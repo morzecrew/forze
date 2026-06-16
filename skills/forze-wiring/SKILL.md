@@ -209,6 +209,10 @@ registry = (
 
 Outer `before` / `wrap` / `on_success` / `on_failure` / `finally_`, then optional transaction scope (`tx_before`, handler, transactional `on_success`, `after_commit`, `dispatch_after_commit`). Higher `priority` runs first within the same stage. See [Middleware and plans](https://morzecrew.github.io/forze/in-depth/capability-execution/).
 
+### Cross-cutting patches
+
+`registry.patch(selector)` applies a plan default (route, deadline, hook) to every operation a selector matches. Patches are **late-bound** — resolved at `freeze()` against the full key set. Across `OperationRegistry.merge(...)` the cross-registry reach is **fail-closed**: if a patch from one part matches another part's operations, `merge` raises naming the selectors and ops. Resolve it by scoping the patch (`patch(selector, namespace=ns)` — matches only ops under `ns`), folding it into per-operation plans first (`registry.materialize_patches()`), or allowing it explicitly (`merge(..., cross_registry=True)`). A policy patch applied *after* the merge never travels through `merge`. A **live** patch is "apply wherever this lands"; a **materialized** one is "settled here." See [Middleware and plans](https://morzecrew.github.io/forze/in-depth/capability-execution/).
+
 ## FastAPI integration
 
 ### Context dependency

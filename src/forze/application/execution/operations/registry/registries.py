@@ -14,6 +14,7 @@ from forze.base.primitives import (
     StrKeyMapping,
     StrKeyNamespace,
     StrKeySelector,
+    str_key_selector,
 )
 
 from ..descriptors import OperationCatalogEntry, OperationDescriptor
@@ -247,12 +248,24 @@ class OperationRegistry:
 
     # ....................... #
 
-    def patch(self, selector: StrKeySelector.Spec) -> OperationRegistryBinder:
+    def patch(
+        self,
+        selector: StrKeySelector.Spec,
+        *,
+        namespace: StrKeyNamespace | None = None,
+    ) -> OperationRegistryBinder:
         """Spawn a binder that commits a plan patch for operations matching ``selector``.
 
-        Selectors target absolute operation keys (as registered on handlers), not
-        namespace-relative segments.
+        Selectors target absolute operation keys (as registered on handlers). Pass
+        ``namespace`` to author the selector in namespace-relative terms — it is
+        scoped to keys under that namespace and matched against the relative
+        remainder, mirroring how ``bind``/``set_handler`` accept a namespace. This
+        lets a sub-registry write ``patch(all_keys(), namespace=ns)`` to mean
+        "everything *I* contribute" and remount cleanly under a merge.
         """
+
+        if namespace is not None:
+            selector = str_key_selector.in_namespace(namespace, selector)
 
         return OperationRegistryBinder(parent=self, ops=None, patch_selector=selector)
 
@@ -262,8 +275,17 @@ class OperationRegistry:
         self,
         selector: StrKeySelector.Spec,
         plan: OperationPlan,
+        *,
+        namespace: StrKeyNamespace | None = None,
     ) -> Self:
-        """Merge or append a plan patch for ``selector``."""
+        """Merge or append a plan patch for ``selector``.
+
+        Pass ``namespace`` to scope the selector to a namespace and match it
+        against the namespace-relative key (see :meth:`patch`).
+        """
+
+        if namespace is not None:
+            selector = str_key_selector.in_namespace(namespace, selector)
 
         patches = list(self._patches)
 
@@ -278,6 +300,92 @@ class OperationRegistry:
         patches.append(PlanPatch(selector=selector, plan=plan))
 
         return attrs.evolve(self, patches=tuple(patches))
+
+    # ....................... #
+
+    def materialize_patches(self, *selectors: StrKeySelector.Spec) -> Self:
+        """Resolve plan patches into per-operation plans and drop them from the registry.
+
+        Each matched patch is merged (in specificity order) into the explicit plan
+        of every operation it selects, then removed from the registry's live
+        patches. The result is an editable registry with no late-bound patches for
+        those selectors — only concrete per-operation plans — so a later
+        :meth:`merge` carries materialized plans instead of selectors that could
+        match a sibling registry's operations.
+
+        With no arguments, *all* patches are materialized; pass one or more patch
+        selectors to materialize only those, leaving the rest live. A selector
+        passed here that is not a registered patch, or a materialized patch that
+        matches no operation, is a configuration error — materializing asserts the
+        patch is local and complete.
+
+        Mental model: a **live** patch is late-bound ("apply wherever this lands");
+        a **materialized** patch is early-bound ("settled here"). The registry
+        boundary is where you choose binding time.
+
+        Two caveats. (1) Materialized steps are merged into the explicit plan, which
+        ``freeze`` always applies *last*; relative to a future lower-specificity
+        patch this reorders them, so materialize is cleanest on a leaf registry or
+        for order-orthogonal steps (deadlines, independent hooks). (2) Materializing
+        a child's own patches does **not** make its operations immune to a parent's
+        later broad patch — they remain in the handler set and still match.
+        """
+
+        if not self._patches:
+            if selectors:
+                raise exc.internal(
+                    "materialize_patches called with selectors but the registry "
+                    "has no plan patches"
+                )
+
+            return self
+
+        targets = set(selectors)
+
+        if targets:
+            present = {patch.selector for patch in self._patches}
+
+            if missing := [sel for sel in targets if sel not in present]:
+                raise exc.internal(f"No plan patch found for selectors: {missing!r}")
+
+        selected = [
+            patch for patch in self._patches if not targets or patch.selector in targets
+        ]
+        remaining = tuple(
+            patch
+            for patch in self._patches
+            if targets and patch.selector not in targets
+        )
+
+        # Orphan guard: materializing asserts the patch is local and complete.
+        for patch in selected:
+            if not any(
+                str_key_selector.matches(patch.selector, str(op))
+                for op in self._handlers
+            ):
+                raise exc.internal(
+                    "Orphan plan patch: selector "
+                    f"{patch.selector!r} matches no registered operations"
+                )
+
+        resolution = PlanResolution(plans={}, patches=tuple(selected))
+        new_plans = self.get_plans()
+
+        for op in self._handlers:
+            op_str = str(op)
+
+            if not any(
+                str_key_selector.matches(patch.selector, op_str) for patch in selected
+            ):
+                continue
+
+            materialized = resolution.resolve(op_str)
+            old_plan = new_plans.get(op)
+            new_plans[op] = (
+                old_plan.merge(materialized) if old_plan is not None else materialized
+            )
+
+        return attrs.evolve(self, plans=new_plans, patches=remaining)
 
     # ....................... #
 
@@ -336,13 +444,26 @@ class OperationRegistry:
     # ....................... #
 
     @hybridmethod
-    def merge(cls: type[Self], *registries: Self, override: bool = False) -> Self:  # type: ignore[misc, override]
+    def merge(  # type: ignore[misc, override]
+        cls: type[Self],  # type: ignore[misc, override]
+        *registries: Self,
+        override: bool = False,
+        cross_registry: bool = False,
+    ) -> Self:
         """Merge multiple operation registries into a single registry.
 
         Registries are expected to be *disjoint*: a duplicate operation key (handler,
         plan, or descriptor) or duplicate patch selector raises a configuration error
         naming the colliding keys. Pass ``override=True`` to explicitly let later
         registries replace earlier entries instead.
+
+        Plan patches are late-bound, so a patch authored in one registry can reach
+        another's operations once they share the merged key set. That cross-registry
+        reach is fail-closed: the merge raises naming the selectors and operations
+        unless you scope the patch (``patch(selector, namespace=ns)``), settle it
+        (:meth:`materialize_patches`) before merging, or pass ``cross_registry=True``
+        to allow it explicitly. A top-level policy patch applied *after* the merge is
+        unaffected — it never travels through ``merge``.
         """
 
         merged = RegistryMerge.merge(
@@ -356,6 +477,7 @@ class OperationRegistry:
                 for reg in registries
             ),
             override=override,
+            cross_registry=cross_registry,
         )
 
         return cls(
@@ -368,8 +490,15 @@ class OperationRegistry:
     # ....................... #
 
     @merge.instancemethod
-    def _merge_instance(self: Self, *registries: Self, override: bool = False) -> Self:  # type: ignore[misc, override]
-        return type(self).merge(self, *registries, override=override)
+    def _merge_instance(  # type: ignore[misc, override]
+        self: Self,
+        *registries: Self,
+        override: bool = False,
+        cross_registry: bool = False,
+    ) -> Self:
+        return type(self).merge(
+            self, *registries, override=override, cross_registry=cross_registry
+        )
 
     # ....................... #
 
@@ -380,10 +509,9 @@ class OperationRegistry:
         RegistryFreezeValidator.validate_all(self._handlers, resolution)
 
         frozen_handlers = dict(self._handlers)
-        frozen_plans: dict[StrKey, FrozenOperationPlan] = {}
-
-        for op in frozen_handlers:
-            frozen_plans[op] = resolution.resolve(str(op)).freeze()
+        frozen_plans = {
+            op: resolution.resolve(str(op)).freeze() for op in frozen_handlers
+        }
 
         # Visibility, not an error: descriptor-less operations stay executable but are
         # invisible/half-visible to catalog-driven surfaces (generated routes refuse

@@ -28,7 +28,10 @@ registry = (
 
 Patch mode sets a default across many operations at once —
 `registry.patch(selector).with_deadline(timedelta(seconds=10)).finish()` gives
-every matched operation a budget in one line.
+every matched operation a budget in one line. Scope it to a namespace with
+`patch(selector, namespace=ns)`, or settle it into per-operation plans with
+`registry.materialize_patches()` so it can't leak to a sibling registry on
+`merge` — see [Cross-cutting patches](capability-execution.md#cross-cutting-patches).
 
 Merging is **restrictive**: across patches, explicit plans, and any
 caller-bound deadline, the *tightest* budget wins. A layer can shorten an

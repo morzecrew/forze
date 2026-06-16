@@ -72,6 +72,58 @@ declaration order). Use `depends_on=(...)` to order by explicit step id when
 there's no capability to name. For a single linear guard, a higher `priority` is
 enough — reach for capabilities only when hooks genuinely share prerequisites.
 
+## Cross-cutting patches
+
+`bind(...)` plans named operations. To apply a default across *many* — a tx
+route, a deadline, an audit hook — use `patch(selector)`, which carries the same
+binder chain but targets every operation a selector matches:
+
+```python
+from datetime import timedelta
+
+from forze.base.primitives import str_key_selector
+
+registry = (
+    registry
+    .patch(str_key_selector.all_keys())
+    .with_deadline(timedelta(seconds=10))
+    .finish(deep=True)
+)
+```
+
+Patches are **late-bound**: their selectors aren't resolved until `freeze()`,
+against the full set of registered operations. That's the power — a top-level
+`patch(all_keys())` policy applied *after* assembling the registry covers
+everything in it. But it's also a sharp edge across `OperationRegistry.merge(...)`:
+a broad patch authored *inside* one sub-registry would otherwise reach a sibling's
+operations once they share the merged key set.
+
+So that reach is **fail-closed**. If a patch from one part matches operations
+contributed by another part, `merge` raises and names the offending selectors and
+operations. A patch matching only its own part's operations is never flagged, and
+a policy patch added *after* the merge never travels through `merge`, so it's
+unaffected. Three ways forward when the gate fires:
+
+- **Scope the patch to a namespace.** `patch(selector, namespace=ns)` matches only
+  keys under `ns` and tests the selector against the namespace-relative remainder
+  — mirroring the `namespace=` argument on `bind`/`set_handler`. A kit can write
+  `patch(all_keys(), namespace=ns)` to mean "everything *I* contribute" and
+  remount cleanly under a merge.
+- **Materialize the patch into plans.** `registry.materialize_patches()` resolves
+  every patch into the explicit plan of each operation it matches and drops the
+  live selectors, so a later `merge` carries concrete per-operation plans instead
+  of selectors that could reach a sibling. Pass specific selectors
+  (`materialize_patches(sel)`) to settle some and leave others live.
+- **Allow it explicitly.** `OperationRegistry.merge(..., cross_registry=True)`
+  permits the reach when a patch is *meant* to govern downstream-contributed
+  operations (logged for the record).
+
+The mental model: a **live** patch is late-bound ("apply wherever this lands"); a
+**materialized** patch is early-bound ("settled here"). Materializing is cleanest
+on a leaf registry or for order-orthogonal steps (deadlines, independent hooks),
+and it does not make an operation immune to a patch applied to the assembled
+registry afterwards — the op stays in the handler set and still matches.
+
 ## Validated at freeze, not at request
 
 `freeze()` is where the plan is checked and locked. Capability graphs must

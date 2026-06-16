@@ -8,6 +8,7 @@ from typing import Callable, Iterable, Iterator, TypeAlias, final
 import attrs
 
 from ..exceptions import exc
+from .namespace import StrKeyNamespace
 from .types import StrKey
 
 # ----------------------- #
@@ -113,6 +114,31 @@ class _When:
 
 
 @final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _Namespaced:
+    """Scope an inner selector to a namespace, matching against the relative key.
+
+    A key matches only when it starts with ``prefix + sep`` and the remainder
+    (the namespace-relative portion) matches ``inner``. This lets a selector be
+    authored in the same relative terms as operation keys and remounted under a
+    namespace without hardcoding the absolute prefix.
+    """
+
+    prefix: str
+    sep: str
+    inner: StrKeySelector.Spec
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        _require_non_empty(self.prefix, label="Namespaced.prefix")
+        _require_non_empty(self.sep, label="Namespaced.sep")
+
+
+# ....................... #
+
+
+@final
 class StrKeySelector:
     """Factory and matching API for opaque string key selectors.
 
@@ -124,7 +150,9 @@ class StrKeySelector:
     imply a canonical key separator.
     """
 
-    Spec: TypeAlias = _AllKeys | _ExactKeys | _Prefix | _Suffix | _Glob | _When
+    Spec: TypeAlias = (
+        _AllKeys | _ExactKeys | _Prefix | _Suffix | _Glob | _When | _Namespaced
+    )
     """Tagged union of selector strategies returned by factory methods."""
 
     # ....................... #
@@ -174,6 +202,24 @@ class StrKeySelector:
 
     # ....................... #
 
+    def in_namespace(self, namespace: StrKeyNamespace, selector: Spec) -> Spec:
+        """Scope ``selector`` to ``namespace``, matching the namespace-relative key.
+
+        The resulting selector matches a key only when it lives under
+        ``namespace`` (``<prefix><sep>...``); ``selector`` is then tested against
+        the relative remainder. Use it to author a patch in relative terms and
+        remount it under a namespace, the same way handlers and plans accept a
+        ``namespace`` argument.
+        """
+
+        return _Namespaced(
+            prefix=str(namespace.prefix),
+            sep=namespace.sep,
+            inner=selector,
+        )
+
+    # ....................... #
+
     def matches(self, selector: Spec, key: StrKey) -> bool:
         """Return whether ``key`` is selected by ``selector``."""
 
@@ -197,6 +243,14 @@ class StrKeySelector:
 
             case _When(predicate=predicate):
                 return predicate(normalized)
+
+            case _Namespaced(prefix=prefix, sep=sep, inner=inner):
+                boundary = prefix + sep
+
+                if not normalized.startswith(boundary):
+                    return False
+
+                return self.matches(inner, normalized[len(boundary):])
 
     # ....................... #
 
@@ -236,6 +290,11 @@ class StrKeySelector:
 
             case _ExactKeys(keys=keys):
                 return 1000 + len(keys)
+
+            case _Namespaced(prefix=prefix, sep=sep, inner=inner):
+                # The namespace boundary is an added constraint, so a scoped
+                # selector is strictly more specific than its bare inner.
+                return len(prefix) + len(sep) + self.specificity(inner)
 
     # ....................... #
 

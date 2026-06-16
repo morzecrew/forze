@@ -11,7 +11,11 @@ from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
-from forze.base.primitives import StrKeySelector, str_key_selector
+from forze.base.primitives import (
+    StrKeyNamespace,
+    StrKeySelector,
+    str_key_selector,
+)
 
 # ----------------------- #
 
@@ -392,3 +396,278 @@ class TestPatchSelectorSpecificity:
         assert _tx_routes(frozen)["projects.get"] == "base"
         assert len(frozen.plans["projects.create"].outer.before.steps) == 1
         assert len(frozen.plans["projects.get"].outer.before.steps) == 0
+
+
+# ....................... #
+# Namespace-scoped patches
+
+
+class TestNamespacedPatch:
+    def test_namespace_all_keys_scopes_to_namespace_only(self) -> None:
+        """``all_keys`` under a namespace means "everything *I* contribute"."""
+
+        reg = OperationRegistry(
+            handlers={
+                "storage.upload": lambda _ctx: None,
+                "storage.download": lambda _ctx: None,
+                "search.query": lambda _ctx: None,
+            },
+        )
+        frozen = (
+            reg.patch(
+                str_key_selector.all_keys(),
+                namespace=StrKeyNamespace(prefix="storage"),
+            )
+            .bind_tx()
+            .set_route("gcs")
+            .finish(deep=True)
+            .freeze()
+        )
+
+        routes = _tx_routes(frozen)
+        assert routes["storage.upload"] == "gcs"
+        assert routes["storage.download"] == "gcs"
+        assert routes["search.query"] is None
+
+    def test_namespace_prefix_matches_relative_remainder(self) -> None:
+        """A relative ``prefix`` is tested against the namespace-relative key."""
+
+        reg = OperationRegistry(
+            handlers={
+                "storage.upload": lambda _ctx: None,
+                "storage.download": lambda _ctx: None,
+                "storage.delete": lambda _ctx: None,
+            },
+        )
+        frozen = (
+            reg.patch(
+                str_key_selector.prefix("up"),
+                namespace=StrKeyNamespace(prefix="storage"),
+            )
+            .bind_tx()
+            .set_route("gcs")
+            .finish(deep=True)
+            .freeze()
+        )
+
+        routes = _tx_routes(frozen)
+        assert routes["storage.upload"] == "gcs"
+        assert routes["storage.download"] is None
+        assert routes["storage.delete"] is None
+
+    def test_namespace_custom_separator(self) -> None:
+        reg = OperationRegistry(handlers={"storage::upload": lambda _ctx: None})
+        frozen = (
+            reg.patch(
+                str_key_selector.all_keys(),
+                namespace=StrKeyNamespace(prefix="storage", sep="::"),
+            )
+            .bind_tx()
+            .set_route("gcs")
+            .finish(deep=True)
+            .freeze()
+        )
+
+        assert _tx_routes(frozen)["storage::upload"] == "gcs"
+
+    def test_namespace_patch_matching_no_namespace_op_is_orphan(self) -> None:
+        reg = (
+            OperationRegistry(handlers={"search.query": lambda _ctx: None})
+            .patch(
+                str_key_selector.all_keys(),
+                namespace=StrKeyNamespace(prefix="storage"),
+            )
+            .bind_tx()
+            .set_route("gcs")
+            .finish(deep=True)
+        )
+
+        with pytest.raises(CoreException, match="Orphan plan patch"):
+            reg.freeze()
+
+    def test_namespace_commit_patch_equivalent_to_patch(self) -> None:
+        ns = StrKeyNamespace(prefix="storage")
+        selector = str_key_selector.all_keys()
+        via_patch = (
+            OperationRegistry(handlers={"storage.upload": lambda _ctx: None})
+            .patch(selector, namespace=ns)
+            .bind_tx()
+            .set_route("gcs")
+            .finish(deep=True)
+        )
+
+        # Same scoped selector lands as a single patch (selectors compare equal).
+        assert len(via_patch.get_patches()) == 1
+        assert via_patch.get_patches()[0].selector == str_key_selector.in_namespace(
+            ns, selector
+        )
+
+
+# ....................... #
+# Patch materialization
+
+
+def _route_patched_reg(
+    handlers: dict[str, object],
+    selector: StrKeySelector.Spec,
+    *,
+    route: str = "pg",
+) -> OperationRegistry:
+    return (
+        OperationRegistry(handlers=handlers)  # type: ignore[arg-type]
+        .patch(selector)
+        .bind_tx()
+        .set_route(route)
+        .finish(deep=True)
+    )
+
+
+class TestMaterializePatches:
+    def test_materialize_folds_patches_into_plans(self) -> None:
+        reg = _route_patched_reg(
+            {"a": lambda _ctx: None, "b": lambda _ctx: None},
+            str_key_selector.all_keys(),
+        )
+        assert len(reg.get_patches()) == 1
+
+        materialized = reg.materialize_patches()
+        assert materialized.get_patches() == ()
+
+        frozen = materialized.freeze()
+        assert _tx_routes(frozen) == {"a": "pg", "b": "pg"}
+
+    def test_materialize_prevents_leak_across_merge(self) -> None:
+        local = _route_patched_reg(
+            {"a": lambda _ctx: None}, str_key_selector.all_keys()
+        ).materialize_patches()
+        other = OperationRegistry(handlers={"b": lambda _ctx: None})
+
+        frozen = OperationRegistry.merge(local, other).freeze()
+
+        routes = _tx_routes(frozen)
+        assert routes["a"] == "pg"
+        assert routes["b"] is None
+
+    def test_unmaterialized_broad_patch_reach_raises_by_default(self) -> None:
+        local = _route_patched_reg(
+            {"a": lambda _ctx: None}, str_key_selector.all_keys()
+        )
+        other = OperationRegistry(handlers={"b": lambda _ctx: None})
+
+        with pytest.raises(CoreException, match="reach operations"):
+            OperationRegistry.merge(local, other)
+
+    def test_unmaterialized_broad_patch_reaches_sibling_when_allowed(self) -> None:
+        """The late-binding power of a live patch, made explicit via the flag."""
+
+        local = _route_patched_reg(
+            {"a": lambda _ctx: None}, str_key_selector.all_keys()
+        )
+        other = OperationRegistry(handlers={"b": lambda _ctx: None})
+
+        frozen = OperationRegistry.merge(local, other, cross_registry=True).freeze()
+
+        assert _tx_routes(frozen)["b"] == "pg"
+
+    def test_namespaced_patch_does_not_trip_cross_registry_gate(self) -> None:
+        ns = StrKeyNamespace(prefix="storage")
+        local = (
+            OperationRegistry(handlers={"storage.upload": lambda _ctx: None})
+            .patch(str_key_selector.all_keys(), namespace=ns)
+            .bind_tx()
+            .set_route("gcs")
+            .finish(deep=True)
+        )
+        # A sibling outside the namespace merges cleanly — no opt-in needed.
+        other = OperationRegistry(handlers={"search.query": lambda _ctx: None})
+
+        frozen = OperationRegistry.merge(local, other).freeze()
+
+        routes = _tx_routes(frozen)
+        assert routes["storage.upload"] == "gcs"
+        assert routes["search.query"] is None
+
+    def test_materialize_does_not_double_apply_hooks(self) -> None:
+        step = BeforeStep(id="b1", factory=_noop_before_factory)
+        reg = (
+            OperationRegistry(handlers={"op": lambda _ctx: None})
+            .patch(str_key_selector.all_keys())
+            .bind_outer()
+            .before(step)
+            .finish(deep=True)
+            .materialize_patches()
+        )
+        frozen = reg.freeze()
+
+        assert len(frozen.plans["op"].outer.before.steps) == 1
+
+    def test_materialize_selective_leaves_others_live(self) -> None:
+        step = BeforeStep(id="b1", factory=_noop_before_factory)
+        reg = (
+            OperationRegistry(handlers={"op": lambda _ctx: None})
+            .patch(str_key_selector.prefix("op"))
+            .bind_tx()
+            .set_route("pg")
+            .finish(deep=True)
+            .patch(str_key_selector.all_keys())
+            .bind_outer()
+            .before(step)
+            .finish(deep=True)
+        )
+
+        materialized = reg.materialize_patches(str_key_selector.prefix("op"))
+
+        # Only the all_keys patch remains live.
+        remaining = materialized.get_patches()
+        assert len(remaining) == 1
+        assert remaining[0].selector == str_key_selector.all_keys()
+
+        frozen = materialized.freeze()
+        assert _tx_routes(frozen)["op"] == "pg"
+        assert len(frozen.plans["op"].outer.before.steps) == 1
+
+    def test_materialize_unknown_selector_raises(self) -> None:
+        reg = _route_patched_reg(
+            {"op": lambda _ctx: None}, str_key_selector.all_keys()
+        )
+
+        with pytest.raises(CoreException, match="No plan patch found"):
+            reg.materialize_patches(str_key_selector.exact("op"))
+
+    def test_materialize_orphan_patch_raises(self) -> None:
+        reg = _route_patched_reg(
+            {"other": lambda _ctx: None}, str_key_selector.prefix("storage.")
+        )
+
+        with pytest.raises(CoreException, match="Orphan plan patch"):
+            reg.materialize_patches()
+
+    def test_materialize_with_selectors_but_no_patches_raises(self) -> None:
+        reg = OperationRegistry(handlers={"op": lambda _ctx: None})
+
+        with pytest.raises(CoreException, match="no plan patches"):
+            reg.materialize_patches(str_key_selector.all_keys())
+
+    def test_materialize_no_patches_is_noop(self) -> None:
+        reg = OperationRegistry(handlers={"op": lambda _ctx: None})
+
+        assert reg.materialize_patches() is reg
+
+    def test_materialize_namespaced_patch_stays_local(self) -> None:
+        ns = StrKeyNamespace(prefix="storage")
+        local = (
+            OperationRegistry(handlers={"storage.upload": lambda _ctx: None})
+            .patch(str_key_selector.all_keys(), namespace=ns)
+            .bind_tx()
+            .set_route("gcs")
+            .finish(deep=True)
+            .materialize_patches()
+        )
+        other = OperationRegistry(handlers={"storage.scan": lambda _ctx: None})
+
+        frozen = OperationRegistry.merge(local, other).freeze()
+
+        routes = _tx_routes(frozen)
+        assert routes["storage.upload"] == "gcs"
+        # Materialized before merge, so a sibling storage op is untouched.
+        assert routes["storage.scan"] is None

@@ -6,7 +6,11 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze.base.primitives import StrKeySelector, str_key_selector
+from forze.base.primitives import (
+    StrKeyNamespace,
+    StrKeySelector,
+    str_key_selector,
+)
 from forze.base.primitives.selector import _ExactKeys
 
 # ----------------------- #
@@ -119,3 +123,47 @@ def test_class_api_matches_singleton() -> None:
     sel = direct.exact("a")
     assert direct.matches(sel, "a")
     assert direct.specificity(sel) == _sel.specificity(sel)
+
+
+def test_in_namespace_scopes_inner_to_relative_key() -> None:
+    ns = StrKeyNamespace(prefix="storage")
+    sel = _sel.in_namespace(ns, _sel.prefix("up"))
+
+    assert _sel.matches(sel, "storage.upload")
+    assert not _sel.matches(sel, "storage.download")
+    # Outside the namespace never matches, even if the relative part would.
+    assert not _sel.matches(sel, "other.upload")
+    # The bare prefix exists at the front, not after the namespace boundary.
+    assert not _sel.matches(sel, "up.storage")
+
+
+def test_in_namespace_all_keys_requires_namespace_boundary() -> None:
+    ns = StrKeyNamespace(prefix="storage")
+    sel = _sel.in_namespace(ns, _sel.all_keys())
+
+    assert _sel.matches(sel, "storage.upload")
+    assert not _sel.matches(sel, "storage")
+    assert not _sel.matches(sel, "storageX.upload")
+
+
+def test_in_namespace_custom_separator() -> None:
+    ns = StrKeyNamespace(prefix="storage", sep="::")
+    sel = _sel.in_namespace(ns, _sel.all_keys())
+
+    assert _sel.matches(sel, "storage::upload")
+    assert not _sel.matches(sel, "storage.upload")
+
+
+def test_in_namespace_is_more_specific_than_inner() -> None:
+    ns = StrKeyNamespace(prefix="storage")
+    inner = _sel.all_keys()
+
+    assert _sel.specificity(_sel.in_namespace(ns, inner)) > _sel.specificity(inner)
+
+
+def test_in_namespace_equality_for_patch_dedup() -> None:
+    ns = StrKeyNamespace(prefix="storage")
+
+    assert _sel.in_namespace(ns, _sel.all_keys()) == _sel.in_namespace(
+        ns, _sel.all_keys()
+    )
