@@ -96,23 +96,22 @@ def resolve_namespace(
     ns: StrKeyNamespace | None,
     resource: str | None,
 ) -> StrKeyNamespace:
-    """
-    Resolve the operation namespace from either an explicit namespace or a resource prefix.
-    
-    Exactly one of `ns` or `resource` must be provided. If `ns` is given, it is returned
-    directly; if `resource` is given, a namespace is constructed from it using the default
-    separator. The resolved namespace must match the prefix under which operations were
-    registered in the catalog.
-    
-    Parameters:
-    	ns (StrKeyNamespace | None): An explicit namespace object.
-    	resource (str | None): A resource prefix string to construct the namespace from.
-    
+    """Resolve the operation namespace from an explicit namespace or a resource prefix.
+
+    Exactly one of *ns* or *resource* must be provided. The resolved namespace must
+    match the prefix under which the operations were registered in the catalog.
+
+    Args:
+        ns (StrKeyNamespace | None): An explicit namespace, returned as-is when given.
+        resource (str | None): A prefix string the namespace is built from (using the
+            default separator) when *ns* is omitted.
+
     Returns:
-    	StrKeyNamespace: The resolved namespace.
-    
+        StrKeyNamespace: The resolved namespace.
+
     Raises:
-    	ConfigurationError: If neither or both `ns` and `resource` are provided.
+        CoreException: If neither or both of *ns* and *resource* are provided
+            (a configuration error).
     """
 
     if ns is not None and resource is None:
@@ -151,14 +150,19 @@ def require_input_type(
     input_type: type[BaseModel] | None,
     op: str,
 ) -> type[BaseModel]:
-    """
-    Ensure an operation's input DTO type is available for route schema derivation.
-    
+    """Return the operation's input DTO type, failing when it is absent.
+
+    Args:
+        input_type (type[BaseModel] | None): The descriptor-derived input type, or
+            ``None`` when the operation has no descriptor input type.
+        op (str): Operation key, surfaced in the error message.
+
     Returns:
-        type[BaseModel]: The input DTO type.
-    
+        type[BaseModel]: The input DTO type used to derive the route schema.
+
     Raises:
-        exc.configuration: If the operation lacks a descriptor with an input type.
+        CoreException: If *input_type* is ``None`` — route schemas cannot be derived
+            (a configuration error).
     """
 
     if input_type is None:
@@ -510,6 +514,30 @@ def attach_operation_routes(
     it appears as a ``{placeholder}``). Dropping one is a configuration error
     (a silent demotion to a query parameter); adding one the endpoint never
     synthesizes is too (the placeholder would never be filled).
+
+    Args:
+        router (APIRouter): Router the generated routes are added to.
+        registry (FrozenOperationRegistry): Frozen registry providing the operation
+            catalog (handlers, descriptors).
+        ns (StrKeyNamespace): Namespace prefixing each binding suffix into its full
+            operation key.
+        ctx_dep (ExecutionContextFactory): Dependency yielding the per-request
+            execution context the endpoints dispatch through.
+        bindings (Mapping[str, RouteBinding]): Per-operation HTTP surface (method,
+            path, status, endpoint builder), keyed by namespace-relative suffix.
+        include (AbstractSet[Any] | None): When given, the exact operations to attach;
+            a listed operation missing from the registry is a configuration error.
+            ``None`` attaches every registered binding.
+        path_overrides (Mapping[Any, str] | None): Per-operation replacement paths,
+            keyed like *include*; each must bind exactly the default path's parameters.
+
+    Returns:
+        APIRouter: The same *router*, with the routes attached.
+
+    Raises:
+        CoreException: On an unknown *include*/override operation, a sensitive read
+            model, or a path override that drops or adds a path parameter (all
+            configuration errors).
     """
 
     known = set(bindings)

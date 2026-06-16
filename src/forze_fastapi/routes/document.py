@@ -174,31 +174,40 @@ def attach_document_routes(
     path per operation and puts the id in a query parameter
     (``GET /notes.get?id=``), so the catalog still maps one-to-one.
 
-    :param router: A plain FastAPI router the caller owns.
-    :param registry: Frozen registry holding the document operations.
-    :param ns: Namespace the operations were registered under
-        (e.g. ``spec.default_namespace``). Mutually exclusive with *resource*;
-        provide exactly one.
-    :param ctx_dep: Factory yielding the current execution context per request.
-    :param style: ``"rest"`` for resource paths (``GET /{id}``, ``PATCH /{id}?rev=``,
-        ``DELETE /{id}``, ``POST /{id}/delete|restore``; list operations stay
-        ``POST /<op>`` since their filter bodies have no REST verb) or ``"rpc"``
-        for operation-named paths with the same verbs and the id/rev as query
-        parameters (``GET /<op>?id=``, ``PATCH /<op>?id=&rev=`` with the patch
-        body, ``DELETE /<op>?id=``, ``PATCH /<op>?id=&rev=`` for soft
-        delete/restore; ``create`` and list operations keep ``POST /<op>`` with
-        the input DTO as body).
-    :param include: Optional narrowing to a subset of kernel operations; including
-        an operation the registry lacks is a configuration error.
-    :param resource: Convenience alternative to *ns* — a prefix string the
-        namespace is built from (``StrKeyNamespace(prefix=resource)``); must equal
-        the prefix the operations were registered under. Mutually exclusive with
-        *ns*; provide exactly one.
-    :param path_overrides: Optional per-operation route-path replacements (keyed
-        like *include*). Only the path changes; the ``operation_id`` stays
-        verbatim. An override must keep the default path's ``{id}``/``{rev}``
-        placeholders or attaching is a configuration error.
-    :returns: *router*, for chaining.
+    Args:
+        router (APIRouter): A plain FastAPI router the caller owns.
+        registry (FrozenOperationRegistry): Frozen registry holding the document
+            operations.
+        ns (StrKeyNamespace | None): Namespace the operations were registered under
+            (e.g. ``spec.default_namespace``). Mutually exclusive with *resource* —
+            provide exactly one.
+        ctx_dep (ExecutionContextFactory): Factory yielding the current execution
+            context per request.
+        style (RouteStyle): ``"rest"`` for resource paths (``GET /{id}``,
+            ``PATCH /{id}?rev=``, ``DELETE /{id}``, ``POST /{id}/delete|restore``;
+            list operations stay ``POST /<op>`` since their filter bodies have no
+            REST verb) or ``"rpc"`` for operation-named paths with the same verbs and
+            the id/rev as query parameters (``create`` and list operations keep
+            ``POST /<op>`` with the input DTO as body).
+        include (AbstractSet | None): Optional narrowing to a subset of kernel
+            operations; including an operation the registry lacks is a configuration
+            error.
+        resource (str | None): Convenience alternative to *ns* — a prefix string the
+            namespace is built from (``StrKeyNamespace(prefix=resource)``); must equal
+            the prefix the operations were registered under. Mutually exclusive with
+            *ns* — provide exactly one.
+        path_overrides (Mapping | None): Optional per-operation route-path replacements
+            (keyed like *include*). Only the path changes; the ``operation_id`` stays
+            verbatim. An override must bind exactly the default path's
+            ``{id}``/``{rev}`` placeholders.
+
+    Returns:
+        APIRouter: The same *router*, for chaining.
+
+    Raises:
+        CoreException: On a configuration error — an unknown *include*/override
+            operation, both or neither of *ns*/*resource*, or a path override that
+            drops or adds a placeholder.
     """
 
     return attach_operation_routes(

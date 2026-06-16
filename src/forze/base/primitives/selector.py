@@ -15,12 +15,15 @@ from .types import StrKey
 
 
 def _normalize_key(key: StrKey) -> str:
-    """
-    Normalize a key to its string form.
-    
+    """Normalize a key to its string form.
+
+    Args:
+        key (StrKey): Key whose string form is taken.
+
     Returns:
-    	str: The string representation of the key.
+        str: ``str(key)`` — the canonical comparable representation.
     """
+
     return str(key)
 
 
@@ -28,16 +31,16 @@ def _normalize_key(key: StrKey) -> str:
 
 
 def _require_non_empty(value: str, *, label: str) -> None:
-    """
-    Validate that a string value is non-empty.
-    
-    Parameters:
+    """Raise when *value* is an empty string.
+
+    Args:
         value (str): The string to validate.
-        label (str): A label used in the error message if validation fails.
-    
+        label (str): Human-readable name of the value, used in the error message.
+
     Raises:
-        exc.internal: If value is empty.
+        CoreException: If *value* is empty (an internal error).
     """
+
     if not value:
         raise exc.internal(f"{label} must be non-empty")
 
@@ -178,11 +181,13 @@ class StrKeySelector:
 
     @staticmethod
     def all_keys(*except_: StrKey) -> Spec:
-        """
-        Creates a selector matching all keys except those specified.
-        
-        Parameters:
-            *except_: Keys to exclude from matching.
+        """Build a selector that matches every key except those listed.
+
+        Args:
+            *except_ (StrKey): Keys to exclude; everything else matches.
+
+        Returns:
+            Spec: An all-keys selector with *except_* removed.
         """
 
         return _AllKeys(except_keys=frozenset(map(_normalize_key, except_)))
@@ -191,14 +196,16 @@ class StrKeySelector:
 
     @staticmethod
     def exact(*keys: StrKey) -> Spec:
-        """
-        Create a selector matching keys by exact literal equality.
-        
-        Parameters:
-            *keys: One or more keys to match exactly.
-        
+        """Build a selector matching the given literal keys exactly.
+
+        Args:
+            *keys (StrKey): One or more keys to match by exact equality.
+
         Returns:
-            A Spec selector that matches only the specified keys.
+            Spec: An exact-match selector over *keys*.
+
+        Raises:
+            CoreException: If no keys are given (an internal error).
         """
 
         if not keys:
@@ -210,14 +217,13 @@ class StrKeySelector:
 
     @staticmethod
     def prefix(value: str) -> Spec:
-        """
-        Create a selector that matches keys starting with a given prefix.
-        
-        Parameters:
-        	value (str): The prefix string that keys must start with. Must be non-empty.
-        
+        """Build a selector matching keys that start with *value*.
+
+        Args:
+            value (str): Prefix a key's normalized form must start with.
+
         Returns:
-        	Spec: A selector spec for prefix matching.
+            Spec: A prefix selector.
         """
 
         return _Prefix(value=value)
@@ -226,9 +232,11 @@ class StrKeySelector:
 
     @staticmethod
     def suffix(value: str) -> Spec:
-        """
-        Create a selector that matches keys ending with a given value.
-        
+        """Build a selector matching keys that end with *value*.
+
+        Args:
+            value (str): Suffix a key's normalized form must end with.
+
         Returns:
             Spec: A suffix selector.
         """
@@ -247,14 +255,14 @@ class StrKeySelector:
 
     @staticmethod
     def when(predicate: Callable[[str], bool]) -> Spec:
-        """
-        Creates a selector that matches keys where the predicate returns true.
-        
-        Parameters:
-            predicate (Callable[[str], bool]): A function that takes a normalized key string and returns `true` if the key matches.
-        
+        """Build a selector matching keys for which *predicate* returns true.
+
+        Args:
+            predicate (Callable[[str], bool]): Applied to the normalized key;
+                ``True`` means the key matches.
+
         Returns:
-            Spec: A selector spec applying the predicate to normalized keys.
+            Spec: A predicate selector.
         """
 
         return _When(predicate=predicate)
@@ -263,12 +271,20 @@ class StrKeySelector:
 
     @staticmethod
     def in_namespace(namespace: StrKeyNamespace, selector: Spec) -> Spec:
-        """
-        Scope selector to a namespace, matching the namespace-relative key.
-        
+        """Scope *selector* to *namespace*, matching the namespace-relative key.
+
         The resulting selector matches a key only when it starts with the namespace
-        boundary (prefix + sep); the inner selector is then tested against the
-        namespace-relative remainder.
+        boundary (``prefix`` + ``sep``); *selector* is then tested against the
+        remaining relative portion. This lets a selector authored in relative terms
+        be remounted under a namespace without hardcoding the absolute prefix.
+
+        Args:
+            namespace (StrKeyNamespace): Namespace whose ``prefix``/``sep`` define
+                the boundary a key must clear.
+            selector (Spec): Inner selector tested against the relative remainder.
+
+        Returns:
+            Spec: A namespace-scoped selector.
         """
 
         return _Namespaced(
@@ -280,15 +296,14 @@ class StrKeySelector:
     # ....................... #
 
     def matches(self, selector: Spec, key: StrKey) -> bool:
-        """
-        Determine whether a key matches the given selector specification.
-        
-        Parameters:
-            selector: A selector specification.
-            key: The key to test against the selector.
-        
+        """Return whether *key* matches *selector*.
+
+        Args:
+            selector (Spec): The selector strategy to apply.
+            key (StrKey): Key to test; normalized to its string form first.
+
         Returns:
-            True if the key matches the selector, False otherwise.
+            bool: ``True`` if *key* matches *selector*, otherwise ``False``.
         """
 
         normalized = _normalize_key(key)
@@ -336,13 +351,17 @@ class StrKeySelector:
     # ....................... #
 
     def specificity(self, selector: Spec) -> int:
-        """
-        Compute a specificity rank for a selector.
-        
-        Higher ranks indicate more specific selectors. Rankings are determined by selector type and content characteristics (e.g., exact matches rank highest, generic selectors rank lowest).
-        
+        """Compute a specificity rank for *selector* (higher means more specific).
+
+        Ranks order overlapping patches at freeze: exact-key selectors rank highest,
+        all-keys lowest, and a namespaced selector outranks its bare inner by the
+        boundary length it adds.
+
+        Args:
+            selector (Spec): The selector to rank.
+
         Returns:
-            An integer rank, where higher values indicate more specific selectors.
+            int: A non-negative specificity rank.
         """
 
         match selector:
@@ -372,11 +391,13 @@ class StrKeySelector:
         self,
         selectors: Iterable[Spec],
     ) -> tuple[Spec, ...]:
-        """
-        Orders selectors by increasing specificity.
-        
+        """Order *selectors* from lowest to highest specificity.
+
+        Args:
+            selectors (Iterable[Spec]): Selectors to order.
+
         Returns:
-            tuple[Spec, ...]: The input selectors as a tuple, ordered from lowest to highest specificity.
+            tuple[Spec, ...]: The selectors sorted by ascending specificity.
         """
 
         return tuple(sorted(selectors, key=self.specificity))

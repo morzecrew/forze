@@ -254,14 +254,22 @@ class OperationRegistry:
         *,
         namespace: StrKeyNamespace | None = None,
     ) -> OperationRegistryBinder:
-        """Spawn a binder that commits a plan patch for operations matching ``selector``.
+        """Spawn a binder that commits a plan patch for operations matching *selector*.
 
         Selectors target absolute operation keys (as registered on handlers). Pass
-        ``namespace`` to author the selector in namespace-relative terms — it is
-        scoped to keys under that namespace and matched against the relative
-        remainder, mirroring how ``bind``/``set_handler`` accept a namespace. This
-        lets a sub-registry write ``patch(all_keys(), namespace=ns)`` to mean
-        "everything *I* contribute" and remount cleanly under a merge.
+        *namespace* to author the selector in namespace-relative terms — it is scoped
+        to keys under that namespace and matched against the relative remainder,
+        mirroring how ``bind``/``set_handler`` accept a namespace. This lets a
+        sub-registry write ``patch(all_keys(), namespace=ns)`` to mean "everything
+        *I* contribute" and remount cleanly under a merge.
+
+        Args:
+            selector (StrKeySelector.Spec): Selector choosing the operations to patch.
+            namespace (StrKeyNamespace | None): When given, scopes *selector* to that
+                namespace and matches it against the namespace-relative key.
+
+        Returns:
+            OperationRegistryBinder: A binder whose plan steps become the patch.
         """
 
         if namespace is not None:
@@ -278,10 +286,21 @@ class OperationRegistry:
         *,
         namespace: StrKeyNamespace | None = None,
     ) -> Self:
-        """Merge or append a plan patch for ``selector``.
+        """Merge or append a plan patch for *selector*, returning a new registry.
 
-        Pass ``namespace`` to scope the selector to a namespace and match it
-        against the namespace-relative key (see :meth:`patch`).
+        When a patch with the same selector already exists, *plan* is merged into it;
+        otherwise the patch is appended. Pass *namespace* to scope the selector to a
+        namespace and match it against the namespace-relative key (see :meth:`patch`).
+
+        Args:
+            selector (StrKeySelector.Spec): Selector choosing the operations to patch.
+            plan (OperationPlan): Plan steps merged into the matched operations' plans
+                at freeze.
+            namespace (StrKeyNamespace | None): When given, scopes *selector* to that
+                namespace and matches it against the namespace-relative key.
+
+        Returns:
+            Self: A new registry with the patch merged or appended.
         """
 
         if namespace is not None:
@@ -329,6 +348,18 @@ class OperationRegistry:
         for order-orthogonal steps (deadlines, independent hooks). (2) Materializing
         a child's own patches does **not** make its operations immune to a parent's
         later broad patch — they remain in the handler set and still match.
+
+        Args:
+            *selectors (StrKeySelector.Spec): Patch selectors to materialize; with
+                none given, every live patch is materialized.
+
+        Returns:
+            Self: A new registry whose matched patches are folded into per-operation
+            plans and dropped from the live patch set.
+
+        Raises:
+            CoreException: If a passed selector is not a registered patch, or a
+                materialized patch matches no operation (both configuration errors).
         """
 
         if not self._patches:
@@ -392,12 +423,13 @@ class OperationRegistry:
     # ....................... #
 
     def _resolution(self) -> PlanResolution:
-        """
-        Build a plan resolution from the registry's current plans and patches.
-        
+        """Build a plan resolution from the registry's current plans and patches.
+
         Returns:
-        	PlanResolution containing the registry's plans and patches.
+            PlanResolution: Snapshot pairing the registry's plans with its live
+            patches, ready for freeze-time resolution.
         """
+
         return PlanResolution(plans=self._plans, patches=self._patches)
 
     # ....................... #
@@ -472,6 +504,20 @@ class OperationRegistry:
         (:meth:`materialize_patches`) before merging, or pass ``cross_registry=True``
         to allow it explicitly. A top-level policy patch applied *after* the merge is
         unaffected — it never travels through ``merge``.
+
+        Args:
+            *registries (Self): Registries to merge, applied left to right.
+            override (bool): Allow later registries to replace duplicate keys/selectors
+                instead of raising. Defaults to ``False``.
+            cross_registry (bool): Allow a patch to reach another registry's operations
+                instead of raising. Defaults to ``False`` (logged when allowed).
+
+        Returns:
+            Self: A single registry combining all inputs.
+
+        Raises:
+            CoreException: On a duplicate key/selector without *override*, or on
+                cross-registry patch reach without *cross_registry*.
         """
 
         merged = RegistryMerge.merge(
@@ -504,17 +550,23 @@ class OperationRegistry:
         override: bool = False,
         cross_registry: bool = False,
     ) -> Self:
-        """
-        Merge this registry with one or more other registries.
-        
-        Parameters:
-        	registries: Other registries to merge with this one
-        	override: Whether to allow overriding existing operations
-        	cross_registry: Whether to allow cross-registry references
-        
+        """Merge this registry with others — the instance form of :meth:`merge`.
+
+        Args:
+            *registries (Self): Other registries to merge with this one.
+            override (bool): Allow later registries to replace duplicate keys/selectors.
+                Defaults to ``False``.
+            cross_registry (bool): Allow a patch to reach another registry's operations.
+                Defaults to ``False`` (logged when allowed).
+
         Returns:
-        	A new registry with merged handlers, plans, descriptors, and patches
+            Self: A single registry combining all inputs.
+
+        Raises:
+            CoreException: On a duplicate key/selector without *override*, or on
+                cross-registry patch reach without *cross_registry*.
         """
+
         return type(self).merge(
             self, *registries, override=override, cross_registry=cross_registry
         )
@@ -522,11 +574,16 @@ class OperationRegistry:
     # ....................... #
 
     def freeze(self) -> FrozenOperationRegistry:
-        """
-        Convert the mutable registry to an immutable form validated for execution.
-        
+        """Convert the mutable registry into an immutable, execution-ready form.
+
+        Resolves plan patches into per-operation plans and runs the freeze-time
+        validator before snapshotting.
+
         Returns:
-            FrozenOperationRegistry: The frozen registry with resolved and validated plans.
+            FrozenOperationRegistry: The validated, immutable registry.
+
+        Raises:
+            CoreException: If freeze-time validation rejects the resolved plans.
         """
 
         resolution = self._resolution()

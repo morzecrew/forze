@@ -99,20 +99,31 @@ def attach_tenancy_routes(
     operation descriptors; every call dispatches through ``run_operation`` (plans + hooks
     apply, no bypass).
 
-    :param router: A plain FastAPI router the caller owns.
-    :param registry: Frozen registry holding the tenancy operations.
-    :param ns: Namespace the operations were registered under (e.g. ``spec.default_namespace``).
-        Mutually exclusive with *resource*; provide exactly one.
-    :param ctx_dep: Factory yielding the current execution context per request.
-    :param include: Optional narrowing to a subset of operations.
-    :param resource: Convenience alternative to *ns* — a prefix string the
-        namespace is built from; must equal the prefix the operations were
-        registered under. Mutually exclusive with *ns*; provide exactly one.
-    :param path_overrides: Optional per-operation route-path replacements (keyed
-        like *include*); only the path changes, the ``operation_id`` stays
-        verbatim. An override must keep any ``{id}`` placeholder the default path
-        binds.
-    :returns: *router*, for chaining.
+    Args:
+        router (APIRouter): A plain FastAPI router the caller owns.
+        registry (FrozenOperationRegistry): Frozen registry holding the tenancy
+            operations.
+        ns (StrKeyNamespace | None): Namespace the operations were registered under
+            (e.g. ``spec.default_namespace``). Mutually exclusive with *resource* —
+            provide exactly one.
+        ctx_dep (ExecutionContextFactory): Factory yielding the current execution
+            context per request.
+        include (AbstractSet | None): Optional narrowing to a subset of operations.
+        resource (str | None): Convenience alternative to *ns* — a prefix string the
+            namespace is built from; must equal the prefix the operations were
+            registered under. Mutually exclusive with *ns* — provide exactly one.
+        path_overrides (Mapping | None): Optional per-operation route-path replacements
+            (keyed like *include*); only the path changes, the ``operation_id`` stays
+            verbatim. An override must bind exactly the ``{id}`` placeholder the
+            default path binds.
+
+    Returns:
+        APIRouter: The same *router*, for chaining.
+
+    Raises:
+        CoreException: On a configuration error — an unknown *include*/override
+            operation, both or neither of *ns*/*resource*, or a path override that
+            drops or adds a placeholder.
     """
 
     return attach_operation_routes(
