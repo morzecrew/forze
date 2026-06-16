@@ -11,6 +11,7 @@ from forze.application.contracts.search import (
     SearchQueryPort,
 )
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.search import search_spec_encrypts
 from forze.base.exceptions import exc
 from forze_meilisearch.adapters.search._simple_base import (
     MeilisearchSimpleSearchAdapter,
@@ -73,5 +74,9 @@ class ConfigurableMeilisearchFederatedSearch(FederatedSearchQueryDepPort):
             merge=self.config.merge,
             rrf_k=self.config.rrf_k,
             rrf_per_leg_limit=self.config.rrf_per_leg_limit,
-            result_snapshot=result_snapshot(context, spec.snapshot),
+            result_snapshot=result_snapshot(
+                context,
+                spec.snapshot,
+                encrypted=any(search_spec_encrypts(m) for m in spec.members),
+            ),
         )

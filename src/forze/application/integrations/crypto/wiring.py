@@ -3,8 +3,9 @@
 The document analog of
 :func:`~forze.application.integrations.storage.validate_storage_encryption_wiring`.
 Where storage knows its ``encrypt`` flag statically (per route config), document
-encryption is declared on the *spec* (``encrypted_fields`` / ``searchable_fields``)
-and so can only be resolved at factory call time. :func:`resolve_document_codecs`
+encryption is declared on the *spec* (``DocumentSpec.encryption``, a
+:class:`~forze.application.contracts.crypto.FieldEncryption` policy) and so can only be
+resolved at factory call time. :func:`resolve_document_codecs`
 runs there, performing two fail-closed checks before wrapping the codec bundle:
 
 1. **Infra presence** — a spec that marks fields for encryption MUST have a keyring
@@ -23,6 +24,7 @@ from forze.application.contracts.crypto import (
     DeterministicFieldCipherPort,
     EncryptionTier,
     FieldCipherPort,
+    FieldEncryption,
     validate_required_encryption,
 )
 from forze.application.contracts.document import DocumentCodecs
@@ -38,26 +40,25 @@ def resolve_document_codecs(
     codecs: DocumentCodecs[Any, Any, Any, Any],
     *,
     spec_name: str,
-    encrypted_fields: frozenset[str],
-    searchable_fields: frozenset[str],
+    encryption: FieldEncryption | None,
     keyring: FieldCipherPort | None,
     deterministic: DeterministicFieldCipherPort | None,
     tenant_provider: Callable[[], TenantIdentity | None],
     integration: str,
     code: str,
     required_encryption: EncryptionTier | None = None,
-    bind_record_id: bool = False,
 ) -> DocumentCodecs[Any, Any, Any, Any]:
     """Validate encryption wiring for a document spec and wrap its codecs.
 
-    *keyring* / *deterministic* are the resolved ciphers or ``None`` when the
-    dependency is not registered (the caller passes ``None`` instead of letting
-    the lookup raise, so this can report a precise, actionable error). When the
-    spec declares no encrypted or searchable fields the bundle is returned
-    unchanged — subject only to the ``required_encryption`` floor.
+    *encryption* is the spec's :class:`~forze.application.contracts.crypto.FieldEncryption`
+    policy (or ``None``). *keyring* / *deterministic* are the resolved ciphers or ``None``
+    when the dependency is not registered (the caller passes ``None`` instead of letting the
+    lookup raise, so this can report a precise, actionable error). When the spec declares no
+    encrypted or searchable fields the bundle is returned unchanged — subject only to the
+    ``required_encryption`` floor.
     """
 
-    declares = bool(encrypted_fields or searchable_fields)
+    declares = encryption is not None and not encryption.is_empty
     derived: EncryptionTier = "field" if declares else "none"
 
     # Coverage floor first: catches a spec that declares nothing under a deployment
@@ -70,7 +71,7 @@ def resolve_document_codecs(
         max_supported="field",
     )
 
-    if not declares:
+    if encryption is None or not declares:
         return codecs
 
     # Infra presence: fail closed rather than persist plaintext for fields the spec
@@ -78,37 +79,37 @@ def resolve_document_codecs(
     if keyring is None:
         raise exc.configuration(
             f"{integration} document {spec_name!r} declares encrypted fields "
-            f"{sorted(encrypted_fields | searchable_fields)} but no keyring is "
+            f"{sorted(encryption.encrypted | encryption.searchable)} but no keyring is "
             "wired. Add a CryptoDepsModule (registers the keyring) or remove the "
             "encrypted/searchable field declarations.",
             code=code,
             details={
                 "document": spec_name,
-                "encrypted_fields": sorted(encrypted_fields),
-                "searchable_fields": sorted(searchable_fields),
+                "encrypted_fields": sorted(encryption.encrypted),
+                "searchable_fields": sorted(encryption.searchable),
             },
         )
 
-    if searchable_fields and deterministic is None:
+    if encryption.searchable and deterministic is None:
         raise exc.configuration(
             f"{integration} document {spec_name!r} declares searchable "
-            f"(deterministic) fields {sorted(searchable_fields)} but no "
+            f"(deterministic) fields {sorted(encryption.searchable)} but no "
             "deterministic cipher is wired. Set CryptoDepsModule(deterministic_root="
             "...) or remove the searchable field declarations.",
             code=code,
             details={
                 "document": spec_name,
-                "searchable_fields": sorted(searchable_fields),
+                "searchable_fields": sorted(encryption.searchable),
             },
         )
 
     return encrypting_document_codecs(
         codecs,
-        fields=encrypted_fields,
+        fields=encryption.encrypted,
         cipher=keyring,
         tenant_provider=tenant_provider,
         label=spec_name,
-        searchable_fields=searchable_fields,
+        searchable_fields=encryption.searchable,
         deterministic=deterministic,
-        record_id_field="id" if bind_record_id else None,
+        record_id_field="id" if encryption.binds_record_id else None,
     )

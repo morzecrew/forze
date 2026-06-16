@@ -174,6 +174,48 @@ async def test_resolve_pgroonga_plan_option_override() -> None:
     assert plan == "index_first"
 
 
+@pytest.mark.asyncio
+async def test_resolve_pgroonga_plan_tenant_aware_forces_filter_first() -> None:
+    """Tenant-aware search never uses ``index_first``, even when otherwise selected.
+
+    ``index_first`` ranks a heap top-K across all tenants and applies the tenant
+    predicate only as an outer post-filter, which scans cross-tenant rows and
+    truncates a tenant's results. Tenant-awareness overrides every other signal —
+    an explicit ``index_first`` option, a large-table ``auto`` estimate, and the
+    filterless-browse path — without issuing the (misleading) estimation queries.
+    """
+
+    intro = AsyncMock()
+    intro.estimate_relation_rows = AsyncMock(return_value=500_000)
+    intro.estimate_filtered_rows = AsyncMock(return_value=500_000)
+
+    for configured, options, parsed in (
+        ("index_first", None, None),
+        ("auto", {"pgroonga_plan": "index_first"}, None),
+        ("auto", None, None),
+        ("auto", None, QueryField(name="tenant_id", op="$eq", value="t1")),
+    ):
+        plan = await resolve_pgroonga_plan(
+            configured=configured,
+            options=options,
+            parsed_filters=parsed,
+            read_qname=PostgresQualifiedName("public", "docs"),
+            introspector=intro,
+            auto_index_first_min_rows=1,
+            auto_filter_first_max_rows=50_000,
+            auto_with_filters=True,
+            auto_use_exact_count=False,
+            count_filtered_rows=None,
+            estimate_filtered_rows=intro.estimate_filtered_rows,
+            tenant_aware=True,
+        )
+        assert plan == "filter_first"
+
+    # No estimation queries are issued on the tenant-aware short circuit.
+    intro.estimate_relation_rows.assert_not_awaited()
+    intro.estimate_filtered_rows.assert_not_awaited()
+
+
 def test_is_trivial_filter_and_plan_option() -> None:
     assert is_trivial_filter(None) is True
     assert effective_pgroonga_plan_option({"pgroonga_plan": "auto"}) == "auto"

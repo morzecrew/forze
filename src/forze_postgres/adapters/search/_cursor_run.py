@@ -26,6 +26,7 @@ from forze.application.contracts.search import (
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
 )
+from forze.application.integrations.search import decrypt_search_rows
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
@@ -182,7 +183,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
         use_before=use_before,
     )
 
-    return _cursor_page_from_rows(
+    return await _cursor_page_from_rows(
         rows,
         return_type=return_type,
         return_fields=return_fields,
@@ -337,7 +338,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         use_before=use_before,
     )
 
-    return _cursor_page_from_rows(
+    return await _cursor_page_from_rows(
         rows,
         return_type=return_type,
         return_fields=return_fields,
@@ -353,7 +354,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
 # ....................... #
 
 
-def _cursor_page_from_rows(
+async def _cursor_page_from_rows(
     rows: list[JsonDict],
     *,
     return_type: type[BaseModel] | None,
@@ -365,6 +366,10 @@ def _cursor_page_from_rows(
     has_more: bool,
     trust_source: bool = False,
 ) -> CursorPage[Any]:
+    # Decrypt sealed fields out of the raw rows once, so the spec model, a custom
+    # return_type, and raw field projections all read plaintext (no-op for a plain codec).
+    rows, codec = await decrypt_search_rows(codec, rows)
+
     hits: list[Any]
 
     if return_fields is not None:

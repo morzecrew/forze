@@ -140,8 +140,31 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
+    @property
+    def _encrypts(self) -> bool:
+        # The factory wraps the read codec with an EncryptingModelCodec (which exposes
+        # ``prepare_encrypt``) when the spec declares an ``encryption`` policy.
+        return hasattr(self.spec.resolved_read_codec, "prepare_encrypt")
+
+    async def prepare_encrypt(self) -> None:
+        """Warm the keyring before a synchronous encrypting encode (no-op if plaintext)."""
+
+        prepare = getattr(self.spec.resolved_read_codec, "prepare_encrypt", None)
+        if prepare is not None:
+            await prepare()
+
     def to_index_document(self, model: M) -> dict[str, Any]:
-        data = self.spec.resolved_read_codec.encode_mapping(model)
+        codec = self.spec.resolved_read_codec
+        # Encrypting routes must go through the persistence encode to seal the configured
+        # fields (``encode_mapping`` is the plaintext passthrough). But that path defaults to
+        # excluding pydantic ``@computed_field`` values, which the plain index path keeps —
+        # so re-enable them here to index the same field set, just with the encrypted ones
+        # sealed. Plain routes use ``encode_mapping`` directly (computed fields already in).
+        data = (
+            codec.encode_persistence_mapping(model, exclude={"computed_fields": False})
+            if self._encrypts
+            else codec.encode_mapping(model)
+        )
         out: dict[str, Any] = {}
 
         for key, value in data.items():

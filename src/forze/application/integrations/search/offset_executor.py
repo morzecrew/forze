@@ -15,6 +15,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
 )
+from forze.application.integrations.search.encryption import decrypt_search_rows
 from forze.application.integrations.search.snapshot import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, materialize_mapping_rows
@@ -199,6 +200,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
     )
 
     outcome = await hooks.fetch_rows(window, want_snap=want_snap)
+    rows, codec = await decrypt_search_rows(codec, outcome.rows)
 
     if return_count and total is None and outcome.total is not None:
         total = outcome.total
@@ -211,7 +213,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
             )
 
     return await snapshot_materialize_and_paginate(
-        rows=outcome.rows,
+        rows=rows,
         want_snap=want_snap,
         result_snapshot=result_snapshot,
         rs_spec=rs_spec,

@@ -14,7 +14,11 @@ from forze.application.contracts.analytics import (
     AnalyticsRunOptions,
     AnalyticsSpec,
 )
-from forze.application.integrations.analytics import AnalyticsQueryPortMixin
+from forze.application.integrations.analytics import (
+    AnalyticsQueryPortMixin,
+    decrypt_and_shape_rows,
+    encode_ingest_payloads,
+)
 from forze.application.integrations.analytics.adapter_common import (
     bind_tenant_param,
     dry_run_enabled,
@@ -26,7 +30,6 @@ from forze.application.integrations.analytics.adapter_common import (
     parse_count_row,
     parse_keyset_cursor_after,
     parse_offset_cursor_after,
-    shape_rows,
     validate_fetch_batch_size,
     validated_params,
 )
@@ -42,7 +45,6 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import default_model_codec
 from forze_clickhouse.execution.deps.configs import (
     ClickHouseAnalyticsConfig,
     ClickHouseQueryConfig,
@@ -309,7 +311,13 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             fetch_batch_size=fetch_batch_size,
         )
 
-        typed = self.spec.resolved_read_codec.decode_mapping_many(rows)
+        typed = await decrypt_and_shape_rows(
+            rows,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            return_type=None,
+            return_fields=None,
+        )
 
         for offset in range(0, len(typed), fetch_batch_size):
             yield typed[offset : offset + fetch_batch_size]
@@ -341,7 +349,13 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
         )
-        typed = default_model_codec(return_type).decode_mapping_many(rows)
+        typed = await decrypt_and_shape_rows(
+            rows,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            return_type=return_type,
+            return_fields=None,
+        )
 
         for offset in range(0, len(typed), fetch_batch_size):
             yield typed[offset : offset + fetch_batch_size]
@@ -387,7 +401,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 limit=lim,
                 offset=None,
             )
-            hits = shape_rows(
+            hits = await decrypt_and_shape_rows(
                 result.rows,
                 read_codec=self.spec.resolved_read_codec,
                 read_type=self.spec.read,
@@ -412,7 +426,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 limit=lim,
                 offset=start,
             )
-            hits = shape_rows(
+            hits = await decrypt_and_shape_rows(
                 result.rows,
                 read_codec=self.spec.resolved_read_codec,
                 read_type=self.spec.read,
@@ -463,25 +477,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 f"Analytics ingest codec is not configured for route {self.spec.name!r}."
             )
 
-        payloads: list[JsonDict] = []
-
-        for row in rows:
-            if isinstance(row, ingest_codec.model_type):
-                payloads.append(ingest_codec.encode_mapping(row))
-
-            elif isinstance(
-                row, BaseModel
-            ):  # pyright: ignore[reportUnnecessaryIsInstance]
-                payloads.append(
-                    ingest_codec.encode_mapping(
-                        ingest_codec.decode_mapping(row.model_dump()),
-                    )
-                )
-
-            else:
-                raise exc.internal(
-                    "Analytics ingest rows must be Pydantic model instances."
-                )
+        payloads = await encode_ingest_payloads(ingest_codec, list(rows))
 
         database, table = await self._resolved_ingest_target()
 

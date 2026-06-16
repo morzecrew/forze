@@ -75,18 +75,21 @@ A document spec names the fields to seal. Tiers run weakest to strongest —
 DocumentSpec(
     name="patients",
     read=Patient,
-    encrypted_fields=frozenset({"ssn", "diagnosis"}),
-    searchable_fields=frozenset({"email"}),   # deterministic — see below
-    encryption_binds_record_id=True,          # bind the row id into the AAD
+    encryption=FieldEncryption(
+        encrypted=frozenset({"ssn", "diagnosis"}),
+        searchable=frozenset({"email"}),   # deterministic — see below
+        binds_record_id=True,              # bind the row id into the AAD
+    ),
 )
 ```
 
-`encrypted_fields` are randomized AEAD ciphertext; `searchable_fields` use a
-deterministic cipher so equality queries still match. Setting
-`encryption_binds_record_id=True` folds the record's `id` into the AAD of every
-randomized field, so a ciphertext can't be copied between rows — it applies only
-to randomized fields, never searchable ones (whose ciphertext must stay
-record-independent to compare).
+A single `FieldEncryption` policy declares the whole shape, and the `SearchSpec`
+over the same table shares the *same* object — so the two can't drift.
+`encrypted` fields are randomized AEAD ciphertext; `searchable` fields use a
+deterministic cipher so equality queries still match. Setting `binds_record_id=True`
+folds the record's `id` into the AAD of every randomized field, so a ciphertext
+can't be copied between rows — it applies only to randomized fields, never
+searchable ones (whose ciphertext must stay record-independent to compare).
 
 !!! warning "Marking a field requires a wired keyring"
 
@@ -94,6 +97,23 @@ record-independent to compare).
     no deterministic cipher, when it declares searchable fields) raises at
     factory time rather than writing plaintext. The check is fail-closed by
     design.
+
+The **same** `FieldEncryption` policy carries across planes. Point a `SearchSpec`,
+an `AnalyticsSpec`, or a graph node/edge kind at it and those surfaces seal the
+same fields on write and decrypt them out of every read path — search results,
+warehouse rows (offset / cursor / chunked / projections), and graph
+get / neighbors / walk / shortest-path. Encrypted fields stay **confidential**:
+they're never content-searchable, aggregatable, or matchable in a graph predicate
+(that's physics, not a limit) — so encrypt what you store-and-return but never
+query by, and use `searchable` (deterministic) fields for the equality lookups you
+do need. Each plane fails closed the same way (`core.{search,analytics,graph}.encryption_wiring`).
+One caveat when sharing a policy: `binds_record_id` needs a stable per-record id, so it
+applies to the document and graph (key-addressed) planes only — an `AnalyticsSpec` (warehouse
+rows have no id) and an endpoint-identity graph edge reject it at wiring. Leave it off the
+policy you share with those, or give them their own.
+The downstream caches inherit it: when a search route encrypts, its result-snapshot
+runs (the frozen models kept for stable re-pagination) are sealed at rest too, so the
+snapshot store never re-exposes what the document sealed — automatic, no extra config.
 
 ### Object storage
 
@@ -126,6 +146,17 @@ AAD is reconstructable from the envelope headers (tenant and event id), so any
 transport carries it: queue, stream, or pub/sub, across every messaging
 backend. Legacy plaintext rows written before a tier was raised still relay.
 
+### Idempotency result cache
+
+The idempotency store replays an operation's full **result** for a duplicate
+request, so a Forze-owned store (Redis/Postgres) holds that return value at rest.
+Seal it with one flag — the result is sealed on commit and opened on replay
+(metadata stays plaintext), bound to `(tenant, op:key)`:
+
+```python
+IdempotencySpec(name="orders", encrypt_result=True)
+```
+
 ## Searchable fields and rotation
 
 Deterministic (searchable) fields need a stable root secret, set on the crypto
@@ -150,7 +181,7 @@ searchable value under the new root, then drop the previous one.
 
     Deterministic encryption leaks equality — identical plaintexts are visible as
     identical ciphertexts. Mark a field `searchable` only when you must query it
-    by exact value; otherwise leave it randomized in `encrypted_fields`.
+    by exact value; otherwise leave it randomized in `FieldEncryption.encrypted`.
 
 ## Declaring a minimum
 

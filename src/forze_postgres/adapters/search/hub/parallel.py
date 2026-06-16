@@ -20,7 +20,10 @@ from forze.application.contracts.querying import (
     validate_cursor_token,
 )
 from forze.application.contracts.search import SearchOptions, SearchResultSnapshotOptions
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    decrypt_search_rows,
+)
 from forze.base.primitives import JsonDict
 
 from .._cursor_run import parse_search_cursor
@@ -290,6 +293,10 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             for r in merged[offset : offset + page_limit]
         ]
         trust = search_trust_source(host.read_validation)
+        # Decrypt sealed hub-row fields once, before materialization (no-op if plaintext).
+        page_rows, decode_codec = await decrypt_search_rows(
+            hub_spec.resolved_read_codec, page_rows
+        )
 
         page = materialize_search_page(
             page_rows=page_rows,
@@ -299,7 +306,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             return_type=return_type,
             return_fields=return_fields,
             model_type=host.model_type,
-            codec=hub_spec.resolved_read_codec,
+            codec=decode_codec,
             trust_source=trust,
         )
 
@@ -387,17 +394,23 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             prv = None
 
         trust = search_trust_source(host.read_validation)
+        # Decrypt sealed hub-row fields once, so a raw field projection and a decoded
+        # return_type both read plaintext (no-op if plaintext).
+        mat_rows, decode_codec = await decrypt_search_rows(
+            hub_spec.resolved_read_codec,
+            [hub_row_for_materialize(r) for r in rows],
+        )
 
         if return_fields is not None:
-            rj = [{k: r.get(k, None) for k in return_fields} for r in rows]
+            rj = [{k: r.get(k, None) for k in return_fields} for r in mat_rows]
             return CursorPage(
                 hits=rj, next_cursor=nxt, prev_cursor=prv, has_more=has_more
             )
 
         hits = decode_search_hits(
-            rows=[hub_row_for_materialize(r) for r in rows],
+            rows=mat_rows,
             model_type=host.model_type,
-            codec=hub_spec.resolved_read_codec,
+            codec=decode_codec,
             return_type=return_type,
             trust_source=trust,
         )

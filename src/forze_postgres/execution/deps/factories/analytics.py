@@ -4,6 +4,12 @@ from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
+from forze.application.contracts.crypto import (
+    DeterministicCipherDepKey,
+    KeyringDepKey,
+)
+from forze.application.integrations.analytics import resolve_analytics_codecs_spec
+
 from ....adapters.analytics import PostgresAnalyticsAdapter
 from ..configs import PostgresAnalyticsConfig
 from ..keys import PostgresClientDepKey
@@ -32,6 +38,20 @@ class ConfigurablePostgresAnalytics:
     ) -> PostgresAnalyticsAdapter[Any, Any]:
         self.config.validate_against_spec(spec)
         client = ctx.deps.provide(PostgresClientDepKey)
+        spec = resolve_analytics_codecs_spec(
+            spec,
+            keyring=(
+                ctx.deps.provide(KeyringDepKey)
+                if ctx.deps.exists(KeyringDepKey)
+                else None
+            ),
+            deterministic=(
+                ctx.deps.provide(DeterministicCipherDepKey)
+                if ctx.deps.exists(DeterministicCipherDepKey)
+                else None
+            ),
+            tenant_provider=ctx.inv_ctx.get_tenant,
+        )
         return PostgresAnalyticsAdapter(
             client=client,
             spec=spec,

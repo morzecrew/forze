@@ -62,6 +62,11 @@ class TemporalConfig:
     rpc_metadata: Mapping[str, str] | None = None
     """Extra headers attached to every RPC call."""
 
+    encrypt_payloads: bool = False
+    """Seal workflow/activity payloads at rest with the wired keyring (single-key BYOK).
+    When ``True``, the startup hook composes an encrypting ``PayloadCodec`` over
+    :attr:`data_converter` and fails closed if no keyring is registered. Default ``False``."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

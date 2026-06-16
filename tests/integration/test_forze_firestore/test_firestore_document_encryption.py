@@ -9,7 +9,11 @@ from uuid import uuid4
 
 import pytest
 
-from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
+from forze.application.contracts.crypto import (
+    FieldEncryption,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -56,7 +60,7 @@ def _spec(*, encrypted: bool) -> DocumentSpec:
         name="people_ns",
         read=_PersonRead,
         write=_WRITE,  # type: ignore[arg-type]
-        encrypted_fields=frozenset({"email"}) if encrypted else frozenset(),
+        encryption=(FieldEncryption(encrypted=frozenset({"email"})) if encrypted else None),
     )
 
 

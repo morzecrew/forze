@@ -6,8 +6,11 @@ federated rank fusion, and ``SearchResultSnapshotPort`` access here.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
@@ -20,6 +23,7 @@ from forze.application.contracts.base import (
     SearchSnapshotHandle,
     page_from_limit_offset,
 )
+from forze.application.contracts.crypto import KeyringPort
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
@@ -33,7 +37,10 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
-from forze.base.exceptions import exc
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.integrations.crypto import payload_aad
+from forze.base.crypto import unpack_envelope
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, stable_payload_fingerprint
 from forze.base.serialization import default_model_codec
 
@@ -41,6 +48,17 @@ from forze.base.serialization import default_model_codec
 
 M_co = TypeVar("M_co", bound=BaseModel)
 T_co = TypeVar("T_co", bound=BaseModel)
+
+SNAPSHOT_PAYLOAD_DOMAIN = "search.snapshot"
+"""AAD domain isolating snapshot-record ciphertext from other contexts."""
+
+_SEALED_PREFIX = "\x01fz.snap:"
+"""Sentinel marking a sealed record key. A plaintext key is model JSON (``{``) or a
+``member\\0json`` federated key, so it never starts with this control byte — letting reads
+tell sealed from legacy-plaintext records during a zero-downtime rollout."""
+
+_CIPHER_NOT_WARM = "core.crypto.cipher_not_warm"
+"""Raised by the sync cipher when its data key rotated out from under a warmed batch."""
 
 # ....................... #
 
@@ -84,6 +102,136 @@ class SearchResultSnapshot:
     store: SearchResultSnapshotPort
     """KV backend for snapshot runs."""
 
+    cipher: KeyringPort | None = attrs.field(default=None, repr=False)
+    """Keyring sealing the stored record models at rest — set only when the search route
+    field-encrypts, so the snapshot store does not re-expose what the document sealed.
+    ``None`` keeps record keys plaintext (the default, unencrypted routes)."""
+
+    cipher_tenant: Callable[[], TenantIdentity | None] | None = attrs.field(
+        default=None, repr=False
+    )
+    """Resolver for the bound tenant, anchoring the per-record AAD to ``cipher``."""
+
+    # ....................... #
+
+    async def _seal_ids(self, ids: list[str], *, run_id: str) -> list[str]:
+        """Seal each record key under ``(tenant, run_id)`` so the store holds no plaintext.
+
+        Whole-key sealing (the key is opaque model JSON) keeps list order — encryption is
+        per-position — so re-pagination over the sealed run is unchanged. A no-op without a
+        cipher. The data key is **warmed once** for the whole run, then each key is sealed
+        with the no-await sync cipher (the same batch path the field codec uses): one key
+        resolution and zero per-item awaits/locks instead of one async round per record.
+        """
+
+        if self.cipher is None:
+            return ids
+
+        tenant = self.cipher_tenant() if self.cipher_tenant is not None else None
+        aad = payload_aad(
+            SNAPSHOT_PAYLOAD_DOMAIN,
+            tenant.tenant_id if tenant is not None else None,
+            run_id,
+        )
+
+        cipher = self.cipher
+        await cipher.warm(tenant)
+
+        sealed: list[str] = []
+
+        for raw in ids:
+            blob = await self._encrypt_one(cipher, raw.encode("utf-8"), tenant, aad)
+            sealed.append(_SEALED_PREFIX + base64.b64encode(blob).decode("ascii"))
+
+        return sealed
+
+    # ....................... #
+
+    @staticmethod
+    async def _encrypt_one(
+        cipher: KeyringPort,
+        plaintext: bytes,
+        tenant: TenantIdentity | None,
+        aad: bytes,
+    ) -> bytes:
+        """Sync-encrypt against the warmed key, re-warming once if the key rotated mid-run.
+
+        A run never exhausts a data key in practice (``max_dek_messages`` ≫ the snapshot
+        cap), but if a shared key tips over its budget mid-loop the sync path raises
+        ``cipher_not_warm``; one re-warm mints the next key and the encrypt retries.
+        """
+
+        try:
+            return cipher.encrypt_sync(plaintext, tenant=tenant, aad=aad)
+
+        except CoreException as error:
+            if error.code != _CIPHER_NOT_WARM:
+                raise
+
+            await cipher.warm(tenant)
+            return cipher.encrypt_sync(plaintext, tenant=tenant, aad=aad)
+
+    # ....................... #
+
+    async def _open_ids(self, ids: Sequence[str], *, run_id: str) -> list[str]:
+        """Open record keys sealed by :meth:`_seal_ids`; pass legacy plaintext through.
+
+        Fail-closed: a sealed key with no cipher wired is a misconfiguration (the key cannot
+        be opened), so it raises rather than handing back ciphertext.
+        """
+
+        if not any(k.startswith(_SEALED_PREFIX) for k in ids):
+            return list(ids)
+
+        if self.cipher is None:
+            raise exc.configuration(
+                "Search snapshot holds sealed records but no keyring is wired to open them. "
+                "Register a CryptoDepsModule or clear the route's encryption.",
+                code="core.search.snapshot_encryption_wiring",
+            )
+
+        tenant = self.cipher_tenant() if self.cipher_tenant is not None else None
+        aad = payload_aad(
+            SNAPSHOT_PAYLOAD_DOMAIN,
+            tenant.tenant_id if tenant is not None else None,
+            run_id,
+        )
+
+        # Decode every sealed blob first (None marks a passed-through plaintext position),
+        # warm the decrypt cache for all their data keys in one pass (a run reuses only a
+        # handful of distinct keys), then sync-decrypt with no per-record awaits.
+        blobs: list[bytes | None] = []
+        for key in ids:
+            if not key.startswith(_SEALED_PREFIX):
+                blobs.append(None)
+                continue
+
+            try:
+                blobs.append(
+                    base64.b64decode(key[len(_SEALED_PREFIX) :], validate=True)
+                )
+
+            except (binascii.Error, ValueError) as error:
+                raise exc.validation(
+                    "Sealed snapshot record key is not valid base64",
+                    code="core.search.snapshot_base64_invalid",
+                ) from error
+
+        await self.cipher.ensure_unwrapped(
+            unpack_envelope(blob) for blob in blobs if blob is not None
+        )
+
+        opened: list[str] = []
+
+        for key, blob in zip(ids, blobs, strict=True):
+            if blob is None:
+                opened.append(key)  # legacy plaintext record, replayed as-is
+
+            else:
+                opened.append(self.cipher.decrypt_sync(blob, aad=aad).decode("utf-8"))
+
+        return opened
+
     # ....................... #
 
     @staticmethod
@@ -103,10 +251,7 @@ class SearchResultSnapshot:
         if opt and "max_ids" in opt:
             return max(1, int(opt["max_ids"]))
 
-        if spec is not None:
-            return max(1, int(spec.max_ids))
-
-        return 50_000
+        return max(1, int(spec.max_ids)) if spec is not None else 50_000
 
     # ....................... #
 
@@ -118,10 +263,7 @@ class SearchResultSnapshot:
         if opt and "chunk_size" in opt:
             return max(1, int(opt["chunk_size"]))
 
-        if spec is not None:
-            return max(1, int(spec.chunk_size))
-
-        return 5_000
+        return max(1, int(spec.chunk_size)) if spec is not None else 5_000
 
     # ....................... #
 
@@ -133,10 +275,7 @@ class SearchResultSnapshot:
         if opt and "ttl_seconds" in opt:
             return timedelta(seconds=max(1, int(opt["ttl_seconds"])))
 
-        if spec is not None:
-            return spec.ttl
-
-        return timedelta(minutes=5)
+        return spec.ttl if spec is not None else timedelta(minutes=5)
 
     # ....................... #
     # Simple / hub fingerprints
@@ -246,7 +385,7 @@ class SearchResultSnapshot:
             payload["rrf_k"] = rrf_k
 
         if extras:
-            payload.update(dict(extras))
+            payload |= dict(extras)
 
         return stable_payload_fingerprint(payload)
 
@@ -370,14 +509,12 @@ class SearchResultSnapshot:
     ) -> tuple[int | None, int, int]:
         p = dict(pagination or {})
         limit = p.get("limit")
-
-        user_offset = int(p.get("offset") or 0)
-
         page_limit = max(1, int(limit)) if limit is not None else 20
 
         if want_snap:
-
             return max(1, max_ids), 0, page_limit
+
+        user_offset = int(p.get("offset") or 0)
 
         return (int(limit) if limit is not None else None, user_offset, page_limit)
 
@@ -486,6 +623,8 @@ class SearchResultSnapshot:
         if raw_keys is None:
             return None
 
+        raw_keys = await self._open_ids(raw_keys, run_id=str(snap_opt["id"]))
+
         sm: SearchResultSnapshotMeta | None = await self.store.get_meta(
             str(snap_opt["id"])
         )
@@ -576,7 +715,10 @@ class SearchResultSnapshot:
         await self.store.put_run(
             run_id=run_id,
             fingerprint=fp_computed,
-            ordered_ids=[self.result_record_key_string(h) for h in to_store],
+            ordered_ids=await self._seal_ids(
+                [self.result_record_key_string(h) for h in to_store],
+                run_id=run_id,
+            ),
             ttl=self.effective_snapshot_ttl(snap_opt, rs_spec),
             chunk_size=self.effective_snapshot_chunk_size(snap_opt, rs_spec),
         )
@@ -610,7 +752,7 @@ class SearchResultSnapshot:
         await self.store.put_run(
             run_id=run_id,
             fingerprint=fp_computed,
-            ordered_ids=sliced,
+            ordered_ids=await self._seal_ids(sliced, run_id=run_id),
             ttl=self.effective_snapshot_ttl(snap_opt, rs_spec),
             chunk_size=self.effective_snapshot_chunk_size(snap_opt, rs_spec),
         )
@@ -660,6 +802,8 @@ class SearchResultSnapshot:
 
         if raw_keys is None:
             return None
+
+        raw_keys = await self._open_ids(raw_keys, run_id=str(snapshot["id"]))
 
         sm = await self.store.get_meta(str(snapshot["id"]))
         total_snap = int(sm.total) if sm and sm.complete else offset + len(raw_keys)

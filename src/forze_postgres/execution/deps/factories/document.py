@@ -6,6 +6,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import (
+    BytesCipherPort,
     DeterministicCipherDepKey,
     EncryptionTier,
     KeyringDepKey,
@@ -28,7 +29,6 @@ from ..utils import doc_write_gw, read_gw
 
 if TYPE_CHECKING:
     from forze.application.contracts.document import DocumentSpec
-    from forze.application.contracts.transaction import AfterCommitPort
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
@@ -41,13 +41,25 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
+def _cache_cipher(
+    ctx: "ExecutionContext", spec: "DocumentSpec[Any, Any, Any, Any]"
+) -> BytesCipherPort | None:
+    """Keyring for sealing cache bodies — only when the document field-encrypts (so the
+    cache does not re-expose what the document protects) and a keyring is wired."""
+
+    if spec.encryption is None or spec.encryption.is_empty:
+        return None
+
+    return ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
+
+
 def _resolve_codecs(
     ctx: "ExecutionContext",
     spec: "DocumentSpec[Any, Any, Any, Any]",
     *,
     required_encryption: EncryptionTier | None = None,
 ) -> DocumentCodecs[Any, Any, Any, Any]:
-    """Spec codecs, wrapped for field encryption when ``encrypted_fields`` is set.
+    """Spec codecs, wrapped for field encryption when ``spec.encryption`` is set.
 
     Resolves the ciphers as optional (``None`` when unregistered) so the shared
     helper can fail closed with a precise error instead of the generic dependency
@@ -57,12 +69,9 @@ def _resolve_codecs(
     return resolve_document_codecs(
         spec.resolved_codecs,
         spec_name=str(spec.name),
-        encrypted_fields=spec.encrypted_fields,
-        searchable_fields=spec.searchable_fields,
+        encryption=spec.encryption,
         keyring=(
-            ctx.deps.provide(KeyringDepKey)
-            if ctx.deps.exists(KeyringDepKey)
-            else None
+            ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
         ),
         deterministic=(
             ctx.deps.provide(DeterministicCipherDepKey)
@@ -73,7 +82,6 @@ def _resolve_codecs(
         integration="postgres",
         code="postgres.document.encryption_wiring",
         required_encryption=required_encryption,
-        bind_record_id=spec.encryption_binds_record_id,
     )
 
 
@@ -116,10 +124,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             read_validation=self.config.read_validation,
         )
 
-        after_commit: "AfterCommitPort | None" = None
-
-        if cache is not None:
-            after_commit = ctx.tx_ctx.run_or_defer
+        after_commit = ctx.tx_ctx.run_or_defer if cache is not None else None
 
         cc = DocumentCache[R](
             read_model_type=read.model_type,
@@ -131,6 +136,8 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             tenant_key=lambda: (
                 str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
             ),
+            cipher=_cache_cipher(ctx, spec),
+            cipher_tenant=ctx.inv_ctx.get_tenant,
         )
 
         return PostgresDocumentAdapter(
@@ -213,10 +220,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             conflict_target=self.config.conflict_target,
         )
 
-        after_commit: "AfterCommitPort | None" = None
-
-        if cache is not None:
-            after_commit = ctx.tx_ctx.run_or_defer
+        after_commit = ctx.tx_ctx.run_or_defer if cache is not None else None
 
         cc = DocumentCache[R](
             read_model_type=read.model_type,
@@ -228,6 +232,8 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             tenant_key=lambda: (
                 str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
             ),
+            cipher=_cache_cipher(ctx, spec),
+            cipher_tenant=ctx.inv_ctx.get_tenant,
         )
 
         return PostgresDocumentAdapter(

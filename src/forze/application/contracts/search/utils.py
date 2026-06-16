@@ -30,13 +30,12 @@ def normalize_search_queries(query: str | Sequence[str]) -> tuple[str, ...]:
 
     if isinstance(query, str):
         s = query.strip()
-        return () if not s else (s,)
+        return (s,) if s else ()
 
     parts: list[str] = []
 
     for item in query:
-        s = str(item).strip()
-        if s:
+        if s := str(item).strip():
             parts.append(s)
 
     return tuple(parts)
@@ -56,15 +55,13 @@ def calculate_effective_field_weights(
     fields_to_search = list(options.get("fields", []))
 
     if provided_weights:
-        weights = {f: provided_weights.get(f, 0.0) for f in spec.fields}
+        return {f: provided_weights.get(f, 0.0) for f in spec.fields}
 
     elif fields_to_search:
-        weights = {f: 1.0 if f in fields_to_search else 0.0 for f in spec.fields}
+        return {f: 1.0 if f in fields_to_search else 0.0 for f in spec.fields}
 
     elif spec.default_weights:
-        weights = dict(spec.default_weights)
+        return dict(spec.default_weights)
 
     else:
-        weights = {f: 1.0 for f in spec.fields}
-
-    return weights
+        return {f: 1.0 for f in spec.fields}

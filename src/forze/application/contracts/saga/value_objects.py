@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, Awaitable, Callable, Generic, Sequence, TypeVar, final
+from typing import TYPE_CHECKING, Awaitable, Callable, Sequence, final
 
 import attrs
 
@@ -16,12 +16,6 @@ if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
-
-Ctx = TypeVar("Ctx")
-"""The saga's working context, threaded through and accumulated across steps."""
-
-
-# ....................... #
 
 
 class SagaStepKind(StrEnum):
@@ -45,7 +39,7 @@ class SagaStepKind(StrEnum):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class SagaStep(Generic[Ctx]):
+class SagaStep[Ctx]:
     """A single saga step: an action and its optional compensation.
 
     ``action`` does the step's work (typically a local transaction) and returns the
@@ -118,14 +112,14 @@ def validate_saga_order(
 
             seen_pivot = True
 
-        else:  # RETRYABLE
-            if not seen_pivot:
-                raise exc.configuration(
-                    f"Saga {saga_name!r}: retryable step {name!r} requires a preceding "
-                    "pivot step."
-                )
-
+        elif seen_pivot:
             seen_retryable = True
+
+        else:
+            raise exc.configuration(
+                f"Saga {saga_name!r}: retryable step {name!r} requires a preceding "
+                "pivot step."
+            )
 
 
 # ....................... #
@@ -133,7 +127,7 @@ def validate_saga_order(
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class SagaDefinition(BaseSpec, Generic[Ctx]):
+class SagaDefinition[Ctx](BaseSpec):
     """An ordered set of saga steps run by a :class:`SagaExecutorPort`."""
 
     steps: tuple[SagaStep[Ctx], ...]

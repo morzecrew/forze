@@ -4,7 +4,11 @@ from uuid import uuid4
 
 import pytest
 
-from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
+from forze.application.contracts.crypto import (
+    FieldEncryption,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -80,7 +84,7 @@ async def test_mongo_equality_search_on_encrypted_field(
             "create_cmd": _PersonCreate,
             "update_cmd": _PersonUpdate,
         },
-        searchable_fields=frozenset({"email"}),
+        encryption=FieldEncryption(searchable=frozenset({"email"})),
     )
 
     ctx = _ctx(mongo_client, db, collection)

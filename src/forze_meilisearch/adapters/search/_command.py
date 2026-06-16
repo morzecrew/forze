@@ -124,6 +124,9 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
             return
 
         index = self.client.index(await self._resolved_index_uid())
+        # Warm the keyring once before the synchronous encrypting encode (no-op when the
+        # route is not encrypted).
+        await self.prepare_encrypt()
         payload = [self.to_index_document(d) for d in documents]
 
         for i in range(0, len(payload), _BATCH_SIZE):

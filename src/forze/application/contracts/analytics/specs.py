@@ -9,9 +9,14 @@ from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
-from forze.base.serialization import ModelCodec, default_model_codec
+from forze.base.serialization import (
+    ModelCodec,
+    default_model_codec,
+    stored_field_names_for,
+)
 
 from ..base import BaseSpec
+from ..crypto import FieldEncryption
 
 # ----------------------- #
 
@@ -66,6 +71,15 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
     )
     """Ingest-row codec when :attr:`ingest` is set."""
 
+    encryption: FieldEncryption | None = attrs.field(default=None)
+    """Field-encryption policy (see :class:`FieldEncryption`): which warehouse columns are
+    sealed at rest. Encrypted columns are **confidential** — sealed on ingest, decrypted out
+    of every read path — but *not* aggregatable, groupable, or range-filterable (randomized
+    ciphertext has no numeric/linguistic structure). Encrypt only columns you store-and-return
+    but never analyze (e.g. PII carried alongside the dimensions/measures you query). Requires
+    a wired keyring; ``binds_record_id`` is unsupported here (analytics rows have no stable id).
+    ``None`` (default) = no encryption."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -109,6 +123,17 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
     if not spec.queries:
         raise exc.configuration(
             "AnalyticsSpec.queries must contain at least one named query."
+        )
+
+    if spec.encryption is not None:
+        if spec.encryption.binds_record_id:
+            raise exc.configuration(
+                "AnalyticsSpec.encryption cannot set binds_record_id: analytics rows have no "
+                "stable record id to bind into the AAD. Use a FieldEncryption without it."
+            )
+
+        spec.encryption.validate_fields_exist(
+            stored_field_names_for(spec.read), spec_name=spec.name
         )
 
     if not issubclass(spec.read, BaseModel):

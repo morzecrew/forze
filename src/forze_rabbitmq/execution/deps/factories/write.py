@@ -4,8 +4,14 @@ from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.queue import QueueCommandDepPort, QueueSpec
+from forze.application.contracts.crypto import KeyringDepKey
+from forze.application.contracts.queue import (
+    QueueCommandDepPort,
+    QueueCommandPort,
+    QueueSpec,
+)
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.queue import encrypting_queue_command
 
 from ....adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
 from ..configs import RabbitMQQueueConfig
@@ -30,15 +36,23 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
         self,
         ctx: ExecutionContext,
         spec: QueueSpec[Any],
-    ) -> RabbitMQQueueAdapter[Any]:
+    ) -> QueueCommandPort[Any]:
         client = ctx.deps.provide(RabbitMQClientDepKey)
         codec = RabbitMQQueueCodec(payload_codec=spec.codec)
 
-        return RabbitMQQueueAdapter(
+        adapter = RabbitMQQueueAdapter(
             client=client,
             codec=codec,
             namespace=self.config.namespace,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
             delayed_delivery=self.config.delayed_delivery,
+        )
+        cipher = (
+            ctx.deps.provide(KeyringDepKey)
+            if ctx.deps.exists(KeyringDepKey)
+            else None
+        )
+        return encrypting_queue_command(
+            adapter, spec, cipher=cipher, tenant_provider=ctx.inv_ctx.get_tenant
         )

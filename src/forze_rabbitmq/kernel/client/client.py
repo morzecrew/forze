@@ -7,7 +7,7 @@ require_rabbitmq()
 # ....................... #
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Mapping, Sequence, final
 from uuid import uuid4
@@ -393,10 +393,7 @@ class RabbitMQClient(RabbitMQClientPort):
         if isinstance(raw_key, bytes):
             return raw_key.decode("utf-8")
 
-        if isinstance(raw_key, str):
-            return raw_key
-
-        return None
+        return raw_key if isinstance(raw_key, str) else None
 
     # ....................... #
 
@@ -457,7 +454,9 @@ class RabbitMQClient(RabbitMQClientPort):
                 if not isinstance(entry, Mapping):
                     continue
 
-                reason = entry.get("reason")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                reason = entry.get(
+                    "reason"
+                )  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
                 if isinstance(reason, bytes):
                     reason = reason.decode("utf-8", errors="replace")
@@ -465,7 +464,9 @@ class RabbitMQClient(RabbitMQClientPort):
                 if reason != "rejected":
                     continue
 
-                count = entry.get("count")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                count = entry.get(
+                    "count"
+                )  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
                 if isinstance(count, int):
                     rejected += count
@@ -672,11 +673,18 @@ class RabbitMQClient(RabbitMQClientPort):
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> list[str]:
         """Publish a batch of messages, optionally with delayed delivery.
 
         Caller *headers* ride the AMQP message headers verbatim; the reserved
         transport keys (``forze_key``) always win on collision.
+        *message_headers*, when given, supplies one header mapping per body (its
+        length must equal *bodies*); publish ``i`` carries
+        ``{**(headers or {}), **message_headers[i]}`` so a single batched
+        publish can give each message distinct headers (e.g. a per-message
+        ``forze_event_id``). ``None`` keeps every publish on the shared
+        *headers* (byte-for-byte unchanged).
 
         Delayed delivery uses the standard RabbitMQ per-TTL-queue pattern:
         each distinct delay value gets its own DLX queue
@@ -697,18 +705,46 @@ class RabbitMQClient(RabbitMQClientPort):
                 "RabbitMQ message_ids size must match batch body size"
             )
 
+        if message_headers is not None and len(message_headers) != len(bodies):
+            raise exc.precondition(
+                "RabbitMQ message_headers size must match batch body size"
+            )
+
         resolved_ids = (
             list(message_ids)
             if message_ids is not None
             else [uuid4().hex for _ in range(len(bodies))]
         )
-        # Caller headers pass through verbatim; reserved transport keys are
-        # written last so they always win on collision.
-        amqp_headers: dict[str, str] | None = dict(headers) if headers else None
 
-        if key is not None:
-            amqp_headers = amqp_headers or {}
-            amqp_headers[_KEY_HEADER] = key
+        def __build_amqp_headers(
+            base: Mapping[str, str] | None,
+        ) -> dict[str, str] | None:
+            # Strip reserved transport keys from caller input — only the transport sets them.
+            # This must hold even when ``key`` is ``None`` (nothing is written): otherwise a
+            # caller-supplied ``forze_key`` would silently set the partitioning lane.
+            filtered = (
+                {k: v for k, v in base.items() if k not in _RESERVED_HEADERS}
+                if base
+                else {}
+            )
+            built: dict[str, str] | None = filtered or None
+
+            if key is not None:
+                built = built or {}
+                built[_KEY_HEADER] = key
+
+            return built
+
+        # Per-message effective headers (shared headers overridden by the
+        # per-message entry) when message_headers is given; otherwise every
+        # publish rides the shared batch-wide headers (unchanged path).
+        if message_headers is not None:
+            per_message_amqp_headers = [
+                __build_amqp_headers({**(headers or {}), **mh})
+                for mh in message_headers
+            ]
+        else:
+            per_message_amqp_headers = [__build_amqp_headers(headers)] * len(bodies)
 
         delivery_mode = (
             DeliveryMode.PERSISTENT
@@ -727,7 +763,9 @@ class RabbitMQClient(RabbitMQClientPort):
         )
         messages: list[Message] = []
 
-        for body, resolved_message_id in zip(bodies, resolved_ids, strict=True):
+        for body, resolved_message_id, amqp_headers in zip(
+            bodies, resolved_ids, per_message_amqp_headers, strict=True
+        ):
             message = Message(
                 body=body,
                 content_type="application/json",
@@ -794,7 +832,7 @@ class RabbitMQClient(RabbitMQClientPort):
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
-        try:
+        with suppress(TimeoutError):
             async with asyncio.timeout(window.total_seconds()):
                 # No iterator timeout: the surrounding ``asyncio.timeout``
                 # bounds the whole drain loop (aio_pika treats its iterator
@@ -805,8 +843,6 @@ class RabbitMQClient(RabbitMQClientPort):
 
                         if len(raw_messages) >= max_messages:
                             break
-        except TimeoutError:
-            pass
 
         return await self.__to_message_batch(queue, raw_messages)
 
@@ -841,13 +877,7 @@ class RabbitMQClient(RabbitMQClientPort):
                 try:
                     raw = await it.__anext__()
 
-                except StopAsyncIteration:
-                    return
-
-                except TimeoutError:
-                    # Idle window elapsed: terminate cleanly per the queue
-                    # port contract instead of surfacing an infrastructure
-                    # error (aio_pika closes the iterator before raising).
+                except (StopAsyncIteration, TimeoutError):
                     return
 
                 yield await self.__to_message(queue, raw)

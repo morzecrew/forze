@@ -21,6 +21,7 @@ from forze.application.contracts.tenancy.routed_client_base import (
 from forze.base.primitives.fingerprint import build_routing_fingerprint
 
 from .client import SQSClient
+from .constants import SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES
 from .port import SQSClientPort
 from .routing_credentials import SQSRoutingCredentials
 from .types import SQSQueueMessage
@@ -159,6 +160,8 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
+        max_batch_payload_bytes: int = SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES,
     ) -> list[str]:
         inner = await self._get_client()
 
@@ -173,6 +176,8 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
                 delay=delay,
                 not_before=not_before,
                 headers=headers,
+                message_headers=message_headers,
+                max_batch_payload_bytes=max_batch_payload_bytes,
             )
 
     async def receive(

@@ -21,6 +21,10 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze.application.contracts.analytics.specs import AnalyticsQueryDefinition
+from forze.application.integrations.analytics import (
+    decrypt_and_shape_rows,
+    encode_ingest_payloads,
+)
 from forze.application.integrations.analytics.adapter_common import (
     validate_fetch_batch_size,
 )
@@ -112,20 +116,6 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    def _to_typed(self, rows: list[JsonDict]) -> list[R]:
-        return self.spec.resolved_read_codec.decode_mapping_many(rows)
-
-    # ....................... #
-
-    def _to_projected(
-        self,
-        rows: list[JsonDict],
-        fields: Sequence[str],
-    ) -> list[JsonDict]:
-        return [{k: row.get(k) for k in fields} for row in rows]
-
-    # ....................... #
-
     async def _offset_page(
         self,
         query_key: str,
@@ -145,12 +135,13 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             return page_from_limit_offset(empty, pagination, total=None)
 
         rows = self._apply_max_rows(self._query_rows(query_key), options)
-        if return_fields is not None:
-            data: list[Any] = self._to_projected(rows, return_fields)
-        elif return_type is not None:
-            data = default_model_codec(return_type).decode_mapping_many(rows)
-        else:
-            data = self._to_typed(rows)
+        data = await decrypt_and_shape_rows(
+            rows,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            return_type=return_type,
+            return_fields=return_fields,
+        )
 
         if return_count:
             return page_from_limit_offset(data, pagination, total=len(data))
@@ -183,12 +174,13 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         has_more = len(window) > lim
         page_rows = window[:lim]
 
-        if return_fields is not None:
-            hits: list[Any] = self._to_projected(page_rows, return_fields)
-        elif return_type is not None:
-            hits = default_model_codec(return_type).decode_mapping_many(page_rows)
-        else:
-            hits = self._to_typed(page_rows)
+        hits = await decrypt_and_shape_rows(
+            page_rows,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            return_type=return_type,
+            return_fields=return_fields,
+        )
 
         next_c, prev_c = _mock_cursor_tokens(start, len(page_rows), has_more=has_more)
         return CursorPage(
@@ -474,28 +466,10 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 f"Analytics ingest codec is not configured for route {self._route()!r}."
             )
 
-        accepted = 0
-        payloads: list[JsonDict] = []
-
-        for row in rows:
-            if isinstance(row, ingest_codec.model_type):
-                payloads.append(ingest_codec.encode_mapping(row))
-            elif isinstance(
-                row, BaseModel
-            ):  # pyright: ignore[reportUnnecessaryIsInstance]
-                payloads.append(
-                    ingest_codec.encode_mapping(
-                        ingest_codec.decode_mapping(row.model_dump()),
-                    )
-                )
-            else:
-                raise exc.internal(
-                    "Analytics ingest rows must be Pydantic model instances."
-                )
-            accepted += 1
+        payloads = await encode_ingest_payloads(ingest_codec, list(rows))
 
         with self.state.lock:
             log = self.state.analytics_ingest_log.setdefault(self._route(), [])
             log.extend(payloads)
 
-        return AnalyticsAppendResult(accepted=accepted)
+        return AnalyticsAppendResult(accepted=len(payloads))

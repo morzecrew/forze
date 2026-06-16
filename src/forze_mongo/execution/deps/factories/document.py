@@ -6,6 +6,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import (
+    BytesCipherPort,
     DeterministicCipherDepKey,
     EncryptionTier,
     KeyringDepKey,
@@ -39,13 +40,25 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
+def _cache_cipher(
+    ctx: ExecutionContext, spec: DocumentSpec[Any, Any, Any, Any]
+) -> BytesCipherPort | None:
+    """Keyring for sealing cache bodies — only when the document field-encrypts and a
+    keyring is wired (so the cache does not re-expose what the document protects)."""
+
+    if spec.encryption is None or spec.encryption.is_empty:
+        return None
+
+    return ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
+
+
 def _resolve_codecs(
     ctx: ExecutionContext,
     spec: DocumentSpec[Any, Any, Any, Any],
     *,
     required_encryption: EncryptionTier | None = None,
 ) -> DocumentCodecs[Any, Any, Any, Any]:
-    """Spec codecs, wrapped for field encryption when ``encrypted_fields`` is set.
+    """Spec codecs, wrapped for field encryption when ``spec.encryption`` is set.
 
     Resolves the ciphers as optional (``None`` when unregistered) so the shared
     helper can fail closed with a precise error instead of the generic dependency
@@ -55,8 +68,7 @@ def _resolve_codecs(
     return resolve_document_codecs(
         spec.resolved_codecs,
         spec_name=str(spec.name),
-        encrypted_fields=spec.encrypted_fields,
-        searchable_fields=spec.searchable_fields,
+        encryption=spec.encryption,
         keyring=(
             ctx.deps.provide(KeyringDepKey)
             if ctx.deps.exists(KeyringDepKey)
@@ -71,7 +83,6 @@ def _resolve_codecs(
         integration="mongo",
         code="mongo.document.encryption_wiring",
         required_encryption=required_encryption,
-        bind_record_id=spec.encryption_binds_record_id,
     )
 
 # ....................... #
@@ -128,6 +139,8 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
                 str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
             ),
             read_codec=read.read_codec,
+            cipher=_cache_cipher(ctx, spec),
+            cipher_tenant=ctx.inv_ctx.get_tenant,
         )
 
         return MongoDocumentAdapter(
@@ -224,6 +237,8 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
                 str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
             ),
             read_codec=read.read_codec,
+            cipher=_cache_cipher(ctx, spec),
+            cipher_tenant=ctx.inv_ctx.get_tenant,
         )
 
         return MongoDocumentAdapter(

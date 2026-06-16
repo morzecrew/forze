@@ -39,6 +39,7 @@ from forze.application.contracts.resolution import (
     resolve_scoped_namespace,
 )
 from forze.application.contracts.tenancy import TenancyMixin
+from forze.application.integrations.graph import GraphCodecs, GraphKindCipher
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import default_model_codec
@@ -77,6 +78,10 @@ class Neo4jGraphAdapter(TenancyMixin):
 
     spec: GraphModuleSpec
     client: Neo4jClientPort
+    codecs: GraphCodecs | None = None
+    """Per-kind property-map ciphers (one :class:`GraphKindCipher` per node/edge kind). The
+    factory resolves these from the wired keyring; ``None`` falls back to plaintext codecs (so
+    a module with no ``encryption`` policy needs no crypto wiring)."""
     tenant_property: str = "tenant_id"
     database: NamedResourceSpec | None = None
     """Target Neo4j database — a static name, a per-tenant resolver (``namespace`` tier:
@@ -181,15 +186,37 @@ class Neo4jGraphAdapter(TenancyMixin):
 
     # ....................... #
 
-    def _vertex_model(self, kind: str, props: JsonDict) -> BaseModel:
-        codec = default_model_codec(self._node(kind).read)
-        return codec.decode_mapping(self._strip_internal(props), trust_source=True)
+    def _node_cipher(self, kind: str) -> GraphKindCipher:
+        """Per-kind property-map cipher for a node kind (plaintext when unwired)."""
+
+        node = self._node(kind)
+
+        if self.codecs is not None:
+            return self.codecs.node(kind)
+
+        return GraphKindCipher(read_codec=default_model_codec(node.read), cipher=None)
 
     # ....................... #
 
-    def _edge_model(self, kind: str, props: JsonDict) -> BaseModel:
-        codec = default_model_codec(self._edge(kind).read)
-        return codec.decode_mapping(self._strip_internal(props), trust_source=True)
+    def _edge_cipher(self, kind: str) -> GraphKindCipher:
+        """Per-kind property-map cipher for an edge kind (plaintext when unwired)."""
+
+        edge = self._edge(kind)
+
+        if self.codecs is not None:
+            return self.codecs.edge(kind)
+
+        return GraphKindCipher(read_codec=default_model_codec(edge.read), cipher=None)
+
+    # ....................... #
+
+    async def _vertex_model(self, kind: str, props: JsonDict) -> BaseModel:
+        return await self._node_cipher(kind).open(self._strip_internal(props))
+
+    # ....................... #
+
+    async def _edge_model(self, kind: str, props: JsonDict) -> BaseModel:
+        return await self._edge_cipher(kind).open(self._strip_internal(props))
 
     # ....................... #
     # tenancy helpers
@@ -224,8 +251,15 @@ class Neo4jGraphAdapter(TenancyMixin):
 
     # ....................... #
 
-    def _encode(self, cmd: BaseModel) -> JsonDict:
+    async def _encode(
+        self,
+        cmd: BaseModel,
+        cipher: GraphKindCipher,
+        *,
+        record_id: Any = None,
+    ) -> JsonDict:
         data: JsonDict = cmd.model_dump(mode="json", exclude_none=True)
+        data = await cipher.seal(data, record_id=record_id)
 
         if self.tenant_aware:
             data[self.tenant_property] = self._tenant_str()
@@ -247,7 +281,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         if not rows:
             return None
 
-        return self._vertex_model(ref.kind, rows[0]["n"])
+        return await self._vertex_model(ref.kind, rows[0]["n"])
 
     # ....................... #
 
@@ -286,7 +320,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         if not rows:
             return None
 
-        return self._edge_model(ref.kind, rows[0]["r"])
+        return await self._edge_model(ref.kind, rows[0]["r"])
 
     # ....................... #
 
@@ -324,8 +358,8 @@ class Neo4jGraphAdapter(TenancyMixin):
 
             out.append(
                 NeighborRow(
-                    other=self._vertex_model(other_kind, row["other"]),
-                    via_edge=self._edge_model(row["via_type"], row["via_edge"]),
+                    other=await self._vertex_model(other_kind, row["other"]),
+                    via_edge=await self._edge_model(row["via_type"], row["via_edge"]),
                     direction=direction,
                 )
             )
@@ -372,14 +406,14 @@ class Neo4jGraphAdapter(TenancyMixin):
                 )
 
             if row.get("from_parent") and row.get("from_parent_type"):
-                from_parent = self._edge_model(
+                from_parent = await self._edge_model(
                     row["from_parent_type"], row["from_parent"]
                 )
 
             out.append(
                 GraphWalkStep(
                     depth=row["depth"],
-                    vertex=self._vertex_model(vertex_kind, row["vertex"]),
+                    vertex=await self._vertex_model(vertex_kind, row["vertex"]),
                     from_parent=from_parent,
                     parent_ref=parent_ref,
                 )
@@ -419,12 +453,20 @@ class Neo4jGraphAdapter(TenancyMixin):
 
         row = rows[0]
         vertices = tuple(
-            self._vertex_model(self._node_kind_from_labels(labels), props)
-            for props, labels in zip(row["vertices"], row["vertex_labels"], strict=True)
+            [
+                await self._vertex_model(self._node_kind_from_labels(labels), props)
+                for props, labels in zip(
+                    row["vertices"], row["vertex_labels"], strict=True
+                )
+            ]
         )
         edges = tuple(
-            self._edge_model(edge_type, props)
-            for props, edge_type in zip(row["edges"], row["edge_types"], strict=True)
+            [
+                await self._edge_model(edge_type, props)
+                for props, edge_type in zip(
+                    row["edges"], row["edge_types"], strict=True
+                )
+            ]
         )
 
         return ShortestPathResult(vertices=vertices, edges=edges)
@@ -456,7 +498,9 @@ class Neo4jGraphAdapter(TenancyMixin):
             database=await self._resolved_database(),
         )
 
-        return [self._vertex_model(params.target_kind, row["m"]) for row in rows]
+        return [
+            await self._vertex_model(params.target_kind, row["m"]) for row in rows
+        ]
 
     # ....................... #
     # GraphCommandPort
@@ -468,18 +512,18 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         return_new: bool = True,
     ) -> BaseModel | None:
-        self._node(node_kind)
         query = builders.create_vertex(node_kind)
+        props = await self._encode(cmd, self._node_cipher(node_kind))
         rows = await self.client.run(
             query,
-            {"props": self._encode(cmd), **self._params()},
+            {"props": props, **self._params()},
             database=await self._resolved_database(),
         )
 
         if not return_new:
             return None
 
-        return self._vertex_model(node_kind, rows[0]["n"])
+        return await self._vertex_model(node_kind, rows[0]["n"])
 
     # ....................... #
 
@@ -488,9 +532,12 @@ class Neo4jGraphAdapter(TenancyMixin):
         query = builders.update_vertex(
             ref.kind, node.key_field, tenant_field=self._tenant_field
         )
+        props = await self._encode(
+            cmd, self._node_cipher(ref.kind), record_id=ref.key
+        )
         rows = await self.client.run(
             query,
-            {"props": self._encode(cmd), **self._params(key=ref.key)},
+            {"props": props, **self._params(key=ref.key)},
             database=await self._resolved_database(),
         )
 
@@ -500,7 +547,7 @@ class Neo4jGraphAdapter(TenancyMixin):
                 code="graph_vertex_not_found",
             )
 
-        return self._vertex_model(ref.kind, rows[0]["n"])
+        return await self._vertex_model(ref.kind, rows[0]["n"])
 
     # ....................... #
 
@@ -554,7 +601,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         from_node = self._node(endpoint.from_kind)
         to_node = self._node(endpoint.to_kind)
 
-        data = self._encode(cmd)
+        data = await self._encode(cmd, self._edge_cipher(edge_kind))
         from_key = data.pop("from_key", None)
         to_key = data.pop("to_key", None)
 
@@ -588,7 +635,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         if not return_new:
             return None
 
-        return self._edge_model(edge_kind, rows[0]["r"])
+        return await self._edge_model(edge_kind, rows[0]["r"])
 
     # ....................... #
     # GraphRawQueryPort

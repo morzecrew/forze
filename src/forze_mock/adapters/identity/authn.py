@@ -53,7 +53,7 @@ from forze.application.contracts.authn.value_objects.tokens import (
     IssuedTokens,
 )
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import utcnow
+from forze.base.primitives import StrKey, utcnow
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.state import MockState
 
@@ -67,10 +67,16 @@ def _route_store(state: MockState, route: str) -> dict[str, Any]:
     return authn.setdefault(route, {})  # type: ignore[assignment]
 
 
+# ....................... #
+
+
 def _tenant_uuid(value: Any) -> UUID | None:
     """Parse the session store's string-or-None tenant id into a UUID for events."""
 
     return UUID(str(value)) if value else None
+
+
+# ....................... #
 
 
 class _RefreshReuse(Exception):
@@ -85,6 +91,9 @@ class _RefreshReuse(Exception):
     def __init__(self, session: dict[str, Any]) -> None:
         super().__init__("refresh token reuse")
         self.session = session
+
+
+# ....................... #
 
 
 def _assertion_from_store(entry: dict[str, Any]) -> VerifiedAssertion:
@@ -114,10 +123,16 @@ def _sessions(store: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return store.setdefault("sessions", {})  # type: ignore[no-any-return]
 
 
+# ....................... #
+
+
 def _access_tokens(store: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Access tokens issued by :class:`MockTokenLifecyclePort` (token → record)."""
 
     return store.setdefault("access_tokens", {})  # type: ignore[no-any-return]
+
+
+# ....................... #
 
 
 def _revoke_sessions_matching(
@@ -170,6 +185,9 @@ def seed_password_account(
         store.setdefault("principal_map", {})[login] = str(principal_id)
 
 
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockPasswordVerifierPort(PasswordVerifierPort):
@@ -199,6 +217,9 @@ class MockPasswordVerifierPort(PasswordVerifierPort):
         return _assertion_from_store(entry)  # type: ignore[arg-type]
 
 
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockTokenVerifierPort(TokenVerifierPort):
@@ -214,7 +235,9 @@ class MockTokenVerifierPort(TokenVerifierPort):
     """
 
     state: MockState
-    route: str = "main"
+    route: StrKey = "main"
+
+    # ....................... #
 
     async def verify_token(
         self,
@@ -263,6 +286,9 @@ class MockTokenVerifierPort(TokenVerifierPort):
                 "tid": issued.get("tenant_id"),
             },
         )
+
+
+# ....................... #
 
 
 @final

@@ -20,6 +20,7 @@ from .kernel.client import (
     TemporalClientPort,
     TemporalConfig,
 )
+from .kernel.crypto import EncryptingPayloadCodec, encrypting_data_converter
 from .sandbox import (
     PASSTHROUGH_MODULES,
     default_sandbox_restrictions,
@@ -31,6 +32,8 @@ from .saga import TemporalSaga
 
 __all__ = [
     "TemporalConfig",
+    "EncryptingPayloadCodec",
+    "encrypting_data_converter",
     "TemporalClient",
     "TemporalClientPort",
     "RoutedTemporalClient",

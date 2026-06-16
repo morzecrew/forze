@@ -105,6 +105,7 @@ class RoutedRabbitMQClient(DsnRoutedTenantClientBase[RabbitMQClient], RabbitMQCl
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> list[str]:
         inner = await self._get_client()
         return await inner.enqueue_many(
@@ -118,6 +119,7 @@ class RoutedRabbitMQClient(DsnRoutedTenantClientBase[RabbitMQClient], RabbitMQCl
             not_before=not_before,
             delayed_delivery=delayed_delivery,
             headers=headers,
+            message_headers=message_headers,
         )
 
     async def receive(

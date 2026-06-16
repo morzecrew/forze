@@ -151,12 +151,21 @@ class QueueCommandPort[M](Protocol):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> Awaitable[list[str]]:
         """Enqueue multiple messages and return their identifiers.
 
         The same *delay*, *not_before*, and *headers* apply to every message
         in the batch. *key* follows the per-backend semantics documented on
         :meth:`enqueue`.
+
+        :param message_headers: Optional **per-message** headers, one mapping per
+            payload (its length must equal *payloads*). Message ``i`` carries
+            ``{**headers, **message_headers[i]}`` — the per-message entry overrides
+            the shared *headers* — so a single batched publish can still give each
+            message distinct metadata (e.g. a per-message ``forze_event_id`` for
+            end-to-end encryption, which also keeps the SQS FIFO dedup id
+            per-message). ``None`` keeps every message on the shared *headers*.
         """
 
         ...  # pragma: no cover

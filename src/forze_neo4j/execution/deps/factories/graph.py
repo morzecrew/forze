@@ -8,8 +8,13 @@ from typing import final
 
 import attrs
 
+from forze.application.contracts.crypto import (
+    DeterministicCipherDepKey,
+    KeyringDepKey,
+)
 from forze.application.contracts.graph import GraphModuleSpec
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.graph import resolve_graph_codecs
 
 from ....adapters import Neo4jGraphAdapter
 from ..configs import Neo4jGraphConfig
@@ -35,10 +40,25 @@ class ConfigurableNeo4jGraph:
         spec: GraphModuleSpec,
     ) -> Neo4jGraphAdapter:
         client = ctx.deps.provide(Neo4jClientDepKey)
+        codecs = resolve_graph_codecs(
+            spec,
+            keyring=(
+                ctx.deps.provide(KeyringDepKey)
+                if ctx.deps.exists(KeyringDepKey)
+                else None
+            ),
+            deterministic=(
+                ctx.deps.provide(DeterministicCipherDepKey)
+                if ctx.deps.exists(DeterministicCipherDepKey)
+                else None
+            ),
+            tenant_provider=ctx.inv_ctx.get_tenant,
+        )
 
         return Neo4jGraphAdapter(
             spec=spec,
             client=client,
+            codecs=codecs,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
             tenant_property=self.config.tenant_property,

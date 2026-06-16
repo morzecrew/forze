@@ -54,6 +54,7 @@ class RabbitMQClientPort(Protocol):
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> Awaitable[list[str]]: ...  # pragma: no cover
 
     def receive(

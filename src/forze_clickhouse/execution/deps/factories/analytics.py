@@ -5,7 +5,12 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsSpec
+from forze.application.contracts.crypto import (
+    DeterministicCipherDepKey,
+    KeyringDepKey,
+)
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.analytics import resolve_analytics_codecs_spec
 
 from ....adapters import ClickHouseAnalyticsAdapter
 from ..configs import ClickHouseAnalyticsConfig
@@ -33,6 +38,20 @@ class ConfigurableClickHouseAnalytics:
     ) -> ClickHouseAnalyticsAdapter[Any, Any]:
         self.config.validate_against_spec(spec)
         client = ctx.deps.provide(ClickHouseClientDepKey)
+        spec = resolve_analytics_codecs_spec(
+            spec,
+            keyring=(
+                ctx.deps.provide(KeyringDepKey)
+                if ctx.deps.exists(KeyringDepKey)
+                else None
+            ),
+            deterministic=(
+                ctx.deps.provide(DeterministicCipherDepKey)
+                if ctx.deps.exists(DeterministicCipherDepKey)
+                else None
+            ),
+            tenant_provider=ctx.inv_ctx.get_tenant,
+        )
         return ClickHouseAnalyticsAdapter(
             client=client,
             spec=spec,

@@ -7,17 +7,17 @@ from typing import Any, Sequence, TypeVar
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions
+from forze.application.contracts.base import CursorPage
+from forze.application.contracts.querying import CursorPaginationExpression
 from forze.application.integrations.analytics.adapter_common import (
+    decrypt_and_shape_rows,
     dry_run_enabled,
     encode_keyset_cursor_next,
     encode_offset_cursor_next_prev,
     merge_forze_after_params,
     parse_keyset_cursor_after,
     parse_offset_cursor_after,
-    shape_rows,
 )
-from forze.application.contracts.base import CursorPage
-from forze.application.contracts.querying import CursorPaginationExpression
 from forze.base.primitives import StrKey
 
 from ._mixin_base import PostgresAnalyticsMixinBase
@@ -60,9 +60,7 @@ class PostgresAnalyticsCursorMixin[R: BaseModel, Ing: BaseModel](
                 has_more=False,
             )
 
-        cursor_col = host._cursor_column(query_key)  # type: ignore[protected-access]
-
-        if cursor_col:
+        if cursor_col := host._cursor_column(query_key):  # type: ignore[protected-access]
             after_value, lim = parse_keyset_cursor_after(
                 cursor,
                 backward_not_supported=_PG_BACKWARD_CURSOR,
@@ -78,7 +76,7 @@ class PostgresAnalyticsCursorMixin[R: BaseModel, Ing: BaseModel](
                 limit=lim,
                 offset=None,
             )
-            hits = shape_rows(
+            hits = await decrypt_and_shape_rows(
                 rows,
                 read_codec=host.spec.resolved_read_codec,
                 read_type=host.spec.read,
@@ -104,7 +102,7 @@ class PostgresAnalyticsCursorMixin[R: BaseModel, Ing: BaseModel](
                 limit=lim,
                 offset=start,
             )
-            hits = shape_rows(
+            hits = await decrypt_and_shape_rows(
                 rows,
                 read_codec=host.spec.resolved_read_codec,
                 read_type=host.spec.read,

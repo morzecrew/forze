@@ -9,6 +9,7 @@ from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchSpec,
 )
+from forze.application.integrations.search import search_spec_encrypts
 from forze.base.exceptions import exc
 
 from ....adapters import PostgresFederatedSearchAdapter
@@ -104,5 +105,9 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             rrf_k=self.config.rrf_k,
             rrf_per_leg_limit=self.config.rrf_per_leg_limit,
             postgres_client=context.deps.provide(PostgresClientDepKey),
-            result_snapshot=result_snapshot(context, spec.snapshot),
+            result_snapshot=result_snapshot(
+                context,
+                spec.snapshot,
+                encrypted=any(search_spec_encrypts(m) for m in spec.members),
+            ),
         )
