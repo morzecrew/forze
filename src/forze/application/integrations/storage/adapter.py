@@ -5,6 +5,7 @@ import builtins
 import mimetypes
 import re
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Mapping
 from uuid import UUID
@@ -12,6 +13,7 @@ from uuid import UUID
 import attrs
 import msgspec
 
+from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     is_static_named_resource,
@@ -33,7 +35,6 @@ from forze.application.contracts.storage.value_objects import (
     UploadPart,
     UploadSession,
 )
-from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
 from forze.application.integrations.storage.client import (
     ObjectStorageClientPort,
@@ -138,10 +139,7 @@ class ObjectStorageAdapter(
         # the no-tenant key.
         tenant_id = self._tenant_id_for_resolve()
 
-        if tenant_id is None:
-            return None
-
-        return TenantIdentity(tenant_id=tenant_id)
+        return None if tenant_id is None else TenantIdentity(tenant_id=tenant_id)
 
     # ....................... #
 
@@ -221,10 +219,7 @@ class ObjectStorageAdapter(
     def __tenant_prefix(self) -> str | None:
         tenant_id = self.require_tenant_if_aware()
 
-        if tenant_id is not None:
-            return f"tenant_{tenant_id}"
-
-        return None
+        return f"tenant_{tenant_id}" if tenant_id is not None else None
 
     # ....................... #
 
@@ -249,8 +244,10 @@ class ObjectStorageAdapter(
 
         if prefix is None:
             parts = (key,)
+
         elif isinstance(prefix, str):
             parts = (prefix, key)
+
         else:
             parts = (*prefix, key)
 
@@ -258,7 +255,8 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
-    def _validate_prefix(self, prefix: str | None) -> None:
+    @staticmethod
+    def _validate_prefix(prefix: str | None) -> None:
         if prefix is None:
             return
 
@@ -267,7 +265,8 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
-    def _validate_key(self, key: str) -> None:
+    @staticmethod
+    def _validate_key(key: str) -> None:
         """Reject object keys that could escape the bucket/tenant prefix.
 
         Keys minted by this adapter are a validated prefix plus a generated id, so a
@@ -1042,15 +1041,10 @@ def guess_content_type_with_magic(filename: str, data: bytes) -> str:
     the package being absent) this falls back to extension-based guessing.
     """
 
-    try:
+    with suppress(Exception):  # nosec B110
         import magic
 
-        ct_magic = magic.from_buffer(data, mime=True)
-
-        if ct_magic:
+        if ct_magic := magic.from_buffer(data, mime=True):
             return ct_magic
-
-    except Exception:  # nosec B110
-        pass
 
     return _guess_content_type_from_name(filename)

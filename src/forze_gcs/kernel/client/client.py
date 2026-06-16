@@ -160,8 +160,8 @@ class GCSClient(GCSClientPort):
             try:
                 await storage.close()
 
-            except Exception as exc:
-                close_error = exc
+            except Exception as e:
+                close_error = e
 
             finally:
                 self.__storage = None
@@ -172,8 +172,8 @@ class GCSClient(GCSClientPort):
             self.__project_id = None
             self.__config = None
 
-        except Exception as exc:
-            cred_error = exc
+        except Exception as e:
+            cred_error = e
 
         errors = [e for e in (close_error, cred_error) if e is not None]
 

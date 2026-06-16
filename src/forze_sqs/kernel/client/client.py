@@ -528,13 +528,14 @@ class SQSClient(SQSClientPort):
 
     @staticmethod
     def __extract_attr(
-        attrs: dict[str, dict[str, str]] | None,
+        attrs_: dict[str, dict[str, str]] | None,
         key: str,
     ) -> str | None:
-        if not attrs:
+        if not attrs_:
             return None
 
-        raw = attrs.get(key)
+        raw = attrs_.get(key)
+
         if not isinstance(raw, dict):
             return None
 
@@ -545,7 +546,7 @@ class SQSClient(SQSClientPort):
 
     @staticmethod
     def __extract_headers(
-        attrs: dict[str, dict[str, str]] | None,
+        attrs_: dict[str, dict[str, str]] | None,
     ) -> dict[str, str] | None:
         """Return caller-visible string headers from message attributes.
 
@@ -553,12 +554,12 @@ class SQSClient(SQSClientPort):
         survive — the port contract is string-to-string.
         """
 
-        if not attrs:
+        if not attrs_:
             return None
 
         out: dict[str, str] = {}
 
-        for attr_key, raw in attrs.items():
+        for attr_key, raw in attrs_.items():
             if attr_key in _RESERVED_ATTRS or not isinstance(
                 raw, dict
             ):  # pyright: ignore[reportUnnecessaryIsInstance]
@@ -595,9 +596,9 @@ class SQSClient(SQSClientPort):
     @staticmethod
     def __decode_body(
         body: str,
-        attrs: dict[str, dict[str, str]] | None,
+        attrs_: dict[str, dict[str, str]] | None,
     ) -> bytes:
-        encoding = SQSClient.__extract_attr(attrs, _ENCODING_ATTR)
+        encoding = SQSClient.__extract_attr(attrs_, _ENCODING_ATTR)
 
         if encoding == _ENCODING_B64:
             try:
@@ -612,10 +613,10 @@ class SQSClient(SQSClientPort):
 
     @staticmethod
     def __extract_enqueued_at(
-        attrs: dict[str, dict[str, str]] | None,
+        attrs_: dict[str, dict[str, str]] | None,
         system_attrs: dict[str, str] | None,
     ) -> datetime | None:
-        if from_message_attr := SQSClient.__extract_attr(attrs, _ENQUEUED_AT_ATTR):
+        if from_message_attr := SQSClient.__extract_attr(attrs_, _ENQUEUED_AT_ATTR):
             with suppress(ValueError):
                 return datetime.fromisoformat(from_message_attr)
 
@@ -1019,8 +1020,8 @@ class SQSClient(SQSClientPort):
 
             body = raw.get("Body", "")
 
-            attrs = raw.get("MessageAttributes")
-            attrs = attrs if isinstance(attrs, dict) else None
+            attrs_ = raw.get("MessageAttributes")
+            attrs_ = attrs_ if isinstance(attrs_, dict) else None
 
             system_attrs = raw.get("Attributes")
             system_attrs = system_attrs if isinstance(system_attrs, dict) else None
@@ -1030,11 +1031,11 @@ class SQSClient(SQSClientPort):
                     queue=queue,
                     id=message_id,
                     receipt_handle=receipt,
-                    body=self.__decode_body(body, attrs),  # type: ignore[arg-type]
-                    type=self.__extract_attr(attrs, _TYPE_ATTR),  # type: ignore[arg-type]
-                    enqueued_at=self.__extract_enqueued_at(attrs, system_attrs),  # type: ignore[arg-type]
-                    key=self.__extract_attr(attrs, _KEY_ATTR),  # type: ignore[arg-type]
-                    headers=self.__extract_headers(attrs),  # type: ignore[arg-type]
+                    body=self.__decode_body(body, attrs_),  # type: ignore[arg-type]
+                    type=self.__extract_attr(attrs_, _TYPE_ATTR),  # type: ignore[arg-type]
+                    enqueued_at=self.__extract_enqueued_at(attrs_, system_attrs),  # type: ignore[arg-type]
+                    key=self.__extract_attr(attrs_, _KEY_ATTR),  # type: ignore[arg-type]
+                    headers=self.__extract_headers(attrs_),  # type: ignore[arg-type]
                     delivery_count=self.__extract_delivery_count(system_attrs),  # type: ignore[arg-type]
                 )
             )
@@ -1088,6 +1089,7 @@ class SQSClient(SQSClientPort):
                 # remainder still long-polls instead of short-poll spinning;
                 # the idle stop may overshoot by less than a second.
                 wait_seconds = min(long_poll_seconds, float(math.ceil(remaining)))
+
             else:
                 wait_seconds = long_poll_seconds
 
@@ -1103,6 +1105,7 @@ class SQSClient(SQSClientPort):
                 # Back off so a persistently failing receive does not
                 # hot-loop; the idle deadline (when set) still terminates.
                 await asyncio.sleep(backoff)
+
                 backoff = min(backoff * 2, _CONSUME_ERROR_BACKOFF_MAX)
 
                 continue

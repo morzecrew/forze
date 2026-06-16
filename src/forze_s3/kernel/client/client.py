@@ -317,7 +317,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.bucket_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.bucket_exists")
     async def bucket_exists(self, bucket: str) -> bool:
         """Return whether the given bucket exists.
 
@@ -352,7 +352,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.create_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.create_bucket")
     async def create_bucket(self, bucket: str) -> None:
         """Create a bucket, silently succeeding if it already exists.
 
@@ -396,7 +396,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.ensure_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.ensure_bucket")
     async def ensure_bucket(self, bucket: str) -> None:
         """Create the bucket when it does not exist (idempotent).
 
@@ -412,7 +412,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.object_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.object_exists")
     async def object_exists(self, bucket: str, key: str) -> bool:
         """Return whether the given object key exists in the bucket.
 
@@ -436,7 +436,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.upload_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.upload_bytes")
     async def upload_bytes(
         self,
         bucket: str,
@@ -474,7 +474,7 @@ class S3Client(S3ClientPort):
         if tags:
             extra["Tagging"] = urlencode(tags)
 
-        extra.update(_s3_sse_extra_args(sse))
+        extra |= _s3_sse_extra_args(sse)
 
         fileobj = io.BytesIO(data)
 
@@ -486,7 +486,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.download_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.download_bytes")
     async def download_bytes(self, bucket: str, key: str) -> ObjectBody:
         """Download the full content of an S3 object plus its metadata.
 
@@ -513,7 +513,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.download_range_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.download_range_bytes")
     async def download_range_bytes(
         self,
         bucket: str,
@@ -580,7 +580,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.download_bytes_conditional")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.download_bytes_conditional")
     async def download_bytes_conditional(
         self,
         bucket: str,
@@ -635,7 +635,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.copy_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.copy_object")
     async def copy_object(
         self,
         bucket: str,
@@ -670,7 +670,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.put_object_tags")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.put_object_tags")
     async def put_object_tags(
         self,
         bucket: str,
@@ -696,7 +696,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.delete_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.delete_object")
     async def delete_object(self, bucket: str, key: str) -> None:
         """Delete an object from the bucket.
 
@@ -710,7 +710,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.list_objects")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.list_objects")
     async def list_objects(
         self,
         bucket: str,
@@ -794,8 +794,8 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
+    @staticmethod
     async def __attach_tags(
-        self,
         c: AsyncS3Client,
         bucket: str,
         items: list[ObjectStorageListedObject],
@@ -831,7 +831,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.head_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.head_object")
     async def head_object(
         self,
         bucket: str,
@@ -877,7 +877,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.presign_download_url")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.presign_download_url")
     async def presign_download_url(
         self,
         bucket: str,
@@ -913,7 +913,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.presign_upload_url")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.presign_upload_url")
     async def presign_upload_url(
         self,
         bucket: str,
@@ -960,8 +960,8 @@ class S3Client(S3ClientPort):
             params["ContentType"] = content_type
             headers["Content-Type"] = content_type
 
-        params.update(_s3_sse_extra_args(sse))
-        headers.update(_s3_sse_request_headers(sse))
+        params |= _s3_sse_extra_args(sse)
+        headers |= _s3_sse_request_headers(sse)
 
         expires_at = utcnow() + timedelta(seconds=seconds)
         url = await c.generate_presigned_url(
@@ -980,7 +980,7 @@ class S3Client(S3ClientPort):
     # ....................... #
     # Resumable multipart upload primitives.
 
-    @exc_interceptor.coroutine("s3.create_multipart_upload")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.create_multipart_upload")
     async def create_multipart_upload(
         self,
         bucket: str,
@@ -1019,7 +1019,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.presign_multipart_part")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.presign_multipart_part")
     async def presign_multipart_part(
         self,
         bucket: str,
@@ -1061,7 +1061,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.list_multipart_parts")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.list_multipart_parts")
     async def list_multipart_parts(
         self,
         bucket: str,
@@ -1099,7 +1099,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.complete_multipart_upload")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.complete_multipart_upload")
     async def complete_multipart_upload(
         self,
         bucket: str,
@@ -1148,7 +1148,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.abort_multipart_upload")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.abort_multipart_upload")
     async def abort_multipart_upload(
         self,
         bucket: str,
@@ -1268,7 +1268,9 @@ def _decode_tag_set(resp: Mapping[str, Any]) -> dict[str, str]:
     tag_set = cast(list[dict[str, str]], resp.get("TagSet") or [])
 
     for entry in tag_set:
-        if not isinstance(entry, MappingABC):  # pyright: ignore[reportUnnecessaryIsInstance]
+        if not isinstance(
+            entry, MappingABC
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
             continue
 
         tag_key = entry.get("Key")
