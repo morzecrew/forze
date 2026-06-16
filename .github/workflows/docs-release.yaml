@@ -54,81 +54,24 @@ jobs:
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
       - name: Install d2
-        run: |
-          set -euxo pipefail
-
-          D2_VERSION=v0.7.1
-
-          curl -LsSf -o /tmp/d2.tar.gz \
-          "https://github.com/terrastruct/d2/releases/download/${D2_VERSION}/d2-${D2_VERSION}-linux-amd64.tar.gz";
-
-          mkdir -p /tmp/d2-extract
-          tar -xzf /tmp/d2.tar.gz -C /tmp/d2-extract
-          sudo mv "$(find /tmp/d2-extract -type f -name d2 | head -n 1)" /usr/local/bin/d2
-          sudo chmod +x /usr/local/bin/d2
-
-          d2 --version
+        run: bash .github/scripts/install-d2.sh
 
       - name: Install dependencies
         run: uv sync --group docs
 
       - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        run: bash .github/scripts/configure-git-identity.sh
 
       - name: Resolve target version
         id: ver
-        run: |
-          set -euo pipefail
-
-          ref="${GITHUB_REF_NAME}"
-
-          # Newest released minor across all tags (vX.Y.Z, highest wins).
-          newest_tag="$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-          newest_minor="$(printf '%s' "${newest_tag#v}" | cut -d. -f1,2)"
-
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            # Ship (or backport): take MAJOR.MINOR from the tag.
-            target_minor="$(printf '%s' "${ref#v}" | cut -d. -f1,2)"
-          else
-            # Polish: must run on a release/vX.Y.* branch — the version comes from
-            # the branch name. Polishing an *older* minor is allowed (it refreshes
-            # that minor's docs in place); the move_latest gate below ensures it
-            # never touches `latest`/root unless the minor is the newest one.
-            case "$ref" in
-              release/v*) target_minor="$(printf '%s' "${ref#release/v}" | cut -d. -f1,2)" ;;
-              *)
-                echo "::error::workflow_dispatch must run on a 'release/vX.Y.*' branch (got '$ref')"
-                exit 1
-                ;;
-            esac
-          fi
-
-          # Move `latest` + the root redirect only when this is the newest minor.
-          if [ "$target_minor" = "$newest_minor" ]; then
-            move_latest=true
-          else
-            move_latest=false
-          fi
-
-          echo "minor=$target_minor" >> "$GITHUB_OUTPUT"
-          echo "move_latest=$move_latest" >> "$GITHUB_OUTPUT"
-          echo "Resolved: minor=$target_minor move_latest=$move_latest (newest=$newest_minor)"
+        run: bash .github/scripts/resolve-docs-version.sh
 
       - name: Build diagrams
         # mike runs `zensical build` but not d2; _diagrams/*.svg are gitignored.
         run: just build-diagrams
 
       - name: Deploy version
-        working-directory: pages
-        run: |
-          set -euo pipefail
-          minor="${{ steps.ver.outputs.minor }}"
-
-          if [ "${{ steps.ver.outputs.move_latest }}" = "true" ]; then
-            uv run mike deploy --push --update-aliases --branch gh-pages "$minor" latest
-            uv run mike set-default --push --branch gh-pages latest
-          else
-            uv run mike deploy --push --branch gh-pages "$minor"
-          fi
+        run: >-
+          bash .github/scripts/deploy-docs-version.sh
+          "${{ steps.ver.outputs.minor }}"
+          "${{ steps.ver.outputs.move_latest }}"

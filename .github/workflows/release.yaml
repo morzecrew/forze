@@ -39,22 +39,7 @@ jobs:
           fetch-depth: 0
 
       - name: Ensure release tag is on main
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git fetch --no-tags origin main:refs/remotes/origin/main
-
-          TAG_COMMIT="$(git rev-list -n 1 "${GITHUB_REF_NAME}")"
-
-          if git merge-base --is-ancestor "$TAG_COMMIT" "origin/main"; then
-            echo "OK: tag commit is on main"
-          else
-            echo "ERROR: tag '${GITHUB_REF_NAME}' points to commit not contained in main"
-            echo "Tag commit: $TAG_COMMIT"
-            echo "Refuse release build."
-            exit 1
-          fi
+        run: bash .github/scripts/ensure-tag-on-main.sh
 
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
@@ -125,9 +110,7 @@ jobs:
 
       - name: Compute version from tag
         id: ver
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          echo "version=${tag#v}" >> $GITHUB_OUTPUT
+        run: bash .github/scripts/compute-version-from-tag.sh
 
       - name: Get Changelog Entry
         id: changelog
