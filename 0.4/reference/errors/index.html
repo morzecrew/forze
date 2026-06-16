@@ -101,6 +101,23 @@
     
       <div data-md-color-scheme="default" data-md-component="outdated" hidden>
         
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  <span data-forze-channel="release" hidden>
+    You're viewing the docs for an <strong>older release</strong>.
+    <a data-forze-latest href="."><strong>Go to the latest version.</strong></a>
+  </span>
+  <span data-forze-channel="dev" hidden>
+    You're viewing the <strong>in-progress</strong> docs for the next release — APIs
+    may still change.
+    <a data-forze-latest href="."><strong>Go to the latest release.</strong></a>
+  </span>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
       </div>
     
     
