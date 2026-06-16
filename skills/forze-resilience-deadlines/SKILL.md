@@ -65,6 +65,9 @@ Declare a time budget on the **operation plan**, not per route or caller:
 ```python
 registry.bind("orders.create").with_deadline(timedelta(seconds=5)).finish().freeze()
 # or a default across many ops: registry.patch(selector).with_deadline(...).finish()
+# scope it: registry.patch(selector, namespace=ns)  → matches only ops under ns
+# settle it: registry.materialize_patches()  → fold patches into plans so a later
+#            OperationRegistry.merge can't leak them onto a sibling's operations
 ```
 
 - Boundaries may add a caller budget: `with bind_deadline(timeout_s): ...` (from `forze.application.execution`); `None` is a no-op passthrough. Binding is **tighten-only** — the tightest budget always wins.

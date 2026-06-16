@@ -88,6 +88,8 @@ def _build_app(
     *,
     writable: bool = True,
     include=None,
+    resource=None,
+    path_overrides=None,
 ) -> FastAPI:
     spec = _spec(writable=writable)
     state = MockState()
@@ -96,10 +98,13 @@ def _build_app(
     attach_document_routes(
         router,
         registry=_registry(spec),
-        ns=spec.default_namespace,
+        # Use the resource-prefix convenience when requested, else the explicit ns.
+        ns=None if resource is not None else spec.default_namespace,
+        resource=resource,
         ctx_dep=lambda: context_from_modules(MockDepsModule(state=state)),
         style=style,
         include=include,
+        path_overrides=path_overrides,
     )
 
     app = FastAPI()
@@ -303,6 +308,111 @@ class TestCatalogProjection:
                 ns=StrKeyNamespace(prefix="other"),
                 ctx_dep=lambda: context_from_modules(MockDepsModule()),
                 style="rest",
+            )
+
+
+class TestResourcePrefix:
+    def test_resource_prefix_matches_explicit_namespace(self) -> None:
+        # resource="notes" builds StrKeyNamespace(prefix="notes"), the same prefix
+        # the registry was built under (spec.name == "notes").
+        assert _operation_ids(_build_app("rest", resource="notes")) == _ALL_OP_IDS
+
+    def test_resource_prefix_round_trips(self) -> None:
+        client = TestClient(_build_app("rest", resource="notes"))
+
+        created = client.post("/notes", json={"title": "hi"})
+        assert created.status_code == 201
+        assert client.get(f"/notes/{created.json()['id']}").json()["title"] == "hi"
+
+    def test_resource_mismatch_finds_no_operations(self) -> None:
+        with pytest.raises(CoreException, match="No matching operations"):
+            _build_app("rest", resource="other")
+
+    def test_both_ns_and_resource_raises(self) -> None:
+        spec = _spec()
+
+        with pytest.raises(CoreException, match="exactly one"):
+            attach_document_routes(
+                APIRouter(),
+                registry=_registry(spec),
+                ns=spec.default_namespace,
+                resource="notes",
+                ctx_dep=lambda: context_from_modules(MockDepsModule()),
+                style="rest",
+            )
+
+    def test_neither_ns_nor_resource_raises(self) -> None:
+        spec = _spec()
+
+        with pytest.raises(CoreException, match="exactly one"):
+            attach_document_routes(
+                APIRouter(),
+                registry=_registry(spec),
+                ctx_dep=lambda: context_from_modules(MockDepsModule()),
+                style="rest",
+            )
+
+
+class TestPathOverrides:
+    def test_override_keeps_operation_id_and_moves_path(self) -> None:
+        app = _build_app(
+            "rest", path_overrides={DocumentKernelOp.GET: "/by-id/{id}"}
+        )
+        paths = app.openapi()["paths"]
+
+        assert "/notes/by-id/{id}" in paths
+        assert "get" not in paths.get("/notes/{id}", {})
+        # operationId stays the verbatim catalog key regardless of the new path.
+        assert _operation_ids(app) == _ALL_OP_IDS
+
+    def test_overridden_route_dispatches(self) -> None:
+        client = TestClient(
+            _build_app("rest", path_overrides={DocumentKernelOp.GET: "/by-id/{id}"})
+        )
+
+        created = client.post("/notes", json={"title": "moved"})
+        note = created.json()
+
+        # GET no longer serves the old path (PATCH/DELETE still live there → 405).
+        assert client.get(f"/notes/{note['id']}").status_code == 405
+        fetched = client.get(f"/notes/by-id/{note['id']}")
+        assert fetched.status_code == 200
+        assert fetched.json()["title"] == "moved"
+
+    def test_override_of_paramless_path(self) -> None:
+        app = _build_app("rest", path_overrides={DocumentKernelOp.LIST: "/search"})
+        paths = app.openapi()["paths"]
+
+        assert "/notes/search" in paths
+        assert "/notes/list" not in paths
+
+    def test_override_accepts_str_key(self) -> None:
+        app = _build_app("rest", path_overrides={"get": "/by-id/{id}"})
+
+        assert "/notes/by-id/{id}" in app.openapi()["paths"]
+
+    def test_override_dropping_path_param_raises(self) -> None:
+        with pytest.raises(CoreException, match="drops path parameter"):
+            _build_app("rest", path_overrides={DocumentKernelOp.GET: "/by-id"})
+
+    def test_override_adding_path_param_raises(self) -> None:
+        with pytest.raises(CoreException, match="adds path parameter"):
+            _build_app(
+                "rest", path_overrides={DocumentKernelOp.GET: "/{tenant}/by-id/{id}"}
+            )
+
+    def test_override_of_unknown_operation_raises(self) -> None:
+        with pytest.raises(CoreException, match="Unknown path override"):
+            _build_app("rest", path_overrides={"nope": "/whatever"})
+
+    def test_override_of_excluded_operation_raises(self) -> None:
+        # GET is a real op but excluded by `include`, so the override is dead
+        # config — caught instead of silently ignored.
+        with pytest.raises(CoreException, match="Unknown path override"):
+            _build_app(
+                "rest",
+                include=[DocumentKernelOp.LIST],
+                path_overrides={DocumentKernelOp.GET: "/by-id/{id}"},
             )
 
 

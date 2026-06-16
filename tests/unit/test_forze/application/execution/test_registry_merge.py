@@ -15,7 +15,7 @@ def test_merge_combines_disjoint_handlers_plans_and_patches() -> None:
         plans={"a": OperationPlan()},
         patches=(
             PlanPatch(
-                selector=str_key_selector.all_keys(),
+                selector=str_key_selector.exact("a"),
                 plan=OperationPlan(),
             ),
         ),
@@ -95,3 +95,71 @@ def test_merge_patch_selector_conflict_override_last_wins() -> None:
     )
 
     assert merged.patches == (second,)
+
+
+# ....................... #
+# Cross-registry patch reach gate
+
+
+def _all_keys_patch() -> PlanPatch:
+    """
+    Create a plan patch that targets all keys.
+    
+    Returns:
+        PlanPatch: A patch with a selector matching all keys and an empty operation plan.
+    """
+    return PlanPatch(selector=str_key_selector.all_keys(), plan=OperationPlan())
+
+
+def test_merge_cross_registry_patch_reach_raises_by_default() -> None:
+    left = RegistryMerge(
+        handlers={"a": lambda _ctx: None},
+        patches=(_all_keys_patch(),),
+    )
+    right = RegistryMerge(handlers={"b": lambda _ctx: None})
+
+    with pytest.raises(CoreException, match="reach operations") as excinfo:
+        RegistryMerge.merge(left, right)
+
+    assert excinfo.value.kind.value == "configuration"
+    # Names the foreign operation the patch would govern.
+    assert "'b'" in str(excinfo.value)
+
+
+def test_merge_cross_registry_allowed_with_flag() -> None:
+    left = RegistryMerge(
+        handlers={"a": lambda _ctx: None},
+        patches=(_all_keys_patch(),),
+    )
+    right = RegistryMerge(handlers={"b": lambda _ctx: None})
+
+    merged = RegistryMerge.merge(left, right, cross_registry=True)
+
+    assert set(merged.handlers) == {"a", "b"}
+    assert len(merged.patches) == 1
+
+
+def test_merge_patch_matching_only_own_ops_is_not_flagged() -> None:
+    left = RegistryMerge(
+        handlers={"a": lambda _ctx: None},
+        patches=(PlanPatch(selector=str_key_selector.exact("a"), plan=OperationPlan()),),
+    )
+    right = RegistryMerge(handlers={"b": lambda _ctx: None})
+
+    merged = RegistryMerge.merge(left, right)
+
+    assert set(merged.handlers) == {"a", "b"}
+
+
+def test_merge_prior_patch_reaching_later_handler_is_flagged() -> None:
+    """The reach is symmetric — order of the colliding part does not matter."""
+
+    left = RegistryMerge(handlers={"a": lambda _ctx: None})
+    right = RegistryMerge(
+        handlers={"b": lambda _ctx: None},
+        patches=(_all_keys_patch(),),
+    )
+
+    # right's all_keys patch reaches left's "a".
+    with pytest.raises(CoreException, match="reach operations"):
+        RegistryMerge.merge(left, right)

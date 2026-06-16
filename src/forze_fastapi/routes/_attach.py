@@ -15,6 +15,7 @@ require_fastapi()
 # ....................... #
 
 import inspect
+import re
 from enum import Enum
 from typing import (
     AbstractSet,
@@ -91,11 +92,78 @@ class RouteBinding:
 # ....................... #
 
 
+def resolve_namespace(
+    ns: StrKeyNamespace | None,
+    resource: str | None,
+) -> StrKeyNamespace:
+    """Resolve the operation namespace from an explicit namespace or a resource prefix.
+
+    Exactly one of *ns* or *resource* must be provided. The resolved namespace must
+    match the prefix under which the operations were registered in the catalog.
+
+    Args:
+        ns (StrKeyNamespace | None): An explicit namespace, returned as-is when given.
+        resource (str | None): A prefix string the namespace is built from (using the
+            default separator) when *ns* is omitted.
+
+    Returns:
+        StrKeyNamespace: The resolved namespace.
+
+    Raises:
+        CoreException: If neither or both of *ns* and *resource* are provided
+            (a configuration error).
+    """
+
+    if ns is not None and resource is None:
+        return ns
+
+    if resource is not None and ns is None:
+        return StrKeyNamespace(prefix=resource)
+
+    raise exc.configuration(
+        "Provide exactly one of 'ns' (an explicit namespace) or 'resource' "
+        "(a prefix string to build the namespace from)."
+    )
+
+
+# ....................... #
+
+
+_PATH_PARAM = re.compile(r"\{([^}:]+)(?::[^}]*)?\}")
+"""Matches a FastAPI path placeholder, capturing the parameter name.
+
+Handles the bare ``{name}`` form and the converter form ``{name:path}`` (used by
+the storage routes for slash-bearing keys), capturing ``name`` in both.
+"""
+
+
+def _path_params(path: str) -> set[str]:
+    """The set of path-parameter names a route template binds."""
+
+    return set(_PATH_PARAM.findall(path))
+
+
+# ....................... #
+
+
 def require_input_type(
     input_type: type[BaseModel] | None,
     op: str,
 ) -> type[BaseModel]:
-    """Fail loud when a builder needs the descriptor's input DTO and it is absent."""
+    """Return the operation's input DTO type, failing when it is absent.
+
+    Args:
+        input_type (type[BaseModel] | None): The descriptor-derived input type, or
+            ``None`` when the operation has no descriptor input type.
+        op (str): Operation key, surfaced in the error message.
+
+    Returns:
+        type[BaseModel]: The input DTO type used to derive the route schema.
+
+    Raises:
+        CoreException: If *input_type* is ``None`` — route schemas cannot be derived
+            (a configuration error).
+    """
 
     if input_type is None:
         raise exc.configuration(
@@ -428,6 +496,7 @@ def attach_operation_routes(
     ctx_dep: ExecutionContextFactory,
     bindings: Mapping[str, RouteBinding],
     include: AbstractSet[Any] | None,
+    path_overrides: Mapping[Any, str] | None = None,
 ) -> APIRouter:
     """Attach the registered operations under *ns* to *router* per *bindings*.
 
@@ -435,6 +504,40 @@ def attach_operation_routes(
     operations are skipped unless explicitly listed in *include*, which makes the
     omission a configuration error. Each route's ``operation_id`` is the operation
     key verbatim; schemas come from the operation descriptors.
+
+    *path_overrides* maps an operation (the same kernel-op/str key accepted by
+    *include*) to a replacement route path. Only the path changes — method,
+    status, builder, and the verbatim ``operation_id`` are untouched, so the
+    catalog identity is preserved. An override must bind **exactly** the path
+    parameters the default path binds — no more, no less (the endpoint builders
+    synthesize fixed parameter names and FastAPI maps a name to the path only when
+    it appears as a ``{placeholder}``). Dropping one is a configuration error
+    (a silent demotion to a query parameter); adding one the endpoint never
+    synthesizes is too (the placeholder would never be filled).
+
+    Args:
+        router (APIRouter): Router the generated routes are added to.
+        registry (FrozenOperationRegistry): Frozen registry providing the operation
+            catalog (handlers, descriptors).
+        ns (StrKeyNamespace): Namespace prefixing each binding suffix into its full
+            operation key.
+        ctx_dep (ExecutionContextFactory): Dependency yielding the per-request
+            execution context the endpoints dispatch through.
+        bindings (Mapping[str, RouteBinding]): Per-operation HTTP surface (method,
+            path, status, endpoint builder), keyed by namespace-relative suffix.
+        include (AbstractSet[Any] | None): When given, the exact operations to attach;
+            a listed operation missing from the registry is a configuration error.
+            ``None`` attaches every registered binding.
+        path_overrides (Mapping[Any, str] | None): Per-operation replacement paths,
+            keyed like *include*; each must bind exactly the default path's parameters.
+
+    Returns:
+        APIRouter: The same *router*, with the routes attached.
+
+    Raises:
+        CoreException: On an unknown *include*/override operation, a sensitive read
+            model, or a path override that drops or adds a path parameter (all
+            configuration errors).
     """
 
     known = set(bindings)
@@ -445,6 +548,14 @@ def attach_operation_routes(
             f"Unknown operations: {sorted(unknown)} (expected {sorted(known)})"
         )
 
+    overrides = {str(key): path for key, path in (path_overrides or {}).items()}
+
+    if unknown := set(overrides) - wanted:
+        raise exc.configuration(
+            f"Unknown path override operations: {sorted(unknown)} "
+            f"(expected {sorted(map(str, wanted))})"
+        )
+
     catalog = {str(key): entry for key, entry in registry.catalog().items()}
     attached = 0
 
@@ -453,6 +564,26 @@ def attach_operation_routes(
             continue
 
         op = ns.key(suffix)
+        path = overrides.get(str(suffix), binding.path)
+
+        default_params = _path_params(binding.path)
+        override_params = _path_params(path)
+
+        if missing := default_params - override_params:
+            raise exc.configuration(
+                f"Path override '{path}' for operation '{op}' drops path "
+                f"parameter(s) {sorted(missing)} the default path '{binding.path}' "
+                "binds (the endpoint requires them in the path, not the query)"
+            )
+
+        if extra := override_params - default_params:
+            raise exc.configuration(
+                f"Path override '{path}' for operation '{op}' adds path "
+                f"parameter(s) {sorted(extra)} the default path '{binding.path}' "
+                "does not bind (the endpoint synthesizes fixed parameter names, so "
+                "an unknown placeholder would never be filled)"
+            )
+
         entry = catalog.get(op)
 
         if entry is None:
@@ -487,7 +618,7 @@ def attach_operation_routes(
         )
 
         router.add_api_route(
-            binding.path,
+            path,
             endpoint,
             methods=[binding.method],
             response_model=output_type,
