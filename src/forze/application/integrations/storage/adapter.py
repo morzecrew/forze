@@ -38,6 +38,7 @@ from forze.application.contracts.storage.value_objects import (
 from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
 from forze.application.integrations.storage.client import (
     ObjectStorageClientPort,
+    ObjectStorageHead,
     ObjectStoragePartInfo,
     ObjectStorageSSE,
     validate_range,
@@ -322,6 +323,65 @@ class ObjectStorageAdapter(
             raise exc.internal("Invalid object metadata") from e
 
         return default_b64_codec.loads(meta.filename)
+
+    # ....................... #
+
+    def _stored_from_head(
+        self,
+        key: str,
+        head: ObjectStorageHead,
+        listed_tags: Mapping[str, str] | None,
+    ) -> StoredObject:
+        """Build a :class:`StoredObject` from a listed object's head.
+
+        Honors the metadata envelope when present (objects written through
+        :meth:`upload`); for raw objects that carry **no** envelope — written
+        through a presigned ``PUT`` or assembled by ``complete_upload`` — it
+        falls back to honest head fields (basename for the filename, head size
+        and last-modified) instead of raising, mirroring :meth:`download`.
+
+        Tags either ride on the listed object (S3 with ``include_tags=True``)
+        or on the head (GCS, which round-trips them for free); the listed-object
+        tags win when present.
+        """
+
+        tags = (
+            dict(listed_tags)
+            if listed_tags
+            else (dict(head.tags) if head.tags else None)
+        )
+
+        if not head.metadata:
+            return StoredObject(
+                key=key,
+                filename=self._key_basename(key),
+                description=None,
+                content_type=head.content_type,
+                size=head.size,
+                created_at=head.last_modified or utcnow(),
+                tags=tags,
+            )
+
+        try:
+            meta = object_metadata_from_user_metadata(dict(head.metadata))
+
+        except CoreException:
+            raise
+
+        except Exception as e:
+            raise exc.internal("Invalid object metadata") from e
+
+        return StoredObject(
+            key=key,
+            filename=default_b64_codec.loads(meta.filename),
+            description=(
+                default_b64_codec.loads(meta.description) if meta.description else None
+            ),
+            content_type=head.content_type,
+            size=meta.size,
+            created_at=meta.created_at,
+            tags=tags,
+        )
 
     # ....................... #
 
@@ -800,41 +860,10 @@ class ObjectStorageAdapter(
                 *(self.client.head_object(bucket=bucket, key=o.key) for o in objects)
             )
 
-            out: list[StoredObject] = []
-
-            for o, h in zip(objects, heads, strict=True):
-                if not h.metadata:
-                    raise exc.internal("Invalid object metadata")
-
-                try:
-                    meta = object_metadata_from_user_metadata(dict(h.metadata))
-
-                except CoreException:
-                    raise
-
-                except Exception as e:
-                    raise exc.internal("Invalid object metadata") from e
-
-                # Tags either ride on the listed object (S3 with
-                # ``include_tags=True``) or on the head metadata (GCS, which
-                # round-trips them for free); prefer the listed-object tags.
-                tags = dict(o.tags) if o.tags else (dict(h.tags) if h.tags else None)
-
-                out.append(
-                    StoredObject(
-                        key=o.key,
-                        filename=default_b64_codec.loads(meta.filename),
-                        description=(
-                            default_b64_codec.loads(meta.description)
-                            if meta.description
-                            else None
-                        ),
-                        content_type=h.content_type,
-                        size=meta.size,
-                        created_at=meta.created_at,
-                        tags=tags,
-                    )
-                )
+            out = [
+                self._stored_from_head(o.key, h, o.tags)
+                for o, h in zip(objects, heads, strict=True)
+            ]
 
         return out, total_count
 
