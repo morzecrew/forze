@@ -30,6 +30,7 @@ nav = [
         "get-started/installation.md",
         "get-started/quickstart.md",
         "get-started/project-structure.md",
+        "get-started/changelog.md",
     ] },
     { "Learn" = [
         { "Concepts" = [
@@ -196,7 +197,7 @@ auto_themed = true
 auto_caption = true
 
 [project.markdown_extensions.pymdownx.snippets]
-base_path = ["docs", "../examples"]
+base_path = ["docs", "../examples", ".."]
 check_paths = true
 [project.markdown_extensions.admonition]
 [project.markdown_extensions.pymdownx.details]

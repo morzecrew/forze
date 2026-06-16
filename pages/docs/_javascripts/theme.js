@@ -180,3 +180,206 @@
     document.addEventListener("DOMContentLoaded", applyBanner);
   }
 })();
+
+// Version switcher: open on click, not hover ---------------------------------
+// mike/Material opens the version list on :hover, which is fiddly. We drive it
+// with a click-toggled `.md-version--open` class instead (the stylesheet maps
+// that class to the open state and neutralizes the hover trigger). Delegated on
+// document so it works for the selector mike injects and survives instant nav;
+// clicking the current version toggles it, clicking elsewhere or Escape closes.
+(function () {
+  document.addEventListener("click", function (e) {
+    var onCurrent =
+      e.target.closest && e.target.closest(".md-version__current");
+    if (onCurrent) e.preventDefault();
+    document.querySelectorAll(".md-version").forEach(function (v) {
+      if (onCurrent && v.contains(onCurrent)) {
+        v.classList.toggle("md-version--open");
+      } else {
+        v.classList.remove("md-version--open");
+      }
+    });
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    document.querySelectorAll(".md-version--open").forEach(function (v) {
+      v.classList.remove("md-version--open");
+    });
+  });
+})();
+
+// Version switcher: pin the current version to the top -----------------------
+// Move the version you're viewing to the top of the dropdown, then a separator,
+// then the rest in their original order. The list is injected asynchronously by
+// the theme, so wait for it; the reorder is idempotent (guarded by the
+// separator) and re-runs on instant navigation.
+(function () {
+  function firstText(el) {
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3 && n.textContent.trim()) return n.textContent.trim();
+    }
+    return (el.textContent || "").trim();
+  }
+
+  function reorder() {
+    var version = document.querySelector(".md-version");
+    if (!version) return false;
+    var list = version.querySelector(".md-version__list");
+    var current = version.querySelector(".md-version__current");
+    if (!list || !current) return false;
+    var items = list.querySelectorAll(".md-version__item");
+    if (!items.length) return false; // not populated yet — keep waiting
+    if (list.querySelector(".forze-version-sep")) return true; // already done
+
+    // The current version is the one whose title matches the trigger button.
+    var curTitle = firstText(current);
+    var selected = null;
+    for (var i = 0; i < items.length; i++) {
+      var link = items[i].querySelector(".md-version__link");
+      if (link && firstText(link) === curTitle) {
+        selected = items[i];
+        break;
+      }
+    }
+    if (!selected) return true; // nothing matched — leave the list as-is
+
+    list.insertBefore(selected, list.firstChild);
+    var sep = document.createElement("li");
+    sep.className = "forze-version-sep";
+    sep.setAttribute("aria-hidden", "true");
+    list.insertBefore(sep, selected.nextSibling);
+    return true;
+  }
+
+  function init() {
+    if (reorder()) return;
+    var obs = new MutationObserver(function () {
+      if (reorder()) obs.disconnect();
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    setTimeout(function () {
+      obs.disconnect();
+    }, 8000); // safety: stop watching even if the selector never appears
+  }
+
+  if (window.document$ && typeof window.document$.subscribe === "function") {
+    window.document$.subscribe(init);
+  } else if (document.readyState !== "loading") {
+    init();
+  } else {
+    document.addEventListener("DOMContentLoaded", init);
+  }
+})();
+
+// Version switcher: don't 404 when a page is missing in the target version ----
+// Each version entry links to the *same* path in that version; if that page
+// doesn't exist there, you'd land on a 404. Intercept the click (capture phase,
+// ahead of the theme's own handler), HEAD the target, and fall back to that
+// version's home when it's missing. Cross-version is a full load anyway.
+(function () {
+  // The path after the current version segment, e.g. "get-started/changelog/".
+  function relPath() {
+    var m = location.pathname.match(
+      /^.*?\/(?:dev|latest|stable|\d+(?:\.\d+)+)\/(.*)$/,
+    );
+    return m ? m[1] : "";
+  }
+
+  document.addEventListener(
+    "click",
+    function (e) {
+      var link = e.target.closest && e.target.closest(".md-version__link");
+      if (!link || !link.href) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      document.querySelectorAll(".md-version--open").forEach(function (v) {
+        v.classList.remove("md-version--open");
+      });
+
+      // The theme links each entry to the target version's *root*. Rebuild the
+      // same path under that root so we can keep your place when it exists.
+      var home = link.href;
+      var rel = relPath();
+      var samePath = rel ? home.replace(/\/?$/, "/") + rel : home;
+      if (samePath === home) {
+        location.href = home;
+        return;
+      }
+
+      var done = false;
+      function go(url) {
+        if (done) return;
+        done = true;
+        location.href = url;
+      }
+      // Stay on the page only for a confirmed 200; anything else (404, a slow
+      // check, an error) goes to the version home, so we never land on a 404.
+      var timer = setTimeout(function () {
+        go(home);
+      }, 4000);
+      fetch(samePath, { method: "GET", cache: "no-store" })
+        .then(function (r) {
+          clearTimeout(timer);
+          go(r.status === 200 ? samePath : home);
+        })
+        .catch(function () {
+          clearTimeout(timer);
+          go(home);
+        });
+    },
+    true,
+  );
+})();
+
+// Sidebars: a compact "scroll for more" indicator instead of a scrollbar -------
+// Appended to each scroll container; shown only when there is more content
+// below, hidden at the end. Re-evaluated on scroll, resize, and instant
+// navigation (the TOC changes per page). The scrollbar itself is hidden in CSS.
+(function () {
+  function setup(wrap) {
+    if (wrap.__forzeMore) {
+      requestAnimationFrame(wrap.__forzeMore);
+      return;
+    }
+
+    // A zero-height `position: sticky; bottom: 0` marker placed at the end of the
+    // scroll content; the browser's compositor pins it to the visible bottom edge
+    // (no JS repositioning -> no jump/flicker). JS only toggles visibility.
+    var inner = wrap.querySelector(".md-sidebar__inner") || wrap;
+    var ind = document.createElement("div");
+    ind.className = "forze-scroll-more";
+    ind.setAttribute("aria-hidden", "true");
+    var label = document.createElement("span");
+    label.className = "forze-scroll-more__label";
+    label.textContent = "↓ Scroll for more";
+    ind.appendChild(label);
+    inner.appendChild(ind);
+
+    var raf = 0;
+    function update() {
+      raf = 0;
+      var more = wrap.scrollHeight - wrap.clientHeight - wrap.scrollTop > 8;
+      ind.classList.toggle("is-visible", more);
+    }
+    function schedule() {
+      if (!raf) raf = requestAnimationFrame(update);
+    }
+    wrap.__forzeMore = update;
+    wrap.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    requestAnimationFrame(update);
+  }
+
+  function setupAll() {
+    document.querySelectorAll(".md-sidebar__scrollwrap").forEach(setup);
+  }
+
+  if (window.document$ && typeof window.document$.subscribe === "function") {
+    window.document$.subscribe(setupAll);
+  } else if (document.readyState !== "loading") {
+    setupAll();
+  } else {
+    document.addEventListener("DOMContentLoaded", setupAll);
+  }
+})();
