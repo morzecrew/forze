@@ -50,6 +50,12 @@
       "sourceType": "github",
       "computedHash": "05d1fd2762d38e6afac8533e28554038e27fc8620b2df63f1e806de3c4d77fe3"
     },
+    "python-google-docstrings": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python-google-docstrings/SKILL.md",
+      "computedHash": "7fcd6bd8a695e31ba922c5b35bddc5fff4a75cab0648a6a226fa4e34f1716479"
+    },
     "python-performance-optimization": {
       "source": "wshobson/agents",
       "sourceType": "github",
