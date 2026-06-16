@@ -204,7 +204,7 @@ class MockStorageAdapter(
 
         total = len(payload)
 
-        if start >= total > 0:
+        if total == 0 or start >= total:
             raise unsatisfiable_range(start, total)
 
         last = total - 1 if end is None else min(end, total - 1)

@@ -241,7 +241,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.bucket_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.bucket_exists")
     async def bucket_exists(self, bucket: str) -> bool:
         storage = self.__require_storage()
 
@@ -260,13 +260,13 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.create_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.create_bucket")
     async def create_bucket(self, bucket: str) -> None:
         await self._insert_bucket(bucket)
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.ensure_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.ensure_bucket")
     async def ensure_bucket(self, bucket: str) -> None:
         """Create the bucket when it does not exist (idempotent)."""
 
@@ -275,7 +275,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.object_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.object_exists")
     async def object_exists(self, bucket: str, key: str) -> bool:
         storage = self.__require_storage()
         bucket_ref = storage.get_bucket(bucket)
@@ -284,7 +284,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.upload_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.upload_bytes")
     async def upload_bytes(
         self,
         bucket: str,
@@ -334,7 +334,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.download_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.download_bytes")
     async def download_bytes(self, bucket: str, key: str) -> ObjectBody:
         """Download a GCS object's full body plus its metadata.
 
@@ -360,7 +360,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.download_range_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.download_range_bytes")
     async def download_range_bytes(
         self,
         bucket: str,
@@ -390,7 +390,7 @@ class GCSClient(GCSClientPort):
         head = _head_from_object_json(raw)
         total = head.size
 
-        if start >= total > 0:
+        if total == 0 or start >= total:
             raise unsatisfiable_range(start, total)
 
         try:
@@ -416,7 +416,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.download_bytes_conditional")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.download_bytes_conditional")
     async def download_bytes_conditional(
         self,
         bucket: str,
@@ -470,7 +470,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.copy_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.copy_object")
     async def copy_object(
         self,
         bucket: str,
@@ -505,7 +505,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.put_object_tags")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.put_object_tags")
     async def put_object_tags(
         self,
         bucket: str,
@@ -545,7 +545,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.delete_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.delete_object")
     async def delete_object(self, bucket: str, key: str) -> None:
         storage = self.__require_storage()
 
@@ -557,7 +557,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.list_objects")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.list_objects")
     async def list_objects(
         self,
         bucket: str,
@@ -611,7 +611,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.head_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.head_object")
     async def head_object(
         self,
         bucket: str,
@@ -640,7 +640,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.presign_download_url")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.presign_download_url")
     async def presign_download_url(
         self,
         bucket: str,
@@ -669,7 +669,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.presign_upload_url")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.presign_upload_url")
     async def presign_upload_url(
         self,
         bucket: str,
@@ -819,8 +819,6 @@ class GCSClient(GCSClientPort):
         )
 
     # ....................... #
-
-    # ....................... #
     # Resumable multipart upload primitives (compose-based, see MPU_NAMESPACE).
 
     @staticmethod
@@ -833,7 +831,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.create_multipart_upload")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.create_multipart_upload")
     async def create_multipart_upload(
         self,
         bucket: str,
@@ -858,7 +856,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.presign_multipart_part")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.presign_multipart_part")
     async def presign_multipart_part(
         self,
         bucket: str,
@@ -882,7 +880,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.list_multipart_parts")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.list_multipart_parts")
     async def list_multipart_parts(
         self,
         bucket: str,
@@ -914,7 +912,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.complete_multipart_upload")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.complete_multipart_upload")
     async def complete_multipart_upload(
         self,
         bucket: str,
@@ -1033,7 +1031,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("gcs.abort_multipart_upload")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.abort_multipart_upload")
     async def abort_multipart_upload(
         self,
         bucket: str,
@@ -1143,13 +1141,13 @@ def _http_date(value: datetime) -> str:
 # ....................... #
 
 
-def _response_is_not_found(exc: aiohttp.ClientResponseError) -> bool:
-    status = getattr(exc, "status", None)
+def _response_is_not_found(e: aiohttp.ClientResponseError) -> bool:
+    status = getattr(e, "status", None)
 
     if status in {404, 410}:
         return True
 
-    code = getattr(exc, "code", None)
+    code = getattr(e, "code", None)
 
     return code in {404, 410}
 

@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable
 # OpenTelemetry is imported lazily inside the ``instrument_*`` functions below so that
 # merely importing this module (it is re-exported from ``forze.application.execution``)
 # does not pull ``opentelemetry`` into the import path of an uninstrumented app.
-
 from forze.application.contracts.crypto import CryptoKeyringStats
 from forze.application.contracts.execution import (
     Middleware,
@@ -66,6 +65,8 @@ _BREAKER_PHASE_VALUES: dict[str, int] = {
     "breaker_open": 2,
 }
 """Breaker gauge encoding: 0 = closed, 1 = half-open, 2 = open."""
+
+# ....................... #
 
 
 def instrument_operations(
@@ -441,26 +442,28 @@ def _telemetry_factory(
 # ....................... #
 
 
-def _span_attributes(
-    ctx: ExecutionContext, op_name: str, kind: str
-) -> dict[str, str]:
+def _span_attributes(ctx: ExecutionContext, op_name: str, kind: str) -> dict[str, str]:
     attributes: dict[str, str] = {
         "forze.operation": op_name,
         "forze.operation.kind": kind,
     }
 
     metadata = ctx.inv_ctx.get_metadata()
+
     if metadata is not None:
         attributes["forze.execution_id"] = str(metadata.execution_id)
         attributes["forze.correlation_id"] = str(metadata.correlation_id)
+
         if metadata.causation_id is not None:
             attributes["forze.causation_id"] = str(metadata.causation_id)
 
     tenant = ctx.inv_ctx.get_tenant()
+
     if tenant is not None:
         attributes["forze.tenant_id"] = str(tenant.tenant_id)
 
     authn = ctx.inv_ctx.get_authn()
+
     if authn is not None:
         attributes["forze.principal_id"] = str(authn.principal_id)
 
