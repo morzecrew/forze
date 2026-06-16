@@ -137,7 +137,6 @@ nav = [
         "reference/query-syntax.md",
         "reference/mapping.md",
         "reference/errors.md",
-        "reference/migration.md",
     ] },
 ]
 

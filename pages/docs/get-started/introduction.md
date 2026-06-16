@@ -21,20 +21,19 @@ Forze fits backend developers who:
 
 | Situation | Why Forze fits |
 |-----------|----------------|
+| Rapid prototyping | In-memory mock adapters run with no Docker and no wiring, so you build the real operation flow in minutes and add infrastructure later |
 | Domain-rich applications | Aggregates, events, and sagas keep complex business logic organized |
 | Evolving infrastructure | Swap Postgres for Mongo, Redis for Memcached, without rewriting handlers |
 | Growing teams | Shared contracts and layers reduce guesswork about where code belongs |
 | Test-first workflows | Mock adapters run in-memory; domain logic tests without containers |
 
-## When to skip Forze
+## From prototype to production
 
-Forze adds structure. That structure pays off in medium-to-large services but may feel heavy for:
+Forze isn't only for "large" projects. Because every capability is a pluggable port, it scales *down* as readily as up. Start a spike against in-memory mock adapters — no database, no Docker, no config — and you already have the real operation flow. When the idea sticks, point the same handlers at Postgres, Redis, or S3 by changing wiring, not business code. You don't pay for infrastructure you haven't added yet, so composability is what makes the fast start possible *and* keeps it from becoming throwaway.
 
-- **Simple CRUD APIs** with no domain logic beyond validation
-- **Prototypes** where speed matters more than maintainability
-- **Single-developer scripts** where architecture overhead slows you down
+## When you might not need Forze
 
-For those cases, plain FastAPI or Flask often gets the job done faster.
+Forze adds a thin layer of structure. For a throwaway single-file script, or a one-endpoint passthrough with no logic beyond validation, plain FastAPI or Flask is the shorter path. Reach for Forze the moment you have operations worth keeping clean — which, with mock adapters, can be on day one.
 
 ## Core ideas in one minute
 

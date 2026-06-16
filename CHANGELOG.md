@@ -212,8 +212,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `PostgresWriteGateway(...)` without write codecs | Pass `create_codec` / `update_codec` / `codec=`, or use `doc_write_gw` |
 | `PostgresHistoryGateway(...)` without `history_codec` | Pass `history_codec` and `codec=`, or use `doc_write_gw` |
 
-See [Kits reference](pages/docs/reference/kits.md).
-
 ### Fixed
 
 - **Package error mappers were dead code in 12 integrations:** `ChainExceptionMapper` now flattens nested chains so package mappers are consulted — most critically Postgres `SerializationFailure`/`DeadlockDetected` (and Mongo/Neo4j conflicts) now map to `CONCURRENCY`, so **OCC retry fires on real serialization conflicts**. Mapped errors carry the interception `site`.

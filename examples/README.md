@@ -7,8 +7,7 @@ is worse than no example). Most run fully in-process on `forze_mock` — no Dock
 Layout:
 
 - **`quickstart/`** — the Get Started app (in-memory User CRUD on FastAPI).
-- **`recipes/<name>/`** — one directory per [docs recipe](../pages/docs/recipes/). Each has an
-  `app.py`; backend-coupled recipes also carry a `compose.yaml` + `justfile` (`just run`).
+- **`recipes/<name>/`** — one directory per docs recipe. Each has an `app.py`; backend-coupled recipes also carry a `compose.yaml` + `justfile` (`just run`).
 
 The docs pull their code straight from these files via snippet includes, so the snippets can't
 drift from what actually runs.
