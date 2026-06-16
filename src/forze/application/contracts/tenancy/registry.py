@@ -43,7 +43,7 @@ class TenantPoolStats:
 
 
 @attrs.define(slots=True)
-class TenantClientRegistry[C, R = str]:
+class TenantClientRegistry[C, R]:
     """LRU pool keyed by tenant id with optional fingerprint dedup.
 
     When ``guarded=True``, the underlying :class:`~forze.base.primitives.GuardedLruRegistry`

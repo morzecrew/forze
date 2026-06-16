@@ -112,7 +112,7 @@ class ChainExceptionMapper(ExceptionMapper):
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def map_pydantic(
+def map_pydantic(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,

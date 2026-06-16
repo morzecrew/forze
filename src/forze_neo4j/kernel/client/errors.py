@@ -35,7 +35,7 @@ _fallback = fallback_exception_mapper("Neo4j")
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _neo4j_eh(
+def _neo4j_eh(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,

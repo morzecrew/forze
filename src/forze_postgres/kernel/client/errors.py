@@ -32,7 +32,7 @@ FK_pattern = re.compile(
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _psycopg_eh(
+def _psycopg_eh(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,

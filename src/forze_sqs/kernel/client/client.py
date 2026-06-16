@@ -10,7 +10,7 @@ import asyncio
 import base64
 import math
 import re
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from re import Pattern
@@ -41,8 +41,8 @@ from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_de
 from forze.base.exceptions import exc
 
 from .._logger import logger
-from .errors import exc_interceptor
 from .constants import SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES
+from .errors import exc_interceptor
 from .port import SQSClientPort
 from .types import SQSQueueMessage
 from .value_objects import SQSConfig, SQSConnectionOpts
@@ -296,10 +296,7 @@ class SQSClient(SQSClientPort):
         is_fifo = queue.endswith(".fifo")
         base = queue[:-5] if is_fifo else queue
         base = _RE_UNSUPPORTED_CHARS.sub("_", base)
-        base = _RE_MULTI_UNDERSCORE.sub("_", base).strip("_")
-
-        if not base:
-            base = "queue"
+        base = _RE_MULTI_UNDERSCORE.sub("_", base).strip("_") or "queue"
 
         if is_fifo:
             max_base = 75  # 80 - len(".fifo")
@@ -585,10 +582,7 @@ class SQSClient(SQSClientPort):
 
         raw = system_attrs.get(_RECEIVE_COUNT_ATTR)
 
-        if isinstance(raw, str) and raw.isdigit():
-            return int(raw)
-
-        return None
+        return int(raw) if isinstance(raw, str) and raw.isdigit() else None
 
     # ....................... #
 
@@ -621,16 +615,13 @@ class SQSClient(SQSClientPort):
         attrs: dict[str, dict[str, str]] | None,
         system_attrs: dict[str, str] | None,
     ) -> datetime | None:
-        from_message_attr = SQSClient.__extract_attr(attrs, _ENQUEUED_AT_ATTR)
-
-        if from_message_attr:
-            try:
+        if from_message_attr := SQSClient.__extract_attr(attrs, _ENQUEUED_AT_ATTR):
+            with suppress(ValueError):
                 return datetime.fromisoformat(from_message_attr)
-            except ValueError:
-                pass
 
         if system_attrs:
             sent = system_attrs.get("SentTimestamp")
+
             if sent and sent.isdigit():
                 return datetime.fromtimestamp(int(sent) / 1000.0, tz=timezone.utc)
 
@@ -666,10 +657,7 @@ class SQSClient(SQSClientPort):
 
         seconds = int(resolved.total_seconds())
 
-        if seconds <= 0:
-            return None
-
-        return seconds
+        return None if seconds <= 0 else seconds
 
     # ....................... #
 
@@ -789,9 +777,7 @@ class SQSClient(SQSClientPort):
         per_message_headers: list[Mapping[str, str] | None]
 
         if message_headers is not None:
-            per_message_headers = [
-                {**(headers or {}), **mh} for mh in message_headers
-            ]
+            per_message_headers = [{**(headers or {}), **mh} for mh in message_headers]
         else:
             per_message_headers = [headers] * len(bodies)
 
@@ -810,10 +796,12 @@ class SQSClient(SQSClientPort):
 
             if header_event_id and len(bodies) == 1:
                 resolved_ids = [header_event_id]
+
             else:
                 resolved_ids = [uuid4().hex for _ in range(len(bodies))]
 
         queue_url = await self.__resolve_queue_url(queue)
+
         # Batch-wide attributes reused for every entry when message_headers is
         # absent (the common path); per-entry attributes built below otherwise.
         shared_msg_attrs = self.__build_message_attributes(
@@ -910,16 +898,17 @@ class SQSClient(SQSClientPort):
         def _entry_size(index: int) -> int:
             entry_headers = per_message_headers[index]
             header_bytes = (
-                sum(len(name.encode("utf-8")) + 6 + len(value.encode("utf-8")) for name, value in entry_headers.items())
+                sum(
+                    len(name.encode("utf-8")) + 6 + len(value.encode("utf-8"))
+                    for name, value in entry_headers.items()
+                )
                 if entry_headers
                 else 0
             )
             body_b64_bytes = ((len(bodies[index]) + 2) // 3) * 4
             return body_b64_bytes + header_bytes + _SQS_RESERVED_ATTR_BYTES
 
-        chunks: list[
-            tuple[list[bytes], list[str], list[Mapping[str, str] | None]]
-        ] = []
+        chunks: list[tuple[list[bytes], list[str], list[Mapping[str, str] | None]]] = []
         chunk_indices: list[int] = []
         chunk_bytes = 0
 
@@ -1192,13 +1181,13 @@ class SQSClient(SQSClientPort):
                 {"Id": f"m{i}", "ReceiptHandle": receipt}
                 for i, (_, receipt) in enumerate(chunk)
             ]
+
             resp = await c.delete_message_batch(
                 QueueUrl=queue_url,
                 Entries=entries,  # type: ignore[arg-type]
             )
-            failed = resp.get("Failed") or []
 
-            if failed:
+            if failed := resp.get("Failed") or []:
                 failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
 
                 raise exc.internal(

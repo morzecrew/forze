@@ -27,7 +27,7 @@ _fallback = fallback_exception_mapper("Redis")
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _redis_eh(
+def _redis_eh(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,

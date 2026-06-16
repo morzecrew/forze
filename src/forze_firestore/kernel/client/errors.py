@@ -28,7 +28,7 @@ _fallback = fallback_exception_mapper("Firestore")
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _firestore_eh(
+def _firestore_eh(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,

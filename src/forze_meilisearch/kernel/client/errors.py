@@ -32,7 +32,7 @@ _fallback = fallback_exception_mapper("Meilisearch")
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract, arg-type]
-def _meilisearch_eh(
+def _meilisearch_eh(  # skipcq: PY-R1000
     exc_: BaseException,
     *,
     site: str,

@@ -25,7 +25,7 @@ _fallback = fallback_exception_mapper("RabbitMQ")
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _rabbitmq_eh(
+def _rabbitmq_eh(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,
