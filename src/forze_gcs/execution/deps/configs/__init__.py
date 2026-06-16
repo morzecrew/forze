@@ -48,3 +48,9 @@ class GCSStorageConfig(TenantAwareIntegrationConfig):
     def __attrs_post_init__(self) -> None:
         if is_static_named_resource(self.bucket) and not self.bucket:
             raise exc.configuration("GCS storage config requires bucket.")
+
+        if self.kms_key_name is not None and not self.kms_key_name.strip():
+            raise exc.configuration(
+                "GCS kms_key_name must not be blank; pass None for "
+                "Google-managed default encryption.",
+            )

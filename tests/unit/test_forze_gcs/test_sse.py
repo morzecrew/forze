@@ -211,3 +211,11 @@ def test_build_sse_carries_kms_key_name() -> None:
     sse = _build_sse(config)
     assert sse is not None
     assert sse.key_id == "kms/key"
+
+
+def test_blank_kms_key_name_rejected() -> None:
+    # A whitespace-only key would silently pass a bad CMEK key downstream.
+    from forze.base.exceptions import CoreException
+
+    with pytest.raises(CoreException):
+        GCSStorageConfig(bucket="b", kms_key_name="   ")

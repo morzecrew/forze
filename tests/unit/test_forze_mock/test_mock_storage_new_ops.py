@@ -209,6 +209,19 @@ async def test_move_deletes_source(adapter: MockStorageAdapter) -> None:
 
 
 @pytest.mark.asyncio
+async def test_self_move_is_noop_no_data_loss(adapter: MockStorageAdapter) -> None:
+    # move(k, k) is copy-then-delete; without the guard the delete would destroy
+    # the object. It must be a no-op that leaves the object intact.
+    src = await _upload(adapter, b"payload")
+
+    head = await adapter.move(src.key, src.key)
+
+    intact = await adapter.download(src.key)
+    assert intact.data == b"payload"
+    assert head.size == len(b"payload")
+
+
+@pytest.mark.asyncio
 async def test_copy_missing_source_raises(adapter: MockStorageAdapter) -> None:
     with pytest.raises(CoreException):
         await adapter.copy("nope", "dst")

@@ -88,16 +88,17 @@ def build_storage_registry(
     )
 
     # Read-only ops acquire only the query port. PRESIGN_DOWNLOAD mints a *read*
-    # grant, so it is a query like LIST/DOWNLOAD; LIST_PARTS only reads the
-    # session's part listing. PRESIGN_UPLOAD and the write-side multipart ops
-    # (BEGIN/PRESIGN_PART/COMPLETE/ABORT) stay commands — they acquire the
-    # write-guarded command/uploads ports, exactly like UPLOAD/DELETE.
+    # grant, so it is a query like LIST/DOWNLOAD. PRESIGN_UPLOAD and ALL the
+    # multipart-session ops (BEGIN/PRESIGN_PART/LIST_PARTS/COMPLETE/ABORT) stay
+    # commands — they acquire the write-guarded command/uploads ports, exactly
+    # like UPLOAD/DELETE. LIST_PARTS is read-only in intent but acquires the
+    # write-guarded uploads port, so it must not be dispatched as a QUERY (the
+    # read-only guard forbids the uploads grant).
     reg = (
         reg.bind(
             StorageKernelOp.LIST,
             StorageKernelOp.DOWNLOAD,
             StorageKernelOp.PRESIGN_DOWNLOAD,
-            StorageKernelOp.LIST_PARTS,
             namespace=ns,
         )
         .as_query()

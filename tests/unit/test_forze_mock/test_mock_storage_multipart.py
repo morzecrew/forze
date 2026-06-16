@@ -114,6 +114,21 @@ async def test_complete_requires_parts(adapter: MockStorageAdapter) -> None:
 
 
 @pytest.mark.asyncio
+async def test_complete_rejects_duplicate_part_numbers(
+    adapter: MockStorageAdapter,
+) -> None:
+    session = await adapter.begin_upload("dup.bin")
+    p1 = adapter.deposit_part(session, 1, b"aaa")
+
+    # Two parts sharing a part_number would silently corrupt the assembly.
+    with pytest.raises(CoreException, match="[Dd]uplicate"):
+        await adapter.complete_upload(
+            session,
+            [p1, UploadPart(part_number=1, etag="other", size=3)],
+        )
+
+
+@pytest.mark.asyncio
 async def test_complete_unknown_part_raises(adapter: MockStorageAdapter) -> None:
     session = await adapter.begin_upload("partial.bin")
     adapter.deposit_part(session, 1, b"aaa")

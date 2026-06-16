@@ -9,7 +9,7 @@ from .storage import (
 # ----------------------- #
 
 __all__ = [
-    "ConfigurableGCSStorageQuery",
     "ConfigurableGCSStorageCommand",
+    "ConfigurableGCSStorageQuery",
     "ConfigurableGCSStorageUploads",
 ]

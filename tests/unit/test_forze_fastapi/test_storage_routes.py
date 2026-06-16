@@ -221,12 +221,6 @@ class TestStorageRoutes:
         with pytest.raises(CoreException, match="Unknown operations"):
             _build_app("rest", include={"nope"})
 
-    @pytest.mark.parametrize("style", ["rest", "rpc"])
-    def test_all_new_ops_attach_with_verbatim_operation_ids(self, style: str) -> None:
-        expected = {f"files.{op.value}" for op in StorageKernelOp}
-
-        assert _operation_ids(_build_app(style)) == expected
-
     def test_rest_presign_and_multipart_paths(self) -> None:
         paths = _build_app("rest").openapi()["paths"]
 

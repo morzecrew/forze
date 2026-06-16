@@ -82,7 +82,10 @@ def _session_from_dto(dto: UploadSessionDTO) -> UploadSession:
     return UploadSession(
         key=dto.key,
         upload_id=dto.upload_id,
-        bucket=dto.bucket,
+        # Never propagate a client-supplied bucket: the adapter always resolves
+        # the tenant bucket from the route, so a forged bucket must not redirect
+        # the operation to another bucket.
+        bucket=None,
         content_type=dto.content_type,
     )
 

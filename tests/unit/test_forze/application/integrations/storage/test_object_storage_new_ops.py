@@ -186,6 +186,25 @@ async def test_move_copies_then_deletes_source(
     assert del_kwargs == {"bucket": "test-bucket", "key": "src/a"}
 
 
+@pytest.mark.asyncio
+async def test_self_move_skips_delete_no_data_loss(
+    adapter: ObjectStorageAdapter,
+) -> None:
+    # move(k, k): copy-then-delete would destroy the object, so the delete must
+    # be skipped and the head of the (intact) object returned.
+    adapter.client.copy_object = AsyncMock()
+    adapter.client.delete_object = AsyncMock()
+    adapter.client.head_object = AsyncMock(
+        return_value=ObjectStorageHead(content_type="text/plain", size=3, etag="e"),
+    )
+
+    head = await adapter.move("same/k", "same/k")
+
+    adapter.client.delete_object.assert_not_called()
+    assert head.etag == "e"
+    assert head.size == 3
+
+
 # ----------------------- #
 # download_range
 

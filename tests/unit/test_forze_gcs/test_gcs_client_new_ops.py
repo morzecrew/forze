@@ -132,8 +132,31 @@ async def test_conditional_other_error_propagates() -> None:
     fake.download = AsyncMock(side_effect=_response_error(403))
     client = _client(fake)
 
-    with pytest.raises(Exception):
+    with pytest.raises(CoreException):
         await client.download_bytes_conditional("b", "k", if_none_match="x")
+
+
+# ----------------------- #
+# _http_date
+
+
+def test_http_date_naive_treated_as_utc() -> None:
+    from forze_gcs.kernel.client.client import _http_date
+
+    dt = datetime(2026, 1, 2, 10, 0, 0)  # naive
+    assert _http_date(dt) == "Fri, 02 Jan 2026 10:00:00 GMT"
+
+
+def test_http_date_non_utc_aware_converted_to_gmt() -> None:
+    from datetime import timedelta
+
+    from forze_gcs.kernel.client.client import _http_date
+
+    # +02:00 local → 08:00 GMT. ``format_datetime(usegmt=True)`` requires UTC,
+    # so a non-UTC tz-aware value must be converted, not stamped.
+    tz = timezone(timedelta(hours=2))
+    dt = datetime(2026, 1, 2, 10, 0, 0, tzinfo=tz)
+    assert _http_date(dt) == "Fri, 02 Jan 2026 08:00:00 GMT"
 
 
 # ----------------------- #

@@ -57,6 +57,27 @@ default_b64_codec = AsciiB64Codec()
 # ....................... #
 
 
+def _reject_duplicate_part_numbers(parts: Sequence[UploadPart]) -> None:
+    """Reject a parts list with a repeated ``part_number`` before assembly.
+
+    Duplicate part numbers would silently corrupt the assembled object (a later
+    part overwriting an earlier one, or both being composed), so fail closed.
+    """
+
+    seen: set[int] = set()
+
+    for part in parts:
+        if part.part_number in seen:
+            raise exc.validation(
+                f"Duplicate part_number in complete_upload: {part.part_number}",
+            )
+
+        seen.add(part.part_number)
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ObjectStorageAdapter(
     StorageQueryPort,
@@ -699,7 +720,8 @@ class ObjectStorageAdapter(
                 sse=self.sse,
             )
             h = await self.client.head_object(bucket=bucket, key=dst_key)
-            await self.client.delete_object(bucket=bucket, key=src_key)
+            if src_key != dst_key:
+                await self.client.delete_object(bucket=bucket, key=src_key)
 
         return ObjectHead(
             content_type=h.content_type,
@@ -879,7 +901,7 @@ class ObjectStorageAdapter(
             )
 
         self._validate_key(session.key)
-        bucket = session.bucket or await self._resolved_bucket()
+        bucket = await self._resolved_bucket()
 
         async with self.client.client():
             return await self.client.presign_multipart_part(
@@ -897,7 +919,7 @@ class ObjectStorageAdapter(
 
         self._reject_multipart_when_encrypted()
         self._validate_key(session.key)
-        bucket = session.bucket or await self._resolved_bucket()
+        bucket = await self._resolved_bucket()
 
         async with self.client.client():
             parts = await self.client.list_multipart_parts(
@@ -939,7 +961,9 @@ class ObjectStorageAdapter(
                 "complete_upload requires at least one part",
             )
 
-        bucket = session.bucket or await self._resolved_bucket()
+        _reject_duplicate_part_numbers(parts)
+
+        bucket = await self._resolved_bucket()
 
         client_parts = [
             ObjectStoragePartInfo(
@@ -977,7 +1001,7 @@ class ObjectStorageAdapter(
 
         self._reject_multipart_when_encrypted()
         self._validate_key(session.key)
-        bucket = session.bucket or await self._resolved_bucket()
+        bucket = await self._resolved_bucket()
 
         async with self.client.client():
             await self.client.abort_multipart_upload(

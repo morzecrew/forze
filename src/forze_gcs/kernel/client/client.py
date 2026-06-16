@@ -1095,8 +1095,13 @@ def _http_date(value: datetime) -> str:
 
     from email.utils import format_datetime
 
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+    # ``usegmt=True`` requires a UTC datetime: stamp naive values as UTC and
+    # convert tz-aware non-UTC values, so a +02:00 input formats correctly.
+    value = (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
 
     return format_datetime(value, usegmt=True)
 

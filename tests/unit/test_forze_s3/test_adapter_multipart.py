@@ -46,6 +46,7 @@ class _FakeClient:
         self.complete_calls: list[dict[str, Any]] = []
         self.abort_calls: list[dict[str, Any]] = []
         self.list_result: list[ObjectStoragePartInfo] = []
+        self.list_calls: list[dict[str, Any]] = []
         self.upload_id = "UID-xyz"
 
     @asynccontextmanager
@@ -99,6 +100,7 @@ class _FakeClient:
     async def list_multipart_parts(
         self, *, bucket: str, key: str, upload_id: str
     ) -> list[ObjectStoragePartInfo]:
+        self.list_calls.append({"bucket": bucket, "key": key, "upload_id": upload_id})
         return self.list_result
 
     async def complete_multipart_upload(
@@ -250,6 +252,83 @@ async def test_abort_forwards() -> None:
     await adapter.abort_upload(session)
 
     assert client.abort_calls[0]["upload_id"] == "UID-xyz"
+
+
+# ----------------------- #
+# Forged-bucket isolation (a client-supplied session.bucket must be ignored;
+# the adapter always operates on the tenant-resolved bucket).
+
+
+def _forged_session(client: _FakeClient):
+    from forze.application.contracts.storage import UploadSession
+
+    return UploadSession(
+        key="k",
+        upload_id=client.upload_id,
+        bucket="attacker-bucket",
+        content_type=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_parts_ignores_forged_session_bucket() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client)
+
+    await adapter.list_parts(_forged_session(client))
+
+    assert client.list_calls[0]["bucket"] == "bkt"
+
+
+@pytest.mark.asyncio
+async def test_presign_part_ignores_forged_session_bucket() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client)
+
+    await adapter.presign_part(_forged_session(client), 1, expires_in=EXPIRES)
+
+    assert client.presign_calls[0]["bucket"] == "bkt"
+
+
+@pytest.mark.asyncio
+async def test_complete_ignores_forged_session_bucket() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client)
+
+    await adapter.complete_upload(
+        _forged_session(client),
+        [UploadPart(part_number=1, etag="e1")],
+    )
+
+    assert client.complete_calls[0]["bucket"] == "bkt"
+
+
+@pytest.mark.asyncio
+async def test_abort_ignores_forged_session_bucket() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client)
+
+    await adapter.abort_upload(_forged_session(client))
+
+    assert client.abort_calls[0]["bucket"] == "bkt"
+
+
+@pytest.mark.asyncio
+async def test_complete_rejects_duplicate_part_numbers() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client)
+    session = await adapter.begin_upload("k")
+
+    with pytest.raises(CoreException, match="[Dd]uplicate"):
+        await adapter.complete_upload(
+            session,
+            [
+                UploadPart(part_number=1, etag="e1"),
+                UploadPart(part_number=1, etag="e2"),
+            ],
+        )
+
+    assert client.complete_calls == []
 
 
 # ----------------------- #

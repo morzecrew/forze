@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta
 
+from pydantic import Field
+
 from forze.domain.models import BaseDTO
 from forze_kits.dto.paginated import Pagination
 
@@ -256,8 +258,8 @@ class ObjectHeadDTO(BaseDTO):
     last_modified: datetime | None = None
     """Backend last-modification timestamp, or ``None`` when unavailable."""
 
-    metadata: dict[str, str] = {}
+    metadata: dict[str, str] = Field(default_factory=dict)
     """User-defined metadata key-value pairs as the backend stores them."""
 
-    tags: dict[str, str] = {}
+    tags: dict[str, str] = Field(default_factory=dict)
     """Object tags (population follows the backend's ``include_tags`` guarantee)."""

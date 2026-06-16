@@ -282,6 +282,13 @@ def test_sse_s3_forbids_key_id() -> None:
         S3ServerSideEncryption(mode="s3", kms_key_id="kid")
 
 
+def test_sse_invalid_mode_rejected() -> None:
+    # ``mode`` is a Literal (not enforced at runtime), so the config must reject
+    # an out-of-domain value itself.
+    with pytest.raises(CoreException):
+        S3ServerSideEncryption(mode="bad")  # type: ignore[arg-type]
+
+
 def test_sse_kms_with_key_id_is_valid() -> None:
     sse = S3ServerSideEncryption(mode="kms", kms_key_id="kid")
     assert sse.mode == "kms"

@@ -40,6 +40,11 @@ class S3ServerSideEncryption:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.mode not in {"none", "s3", "kms"}:
+            raise exc.configuration(
+                f"S3 SSE mode must be one of 'none', 's3', 'kms', got {self.mode!r}.",
+            )
+
         if self.mode == "kms" and not self.kms_key_id:
             raise exc.configuration(
                 "S3 SSE-KMS requires kms_key_id (mode='kms').",

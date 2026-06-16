@@ -5,8 +5,7 @@ from __future__ import annotations
 import builtins
 import hashlib
 import mimetypes
-
-import msgspec
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import (
     Any,
@@ -14,8 +13,9 @@ from typing import (
     Mapping,
     final,
 )
+
 import attrs
-from collections.abc import Sequence
+import msgspec
 
 from forze.application.contracts.storage import (
     DownloadedObject,
@@ -29,6 +29,9 @@ from forze.application.contracts.storage import (
     UploadedObject,
     UploadPart,
     UploadSession,
+)
+from forze.application.integrations.storage.adapter import (
+    _reject_duplicate_part_numbers,  # pyright: ignore[reportPrivateUsage]
 )
 from forze.application.integrations.storage.client import (
     ObjectStorageSSE,
@@ -201,7 +204,7 @@ class MockStorageAdapter(
 
         total = len(payload)
 
-        if start >= total and total > 0:
+        if start >= total > 0:
             raise unsatisfiable_range(start, total)
 
         last = total - 1 if end is None else min(end, total - 1)
@@ -422,7 +425,7 @@ class MockStorageAdapter(
             self._payloads()[dst_key] = payload
             self._record_sse(dst_key)
 
-            if delete_source:
+            if delete_source and src_key != dst_key:
                 self._objects().pop(src_key, None)
                 self._payloads().pop(src_key, None)
                 self.state.storage_sse.get(self._bucket(), {}).pop(src_key, None)
@@ -636,6 +639,8 @@ class MockStorageAdapter(
 
         if not parts:
             raise exc.validation("complete_upload requires at least one part")
+
+        _reject_duplicate_part_numbers(parts)
 
         now = utcnow()
         content_type = (

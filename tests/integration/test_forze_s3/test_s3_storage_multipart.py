@@ -72,7 +72,10 @@ async def test_multipart_full_flow_parallel(
 
     async with httpx.AsyncClient(timeout=60) as http:
         etags = await asyncio.gather(
-            *(_put_part(http, url.url, body) for url, body in zip(urls, bodies))
+            *(
+                _put_part(http, url.url, body)
+                for url, body in zip(urls, bodies, strict=True)
+            )
         )
 
     parts = [

@@ -196,7 +196,7 @@ async def test_conditional_other_error_propagates() -> None:
     client, tok = _client_with(api)
 
     try:
-        with pytest.raises(Exception):
+        with pytest.raises(CoreException):
             await client.download_bytes_conditional("b", "k", if_none_match="x")
     finally:
         client._S3Client__ctx_client.reset(tok)
