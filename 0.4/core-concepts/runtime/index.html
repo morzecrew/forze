@@ -4106,8 +4106,8 @@
 <p>The <strong>runtime</strong> turns a pile of specifications, operations, and adapters into a
 running service. It owns three things: the dependency wiring, the lifecycle of
 infrastructure clients, and the per-request execution context.</p>
-<p><a class="glightbox" data-title="DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope" data-type="image" href="../../_diagrams/light/execution-runtime.svg"><img alt="DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope" src="../../_diagrams/light/execution-runtime.svg#only-light" /></a>
-<a class="glightbox" data-title="DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope" data-type="image" href="../../_diagrams/dark/execution-runtime.svg"><img alt="DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope" src="../../_diagrams/dark/execution-runtime.svg#only-dark" /></a></p>
+<p><a class="glightbox" data-gallery="light" data-title="DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope" data-type="image" href="../../_diagrams/light/execution-runtime.svg#only-light"><img alt="DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope" src="../../_diagrams/light/execution-runtime.svg#only-light" /></a>
+<a class="glightbox" data-gallery="dark" data-title="DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope" data-type="image" href="../../_diagrams/dark/execution-runtime.svg#only-dark"><img alt="DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope" src="../../_diagrams/dark/execution-runtime.svg#only-dark" /></a></p>
 <h2 id="two-registries-frozen">Two registries, frozen<a class="headerlink" href="#two-registries-frozen" title="Permanent link">&para;</a></h2>
 <p>You describe the runtime with two registries, then <strong>freeze</strong> them — the runtime
 takes frozen, validated inputs and does not coerce them:</p>
