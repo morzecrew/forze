@@ -513,6 +513,17 @@ def _route_patched_reg(
     *,
     route: str = "pg",
 ) -> OperationRegistry:
+    """
+    Create an operation registry with transaction routes configured for selected operations.
+    
+    Parameters:
+        handlers (dict[str, object]): Mapping of operation keys to handler objects
+        selector (StrKeySelector.Spec): Selector specification determining which operations receive the route
+        route (str): The transaction route value to apply
+    
+    Returns:
+        OperationRegistry: A registry with transaction routes applied to matching operations
+    """
     return (
         OperationRegistry(handlers=handlers)  # type: ignore[arg-type]
         .patch(selector)
@@ -558,7 +569,9 @@ class TestMaterializePatches:
             OperationRegistry.merge(local, other)
 
     def test_unmaterialized_broad_patch_reaches_sibling_when_allowed(self) -> None:
-        """The late-binding power of a live patch, made explicit via the flag."""
+        """
+        Verifies that an unmaterialized broad patch from one registry reaches operations in a merged sibling registry when cross_registry=True is enabled.
+        """
 
         local = _route_patched_reg(
             {"a": lambda _ctx: None}, str_key_selector.all_keys()

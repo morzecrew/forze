@@ -499,6 +499,17 @@ class SQSClient(SQSClientPort):
         # reserved transport attributes are written after them so they always
         # win on collision. Note AWS caps message attributes at 10 per
         # message — headers count against that limit.
+        """
+        Construct an SQS MessageAttributes dictionary from caller headers and metadata.
+        
+        Includes caller-provided headers as String attributes, always sets a base64
+        encoding marker attribute, and optionally adds metadata attributes for message
+        type, message key, and enqueued timestamp (formatted as ISO-8601 if present).
+        
+        Returns:
+            An SQS MessageAttributes dictionary where each attribute name maps to a
+            dict with "StringValue" and "DataType" keys.
+        """
         attrs_: dict[str, dict[str, str]] = {}
 
         if headers:

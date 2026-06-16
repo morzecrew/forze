@@ -58,21 +58,15 @@ class RegistryMerge:
         override: bool = False,
         cross_registry: bool = False,
     ) -> Self:
-        """Merge multiple registry contents into one.
-
+        """
+        Merge multiple registry contents into one.
+        
         Duplicate operation keys (handlers, plans, descriptors) and duplicate patch
-        selectors are a configuration error naming the colliding keys — merging is
-        meant to combine *disjoint* registries. Pass ``override=True`` to explicitly
-        let later parts replace earlier ones instead.
-
-        A **plan patch** is late-bound: its selector resolves at freeze against the
-        full merged key set, so a patch authored in one part can reach operations
-        contributed by another. That cross-registry reach is fail-closed — if any
-        part's patch matches another part's operations, the merge raises and names
-        the offending selectors and operations. Scope the patch with ``namespace=``,
-        settle it with ``materialize_patches()`` before merging, or pass
-        ``cross_registry=True`` to allow the reach explicitly (logged for the
-        record). A patch matching only its own part's operations is never flagged.
+        selectors raise a configuration error unless override=True. Plan patches are
+        late-bound and resolve against the full merged key set, so a patch from one
+        part may reach operations contributed by another. Cross-registry patch reach
+        raises a configuration error unless cross_registry=True; when allowed, it is
+        logged. Patches that reach only operations from their own part are not flagged.
         """
 
         merged_handlers: dict[StrKey, HandlerFactory] = {}
@@ -84,6 +78,16 @@ class RegistryMerge:
         crossings: dict[StrKeySelector.Spec, set[str]] = {}
 
         def _conflict(kind: str, keys: set[str]) -> CoreException:
+            """
+            Construct a configuration exception for duplicate registry entries.
+            
+            Parameters:
+                kind (str): Category of duplicate entries (e.g., 'handler factories', 'operation plans').
+                keys (set[str]): Operation keys that are duplicated.
+            
+            Returns:
+                CoreException: A configuration exception with details about the conflict.
+            """
             return exc.configuration(
                 f"Operation registry merge conflict — duplicate {kind} for "
                 f"operations: {sorted(keys)}. Later registries would silently "
@@ -94,6 +98,13 @@ class RegistryMerge:
             patches: "tuple[PlanPatch, ...] | list[PlanPatch]",
             handlers: StrKeyMapping[HandlerFactory],
         ) -> None:
+            """
+            Record which operations each plan patch selector would govern.
+            
+            Parameters:
+            	patches (tuple[PlanPatch, ...] | list[PlanPatch]): Collection of plan patches to check
+            	handlers (StrKeyMapping[HandlerFactory]): Mapping of operations to check against patch selectors
+            """
             for patch in patches:
                 for op in handlers:
                     if str_key_selector.matches(patch.selector, str(op)):
@@ -194,6 +205,17 @@ class RegistryMerge:
         override: bool = False,
         cross_registry: bool = False,
     ) -> Self:
+        """
+        Merge this registry with others, with configurable handling of duplicates and cross-registry patches.
+        
+        Parameters:
+            *parts (RegistryMerge): Additional registries to merge with this one.
+            override (bool): If True, allows duplicate keys in handlers, plans, or descriptors, with earlier entries replaced. Defaults to False.
+            cross_registry (bool): If True, allows plan patches to reach operations from other registries. If False, raises an error on cross-registry patch reach. Defaults to False.
+        
+        Returns:
+            RegistryMerge: A new merged registry combining handlers, plans, descriptors, and patches from all parts.
+        """
         return type(self).merge(
             self, *parts, override=override, cross_registry=cross_registry
         )
