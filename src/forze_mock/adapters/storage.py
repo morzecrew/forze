@@ -231,8 +231,12 @@ class MockStorageAdapter(
 
         Requires at least one condition. ``if_none_match`` compares the caller's
         ETag against this object's stable MD5; ``if_modified_since`` compares the
-        upload time. When either condition reports "not modified", returns
-        ``None`` (the 304 equivalent); otherwise returns the body.
+        upload time. Returns ``None`` (the 304 equivalent) when the active
+        condition reports "not modified"; otherwise returns the body.
+
+        Per RFC 7232 §6, ``If-None-Match`` takes precedence: when it is present
+        ``If-Modified-Since`` is ignored entirely, matching what a real S3/GCS
+        ``GetObject`` does with both headers set.
         """
 
         if if_none_match is None and if_modified_since is None:
@@ -250,13 +254,12 @@ class MockStorageAdapter(
 
         etag = self._etag(payload)
 
-        not_modified = False
-
-        if if_none_match is not None and if_none_match.strip('"') == etag:
-            not_modified = True
-
-        if if_modified_since is not None and obj.created_at <= if_modified_since:
-            not_modified = True
+        if if_none_match is not None:
+            not_modified = if_none_match.strip('"') == etag
+        elif if_modified_since is not None:
+            not_modified = obj.created_at <= if_modified_since
+        else:  # pragma: no cover - guarded above
+            not_modified = False
 
         if not_modified:
             return None

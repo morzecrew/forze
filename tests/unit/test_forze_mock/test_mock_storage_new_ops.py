@@ -165,6 +165,26 @@ async def test_download_if_changed_modified_since(
 
 
 @pytest.mark.asyncio
+async def test_download_if_changed_etag_takes_precedence_over_date(
+    adapter: MockStorageAdapter,
+) -> None:
+    # RFC 7232 §6: when If-None-Match is present, If-Modified-Since is ignored.
+    # ETag mismatches (changed) but the date alone would say "not modified" —
+    # the body must still be returned, matching a real S3/GCS GetObject.
+    with bind_time_source(FrozenTimeSource(INSTANT)):
+        stored = await _upload(adapter, b"hello world")
+
+    result = await adapter.download_if_changed(
+        stored.key,
+        if_none_match='"deadbeef"',
+        if_modified_since=INSTANT + timedelta(hours=1),
+    )
+
+    assert result is not None
+    assert result.data == b"hello world"
+
+
+@pytest.mark.asyncio
 async def test_download_if_changed_requires_a_condition(
     adapter: MockStorageAdapter,
 ) -> None:
