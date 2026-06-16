@@ -392,6 +392,12 @@ class OperationRegistry:
     # ....................... #
 
     def _resolution(self) -> PlanResolution:
+        """
+        Build a plan resolution from the registry's current plans and patches.
+        
+        Returns:
+        	PlanResolution containing the registry's plans and patches.
+        """
         return PlanResolution(plans=self._plans, patches=self._patches)
 
     # ....................... #
@@ -498,6 +504,17 @@ class OperationRegistry:
         override: bool = False,
         cross_registry: bool = False,
     ) -> Self:
+        """
+        Merge this registry with one or more other registries.
+        
+        Parameters:
+        	registries: Other registries to merge with this one
+        	override: Whether to allow overriding existing operations
+        	cross_registry: Whether to allow cross-registry references
+        
+        Returns:
+        	A new registry with merged handlers, plans, descriptors, and patches
+        """
         return type(self).merge(
             self, *registries, override=override, cross_registry=cross_registry
         )
@@ -505,7 +522,12 @@ class OperationRegistry:
     # ....................... #
 
     def freeze(self) -> FrozenOperationRegistry:
-        """Freeze the operation registry."""
+        """
+        Convert the mutable registry to an immutable form validated for execution.
+        
+        Returns:
+            FrozenOperationRegistry: The frozen registry with resolved and validated plans.
+        """
 
         resolution = self._resolution()
         RegistryFreezeValidator.validate_all(self._handlers, resolution)

@@ -96,16 +96,23 @@ def resolve_namespace(
     ns: StrKeyNamespace | None,
     resource: str | None,
 ) -> StrKeyNamespace:
-    """Resolve the operation namespace from an explicit *ns* or a *resource* prefix.
-
-    Exactly one must be given. *ns* is the full-control form (custom separator,
-    pre-built object); *resource* is a convenience that builds
-    ``StrKeyNamespace(prefix=resource)`` with the default separator, so callers
-    can pass the resource name as a plain string instead of constructing (or
-    reaching into ``spec.default_namespace`` for) the namespace. Either way the
-    resolved namespace must match the prefix the operations were *registered*
-    under — the kit builders default to ``spec.default_namespace`` — since it is
-    only used to look operations up in the catalog.
+    """
+    Resolve the operation namespace from either an explicit namespace or a resource prefix.
+    
+    Exactly one of `ns` or `resource` must be provided. If `ns` is given, it is returned
+    directly; if `resource` is given, a namespace is constructed from it using the default
+    separator. The resolved namespace must match the prefix under which operations were
+    registered in the catalog.
+    
+    Parameters:
+    	ns (StrKeyNamespace | None): An explicit namespace object.
+    	resource (str | None): A resource prefix string to construct the namespace from.
+    
+    Returns:
+    	StrKeyNamespace: The resolved namespace.
+    
+    Raises:
+    	ConfigurationError: If neither or both `ns` and `resource` are provided.
     """
 
     if ns is not None and resource is None:
@@ -144,7 +151,15 @@ def require_input_type(
     input_type: type[BaseModel] | None,
     op: str,
 ) -> type[BaseModel]:
-    """Fail loud when a builder needs the descriptor's input DTO and it is absent."""
+    """
+    Ensure an operation's input DTO type is available for route schema derivation.
+    
+    Returns:
+        type[BaseModel]: The input DTO type.
+    
+    Raises:
+        exc.configuration: If the operation lacks a descriptor with an input type.
+    """
 
     if input_type is None:
         raise exc.configuration(

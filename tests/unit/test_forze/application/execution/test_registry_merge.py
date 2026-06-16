@@ -102,6 +102,12 @@ def test_merge_patch_selector_conflict_override_last_wins() -> None:
 
 
 def _all_keys_patch() -> PlanPatch:
+    """
+    Create a plan patch that targets all keys.
+    
+    Returns:
+        PlanPatch: A patch with a selector matching all keys and an empty operation plan.
+    """
     return PlanPatch(selector=str_key_selector.all_keys(), plan=OperationPlan())
 
 
