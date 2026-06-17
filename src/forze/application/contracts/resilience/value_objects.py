@@ -197,6 +197,14 @@ class BulkheadStrategy:
     ``queue_target`` so the starved tail is shed instead of parked forever.
     Requires ``max_queue >= 1``."""
 
+    prioritized: bool = False
+    """Criticality-aware shedding (Netflix-style prioritized load shedding).
+    When set, the per-request :class:`~forze.application.execution.context.Criticality`
+    drives admission and CoDel shedding: a full queue admits a higher-criticality
+    arrival by shedding the lowest-criticality waiter, and lower tiers are shed
+    sooner under sustained congestion. A no-op while every request shares a tier.
+    Requires ``max_queue >= 1``."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -212,20 +220,19 @@ class BulkheadStrategy:
         if self.queue_interval.total_seconds() <= 0:
             raise exc.configuration("Bulkhead queue_interval must be positive")
 
-        if (
-            self.queue_target is not None
-            and self.queue_target >= self.queue_interval
-        ):
+        if self.queue_target is not None and self.queue_target >= self.queue_interval:
             raise exc.configuration(
                 "Bulkhead queue_target must be smaller than queue_interval"
             )
 
         if (
-            self.queue_target is not None or self.queue_adaptive_lifo
+            self.queue_target is not None
+            or self.queue_adaptive_lifo
+            or self.prioritized
         ) and self.max_queue < 1:
             raise exc.configuration(
-                "Bulkhead queue management (queue_target / queue_adaptive_lifo) "
-                "requires max_queue >= 1"
+                "Bulkhead queue management (queue_target / queue_adaptive_lifo / "
+                "prioritized) requires max_queue >= 1"
             )
 
 
@@ -309,13 +316,25 @@ class AdaptiveBulkheadStrategy:
     ``queue_target`` so the starved tail is shed instead of parked forever.
     Requires ``max_queue >= 1``."""
 
+    prioritized: bool = False
+    """Criticality-aware shedding (Netflix-style prioritized load shedding).
+    When set, the per-request :class:`~forze.application.execution.context.Criticality`
+    drives admission and CoDel shedding: a full queue admits a higher-criticality
+    arrival by shedding the lowest-criticality waiter, and lower tiers are shed
+    sooner under sustained congestion. A no-op while every request shares a tier.
+    Requires ``max_queue >= 1``."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if self.latency_threshold.total_seconds() <= 0:
-            raise exc.configuration("Adaptive bulkhead latency_threshold must be positive")
+            raise exc.configuration(
+                "Adaptive bulkhead latency_threshold must be positive"
+            )
 
-        if self.latency_quantile is not None and not (0.0 < self.latency_quantile < 1.0):
+        if self.latency_quantile is not None and not (
+            0.0 < self.latency_quantile < 1.0
+        ):
             raise exc.configuration(
                 "Adaptive bulkhead latency_quantile must be in (0, 1)"
             )
@@ -346,20 +365,19 @@ class AdaptiveBulkheadStrategy:
         if self.queue_interval.total_seconds() <= 0:
             raise exc.configuration("Bulkhead queue_interval must be positive")
 
-        if (
-            self.queue_target is not None
-            and self.queue_target >= self.queue_interval
-        ):
+        if self.queue_target is not None and self.queue_target >= self.queue_interval:
             raise exc.configuration(
                 "Bulkhead queue_target must be smaller than queue_interval"
             )
 
         if (
-            self.queue_target is not None or self.queue_adaptive_lifo
+            self.queue_target is not None
+            or self.queue_adaptive_lifo
+            or self.prioritized
         ) and self.max_queue < 1:
             raise exc.configuration(
-                "Bulkhead queue management (queue_target / queue_adaptive_lifo) "
-                "requires max_queue >= 1"
+                "Bulkhead queue management (queue_target / queue_adaptive_lifo / "
+                "prioritized) requires max_queue >= 1"
             )
 
 

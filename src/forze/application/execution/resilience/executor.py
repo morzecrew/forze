@@ -763,6 +763,7 @@ class InProcessResilienceExecutor:
                 ),
                 queue_interval_s=strat.queue_interval.total_seconds(),
                 queue_adaptive_lifo=strat.queue_adaptive_lifo,
+                prioritized=strat.prioritized,
             )
             self._bulkheads[key] = state
 
@@ -797,6 +798,7 @@ class InProcessResilienceExecutor:
                 ),
                 queue_interval_s=strat.queue_interval.total_seconds(),
                 queue_adaptive_lifo=strat.queue_adaptive_lifo,
+                prioritized=strat.prioritized,
             )
             self._adaptive_bulkheads[key] = state
 
