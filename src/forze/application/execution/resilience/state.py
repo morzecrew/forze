@@ -8,9 +8,9 @@ from typing import Callable, Literal
 import attrs
 
 from forze.base.exceptions import exc
+from forze.base.primitives import WindowedP2Quantile
 
 from ..context.deadline import current_deadline
-from .quantile import WindowedP2Quantile
 
 # ----------------------- #
 
@@ -247,7 +247,9 @@ class AdaptiveBulkheadState:
     likely to still be waiting); FIFO otherwise."""
 
     limit: float = attrs.field(
-        default=attrs.Factory(lambda self: float(self.max_concurrency), takes_self=True),
+        default=attrs.Factory(
+            lambda self: float(self.max_concurrency), takes_self=True
+        ),
         init=False,
     )
     """Current concurrency limit (floored to int for admission)."""
@@ -290,10 +292,7 @@ class AdaptiveBulkheadState:
     def can_admit(self) -> bool:
         """Whether a call may take a slot or join the wait queue."""
 
-        if self.in_use < int(self.limit):
-            return True
-
-        return self.waiting < self.max_queue
+        return True if self.in_use < int(self.limit) else self.waiting < self.max_queue
 
     # ....................... #
 

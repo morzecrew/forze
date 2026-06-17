@@ -6,11 +6,8 @@ import random
 
 import pytest
 
-from forze.application.execution.resilience.quantile import (
-    P2Quantile,
-    WindowedP2Quantile,
-)
 from forze.base.exceptions import CoreException
+from forze.base.primitives import P2Quantile, WindowedP2Quantile
 
 # ----------------------- #
 

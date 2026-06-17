@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Mergeable quantile sketch (`DDSketch`)** — `forze.base.primitives` ships `DDSketch` (Masson et al., VLDB 2019) and `WindowedDDSketch`: a logarithmic-bucket sketch answering any quantile within a bounded **relative** error, mergeable across streams (`merge`/`merged`) for fleet-wide or multi-quantile (p50/p90/p99) latency. Bounded memory via collapse-lowest (`max_bins`); non-negative domain with a dedicated zero bucket. Complements `P2Quantile` (which stays for single-quantile in-process control loops); no wiring changes.
+
+### Changed
+
+- **Quantile estimators relocated** — `P2Quantile`/`WindowedP2Quantile` moved from `forze.application.execution.resilience.quantile` to `forze.base.primitives` (co-located with `DDSketch`; now public `base.primitives` exports). The old module path is removed; internal resilience wiring is unaffected.
+
 ## [0.4.0] - 2026-06-17
 
 ### Added
@@ -643,6 +653,7 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/morzecrew/forze/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/morzecrew/forze/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/morzecrew/forze/compare/v0.1.14...v0.2.0

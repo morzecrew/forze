@@ -23,9 +23,11 @@ from .mapping import (
     StrKeyMapping,
 )
 from .namespace import StrKeyNamespace
+from .quantile import P2Quantile, WindowedP2Quantile
 from .runtime import RuntimeVar
 from .selector import StrKeySelector, str_key_selector
 from .sequence import AbstractSequence
+from .sketch import DDSketch, WindowedDDSketch
 from .string import normalize_string
 from .time_source import (
     FrozenTimeSource,
@@ -75,6 +77,10 @@ __all__ = [
     "StrKeySelector",
     "str_key_selector",
     "AbstractSequence",
+    "P2Quantile",
+    "WindowedP2Quantile",
+    "DDSketch",
+    "WindowedDDSketch",
     "DirectedAcyclicGraph",
     "MappingConverter",
 ]
