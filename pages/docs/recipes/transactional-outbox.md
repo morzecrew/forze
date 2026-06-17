@@ -250,6 +250,16 @@ db.outbox.createIndex({ outbox_route: 1, status: 1, processing_at: 1 })
 db.outbox.createIndex({ claim_token: 1 }, { sparse: true })
 ```
 
+`hlc_ordering=True` works the same on Mongo: the packed HLC is stored on each
+document and the claim sorts `[(hlc, 1), (created_at, 1), (id, 1)]`. No schema
+migration is needed (documents are schemaless), but add an index to match, and
+note that Mongo sorts missing-`hlc` rows *first* — so during migration legacy
+rows drain oldest-first, the inverse of Postgres `NULLS LAST` (both best-effort):
+
+```javascript
+db.outbox.createIndex({ outbox_route: 1, status: 1, available_at: 1, hlc: 1, created_at: 1, id: 1 })
+```
+
 ## Notes
 
 - **Store the outbox where you store the data** so the stage shares the
