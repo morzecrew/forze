@@ -7,7 +7,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.base.primitives import JsonDict, StrKey, utcnow
+from forze.base.primitives import HlcTimestamp, JsonDict, StrKey, utcnow
 
 # ----------------------- #
 
@@ -66,6 +66,13 @@ class IntegrationEvent[M]:
     a retrying or failed row does **not** stall later rows of its key —
     consumers must still tolerate reordering and redelivery.
     """
+
+    hlc: HlcTimestamp | None = None
+    """Hybrid Logical Clock stamp (causal order). Stamped from the process-global
+    :func:`~forze.application.execution.outbox.clock.outbox_clock` at staging; a
+    causal successor always sorts after its cause across replicas. Persisted and
+    used for claim ordering only on outbox backends with HLC ordering enabled;
+    otherwise carried for downstream consumers that order on ``HEADER_HLC``."""
 
 
 # ....................... #
@@ -136,6 +143,11 @@ class OutboxClaim:
     order on the happy path. A retrying/failed row does **not** stall later
     rows of its key.
     """
+
+    hlc: HlcTimestamp | None = None
+    """Hybrid Logical Clock stamp reconstructed from the row (HLC-ordering
+    backends only). The relay forwards it as ``HEADER_HLC`` so consumers can
+    order causally; ``None`` when the backend does not persist it."""
 
 
 # ....................... #

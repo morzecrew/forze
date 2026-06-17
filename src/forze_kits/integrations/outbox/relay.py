@@ -15,6 +15,7 @@ from forze.application.contracts.envelope import (
     HEADER_CORRELATION_ID,
     HEADER_EVENT_ID,
     HEADER_EXECUTION_ID,
+    HEADER_HLC,
     HEADER_OCCURRED_AT,
     HEADER_TENANT_ID,
 )
@@ -152,6 +153,9 @@ def _claim_envelope_headers(claim: OutboxClaim) -> dict[str, str]:
 
     if claim.tenant_id is not None:
         headers[HEADER_TENANT_ID] = str(claim.tenant_id)
+
+    if claim.hlc is not None:
+        headers[HEADER_HLC] = claim.hlc.encode()
 
     return headers
 

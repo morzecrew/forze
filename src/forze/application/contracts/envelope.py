@@ -50,6 +50,11 @@ HEADER_EVENT_ID: Final = "forze_event_id"
 HEADER_OCCURRED_AT: Final = "forze_occurred_at"
 """When the event occurred (ISO-8601 string)."""
 
+HEADER_HLC: Final = "forze_hlc"
+"""Hybrid Logical Clock stamp (``physical_ms.logical`` string, lexsortable) —
+present only from HLC-ordering outbox backends. A consumer merges it into its
+process clock so reactions causally follow their cause, and may order on it."""
+
 # ....................... #
 
 ENVELOPE_HEADER_KEYS: Final = frozenset(
@@ -60,6 +65,7 @@ ENVELOPE_HEADER_KEYS: Final = frozenset(
         HEADER_TENANT_ID,
         HEADER_EVENT_ID,
         HEADER_OCCURRED_AT,
+        HEADER_HLC,
     }
 )
 """All well-known envelope header names."""
@@ -89,6 +95,7 @@ __all__ = [
     "HEADER_TENANT_ID",
     "HEADER_EVENT_ID",
     "HEADER_OCCURRED_AT",
+    "HEADER_HLC",
     "ENVELOPE_HEADER_KEYS",
     "HTTP_HEADER_DEADLINE_BUDGET",
 ]

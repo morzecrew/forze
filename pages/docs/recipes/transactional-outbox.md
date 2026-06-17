@@ -219,6 +219,26 @@ ALTER TABLE app.outbox
     ADD COLUMN ordering_key TEXT;
 ```
 
+### Causal ordering (Hybrid Logical Clock)
+
+By default claims are ordered by `created_at` — assigned per flush batch, so
+rows staged together share a timestamp and tie arbitrarily, and clocks on
+different replicas can disagree. Set `PostgresOutboxConfig(hlc_ordering=True)`
+to claim in **causal** order instead: every event carries a Hybrid Logical
+Clock stamp that stays close to wall time yet always exceeds any timestamp the
+process has observed (including one merged from a consumed event's `forze_hlc`
+header), so a reaction sorts after its cause across replicas, and the
+time-ordered `id` breaks any remaining tie. Add the column first, then opt in
+(legacy `NULL`-`hlc` rows fall back to `created_at`):
+
+```sql
+ALTER TABLE app.outbox ADD COLUMN hlc BIGINT;
+
+-- claim order becomes (hlc NULLS LAST, created_at, id); index to match
+CREATE INDEX outbox_claim_hlc_idx
+    ON app.outbox (outbox_route, status, available_at, hlc, created_at, id);
+```
+
 For Mongo (`MongoOutboxConfig`), documents mirror these fields; recommended
 indexes:
 
