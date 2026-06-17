@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Quantile estimators relocated** — `P2Quantile`/`WindowedP2Quantile` moved from `forze.application.execution.resilience.quantile` to `forze.base.primitives` (co-located with `DDSketch`; now public `base.primitives` exports). The old module path is removed; internal resilience wiring is unaffected.
 
+### Fixed
+
+- **Typing annotations** — type-only imports moved under `TYPE_CHECKING` with forward references (including the runtime-optional OpenTelemetry types), so affected modules import cleanly without those optional dependencies installed and skip needless runtime imports.
+
 ## [0.4.0] - 2026-06-17
 
 ### Added
