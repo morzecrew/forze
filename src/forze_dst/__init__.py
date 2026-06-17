@@ -33,6 +33,7 @@ from .loop import (
     SimulationEventLoop,
 )
 from .oracle import ViolationReport, explore, minimize, run_recorded
+from .reactive import ReactiveMap
 from .report import CausalGraph, OperationSpan, TraceStep, format_report
 from .recorder import (
     Event,
@@ -108,6 +109,7 @@ __all__ = [
     "ModelState",
     "derive_scenario",
     "DEFAULT_CREATE_VERBS",
+    "ReactiveMap",
     "Scheduler",
     "RandomScheduler",
     "PCTScheduler",

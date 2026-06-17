@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import random
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Sequence, final
+from typing import Any, Awaitable, Callable, Sequence, cast, final
 
 import attrs
 
@@ -30,6 +30,7 @@ from forze_dst.derive import derive_scenario as _derive_from_catalog
 from forze_dst.invariants import Invariant, check
 from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.recorder import History, Recorder, bind_recorder, record_event
+from forze_dst.reactive import ReactiveMap
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
 from forze_dst.scheduler import SystematicScheduler
@@ -37,7 +38,7 @@ from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
 
-DepsFactory = Callable[[], DepsModule]
+DepsFactory = Callable[[], "DepsModule | Sequence[DepsModule]"]
 Hook = Callable[[ExecutionContext], Awaitable[None]]
 
 
@@ -150,6 +151,29 @@ class Simulation:
 
     # ....................... #
 
+    def _frozen_deps(self) -> Any:
+        """Build the run's resolved, runtime-traced deps from the factory.
+
+        The factory may return a single module or several (e.g. a mock module plus a
+        ``DomainEventsDepsModule`` wiring saga / event-handler cascades).
+        """
+
+        produced = self.deps()
+        modules: tuple[DepsModule, ...] = (
+            tuple(produced)
+            if isinstance(produced, (list, tuple))
+            else (cast("DepsModule", produced),)
+        )
+
+        return (
+            DepsRegistry.from_modules(*modules)
+            .with_tracing(runtime=True)
+            .freeze()
+            .resolve()
+        )
+
+    # ....................... #
+
     def _input_for(self, op: str, rng: random.Random, case: OperationCase) -> Any:
         if case.inputs is not None:
             return case.inputs(rng)
@@ -209,13 +233,7 @@ class Simulation:
         recorder = Recorder(seed=seed)
 
         async def scenario() -> None:
-            frozen = (
-                DepsRegistry.from_modules(self.deps())
-                .with_tracing(runtime=True)
-                .freeze()
-                .resolve()
-            )
-            ctx = ExecutionContext(deps=frozen)
+            ctx = ExecutionContext(deps=self._frozen_deps())
 
             if self.setup is not None:
                 await self.setup(ctx)
@@ -459,13 +477,7 @@ class Simulation:
         async def driver() -> None:
             nonlocal generated
 
-            frozen = (
-                DepsRegistry.from_modules(self.deps())
-                .with_tracing(runtime=True)
-                .freeze()
-                .resolve()
-            )
-            ctx = ExecutionContext(deps=frozen)
+            ctx = ExecutionContext(deps=self._frozen_deps())
 
             if self.setup is not None:
                 await self.setup(ctx)
@@ -806,17 +818,29 @@ class Simulation:
 
     # ....................... #
 
-    def _probe_reactive(
-        self, base: Scenario, *, seed: int, epoch: datetime
-    ) -> frozenset[str]:
-        """Find operations triggered reactively (saga steps / event handlers) by a probe.
+    def reactive_map(
+        self,
+        *,
+        create_verbs: frozenset[str] = DEFAULT_CREATE_VERBS,
+        arrange_each: int = 1,
+        seed: int = 0,
+        epoch: datetime = DEFAULT_EPOCH,
+    ) -> ReactiveMap:
+        """Recover the reactive cascade topology by probing each candidate operation.
 
-        Fires each act rule once against the arranged state and diffs the engine trace: an
-        operation that the trace shows *invoked* but that the harness never *directly* drove
-        was triggered as a cascade — so it is an internal effect, not an entry point.
+        For each operation the catalog derivation treats as an entry point, fire it once
+        against the arranged state and read the engine trace: every operation invoked but not
+        directly driven is a *cascade* (saga step / event handler), and every domain event
+        dispatched along the way is recorded. The operation registries hold opaque callables,
+        so this wiring is only knowable at runtime — this is how it is recovered.
         """
 
-        reactive: set[str] = set()
+        base = _derive_from_catalog(
+            self.operations, create_verbs=create_verbs, arrange_each=arrange_each
+        )
+
+        cascades: dict[str, frozenset[str]] = {}
+        events: dict[str, frozenset[str]] = {}
 
         for rule in base.act:
             probe = Scenario(state=base.state, arrange=base.arrange, act=(rule,))
@@ -842,9 +866,22 @@ class Simulation:
                 and event.fields.get("trace_domain") == "operation"
                 and event.fields.get("phase") == "invoke"
             }
-            reactive.update(str(op) for op in (invoked - direct) if op is not None)
+            dispatched = {
+                event.fields.get("surface")
+                for event in history.events
+                if event.kind == "trace"
+                and event.fields.get("trace_domain") == "domain"
+                and event.fields.get("op") == "dispatch"
+            }
 
-        return frozenset(reactive)
+            cascades[rule.op] = frozenset(
+                str(op) for op in (invoked - direct) if op is not None
+            )
+            events[rule.op] = frozenset(
+                str(name) for name in dispatched if name is not None
+            )
+
+        return ReactiveMap(cascades=cascades, events=events)
 
     # ....................... #
 
@@ -860,10 +897,10 @@ class Simulation:
         """Infer a draft :class:`Scenario` from the catalog, then refine it reactively.
 
         Starts from the static, name-driven catalog derivation (see
-        :func:`forze_dst.derive.derive_scenario`); then, unless *probe* is disabled, runs a
-        one-shot probe per act rule to drop operations that are only ever triggered as
-        cascades (saga steps, domain-event handlers) — they fire automatically when their
-        trigger runs, so driving them directly would be unrealistic.
+        :func:`forze_dst.derive.derive_scenario`); then, unless *probe* is disabled, recovers
+        the reactive cascade topology (see :meth:`reactive_map`) and drops operations that are
+        only ever triggered as cascades (saga steps, domain-event handlers) — they fire
+        automatically when their trigger runs, so driving them directly would be unrealistic.
         """
 
         base = _derive_from_catalog(
@@ -873,7 +910,12 @@ class Simulation:
         if not probe:
             return base
 
-        reactive = self._probe_reactive(base, seed=seed, epoch=epoch)
+        reactive = self.reactive_map(
+            create_verbs=create_verbs,
+            arrange_each=arrange_each,
+            seed=seed,
+            epoch=epoch,
+        ).reactive_ops
 
         if not reactive:
             return base
