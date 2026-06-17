@@ -48,6 +48,7 @@ from .scheduler import (
     PCTScheduler,
     RandomScheduler,
     Scheduler,
+    SystematicScheduler,
     pct_scheduler_factory,
 )
 from .time_source import DEFAULT_EPOCH, SimulationTimeSource
@@ -110,5 +111,6 @@ __all__ = [
     "Scheduler",
     "RandomScheduler",
     "PCTScheduler",
+    "SystematicScheduler",
     "pct_scheduler_factory",
 ]

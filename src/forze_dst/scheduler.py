@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, Sequence, runtime_checkable
 
 # ----------------------- #
 
@@ -121,6 +121,38 @@ class PCTScheduler:
         # Highest priority first; plain call_soon callbacks (no task) keep FIFO at the end.
         ordered = sorted(tagged, key=rank, reverse=True)
         return [handle for _task, handle in ordered]
+
+
+# ....................... #
+
+
+class SystematicScheduler:
+    """Deterministically pick which ready callback runs first each tick, per a choice vector.
+
+    At tick *i* the callback at index ``choices[i] % n`` (of the ``n`` ready) is moved to the
+    front; the rest keep their order. Beyond the prescribed prefix it defaults to FIFO
+    (choice ``0``). It records the per-tick branching factor (``n``) so an explorer can
+    enumerate the alternatives at each branch — the basis for systematic interleaving search.
+    """
+
+    def __init__(self, choices: Sequence[int]) -> None:
+        self._choices = list(choices)
+        self._index = 0
+        self.branching: list[int] = []
+
+    def reorder(self, ready: list[Any], step: int) -> list[Any]:
+        del step
+        size = len(ready)
+        self.branching.append(size)
+
+        choice = self._choices[self._index] if self._index < len(self._choices) else 0
+        self._index += 1
+        pick = choice % size if size else 0
+
+        if pick == 0:
+            return ready
+
+        return [ready[pick], *ready[:pick], *ready[pick + 1 :]]
 
 
 # ....................... #

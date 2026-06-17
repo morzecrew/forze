@@ -32,12 +32,32 @@ from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
+from forze_dst.scheduler import SystematicScheduler
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
 
 DepsFactory = Callable[[], DepsModule]
 Hook = Callable[[ExecutionContext], Awaitable[None]]
+
+
+def _outcome_signature(history: History) -> tuple[Any, ...]:
+    """The observable effect order of a run — operations + recorded facts, ignoring trace.
+
+    Two interleavings with the same signature are observationally equivalent (same effects in
+    the same order), so the explorer need not expand both — a partial-order reduction.
+    """
+
+    return tuple(
+        (event.kind, event.fields.get("op"), event.fields.get("outcome"))
+        if event.kind == "operation"
+        else (event.kind, tuple(sorted(event.fields.items(), key=lambda kv: kv[0])))
+        for event in history.events
+        if event.kind not in ("trace", "op_start")
+    )
+
+
+# ....................... #
 
 
 def _fold_runtime_trace(ctx: ExecutionContext) -> None:
@@ -637,11 +657,9 @@ class Simulation:
         if not scenario.act:
             return None
 
-        schedule_seed_of = (  # pyright: ignore[reportUnknownVariableType]
-            (lambda seed: seed)  # pyright: ignore[reportUnknownLambdaType]
-            if perturb
-            else (lambda _seed: None)  # pyright: ignore[reportUnknownLambdaType]
-        )
+        def schedule_seed_of(seed: int) -> int | None:
+            return seed if perturb else None
+
         plans = strategies.tuples(
             strategies.integers(min_value=0, max_value=2**31 - 1),
             strategies.lists(
@@ -698,6 +716,93 @@ class Simulation:
             history=history,
             registry_fingerprint=self.fingerprint(),
         )
+
+    # ....................... #
+
+    def explore_scenario_dpor(
+        self,
+        scenario: Scenario,
+        *,
+        act_count: int = 6,
+        concurrency: int = 4,
+        seed: int = 0,
+        max_runs: int = 500,
+        epoch: datetime = DEFAULT_EPOCH,
+    ) -> ViolationReport | None:
+        """Systematically explore interleavings of a fixed workload (DPOR-family reduction).
+
+        The complete, deterministic complement to :meth:`explore_scenario_hypothesis` and PCT:
+        it fixes one act workload (generated from *seed*), then walks the tree of per-tick
+        scheduling choices depth-first via :class:`~forze_dst.scheduler.SystematicScheduler` —
+        guaranteed to find a violation reachable by *reordering* that workload, within
+        *max_runs*. A partial-order reduction prunes the search: an interleaving whose
+        observable effect order matches one already seen is not expanded (equivalent
+        continuations), so only orderings that change effects are explored.
+
+        This operates at the loop's tick granularity (not per-memory-access), so the
+        reduction is by observed effect-equivalence rather than a computed independence
+        relation — sound (never expands a distinct outcome twice) and robust, though not the
+        optimal per-access DPOR. Returns the first violating interleaving's report (the
+        ``schedule`` reproduces it), or ``None`` if none within *max_runs*.
+        """
+
+        # Fix the workload once; vary only the interleaving across runs.
+        _, workload = self._run_scenario(
+            scenario,
+            act_workload=None,
+            act_count=act_count,
+            concurrency=concurrency,
+            seed=seed,
+            schedule_seed=None,
+            epoch=epoch,
+        )
+
+        frontier: list[tuple[int, ...]] = [()]
+        visited: set[tuple[int, ...]] = set()
+        seen_signatures: set[tuple[Any, ...]] = set()
+        runs = 0
+
+        while frontier and runs < max_runs:
+            choices = frontier.pop()
+
+            if choices in visited:
+                continue
+            visited.add(choices)
+
+            scheduler = SystematicScheduler(choices)
+            history, _ = self._run_scenario(
+                scenario,
+                act_workload=workload,
+                act_count=act_count,
+                concurrency=concurrency,
+                seed=seed,
+                schedule_seed=None,
+                epoch=epoch,
+                scheduler=scheduler,
+            )
+            runs += 1
+
+            if check(history, self.invariants):
+                return ViolationReport(
+                    seed=seed,
+                    schedule_seed=None,
+                    violations=tuple(check(history, self.invariants)),
+                    workload=tuple(workload),
+                    history=history,
+                    registry_fingerprint=self.fingerprint(),
+                )
+
+            signature = _outcome_signature(history)
+            if signature in seen_signatures:
+                continue  # observationally equivalent → its subtree is redundant
+            seen_signatures.add(signature)
+
+            # Expand: at each tick that branched, try every alternative first-choice.
+            for tick, size in enumerate(scheduler.branching):
+                for alternative in range(1, size):
+                    frontier.append((*choices[:tick], alternative))
+
+        return None
 
     # ....................... #
 

@@ -26,6 +26,8 @@ from forze_dst import (
     Rule,
     Scenario,
     Simulation,
+    SystematicScheduler,
+    expect,
     no_duplicate_effect,
     pct_scheduler_factory,
     record_event,
@@ -180,3 +182,77 @@ class TestPCTDrivesHarness:
         assert report is not None
         assert report.violations[0].invariant == "no_duplicate_effect"
         assert [op for op, _ in report.workload] == ["pay_order", "pay_order"]
+
+
+# ....................... #
+
+
+class TestSystematicSchedulerUnit:
+    def test_choice_rotates_chosen_handle_to_front(self) -> None:
+        scheduler = SystematicScheduler([2])
+        out = scheduler.reorder(["a", "b", "c", "d"], step=1)
+        assert out == ["c", "a", "b", "d"]  # index 2 to front, rest order kept
+        assert scheduler.branching == [4]  # branching factor recorded
+
+    def test_default_is_fifo_beyond_the_prefix(self) -> None:
+        scheduler = SystematicScheduler([])  # empty prefix → choice 0 everywhere
+        assert scheduler.reorder(["a", "b", "c"], step=1) == ["a", "b", "c"]
+
+    def test_distinct_choices_yield_distinct_orders(self) -> None:
+        def run(choices: list[int]) -> list[int]:
+            log: list[int] = []
+
+            async def scenario() -> None:
+                async def worker(worker_id: int) -> None:
+                    log.append(worker_id)
+
+                await asyncio.gather(*(worker(i) for i in range(3)))
+
+            run_simulation(scenario, seed=0, scheduler=SystematicScheduler(choices))
+            return log
+
+        assert run([0]) != run([2]) or run([1]) != run([0])  # control changes order
+
+
+class TestDPOR:
+    def test_finds_double_charge_systematically(self) -> None:
+        report = _payments_simulation().explore_scenario_dpor(
+            _payments_scenario(), act_count=3, concurrency=3, max_runs=200
+        )
+        assert report is not None
+        assert report.violations[0].invariant == "no_duplicate_effect"
+        assert all(op == "pay_order" for op, _ in report.workload)
+
+    def test_reproducible(self) -> None:
+        a = _payments_simulation().explore_scenario_dpor(
+            _payments_scenario(), act_count=3, concurrency=3, max_runs=200
+        )
+        b = _payments_simulation().explore_scenario_dpor(
+            _payments_scenario(), act_count=3, concurrency=3, max_runs=200
+        )
+        assert a is not None and b is not None
+        assert a.workload == b.workload
+        assert a.violations[0].message == b.violations[0].message
+
+    def test_safe_scenario_terminates_with_no_violation(self) -> None:
+        # A single op with no shared state can't violate; the search must terminate (the
+        # partial-order reduction + bound keep it finite) and return None.
+        @attrs.define(slots=True)
+        class _Noop(Handler[None, None]):
+            async def __call__(self, _args: None) -> None:
+                record_event("touched", ok=True)
+
+        registry = OperationRegistry(
+            handlers={"noop": lambda _c: _Noop()}
+        ).freeze()
+        sim = Simulation(
+            operations=registry,
+            deps=lambda: MockDepsModule(),
+            invariants=[expect("touched", lambda e: e.fields["ok"], message="never")],
+        )
+        scenario = Scenario(state=ModelState, act=(Rule(op="noop"),))
+
+        report = sim.explore_scenario_dpor(
+            scenario, act_count=3, concurrency=3, max_runs=200
+        )
+        assert report is None
