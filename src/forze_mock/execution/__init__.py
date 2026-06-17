@@ -1,8 +1,11 @@
 """Execution wiring for the in-memory mock integration."""
 
 from .configs import MockRouteConfig
+from .factories import mock_txmanager
 from .keys import MockRoutedStateDepKey, MockStateDepKey
-from .module import MockDepsModule, mock_txmanager
+from .module import MockDepsModule
+
+# ----------------------- #
 
 __all__ = [
     "MockRouteConfig",

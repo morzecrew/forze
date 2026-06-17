@@ -265,6 +265,12 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.",
     "if TYPE_CHECKING:",
+    # ``@overload`` stubs (and their ``...`` bodies) are type-checker-only: the
+    # runtime impl follows them, so they are never executed. Excluding them keeps
+    # branch coverage honest instead of penalizing typed overloaded signatures.
+    "@overload",
+    "@(typing\\.)?overload",
+    "^\\s*\\.\\.\\.$",
 ]
 
 # ....................... #

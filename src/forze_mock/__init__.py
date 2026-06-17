@@ -40,7 +40,7 @@ from .adapters.identity import (
     MockTenantManagementPort,
     MockTenantResolverPort,
 )
-from .embeddings import MockHashEmbeddingsProvider
+from .adapters.embeddings import MockHashEmbeddingsProvider
 from .execution import (
     MockDepsModule,
     MockRouteConfig,

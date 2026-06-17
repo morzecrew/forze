@@ -20,7 +20,7 @@ from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule, MockStateDepKey
-from forze_mock.outbox_adapter import MockOutboxRow
+from forze_mock.adapters.outbox import MockOutboxRow
 
 
 class _EventPayload(BaseModel):

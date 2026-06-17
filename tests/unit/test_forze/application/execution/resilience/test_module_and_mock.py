@@ -27,7 +27,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from tests.support.execution_context import context_from_modules
 
 from forze_mock import MockDepsModule
-from forze_mock.resilience import PassthroughResilienceExecutor
+from forze_mock.adapters.resilience import PassthroughResilienceExecutor
 
 # ----------------------- #
 
