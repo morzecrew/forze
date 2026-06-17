@@ -1,7 +1,5 @@
 """Shared in-memory state for mock adapters."""
 
-from __future__ import annotations
-
 import asyncio
 import copy
 import threading
@@ -181,7 +179,7 @@ class MockState:
     )
     """Nested in-memory identity plane (authn, authz, tenants, secrets)."""
 
-    authn_events: list[AuthnEvent] = attrs.field(factory=list)
+    authn_events: list["AuthnEvent"] = attrs.field(factory=list)
     """Authn events recorded by :class:`~forze_mock.adapters.events.RecordingAuthnEventSink`
     (test observability; appended in emission order)."""
 

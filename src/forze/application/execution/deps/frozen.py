@@ -180,7 +180,7 @@ class FrozenDeps:
 
     def resolve_configurable(
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         key: DepKey[Any],
         spec: BaseSpec,
         *,
@@ -230,7 +230,7 @@ class FrozenDeps:
 
     def resolve_simple(
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         key: DepKey[Any],
         *,
         route: StrKey | None = None,

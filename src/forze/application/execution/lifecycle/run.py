@@ -36,7 +36,7 @@ class StartupWavePartialError(Exception):
 
 async def _run_startup_step(
     step: LifecycleStep,
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
 ) -> None:
     logger.trace("Executing '%s' startup hook", step.id)
     await step.startup(ctx)
@@ -48,7 +48,7 @@ async def _run_startup_step(
 
 async def _run_shutdown_step(
     step: LifecycleStep,
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
 ) -> None:
     logger.trace("Executing '%s' shutdown hook", step.id)
     await step.shutdown(ctx)
@@ -59,7 +59,7 @@ async def _run_shutdown_step(
 
 async def _run_startup_wave_concurrent(
     graph: ExecutionGraph[LifecycleStep],
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     wave: tuple[StrKey, ...],
 ) -> list[StrKey]:
     if not wave:
@@ -91,7 +91,7 @@ async def _run_startup_wave_concurrent(
 
 async def _rollback_startup(
     graph: ExecutionGraph[LifecycleStep],
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     executed_waves: list[list[StrKey]],
 ) -> None:
     for wave_ids in reversed(executed_waves):
@@ -120,7 +120,7 @@ async def _rollback_startup(
 
 async def run_lifecycle_startup(
     graph: ExecutionGraph[LifecycleStep],
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     *,
     concurrent: bool,
 ) -> None:
@@ -182,7 +182,7 @@ async def run_lifecycle_startup(
 
 async def _run_shutdown_step_logged(
     step: LifecycleStep,
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
 ) -> None:
     if step.id not in ctx.lifecycle_started:
         logger.trace(
@@ -207,7 +207,7 @@ async def _run_shutdown_step_logged(
 
 async def run_lifecycle_shutdown(
     graph: ExecutionGraph[LifecycleStep],
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     *,
     concurrent: bool,
 ) -> None:

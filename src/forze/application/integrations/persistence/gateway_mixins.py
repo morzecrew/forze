@@ -568,9 +568,8 @@ class HistoryOccMixin(Generic[D]):
             for current, rev, update in data
             if rev != current.rev
         ]
-        bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
 
-        if bad_records:
+        if [rev for current, rev, _ in to_check if rev > current.rev]:
             raise exc.precondition(
                 "Invalid revision number",
                 code="revision_mismatch",

@@ -51,10 +51,10 @@ class SagaStep[Ctx]:
     name: StrKey
     """Step name (for tracing and error context)."""
 
-    action: Callable[[ExecutionContext, Ctx], Awaitable[Ctx]]
+    action: Callable[["ExecutionContext", Ctx], Awaitable[Ctx]]
     """Perform the step; return the updated saga context."""
 
-    compensation: Callable[[ExecutionContext, Ctx], Awaitable[None]] | None = None
+    compensation: Callable[["ExecutionContext", Ctx], Awaitable[None]] | None = None
     """Undo a committed step; receives the context as of the step's completion."""
 
     kind: SagaStepKind = SagaStepKind.COMPENSATABLE

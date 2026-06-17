@@ -1,7 +1,5 @@
 """Resolve the saga executor with an in-process default."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from forze.application.contracts.saga import (
@@ -32,7 +30,7 @@ def default_saga_executor() -> SagaExecutorPort:
 # ....................... #
 
 
-def resolve_saga_executor(ctx: ExecutionContext) -> SagaExecutorPort:
+def resolve_saga_executor(ctx: "ExecutionContext") -> SagaExecutorPort:
     """Return the app-registered saga executor, or the in-process default."""
 
     if ctx.deps.exists(SagaExecutorDepKey):
@@ -45,7 +43,7 @@ def resolve_saga_executor(ctx: ExecutionContext) -> SagaExecutorPort:
 
 
 async def run_saga[Ctx](
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     definition: SagaDefinition[Ctx],
     initial: Ctx,
 ) -> Ctx:

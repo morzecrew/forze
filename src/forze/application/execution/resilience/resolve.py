@@ -38,7 +38,7 @@ def default_resilience_executor() -> ResilienceExecutorPort:
 # ....................... #
 
 
-def resolve_resilience_executor(ctx: ExecutionContext) -> ResilienceExecutorPort:
+def resolve_resilience_executor(ctx: "ExecutionContext") -> ResilienceExecutorPort:
     """Return the app-registered executor, or the shared default if none exists."""
 
     if ctx.deps.exists(ResilienceExecutorDepKey):

@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Generic, Literal, Sequence, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Generic,
+    Literal,
+    Sequence,
+    cast,
+    overload,
+)
 from uuid import UUID
 
 from forze.application.contracts.document import KeyedCreate, UpsertItem
@@ -16,8 +26,6 @@ from forze_mock.query._types import C, D, R, U
 from forze_mock.query.matching import _match_filters  # type: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from forze.application.contracts.base import CountlessPage
     from forze.application.contracts.document import DocumentSpec
     from forze.application.contracts.domain import DomainEventDispatcherPort

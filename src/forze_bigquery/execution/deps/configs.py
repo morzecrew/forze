@@ -14,7 +14,6 @@ from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_bigquery.kernel.relation import RelationSpec, coerce_relation_spec
 
-
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
@@ -22,10 +21,7 @@ if TYPE_CHECKING:
 
 
 def _optional_relation_spec(value: object) -> RelationSpec | None:
-    if value is None:
-        return None
-
-    return coerce_relation_spec(value)
+    return None if value is None else coerce_relation_spec(value)
 
 
 # ....................... #
@@ -117,17 +113,13 @@ class BigQueryAnalyticsConfig(TenantAwareIntegrationConfig):
         spec_keys = set(spec.queries.keys())
         config_keys = set(self.queries.keys())
 
-        missing = spec_keys - config_keys
-
-        if missing:
+        if missing := spec_keys - config_keys:
             raise exc.configuration(
                 f"BigQuery analytics config for route {spec.name!r} is missing query keys: "
                 f"{sorted(missing)!r}."
             )
 
-        extra = config_keys - spec_keys
-
-        if extra:
+        if extra := config_keys - spec_keys:
             raise exc.configuration(
                 f"BigQuery analytics config for route {spec.name!r} has unknown query keys: "
                 f"{sorted(extra)!r}."

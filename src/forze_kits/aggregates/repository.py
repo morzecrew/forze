@@ -7,8 +7,6 @@ Domain events the aggregate emits flow in-transaction via the command port — t
 repository never dispatches them itself (that would double-dispatch).
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Generic, TypeVar, final
 from uuid import UUID
 
@@ -90,7 +88,7 @@ class AggregateRepository(Generic[R, D, C, U]):
 
 
 def aggregate_repository(
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     spec: DocumentSpec[R, D, C, U],
 ) -> AggregateRepository[R, D, C, U]:
     """Build an :class:`AggregateRepository` for *spec* from the execution context."""

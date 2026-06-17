@@ -26,6 +26,7 @@ class _Parent(Protocol):
     """Parent interface protocol."""
 
     def bind_outer(self) -> ScopeBinder[Self, Any]: ...
+
     def bind_tx(self) -> TransactionScopeBinder[Self, Any]: ...
 
 

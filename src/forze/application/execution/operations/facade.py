@@ -85,10 +85,7 @@ class facade_op[Args, R]:
         obj: OperationFacade | None,
         objtype: type[Any] | None = None,
     ) -> "ResolvedOperation[Args, R] | Self":
-        if obj is None:
-            return self
-
-        return obj.resolve(self.op)
+        return self if obj is None else obj.resolve(self.op)
 
 
 # ....................... #
