@@ -20,8 +20,9 @@ rather than a non-deterministic, wall-clock-bound hang.
 from __future__ import annotations
 
 import asyncio
+import random
 import selectors
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 # ----------------------- #
 
@@ -115,12 +116,37 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
     workload full of ``asyncio.sleep`` / timeouts runs in real-wall milliseconds and
     deterministically. Pair with a simulation :class:`TimeSource` (whose ``monotonic``
     reads ``loop.time()``) so application clocks track the same virtual time.
+
+    When *schedule_rng* is given, the ready-callback queue is shuffled with it on
+    every tick — perturbing the interleaving of concurrent tasks' continuations to
+    explore orderings FIFO would never reach (where order-dependent races hide).
+    The RNG is deliberately separate from the application entropy seam, so a schedule
+    can be varied without changing application values, and vice versa. Same RNG seed →
+    same interleaving, so any bug it surfaces reproduces.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, schedule_rng: random.Random | None = None) -> None:
         super().__init__()
         self._sim_clock: float = 0.0
+        self._schedule_rng = schedule_rng
         self._selector: _NullSelector = _NullSelector(self)
+
+    # ....................... #
+
+    def _run_once(self) -> None:
+        # Perturb only the callbacks already ready at the start of the tick — the
+        # continuations concurrent tasks scheduled via ``call_soon`` after awaiting.
+        # BaseEventLoop then runs them (and any timers due this tick) in this order.
+        rng = self._schedule_rng
+        if rng is not None:
+            ready = cast("Any", self)._ready  # CPython internal, absent from typeshed
+            if len(ready) > 1:
+                ordered = list(ready)
+                rng.shuffle(ordered)
+                ready.clear()
+                ready.extend(ordered)
+
+        cast("Any", super())._run_once()
 
     # ....................... #
     # the two virtual-time hooks

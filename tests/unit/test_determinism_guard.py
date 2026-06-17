@@ -34,6 +34,10 @@ _ALLOWLIST: frozenset[str] = frozenset(
     {
         "forze/base/primitives/entropy_source.py",
         "forze/base/primitives/time_source.py",
+        # The simulation harness *builds* the deterministic substrate: it constructs
+        # seeded RNGs (schedule perturbation, workload generation) on purpose.
+        "forze_mock/simulation/runtime.py",
+        "forze_mock/simulation/workload.py",
     }
 )
 

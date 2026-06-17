@@ -7,6 +7,7 @@ completion. Same ``(scenario, seed)`` → identical execution, in real-wall
 milliseconds however much virtual time the scenario spans.
 """
 
+import random
 from datetime import datetime
 from typing import Awaitable, Callable
 
@@ -27,6 +28,7 @@ def run_simulation[T](
     *,
     seed: int = 0,
     epoch: datetime = DEFAULT_EPOCH,
+    schedule_seed: int | None = None,
 ) -> T:
     """Run *scenario* on a deterministic virtual-time loop with seeded entropy.
 
@@ -35,12 +37,22 @@ def run_simulation[T](
     ``monotonic``, ``uuid7``/``uuid4``, jitter, and nonce read is a pure function of
     ``(seed, epoch)`` and the scenario's own sleeps. Returns the scenario's result.
 
+    *schedule_seed* (opt-in) enables scheduler perturbation: the ready-callback queue
+    is shuffled each tick from a separate RNG seeded with it, exploring concurrent
+    interleavings FIFO never reaches. ``None`` keeps deterministic FIFO order. Either
+    way the run is reproducible — a fixed ``(seed, schedule_seed)`` replays exactly.
+
     Raises :class:`~forze_mock.simulation.loop.SimulationDeadlock` if the scenario
     blocks with no pending timer, or :class:`~forze_mock.simulation.loop.RealIOForbidden`
     if it touches real I/O or a thread executor.
     """
 
-    loop = SimulationEventLoop()
+    schedule_rng = (
+        None
+        if schedule_seed is None
+        else random.Random(schedule_seed)  # nosec B311 - deterministic sim schedule, not crypto
+    )
+    loop = SimulationEventLoop(schedule_rng=schedule_rng)
     time_source = SimulationTimeSource(loop=loop, epoch=epoch)
     entropy = SeededEntropySource(seed=seed)
 

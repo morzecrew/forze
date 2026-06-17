@@ -48,11 +48,15 @@ from .execution import (
     MockStateDepKey,
 )
 from .simulation import (
+    OpSpec,
     RealIOForbidden,
     SimulationDeadlock,
     SimulationEventLoop,
     SimulationTimeSource,
+    generate_workload,
     run_simulation,
+    run_workload,
+    simulate_workload,
 )
 from .tenancy import (
     MockRoutedStateRegistry,
@@ -112,4 +116,8 @@ __all__ = [
     "SimulationTimeSource",
     "SimulationDeadlock",
     "RealIOForbidden",
+    "OpSpec",
+    "generate_workload",
+    "run_workload",
+    "simulate_workload",
 ]

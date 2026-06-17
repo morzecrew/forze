@@ -15,6 +15,12 @@ from forze_mock.simulation.loop import (
 )
 from forze_mock.simulation.runtime import run_simulation
 from forze_mock.simulation.time_source import DEFAULT_EPOCH, SimulationTimeSource
+from forze_mock.simulation.workload import (
+    OpSpec,
+    generate_workload,
+    run_workload,
+    simulate_workload,
+)
 
 # ----------------------- #
 
@@ -25,4 +31,8 @@ __all__ = [
     "RealIOForbidden",
     "SimulationDeadlock",
     "DEFAULT_EPOCH",
+    "OpSpec",
+    "generate_workload",
+    "run_workload",
+    "simulate_workload",
 ]
