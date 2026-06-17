@@ -12,6 +12,7 @@ from forze.base.primitives import WindowedP2Quantile
 
 from ..context.criticality import Criticality, current_criticality
 from ..context.deadline import current_deadline
+from .limiter import Gradient2Limiter
 
 # ----------------------- #
 
@@ -263,6 +264,10 @@ class AdaptiveBulkheadState:
     tighter CoDel sojourn allowance (see :data:`_CRITICALITY_GRACE`). Reads the
     ambient :func:`current_criticality` at park time. Inert when ``False``."""
 
+    limiter: Gradient2Limiter | None = None
+    """Delay-based (Gradient2) controller. When set, :meth:`on_complete` delegates
+    the limit to it (the AIMD fields are unused); ``None`` keeps the AIMD law."""
+
     limit: float = attrs.field(
         default=attrs.Factory(
             lambda self: float(self.max_concurrency), takes_self=True
@@ -471,8 +476,14 @@ class AdaptiveBulkheadState:
         latency: float,
         now: float,
         quantile_value: float | None = None,
+        inflight: int | None = None,
     ) -> bool:
         """Adjust the limit for a completed call; return ``True`` on a decrease.
+
+        Gradient mode (``limiter`` set): the limit is delegated to the Gradient2
+        controller, which tracks the latency gradient with no threshold — the
+        AIMD fields and ``quantile_value`` are unused. ``inflight`` (the
+        concurrency at completion) feeds its no-load guard.
 
         Per-sample mode (``latency_quantile is None``): this completion's
         latency over the threshold is a breach. Quantile mode: the congestion
@@ -484,6 +495,17 @@ class AdaptiveBulkheadState:
         limit rather than reading "unknown" as "healthy" and creeping back up
         mid-incident.
         """
+
+        if self.limiter is not None:
+            # Gradient2: the controller owns the limit. ``inflight`` defaults to
+            # the current in-flight count (the executor passes the value taken
+            # before release for an accurate no-load guard).
+            observed = self.in_use if inflight is None else inflight
+            new_limit = self.limiter.observe(latency, observed)
+            decreased = new_limit < self.limit
+            self.limit = new_limit
+
+            return decreased
 
         if self.latency_quantile is not None:
             if quantile_value is None:

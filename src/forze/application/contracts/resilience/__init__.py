@@ -15,6 +15,7 @@ from .value_objects import (
     AdaptiveThrottleStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
+    GradientBulkheadStrategy,
     FallbackStrategy,
     HedgeSafety,
     HedgeStrategy,
@@ -32,6 +33,7 @@ from .value_objects import (
 __all__ = [
     "BackoffStrategy",
     "AdaptiveBulkheadStrategy",
+    "GradientBulkheadStrategy",
     "AdaptiveThrottleStrategy",
     "BulkheadStrategy",
     "CircuitBreakerStrategy",

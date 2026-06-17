@@ -12,6 +12,7 @@ from forze.application.contracts.resilience import (
     AdaptiveThrottleStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
+    GradientBulkheadStrategy,
     HedgeStrategy,
     RateLimitStrategy,
     ResiliencePolicy,
@@ -24,6 +25,7 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
+from .limiter import Gradient2Limiter
 from .state import (
     AdaptiveBulkheadState,
     AdaptiveThrottleState,
@@ -120,6 +122,12 @@ class InProcessResilienceExecutor:
     )
     """Adaptive (AIMD) bulkhead state for the executor."""
 
+    _gradient_bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Delay-based (Gradient2) bulkhead state for the executor."""
+
     _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
     """Budget state for the executor."""
 
@@ -178,16 +186,26 @@ class InProcessResilienceExecutor:
                 adaptive.waiting,
             )
 
+        for (policy, route), gradient in self._gradient_bulkheads.items():
+            yield (
+                str(policy),
+                str(route) if route is not None else None,
+                gradient.waiting,
+            )
+
     # ....................... #
 
     def adaptive_bulkhead_limits(self) -> Iterator[tuple[str, str | None, float]]:
-        """Yield ``(policy, route, limit)`` for every adaptive bulkhead with live state.
+        """Yield ``(policy, route, limit)`` for every dynamic bulkhead with live state.
 
-        Snapshot accessor for observable gauges: the current AIMD concurrency
-        limit. State appears lazily on first use of an adaptive policy.
+        Snapshot accessor for observable gauges: the current AIMD or Gradient2
+        concurrency limit. State appears lazily on first use of the policy.
         """
 
-        for (policy, route), state in self._adaptive_bulkheads.items():
+        for (policy, route), state in (
+            *self._adaptive_bulkheads.items(),
+            *self._gradient_bulkheads.items(),
+        ):
             yield (
                 str(policy),
                 str(route) if route is not None else None,
@@ -433,6 +451,16 @@ class InProcessResilienceExecutor:
                 return await self._with_adaptive_bulkhead(ab, ab_inner, pol, route)
 
             call = with_adaptive_bulkhead
+
+        gradient = pol.gradient_bulkhead
+
+        if gradient is not None:
+            gb, gb_inner = gradient, call
+
+            async def with_gradient_bulkhead() -> T:
+                return await self._with_gradient_bulkhead(gb, gb_inner, pol, route)
+
+            call = with_gradient_bulkhead
 
         rate_limit = pol.rate_limit
 
@@ -766,6 +794,47 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
+    async def _with_gradient_bulkhead[T](
+        self,
+        strat: GradientBulkheadStrategy,
+        inner: Callable[[], Awaitable[T]],
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> T:
+        state = self._gradient_bulkhead_for(strat, pol, route)
+
+        if not state.can_admit():
+            self._emit("bulkhead_reject", pol, route)
+            raise exc.infrastructure(f"Bulkhead full for policy {pol.name!r}")
+
+        await self._admit(state, pol, route)
+        start = self.clock()
+
+        try:
+            result = await inner()
+
+        except BaseException:
+            # Gradient feeds *successful* completions only: a failure (fast or
+            # slow) is the circuit breaker's job and leaves the limit untouched.
+            state.release()
+            raise
+
+        # Take the in-flight count before release for an accurate no-load guard.
+        inflight = state.in_use
+        state.release()
+        elapsed = self.clock() - start
+
+        # A zero-duration completion (clock resolution / no advance) carries no
+        # latency signal — don't feed the gradient controller a non-positive rtt.
+        if elapsed > 0.0 and state.on_complete(
+            elapsed, self.clock(), inflight=inflight
+        ):
+            self._emit("bulkhead_backoff", pol, route)
+
+        return result
+
+    # ....................... #
+
     def _breaker_outcome(
         self,
         transition: Transition,
@@ -846,6 +915,51 @@ class InProcessResilienceExecutor:
                 prioritized=strat.prioritized,
             )
             self._adaptive_bulkheads[key] = state
+
+        return state
+
+    # ....................... #
+
+    def _gradient_bulkhead_for(
+        self,
+        strat: GradientBulkheadStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> AdaptiveBulkheadState:
+        key = (pol.name, route)
+        state = self._gradient_bulkheads.get(key)
+
+        if state is None:
+            # The Gradient2 controller owns the limit; the AIMD fields are inert
+            # (latency_threshold = inf so the failure path never feeds a sample).
+            state = AdaptiveBulkheadState(
+                latency_threshold=float("inf"),
+                min_concurrency=strat.min_concurrency,
+                max_concurrency=strat.max_concurrency,
+                max_queue=strat.max_queue,
+                backoff_ratio=0.5,
+                increase_step=1.0,
+                cooldown=0.0,
+                clock=self.clock,
+                queue_target_s=(
+                    strat.queue_target.total_seconds()
+                    if strat.queue_target is not None
+                    else None
+                ),
+                queue_interval_s=strat.queue_interval.total_seconds(),
+                queue_adaptive_lifo=strat.queue_adaptive_lifo,
+                prioritized=strat.prioritized,
+                limiter=Gradient2Limiter(
+                    initial_limit=strat.max_concurrency,
+                    max_limit=strat.max_concurrency,
+                    min_limit=strat.min_concurrency,
+                    rtt_tolerance=strat.rtt_tolerance,
+                    smoothing=strat.smoothing,
+                    long_window=strat.long_window,
+                    queue_size=strat.headroom,
+                ),
+            )
+            self._gradient_bulkheads[key] = state
 
         return state
 

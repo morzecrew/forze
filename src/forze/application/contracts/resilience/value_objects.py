@@ -386,6 +386,107 @@ class AdaptiveBulkheadStrategy:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
+class GradientBulkheadStrategy:
+    """Delay-based concurrency limiter: a bulkhead whose limit tracks the latency
+    gradient (Gradient2, Netflix concurrency-limits).
+
+    The same admission machinery as :class:`AdaptiveBulkheadStrategy` (bounded
+    queue, optional CoDel / adaptive-LIFO / prioritized shedding), but the limit
+    is driven by a delay-based controller instead of AIMD: it learns the no-load
+    latency baseline and contracts as latency inflates — with **no
+    ``latency_threshold`` to tune**. Only *successful* completions feed the
+    controller; failures are the circuit breaker's job and leave the limit
+    untouched. Mutually exclusive with the other bulkhead kinds within a policy.
+    """
+
+    max_concurrency: int
+    """Ceiling and initial limit."""
+
+    min_concurrency: int = 1
+    """Floor the limit never decreases below."""
+
+    max_queue: int = 0
+    """Maximum number of calls allowed to wait for a slot before rejection."""
+
+    rtt_tolerance: float = 1.5
+    """Latency-rise headroom before contracting: ``1.5`` tolerates a 50% rise
+    over the learned baseline before the gradient drops below ``1.0``."""
+
+    smoothing: float = 0.2
+    """EWMA factor applied to limit *increases* (gentle ramp up; fast down)."""
+
+    long_window: int = 600
+    """Samples over which the no-load baseline RTT is averaged."""
+
+    headroom: float = 4.0
+    """Standing in-flight headroom the limit probes toward while healthy (the
+    Gradient2 ``queue_size`` term — distinct from ``max_queue``)."""
+
+    queue_target: timedelta | None = None
+    """CoDel target sojourn (see :class:`AdaptiveBulkheadStrategy`)."""
+
+    queue_interval: timedelta = timedelta(milliseconds=100)
+    """CoDel interval (see :class:`AdaptiveBulkheadStrategy`)."""
+
+    queue_adaptive_lifo: bool = False
+    """Serve the newest waiter first while congested (see :class:`AdaptiveBulkheadStrategy`)."""
+
+    prioritized: bool = False
+    """Criticality-aware shedding (see :class:`AdaptiveBulkheadStrategy`)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.min_concurrency < 1:
+            raise exc.configuration("Gradient bulkhead min_concurrency must be >= 1")
+
+        if self.max_concurrency < self.min_concurrency:
+            raise exc.configuration(
+                "Gradient bulkhead max_concurrency must be >= min_concurrency"
+            )
+
+        if self.max_queue < 0:
+            raise exc.configuration("Gradient bulkhead max_queue must be >= 0")
+
+        if self.rtt_tolerance < 1.0:
+            raise exc.configuration("Gradient bulkhead rtt_tolerance must be >= 1.0")
+
+        if not 0.0 < self.smoothing <= 1.0:
+            raise exc.configuration("Gradient bulkhead smoothing must be in (0, 1]")
+
+        if self.long_window < 1:
+            raise exc.configuration("Gradient bulkhead long_window must be >= 1")
+
+        if self.headroom < 0.0:
+            raise exc.configuration("Gradient bulkhead headroom must be >= 0")
+
+        if self.queue_target is not None and self.queue_target.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_target must be positive")
+
+        if self.queue_interval.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_interval must be positive")
+
+        if self.queue_target is not None and self.queue_target >= self.queue_interval:
+            raise exc.configuration(
+                "Bulkhead queue_target must be smaller than queue_interval"
+            )
+
+        if (
+            self.queue_target is not None
+            or self.queue_adaptive_lifo
+            or self.prioritized
+        ) and self.max_queue < 1:
+            raise exc.configuration(
+                "Bulkhead queue management (queue_target / queue_adaptive_lifo / "
+                "prioritized) requires max_queue >= 1"
+            )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class CircuitBreakerStrategy:
     """Rolling-window circuit breaker."""
 
@@ -629,6 +730,7 @@ Strategy = (
     RateLimitStrategy
     | BulkheadStrategy
     | AdaptiveBulkheadStrategy
+    | GradientBulkheadStrategy
     | CircuitBreakerStrategy
     | AdaptiveThrottleStrategy
     | RetryStrategy
@@ -641,6 +743,7 @@ _STRATEGY_ORDER: tuple[type, ...] = (
     RateLimitStrategy,
     BulkheadStrategy,
     AdaptiveBulkheadStrategy,
+    GradientBulkheadStrategy,
     CircuitBreakerStrategy,
     AdaptiveThrottleStrategy,
     RetryStrategy,
@@ -690,10 +793,19 @@ class ResiliencePolicy:
         if len(set(functional)) != len(functional):
             raise exc.configuration("Resilience policy has duplicate strategy types")
 
-        if BulkheadStrategy in functional and AdaptiveBulkheadStrategy in functional:
+        bulkhead_kinds = sum(
+            kind in functional
+            for kind in (
+                BulkheadStrategy,
+                AdaptiveBulkheadStrategy,
+                GradientBulkheadStrategy,
+            )
+        )
+
+        if bulkhead_kinds > 1:
             raise exc.configuration(
-                "Resilience policy cannot combine BulkheadStrategy with "
-                "AdaptiveBulkheadStrategy — they occupy the same slot",
+                "Resilience policy cannot combine Bulkhead / AdaptiveBulkhead / "
+                "GradientBulkhead strategies — they occupy the same slot",
             )
 
         if (
@@ -743,6 +855,12 @@ class ResiliencePolicy:
         """Adaptive (AIMD) bulkhead strategy if declared."""
 
         return self._of_type(AdaptiveBulkheadStrategy)
+
+    @property
+    def gradient_bulkhead(self) -> GradientBulkheadStrategy | None:
+        """Delay-based (Gradient2) bulkhead strategy if declared."""
+
+        return self._of_type(GradientBulkheadStrategy)
 
     @property
     def circuit_breaker(self) -> CircuitBreakerStrategy | None:
