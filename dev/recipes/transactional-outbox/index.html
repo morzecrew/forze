@@ -3427,6 +3427,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Table schema">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#causal-ordering-hybrid-logical-clock" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Causal ordering (Hybrid Logical Clock)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4218,6 +4235,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Table schema">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#causal-ordering-hybrid-logical-clock" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Causal ordering (Hybrid Logical Clock)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4532,6 +4566,22 @@ Existing tables migrate with:</p>
 <span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">available_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="p">,</span>
 <span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">ordering_key</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">;</span>
 </code></pre></div>
+<h3 id="causal-ordering-hybrid-logical-clock">Causal ordering (Hybrid Logical Clock)<a class="headerlink" href="#causal-ordering-hybrid-logical-clock" title="Permanent link">&para;</a></h3>
+<p>By default claims are ordered by <code>created_at</code> — assigned per flush batch, so
+rows staged together share a timestamp and tie arbitrarily, and clocks on
+different replicas can disagree. Set <code>PostgresOutboxConfig(hlc_ordering=True)</code>
+to claim in <strong>causal</strong> order instead: every event carries a Hybrid Logical
+Clock stamp that stays close to wall time yet always exceeds any timestamp the
+process has observed (including one merged from a consumed event's <code>forze_hlc</code>
+header), so a reaction sorts after its cause across replicas, and the
+time-ordered <code>id</code> breaks any remaining tie. Add the column first, then opt in
+(legacy <code>NULL</code>-<code>hlc</code> rows fall back to <code>created_at</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">hlc</span><span class="w"> </span><span class="nb">BIGINT</span><span class="p">;</span>
+
+<span class="c1">-- claim order becomes (hlc NULLS LAST, created_at, id); index to match</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">outbox_claim_hlc_idx</span>
+<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="p">(</span><span class="n">outbox_route</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">available_at</span><span class="p">,</span><span class="w"> </span><span class="n">hlc</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">,</span><span class="w"> </span><span class="n">id</span><span class="p">);</span>
+</code></pre></div>
 <p>For Mongo (<code>MongoOutboxConfig</code>), documents mirror these fields; recommended
 indexes:</p>
 <div class="highlight"><pre><span></span><code><span class="nx">db</span><span class="p">.</span><span class="nx">outbox</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">outbox_route</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">event_id</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">unique</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">})</span>
@@ -4539,6 +4589,13 @@ indexes:</p>
 <span class="nx">db</span><span class="p">.</span><span class="nx">outbox</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">outbox_route</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">status</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">processing_at</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">})</span>
 <span class="c1">// the relay reads each claimed batch back by its claim token</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">outbox</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">claim_token</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">sparse</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">})</span>
+</code></pre></div>
+<p><code>hlc_ordering=True</code> works the same on Mongo: the packed HLC is stored on each
+document and the claim sorts <code>[(hlc, 1), (created_at, 1), (id, 1)]</code>. No schema
+migration is needed (documents are schemaless), but add an index to match, and
+note that Mongo sorts missing-<code>hlc</code> rows <em>first</em> — so during migration legacy
+rows drain oldest-first, the inverse of Postgres <code>NULLS LAST</code> (both best-effort):</p>
+<div class="highlight"><pre><span></span><code><span class="nx">db</span><span class="p">.</span><span class="nx">outbox</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">outbox_route</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">status</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">available_at</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">hlc</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">created_at</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">})</span>
 </code></pre></div>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
