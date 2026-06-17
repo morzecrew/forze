@@ -122,6 +122,15 @@ class TestFailOpen:
 
         assert await store.observe(_KEY, 0.05, _strat()) is None
 
+    async def test_malformed_quantile_result_degrades_not_raises(self) -> None:
+        # record OK, but the quantile read returns a non-integer: a successful
+        # Redis call with a bad payload must fail-open, not propagate and break
+        # the call whose work already succeeded.
+        rs = AsyncMock(side_effect=["OK", "garbage"])
+        store = _store(rs)
+
+        assert await store.observe(_KEY, 0.05, _strat()) is None
+
 
 class TestReset:
     async def test_reset_clears_cache_and_drops_hash(self) -> None:

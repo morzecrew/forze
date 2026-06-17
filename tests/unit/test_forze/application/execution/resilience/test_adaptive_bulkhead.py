@@ -14,7 +14,10 @@ from forze.application.contracts.resilience import (
 )
 from forze.application.execution.resilience import InProcessResilienceExecutor
 from forze.application.execution.resilience.state import AdaptiveBulkheadState
-from forze.application.execution.resilience.store import InMemoryLatencyDigestStore
+from forze.application.execution.resilience.store import (
+    InMemoryLatencyDigestStore,
+    LatencyDigestKey,
+)
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 # ----------------------- #
@@ -202,6 +205,49 @@ class TestExecutorIntegration:
 
         ((_, _, limit),) = executor.adaptive_bulkhead_limits()
         assert limit == 4.0
+
+    async def test_cancellation_releases_slot_without_feeding_digest(self) -> None:
+        # A cancellation must release the slot and propagate, without awaiting
+        # the digest store while unwinding (re-interruption risk) — and it is
+        # not a latency sample.
+        fed: list[float] = []
+        inner = InMemoryLatencyDigestStore()
+
+        class _SpyDigest:  # satisfies the LatencyDigestStore protocol structurally
+            async def observe(
+                self,
+                key: LatencyDigestKey,
+                latency: float,
+                strat: AdaptiveBulkheadStrategy,
+            ) -> float | None:
+                fed.append(latency)
+                return await inner.observe(key, latency, strat)
+
+            async def reset(
+                self, key: LatencyDigestKey, strat: AdaptiveBulkheadStrategy
+            ) -> None:
+                await inner.reset(key, strat)
+
+        executor = InProcessResilienceExecutor(
+            policies={
+                "p": ResiliencePolicy(
+                    name="p",
+                    strategies=(_strategy(max_concurrency=2, latency_quantile=0.95),),
+                )
+            },
+            clock=_Clock(),
+            latency_digest_store=_SpyDigest(),
+        )
+
+        async def cancelled() -> str:
+            raise asyncio.CancelledError
+
+        with pytest.raises(asyncio.CancelledError):
+            await executor.run(cancelled, policy="p")
+
+        assert fed == []  # cancellation never fed the digest
+        ((_, _, limit),) = executor.adaptive_bulkhead_limits()
+        assert limit == 2.0  # slot released, limit untouched
 
     async def test_fast_failure_leaves_limit_untouched(self) -> None:
         clock = _Clock()

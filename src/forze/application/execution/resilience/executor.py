@@ -744,6 +744,13 @@ class InProcessResilienceExecutor:
         try:
             result = await inner()
 
+        except asyncio.CancelledError:
+            # A cancellation is not a downstream-latency signal, and awaiting the
+            # digest store while unwinding a cancellation risks re-interruption —
+            # just release the slot and propagate.
+            state.release()
+            raise
+
         except BaseException:
             state.release()
             elapsed = self.clock() - start

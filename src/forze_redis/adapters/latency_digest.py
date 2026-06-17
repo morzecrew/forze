@@ -128,12 +128,15 @@ class RedisLatencyDigestStore(LatencyDigestStore):
                 [self._key(key)],
                 [strat.latency_quantile, _MIN_SAMPLES],
             )
+            # Decode inside the try: a malformed/out-of-range result must
+            # degrade like a Redis error, never propagate and break the call
+            # whose work already succeeded.
+            value = None if res == "" else self._bucketer.index_value(int(res))
 
-        except Exception:  # noqa: BLE001 — fail-open
+        except Exception:  # noqa: BLE001 — fail-open: Redis error or bad result
             self._degrade("quantile", key)
             return await self.fallback.observe(key, latency, strat)
 
-        value = None if res == "" else self._bucketer.index_value(int(res))
         self._cache[key] = (value, self.clock() + self.local_cache_ttl)
 
         return value
