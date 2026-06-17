@@ -11,6 +11,7 @@ import random
 from datetime import datetime
 from typing import Awaitable, Callable
 
+from forze.application.execution.tracing.cooperative import cooperative_scheduling
 from forze.base.primitives import (
     SeededEntropySource,
     bind_entropy_source,
@@ -58,7 +59,14 @@ def run_simulation[T](
     entropy = SeededEntropySource(seed=seed)
 
     try:
-        with bind_time_source(time_source), bind_entropy_source(entropy):
+        # Cooperative scheduling makes every traced port call a yield point, so concurrent
+        # operations interleave at port boundaries (real adapters suspend on I/O; the mocks
+        # don't) — the scheduler then explores those interleavings. No app code required.
+        with (
+            bind_time_source(time_source),
+            bind_entropy_source(entropy),
+            cooperative_scheduling(),
+        ):
             return loop.run_until_complete(scenario())
 
     finally:

@@ -8,7 +8,8 @@ from datetime import timedelta
 from typing import Any, Protocol, final
 
 import attrs
-from jwt import InvalidTokenError, PyJWKClient, PyJWKClientError
+from jwt import InvalidTokenError, PyJWKClientError
+from jwt.jwks_client import PyJWKClient
 
 from forze.base.exceptions import exc
 

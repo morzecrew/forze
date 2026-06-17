@@ -67,6 +67,7 @@ class TraceStep:
     domain: str
     op: str
     surface: str | None
+    route: str | None
     phase: str | None
     tx_depth: int
 
@@ -75,6 +76,8 @@ class TraceStep:
     @property
     def label(self) -> str:
         target = self.surface or self.domain
+        if self.route:  # spec / transaction route, e.g. document_command[orders]
+            target = f"{target}[{self.route}]"
         return f"{target}.{self.op}" if self.op else target
 
 
@@ -140,6 +143,7 @@ class CausalGraph:
                     domain=str(event.fields.get("trace_domain")),
                     op=str(event.fields.get("op")),
                     surface=event.fields.get("surface"),
+                    route=event.fields.get("route"),
                     phase=event.fields.get("phase"),
                     tx_depth=int(event.fields.get("tx_depth", 0)),
                 )

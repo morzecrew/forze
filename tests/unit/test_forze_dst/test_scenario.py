@@ -20,6 +20,8 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 
+from forze.base.exceptions import exc
+
 from forze_dst import (
     ModelState,
     Rule,
@@ -27,6 +29,7 @@ from forze_dst import (
     Simulation,
     expect,
     no_duplicate_effect,
+    no_unexpected_error,
     record_event,
 )
 from forze_mock import MockDepsModule
@@ -175,6 +178,42 @@ class TestHypothesisExplore:
         )
         report = _payments_simulation(atomic=False).explore_scenario_hypothesis(
             scenario, max_examples=10
+        )
+        assert report is None
+
+
+class TestNoUnexpectedError:
+    def _sim(self, exception: Exception) -> Simulation:
+        @attrs.define(slots=True)
+        class _Boom(Handler[None, None]):
+            async def __call__(self, _args: None) -> None:
+                raise exception
+
+        registry = OperationRegistry(handlers={"boom": lambda _c: _Boom()}).freeze()
+        return Simulation(
+            operations=registry,
+            deps=lambda: MockDepsModule(),
+            invariants=[no_unexpected_error()],
+        )
+
+    def test_flags_an_unexpected_exception(self) -> None:
+        report = self._sim(KeyError("boom")).explore_scenario(
+            Scenario(state=ModelState, act=(Rule(op="boom"),)),
+            act_count=1,
+            concurrency=1,
+            seeds=range(1),
+        )
+        assert report is not None
+        assert report.violations[0].invariant == "no_unexpected_error"
+        assert "KeyError" in report.violations[0].message
+
+    def test_ignores_a_domain_coreexception(self) -> None:
+        # A declared domain failure is an expected outcome — not a bug.
+        report = self._sim(exc.validation("bad input")).explore_scenario(
+            Scenario(state=ModelState, act=(Rule(op="boom"),)),
+            act_count=1,
+            concurrency=1,
+            seeds=range(3),
         )
         assert report is None
 

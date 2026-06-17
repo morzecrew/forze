@@ -24,6 +24,7 @@ import attrs
 from forze.application.execution import DepsModule, DepsRegistry, ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import FrozenOperationRegistry
+from forze.base.exceptions import CoreException
 from forze.base.primitives import monotonic
 from forze_dst.derive import DEFAULT_CREATE_VERBS
 from forze_dst.derive import derive_scenario as _derive_from_catalog
@@ -269,6 +270,7 @@ class Simulation:
                             op=call.op,
                             outcome="error",
                             error=type(error).__name__,
+                            unexpected=not isinstance(error, CoreException),
                             invoked_at=invoked,
                             returned_at=monotonic(),
                         )
@@ -400,6 +402,7 @@ class Simulation:
                     op=op,
                     outcome="error",
                     error=type(error).__name__,
+                    unexpected=not isinstance(error, CoreException),
                     invoked_at=invoked,
                     returned_at=monotonic(),
                 )
@@ -443,6 +446,7 @@ class Simulation:
                 op=op,
                 outcome="error",
                 error=type(error).__name__,
+                unexpected=not isinstance(error, CoreException),
                 invoked_at=invoked,
                 returned_at=monotonic(),
             )

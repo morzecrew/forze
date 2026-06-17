@@ -150,6 +150,34 @@ def mutual_exclusion(
     return _check
 
 
+def no_unexpected_error() -> Invariant:
+    """No operation raised an *unexpected* exception (a bug — ``KeyError``, ``TypeError``, …).
+
+    Domain failures (``CoreException``) are expected outcomes and pass; anything else is a
+    latent bug surfaced under the explored interleavings and injected faults. This is the
+    zero-instrumentation safety net — it holds against any operation registry without a
+    single app-written invariant, so ``forze dst run`` is useful on an uninstrumented app.
+
+    Requires the harness to tag operation errors (it records ``unexpected`` on each).
+    """
+
+    def _check(history: History) -> list[Violation]:
+        return [
+            Violation(
+                invariant="no_unexpected_error",
+                message=(
+                    f"operation {event.fields.get('op')!r} raised an unexpected "
+                    f"{event.fields.get('error')}"
+                ),
+                events=(event,),
+            )
+            for event in history.of_kind("operation")
+            if event.fields.get("outcome") == "error" and event.fields.get("unexpected")
+        ]
+
+    return _check
+
+
 def expect(
     kind: str,
     predicate: Callable[[Event], bool],

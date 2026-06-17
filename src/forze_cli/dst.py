@@ -84,6 +84,16 @@ def run(
     """Explore an auto-derived scenario; print the counterexample (exit 1 if one is found)."""
 
     sim = load_simulation(target)
+
+    if not sim.invariants:
+        # No invariants → DST has nothing to assert (e.g. an ad-hoc bare registry). Say so
+        # rather than printing a misleading "no violation found".
+        typer.echo(
+            "⚠ no invariants defined — nothing to check. Point at a Simulation that "
+            "declares invariants (a bare registry has none) to actually find bugs."
+        )
+        return
+
     scenario = sim.derive_scenario()
 
     if strategy is Strategy.hypothesis:

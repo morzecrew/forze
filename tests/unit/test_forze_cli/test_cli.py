@@ -136,6 +136,50 @@ class TestLoader:
             load_simulation("forze_dst:DEFAULT_CREATE_VERBS")  # a frozenset
 
 
+class TestDiscovery:
+    def test_callable_returning_non_simulation_raises(self) -> None:
+        with pytest.raises(TypeError):
+            load_simulation("builtins:dict")  # dict() is neither Simulation nor registry
+
+    def test_discover_ambiguous_simulations(self) -> None:
+        # This very module exposes several Simulations (RACY/CLEAN/PRODUCER_ONLY).
+        with pytest.raises(ValueError):
+            load_simulation(__name__)
+
+    def test_discover_registry_and_none_and_ambiguous(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import types
+
+        from forze_cli import loader
+
+        registry = PRODUCER_ONLY.operations
+        one_registry = types.ModuleType("m_one")
+        one_registry.r = registry  # type: ignore[attr-defined]
+        two_registries = types.ModuleType("m_two")
+        two_registries.a = registry  # type: ignore[attr-defined]
+        two_registries.b = registry  # type: ignore[attr-defined]
+        empty = types.ModuleType("m_empty")
+
+        modules = {"m_one": one_registry, "m_two": two_registries, "m_empty": empty}
+        monkeypatch.setattr(loader.importlib, "import_module", lambda name: modules[name])
+
+        assert isinstance(load_simulation("m_one"), Simulation)  # single registry → wrapped
+        with pytest.raises(ValueError):
+            load_simulation("m_two")  # ambiguous registries
+        with pytest.raises(ValueError):
+            load_simulation("m_empty")  # nothing to drive
+
+    def test_cwd_is_put_on_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from forze_cli import loader
+
+        sentinel = "/tmp/forze-cli-sentinel-dir"  # nosec B108 - test path, never created
+        monkeypatch.setattr(loader.os, "getcwd", lambda: sentinel)
+        monkeypatch.setattr(loader.sys, "path", [p for p in __import__("sys").path])
+        loader._ensure_cwd_importable()
+        assert sentinel in loader.sys.path
+
+
 class TestParseSeeds:
     def test_forms(self) -> None:
         assert _parse_seeds("5") == [0, 1, 2, 3, 4]
@@ -160,6 +204,13 @@ class TestRun:
         )
         assert result.exit_code == 0
         assert "no violation" in result.stdout
+
+    def test_no_invariants_is_not_a_silent_pass(self) -> None:
+        # A Simulation with no invariants must not read as "✓ no violation found".
+        result = runner.invoke(app, ["dst", "run", _ref("PRODUCER_ONLY")])
+        assert result.exit_code == 0
+        assert "no invariants" in result.stdout
+        assert "no violation" not in result.stdout
 
     @pytest.mark.parametrize("strategy", ["scenario", "hypothesis", "dpor"])
     def test_strategies_find_the_bug(self, strategy: str) -> None:

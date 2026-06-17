@@ -19,6 +19,7 @@ from .invariants import (
     monotonic_per,
     mutual_exclusion,
     no_duplicate_effect,
+    no_unexpected_error,
 )
 from .linearizability import (
     RegisterSpec,
@@ -88,6 +89,7 @@ __all__ = [
     "no_duplicate_effect",
     "monotonic_per",
     "mutual_exclusion",
+    "no_unexpected_error",
     "expect",
     "run_recorded",
     "minimize",
