@@ -25,8 +25,8 @@ class MappingConverter:
     # ....................... #
 
     @staticmethod
-    def _validate_input_mapping[V](
-        value: Mapping[str, V] | Mapping[StrEnum, V],
+    def _validate_input_mapping[K: StrEnum, V](
+        value: Mapping[str, V] | Mapping[K, V],
     ) -> None:
         for k in value:
             if not isinstance(
@@ -38,17 +38,17 @@ class MappingConverter:
 
     @overload
     @staticmethod
-    def to_str_key[V: Any](
-        value: Mapping[str, V] | Mapping[StrEnum, V],
+    def to_str_key[K: StrEnum, V: Any](
+        value: Mapping[str, V] | Mapping[K, V],
     ) -> StrKeyMapping[V]: ...
 
     @overload
     @staticmethod
-    def to_str_key[V: Any](value: None) -> None: ...
+    def to_str_key[K: StrEnum, V: Any](value: None) -> None: ...
 
     @staticmethod
-    def to_str_key[V: Any](
-        value: Mapping[str, V] | Mapping[StrEnum, V] | None,
+    def to_str_key[K: StrEnum, V: Any](
+        value: Mapping[str, V] | Mapping[K, V] | None,
     ) -> StrKeyMapping[V] | None:
         if value is None:
             return None
@@ -61,17 +61,17 @@ class MappingConverter:
 
     @overload
     @staticmethod
-    def to_str_key_frozen[V: Any](
-        value: Mapping[str, V] | Mapping[StrEnum, V],
+    def to_str_key_frozen[K: StrEnum, V: Any](
+        value: Mapping[str, V] | Mapping[K, V],
     ) -> StrKeyMapping[V]: ...
 
     @overload
     @staticmethod
-    def to_str_key_frozen[V: Any](value: None) -> None: ...
+    def to_str_key_frozen[K: StrEnum, V: Any](value: None) -> None: ...
 
     @staticmethod
-    def to_str_key_frozen[V: Any](
-        value: Mapping[str, V] | Mapping[StrEnum, V] | None,
+    def to_str_key_frozen[K: StrEnum, V: Any](
+        value: Mapping[str, V] | Mapping[K, V] | None,
     ) -> StrKeyMapping[V] | None:
         if value is None:
             return None
