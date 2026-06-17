@@ -106,6 +106,26 @@ class TestPriorityAdmissionDisplacement:
         await normal
         state.release()
 
+    async def test_displace_skips_already_done_victim(self) -> None:
+        # A waiter cancelled concurrently can linger in the queue with a done
+        # future; displacing it must not call set_exception (InvalidStateError).
+        state = _state(max_queue=2)
+        loop = asyncio.get_running_loop()
+
+        cancelled = loop.create_future()
+        cancelled.cancel()
+        live = loop.create_future()
+        victim = (cancelled, None, 0.0, Criticality.BEST_EFFORT)
+        survivor = (live, None, 0.0, Criticality.NORMAL)
+        state._waiters.append(victim)
+        state._waiters.append(survivor)
+
+        state._displace_lowest()  # picks the cancelled BEST_EFFORT — must not raise
+
+        assert victim not in state._waiters
+        assert survivor in state._waiters
+        live.cancel()  # cleanup
+
     async def test_lowest_of_several_is_displaced(self) -> None:
         state = _state(max_queue=3)
         await state.acquire()

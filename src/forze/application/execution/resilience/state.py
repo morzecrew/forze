@@ -318,7 +318,11 @@ class AdaptiveBulkheadState:
 
         incoming = current_criticality()
 
-        return any(crit < incoming for *_, crit in self._waiters)
+        return any(
+            crit < incoming
+            for waiter, _, _, crit in self._waiters
+            if not waiter.done()
+        )
 
     # ....................... #
 
@@ -392,12 +396,17 @@ class AdaptiveBulkheadState:
 
         victim = min(self._waiters, key=lambda entry: entry[3])
         self._waiters.remove(victim)
-        victim[0].set_exception(
-            exc.infrastructure(
-                "Bulkhead queue shed: displaced by a higher-criticality request",
-                code="bulkhead_queue_shed",
+
+        # A waiter cancelled concurrently can still linger in the deque (its
+        # entry is dropped only when it resumes); never set_exception on a
+        # done/cancelled future — it would raise InvalidStateError.
+        if not victim[0].done():
+            victim[0].set_exception(
+                exc.infrastructure(
+                    "Bulkhead queue shed: displaced by a higher-criticality request",
+                    code="bulkhead_queue_shed",
+                )
             )
-        )
 
     # ....................... #
 

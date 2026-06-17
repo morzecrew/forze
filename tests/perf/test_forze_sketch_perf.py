@@ -24,7 +24,8 @@ from forze.base.primitives import DDSketch, WindowedDDSketch
 # ----------------------- #
 
 _ALPHA = 0.01
-_SAMPLES = [random.Random(2024).lognormvariate(3.0, 1.0) for _ in range(2_000)]
+_RNG = random.Random(2024)
+_SAMPLES = [_RNG.lognormvariate(3.0, 1.0) for _ in range(2_000)]
 
 
 def _warm_sketch() -> DDSketch:

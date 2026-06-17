@@ -236,6 +236,18 @@ def test_negative_observation_rejected() -> None:
         sketch.observe(-1.0)
 
 
+def test_non_finite_observation_rejected_without_corrupting_state() -> None:
+    sketch = DDSketch(relative_accuracy=_ALPHA)
+
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(CoreException):
+            sketch.observe(bad)
+
+    # Rejected before any mutation: the count invariant is intact.
+    assert sketch.count == 0
+    assert sketch.quantile(0.5) is None
+
+
 def test_quantile_out_of_range_rejected() -> None:
     sketch = DDSketch(relative_accuracy=_ALPHA)
     sketch.observe(1.0)

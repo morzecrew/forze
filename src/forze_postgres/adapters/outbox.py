@@ -185,7 +185,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             RETURNING
                 t.id, t.outbox_route, t.event_id, t.event_type, t.payload,
                 t.tenant_id, t.execution_id, t.correlation_id, t.causation_id,
-                t.occurred_at, t.attempts, t.ordering_key{hlc_returning}
+                t.occurred_at, t.attempts, t.ordering_key, t.created_at{hlc_returning}
             """
         ).format(
             table=table.ident(),
@@ -195,6 +195,22 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
         )
 
         rows = await self.client.fetch_all(stmt, params)
+
+        # ``UPDATE … RETURNING`` does not preserve the picked CTE's ``ORDER BY``
+        # (Postgres decouples the two), so re-apply the claim order in Python.
+        if hlc_ordering:
+            rows = sorted(
+                rows,
+                key=lambda r: (
+                    r.get("hlc") is None,  # NULLS LAST
+                    r.get("hlc") or 0,
+                    r["created_at"],
+                    r["id"],
+                ),
+            )
+
+        else:
+            rows = sorted(rows, key=lambda r: (r["created_at"], r["id"]))
 
         return [
             OutboxClaim(

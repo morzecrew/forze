@@ -758,7 +758,12 @@ class InProcessResilienceExecutor:
             raise
 
         state.release()
-        await self._adaptive_on_complete(state, strat, pol, route, self.clock() - start)
+        elapsed = self.clock() - start
+
+        # A zero-duration completion (clock resolution / no advance) carries no
+        # latency signal; the failure path is already threshold-gated above.
+        if elapsed > 0.0:
+            await self._adaptive_on_complete(state, strat, pol, route, elapsed)
 
         return result
 

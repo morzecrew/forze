@@ -454,8 +454,8 @@ class GradientBulkheadStrategy:
         if not 0.0 < self.smoothing <= 1.0:
             raise exc.configuration("Gradient bulkhead smoothing must be in (0, 1]")
 
-        if self.long_window < 1:
-            raise exc.configuration("Gradient bulkhead long_window must be >= 1")
+        if self.long_window < 2:
+            raise exc.configuration("Gradient bulkhead long_window must be >= 2")
 
         if self.headroom < 0.0:
             raise exc.configuration("Gradient bulkhead headroom must be >= 0")

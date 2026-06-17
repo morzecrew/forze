@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -103,6 +104,7 @@ async def test_persist_rows_defaults_ordering_key_to_null() -> None:
 async def test_claim_pending_returns_ordering_key_from_row() -> None:
     client = _StubPgClient()
     row_id, event_id = uuid4(), uuid4()
+    t0 = utcnow()
     client.rows = [
         {
             "id": row_id,
@@ -110,9 +112,10 @@ async def test_claim_pending_returns_ordering_key_from_row() -> None:
             "event_id": event_id,
             "event_type": "demo.created",
             "payload": {"label": "x"},
-            "occurred_at": utcnow(),
+            "occurred_at": t0,
             "attempts": 0,
             "ordering_key": "agg-1",
+            "created_at": t0,
         },
         {
             "id": uuid4(),
@@ -120,9 +123,10 @@ async def test_claim_pending_returns_ordering_key_from_row() -> None:
             "event_id": uuid4(),
             "event_type": "demo.created",
             "payload": {"label": "y"},
-            "occurred_at": utcnow(),
+            "occurred_at": t0,
             "attempts": 0,
             "ordering_key": None,
+            "created_at": t0 + timedelta(seconds=1),
         },
     ]
 

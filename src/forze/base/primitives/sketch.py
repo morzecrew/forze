@@ -22,6 +22,7 @@ that matters for latency keeps full accuracy under unbounded dynamic range.
 from __future__ import annotations
 
 import math
+from collections import deque
 
 import attrs
 
@@ -93,6 +94,9 @@ class DDSketch:
         a negative ``x`` is a programming error for a latency/size sketch.
         """
 
+        if not math.isfinite(x):
+            raise exc.validation("DDSketch observations must be finite")
+
         if x < 0.0:
             raise exc.validation("DDSketch observations must be non-negative")
 
@@ -137,14 +141,14 @@ class DDSketch:
         """Fold the smallest-key buckets into the next-smallest until within cap.
 
         Latency cares about the tail, so accuracy is sacrificed at the low end.
-        Rare in practice (only past ``max_bins`` distinct buckets), so the
-        ``sorted`` pass is acceptable.
+        A ``deque`` keeps each fold O(1) (a plain ``list.pop(0)`` shifts every
+        remaining element, making a large merge-time collapse quadratic).
         """
 
-        keys = sorted(self._bins)
+        keys = deque(sorted(self._bins))
 
         while len(self._bins) > self.max_bins:
-            lowest = keys.pop(0)
+            lowest = keys.popleft()
             self._bins[keys[0]] += self._bins.pop(lowest)
 
     # ....................... #
@@ -195,6 +199,11 @@ class DDSketch:
                 "cannot merge DDSketch instances with different relative_accuracy"
             )
 
+        if other.max_bins != self.max_bins:
+            raise exc.configuration(
+                "cannot merge DDSketch instances with different max_bins"
+            )
+
         for key, cnt in other._bins.items():
             self._bins[key] = self._bins.get(key, 0) + cnt
 
@@ -210,11 +219,15 @@ class DDSketch:
     def merged(cls, first: DDSketch, *rest: DDSketch) -> DDSketch:
         """A fresh sketch combining ``first`` and ``rest`` (order-independent)."""
 
+        # Seed from a copy of ``first`` rather than merging it into an empty
+        # sketch (which would walk its bins an extra time).
         out = cls(
             relative_accuracy=first.relative_accuracy,
             max_bins=first.max_bins,
         )
-        out.merge(first)
+        out._bins = dict(first._bins)
+        out._zero_count = first._zero_count
+        out._count = first._count
 
         for sketch in rest:
             out.merge(sketch)

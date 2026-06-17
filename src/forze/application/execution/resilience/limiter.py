@@ -92,8 +92,10 @@ class Gradient2Limiter:
         if not 0.0 < self.smoothing <= 1.0:
             raise exc.configuration("Gradient2 smoothing must be in (0, 1]")
 
-        if self.long_window < 1:
-            raise exc.configuration("Gradient2 long_window must be >= 1")
+        if self.long_window < 2:
+            # window == 1 pins the baseline to the current sample, so the
+            # gradient is always 1.0 and the limit never contracts.
+            raise exc.configuration("Gradient2 long_window must be >= 2")
 
         if self.queue_size < 0.0:
             raise exc.configuration("Gradient2 queue_size must be >= 0")

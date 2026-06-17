@@ -15,11 +15,8 @@ never become a per-call single point of failure. A backoff drops the shared
 hash (a fleet-wide fresh epoch), and an idle digest expires by TTL.
 """
 
-from __future__ import annotations
-
 import time
-from collections.abc import Callable
-from typing import final
+from typing import Callable, final
 
 import attrs
 
@@ -48,6 +45,8 @@ _MIN_SAMPLES = 5
 """Warmup floor mirroring the in-process windowed-P² estimator: below this the
 quantile read returns ``None`` and the AIMD holds the limit."""
 
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True)
@@ -62,9 +61,12 @@ class RedisLatencyDigestStore(LatencyDigestStore):
     fallback: LatencyDigestStore = attrs.Factory(InMemoryLatencyDigestStore)
     clock: Callable[[], float] = time.monotonic
 
+    # ....................... #
+
     _bucketer: DDSketch = attrs.field(init=False)
     _cache: dict[LatencyDigestKey, tuple[float | None, float]] = attrs.field(
-        factory=dict, init=False
+        factory=dict,
+        init=False,
     )
 
     # ....................... #
@@ -90,8 +92,21 @@ class RedisLatencyDigestStore(LatencyDigestStore):
         latency: float,
         strat: AdaptiveBulkheadStrategy,
     ) -> float | None:
+        if latency <= 0.0:
+            # A zero/negative-duration sample carries no latency signal — don't
+            # record it (and don't mistake the bucketing's domain rejection for
+            # a Redis failure). Serve the last known quantile, if still fresh.
+            cached = self._cache.get(key)
+
+            return (
+                cached[0] if cached is not None and cached[1] > self.clock() else None
+            )
+
+        # Compute the bucket index outside the try so a domain error can never
+        # masquerade as a Redis failure and silently route to the fallback.
+        index = self._bucketer.index(latency)
+
         try:
-            index = self._bucketer.index(latency)
             await self.client.run_script(
                 LATENCY_DIGEST_RECORD,
                 [self._key(key)],
@@ -137,11 +152,16 @@ class RedisLatencyDigestStore(LatencyDigestStore):
 
         except Exception:  # noqa: BLE001 — fail-open
             self._degrade("reset", key)
+
+        finally:
+            # Reset the standby digest too (not just on Redis error), so a later
+            # degradation doesn't serve a pre-backoff distribution.
             await self.fallback.reset(key, strat)
 
     # ....................... #
 
-    def _degrade(self, op: str, key: LatencyDigestKey) -> None:
+    @staticmethod
+    def _degrade(op: str, key: LatencyDigestKey) -> None:
         trace_record(
             domain="resilience",
             op="latency_digest_degraded",

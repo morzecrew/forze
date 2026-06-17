@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from pydantic import BaseModel
 
@@ -95,6 +97,17 @@ class TestInboxMerge:
         _merge_inbound_hlc({HEADER_HLC: "not-an-hlc"})
 
         assert outbox_clock().last == before
+
+    def test_drift_guard_ignores_forged_far_future_inbound(self) -> None:
+        # HEADER_HLC is untrusted: a drift-guarded clock must not let a forged
+        # far-future timestamp skew the process clock.
+        set_outbox_clock(HybridLogicalClock(max_drift=timedelta(seconds=1)))
+        before = outbox_clock().last
+
+        far_future = HlcTimestamp(physical_ms=9_000_000_000_000, logical=0)
+        _merge_inbound_hlc({HEADER_HLC: far_future.encode()})
+
+        assert outbox_clock().last == before  # rejected, not skewed
 
     def test_absent_header_is_noop(self) -> None:
         before = outbox_clock().last

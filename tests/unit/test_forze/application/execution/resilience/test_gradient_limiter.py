@@ -119,6 +119,7 @@ class TestValidation:
             {"smoothing": 0.0},
             {"smoothing": 1.5},
             {"long_window": 0},
+            {"long_window": 1},  # degenerate: baseline == sample, gradient pinned at 1.0
             {"queue_size": -1.0},
         ):
             with pytest.raises(CoreException):

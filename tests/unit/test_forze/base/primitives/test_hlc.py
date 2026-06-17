@@ -200,6 +200,11 @@ def test_update_preserves_causality_chain() -> None:
     assert e1 < e2 < e3
 
 
+def test_negative_max_drift_rejected() -> None:
+    with pytest.raises(CoreException):
+        HybridLogicalClock(max_drift=timedelta(seconds=-1))
+
+
 def test_update_skew_guard_rejects_far_future_remote() -> None:
     clock = HybridLogicalClock(max_drift=timedelta(seconds=1))
     remote = HlcTimestamp(10_000, 0)  # 9s ahead of a 1000ms wall clock

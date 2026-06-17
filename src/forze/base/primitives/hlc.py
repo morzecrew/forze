@@ -45,7 +45,6 @@ millisecond timestamps well past year 10000, so the string stays lexsortable."""
 _ENCODE_LOGICAL_DIGITS = 5
 """Fixed width for the logical field in :meth:`HlcTimestamp.encode` (covers 65535)."""
 
-
 # ....................... #
 
 
@@ -142,7 +141,15 @@ class HybridLogicalClock:
     bounding how far a faulty peer can drag this clock forward. ``None`` accepts
     any remote timestamp (plain HLC)."""
 
+    # ....................... #
+
     _last: HlcTimestamp = attrs.field(default=HlcTimestamp(0, 0), init=False)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.max_drift is not None and self.max_drift < timedelta(0):
+            raise exc.configuration("HybridLogicalClock max_drift must be non-negative")
 
     # ....................... #
 
@@ -154,7 +161,10 @@ class HybridLogicalClock:
 
     # ....................... #
 
-    def _wall_ms(self) -> int:
+    @staticmethod
+    def _wall_ms() -> int:
+        """Get the current wall clock time in milliseconds."""
+
         return int(current_time_source().now().timestamp() * 1000)
 
     # ....................... #

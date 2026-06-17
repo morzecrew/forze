@@ -84,6 +84,24 @@ class TestObserve:
         assert sent_index == str(DDSketch(relative_accuracy=_ALPHA).index(0.5))
 
 
+class TestNonPositiveLatency:
+    async def test_zero_latency_not_recorded_or_degraded(self) -> None:
+        # A zero-duration sample must NOT be misclassified as a Redis failure
+        # (the bucketing rejects <= 0) — no record, no degrade, no fallback.
+        rs = AsyncMock()
+        store = _store(rs)
+
+        assert await store.observe(_KEY, 0.0, _strat()) is None
+        rs.assert_not_awaited()
+
+    async def test_negative_latency_not_recorded(self) -> None:
+        rs = AsyncMock()
+        store = _store(rs)
+
+        assert await store.observe(_KEY, -0.5, _strat()) is None
+        rs.assert_not_awaited()
+
+
 class TestFailOpen:
     async def test_record_failure_falls_back_in_memory(self) -> None:
         rs = AsyncMock(side_effect=RuntimeError("redis down"))

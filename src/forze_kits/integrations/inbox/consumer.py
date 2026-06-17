@@ -128,7 +128,6 @@ async def process_with_inbox[M](
 
     headers = _message_headers(message)
     header_event_id = headers.get(HEADER_EVENT_ID)
-    _merge_inbound_hlc(headers)
 
     if message_id is not None:
         dedup_id: str | None = message_id(message)
@@ -177,6 +176,11 @@ async def process_with_inbox[M](
 
             if not await port.mark_if_unseen(str(inbox_spec.name), dedup_id):
                 return False
+
+            # Only a genuinely new message advances the process clock — a
+            # replayed/duplicate one must not (it would let forged or repeated
+            # headers skew causality).
+            _merge_inbound_hlc(headers)
 
             await handler(message)
             return True

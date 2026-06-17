@@ -104,6 +104,7 @@ class TestStrategyValidation:
             {"smoothing": 0.0},
             {"smoothing": 1.5},
             {"long_window": 0},
+            {"long_window": 1},  # degenerate: gradient pinned at 1.0, never contracts
             {"headroom": -1.0},
             {"queue_adaptive_lifo": True},  # needs max_queue >= 1
             {"queue_target": timedelta(milliseconds=5)},  # needs max_queue >= 1
