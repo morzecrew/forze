@@ -277,12 +277,15 @@ jobs:
         with:
           egress-policy: audit
 
-      # Needed so .github/scripts/verify-required-ci.sh is on disk — this gate job
-      # has no other reason to check out, but the verify logic now lives in a script.
-      - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-
+      # Kept INLINE on purpose (no checkout): this is the required status check,
+      # so its pass/fail must not depend on a file pulled from the PR-head
+      # checkout. Reading job results via the `needs` context — passed through
+      # `env` so PR-controlled strings never interpolate into the script body —
+      # keeps the gate self-contained. (The real guarantees are branch protection
+      # requiring this check by name + PR review; see also the operational scripts
+      # under .github/scripts, which are not trust gates.)
       - name: Verify required jobs
+        shell: bash
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           QUALITY_RESULT: ${{ needs.quality.result }}
@@ -290,7 +293,48 @@ jobs:
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           CODE: ${{ needs.changes.outputs.code }}
           FORCE_FULL: ${{ needs.changes.outputs.force_full }}
-        run: bash .github/scripts/verify-required-ci.sh
+        run: |
+          echo "changes.result=${CHANGES_RESULT}"
+          echo "quality.result=${QUALITY_RESULT}"
+          echo "test.result=${TEST_RESULT}"
+          echo "coverage.result=${COVERAGE_RESULT}"
+          echo "code=${CODE}"
+          echo "force_full=${FORCE_FULL}"
+
+          if [[ "${CHANGES_RESULT}" != "success" ]]; then
+            echo "changes job failed"
+            exit 1
+          fi
+
+          if [[ "${FORCE_FULL}" == "true" || "${CODE}" == "true" ]]; then
+            if [[ "${QUALITY_RESULT}" != "success" ]]; then
+              echo "quality job did not succeed"
+              exit 1
+            fi
+            if [[ "${TEST_RESULT}" != "success" ]]; then
+              echo "test matrix did not succeed"
+              exit 1
+            fi
+            if [[ "${COVERAGE_RESULT}" != "success" ]]; then
+              echo "coverage gate did not succeed"
+              exit 1
+            fi
+          else
+            if [[ "${QUALITY_RESULT}" != "skipped" ]]; then
+              echo "quality was expected to be skipped"
+              exit 1
+            fi
+            if [[ "${TEST_RESULT}" != "skipped" ]]; then
+              echo "test was expected to be skipped"
+              exit 1
+            fi
+            if [[ "${COVERAGE_RESULT}" != "skipped" ]]; then
+              echo "coverage was expected to be skipped"
+              exit 1
+            fi
+          fi
+
+          echo "required-ci passed"
 
   perf-gate:
     name: Perf regression gate (A/B vs merge-base)
