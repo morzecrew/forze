@@ -386,27 +386,27 @@ class AdaptiveBulkheadState:
     # ....................... #
 
     def _displace_lowest(self) -> None:
-        """Shed the lowest-criticality parked waiter to admit a higher one.
+        """Shed the lowest-criticality *live* parked waiter to admit a higher one.
 
         Mirrors the CoDel shed path: the victim is removed from the queue and
         failed with ``bulkhead_queue_shed``; its own :meth:`acquire` ``finally``
-        decrements ``waiting``. The caller (via :meth:`can_admit`) guarantees a
-        strictly-lower-criticality victim exists.
+        decrements ``waiting``. Done/cancelled waiters lingering until
+        :meth:`_wake` reaps them are skipped — picking one would leave a live
+        lower-criticality waiter queued and push ``waiting`` past ``max_queue``.
+        The caller (via :meth:`can_admit`) guarantees a live victim exists.
         """
 
-        victim = min(self._waiters, key=lambda entry: entry[3])
+        victim = min(
+            (entry for entry in self._waiters if not entry[0].done()),
+            key=lambda entry: entry[3],
+        )
         self._waiters.remove(victim)
-
-        # A waiter cancelled concurrently can still linger in the deque (its
-        # entry is dropped only when it resumes); never set_exception on a
-        # done/cancelled future — it would raise InvalidStateError.
-        if not victim[0].done():
-            victim[0].set_exception(
-                exc.infrastructure(
-                    "Bulkhead queue shed: displaced by a higher-criticality request",
-                    code="bulkhead_queue_shed",
-                )
+        victim[0].set_exception(
+            exc.infrastructure(
+                "Bulkhead queue shed: displaced by a higher-criticality request",
+                code="bulkhead_queue_shed",
             )
+        )
 
     # ....................... #
 

@@ -106,25 +106,29 @@ class TestPriorityAdmissionDisplacement:
         await normal
         state.release()
 
-    async def test_displace_skips_already_done_victim(self) -> None:
-        # A waiter cancelled concurrently can linger in the queue with a done
-        # future; displacing it must not call set_exception (InvalidStateError).
+    async def test_displace_skips_done_waiters_and_sheds_a_live_one(self) -> None:
+        # A waiter cancelled concurrently lingers in the queue with a done
+        # future. _displace_lowest must skip it (not pick the dead entry) and
+        # shed the lowest-criticality LIVE waiter — otherwise the live queue
+        # would grow past max_queue while a lower-tier waiter stays unserviced.
         state = _state(max_queue=2)
         loop = asyncio.get_running_loop()
 
         cancelled = loop.create_future()
         cancelled.cancel()
         live = loop.create_future()
-        victim = (cancelled, None, 0.0, Criticality.BEST_EFFORT)
-        survivor = (live, None, 0.0, Criticality.NORMAL)
-        state._waiters.append(victim)
-        state._waiters.append(survivor)
+        done_entry = (cancelled, None, 0.0, Criticality.BEST_EFFORT)
+        live_entry = (live, None, 0.0, Criticality.NORMAL)
+        state._waiters.append(done_entry)
+        state._waiters.append(live_entry)
 
-        state._displace_lowest()  # picks the cancelled BEST_EFFORT — must not raise
+        state._displace_lowest()
 
-        assert victim not in state._waiters
-        assert survivor in state._waiters
-        live.cancel()  # cleanup
+        # The live NORMAL waiter is shed; the dead BEST_EFFORT entry is left for
+        # _wake to reap (never chosen, never set_exception'd → no crash).
+        assert live.done() and isinstance(live.exception(), CoreException)
+        assert live_entry not in state._waiters
+        assert done_entry in state._waiters
 
     async def test_lowest_of_several_is_displaced(self) -> None:
         state = _state(max_queue=3)
