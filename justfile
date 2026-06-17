@@ -58,7 +58,7 @@ _uv_cmd name strict *command:
 test *args='':
     {{ _uv_sync }}
 
-    uv run pytest -m "not perf" {{ args }}
+    uv run pytest -m "not perf and not fuzz" {{ args }}
 
 # Save a local perf baseline for the gated (in-process) benchmark subset
 perf-save:
@@ -98,6 +98,13 @@ perf *args='tests/perf':
         --benchmark-max-time=30 \
         -m perf \
         {{ args }}
+
+
+# Run the extended DST fuzz (many seeds; intended for a nightly CI job)
+fuzz *args='tests/unit/test_forze_dst':
+    {{ _uv_sync }}
+
+    uv run pytest -m fuzz {{ args }}
 
 
 # Run all quality checks

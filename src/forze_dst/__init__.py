@@ -15,6 +15,7 @@ from .invariants import (
     check,
     expect,
     monotonic_per,
+    mutual_exclusion,
     no_duplicate_effect,
 )
 from .linearizability import (
@@ -74,6 +75,7 @@ __all__ = [
     "check",
     "no_duplicate_effect",
     "monotonic_per",
+    "mutual_exclusion",
     "expect",
     "run_recorded",
     "minimize",

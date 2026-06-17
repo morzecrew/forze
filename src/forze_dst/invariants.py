@@ -8,7 +8,8 @@ and collects every violation.
 
 from __future__ import annotations
 
-from typing import Callable, Sequence, final
+from collections import defaultdict
+from typing import Any, Callable, Sequence, final
 
 import attrs
 
@@ -99,6 +100,50 @@ def monotonic_per(kind: str, value: str, *, actor: str) -> Invariant:
                 )
 
             last[who] = current
+
+        return violations
+
+    return _check
+
+
+def mutual_exclusion(
+    kind: str,
+    *,
+    resource: str,
+    start: str,
+    end: str,
+) -> Invariant:
+    """No two ``kind`` holds may overlap in ``[start, end)`` for the same ``resource``.
+
+    For validating a distributed lock / critical section across replicas: a correct
+    lock serializes holders, so their intervals never overlap; concurrent entry shows
+    up here as an overlap.
+    """
+
+    def _check(history: History) -> list[Violation]:
+        by_resource: dict[Any, list[tuple[float, float, Event]]] = defaultdict(list)
+        for event in history.of_kind(kind):
+            by_resource[event.fields[resource]].append(
+                (event.fields[start], event.fields[end], event)
+            )
+
+        violations: list[Violation] = []
+        for res, holds in by_resource.items():
+            holds.sort(key=lambda hold: hold[0])
+            max_end: float | None = None
+            max_event: Event | None = None
+
+            for hold_start, hold_end, event in holds:
+                if max_end is not None and hold_start < max_end:
+                    violations.append(
+                        Violation(
+                            invariant="mutual_exclusion",
+                            message=f"overlapping holds on resource {res!r}",
+                            events=(max_event, event) if max_event else (event,),
+                        )
+                    )
+                if max_end is None or hold_end > max_end:
+                    max_end, max_event = hold_end, event
 
         return violations
 
