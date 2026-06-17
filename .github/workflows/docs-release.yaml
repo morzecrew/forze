@@ -1,0 +1,77 @@
+name: Deploy released documentation
+
+# Publishes a released minor's docs to the gh-pages branch.
+#
+#   - tag push `vX.Y.Z`  → deploy version `X.Y`; if it's the newest released
+#     minor, move the `latest` alias and the root redirect to it. A backport tag
+#     on an older minor refreshes that minor in place without touching `latest`.
+#   - workflow_dispatch  → re-polish the *current latest* minor in place. Run it
+#     on the matching `release/vX.Y.*` branch (so released docs + fixes publish,
+#     not main's unreleased changes). Polishing an older minor is refused.
+#
+# `dev` (main's in-progress docs) is handled by docs-dev.yaml.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # mike pushes the built site to the gh-pages branch
+
+# Shared with docs-dev.yaml so deploys to gh-pages serialize. Never cancel mid-push.
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish released docs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0 # full history
+          fetch-tags: true # need every tag to find the newest released minor
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - name: Install d2
+        run: bash .github/scripts/install-d2.sh
+
+      - name: Install dependencies
+        run: uv sync --group docs
+
+      - name: Configure git identity
+        run: bash .github/scripts/configure-git-identity.sh
+
+      - name: Resolve target version
+        id: ver
+        run: bash .github/scripts/resolve-docs-version.sh
+
+      - name: Build diagrams
+        # mike runs `zensical build` but not d2; _diagrams/*.svg are gitignored.
+        run: just build-diagrams
+
+      - name: Deploy version
+        run: >-
+          bash .github/scripts/deploy-docs-version.sh
+          "${{ steps.ver.outputs.minor }}"
+          "${{ steps.ver.outputs.move_latest }}"

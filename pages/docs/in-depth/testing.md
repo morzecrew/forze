@@ -147,8 +147,8 @@ async def test_order_emits_event():
         await facade.create(CreateOrder(product="widget", qty=5))
 
         # check the outbox for the expected event
-        outbox = ctx.messaging.outbox(order_events_spec)
-        events = await outbox.pending()
+        outbox = ctx.outbox.query(order_events_spec)
+        events = await outbox.claim_pending()
 
         assert len(events) == 1
         assert events[0].payload["product"] == "widget"

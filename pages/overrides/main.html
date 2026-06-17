@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{#-
+  Self-host GLightbox in <head> so its global is defined *before* the theme
+  bundle initializes. The bundle otherwise fetches the library from unpkg.com at
+  runtime (gate: `typeof GLightbox == "undefined" ? <load CDN> : <noop>`), and on
+  the first click — before that async fetch lands, or offline / behind a CDN
+  blocker — the .glightbox anchor falls through to the raw .svg. A synchronous
+  head <script> makes the bundle take the no-op branch and init on first click.
+  Loaded here (not via extra_javascript) because extra_javascript is appended at
+  end of <body>, after the bundle, which is too late to win the gate.
+-#}
+{% block extrahead %}
+  {{ super() }}
+  <script src="{{ '_javascripts/glightbox.min.js' | url }}"></script>
+{% endblock %}
+
+{#-
+  Version warning banner content. The theme renders this block inside a
+  `[data-md-component=outdated]` element; the channel detection, message
+  selection, dismiss button, and visibility are all driven from theme.js
+  (subscribed to document$) so they are correct on the first load AND every
+  instant navigation. Both spans start hidden — theme.js reveals the right one;
+  the "latest" links get their href set there too (to the deploy root, which
+  redirects to the default version).
+-#}
+{% block outdated %}
+  <span data-forze-channel="release" hidden>
+    You're viewing the docs for an <strong>older release</strong>.
+    <a data-forze-latest href="."><strong>Go to the latest version.</strong></a>
+  </span>
+  <span data-forze-channel="dev" hidden>
+    You're viewing the <strong>in-progress</strong> docs for the next release — APIs
+    may still change.
+    <a data-forze-latest href="."><strong>Go to the latest release.</strong></a>
+  </span>
+{% endblock %}

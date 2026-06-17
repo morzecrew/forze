@@ -41,8 +41,8 @@ whether that's Postgres, Mongo, or an in-memory fake.
     and the business logic doesn't change, because it only ever talked to the
     seam.
 
-![Forze separates what your app does from how it's done, joined at the execution context](../_diagrams/light/concept-overview.svg#only-light){ loading=lazy }
-![Forze separates what your app does from how it's done, joined at the execution context](../_diagrams/dark/concept-overview.svg#only-dark){ loading=lazy }
+![Forze separates what your app does from how it's done, joined at the execution context](../_diagrams/light/concept-overview.svg#only-light){ data-src="../_diagrams/light/concept-overview.svg#only-light" }
+![Forze separates what your app does from how it's done, joined at the execution context](../_diagrams/dark/concept-overview.svg#only-dark){ data-src="../_diagrams/dark/concept-overview.svg#only-dark" }
 
 ## The vocabulary
 

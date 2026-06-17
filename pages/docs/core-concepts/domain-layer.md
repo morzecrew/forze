@@ -19,8 +19,8 @@ and this layer doesn't move.
 You model a business entity as an **aggregate**. Around it sits a small family of
 frozen, purpose-built types that carry data across boundaries.
 
-![The aggregate family: commands and mixins feed the aggregate; the aggregate projects to a read model](../_diagrams/light/domain-models.svg#only-light){ loading=lazy }
-![The aggregate family: commands and mixins feed the aggregate; the aggregate projects to a read model](../_diagrams/dark/domain-models.svg#only-dark){ loading=lazy }
+![The aggregate family: commands and mixins feed the aggregate; the aggregate projects to a read model](../_diagrams/light/domain-models.svg#only-light){ data-src="../_diagrams/light/domain-models.svg#only-light" }
+![The aggregate family: commands and mixins feed the aggregate; the aggregate projects to a read model](../_diagrams/dark/domain-models.svg#only-dark){ data-src="../_diagrams/dark/domain-models.svg#only-dark" }
 
 | Type | Role | Base class |
 |------|------|-----------|

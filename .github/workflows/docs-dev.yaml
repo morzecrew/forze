@@ -1,0 +1,72 @@
+name: Deploy dev documentation
+
+# Continuously publishes main's in-progress docs to the `dev` version on the
+# gh-pages branch. `dev` is never the default and never carries the `latest`
+# alias, so this never disturbs the released docs. Released versions are handled
+# by docs-release.yaml (tag push / manual polish).
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'pages/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write # mike pushes the built site to the gh-pages branch
+
+# Share one group with docs-release.yaml so concurrent mike deploys (which all
+# mutate gh-pages) serialize instead of racing. Never cancel a deploy mid-push.
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish dev docs
+    # `dev` always tracks main. `push` is already main-only (trigger filter); this
+    # also pins manual `workflow_dispatch` to main, so it can't be run from a stray
+    # feature/release branch and silently overwrite main's docs under `dev`.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0 # full history; mike reads/updates the gh-pages branch
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - name: Install d2
+        run: bash .github/scripts/install-d2.sh
+
+      - name: Install dependencies
+        run: uv sync --group docs
+
+      - name: Configure git identity
+        run: bash .github/scripts/configure-git-identity.sh
+
+      - name: Build diagrams
+        # mike runs `zensical build` but not d2; _diagrams/*.svg are gitignored,
+        # so generate them before deploying.
+        run: just build-diagrams
+
+      - name: Deploy dev version
+        working-directory: pages
+        run: uv run mike deploy --push --branch gh-pages dev

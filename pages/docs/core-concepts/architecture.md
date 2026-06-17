@@ -14,8 +14,8 @@ reverse.
     knows nothing about the database, the web framework, or the cache. Swap
     any of those and the domain doesn't move.
 
-![Layered architecture: domain at the center, wrapped by application, then infrastructure and interface](../_diagrams/light/layered-architecture.svg#only-light){ loading=lazy }
-![Layered architecture: domain at the center, wrapped by application, then infrastructure and interface](../_diagrams/dark/layered-architecture.svg#only-dark){ loading=lazy }
+![Layered architecture: domain at the center, wrapped by application, then infrastructure and interface](../_diagrams/light/layered-architecture.svg#only-light){ data-src="../_diagrams/light/layered-architecture.svg#only-light" }
+![Layered architecture: domain at the center, wrapped by application, then infrastructure and interface](../_diagrams/dark/layered-architecture.svg#only-dark){ data-src="../_diagrams/dark/layered-architecture.svg#only-dark" }
 
 | Layer | Responsibility | Depends on |
 |-------|----------------|------------|

@@ -71,7 +71,19 @@ dev = [
     "deltalake>=0.22.0",
     "pyiceberg[sql-sqlite]>=0.8.0",
 ]
-docs = ["zensical>=0.0.43", "pygments>=2.19.2", "pymdown-extensions>=10.21"]
+docs = [
+    "zensical>=0.0.43",
+    "pygments>=2.19.2",
+    "pymdown-extensions>=10.21",
+    "mike",
+]
+
+[tool.uv.sources]
+# Zensical's mike fork (no PyPI release). Pin the exact commit: an unpinned git
+# source tracks the default branch's HEAD, so any later `uv lock` (e.g. bumping
+# another dep) would silently re-resolve mike — a docs-build change with no diff
+# in this file. Bump deliberately by updating the rev. (== the current uv.lock.)
+mike = { git = "https://github.com/squidfunk/mike", rev = "2d4ad799442f4592db8ad53b179bfb33db8c69ac" }
 
 # ....................... #
 # Optional dependencies

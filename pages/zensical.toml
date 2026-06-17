@@ -1,6 +1,6 @@
 [project]
 site_name = "Forze"
-site_url = "https://morzecrew.github.io/forze"
+site_url = "https://morzecrew.github.io/forze/"
 site_description = "Domain-Driven Design and Hexagonal Architecture for backend services"
 site_author = "Lev Litvinov"
 copyright = "&copy; 2026 Lev Litvinov and contributors"
@@ -14,7 +14,10 @@ repo_name = "forze"
 # ....................... #
 # Styles
 
-extra_css = ["_stylesheets/extra.css"]
+extra_css = ["_stylesheets/glightbox.min.css", "_stylesheets/extra.css"]
+# glightbox.min.js is injected in <head> via overrides/main.html (extrahead), not
+# here — extra_javascript is appended after the theme bundle, too late to define
+# the GLightbox global before the bundle's CDN-gate runs.
 extra_javascript = ["_javascripts/theme.js", "_javascripts/hero.js"]
 
 # ....................... #
@@ -27,9 +30,10 @@ nav = [
         "get-started/installation.md",
         "get-started/quickstart.md",
         "get-started/project-structure.md",
+        "get-started/changelog.md",
     ] },
     { "Learn" = [
-        { "Concepts" = [
+        { "Foundations" = [
             "core-concepts/overview.md",
             "core-concepts/architecture.md",
             "core-concepts/domain-layer.md",
@@ -37,25 +41,29 @@ nav = [
             "core-concepts/contracts.md",
             "core-concepts/runtime.md",
         ] },
-        { "In Depth" = [
+        { "Writing an operation" = [
             "in-depth/wiring.md",
+            "in-depth/capability-execution.md",
             "in-depth/transactions.md",
-            "in-depth/testing.md",
             "in-depth/errors.md",
             "in-depth/concurrency-conflicts.md",
             "in-depth/idempotency.md",
-            "in-depth/events-sagas.md",
+        ] },
+        { "Data & events" = [
             "in-depth/reading-data.md",
-            "in-depth/multi-tenancy.md",
+            "in-depth/events-sagas.md",
+        ] },
+        { "Identity, tenancy & encryption" = [
             "in-depth/identity.md",
+            "in-depth/multi-tenancy.md",
             "in-depth/encryption.md",
         ] },
-        { "Execution Engine" = [
-            "in-depth/capability-execution.md",
+        { "Running in production" = [
             "in-depth/deadlines.md",
             "in-depth/resilience.md",
             "in-depth/shutdown-and-fleets.md",
             "in-depth/observability.md",
+            "in-depth/testing.md",
         ] },
     ] },
     { "Integrations" = [
@@ -137,7 +145,6 @@ nav = [
         "reference/query-syntax.md",
         "reference/mapping.md",
         "reference/errors.md",
-        "reference/migration.md",
     ] },
 ]
 
@@ -167,7 +174,7 @@ features = [
 ]
 custom_dir = "overrides"
 logo = "_images/forze-multicolor.png"
-favicon = "images/forze-multicolor.png"
+favicon = "_images/forze-multicolor.png"
 
 [project.theme.icon]
 repo = "fontawesome/brands/github"
@@ -194,7 +201,7 @@ auto_themed = true
 auto_caption = true
 
 [project.markdown_extensions.pymdownx.snippets]
-base_path = ["docs", "../examples"]
+base_path = ["docs", "../examples", ".."]
 check_paths = true
 [project.markdown_extensions.admonition]
 [project.markdown_extensions.pymdownx.details]
@@ -216,3 +223,14 @@ permalink = true
 
 [project.markdown_extensions.pymdownx.highlight]
 [project.markdown_extensions.pymdownx.inlinehilite]
+
+# ....................... #
+# Versioning
+
+[project.extra.version]
+provider = "mike"
+# Root redirects to whatever carries the "latest" alias (the newest released
+# minor). Patch releases refresh the same minor; `dev` (from main) is a separate,
+# never-default channel. See .github/workflows/docs-*.yaml.
+default = "latest"
+alias = true
