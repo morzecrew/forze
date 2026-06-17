@@ -22,7 +22,7 @@ fallback and hedge:
 | **Timeout** | a per-attempt timeout |
 | **Circuit breaker** | stop calling a failing dependency once a failure ratio trips, for a cool-off window |
 | **Adaptive throttle** | [shed proportionally](#shedding-for-a-degraded-downstream) when the downstream stops accepting — the breaker's sibling for degraded-but-alive dependencies |
-| **Bulkhead** | cap concurrent calls, fixed or [adaptive](#bulkheads), with an optional managed queue |
+| **Bulkhead** | cap concurrent calls — fixed, or [adaptive / delay-based](#bulkheads) — with an optional managed queue |
 | **Fallback / Hedge** | a fallback value on failure; or race staggered attempts |
 
 Retry only fires on kinds that declare themselves **retryable** —
@@ -149,12 +149,29 @@ distribution can. Each backoff opens a fresh measurement epoch, so the
 decision to shrink again is made from the *new* concurrency's latencies, not
 the stale history that justified the last one.
 
+A third kind, **`GradientBulkheadStrategy`**, drops the threshold entirely.
+Where AIMD reacts once latency crosses a number you have to pick, the Gradient2
+controller (from Netflix's `concurrency-limits`) *learns* the no-load latency
+baseline and tracks the gradient between it and recent latency — finding the
+load/latency knee on its own:
+
+```python
+GradientBulkheadStrategy(max_concurrency=16)   # no latency_threshold to tune
+```
+
+It probes the limit up gently while latency sits near baseline and contracts it
+as latency inflates (bounded so one spike can't more than roughly halve it),
+with a no-load guard so a lightly-loaded service never ratchets the limit up on
+noise. Only successful completions feed it — like AIMD, failures are the
+breaker's job. The three bulkhead kinds are mutually exclusive within a policy.
+
 ### Managing the queue
 
 When a bulkhead has a queue (`max_queue >= 1`), a size bound alone isn't
 enough under sustained overload — a short queue that never empties still adds
-its full length of latency to every call. Both bulkhead kinds take two opt-in
-controls for that, straight from Facebook's *Fail at Scale*:
+its full length of latency to every call. Every bulkhead kind takes three
+opt-in controls for that — the first two from Facebook's *Fail at Scale*, the
+last Netflix-style prioritized shedding:
 
 - **`queue_target=`** (CoDel) — bound queueing by the *time* a waiter
   experiences. While the queue has recently been empty, a waiter may sojourn
@@ -165,6 +182,18 @@ controls for that, straight from Facebook's *Fail at Scale*:
   first: its client is the one most likely still listening. FIFO otherwise.
   LIFO starves the old tail under overload by design, so pair it with
   `queue_target` to shed that tail instead of parking it forever.
+- **`prioritized=True`** — make shedding *criticality-aware*. Under a full
+  queue a higher-criticality arrival displaces the lowest-criticality waiter
+  instead of being rejected, and lower tiers get a tighter CoDel allowance so
+  they shed first. Tiers come from the task-scoped `Criticality`
+  (`BEST_EFFORT < DEGRADED < NORMAL < CRITICAL`, default `NORMAL`), bound at the
+  boundary like a deadline — so a background prefetch sheds before a user's
+  interactive call:
+
+  ```python
+  with bind_criticality(Criticality.BEST_EFFORT):
+      await prefetch(...)
+  ```
 
 A parked waiter whose [invocation deadline](deadlines.md) has already expired
 is failed at wake instead of being granted a slot it can no longer use — no
@@ -272,12 +301,17 @@ replicas each enforce `permits/per` independently (a fleet-effective rate of
 replica. `forze[redis]` makes both **shared**:
 
 ```python
-from forze_redis import redis_circuit_breaker_store, redis_rate_limit_store
+from forze_redis import (
+    redis_circuit_breaker_store,
+    redis_latency_digest_store,
+    redis_rate_limit_store,
+)
 
 ResilienceDepsModule(
     spec=my_policies,
     breaker_store=redis_circuit_breaker_store(redis),
     rate_limit_store=redis_rate_limit_store(redis),
+    latency_digest_store=redis_latency_digest_store(redis),  # see below
 )
 ```
 
@@ -289,8 +323,11 @@ the process-local implementation (emitting a `*_store_degraded` trace event),
 so a coordination-store hiccup degrades to per-replica behavior instead of
 failing calls.
 
-Bulkheads deliberately stay process-local — fleet capacity is
-`max_concurrency × replicas` by design, and the [adaptive
-bulkhead](#bulkheads) converges across uncoordinated replicas without shared
-state. The rest of the fleet story — drain, readiness, singleton startup
-steps — is in [Shutdown & fleets](shutdown-and-fleets.md).
+Bulkhead *capacity* stays process-local by design — fleet capacity is
+`max_concurrency × replicas`, and the [adaptive bulkhead](#bulkheads) converges
+across uncoordinated replicas like N TCP flows. Its congestion *signal* can be
+shared, though: for a `latency_quantile` policy, `latency_digest_store` keeps
+the latency sketch in Redis (a mergeable DDSketch), so every replica's adaptive
+limit reacts to the *fleet's* p95 instead of its own — same fail-open posture
+as the other two stores. The rest of the fleet story — drain, readiness,
+singleton startup steps — is in [Shutdown & fleets](shutdown-and-fleets.md).
