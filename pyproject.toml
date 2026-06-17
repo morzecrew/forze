@@ -252,8 +252,6 @@ omit = [
     "*/forze_redis/execution/deps/module.py",
     "*/forze_meilisearch/execution/deps/module.py",
     "*/forze_neo4j/execution/deps/module.py",
-    # Mock
-    "*/forze_mock/*",
 ]
 
 [tool.coverage.report]

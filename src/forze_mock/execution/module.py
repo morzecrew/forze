@@ -83,6 +83,7 @@ from forze.application.contracts.graph import (
     GraphQueryDepKey,
     GraphRawQueryDepKey,
 )
+from forze.application.contracts.http import HttpServiceDepKey, HttpServiceSpec
 from forze.application.contracts.idempotency import (
     IdempotencyDepKey,
     IdempotencyPort,
@@ -183,6 +184,8 @@ from forze_mock.adapters import (
     MockDurableWorkflowScheduleQueryAdapter,
     MockFederatedSearchAdapter,
     MockGraphAdapter,
+    MockHttpRegistry,
+    MockHttpServiceAdapter,
     MockHubSearchAdapter,
     MockIdempotencyAdapter,
     MockInboxAdapter,
@@ -316,6 +319,23 @@ class ConfigurableMockDocument(_MockFactoryBase):
             dispatcher_provider=domain_dispatcher_provider(context),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockHttpService(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: HttpServiceSpec,
+    ) -> MockHttpServiceAdapter:
+        # Stateless except the programmable handler registry on the module; an
+        # absent registry yields an empty one, so every op is "unprogrammed"
+        # (loud error) until a handler is registered.
+        return MockHttpServiceAdapter(
+            spec=spec,
+            registry=self.module.http or MockHttpRegistry(),
         )
 
 
@@ -1042,6 +1062,13 @@ class MockDepsModule(DepsModule):
     identity: MockIdentityConfig | None = attrs.field(default=None)
     routed_state: MockRoutedStateRegistry | None = attrs.field(default=None)
     embeddings_dimensions: int = 8
+    http: MockHttpRegistry | None = attrs.field(default=None)
+    """Programmable in-memory responses for outbound ``HttpServicePort`` calls.
+
+    ``None`` registers the port but leaves every operation unprogrammed (any call
+    raises ``code="mock.http.unprogrammed"``); pass a :class:`MockHttpRegistry`
+    with handlers to answer HTTP ops in-process with zero external services."""
+
     resilience: Literal["passthrough", "real"] = "passthrough"
     domain_events: DomainEventRegistry | None = attrs.field(default=None)
 
@@ -1119,6 +1146,7 @@ class MockDepsModule(DepsModule):
             GraphQueryDepKey: graph,
             GraphCommandDepKey: graph,
             GraphRawQueryDepKey: graph,
+            HttpServiceDepKey: ConfigurableMockHttpService(module=self),
             TransactionManagerDepKey: (
                 mock_strict_txmanager if self.strict_tx else mock_txmanager
             ),

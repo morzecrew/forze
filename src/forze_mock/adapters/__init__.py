@@ -18,6 +18,7 @@ from forze_mock.adapters.durable import (
 )
 from forze_mock.adapters.events import RecordingAuthnEventSink
 from forze_mock.adapters.graph import MockGraphAdapter
+from forze_mock.adapters.http import MockHttpRegistry, MockHttpServiceAdapter
 from forze_mock.adapters.idempotency import MockIdempotencyAdapter
 from forze_mock.adapters.inbox import MockInboxAdapter
 from forze_mock.adapters.pubsub import MockPubSubAdapter
@@ -44,6 +45,8 @@ __all__ = [
     "MockHubSearchAdapter",
     "MockFederatedSearchAdapter",
     "MockGraphAdapter",
+    "MockHttpServiceAdapter",
+    "MockHttpRegistry",
     "MockCounterAdapter",
     "MockKeyManagement",
     "MockCacheAdapter",
