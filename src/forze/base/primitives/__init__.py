@@ -15,6 +15,7 @@ from .fingerprint import (
     stable_payload_fingerprint,
 )
 from .graph import DirectedAcyclicGraph
+from .hlc import HlcTimestamp, HybridLogicalClock
 from .lanes import CachedInflightLane, CacheLane, InflightLane
 from .lifecycle_guard import GuardedLifecycle
 from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
@@ -77,6 +78,8 @@ __all__ = [
     "StrKeySelector",
     "str_key_selector",
     "AbstractSequence",
+    "HlcTimestamp",
+    "HybridLogicalClock",
     "P2Quantile",
     "WindowedP2Quantile",
     "DDSketch",

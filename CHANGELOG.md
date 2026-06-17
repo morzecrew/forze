@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Mergeable quantile sketch (`DDSketch`)** — `forze.base.primitives` ships `DDSketch` (Masson et al., VLDB 2019) and `WindowedDDSketch`: a logarithmic-bucket sketch answering any quantile within a bounded **relative** error, mergeable across streams (`merge`/`merged`) for fleet-wide or multi-quantile (p50/p90/p99) latency. Bounded memory via collapse-lowest (`max_bins`); non-negative domain with a dedicated zero bucket. Complements `P2Quantile` (which stays for single-quantile in-process control loops); no wiring changes.
+- **Hybrid Logical Clock (`HybridLogicalClock`)** — `forze.base.primitives` ships `HybridLogicalClock` and `HlcTimestamp` (Kulkarni et al. 2014): a skew-tolerant `(physical_ms, logical)` clock that stays close to wall time yet always exceeds any timestamp it observes (`now` to stamp, `update` to merge a received one), with an optional `max_drift` skew guard, counter-overflow carry, and `pack`/`encode` to a monotonic integer / lexsortable string. Physical time reads through the ambient `TimeSource` (deterministic under a bound source). Pure primitive — no outbox wiring yet.
 
 ### Changed
 
