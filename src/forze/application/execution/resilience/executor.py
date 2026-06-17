@@ -2,7 +2,6 @@
 
 import asyncio
 import random
-import time
 from collections.abc import Awaitable, Callable, Iterator
 
 import attrs
@@ -20,7 +19,7 @@ from forze.application.contracts.resilience import (
     TimeoutStrategy,
 )
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
-from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping, monotonic
 
 from ..context.deadline import remaining_time
 from ..tracing import record
@@ -73,7 +72,7 @@ class InProcessResilienceExecutor:
     )
     """Named policies, keyed by policy name."""
 
-    clock: Callable[[], float] = attrs.field(default=time.monotonic)
+    clock: Callable[[], float] = attrs.field(default=monotonic)
     """Time source for the executor."""
 
     rng: random.Random = attrs.field(factory=random.Random)

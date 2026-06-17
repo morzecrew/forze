@@ -47,6 +47,13 @@ from .execution import (
     MockRoutedStateDepKey,
     MockStateDepKey,
 )
+from .simulation import (
+    RealIOForbidden,
+    SimulationDeadlock,
+    SimulationEventLoop,
+    SimulationTimeSource,
+    run_simulation,
+)
 from .tenancy import (
     MockRoutedStateRegistry,
     MockTenancyMixin,
@@ -100,4 +107,9 @@ __all__ = [
     "MockTenantManagementPort",
     "MockHashEmbeddingsProvider",
     "RecordingAuthnEventSink",
+    "run_simulation",
+    "SimulationEventLoop",
+    "SimulationTimeSource",
+    "SimulationDeadlock",
+    "RealIOForbidden",
 ]

@@ -1,17 +1,23 @@
-"""Determinism guard: raw entropy primitives must route through the seam.
+"""Determinism guard: raw entropy *and clock* primitives must route through the seams.
 
-DST (deterministic simulation testing) requires that every source of randomness
-flow through the ambient ``EntropySource`` seam (``forze.base.primitives``), so a
-bound ``SeededEntropySource`` can make a run byte-identical and seed-replayable.
+DST (deterministic simulation testing) requires that every source of non-determinism
+flow through an ambient seam (``forze.base.primitives``) — randomness through
+``EntropySource`` and time through ``TimeSource`` (``utcnow``/``monotonic``) — so a
+bound ``SeededEntropySource`` + simulation clock can make a run byte-identical and
+seed-replayable.
 
-This AST guard fails if any module under ``src/`` *calls* a raw entropy primitive
-(``os.urandom``, ``secrets.token_*``/``randbits``/…, ``random.<fn>``, stdlib
-``uuid.uuid4``/``uuid1``) outside the seam's own definition. Type annotations and
-bare references (e.g. ``rng: random.Random``, ``factory=random.Random``) are *not*
-flagged — only calls that actually draw entropy.
+This AST guard fails if any module under ``src/`` *calls* a raw primitive outside the
+seam's own definition:
 
-Scope note: wall-clock (`time.monotonic`/`datetime.now`) is intentionally **not**
-guarded yet — those sites are deferred to the DST virtual-clock phase (P2).
+* entropy — ``os.urandom``, ``secrets.token_*``/``randbits``/…, ``random.<fn>``,
+  stdlib ``uuid.uuid4``/``uuid1``;
+* clocks — ``time.monotonic``/``time``/``time_ns``/``process_time*`` and
+  ``datetime.now``/``datetime.utcnow`` (use ``utcnow()`` / ``monotonic()`` instead).
+
+Type annotations and bare references (e.g. ``rng: random.Random``,
+``clock=time.monotonic`` as a *type*) are not flagged — only calls. ``time.perf_counter``
+is intentionally allowed: pure elapsed measurement for observability, which never feeds
+program logic or output and is legitimately real even under simulation.
 """
 
 from __future__ import annotations
@@ -23,10 +29,11 @@ from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
-# Files allowed to use raw primitives: the seam's own definitions.
+# Files allowed to use raw primitives: the seams' own definitions.
 _ALLOWLIST: frozenset[str] = frozenset(
     {
         "forze/base/primitives/entropy_source.py",
+        "forze/base/primitives/time_source.py",
     }
 )
 
@@ -47,6 +54,12 @@ _BANNED_ATTRS: dict[str, frozenset[str] | None] = {
     ),
     "random": None,  # None == every attribute call on the module
     "uuid": frozenset({"uuid4", "uuid1"}),
+    # Clocks: route through utcnow()/monotonic(). perf_counter* is NOT banned
+    # (observability-only elapsed measurement).
+    "time": frozenset(
+        {"monotonic", "monotonic_ns", "time", "time_ns", "process_time", "process_time_ns"}
+    ),
+    "datetime": frozenset({"now", "utcnow"}),
 }
 
 # Names that, when imported via ``from <module> import <name>``, become banned
@@ -59,6 +72,9 @@ _BANNED_FROM_IMPORT: dict[str, frozenset[str]] = {
          "getrandbits", "Random", "SystemRandom", "sample", "betavariate"}
     ),
     "uuid": frozenset({"uuid4", "uuid1"}),
+    "time": frozenset(
+        {"monotonic", "monotonic_ns", "time", "time_ns", "process_time", "process_time_ns"}
+    ),
 }
 
 

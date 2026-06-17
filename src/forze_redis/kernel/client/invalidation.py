@@ -26,12 +26,11 @@ require_redis()
 # ....................... #
 
 import asyncio
-import time
 from typing import Any, Awaitable, Callable, Sequence
 
 import attrs
 
-from forze.base.primitives import current_entropy_source
+from forze.base.primitives import current_entropy_source, monotonic
 from forze_redis.kernel._logger import logger
 
 # ----------------------- #
@@ -63,7 +62,7 @@ class InvalidationHub:
     release_connection: Callable[[Any], Awaitable[None]]
     """Disconnect and return the pinned connection to the pool."""
 
-    clock: Callable[[], float] = time.monotonic
+    clock: Callable[[], float] = monotonic
 
     _subs: list[_Subscription] = attrs.field(factory=list, init=False)
     _task: "asyncio.Task[None] | None" = attrs.field(default=None, init=False)

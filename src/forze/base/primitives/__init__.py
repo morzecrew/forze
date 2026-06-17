@@ -3,7 +3,7 @@
 from .buffer import ContextualBuffer, ContextVarTrace
 from .cell import OnceCell
 from .context_scope import ContextScopedResource
-from .datetime import utcnow
+from .datetime import monotonic, utcnow
 from .entropy_source import (
     EntropySource,
     SeededEntropySource,
@@ -52,6 +52,7 @@ from .uuid import uuid4, uuid7
 
 __all__ = [
     "utcnow",
+    "monotonic",
     "TimeSource",
     "SystemTimeSource",
     "FrozenTimeSource",

@@ -7,7 +7,6 @@ injected through ``DocumentCache(l1_store=...)`` without touching the
 coordinator.
 """
 
-import time
 import weakref
 import zlib
 from collections import OrderedDict
@@ -16,6 +15,7 @@ from typing import Any, Callable, Iterator, Protocol, cast, final, runtime_check
 import attrs
 
 from forze.base.exceptions import exc
+from forze.base.primitives import monotonic
 
 # ----------------------- #
 
@@ -69,7 +69,7 @@ class LruTtlStore:
 
     capacity: int
     ttl: float
-    clock: Callable[[], float] = time.monotonic
+    clock: Callable[[], float] = monotonic
 
     # ....................... #
 
@@ -259,7 +259,7 @@ class TinyLfuStore:
 
     capacity: int
     ttl: float
-    clock: Callable[[], float] = time.monotonic
+    clock: Callable[[], float] = monotonic
 
     # ....................... #
 

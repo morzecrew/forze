@@ -9,7 +9,6 @@ shared rate limit makes ``permits/per`` mean the *fleet's* rate instead of
 silently becoming ``permits × replicas``.
 """
 
-import time
 from typing import Awaitable, Callable, Protocol, final, runtime_checkable
 
 import attrs
@@ -19,7 +18,7 @@ from forze.application.contracts.resilience import (
     CircuitBreakerStrategy,
     RateLimitStrategy,
 )
-from forze.base.primitives import StrKey, WindowedP2Quantile
+from forze.base.primitives import StrKey, WindowedP2Quantile, monotonic
 
 from .state import BreakerState, RateLimitState, Transition
 
@@ -73,7 +72,7 @@ class CircuitBreakerStore(Protocol):
 class InMemoryCircuitBreakerStore(CircuitBreakerStore):
     """Process-local breaker state keyed by ``(policy, route)`` (the default store)."""
 
-    clock: Callable[[], float] = attrs.field(default=time.monotonic)
+    clock: Callable[[], float] = attrs.field(default=monotonic)
 
     _states: dict[BreakerKey, BreakerState] = attrs.field(factory=dict, init=False)
 
@@ -156,7 +155,7 @@ class RateLimitStore(Protocol):
 class InMemoryRateLimitStore(RateLimitStore):
     """Process-local token buckets keyed by ``(policy, route)`` (the default store)."""
 
-    clock: Callable[[], float] = attrs.field(default=time.monotonic)
+    clock: Callable[[], float] = attrs.field(default=monotonic)
 
     _states: dict[RateLimitKey, RateLimitState] = attrs.field(factory=dict, init=False)
 

@@ -1,14 +1,13 @@
 """Process-local mutable state for circuit breaker, bulkhead, rate limit, and retry budget."""
 
 import asyncio
-import time
 from collections import deque
 from typing import Callable, Literal
 
 import attrs
 
 from forze.base.exceptions import exc
-from forze.base.primitives import WindowedP2Quantile
+from forze.base.primitives import WindowedP2Quantile, monotonic
 
 from ..context.criticality import Criticality, current_criticality
 from ..context.deadline import current_deadline
@@ -236,7 +235,7 @@ class AdaptiveBulkheadState:
     increase_step: float
     cooldown: float
 
-    clock: Callable[[], float] = time.monotonic
+    clock: Callable[[], float] = monotonic
     """Time source for queue sojourn/congestion tracking (injectable for tests).
     Waiter *deadlines* always compare against ``time.monotonic`` — they come
     from the deadline ContextVar, which is monotonic-based by contract."""
@@ -461,7 +460,7 @@ class AdaptiveBulkheadState:
                     )
                     continue
 
-            if deadline is not None and time.monotonic() >= deadline:
+            if deadline is not None and monotonic() >= deadline:
                 # Expired while parked: fail it instead of granting a slot the
                 # outer deadline timeout would reclaim before any work ran.
                 waiter.set_exception(

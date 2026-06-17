@@ -35,6 +35,15 @@ class TimeSource(Protocol):
         """Return a fresh time-ordered (UUIDv7-style) id for 'now'."""
         ...  # pragma: no cover
 
+    def monotonic(self) -> float:
+        """Return a monotonic clock reading in fractional seconds.
+
+        For relative timing (deadlines, backoff, TTLs) — a non-decreasing value with
+        an arbitrary epoch, never wall-clock. A simulation source ties this to the
+        virtual event-loop clock so timed work is deterministic.
+        """
+        ...  # pragma: no cover
+
 
 # ....................... #
 
@@ -51,6 +60,9 @@ class SystemTimeSource:
         from .uuid import uuid7  # lazy: avoids the uuid <-> time_source import cycle
 
         return uuid7(timestamp_ns=time.time_ns())
+
+    def monotonic(self) -> float:
+        return time.monotonic()
 
 
 # ....................... #
@@ -75,6 +87,12 @@ class FrozenTimeSource:
         self._counter += 1
 
         return result
+
+    def monotonic(self) -> float:
+        # Only the *wall* clock is frozen (deterministic timestamps/ids); relative
+        # timing stays real, so deadlines/idle-timeouts still elapse under a frozen
+        # source. Virtual, deterministic relative time is the simulation source's job.
+        return time.monotonic()
 
 
 # ....................... #

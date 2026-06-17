@@ -30,3 +30,8 @@ class TemporalWorkflowTimeSource(TimeSource):
 
     def uuid(self) -> UUID:
         return workflow.uuid4()
+
+    def monotonic(self) -> float:
+        # Temporal's replay-safe workflow clock (seconds since epoch); advances
+        # deterministically, so relative timing reproduces across replays too.
+        return workflow.time()

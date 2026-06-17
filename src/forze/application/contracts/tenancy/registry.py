@@ -1,4 +1,3 @@
-import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -8,7 +7,7 @@ from uuid import UUID
 import attrs
 
 from forze.base.exceptions import exc
-from forze.base.primitives import GuardedLruRegistry, SimpleLruRegistry
+from forze.base.primitives import GuardedLruRegistry, SimpleLruRegistry, monotonic
 
 # ----------------------- #
 
@@ -174,7 +173,7 @@ class TenantClientRegistry[C, R]:
 
         self.__fingerprints[tenant_id] = fingerprint
         self.__fingerprints.move_to_end(tenant_id)
-        self.__fingerprint_times[tenant_id] = time.monotonic()
+        self.__fingerprint_times[tenant_id] = monotonic()
 
         while len(self.__fingerprints) > self.max_entries:
             evicted, _ = self.__fingerprints.popitem(last=False)
@@ -200,7 +199,7 @@ class TenantClientRegistry[C, R]:
 
         stamped = self.__fingerprint_times.get(tenant_id)
 
-        return stamped is None or (time.monotonic() - stamped) > ttl.total_seconds()
+        return stamped is None or (monotonic() - stamped) > ttl.total_seconds()
 
     # ....................... #
 
