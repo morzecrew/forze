@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING, Any, Callable, cast, final
 
@@ -46,7 +44,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
     defer_after_commit: AfterCommitPort
     """Defer work until after a successful root transaction commit."""
 
-    inv_ctx: InvocationContext
+    inv_ctx: "InvocationContext"
     """Invocation context — used to bind the read-only flag for a QUERY operation."""
 
     drain_gate: OperationDrainGate
@@ -184,10 +182,10 @@ class DispatchedOperation[Args, R](OnSuccess[Args, R]):
 
 
 async def run_operation(
-    registry: FrozenOperationRegistry,
+    registry: "FrozenOperationRegistry",
     op: StrKey,
     args: Any,
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
 ) -> Any:
     """Run an operation from a frozen registry (resolve + full plan)."""
 
@@ -200,12 +198,12 @@ async def run_operation(
 
 
 def handler_for_registry_operation(
-    registry: FrozenOperationRegistry,
+    registry: "FrozenOperationRegistry",
     operation: StrKey,
-) -> Callable[[ExecutionContext], Handler[Any, Any]]:
+) -> Callable[["ExecutionContext"], Handler[Any, Any]]:
     """Return a factory that yields a resolved operation (full plan) for *operation*."""
 
-    def factory(ctx: ExecutionContext) -> Handler[Any, Any]:
+    def factory(ctx: "ExecutionContext") -> Handler[Any, Any]:
         return registry.resolve(operation, ctx)
 
     return factory
@@ -216,8 +214,8 @@ def handler_for_registry_operation(
 
 async def run_durable_function(
     spec: DurableFunctionSpec[Any, Any],
-    registry: FrozenOperationRegistry,
-    ctx: ExecutionContext,
+    registry: "FrozenOperationRegistry",
+    ctx: "ExecutionContext",
     args: Any,
 ) -> Any:
     """Run a durable function backed by :attr:`DurableFunctionSpec.operation`."""
@@ -235,8 +233,8 @@ async def run_durable_function(
 
 async def run_durable_function_typed[SpecIn: BaseModel, SpecOut: BaseModel](
     spec: DurableFunctionSpec[SpecIn, SpecOut],
-    registry: FrozenOperationRegistry,
-    ctx: ExecutionContext,
+    registry: "FrozenOperationRegistry",
+    ctx: "ExecutionContext",
     args: SpecIn,
 ) -> SpecOut:
     """Typed wrapper around :func:`run_durable_function`."""

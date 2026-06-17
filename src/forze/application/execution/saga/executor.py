@@ -35,7 +35,7 @@ class InProcessSagaExecutor:
 
     async def run[Ctx](
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         definition: SagaDefinition[Ctx],
         initial: Ctx,
     ) -> Ctx:
@@ -86,7 +86,7 @@ class InProcessSagaExecutor:
 
     async def _run_step[Ctx](
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         step: SagaStep[Ctx],
         state: Ctx,
     ) -> Ctx:
@@ -108,7 +108,7 @@ class InProcessSagaExecutor:
 
     async def _compensate[Ctx](
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         definition: SagaDefinition[Ctx],
         progress: SagaProgress,
         states: dict[int, Ctx],
@@ -136,9 +136,9 @@ class InProcessSagaExecutor:
 
     async def _run_compensation[Ctx](
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         step: SagaStep[Ctx],
-        compensation: Callable[[ExecutionContext, Ctx], Awaitable[None]],
+        compensation: Callable[["ExecutionContext", Ctx], Awaitable[None]],
         state: Ctx,
     ) -> None:
         async def _comp() -> None:

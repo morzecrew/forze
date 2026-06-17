@@ -16,8 +16,8 @@ class SagaExecutorPort(Protocol):
 
     def run[Ctx](
         self,
-        ctx: ExecutionContext,
-        definition: SagaDefinition[Ctx],
+        ctx: "ExecutionContext",
+        definition: "SagaDefinition[Ctx]",
         initial: Ctx,
     ) -> Awaitable[Ctx]:
         """Run *definition* from *initial*; on a step failure, compensate the completed

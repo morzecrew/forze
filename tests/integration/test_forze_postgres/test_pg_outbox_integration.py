@@ -92,6 +92,7 @@ async def outbox_table(pg_client: PostgresClient) -> str:
                 attempts INT NOT NULL DEFAULT 0,
                 available_at TIMESTAMPTZ,
                 ordering_key TEXT,
+                hlc BIGINT,
                 UNIQUE (outbox_route, event_id)
             )
             """
@@ -264,8 +265,7 @@ async def test_outbox_ordering_key_round_trips_stage_column_claim(
         assert by_type == {"demo.created": "order-1", "demo.updated": None}
 
         claims = {
-            c.event_type: c
-            for c in await ctx.outbox.query(outbox_spec).claim_pending()
+            c.event_type: c for c in await ctx.outbox.query(outbox_spec).claim_pending()
         }
         assert claims["demo.created"].ordering_key == "order-1"
         assert claims["demo.updated"].ordering_key is None
@@ -821,3 +821,54 @@ async def test_outbox_future_available_at_invisible_to_claim(
 
     assert list(claims) == []
     assert rows[0]["status"] == OutboxStatus.PENDING.value
+
+
+@pytest.mark.asyncio
+async def test_hlc_ordering_persists_and_claims_in_causal_order(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    """With hlc_ordering on, a single-batch flush (shared created_at) still
+    claims in stamp order: the HLC breaks the otherwise-arbitrary tie."""
+
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(
+                relation=("public", outbox_table),
+                hlc_ordering=True,
+            ),
+        },
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(pg_module).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage("demo.a", _OutboxPayload(label="a"))
+            await outbox.stage("demo.b", _OutboxPayload(label="b"))
+            await outbox.stage("demo.c", _OutboxPayload(label="c"))
+            assert await outbox.flush() == 3
+
+        # The hlc column is persisted for every staged row.
+        hlc_rows = await pg_client.fetch_all(
+            sql.SQL("SELECT hlc FROM {t} WHERE outbox_route = %s").format(
+                t=sql.Identifier("public", outbox_table)
+            ),
+            ["integration"],
+        )
+        assert all(row["hlc"] is not None for row in hlc_rows)
+
+        async with ctx.tx_ctx.scope("default"):
+            claims = list(await ctx.outbox.query(outbox_spec).claim_pending())
+
+    # Claimed in stamp order (a, b, c) with strictly ascending HLCs.
+    assert [c.event_type for c in claims] == ["demo.a", "demo.b", "demo.c"]
+    assert all(c.hlc is not None for c in claims)
+    packed = [c.hlc.pack() for c in claims]  # type: ignore[union-attr]
+    assert packed == sorted(packed)
+    assert len(set(packed)) == 3

@@ -24,6 +24,13 @@ class MongoOutboxConfig(TenantAwareIntegrationConfig):
     max_claim_rows: int = 100
     """Default batch size for :meth:`~forze.application.contracts.outbox.OutboxQueryPort.claim_pending`."""
 
+    hlc_ordering: bool = False
+    """Persist each event's Hybrid Logical Clock (`hlc`, packed int64) and claim
+    in causal order (`sort [(hlc, 1), (created_at, 1), (id, 1)]`) instead of
+    `created_at` only. Off by default — the field is absent unless enabled. Note
+    that during migration Mongo sorts legacy missing-`hlc` rows *first* (oldest
+    drain first), the inverse of Postgres `NULLS LAST`; both are best-effort."""
+
     default_processing_lease: timedelta = attrs.field(
         factory=lambda: timedelta(minutes=5)
     )

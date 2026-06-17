@@ -48,6 +48,7 @@ class ProviderStore:
         *,
         route: StrKey | None = None,
         fallback_to_plain: bool = True,
+        fallback_from_route: StrKey | None = None,
     ) -> T:
         """Look up a registered provider or instance without cycle checks."""
 
@@ -55,14 +56,25 @@ class ProviderStore:
             dep = self.plain_deps.get(key)
 
             if not dep:
-                raise exc.internal(f"Plain dependency '{key.name}' not found")
+                msg = (
+                    f"Plain dependency '{key.name}' not found"
+                    if fallback_from_route is None
+                    else f"Plain dependency '{key.name}' not found (fallback from route '{fallback_from_route}')"
+                )
+
+                raise exc.internal(msg)
 
         else:
             routes = self.routed_deps.get(key)
 
             if routes is None:
                 if fallback_to_plain:
-                    return self.get_provider(key, route=None, fallback_to_plain=False)
+                    return self.get_provider(
+                        key,
+                        route=None,
+                        fallback_to_plain=False,
+                        fallback_from_route=route,
+                    )
 
                 raise exc.internal(
                     f"Routed dependency '{key.name}' not found for route '{route}'"
@@ -72,7 +84,12 @@ class ProviderStore:
 
             if dep is None:
                 if fallback_to_plain:
-                    return self.get_provider(key, route=None, fallback_to_plain=False)
+                    return self.get_provider(
+                        key,
+                        route=None,
+                        fallback_to_plain=False,
+                        fallback_from_route=route,
+                    )
 
                 raise exc.internal(
                     f"Dependency '{key.name}' not found for route '{route}'"
@@ -100,10 +117,7 @@ class ProviderStore:
     def registered_frames(self) -> frozenset[ResolutionFrame]:
         """Return all registered dependency frames (static inventory)."""
 
-        frames: set[ResolutionFrame] = set()
-
-        for key in self.plain_deps:
-            frames.add(frame_for(key, None))
+        frames: set[ResolutionFrame] = {frame_for(key, None) for key in self.plain_deps}
 
         for key, routes in self.routed_deps.items():
             for route in routes:
@@ -142,25 +156,19 @@ class ProviderStore:
         routed_acc: dict[DepKey[Any], dict[StrKey, Any]] = {}
 
         for store in stores:
-            plain_overlap = set(plain_acc).intersection(store.plain_deps)
-
-            if plain_overlap:
+            if plain_overlap := set(plain_acc).intersection(store.plain_deps):
                 names = ", ".join(sorted(k.name for k in plain_overlap))
 
                 raise exc.internal(f"Conflicting plain dependencies: {names}")
 
-            cross_overlap_left = set(plain_acc).intersection(store.routed_deps)
-
-            if cross_overlap_left:
+            if cross_overlap_left := set(plain_acc).intersection(store.routed_deps):
                 names = ", ".join(sorted(k.name for k in cross_overlap_left))
 
                 raise exc.internal(
                     f"Dependency keys registered both as plain and routed: {names}"
                 )
 
-            cross_overlap_right = set(routed_acc).intersection(store.plain_deps)
-
-            if cross_overlap_right:
+            if cross_overlap_right := set(routed_acc).intersection(store.plain_deps):
                 names = ", ".join(sorted(k.name for k in cross_overlap_right))
 
                 raise exc.internal(
@@ -177,16 +185,15 @@ class ProviderStore:
                     continue
 
                 existing = dict(existing)
-                routing_key_overlap = set(existing).intersection(routes)
 
-                if routing_key_overlap:
+                if routing_key_overlap := set(existing).intersection(routes):
                     names = ", ".join(sorted(str(r) for r in routing_key_overlap))
 
                     raise exc.internal(
                         f"Conflicting routed dependencies for '{key.name}': {names}"
                     )
 
-                existing.update(routes)
+                existing |= routes
                 routed_acc[key] = existing
 
         return cls(plain_deps=plain_acc, routed_deps=routed_acc)

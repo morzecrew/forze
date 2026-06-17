@@ -1,7 +1,5 @@
 """Shared helpers for stored-file handlers and integration stages."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -60,10 +58,7 @@ def merge_list_filters(
     if not parts:
         return None
 
-    if len(parts) == 1:
-        return parts[0]
-
-    return {"$and": parts}
+    return parts[0] if len(parts) == 1 else {"$and": parts}
 
 
 # ....................... #
@@ -163,7 +158,7 @@ async def stage_deleted(
 async def complete_stored_file_upload(
     *,
     kit: StoredFileKitSpec,
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     args: UploadStoredFileRequestDTO,
     pending: StoredFileRead,
     outbox: OutboxCommandPort[Any] | None = None,
@@ -219,7 +214,7 @@ async def complete_stored_file_upload(
 async def purge_stored_file_blob(
     *,
     kit: StoredFileKitSpec,
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     file_id: UUID,
     storage_key: str | None,
     search: SearchCommandPort[StoredFileRead] | None = None,

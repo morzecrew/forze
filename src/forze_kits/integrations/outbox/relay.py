@@ -1,7 +1,5 @@
 """Relay staged outbox rows to queue, stream, or pubsub backends."""
 
-from __future__ import annotations
-
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, final
 
@@ -15,6 +13,7 @@ from forze.application.contracts.envelope import (
     HEADER_CORRELATION_ID,
     HEADER_EVENT_ID,
     HEADER_EXECUTION_ID,
+    HEADER_HLC,
     HEADER_OCCURRED_AT,
     HEADER_TENANT_ID,
 )
@@ -38,6 +37,8 @@ if TYPE_CHECKING:
 
 _PUBSUB_DOWNGRADE_WARNED: set[str] = set()
 """Outbox routes already warned about the pubsub delivery downgrade (once per process)."""
+
+# ....................... #
 
 
 def _warn_pubsub_downgrade_once(outbox_route: str, channel: str) -> None:
@@ -69,10 +70,10 @@ def _warn_pubsub_downgrade_once(outbox_route: str, channel: str) -> None:
 
 
 def _require_destination(
-    destination: OutboxDestination | None,
+    destination: "OutboxDestination | None",
     *,
     expected_kind: OutboxDestinationKind,
-) -> OutboxDestination:
+) -> "OutboxDestination":
     if destination is None:
         raise exc.precondition(
             f"outbox_spec.destination is required for {expected_kind} relay"
@@ -89,7 +90,7 @@ def _require_destination(
 # ....................... #
 
 
-def _assert_route_matches(destination: OutboxDestination, spec_name: str) -> None:
+def _assert_route_matches(destination: "OutboxDestination", spec_name: str) -> None:
     if str(destination.route) != str(spec_name):
         raise exc.precondition(
             f"spec.name must match OutboxSpec.destination.route for relay "
@@ -127,7 +128,7 @@ def _resolve_channel(
 # ....................... #
 
 
-def _claim_envelope_headers(claim: OutboxClaim) -> dict[str, str]:
+def _claim_envelope_headers(claim: "OutboxClaim") -> dict[str, str]:
     """Build the well-known envelope headers carried by a relayed claim.
 
     Every destination kind forwards the staged invocation envelope as
@@ -152,6 +153,9 @@ def _claim_envelope_headers(claim: OutboxClaim) -> dict[str, str]:
 
     if claim.tenant_id is not None:
         headers[HEADER_TENANT_ID] = str(claim.tenant_id)
+
+    if claim.hlc is not None:
+        headers[HEADER_HLC] = claim.hlc.encode()
 
     return headers
 
@@ -223,7 +227,7 @@ class OutboxRelay:
 
     async def to_queue(
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         queue_spec: QueueSpec[Any],
         *,
         limit: int | None = None,
@@ -249,7 +253,7 @@ class OutboxRelay:
 
     async def to_stream(
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         stream_spec: StreamSpec[Any],
         *,
         limit: int | None = None,
@@ -272,7 +276,7 @@ class OutboxRelay:
 
     async def to_pubsub(
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         pubsub_spec: PubSubSpec[Any],
         *,
         limit: int | None = None,
@@ -292,9 +296,7 @@ class OutboxRelay:
         if destination is not None and destination.kind == "pubsub":
             # Missing/mismatched destinations fall through to the precondition error
             # inside ``_relay`` without a spurious warning.
-            _warn_pubsub_downgrade_once(
-                str(self.outbox_spec.name), destination.channel
-            )
+            _warn_pubsub_downgrade_once(str(self.outbox_spec.name), destination.channel)
 
         return await self._relay(
             ctx,
@@ -309,7 +311,7 @@ class OutboxRelay:
 
     async def run(
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         *,
         queue_spec: QueueSpec[Any] | None = None,
         stream_spec: StreamSpec[Any] | None = None,
@@ -358,7 +360,7 @@ class OutboxRelay:
 
     async def _relay(
         self,
-        ctx: ExecutionContext,
+        ctx: "ExecutionContext",
         spec: BaseSpec,
         *,
         dep_key: DepKey[Any],
@@ -383,7 +385,7 @@ class OutboxRelay:
 
         command = ctx.deps.resolve_configurable(ctx, dep_key, spec, route=spec.name)
 
-        async def _publish(claim: OutboxClaim, payload: Any) -> None:
+        async def _publish(claim: "OutboxClaim", payload: Any) -> None:
             await getattr(command, method)(
                 channel,
                 payload,

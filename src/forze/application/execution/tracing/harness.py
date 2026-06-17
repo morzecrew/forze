@@ -1,7 +1,5 @@
 """Run operations under runtime tracing for mock dry-runs and tests."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Sequence, final
 
 import attrs
@@ -40,10 +38,10 @@ class TracedOperationResult:
 
 
 async def run_traced_operation(
-    registry: FrozenOperationRegistry,
-    op: StrKey,
+    registry: "FrozenOperationRegistry",
+    op: "StrKey",
     args: Any,
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     *,
     validators: Sequence[RuntimeTraceValidator] = (),
 ) -> TracedOperationResult:

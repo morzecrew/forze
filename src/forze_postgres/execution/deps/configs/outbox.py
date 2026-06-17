@@ -24,6 +24,12 @@ class PostgresOutboxConfig(TenantAwareIntegrationConfig):
     max_claim_rows: int = 100
     """Default batch size for :meth:`~forze.application.contracts.outbox.OutboxQueryPort.claim_pending`."""
 
+    hlc_ordering: bool = False
+    """Persist each event's Hybrid Logical Clock and claim in causal order
+    (``ORDER BY hlc NULLS LAST, created_at, id``) instead of ``created_at`` only.
+    Requires an ``hlc BIGINT`` column on the outbox table (legacy null rows fall
+    back to ``created_at``). Off by default — opt in **after** migrating the table."""
+
     default_processing_lease: timedelta = attrs.field(
         factory=lambda: timedelta(minutes=5)
     )

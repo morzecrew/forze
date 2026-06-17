@@ -7,8 +7,6 @@ extra. Emits via the global OpenTelemetry providers — configure the SDK + expo
 app.
 """
 
-from __future__ import annotations
-
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
@@ -27,8 +25,13 @@ from .operations.registry import OperationRegistry
 from .resilience import InProcessResilienceExecutor
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import CallbackOptions, Counter, Histogram, Meter
-    from opentelemetry.trace import Tracer
+    from opentelemetry.metrics import (  # noqa: F401
+        CallbackOptions,
+        Counter,
+        Histogram,
+        Meter,
+    )
+    from opentelemetry.trace import Tracer  # noqa: F401
 
     from .context import ExecutionContext
 
@@ -72,8 +75,8 @@ _BREAKER_PHASE_VALUES: dict[str, int] = {
 def instrument_operations(
     registry: OperationRegistry,
     *,
-    tracer: Tracer | None = None,
-    meter: Meter | None = None,
+    tracer: "Tracer | None" = None,
+    meter: "Meter | None" = None,
 ) -> OperationRegistry:
     """Instrument every operation in *registry* with an OpenTelemetry span + metrics.
 
@@ -120,7 +123,7 @@ def instrument_operations(
 def instrument_resilience(
     executor: InProcessResilienceExecutor,
     *,
-    meter: Meter | None = None,
+    meter: "Meter | None" = None,
 ) -> InProcessResilienceExecutor:
     """Export the executor's resilience events as always-on OpenTelemetry metrics.
 
@@ -181,7 +184,7 @@ def instrument_resilience(
         if phase is not None:
             breaker_state.set(phase, labels)
 
-    def _observe_queue_depth(_options: CallbackOptions) -> Iterable[Observation]:
+    def _observe_queue_depth(_options: "CallbackOptions") -> Iterable[Observation]:
         for policy, route, waiting in executor.bulkhead_queue_depths():
             labels = {"forze.policy": policy}
 
@@ -197,7 +200,7 @@ def instrument_resilience(
         description="Calls queued behind each bulkhead's semaphore.",
     )
 
-    def _observe_limits(_options: CallbackOptions) -> Iterable[Observation]:
+    def _observe_limits(_options: "CallbackOptions") -> Iterable[Observation]:
         for policy, route, limit in executor.adaptive_bulkhead_limits():
             labels = {"forze.policy": policy}
 
@@ -213,7 +216,7 @@ def instrument_resilience(
         description="Current AIMD concurrency limit per adaptive bulkhead.",
     )
 
-    def _observe_hedge_delays(_options: CallbackOptions) -> Iterable[Observation]:
+    def _observe_hedge_delays(_options: "CallbackOptions") -> Iterable[Observation]:
         for policy, route, delay in executor.hedge_delays():
             labels = {"forze.policy": policy}
 
@@ -240,7 +243,7 @@ def instrument_resilience(
 def instrument_tenant_pools(
     pools: dict[str, Any],
     *,
-    meter: Meter | None = None,
+    meter: "Meter | None" = None,
 ) -> None:
     """Export tenant pool churn counters as OpenTelemetry observable metrics.
 
@@ -268,8 +271,8 @@ def instrument_tenant_pools(
 
     def _observe(
         pick: Callable[[TenantPoolStats], int],
-    ) -> Callable[[CallbackOptions], Iterable[Observation]]:
-        def callback(_options: CallbackOptions) -> Iterable[Observation]:
+    ) -> Callable[["CallbackOptions"], Iterable[Observation]]:
+        def callback(_options: "CallbackOptions") -> Iterable[Observation]:
             for label, client in pools.items():
                 stats: TenantPoolStats = client.pool_stats()
 
@@ -315,7 +318,7 @@ def instrument_tenant_pools(
 def instrument_crypto(
     keyrings: dict[str, Any],
     *,
-    meter: Meter | None = None,
+    meter: "Meter | None" = None,
 ) -> None:
     """Export each keyring's KMS + cache counters as OpenTelemetry observable metrics.
 
@@ -345,8 +348,8 @@ def instrument_crypto(
 
     def _observe(
         pick: Callable[[CryptoKeyringStats], int],
-    ) -> Callable[[CallbackOptions], Iterable[Observation]]:
-        def callback(_options: CallbackOptions) -> Iterable[Observation]:
+    ) -> Callable[["CallbackOptions"], Iterable[Observation]]:
+        def callback(_options: "CallbackOptions") -> Iterable[Observation]:
             for label, keyring in keyrings.items():
                 stats: CryptoKeyringStats = keyring.stats()
 
@@ -367,7 +370,7 @@ def instrument_crypto(
         description="Cumulative KMS data-key unwraps (decrypt-path cache misses).",
     )
 
-    def _observe_hits(_options: CallbackOptions) -> Iterable[Observation]:
+    def _observe_hits(_options: "CallbackOptions") -> Iterable[Observation]:
         for label, keyring in keyrings.items():
             stats: CryptoKeyringStats = keyring.stats()
 
@@ -399,13 +402,13 @@ def instrument_crypto(
 
 def _telemetry_factory(
     op_name: str,
-    tracer: Tracer,
-    counter: Counter,
-    duration: Histogram,
+    tracer: "Tracer",
+    counter: "Counter",
+    duration: "Histogram",
 ) -> MiddlewareFactory:
     from opentelemetry.trace import Status, StatusCode
 
-    def factory(ctx: ExecutionContext) -> Middleware[Any, Any]:
+    def factory(ctx: "ExecutionContext") -> Middleware[Any, Any]:
         async def middleware(
             next: Any,  # noqa: A002 — matches the Middleware protocol parameter name
             args: Any,
@@ -442,7 +445,9 @@ def _telemetry_factory(
 # ....................... #
 
 
-def _span_attributes(ctx: ExecutionContext, op_name: str, kind: str) -> dict[str, str]:
+def _span_attributes(
+    ctx: "ExecutionContext", op_name: str, kind: str
+) -> dict[str, str]:
     attributes: dict[str, str] = {
         "forze.operation": op_name,
         "forze.operation.kind": kind,

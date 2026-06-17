@@ -7,10 +7,11 @@ from typing import Mapping
 import attrs
 import pytest
 
-from forze.application.contracts.envelope import HEADER_EVENT_ID
+from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_HLC
 from forze.application.contracts.inbox import InboxSpec
+from forze.application.execution.outbox.clock import outbox_clock, set_outbox_clock
 from forze.base.exceptions import CoreException
-from forze.base.primitives import uuid7
+from forze.base.primitives import HlcTimestamp, HybridLogicalClock, uuid7
 from tests.support.execution_context import context_from_modules
 
 from forze_kits.integrations.inbox import process_with_inbox
@@ -49,6 +50,35 @@ async def test_first_message_processed_then_duplicate_skipped() -> None:
     assert calls == ["evt-1"]  # handler ran exactly once
 
 
+async def test_duplicate_does_not_advance_the_hlc_clock() -> None:
+    # The causal merge runs only after the dedup mark succeeds, so a replayed
+    # message cannot advance (or be used to skew) the process-global clock.
+    saved = outbox_clock()
+    set_outbox_clock(HybridLogicalClock())
+
+    try:
+        ctx = context_from_modules(MockDepsModule())
+
+        async def handler(_msg: _Msg) -> None: ...
+
+        ahead = HlcTimestamp(outbox_clock().now().physical_ms + 1, 0)
+        msg = _Msg(key="evt-hlc", headers={HEADER_HLC: ahead.encode()})
+
+        await process_with_inbox(
+            ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
+        )
+        after_first = outbox_clock().last
+
+        await process_with_inbox(  # duplicate
+            ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
+        )
+
+        assert outbox_clock().last == after_first  # duplicate did not advance it
+
+    finally:
+        set_outbox_clock(saved)
+
+
 async def test_prefers_key_over_id() -> None:
     ctx = context_from_modules(MockDepsModule())
 
@@ -57,13 +87,21 @@ async def test_prefers_key_over_id() -> None:
     # Same key, different id -> still a duplicate (dedup on key).
     assert (
         await process_with_inbox(
-            ctx, _Msg(key="k", id="a"), inbox_spec=_SPEC, handler=handler, tx_route="mock"
+            ctx,
+            _Msg(key="k", id="a"),
+            inbox_spec=_SPEC,
+            handler=handler,
+            tx_route="mock",
         )
         is True
     )
     assert (
         await process_with_inbox(
-            ctx, _Msg(key="k", id="b"), inbox_spec=_SPEC, handler=handler, tx_route="mock"
+            ctx,
+            _Msg(key="k", id="b"),
+            inbox_spec=_SPEC,
+            handler=handler,
+            tx_route="mock",
         )
         is False
     )

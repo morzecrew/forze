@@ -8,9 +8,11 @@ from typing import Callable, Literal
 import attrs
 
 from forze.base.exceptions import exc
+from forze.base.primitives import WindowedP2Quantile
 
+from ..context.criticality import Criticality, current_criticality
 from ..context.deadline import current_deadline
-from .quantile import WindowedP2Quantile
+from .limiter import Gradient2Limiter
 
 # ----------------------- #
 
@@ -19,6 +21,16 @@ BreakerPhase = Literal["closed", "open", "half_open"]
 
 Transition = Literal["open", "closed", "half_open"] | None
 """Phase transition emitted by a state update, or ``None`` when unchanged."""
+
+_CRITICALITY_GRACE: dict[Criticality, float] = {
+    Criticality.BEST_EFFORT: 0.25,
+    Criticality.DEGRADED: 0.5,
+    Criticality.NORMAL: 1.0,
+    Criticality.CRITICAL: 2.0,
+}
+"""Per-tier CoDel sojourn-allowance multiplier (prioritized mode): a lower tier
+breaches its (tighter) allowance — and so is shed — sooner under congestion,
+while a critical request is granted extra grace before it can be shed."""
 
 # ....................... #
 
@@ -246,8 +258,20 @@ class AdaptiveBulkheadState:
     """Serve the *newest* waiter first while congested (its client is the most
     likely to still be waiting); FIFO otherwise."""
 
+    prioritized: bool = False
+    """Criticality-aware shedding: a full queue admits a higher-criticality
+    arrival by displacing the lowest-criticality waiter, and lower tiers get a
+    tighter CoDel sojourn allowance (see :data:`_CRITICALITY_GRACE`). Reads the
+    ambient :func:`current_criticality` at park time. Inert when ``False``."""
+
+    limiter: Gradient2Limiter | None = None
+    """Delay-based (Gradient2) controller. When set, :meth:`on_complete` delegates
+    the limit to it (the AIMD fields are unused); ``None`` keeps the AIMD law."""
+
     limit: float = attrs.field(
-        default=attrs.Factory(lambda self: float(self.max_concurrency), takes_self=True),
+        default=attrs.Factory(
+            lambda self: float(self.max_concurrency), takes_self=True
+        ),
         init=False,
     )
     """Current concurrency limit (floored to int for admission)."""
@@ -267,33 +291,38 @@ class AdaptiveBulkheadState:
     )
     """Last instant the wait queue was observed empty (congestion anchor)."""
 
-    _waiters: deque[tuple[asyncio.Future[None], float | None, float]] = attrs.field(
-        factory=deque,
-        init=False,
+    _waiters: deque[tuple[asyncio.Future[None], float | None, float, Criticality]] = (
+        attrs.field(
+            factory=deque,
+            init=False,
+        )
     )
-
-    _latency_estimator: WindowedP2Quantile | None = attrs.field(
-        default=attrs.Factory(
-            lambda self: (
-                WindowedP2Quantile(p=self.latency_quantile)
-                if self.latency_quantile is not None
-                else None
-            ),
-            takes_self=True,
-        ),
-        init=False,
-    )
-    """Windowed P² estimate of completed-call latency (quantile mode only)."""
 
     # ....................... #
 
     def can_admit(self) -> bool:
-        """Whether a call may take a slot or join the wait queue."""
+        """Whether a call may take a slot or join the wait queue.
+
+        Prioritized mode: a full queue still admits a higher-criticality arrival,
+        which will displace the lowest-criticality waiter on :meth:`acquire`.
+        """
 
         if self.in_use < int(self.limit):
             return True
 
-        return self.waiting < self.max_queue
+        if self.waiting < self.max_queue:
+            return True
+
+        if not self.prioritized:
+            return False
+
+        incoming = current_criticality()
+
+        return any(
+            crit < incoming
+            for waiter, _, _, crit in self._waiters
+            if not waiter.done()
+        )
 
     # ....................... #
 
@@ -306,16 +335,25 @@ class AdaptiveBulkheadState:
         would reclaim the grant immediately anyway.
         """
 
+        criticality = current_criticality() if self.prioritized else Criticality.NORMAL
+
         if self.in_use < int(self.limit) and not self._waiters:
             self.in_use += 1
             return
 
-        if self._tracks_congestion() and not self._waiters:
+        queue_was_empty = not self._waiters
+
+        if self.prioritized and self.waiting >= self.max_queue:
+            # Full queue: shed the lowest-criticality waiter to make room. The
+            # executor's can_admit gate guarantees a strictly-lower victim.
+            self._displace_lowest()
+
+        if self._tracks_congestion() and queue_was_empty:
             # The queue was empty until this park: reset the congestion anchor.
             self.last_empty_at = self.clock()
 
         waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        entry = (waiter, current_deadline(), self.clock())
+        entry = (waiter, current_deadline(), self.clock(), criticality)
         self._waiters.append(entry)
         self.waiting += 1
 
@@ -347,6 +385,31 @@ class AdaptiveBulkheadState:
 
     # ....................... #
 
+    def _displace_lowest(self) -> None:
+        """Shed the lowest-criticality *live* parked waiter to admit a higher one.
+
+        Mirrors the CoDel shed path: the victim is removed from the queue and
+        failed with ``bulkhead_queue_shed``; its own :meth:`acquire` ``finally``
+        decrements ``waiting``. Done/cancelled waiters lingering until
+        :meth:`_wake` reaps them are skipped — picking one would leave a live
+        lower-criticality waiter queued and push ``waiting`` past ``max_queue``.
+        The caller (via :meth:`can_admit`) guarantees a live victim exists.
+        """
+
+        victim = min(
+            (entry for entry in self._waiters if not entry[0].done()),
+            key=lambda entry: entry[3],
+        )
+        self._waiters.remove(victim)
+        victim[0].set_exception(
+            exc.infrastructure(
+                "Bulkhead queue shed: displaced by a higher-criticality request",
+                code="bulkhead_queue_shed",
+            )
+        )
+
+    # ....................... #
+
     def _tracks_congestion(self) -> bool:
         """Whether any queue feature needs the congestion anchor maintained."""
 
@@ -373,7 +436,7 @@ class AdaptiveBulkheadState:
                 if self.queue_adaptive_lifo and congested
                 else self._waiters.popleft()
             )
-            waiter, deadline, enqueued_at = entry
+            waiter, deadline, enqueued_at, criticality = entry
 
             if waiter.cancelled():
                 continue
@@ -381,8 +444,12 @@ class AdaptiveBulkheadState:
             if self.queue_target_s is not None:
                 # CoDel (simplified, Facebook-style): generous sojourn
                 # allowance while the queue has recently been empty, tight
-                # allowance under sustained congestion.
+                # allowance under sustained congestion. Prioritized mode scales
+                # the allowance by tier so lower-criticality waiters shed sooner.
                 allowed = self.queue_target_s if congested else self.queue_interval_s
+
+                if self.prioritized:
+                    allowed *= _CRITICALITY_GRACE.get(criticality, 1.0)
 
                 if now - enqueued_at > allowed:
                     waiter.set_exception(
@@ -413,29 +480,47 @@ class AdaptiveBulkheadState:
 
     # ....................... #
 
-    def on_complete(self, latency: float, now: float) -> bool:
+    def on_complete(
+        self,
+        latency: float,
+        now: float,
+        quantile_value: float | None = None,
+        inflight: int | None = None,
+    ) -> bool:
         """Adjust the limit for a completed call; return ``True`` on a decrease.
 
-        Per-sample mode: this completion's latency over the threshold is a
-        breach. Quantile mode (``latency_quantile`` set): the windowed P²
-        estimate over the threshold is — one outlier can't move a quantile,
-        only a shifted distribution can. An undefined estimate (warming up)
-        never breaches.
+        Gradient mode (``limiter`` set): the limit is delegated to the Gradient2
+        controller, which tracks the latency gradient with no threshold — the
+        AIMD fields and ``quantile_value`` are unused. ``inflight`` (the
+        concurrency at completion) feeds its no-load guard.
+
+        Per-sample mode (``latency_quantile is None``): this completion's
+        latency over the threshold is a breach. Quantile mode: the congestion
+        signal is the windowed quantile of recent completed-call latencies —
+        supplied by the executor's :class:`LatencyDigestStore` as
+        ``quantile_value`` (the store owns the estimator, so the signal can be
+        process-local or shared across replicas). ``quantile_value is None``
+        means the estimate is still warming, which never breaches — holding the
+        limit rather than reading "unknown" as "healthy" and creeping back up
+        mid-incident.
         """
 
-        estimator = self._latency_estimator
+        if self.limiter is not None:
+            # Gradient2: the controller owns the limit. ``inflight`` defaults to
+            # the current in-flight count (the executor passes the value taken
+            # before release for an accurate no-load guard).
+            observed = self.in_use if inflight is None else inflight
+            new_limit = self.limiter.observe(latency, observed)
+            decreased = new_limit < self.limit
+            self.limit = new_limit
 
-        if estimator is not None:
-            estimator.observe(latency)
-            value = estimator.value()
+            return decreased
 
-            if value is None:
-                # Warming (fewer than five samples this epoch): no signal in
-                # either direction — hold the limit rather than reading
-                # "unknown" as "healthy" and creeping back up mid-incident.
+        if self.latency_quantile is not None:
+            if quantile_value is None:
                 return False
 
-            breached = value > self.latency_threshold
+            breached = quantile_value > self.latency_threshold
 
         else:
             breached = latency > self.latency_threshold
@@ -453,14 +538,6 @@ class AdaptiveBulkheadState:
 
         self.last_decrease_at = now
         self.limit = max(float(self.min_concurrency), self.limit * self.backoff_ratio)
-
-        if estimator is not None:
-            # Fresh measurement epoch: the old distribution justified this
-            # decrease; only the *new* concurrency's latencies should decide
-            # the next move. Without the reset, a stale-high quantile keeps
-            # re-breaching for up to two windows after the downstream
-            # recovers, ratcheting the limit to the floor once per cooldown.
-            self._latency_estimator = WindowedP2Quantile(p=estimator.p)
 
         return True
 

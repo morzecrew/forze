@@ -14,11 +14,10 @@ from typing import TYPE_CHECKING, Callable, Iterable
 # OpenTelemetry is imported lazily inside ``instrument_document_l1`` so importing this
 # module (re-exported from the document integration package) does not pull
 # ``opentelemetry`` into an uninstrumented app's import path.
-
 from .l1 import L1Stats, iter_l1_stats
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import CallbackOptions, Meter
+    from opentelemetry.metrics import CallbackOptions, Meter  # noqa: F401
 
 # ----------------------- #
 

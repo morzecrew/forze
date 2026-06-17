@@ -46,8 +46,6 @@ reclaimed and redelivered — at-least-once holds, nothing is lost or silently
 swallowed.
 """
 
-from __future__ import annotations
-
 import random
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
@@ -133,7 +131,7 @@ def compute_retry_delay(
 
 
 async def relay_outbox_claims(
-    ctx: ExecutionContext,
+    ctx: "ExecutionContext",
     *,
     outbox_spec: OutboxSpec[Any],
     publish_one: PublishOne,

@@ -16,7 +16,7 @@ from forze.base.exceptions import exc
 from ..deps import Deps
 from .executor import InProcessResilienceExecutor
 from .policies import builtin_default_policies
-from .store import CircuitBreakerStore, RateLimitStore
+from .store import CircuitBreakerStore, LatencyDigestStore, RateLimitStore
 
 # ----------------------- #
 
@@ -36,6 +36,11 @@ class ResilienceDepsModule:
     """Optional shared rate-limit store (e.g. Redis), making ``permits/per`` the
     fleet's rate. Defaults to process-local — each replica enforces the rate
     independently, so the fleet-effective rate is ``permits × replicas``."""
+
+    latency_digest_store: LatencyDigestStore | None = None
+    """Optional shared adaptive-bulkhead latency digest (e.g. Redis-backed
+    DDSketch), making the AIMD congestion signal reflect the fleet's latency.
+    Defaults to process-local (windowed P²)."""
 
     port_policies: tuple[PortPolicy, ...] = attrs.field(
         factory=tuple,
@@ -90,6 +95,9 @@ class ResilienceDepsModule:
 
         if self.rate_limit_store is not None:
             executor_kwargs["rate_limit_store"] = self.rate_limit_store
+
+        if self.latency_digest_store is not None:
+            executor_kwargs["latency_digest_store"] = self.latency_digest_store
 
         executor = InProcessResilienceExecutor(**executor_kwargs)
         deps: dict[DepKey[Any], Any] = {ResilienceExecutorDepKey: executor}

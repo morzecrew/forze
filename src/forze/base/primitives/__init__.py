@@ -15,6 +15,7 @@ from .fingerprint import (
     stable_payload_fingerprint,
 )
 from .graph import DirectedAcyclicGraph
+from .hlc import HlcTimestamp, HybridLogicalClock
 from .lanes import CachedInflightLane, CacheLane, InflightLane
 from .lifecycle_guard import GuardedLifecycle
 from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
@@ -23,9 +24,11 @@ from .mapping import (
     StrKeyMapping,
 )
 from .namespace import StrKeyNamespace
+from .quantile import P2Quantile, WindowedP2Quantile
 from .runtime import RuntimeVar
 from .selector import StrKeySelector, str_key_selector
 from .sequence import AbstractSequence
+from .sketch import DDSketch, WindowedDDSketch
 from .string import normalize_string
 from .time_source import (
     FrozenTimeSource,
@@ -75,6 +78,12 @@ __all__ = [
     "StrKeySelector",
     "str_key_selector",
     "AbstractSequence",
+    "HlcTimestamp",
+    "HybridLogicalClock",
+    "P2Quantile",
+    "WindowedP2Quantile",
+    "DDSketch",
+    "WindowedDDSketch",
     "DirectedAcyclicGraph",
     "MappingConverter",
 ]

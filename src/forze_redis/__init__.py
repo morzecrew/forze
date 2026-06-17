@@ -22,6 +22,10 @@ from .adapters.circuit_breaker import (
     RedisCircuitBreakerStore,
     redis_circuit_breaker_store,
 )
+from .adapters.latency_digest import (
+    RedisLatencyDigestStore,
+    redis_latency_digest_store,
+)
 from .adapters.rate_limit import (
     RedisRateLimitStore,
     redis_rate_limit_store,
@@ -57,4 +61,6 @@ __all__ = [
     "redis_circuit_breaker_store",
     "RedisRateLimitStore",
     "redis_rate_limit_store",
+    "RedisLatencyDigestStore",
+    "redis_latency_digest_store",
 ]

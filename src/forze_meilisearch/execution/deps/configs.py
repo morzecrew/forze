@@ -107,5 +107,3 @@ class MeilisearchFederatedSearchConfig(TenantAwareIntegrationConfig):
                 raise exc.configuration(
                     f"Federated member {member.name!r} missing from MeilisearchFederatedSearchConfig.members.",
                 )
-
-            pass

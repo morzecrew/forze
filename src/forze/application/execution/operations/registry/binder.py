@@ -49,15 +49,9 @@ class OperationRegistryBinder:
         plans = self._parent.get_plans()
 
         for op in self._ops:
-            if op in plans:
-                plans[op] = plans[op].merge(self._acc)
+            plans[op] = plans[op].merge(self._acc) if op in plans else self._acc
 
-            else:
-                plans[op] = self._acc
-
-        new_parent = attrs.evolve(self._parent, plans=plans)
-
-        return new_parent
+        return attrs.evolve(self._parent, plans=plans)
 
     # ....................... #
 
@@ -69,9 +63,7 @@ class OperationRegistryBinder:
         ``registry.bind(op).as_query().bind_tx().set_route("pg").finish()``.
         """
 
-        return attrs.evolve(
-            self, acc=attrs.evolve(self._acc, kind=OperationKind.QUERY)
-        )
+        return attrs.evolve(self, acc=attrs.evolve(self._acc, kind=OperationKind.QUERY))
 
     # ....................... #
 

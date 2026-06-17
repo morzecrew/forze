@@ -6,6 +6,7 @@ from forze.application.contracts.envelope import (
     HEADER_CORRELATION_ID,
     HEADER_EVENT_ID,
     HEADER_EXECUTION_ID,
+    HEADER_HLC,
     HEADER_OCCURRED_AT,
     HEADER_TENANT_ID,
 )
@@ -59,6 +60,7 @@ def test_envelope_header_names_follow_forze_convention() -> None:
     assert HEADER_TENANT_ID == "forze_tenant_id"
     assert HEADER_EVENT_ID == "forze_event_id"
     assert HEADER_OCCURRED_AT == "forze_occurred_at"
+    assert HEADER_HLC == "forze_hlc"
 
     assert ENVELOPE_HEADER_KEYS == {
         HEADER_CORRELATION_ID,
@@ -67,6 +69,7 @@ def test_envelope_header_names_follow_forze_convention() -> None:
         HEADER_TENANT_ID,
         HEADER_EVENT_ID,
         HEADER_OCCURRED_AT,
+        HEADER_HLC,
     }
 
 

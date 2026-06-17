@@ -21,7 +21,7 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
-from forze.base.primitives import utcnow, uuid7
+from forze.base.primitives import HlcTimestamp, utcnow, uuid7
 from forze_postgres.execution.deps.configs.outbox import PostgresOutboxConfig
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways.base import PostgresQualifiedName
@@ -58,6 +58,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
 
         table = await self._table()
         created_at = utcnow()
+        hlc_ordering = self.config.hlc_ordering
         cols = (
             "id",
             "outbox_route",
@@ -74,6 +75,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             "attempts",
             "available_at",
             "ordering_key",
+            *(("hlc",) if hlc_ordering else ()),
         )
         col_idents = [sql.Identifier(c) for c in cols]
         row_template = (
@@ -103,6 +105,11 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                     0,
                     None,
                     event.ordering_key,
+                    *(
+                        (event.hlc.pack() if event.hlc is not None else None,)
+                        if hlc_ordering
+                        else ()
+                    ),
                 ]
             )
 
@@ -148,6 +155,15 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             tenant_filter = sql.SQL("AND tenant_id = %(tenant_id)s")
             params["tenant_id"] = tenant_id
 
+        # HLC ordering: claim in causal order, with the time-ordered uuid7 ``id``
+        # as a deterministic tiebreaker; legacy null-hlc rows fall back to
+        # ``created_at``. Off keeps the size-only created_at order, byte for byte.
+        hlc_ordering = self.config.hlc_ordering
+        order_by = sql.SQL(
+            "hlc NULLS LAST, created_at, id" if hlc_ordering else "created_at"
+        )
+        hlc_returning = sql.SQL(", t.hlc") if hlc_ordering else sql.SQL("")
+
         stmt = sql.SQL(
             """
             WITH picked AS (
@@ -157,7 +173,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                   AND status = %(pending)s
                   AND (available_at IS NULL OR available_at <= %(now)s)
                   {tenant_filter}
-                ORDER BY created_at
+                ORDER BY {order_by}
                 LIMIT %(limit)s
                 FOR UPDATE SKIP LOCKED
             )
@@ -169,11 +185,32 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             RETURNING
                 t.id, t.outbox_route, t.event_id, t.event_type, t.payload,
                 t.tenant_id, t.execution_id, t.correlation_id, t.causation_id,
-                t.occurred_at, t.attempts, t.ordering_key
+                t.occurred_at, t.attempts, t.ordering_key, t.created_at{hlc_returning}
             """
-        ).format(table=table.ident(), tenant_filter=tenant_filter)
+        ).format(
+            table=table.ident(),
+            tenant_filter=tenant_filter,
+            order_by=order_by,
+            hlc_returning=hlc_returning,
+        )
 
         rows = await self.client.fetch_all(stmt, params)
+
+        # ``UPDATE … RETURNING`` does not preserve the picked CTE's ``ORDER BY``
+        # (Postgres decouples the two), so re-apply the claim order in Python.
+        if hlc_ordering:
+            rows = sorted(
+                rows,
+                key=lambda r: (
+                    r.get("hlc") is None,  # NULLS LAST
+                    r.get("hlc") or 0,
+                    r["created_at"],
+                    r["id"],
+                ),
+            )
+
+        else:
+            rows = sorted(rows, key=lambda r: (r["created_at"], r["id"]))
 
         return [
             OutboxClaim(
@@ -189,6 +226,11 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                 occurred_at=row.get("occurred_at"),
                 attempts=int(row.get("attempts") or 0),
                 ordering_key=row.get("ordering_key"),
+                hlc=(
+                    HlcTimestamp.unpack(row["hlc"])
+                    if hlc_ordering and row.get("hlc") is not None
+                    else None
+                ),
             )
             for row in rows
         ]

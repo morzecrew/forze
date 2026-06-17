@@ -9,14 +9,38 @@ from uuid import UUID
 from forze.application.contracts.envelope import (
     HEADER_CORRELATION_ID,
     HEADER_EVENT_ID,
+    HEADER_HLC,
     HEADER_TENANT_ID,
 )
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.context.invocation import InvocationMetadata
-from forze.base.exceptions import exc
-from forze.base.primitives import StrKey, uuid7
+from forze.application.execution.outbox.clock import outbox_clock
+from forze.base.exceptions import CoreException, exc
+from forze.base.primitives import HlcTimestamp, StrKey, uuid7
+
+# ----------------------- #
+
+
+def _merge_inbound_hlc(headers: Mapping[str, object]) -> None:
+    """Advance the process clock past a consumed event's HLC (best-effort).
+
+    So an event produced *in reaction* to this one causally follows it. A
+    malformed or absent header is ignored — ordering is best-effort.
+    """
+
+    raw = headers.get(HEADER_HLC)
+
+    if not isinstance(raw, str) or not raw:
+        return
+
+    try:
+        outbox_clock().update(HlcTimestamp.parse(raw))
+
+    except CoreException:
+        return
+
 
 # ----------------------- #
 
@@ -152,6 +176,11 @@ async def process_with_inbox[M](
 
             if not await port.mark_if_unseen(str(inbox_spec.name), dedup_id):
                 return False
+
+            # Only a genuinely new message advances the process clock — a
+            # replayed/duplicate one must not (it would let forged or repeated
+            # headers skew causality).
+            _merge_inbound_hlc(headers)
 
             await handler(message)
             return True

@@ -27,7 +27,7 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, utcnow, uuid7
+from forze.base.primitives import HlcTimestamp, JsonDict, utcnow, uuid7
 from forze_mongo.execution.deps.configs.outbox import MongoOutboxConfig
 from forze_mongo.kernel.client import MongoClientPort
 from forze_mongo.kernel.relation import resolve_mongo_collection
@@ -74,6 +74,9 @@ def _claim_from_doc(doc: JsonDict) -> OutboxClaim:
         attempts=int(doc.get("attempts") or 0),
         ordering_key=(
             str(doc["ordering_key"]) if doc.get("ordering_key") is not None else None
+        ),
+        hlc=(
+            HlcTimestamp.unpack(int(doc["hlc"])) if doc.get("hlc") is not None else None
         ),
     )
 
@@ -122,6 +125,7 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
 
         coll = await self._collection()
         created_at = utcnow()
+        hlc_ordering = self.config.hlc_ordering
         event_ids = [str(entry.event.event_id) for entry in rows]
 
         existing_filter = self._route_filter()
@@ -173,6 +177,11 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                     "last_error": None,
                     "attempts": 0,
                     "available_at": None,
+                    **(
+                        {"hlc": (event.hlc.pack() if event.hlc is not None else None)}
+                        if hlc_ordering
+                        else {}
+                    ),
                 }
             )
 
@@ -218,11 +227,20 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             {"available_at": {"$lte": now}},
         ]
 
+        # HLC ordering: claim in causal order with the time-ordered uuid7 ``id``
+        # as a deterministic tiebreaker. Mongo sorts missing ``hlc`` first, so
+        # legacy pre-migration rows drain oldest-first; off keeps created_at.
+        claim_sort: list[tuple[str, int]] = (
+            [("hlc", 1), ("created_at", 1), ("id", 1)]
+            if self.config.hlc_ordering
+            else [("created_at", 1)]
+        )
+
         candidates = await self.client.find_many(
             coll,
             base_filter,
             projection={"_id": 1},
-            sort=[("created_at", 1)],
+            sort=claim_sort,
             limit=max_n,
         )
 
@@ -260,7 +278,7 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
         docs = await self.client.find_many(
             coll,
             {"claim_token": claim_token},
-            sort=[("created_at", 1)],
+            sort=claim_sort,
         )
 
         return [_claim_from_doc(doc) for doc in docs]

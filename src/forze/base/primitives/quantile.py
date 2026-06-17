@@ -32,7 +32,7 @@ class P2Quantile:
     markers (the algorithm is undefined before that — callers fall back).
     """
 
-    p: float = attrs.field()
+    p: float
     """Target quantile in ``(0, 1)``."""
 
     # ....................... #
@@ -109,11 +109,11 @@ class P2Quantile:
                 step = 1.0 if d > 0 else -1.0
                 candidate = self._parabolic(i, step)
 
-                if q[i - 1] < candidate < q[i + 1]:
-                    q[i] = candidate
-
-                else:
-                    q[i] = self._linear(i, step)
+                q[i] = (
+                    candidate
+                    if q[i - 1] < candidate < q[i + 1]
+                    else self._linear(i, step)
+                )
 
                 n[i] += step
 
@@ -140,10 +140,7 @@ class P2Quantile:
     def value(self) -> float | None:
         """The current quantile estimate, or ``None`` before five observations."""
 
-        if self._count < _MARKERS:
-            return None
-
-        return self._heights[2]
+        return None if self._count < _MARKERS else self._heights[2]
 
 
 # ....................... #

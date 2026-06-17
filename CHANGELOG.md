@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Mergeable quantile sketch (`DDSketch`)** — `forze.base.primitives` adds `DDSketch`/`WindowedDDSketch`: a relative-error sketch answering any quantile and mergeable across streams (fleet-wide / multi-quantile latency). Complements `P2Quantile`.
+- **Hybrid Logical Clock (`HybridLogicalClock`)** — `forze.base.primitives` adds `HybridLogicalClock`/`HlcTimestamp`: a skew-tolerant causal clock (reads the ambient `TimeSource`) with an optional `max_drift` guard.
+- **Causal outbox ordering** — opt-in `hlc_ordering=True` on `PostgresOutboxConfig`/`MongoOutboxConfig` stamps events with an HLC and claims them in causal order across replicas (relay forwards the untrusted `HEADER_HLC`, drift-guarded). Off by default; **Postgres requires adding an `hlc BIGINT` column first** (legacy rows fall back to `created_at`).
+- **Fleet-wide adaptive-bulkhead congestion signal** — the AIMD latency-quantile signal flows through a pluggable `LatencyDigestStore` (default in-process windowed-P², behavior-preserving); `forze_redis` adds `RedisLatencyDigestStore` so the limit reacts to the fleet's p95. Opt-in via `ResilienceDepsModule(latency_digest_store=…)`.
+- **Prioritized load shedding** — opt-in `prioritized=True` on `BulkheadStrategy`/`AdaptiveBulkheadStrategy` makes the wait queue criticality-aware via the new task-scoped `Criticality` + `bind_criticality`. No-op until enabled; requires `max_queue >= 1`.
+- **Delay-based bulkhead (`GradientBulkheadStrategy`)** — a third bulkhead kind (Gradient2) that tunes concurrency from the latency gradient with no `latency_threshold`. Mutually exclusive with the other bulkhead kinds.
+
+### Changed
+
+- **Quantile estimators relocated** — `P2Quantile`/`WindowedP2Quantile` moved from `forze.application.execution.resilience.quantile` to `forze.base.primitives` (co-located with `DDSketch`; now public `base.primitives` exports). The old module path is removed; internal resilience wiring is unaffected.
+
+### Fixed
+
+- **Typing annotations** — type-only imports moved under `TYPE_CHECKING` with forward references (including the runtime-optional OpenTelemetry types), so affected modules import cleanly without those optional dependencies installed and skip needless runtime imports.
+
 ## [0.4.0] - 2026-06-17
 
 ### Added
@@ -643,6 +662,7 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/morzecrew/forze/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/morzecrew/forze/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/morzecrew/forze/compare/v0.1.14...v0.2.0

@@ -252,7 +252,7 @@ class OperationPlan:
         # extend it. To give one operation a longer budget than a broad patch
         # default, narrow the patch selector instead.
         deadlines = [plan.deadline for plan in plans if plan.deadline is not None]
-        merged_deadline = min(deadlines) if deadlines else None
+        merged_deadline = min(deadlines, default=None)
 
         return cls(
             outer=merged_outer,

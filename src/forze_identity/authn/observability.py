@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable
 from .services.access_token import SigningStats
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import CallbackOptions, Meter, Observation
+    from opentelemetry.metrics import CallbackOptions, Meter, Observation  # noqa: F401
 
 # ----------------------- #
 
@@ -22,11 +22,13 @@ TOKENS_SIGNED_COUNTER = "forze.authn.tokens.signed"
 TOKENS_VERIFIED_COUNTER = "forze.authn.tokens.verified"
 TOKENS_VERIFY_FAILED_COUNTER = "forze.authn.tokens.verify_failed"
 
+# ....................... #
+
 
 def instrument_signing(
     services: dict[str, Any],
     *,
-    meter: Meter | None = None,
+    meter: "Meter | None" = None,
 ) -> None:
     """Export each access-token service's sign/verify counters as OTel observable counters.
 
@@ -51,8 +53,8 @@ def instrument_signing(
 
     def _observe(
         pick: Callable[[SigningStats], int],
-    ) -> Callable[[CallbackOptions], Iterable[Observation]]:
-        def callback(_options: CallbackOptions) -> Iterable[Observation]:
+    ) -> Callable[["CallbackOptions"], Iterable["Observation"]]:
+        def callback(_options: "CallbackOptions") -> Iterable["Observation"]:
             for label, service in services.items():
                 stats: SigningStats = service.signing_stats()
                 attributes: dict[str, str] = {
