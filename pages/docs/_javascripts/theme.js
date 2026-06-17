@@ -123,6 +123,9 @@
     }
     var root = m[1]; // e.g. "/forze/"
     var version = m[2]; // "dev" | "0.4" | "latest" | ...
+    // Re-stamped every run so the once-created dismiss button reads the CURRENT
+    // page's version at click time, not the one captured when it was created.
+    box.dataset.bannerVersion = version;
 
     loadVersions(root).then(function (versions) {
       var latest = versions.filter(function (v) {
@@ -158,7 +161,10 @@
         btn.addEventListener("click", function () {
           box.hidden = true;
           try {
-            sessionStorage.setItem("forze-banner:" + version, "1");
+            sessionStorage.setItem(
+              "forze-banner:" + box.dataset.bannerVersion,
+              "1"
+            );
           } catch (e) {}
         });
         box.appendChild(btn);
@@ -291,6 +297,10 @@
     function (e) {
       var link = e.target.closest && e.target.closest(".md-version__link");
       if (!link || !link.href) return;
+      // Only hijack a plain left click — let the browser handle modified clicks
+      // (Cmd/Ctrl/Shift/Alt, middle button) so open-in-new-tab still works.
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+        return;
       e.preventDefault();
       e.stopImmediatePropagation();
       document.querySelectorAll(".md-version--open").forEach(function (v) {

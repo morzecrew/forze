@@ -4,5 +4,7 @@
 set -euo pipefail
 
 mv coverage-data/.coverage.* . 2>/dev/null || true
-uv run coverage combine
+# Non-fatal: with no shard files downloaded, combine exits 1 ("no data"). This
+# step never gates (the threshold gate runs later), so don't fail the job here.
+uv run coverage combine || true
 uv run coverage xml || true

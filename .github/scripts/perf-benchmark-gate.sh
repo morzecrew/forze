@@ -14,14 +14,22 @@ STORAGE="file://${GITHUB_WORKSPACE}/.benchmarks"
 for r in $(seq 1 "$ROUNDS"); do
 	echo "::group::perf round $r/$ROUNDS"
 	# `base` first, then `head`, so the two sides are temporally adjacent. base
-	# tolerates a merge-base predating the perf_gate marker (no data); a head
-	# failure (the PR's own benches erroring) fails the gate explicitly rather than
-	# letting gate_compare.py pass on empty head data.
+	# may legitimately have NO perf_gate tests (merge-base predates the marker):
+	# pytest exits 5 ("no tests collected") there, which we tolerate. Any OTHER
+	# non-zero means base actually broke — fail rather than gate against a missing
+	# baseline (gate_compare.py would otherwise pass it as "no base"). A head
+	# failure fails the gate via set -e for the same reason.
+	base_rc=0
 	(cd /tmp/base-ref && ./.venv/bin/pytest \
 		--benchmark-only --benchmark-warmup=on --benchmark-disable-gc \
 		--benchmark-storage="$STORAGE" --benchmark-save=base \
-		-m perf_gate tests/perf) ||
-		echo "::warning::base perf round $r produced no data (ref may predate perf_gate)"
+		-m perf_gate tests/perf) || base_rc=$?
+	if [ "$base_rc" -eq 5 ]; then
+		echo "::warning::base perf round $r collected no perf_gate tests (ref predates the marker)"
+	elif [ "$base_rc" -ne 0 ]; then
+		echo "::error::base perf round $r failed (pytest exit $base_rc); refusing to gate without a valid baseline"
+		exit 1
+	fi
 	(cd "${GITHUB_WORKSPACE}" && ./.venv/bin/pytest \
 		--benchmark-only --benchmark-warmup=on --benchmark-disable-gc \
 		--benchmark-storage="$STORAGE" --benchmark-save=head \
