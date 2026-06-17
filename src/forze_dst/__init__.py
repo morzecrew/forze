@@ -9,6 +9,7 @@ time reads track it.
 from __future__ import annotations
 
 from .faults import FaultyQueueCommand, TransportFault, TransportFaultPolicy
+from .harness import OperationCase, Simulation
 from .invariants import (
     Invariant,
     Violation,
@@ -86,4 +87,6 @@ __all__ = [
     "record_operation",
     "is_linearizable",
     "linearizable",
+    "Simulation",
+    "OperationCase",
 ]

@@ -4,7 +4,7 @@ from typing import Protocol, final, runtime_checkable
 
 import attrs
 
-from forze.base.primitives import ContextVarTrace
+from forze.base.primitives import ContextVarTrace, monotonic
 
 from ..tracing import RuntimeTrace
 
@@ -130,6 +130,7 @@ class RecordingRuntimeTracer:
             phase=phase,
             tx_depth=tx_depth,
             tx_route=tx_route,
+            at=monotonic(),
         )
 
     # ....................... #

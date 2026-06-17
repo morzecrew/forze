@@ -143,6 +143,7 @@ inngest = ["inngest>=0.5.18"]
 meilisearch = ["meilisearch-python-sdk>=7.2.1"]
 http = ["httpx>=0.28.0"]
 mcp = ["fastmcp>=3.0.0", "mcp>=1.27.0"]
+dst = ["polyfactory>=3.3.0"]
 
 # ....................... #
 

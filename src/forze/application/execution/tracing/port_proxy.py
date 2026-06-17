@@ -54,6 +54,16 @@ class TracingPortProxy:
         if not callable(attr):
             return attr
 
+        if inspect.isasyncgenfunction(attr):
+
+            @wraps(attr)
+            async def traced_async_gen(*args: Any, **kwargs: Any) -> Any:
+                self._record_call(name)
+                async for item in attr(*args, **kwargs):
+                    yield item
+
+            return traced_async_gen
+
         if inspect.iscoroutinefunction(attr):
 
             @wraps(attr)

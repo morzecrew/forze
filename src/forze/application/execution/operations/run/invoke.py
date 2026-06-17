@@ -13,6 +13,7 @@ from forze.base.primitives import StrKey
 from ...context.active_operation import active_operation_var
 from ...context.deadline import remaining_time, reset_deadline, set_deadline
 from ...context.drain import OperationDrainGate
+from ...tracing.emit import record
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import TransactionRunner, run_resolved_operation_plan
 
@@ -191,7 +192,15 @@ async def run_operation(
 
     resolved = registry.resolve(op, ctx)
 
-    return await resolved(args)
+    record(domain="operation", op=str(op), phase="invoke", deps=ctx.deps)
+    try:
+        result = await resolved(args)
+    except Exception:
+        record(domain="operation", op=str(op), phase="error", deps=ctx.deps)
+        raise
+
+    record(domain="operation", op=str(op), phase="complete", deps=ctx.deps)
+    return result
 
 
 # ....................... #

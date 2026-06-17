@@ -17,6 +17,10 @@ class TracingEvent:
     seq: int
     """Monotonic sequence number within the trace."""
 
+    at: float = 0.0
+    """Monotonic clock reading (via the time seam) when recorded — virtual time under
+    simulation, real ``monotonic`` in production. ``0.0`` when unstamped."""
+
     domain: str
     """Contract family (for example ``tx``, ``document``, ``search``)."""
 

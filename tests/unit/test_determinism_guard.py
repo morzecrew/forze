@@ -38,6 +38,7 @@ _ALLOWLIST: frozenset[str] = frozenset(
         # seeded RNGs (schedule perturbation, workload generation) on purpose.
         "forze_dst/runtime.py",
         "forze_dst/workload.py",
+        "forze_dst/harness.py",
     }
 )
 

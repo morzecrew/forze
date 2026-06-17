@@ -59,9 +59,14 @@ class Recorder:
     _events: list[Event] = attrs.field(factory=list, init=False)
     _seq: int = attrs.field(default=0, init=False)
 
-    def record(self, kind: str, **fields: Any) -> None:
+    def record(self, kind: str, *, at: float | None = None, **fields: Any) -> None:
         self._events.append(
-            Event(seq=self._seq, kind=kind, at=monotonic(), fields=dict(fields))
+            Event(
+                seq=self._seq,
+                kind=kind,
+                at=monotonic() if at is None else at,
+                fields=dict(fields),
+            )
         )
         self._seq += 1
 
@@ -94,14 +99,15 @@ def bind_recorder(recorder: Recorder) -> Iterator[None]:
         _RECORDER.reset(token)
 
 
-def record_event(kind: str, **fields: Any) -> None:
+def record_event(kind: str, *, at: float | None = None, **fields: Any) -> None:
     """Record a domain fact into the active recorder — a no-op when none is bound.
 
     Cheap and safe to leave in application/handler code: outside a recorded simulation
-    it does nothing.
+    it does nothing. *at* overrides the timestamp (used when folding pre-stamped engine
+    trace events); defaults to the current virtual monotonic time.
     """
 
     recorder = _RECORDER.get()
 
     if recorder is not None:
-        recorder.record(kind, **fields)
+        recorder.record(kind, at=at, **fields)

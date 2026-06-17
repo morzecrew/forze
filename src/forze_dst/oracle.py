@@ -90,6 +90,9 @@ class ViolationReport:
     violations: tuple[Violation, ...]
     workload: tuple[object, ...]
     history: History
+    registry_fingerprint: str | None = None
+    """Fingerprint of the operation registry the report was found against; a replay on a
+    changed registry (different fingerprint) can no longer be trusted to reproduce."""
 
 
 def _attempt(

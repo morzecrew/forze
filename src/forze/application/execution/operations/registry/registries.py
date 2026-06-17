@@ -14,6 +14,7 @@ from forze.base.primitives import (
     StrKeyMapping,
     StrKeyNamespace,
     StrKeySelector,
+    stable_payload_fingerprint,
     str_key_selector,
 )
 
@@ -669,6 +670,49 @@ class FrozenOperationRegistry:
             )
             for op in self.handlers
         }
+
+    # ....................... #
+
+    @staticmethod
+    def _operation_shape(entry: OperationCatalogEntry) -> dict[str, Any]:
+        descriptor = entry.descriptor
+        return {
+            "kind": str(entry.kind),
+            "input": descriptor.input_schema() if descriptor is not None else None,
+            "output": descriptor.output_schema() if descriptor is not None else None,
+            "tags": sorted(descriptor.tags) if descriptor is not None else [],
+            "sensitive": descriptor.sensitive if descriptor is not None else False,
+            "supports_idempotency_key": entry.supports_idempotency_key,
+            "requires_authn": entry.requires_authn,
+            "required_permissions": sorted(entry.required_permissions),
+            "deadline_s": (
+                entry.deadline.total_seconds() if entry.deadline is not None else None
+            ),
+        }
+
+    def operation_fingerprint(self, op: StrKey) -> str:
+        """Stable structural fingerprint of a single operation's contract + plan facts.
+
+        Covers the operation's kind, input/output JSON schema, declared idempotency /
+        authn / authz-permission / deadline facts, and catalog tags. Intended as a
+        version tag: if it changes, the operation's observable contract changed.
+
+        It is *structural*, not behavioral — it does NOT hash handler code or a hook's
+        internal configuration, so a same-shape change to logic or middleware tuning is
+        invisible. Treat a *differing* fingerprint as "cannot be trusted to reproduce"
+        and a *matching* one as "same contract, probably reproducible".
+        """
+
+        return stable_payload_fingerprint(self._operation_shape(self.catalog()[op]))
+
+    def fingerprint(self) -> str:
+        """Structural fingerprint of the whole operation catalog (see :meth:`operation_fingerprint`)."""
+
+        shape = {
+            str(op): self._operation_shape(entry)
+            for op, entry in sorted(self.catalog().items(), key=lambda kv: str(kv[0]))
+        }
+        return stable_payload_fingerprint(shape)
 
     # ....................... #
 

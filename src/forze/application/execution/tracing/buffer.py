@@ -64,11 +64,13 @@ class RuntimeTrace:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        at: float = 0.0,
     ) -> TracingEvent:
         """Build and record an event with the next sequence number."""
 
         event = TracingEvent(
             seq=self._next_seq,
+            at=at,
             domain=domain,
             op=op,
             surface=surface,
