@@ -1380,7 +1380,7 @@ dev = [
     { name = "vulture", specifier = ">=2.14" },
 ]
 docs = [
-    { name = "mike", git = "https://github.com/squidfunk/mike" },
+    { name = "mike", git = "https://github.com/squidfunk/mike?rev=2d4ad799442f4592db8ad53b179bfb33db8c69ac" },
     { name = "pygments", specifier = ">=2.19.2" },
     { name = "pymdown-extensions", specifier = ">=10.21" },
     { name = "zensical", specifier = ">=0.0.43" },
@@ -2377,7 +2377,7 @@ wheels = [
 [[package]]
 name = "mike"
 version = "2.2.0+zensical.0.1.0"
-source = { git = "https://github.com/squidfunk/mike#2d4ad799442f4592db8ad53b179bfb33db8c69ac" }
+source = { git = "https://github.com/squidfunk/mike?rev=2d4ad799442f4592db8ad53b179bfb33db8c69ac#2d4ad799442f4592db8ad53b179bfb33db8c69ac" }
 dependencies = [
     { name = "jinja2" },
     { name = "pyparsing" },
