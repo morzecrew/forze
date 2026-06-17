@@ -8,6 +8,7 @@ time reads track it.
 
 from __future__ import annotations
 
+from .faults import FaultyQueueCommand, TransportFault, TransportFaultPolicy
 from .loop import (
     RealIOForbidden,
     SimulationDeadlock,
@@ -35,4 +36,7 @@ __all__ = [
     "generate_workload",
     "run_workload",
     "simulate_workload",
+    "TransportFaultPolicy",
+    "FaultyQueueCommand",
+    "TransportFault",
 ]
