@@ -38,6 +38,10 @@ else
 		echo "test was expected to be skipped"
 		exit 1
 	fi
+	if [[ "${COVERAGE_RESULT}" != "skipped" ]]; then
+		echo "coverage was expected to be skipped"
+		exit 1
+	fi
 fi
 
 echo "required-ci passed"

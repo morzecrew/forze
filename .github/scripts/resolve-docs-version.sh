@@ -14,23 +14,26 @@ set -euo pipefail
 ref="${GITHUB_REF_NAME}"
 
 # Newest released minor across all tags (vX.Y.Z, highest wins).
-newest_tag="$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+newest_tag="$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
 newest_minor="$(printf '%s' "${newest_tag#v}" | cut -d. -f1,2)"
 
 if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-	# Ship (or backport): take MAJOR.MINOR from the tag.
-	target_minor="$(printf '%s' "${ref#v}" | cut -d. -f1,2)"
+	# Ship (or backport): take MAJOR.MINOR from the tag. The release trigger is
+	# `tags: ['v*']`, so reject anything that is not strictly vX.Y.Z here.
+	if [[ ! "$ref" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+		echo "::error::expected tag format vX.Y.Z (got '$ref')"
+		exit 1
+	fi
+	target_minor="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
 else
 	# Polish: the version comes from the release branch name. Polishing an older
 	# minor is allowed; the move_latest gate below keeps `latest`/root untouched
 	# unless it is the newest minor.
-	case "$ref" in
-	release/v*) target_minor="$(printf '%s' "${ref#release/v}" | cut -d. -f1,2)" ;;
-	*)
+	if [[ ! "$ref" =~ ^release/v([0-9]+)\.([0-9]+)\. ]]; then
 		echo "::error::workflow_dispatch must run on a 'release/vX.Y.*' branch (got '$ref')"
 		exit 1
-		;;
-	esac
+	fi
+	target_minor="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
 fi
 
 if [ "$target_minor" = "$newest_minor" ]; then

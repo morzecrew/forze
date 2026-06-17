@@ -10,6 +10,14 @@ set -euo pipefail
 minor="${1:?usage: deploy-docs-version.sh <minor> <move_latest>}"
 move_latest="${2:?usage: deploy-docs-version.sh <minor> <move_latest>}"
 
+case "$move_latest" in
+true | false) ;;
+*)
+	echo "::error::move_latest must be 'true' or 'false' (got '$move_latest')"
+	exit 1
+	;;
+esac
+
 cd "$(git rev-parse --show-toplevel)/pages"
 
 if [ "$move_latest" = "true" ]; then
