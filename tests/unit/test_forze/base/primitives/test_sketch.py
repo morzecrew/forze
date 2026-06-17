@@ -326,3 +326,40 @@ def test_windowed_tracks_distribution_shift() -> None:
 def test_windowed_invalid_window_rejected() -> None:
     with pytest.raises(CoreException):
         WindowedDDSketch(relative_accuracy=_ALPHA, window=0)
+
+
+# ----------------------- #
+# Public bucketing (reused by distributed digests)
+
+
+@pytest.mark.parametrize("x", [1e-3, 0.5, 1.0, 42.0, 1000.0, 1e6])
+def test_index_value_round_trips_within_alpha(x: float) -> None:
+    sketch = DDSketch(relative_accuracy=_ALPHA)
+    value = sketch.index_value(sketch.index(x))
+
+    _assert_within_alpha(value, x)
+
+
+def test_index_is_monotonic() -> None:
+    sketch = DDSketch(relative_accuracy=_ALPHA)
+    xs = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+    indices = [sketch.index(x) for x in xs]
+
+    assert indices == sorted(indices)
+
+
+def test_index_matches_internal_bucketing() -> None:
+    # Two sketches of the same accuracy bucket identically — the property a
+    # distributed (Redis) digest relies on to merge with an in-process one.
+    a = DDSketch(relative_accuracy=_ALPHA)
+    b = DDSketch(relative_accuracy=_ALPHA)
+
+    for x in (0.5, 3.0, 3.001, 50.0):
+        assert a.index(x) == b.index(x)
+
+
+def test_index_rejects_non_positive() -> None:
+    sketch = DDSketch(relative_accuracy=_ALPHA)
+
+    with pytest.raises(CoreException):
+        sketch.index(0.0)

@@ -316,3 +316,83 @@ server ``TIME`` (no clock skew); the bucket starts full on first touch.
 
 Returns ``"1"`` (token consumed) or ``"0"`` (rejected, bucket empty).
 """
+
+
+# ....................... #
+
+
+LATENCY_DIGEST_RECORD: Final = """
+redis.call('HINCRBY', KEYS[1], ARGV[1], 1)
+redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2]))
+return 'OK'
+"""
+"""Record one latency sample into a distributed DDSketch (one Redis hash per
+``(policy, route)``; field = bucket index, value = count). ``HINCRBY`` merges
+samples from every replica into the same bins — the sketch is mergeable by
+construction, so the bins reflect the *fleet's* latency distribution.
+
+KEYS[1]: digest hash. ARGV: bucket_index (computed client-side from the shared
+``relative_accuracy``), ttl_ms. Returns ``"OK"``.
+"""
+
+
+# ....................... #
+
+
+LATENCY_DIGEST_QUANTILE: Final = """
+local data = redis.call('HGETALL', KEYS[1])
+local q = tonumber(ARGV[1])
+local min_count = tonumber(ARGV[2])
+
+local indices = {}
+local counts = {}
+local total = 0
+
+for i = 1, #data, 2 do
+    local idx = tonumber(data[i])
+    local c = tonumber(data[i + 1])
+    indices[#indices + 1] = idx
+    counts[idx] = c
+    total = total + c
+end
+
+if total < min_count then
+    return ''
+end
+
+table.sort(indices)
+local rank = q * (total - 1)
+local cumulative = 0
+
+for _, idx in ipairs(indices) do
+    cumulative = cumulative + counts[idx]
+    if cumulative > rank then
+        return tostring(idx)
+    end
+end
+
+return tostring(indices[#indices])
+"""
+"""Read the ``q``-quantile from the merged DDSketch hash, walking the bins in
+index order to the rank bucket. Returns the bucket index as a string (the client
+maps it back to a latency via the same DDSketch bucketing), or ``""`` while the
+digest is still warming (fewer than ``min_count`` samples) so the caller holds
+the limit rather than acting on a thin estimate.
+
+KEYS[1]: digest hash. ARGV: q (quantile in (0,1)), min_count.
+"""
+
+
+# ....................... #
+
+
+LATENCY_DIGEST_RESET: Final = """
+redis.call('DEL', KEYS[1])
+return 'OK'
+"""
+"""Open a fresh measurement epoch by dropping the digest hash (the old
+distribution justified a backoff). Shared across the fleet — any replica's
+backoff re-measures the whole fleet together, mirroring the shared breaker.
+
+KEYS[1]: digest hash. Returns ``"OK"``.
+"""

@@ -103,11 +103,33 @@ class DDSketch:
 
             return
 
-        key = math.ceil(math.log(x) * self._multiplier)
+        key = self.index(x)
         self._bins[key] = self._bins.get(key, 0) + 1
 
         if len(self._bins) > self.max_bins:
             self._collapse_lowest()
+
+    # ....................... #
+
+    def index(self, x: float) -> int:
+        """The bucket index a positive value maps to.
+
+        Public so a distributed digest (e.g. a Redis-backed sketch) can bucket
+        values identically and merge bin-for-bin with an in-process sketch of
+        the same ``relative_accuracy``.
+        """
+
+        if x <= 0.0:
+            raise exc.validation("DDSketch index requires a positive value")
+
+        return math.ceil(math.log(x) * self._multiplier)
+
+    # ....................... #
+
+    def index_value(self, key: int) -> float:
+        """The representative value of a bucket ``index`` (within ``relative_accuracy``)."""
+
+        return self._bin_value(key)
 
     # ....................... #
 

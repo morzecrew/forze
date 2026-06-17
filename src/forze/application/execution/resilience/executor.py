@@ -34,7 +34,9 @@ from .state import (
 from .store import (
     CircuitBreakerStore,
     InMemoryCircuitBreakerStore,
+    InMemoryLatencyDigestStore,
     InMemoryRateLimitStore,
+    LatencyDigestStore,
     RateLimitStore,
 )
 
@@ -95,6 +97,14 @@ class InProcessResilienceExecutor:
     """Rate-limit token-bucket store (process-local by default, or a distributed
     store so ``permits/per`` is the fleet's rate instead of per-replica)."""
 
+    latency_digest_store: LatencyDigestStore = attrs.field(
+        factory=InMemoryLatencyDigestStore,
+    )
+    """Adaptive-bulkhead latency-quantile digest (process-local by default, or a
+    distributed store so the AIMD congestion signal reflects the fleet's latency
+    instead of one replica's). Only consulted when a policy sets
+    ``AdaptiveBulkheadStrategy.latency_quantile``."""
+
     # ....................... #
 
     _bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
@@ -128,7 +138,9 @@ class InProcessResilienceExecutor:
     )
     """Adaptive hedge-delay state (windowed P² quantile per policy/route)."""
 
-    _metrics_sink: MetricsSink | None = attrs.field(default=None, init=False, repr=False)
+    _metrics_sink: MetricsSink | None = attrs.field(
+        default=None, init=False, repr=False
+    )
     """Optional always-on metrics callback (see :data:`MetricsSink`)."""
 
     # ....................... #
@@ -259,8 +271,10 @@ class InProcessResilienceExecutor:
             budget.on_call()
 
         delay_state = self._hedge_delay_for(hedge, pol, route)
-        delay = delay_state.delay() if delay_state is not None else (
-            hedge.delay.total_seconds()
+        delay = (
+            delay_state.delay()
+            if delay_state is not None
+            else (hedge.delay.total_seconds())
         )
         tasks: set[asyncio.Future[T]] = set()
         errors: list[BaseException] = []
@@ -698,16 +712,11 @@ class InProcessResilienceExecutor:
 
         await self._admit(state, pol, route)
         start = self.clock()
-        failed = False
 
         try:
-            return await inner()
+            result = await inner()
 
         except BaseException:
-            failed = True
-            raise
-
-        finally:
             state.release()
             elapsed = self.clock() - start
 
@@ -715,9 +724,45 @@ class InProcessResilienceExecutor:
             # when it ALSO breached the threshold (a per-attempt timeout firing
             # is a breach at the timeout value); fast failures are the circuit
             # breaker's job and leave the limit untouched.
-            if not failed or elapsed > state.latency_threshold:
-                if state.on_complete(elapsed, self.clock()):
-                    self._emit("bulkhead_backoff", pol, route)
+            if elapsed > state.latency_threshold:
+                await self._adaptive_on_complete(state, strat, pol, route, elapsed)
+
+            raise
+
+        state.release()
+        await self._adaptive_on_complete(state, strat, pol, route, self.clock() - start)
+
+        return result
+
+    # ....................... #
+
+    async def _adaptive_on_complete(
+        self,
+        state: AdaptiveBulkheadState,
+        strat: AdaptiveBulkheadStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+        elapsed: float,
+    ) -> None:
+        """Feed a completed call into the AIMD controller.
+
+        In quantile mode the congestion signal comes from the latency digest
+        store (process-local or fleet-shared); a backoff opens a fresh epoch.
+        """
+
+        quantile_value: float | None = None
+
+        if strat.latency_quantile is not None:
+            key = (pol.name, route)
+            quantile_value = await self.latency_digest_store.observe(
+                key, elapsed, strat
+            )
+
+        if state.on_complete(elapsed, self.clock(), quantile_value):
+            self._emit("bulkhead_backoff", pol, route)
+
+            if strat.latency_quantile is not None:
+                await self.latency_digest_store.reset((pol.name, route), strat)
 
     # ....................... #
 

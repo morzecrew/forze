@@ -15,10 +15,11 @@ from typing import Awaitable, Callable, Protocol, final, runtime_checkable
 import attrs
 
 from forze.application.contracts.resilience import (
+    AdaptiveBulkheadStrategy,
     CircuitBreakerStrategy,
     RateLimitStrategy,
 )
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, WindowedP2Quantile
 
 from .state import BreakerState, RateLimitState, Transition
 
@@ -29,6 +30,9 @@ BreakerKey = tuple[StrKey, StrKey | None]
 
 RateLimitKey = tuple[StrKey, StrKey | None]
 """Identifies a rate-limit bucket by ``(policy_name, route)``."""
+
+LatencyDigestKey = tuple[StrKey, StrKey | None]
+"""Identifies an adaptive-bulkhead latency digest by ``(policy_name, route)``."""
 
 
 # ....................... #
@@ -183,3 +187,95 @@ class InMemoryRateLimitStore(RateLimitStore):
         strat: RateLimitStrategy,
     ) -> bool:
         return self._state_for(key, strat).try_acquire(self.clock())
+
+
+# ....................... #
+
+
+@runtime_checkable
+class LatencyDigestStore(Protocol):
+    """Stores the adaptive bulkhead's latency-quantile congestion signal.
+
+    The executor records each completed call's latency (:meth:`observe`) and
+    reads back the windowed quantile that drives the AIMD breach decision; after
+    a backoff it opens a fresh epoch (:meth:`reset`). With the in-memory default
+    each replica reacts to its *own* p95; a shared store (e.g. a Redis-backed
+    mergeable digest) makes the signal reflect the *fleet's* latency. Only
+    consulted in quantile mode (``AdaptiveBulkheadStrategy.latency_quantile``
+    set); the per-sample default makes no call.
+    """
+
+    def observe(
+        self,
+        key: LatencyDigestKey,
+        latency: float,
+        strat: AdaptiveBulkheadStrategy,
+    ) -> Awaitable[float | None]:
+        """Record one latency sample; return the current quantile, or ``None`` warming."""
+        ...  # pragma: no cover
+
+    def reset(
+        self,
+        key: LatencyDigestKey,
+        strat: AdaptiveBulkheadStrategy,
+    ) -> Awaitable[None]:
+        """Open a fresh measurement epoch (the old distribution justified a backoff)."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class InMemoryLatencyDigestStore(LatencyDigestStore):
+    """Process-local windowed-P² latency digest keyed by ``(policy, route)``.
+
+    The default store — behaviorally identical to the estimator the bulkhead
+    owned before the digest seam existed. ``p`` is taken from the strategy's
+    ``latency_quantile`` (which is set whenever this store is consulted).
+    """
+
+    _estimators: dict[LatencyDigestKey, WindowedP2Quantile] = attrs.field(
+        factory=dict, init=False
+    )
+
+    # ....................... #
+
+    def _estimator_for(
+        self,
+        key: LatencyDigestKey,
+        strat: AdaptiveBulkheadStrategy,
+    ) -> WindowedP2Quantile:
+        estimator = self._estimators.get(key)
+
+        if estimator is None:
+            estimator = WindowedP2Quantile(p=strat.latency_quantile or 0.95)
+            self._estimators[key] = estimator
+
+        return estimator
+
+    # ....................... #
+
+    async def observe(
+        self,
+        key: LatencyDigestKey,
+        latency: float,
+        strat: AdaptiveBulkheadStrategy,
+    ) -> float | None:
+        estimator = self._estimator_for(key, strat)
+        estimator.observe(latency)
+
+        return estimator.value()
+
+    # ....................... #
+
+    async def reset(
+        self,
+        key: LatencyDigestKey,
+        strat: AdaptiveBulkheadStrategy,
+    ) -> None:
+        # Fresh epoch: only the new concurrency's latencies should decide the
+        # next move, so a stale-high quantile cannot ratchet the limit down for
+        # up to two windows after the downstream recovers.
+        self._estimators[key] = WindowedP2Quantile(p=strat.latency_quantile or 0.95)

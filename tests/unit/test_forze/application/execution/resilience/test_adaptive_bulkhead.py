@@ -14,6 +14,7 @@ from forze.application.contracts.resilience import (
 )
 from forze.application.execution.resilience import InProcessResilienceExecutor
 from forze.application.execution.resilience.state import AdaptiveBulkheadState
+from forze.application.execution.resilience.store import InMemoryLatencyDigestStore
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 # ----------------------- #
@@ -310,9 +311,7 @@ class TestQueueManagement:
 
     async def test_adaptive_lifo_serves_newest_first_under_congestion(self) -> None:
         clock = _Clock()
-        state = self._q_state(
-            clock, queue_target_s=None, queue_adaptive_lifo=True
-        )
+        state = self._q_state(clock, queue_target_s=None, queue_adaptive_lifo=True)
         await state.acquire()
         order: list[str] = []
 
@@ -334,9 +333,7 @@ class TestQueueManagement:
 
     async def test_fifo_preserved_without_congestion(self) -> None:
         clock = _Clock()
-        state = self._q_state(
-            clock, queue_target_s=None, queue_adaptive_lifo=True
-        )
+        state = self._q_state(clock, queue_target_s=None, queue_adaptive_lifo=True)
         await state.acquire()
         order: list[str] = []
 
@@ -396,8 +393,16 @@ class TestQueueManagement:
         assert state.queue_adaptive_lifo is True
         assert state.limit == 2.0
 
+
 class TestQuantileSignal:
-    """Percentile-windowed breach: the quantile shifts, not a single sample."""
+    """Percentile-windowed breach via the latency digest store + AIMD math.
+
+    The store owns the windowed-P² estimator (so the signal can be process-local
+    or fleet-shared); these drive ``store.observe -> on_complete -> store.reset``
+    exactly as the executor does, asserting the original integrated behavior.
+    """
+
+    _KEY = ("p", None)
 
     def _q_state(self, **kw: object) -> AdaptiveBulkheadState:
         params: dict[str, object] = {
@@ -410,68 +415,113 @@ class TestQuantileSignal:
         params.update(kw)
         return _state(**params)
 
-    def test_single_outlier_does_not_back_off(self) -> None:
-        state = self._q_state()
+    def _q_strat(self) -> AdaptiveBulkheadStrategy:
+        return AdaptiveBulkheadStrategy(
+            latency_threshold=timedelta(milliseconds=100),
+            max_concurrency=8,
+            latency_quantile=0.95,
+            backoff_ratio=0.5,
+            cooldown=timedelta(seconds=1),
+        )
+
+    async def _drive(
+        self,
+        store: InMemoryLatencyDigestStore,
+        strat: AdaptiveBulkheadStrategy,
+        state: AdaptiveBulkheadState,
+        latency: float,
+        now: float,
+    ) -> bool:
+        quantile = await store.observe(self._KEY, latency, strat)
+        decreased = state.on_complete(latency, now, quantile)
+
+        if decreased:
+            await store.reset(self._KEY, strat)
+
+        return decreased
+
+    async def test_single_outlier_does_not_back_off(self) -> None:
+        state, store, strat = (
+            self._q_state(),
+            InMemoryLatencyDigestStore(),
+            self._q_strat(),
+        )
 
         for _ in range(30):
-            assert state.on_complete(0.01, now=100.0) is False
+            assert await self._drive(store, strat, state, 0.01, 100.0) is False
 
         # One 10s outlier: a per-sample signal would halve the limit here.
-        assert state.on_complete(10.0, now=100.0) is False
+        assert await self._drive(store, strat, state, 10.0, 100.0) is False
         assert state.limit == 8.0
 
-    def test_shifted_distribution_backs_off(self) -> None:
-        state = self._q_state()
+    async def test_shifted_distribution_backs_off(self) -> None:
+        state, store, strat = (
+            self._q_state(),
+            InMemoryLatencyDigestStore(),
+            self._q_strat(),
+        )
 
         decreases = 0
 
         for _ in range(10):
-            decreases += state.on_complete(1.0, now=100.0)
+            decreases += await self._drive(store, strat, state, 1.0, 100.0)
 
         # The estimator warms at five samples, breaches once (cooldown
         # coalesces the rest of the burst).
         assert decreases == 1
         assert state.limit == 4.0
 
-    def test_backoff_opens_fresh_measurement_epoch(self) -> None:
-        state = self._q_state()
+    async def test_backoff_opens_fresh_measurement_epoch(self) -> None:
+        state, store, strat = (
+            self._q_state(),
+            InMemoryLatencyDigestStore(),
+            self._q_strat(),
+        )
 
         for _ in range(5):
-            state.on_complete(1.0, now=100.0)
+            await self._drive(store, strat, state, 1.0, 100.0)
 
         assert state.limit == 4.0  # first breach
 
         # Past the cooldown, the reset estimator is still warming: four more
         # slow completions cannot re-breach...
         for _ in range(4):
-            assert state.on_complete(1.0, now=102.0) is False
+            assert await self._drive(store, strat, state, 1.0, 102.0) is False
 
         assert state.limit == 4.0
 
         # ...the fifth defines the new epoch's estimate and breaches again.
-        assert state.on_complete(1.0, now=102.0) is True
+        assert await self._drive(store, strat, state, 1.0, 102.0) is True
         assert state.limit == 2.0
 
-    def test_recovery_after_backoff_increases_additively(self) -> None:
-        state = self._q_state()
+    async def test_recovery_after_backoff_increases_additively(self) -> None:
+        state, store, strat = (
+            self._q_state(),
+            InMemoryLatencyDigestStore(),
+            self._q_strat(),
+        )
 
         for _ in range(5):
-            state.on_complete(1.0, now=100.0)
+            await self._drive(store, strat, state, 1.0, 100.0)
 
         assert state.limit == 4.0
 
         # The new concurrency is healthy: fast completions recover the limit
         # without the stale slow history vetoing the increase.
         for _ in range(8):
-            state.on_complete(0.01, now=102.0)
+            await self._drive(store, strat, state, 0.01, 102.0)
 
         assert state.limit > 4.0
 
-    def test_warming_estimator_holds_the_limit(self) -> None:
-        state = self._q_state()
+    async def test_warming_estimator_holds_the_limit(self) -> None:
+        state, store, strat = (
+            self._q_state(),
+            InMemoryLatencyDigestStore(),
+            self._q_strat(),
+        )
 
         for _ in range(4):
-            assert state.on_complete(5.0, now=100.0) is False
+            assert await self._drive(store, strat, state, 5.0, 100.0) is False
 
         assert state.limit == 8.0  # no signal yet: neither breach nor growth
 
@@ -481,9 +531,7 @@ class TestQuantileSignal:
             policies={
                 "p": ResiliencePolicy(
                     name="p",
-                    strategies=(
-                        _strategy(max_concurrency=8, latency_quantile=0.95),
-                    ),
+                    strategies=(_strategy(max_concurrency=8, latency_quantile=0.95),),
                 )
             },
             clock=clock,

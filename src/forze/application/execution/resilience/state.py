@@ -293,19 +293,6 @@ class AdaptiveBulkheadState:
         )
     )
 
-    _latency_estimator: WindowedP2Quantile | None = attrs.field(
-        default=attrs.Factory(
-            lambda self: (
-                WindowedP2Quantile(p=self.latency_quantile)
-                if self.latency_quantile is not None
-                else None
-            ),
-            takes_self=True,
-        ),
-        init=False,
-    )
-    """Windowed P² estimate of completed-call latency (quantile mode only)."""
-
     # ....................... #
 
     def can_admit(self) -> bool:
@@ -479,29 +466,30 @@ class AdaptiveBulkheadState:
 
     # ....................... #
 
-    def on_complete(self, latency: float, now: float) -> bool:
+    def on_complete(
+        self,
+        latency: float,
+        now: float,
+        quantile_value: float | None = None,
+    ) -> bool:
         """Adjust the limit for a completed call; return ``True`` on a decrease.
 
-        Per-sample mode: this completion's latency over the threshold is a
-        breach. Quantile mode (``latency_quantile`` set): the windowed P²
-        estimate over the threshold is — one outlier can't move a quantile,
-        only a shifted distribution can. An undefined estimate (warming up)
-        never breaches.
+        Per-sample mode (``latency_quantile is None``): this completion's
+        latency over the threshold is a breach. Quantile mode: the congestion
+        signal is the windowed quantile of recent completed-call latencies —
+        supplied by the executor's :class:`LatencyDigestStore` as
+        ``quantile_value`` (the store owns the estimator, so the signal can be
+        process-local or shared across replicas). ``quantile_value is None``
+        means the estimate is still warming, which never breaches — holding the
+        limit rather than reading "unknown" as "healthy" and creeping back up
+        mid-incident.
         """
 
-        estimator = self._latency_estimator
-
-        if estimator is not None:
-            estimator.observe(latency)
-            value = estimator.value()
-
-            if value is None:
-                # Warming (fewer than five samples this epoch): no signal in
-                # either direction — hold the limit rather than reading
-                # "unknown" as "healthy" and creeping back up mid-incident.
+        if self.latency_quantile is not None:
+            if quantile_value is None:
                 return False
 
-            breached = value > self.latency_threshold
+            breached = quantile_value > self.latency_threshold
 
         else:
             breached = latency > self.latency_threshold
@@ -519,14 +507,6 @@ class AdaptiveBulkheadState:
 
         self.last_decrease_at = now
         self.limit = max(float(self.min_concurrency), self.limit * self.backoff_ratio)
-
-        if estimator is not None:
-            # Fresh measurement epoch: the old distribution justified this
-            # decrease; only the *new* concurrency's latencies should decide
-            # the next move. Without the reset, a stale-high quantile keeps
-            # re-breaching for up to two windows after the downstream
-            # recovers, ratcheting the limit to the floor once per cooldown.
-            self._latency_estimator = WindowedP2Quantile(p=estimator.p)
 
         return True
 
