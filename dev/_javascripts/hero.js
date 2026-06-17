@@ -8,6 +8,7 @@
     var raf = null;
     var io = null;
     var schemeObs = null;
+    var resizeHandler = null;
 
     function cssVar(name, fallback) {
         var v = getComputedStyle(document.body).getPropertyValue(name).trim();
@@ -24,12 +25,19 @@
     }
 
     function start() {
-        var canvas = document.getElementById("forze-hero-canvas");
-        if (!canvas) return;
-
+        // Tear down the previous run's handles first, so navigating to a page
+        // WITHOUT the hero (the early return below) still cleans up — otherwise
+        // the loop/observers/resize listener leak across instant navigations.
         if (raf) (cancelAnimationFrame(raf), (raf = null));
         if (io) (io.disconnect(), (io = null));
         if (schemeObs) (schemeObs.disconnect(), (schemeObs = null));
+        if (resizeHandler) {
+            window.removeEventListener("resize", resizeHandler);
+            resizeHandler = null;
+        }
+
+        var canvas = document.getElementById("forze-hero-canvas");
+        if (!canvas) return;
 
         var ctx = canvas.getContext("2d");
         var reduce = window.matchMedia(
@@ -133,8 +141,8 @@
             setTimeout(start, 120);
             return;
         }
-        window.removeEventListener("resize", resize);
-        window.addEventListener("resize", resize);
+        resizeHandler = resize;
+        window.addEventListener("resize", resizeHandler);
 
         // Re-read colour + intensity when the palette (light/dark) toggles.
         schemeObs = new MutationObserver(function () {

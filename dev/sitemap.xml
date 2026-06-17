@@ -40,10 +40,10 @@
         <loc>https://morzecrew.github.io/forze/dev/in-depth/wiring/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/in-depth/transactions/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/in-depth/capability-execution/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/in-depth/testing/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/in-depth/transactions/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/in-depth/errors/</loc>
@@ -55,22 +55,19 @@
         <loc>https://morzecrew.github.io/forze/dev/in-depth/idempotency/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/in-depth/events-sagas/</loc>
-      </url>
-      <url>
         <loc>https://morzecrew.github.io/forze/dev/in-depth/reading-data/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/in-depth/multi-tenancy/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/in-depth/events-sagas/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/in-depth/identity/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/in-depth/encryption/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/in-depth/multi-tenancy/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/in-depth/capability-execution/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/in-depth/encryption/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/in-depth/deadlines/</loc>
@@ -83,6 +80,9 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/in-depth/observability/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/in-depth/testing/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/integrations/</loc>
