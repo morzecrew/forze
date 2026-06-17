@@ -44,6 +44,12 @@ from .recorder import (
 )
 from .runtime import run_simulation
 from .scenario import ModelState, Rule, Scenario
+from .scheduler import (
+    PCTScheduler,
+    RandomScheduler,
+    Scheduler,
+    pct_scheduler_factory,
+)
 from .time_source import DEFAULT_EPOCH, SimulationTimeSource
 from .workload import (
     OpSpec,
@@ -101,4 +107,8 @@ __all__ = [
     "ModelState",
     "derive_scenario",
     "DEFAULT_CREATE_VERBS",
+    "Scheduler",
+    "RandomScheduler",
+    "PCTScheduler",
+    "pct_scheduler_factory",
 ]

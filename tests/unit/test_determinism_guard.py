@@ -39,6 +39,7 @@ _ALLOWLIST: frozenset[str] = frozenset(
         "forze_dst/runtime.py",
         "forze_dst/workload.py",
         "forze_dst/harness.py",
+        "forze_dst/scheduler.py",
     }
 )
 

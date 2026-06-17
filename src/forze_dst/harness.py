@@ -423,6 +423,7 @@ class Simulation:
         schedule_seed: int | None,
         epoch: datetime,
         act_plan: Sequence[int] | None = None,
+        scheduler: object | None = None,
     ) -> tuple[History, list[tuple[str, Any]]]:
         """Run a scenario: arrange serially, then act concurrently.
 
@@ -491,7 +492,13 @@ class Simulation:
             _fold_runtime_trace(ctx)
 
         with bind_recorder(recorder):
-            run_simulation(driver, seed=seed, schedule_seed=schedule_seed, epoch=epoch)
+            run_simulation(
+                driver,
+                seed=seed,
+                schedule_seed=schedule_seed,
+                epoch=epoch,
+                scheduler=scheduler,
+            )
 
         return recorder.history, generated
 
@@ -506,8 +513,10 @@ class Simulation:
         seed: int,
         perturb: bool,
         epoch: datetime,
+        scheduler_factory: Callable[[int], object] | None = None,
     ) -> ViolationReport | None:
         schedule_seed = seed if perturb else None
+        scheduler = None if scheduler_factory is None else scheduler_factory(seed)
 
         def run(act: Sequence[tuple[str, Any]] | None) -> History:
             history, _ = self._run_scenario(
@@ -518,6 +527,7 @@ class Simulation:
                 seed=seed,
                 schedule_seed=schedule_seed,
                 epoch=epoch,
+                scheduler=scheduler,
             )
             return history
 
@@ -529,6 +539,7 @@ class Simulation:
             seed=seed,
             schedule_seed=schedule_seed,
             epoch=epoch,
+            scheduler=scheduler,
         )
 
         if not check(history, self.invariants):
@@ -561,6 +572,7 @@ class Simulation:
         seeds: Sequence[int],
         perturb: bool = True,
         epoch: datetime = DEFAULT_EPOCH,
+        scheduler_factory: Callable[[int], object] | None = None,
     ) -> ViolationReport | None:
         """Drive a generative :class:`Scenario` per seed; on a violation, minimize + report.
 
@@ -569,6 +581,10 @@ class Simulation:
         first violating seed's act phase is minimized to a 1-minimal set that still fails;
         arrange stays fixed. The report carries the seed, minimized act workload, full
         recorded history (arrange + act), and the registry fingerprint.
+
+        *scheduler_factory* (e.g. :func:`forze_dst.scheduler.pct_scheduler_factory`) supplies
+        a per-seed interleaving scheduler — PCT in place of the default uniform shuffle, to
+        hunt deep interleavings with a better per-run probability.
         """
 
         for seed in seeds:
@@ -579,6 +595,7 @@ class Simulation:
                 seed=seed,
                 perturb=perturb,
                 epoch=epoch,
+                scheduler_factory=scheduler_factory,
             )
             if report is not None:
                 return report

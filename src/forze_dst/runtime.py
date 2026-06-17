@@ -29,6 +29,7 @@ def run_simulation[T](
     seed: int = 0,
     epoch: datetime = DEFAULT_EPOCH,
     schedule_seed: int | None = None,
+    scheduler: object | None = None,
 ) -> T:
     """Run *scenario* on a deterministic virtual-time loop with seeded entropy.
 
@@ -37,10 +38,10 @@ def run_simulation[T](
     ``monotonic``, ``uuid7``/``uuid4``, jitter, and nonce read is a pure function of
     ``(seed, epoch)`` and the scenario's own sleeps. Returns the scenario's result.
 
-    *schedule_seed* (opt-in) enables scheduler perturbation: the ready-callback queue
-    is shuffled each tick from a separate RNG seeded with it, exploring concurrent
-    interleavings FIFO never reaches. ``None`` keeps deterministic FIFO order. Either
-    way the run is reproducible — a fixed ``(seed, schedule_seed)`` replays exactly.
+    Interleaving control (opt-in): pass *schedule_seed* to shuffle the ready-callback queue
+    each tick from a separate seeded RNG, or *scheduler* for a custom strategy (e.g. a
+    :class:`~forze_dst.scheduler.PCTScheduler`) — *scheduler* takes precedence. ``None`` for
+    both keeps deterministic FIFO order. Either way the run is reproducible.
 
     Raises :class:`~forze_dst.loop.SimulationDeadlock` if the scenario
     blocks with no pending timer, or :class:`~forze_dst.loop.RealIOForbidden`
@@ -52,7 +53,7 @@ def run_simulation[T](
         if schedule_seed is None
         else random.Random(schedule_seed)  # nosec B311 - deterministic sim schedule, not crypto
     )
-    loop = SimulationEventLoop(schedule_rng=schedule_rng)
+    loop = SimulationEventLoop(schedule_rng=schedule_rng, scheduler=scheduler)
     time_source = SimulationTimeSource(loop=loop, epoch=epoch)
     entropy = SeededEntropySource(seed=seed)
 

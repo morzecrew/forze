@@ -117,34 +117,48 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
     deterministically. Pair with a simulation :class:`TimeSource` (whose ``monotonic``
     reads ``loop.time()``) so application clocks track the same virtual time.
 
-    When *schedule_rng* is given, the ready-callback queue is shuffled with it on
-    every tick — perturbing the interleaving of concurrent tasks' continuations to
-    explore orderings FIFO would never reach (where order-dependent races hide).
-    The RNG is deliberately separate from the application entropy seam, so a schedule
-    can be varied without changing application values, and vice versa. Same RNG seed →
-    same interleaving, so any bug it surfaces reproduces.
+    Interleaving control (opt-in) reorders the ready-callback queue each tick — the
+    continuations concurrent tasks scheduled via ``call_soon`` after awaiting — to explore
+    orderings FIFO would never reach (where order-dependent races hide). Pass either
+    *schedule_rng* (uniform shuffle each tick) or a *scheduler* object (duck-typed
+    ``reorder(ready, step) -> list``; e.g. a :class:`~forze_dst.scheduler.PCTScheduler`) —
+    *scheduler* takes precedence. Both are deliberately separate from the application entropy
+    seam, so a schedule can be varied without changing application values, and vice versa.
+    Same seed → same interleaving, so any bug surfaced reproduces.
     """
 
-    def __init__(self, *, schedule_rng: random.Random | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        schedule_rng: random.Random | None = None,
+        scheduler: Any = None,
+    ) -> None:
         super().__init__()
         self._sim_clock: float = 0.0
         self._schedule_rng = schedule_rng
+        self._scheduler = scheduler
+        self._step = 0
         self._selector: _NullSelector = _NullSelector(self)
 
     # ....................... #
 
     def _run_once(self) -> None:
-        # Perturb only the callbacks already ready at the start of the tick — the
-        # continuations concurrent tasks scheduled via ``call_soon`` after awaiting.
-        # BaseEventLoop then runs them (and any timers due this tick) in this order.
-        rng = self._schedule_rng
-        if rng is not None:
-            ready = cast("Any", self)._ready  # CPython internal, absent from typeshed
+        # Reorder only the callbacks already ready at the start of the tick. BaseEventLoop
+        # then runs them (and any timers due this tick) in this order.
+        ready = cast("Any", self)._ready  # CPython internal, absent from typeshed
+
+        if self._scheduler is not None:
             if len(ready) > 1:
-                ordered = list(ready)
-                rng.shuffle(ordered)
+                self._step += 1
+                ordered = self._scheduler.reorder(list(ready), self._step)
                 ready.clear()
                 ready.extend(ordered)
+
+        elif self._schedule_rng is not None and len(ready) > 1:
+            ordered = list(ready)
+            self._schedule_rng.shuffle(ordered)
+            ready.clear()
+            ready.extend(ordered)
 
         cast("Any", super())._run_once()
 
