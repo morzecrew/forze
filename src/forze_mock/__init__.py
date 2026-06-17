@@ -47,17 +47,6 @@ from .execution import (
     MockRoutedStateDepKey,
     MockStateDepKey,
 )
-from .simulation import (
-    OpSpec,
-    RealIOForbidden,
-    SimulationDeadlock,
-    SimulationEventLoop,
-    SimulationTimeSource,
-    generate_workload,
-    run_simulation,
-    run_workload,
-    simulate_workload,
-)
 from .tenancy import (
     MockRoutedStateRegistry,
     MockTenancyMixin,
@@ -111,13 +100,4 @@ __all__ = [
     "MockTenantManagementPort",
     "MockHashEmbeddingsProvider",
     "RecordingAuthnEventSink",
-    "run_simulation",
-    "SimulationEventLoop",
-    "SimulationTimeSource",
-    "SimulationDeadlock",
-    "RealIOForbidden",
-    "OpSpec",
-    "generate_workload",
-    "run_workload",
-    "simulate_workload",
 ]

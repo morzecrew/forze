@@ -11,7 +11,7 @@ from uuid import UUID
 
 import attrs
 
-from forze_mock.simulation.loop import SimulationEventLoop
+from .loop import SimulationEventLoop
 
 # ----------------------- #
 

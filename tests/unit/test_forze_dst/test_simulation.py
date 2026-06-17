@@ -14,7 +14,7 @@ import pytest
 
 from forze.application.execution.context.deadline import bind_deadline, remaining_time
 from forze.base.primitives import current_entropy_source, monotonic, uuid7
-from forze_mock.simulation import (
+from forze_dst import (
     RealIOForbidden,
     SimulationDeadlock,
     SimulationEventLoop,

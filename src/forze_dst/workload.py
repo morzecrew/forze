@@ -16,8 +16,8 @@ from typing import Awaitable, Callable, Sequence, final
 
 import attrs
 
-from forze_mock.simulation.runtime import run_simulation
-from forze_mock.simulation.time_source import DEFAULT_EPOCH
+from .runtime import run_simulation
+from .time_source import DEFAULT_EPOCH
 
 # ----------------------- #
 

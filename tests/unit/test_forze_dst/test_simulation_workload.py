@@ -12,7 +12,7 @@ import asyncio
 
 import pytest
 
-from forze_mock.simulation import (
+from forze_dst import (
     OpSpec,
     generate_workload,
     run_simulation,

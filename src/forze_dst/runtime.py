@@ -42,8 +42,8 @@ def run_simulation[T](
     interleavings FIFO never reaches. ``None`` keeps deterministic FIFO order. Either
     way the run is reproducible — a fixed ``(seed, schedule_seed)`` replays exactly.
 
-    Raises :class:`~forze_mock.simulation.loop.SimulationDeadlock` if the scenario
-    blocks with no pending timer, or :class:`~forze_mock.simulation.loop.RealIOForbidden`
+    Raises :class:`~forze_dst.loop.SimulationDeadlock` if the scenario
+    blocks with no pending timer, or :class:`~forze_dst.loop.RealIOForbidden`
     if it touches real I/O or a thread executor.
     """
 

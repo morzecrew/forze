@@ -8,14 +8,14 @@ time reads track it.
 
 from __future__ import annotations
 
-from forze_mock.simulation.loop import (
+from .loop import (
     RealIOForbidden,
     SimulationDeadlock,
     SimulationEventLoop,
 )
-from forze_mock.simulation.runtime import run_simulation
-from forze_mock.simulation.time_source import DEFAULT_EPOCH, SimulationTimeSource
-from forze_mock.simulation.workload import (
+from .runtime import run_simulation
+from .time_source import DEFAULT_EPOCH, SimulationTimeSource
+from .workload import (
     OpSpec,
     generate_workload,
     run_workload,
