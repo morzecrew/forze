@@ -8,6 +8,7 @@ time reads track it.
 
 from __future__ import annotations
 
+from .derive import DEFAULT_CREATE_VERBS, derive_scenario
 from .faults import FaultyQueueCommand, TransportFault, TransportFaultPolicy
 from .harness import OperationCase, Simulation
 from .invariants import (
@@ -32,6 +33,7 @@ from .loop import (
     SimulationEventLoop,
 )
 from .oracle import ViolationReport, explore, minimize, run_recorded
+from .report import CausalGraph, OperationSpan, TraceStep, format_report
 from .recorder import (
     Event,
     History,
@@ -41,6 +43,7 @@ from .recorder import (
     record_event,
 )
 from .runtime import run_simulation
+from .scenario import ModelState, Rule, Scenario
 from .time_source import DEFAULT_EPOCH, SimulationTimeSource
 from .workload import (
     OpSpec,
@@ -82,6 +85,10 @@ __all__ = [
     "minimize",
     "explore",
     "ViolationReport",
+    "CausalGraph",
+    "OperationSpan",
+    "TraceStep",
+    "format_report",
     "SequentialSpec",
     "RegisterSpec",
     "record_operation",
@@ -89,4 +96,9 @@ __all__ = [
     "linearizable",
     "Simulation",
     "OperationCase",
+    "Scenario",
+    "Rule",
+    "ModelState",
+    "derive_scenario",
+    "DEFAULT_CREATE_VERBS",
 ]

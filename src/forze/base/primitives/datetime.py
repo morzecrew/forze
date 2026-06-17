@@ -18,6 +18,9 @@ def utcnow() -> datetime:
     return current_time_source().now()
 
 
+# ....................... #
+
+
 def monotonic() -> float:
     """Return a monotonic clock reading (fractional seconds), via the active TimeSource.
 

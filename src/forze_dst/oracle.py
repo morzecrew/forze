@@ -94,6 +94,13 @@ class ViolationReport:
     """Fingerprint of the operation registry the report was found against; a replay on a
     changed registry (different fingerprint) can no longer be trusted to reproduce."""
 
+    def format(self) -> str:
+        """Render this counterexample as a readable causal report (see ``forze_dst.report``)."""
+
+        from forze_dst.report import format_report
+
+        return format_report(self)
+
 
 def _attempt(
     build: Build[T],

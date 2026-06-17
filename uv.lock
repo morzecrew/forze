@@ -1172,6 +1172,7 @@ clickhouse = [
     { name = "clickhouse-connect", extra = ["async"] },
 ]
 dst = [
+    { name = "hypothesis" },
     { name = "polyfactory" },
 ]
 duckdb = [
@@ -1316,6 +1317,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'oidc'", specifier = ">=0.28.0" },
     { name = "hvac", extras = ["parser"], marker = "extra == 'vault'", specifier = ">=2.4.0" },
+    { name = "hypothesis", marker = "extra == 'dst'", specifier = ">=6.153.0" },
     { name = "inngest", marker = "extra == 'inngest'", specifier = ">=0.5.18" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27.0" },
     { name = "meilisearch-python-sdk", marker = "extra == 'meilisearch'", specifier = ">=7.2.1" },

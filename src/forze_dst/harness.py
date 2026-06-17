@@ -25,16 +25,42 @@ from forze.application.execution import DepsModule, DepsRegistry, ExecutionConte
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze.base.primitives import monotonic
+from forze_dst.derive import DEFAULT_CREATE_VERBS
+from forze_dst.derive import derive_scenario as _derive_from_catalog
 from forze_dst.invariants import Invariant, check
 from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
+from forze_dst.scenario import Scenario
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
 
 DepsFactory = Callable[[], DepsModule]
 Hook = Callable[[ExecutionContext], Awaitable[None]]
+
+
+def _fold_runtime_trace(ctx: ExecutionContext) -> None:
+    """Fold the engine's runtime trace into the recorded history, keeping each event's stamp."""
+
+    trace = ctx.deps.runtime_trace()
+
+    if trace is None:
+        return
+
+    for event in trace.events:
+        record_event(
+            "trace",
+            at=event.at,
+            trace_seq=event.seq,
+            trace_domain=event.domain,
+            op=event.op,
+            surface=event.surface,
+            route=event.route,
+            phase=event.phase,
+            tx_depth=event.tx_depth,
+        )
+
 
 # ....................... #
 
@@ -176,8 +202,12 @@ class Simulation:
 
             semaphore = asyncio.Semaphore(concurrency)
 
-            async def run_one(call: _Call) -> None:
+            async def run_one(call: _Call, index: int) -> None:
                 async with semaphore:
+                    # A start marker so the causal graph has a sequence-based interval
+                    # per call — robust to concurrent ops sharing a virtual-time stamp
+                    # (an ``await`` interleaves them without advancing the clock).
+                    record_event("op_start", call_id=index, op=call.op)
                     invoked = monotonic()
 
                     try:
@@ -186,6 +216,7 @@ class Simulation:
                         )
                         record_event(
                             "operation",
+                            call_id=index,
                             op=call.op,
                             outcome="ok",
                             result=result,
@@ -196,6 +227,7 @@ class Simulation:
                     except Exception as error:
                         record_event(
                             "operation",
+                            call_id=index,
                             op=call.op,
                             outcome="error",
                             error=type(error).__name__,
@@ -203,26 +235,14 @@ class Simulation:
                             returned_at=monotonic(),
                         )
 
-            await asyncio.gather(*(run_one(call) for call in workload))
+            await asyncio.gather(
+                *(run_one(call, index) for index, call in enumerate(workload))
+            )
 
             if self.observe is not None:
                 await self.observe(ctx)
 
-            # Fold the engine's runtime trace (port/tx/dispatch/op events) into the
-            # history, preserving each event's own virtual-time stamp.
-            trace = ctx.deps.runtime_trace()
-            if trace is not None:
-                for event in trace.events:
-                    record_event(
-                        "trace",
-                        at=event.at,
-                        trace_domain=event.domain,
-                        op=event.op,
-                        surface=event.surface,
-                        route=event.route,
-                        phase=event.phase,
-                        tx_depth=event.tx_depth,
-                    )
+            _fold_runtime_trace(ctx)
 
         with bind_recorder(recorder):
             run_simulation(
@@ -305,3 +325,439 @@ class Simulation:
                 return report
 
         return None
+
+    # ....................... #
+
+    async def _run_call(
+        self,
+        ctx: ExecutionContext,
+        semaphore: asyncio.Semaphore,
+        *,
+        call_id: int,
+        op: str,
+        arg: Any,
+    ) -> None:
+        """Run one operation concurrently, recording its start marker and outcome."""
+
+        async with semaphore:
+            record_event("op_start", call_id=call_id, op=op)
+            invoked = monotonic()
+
+            try:
+                result = await run_operation(self.operations, op, arg, ctx)
+                record_event(
+                    "operation",
+                    call_id=call_id,
+                    op=op,
+                    outcome="ok",
+                    result=result,
+                    invoked_at=invoked,
+                    returned_at=monotonic(),
+                )
+
+            except Exception as error:
+                record_event(
+                    "operation",
+                    call_id=call_id,
+                    op=op,
+                    outcome="error",
+                    error=type(error).__name__,
+                    invoked_at=invoked,
+                    returned_at=monotonic(),
+                )
+
+    # ....................... #
+
+    async def _run_arrange_call(
+        self,
+        ctx: ExecutionContext,
+        *,
+        call_id: int,
+        op: str,
+        arg: Any,
+    ) -> tuple[bool, Any]:
+        """Run one arrange operation serially; record it and return ``(ok, result)``.
+
+        A failed arrange op produces nothing into the model (``ok`` is ``False``) but is
+        still recorded, so the report shows where setup broke down.
+        """
+
+        record_event("op_start", call_id=call_id, op=op)
+        invoked = monotonic()
+
+        try:
+            result = await run_operation(self.operations, op, arg, ctx)
+            record_event(
+                "operation",
+                call_id=call_id,
+                op=op,
+                outcome="ok",
+                result=result,
+                invoked_at=invoked,
+                returned_at=monotonic(),
+            )
+            return True, result
+
+        except Exception as error:
+            record_event(
+                "operation",
+                call_id=call_id,
+                op=op,
+                outcome="error",
+                error=type(error).__name__,
+                invoked_at=invoked,
+                returned_at=monotonic(),
+            )
+            return False, None
+
+    # ....................... #
+
+    def _run_scenario(
+        self,
+        scenario: Scenario,
+        *,
+        act_workload: Sequence[tuple[str, Any]] | None,
+        act_count: int,
+        concurrency: int,
+        seed: int,
+        schedule_seed: int | None,
+        epoch: datetime,
+        act_plan: Sequence[int] | None = None,
+    ) -> tuple[History, list[tuple[str, Any]]]:
+        """Run a scenario: arrange serially, then act concurrently.
+
+        The act workload comes from, in precedence: *act_workload* (concrete calls replayed,
+        for minimization), *act_plan* (act-rule indices to fire, built post-arrange — the
+        Hypothesis-driven path; disabled rules are skipped), else generated from the arranged
+        state. Returns the recorded history and the act workload that ran.
+        """
+
+        recorder = Recorder(seed=seed)
+        generated: list[tuple[str, Any]] = []
+
+        async def driver() -> None:
+            nonlocal generated
+
+            frozen = (
+                DepsRegistry.from_modules(self.deps())
+                .with_tracing(runtime=True)
+                .freeze()
+                .resolve()
+            )
+            ctx = ExecutionContext(deps=frozen)
+
+            if self.setup is not None:
+                await self.setup(ctx)
+
+            rng = random.Random(seed)  # nosec B311
+            state = scenario.state()
+
+            # Arrange: serial, real ids captured into the model. Negative call ids keep
+            # arrange spans distinct from (and never confused as concurrent with) act.
+            for index, rule in enumerate(scenario.arrange):
+                if not rule.is_enabled(state):
+                    continue
+
+                arg = rule.arg(state, rng)
+                ok, result = await self._run_arrange_call(
+                    ctx, call_id=-(index + 1), op=rule.op, arg=arg
+                )
+
+                if ok and rule.produces is not None:
+                    state.add(rule.produces, rule.capture(result))
+
+            if act_workload is not None:
+                generated = list(act_workload)
+            elif act_plan is not None:
+                generated = [
+                    (rule.op, rule.arg(state, rng))
+                    for index in act_plan
+                    if (rule := scenario.act[index]).is_enabled(state)
+                ]
+            else:
+                generated = scenario.generate_act(state, act_count, rng)
+
+            semaphore = asyncio.Semaphore(concurrency)
+            await asyncio.gather(
+                *(
+                    self._run_call(ctx, semaphore, call_id=index, op=op, arg=arg)
+                    for index, (op, arg) in enumerate(generated)
+                )
+            )
+
+            if self.observe is not None:
+                await self.observe(ctx)
+
+            _fold_runtime_trace(ctx)
+
+        with bind_recorder(recorder):
+            run_simulation(driver, seed=seed, schedule_seed=schedule_seed, epoch=epoch)
+
+        return recorder.history, generated
+
+    # ....................... #
+
+    def _attempt_scenario(
+        self,
+        scenario: Scenario,
+        *,
+        act_count: int,
+        concurrency: int,
+        seed: int,
+        perturb: bool,
+        epoch: datetime,
+    ) -> ViolationReport | None:
+        schedule_seed = seed if perturb else None
+
+        def run(act: Sequence[tuple[str, Any]] | None) -> History:
+            history, _ = self._run_scenario(
+                scenario,
+                act_workload=act,
+                act_count=act_count,
+                concurrency=concurrency,
+                seed=seed,
+                schedule_seed=schedule_seed,
+                epoch=epoch,
+            )
+            return history
+
+        history, act_workload = self._run_scenario(
+            scenario,
+            act_workload=None,
+            act_count=act_count,
+            concurrency=concurrency,
+            seed=seed,
+            schedule_seed=schedule_seed,
+            epoch=epoch,
+        )
+
+        if not check(history, self.invariants):
+            return None
+
+        # Minimize the act phase only; arrange is replayed identically (seeded), so the
+        # captured act calls still reference valid arranged handles.
+        minimal = minimize(
+            act_workload, lambda subset: bool(check(run(subset), self.invariants))
+        )
+        final_history = run(minimal)
+
+        return ViolationReport(
+            seed=seed,
+            schedule_seed=schedule_seed,
+            violations=tuple(check(final_history, self.invariants)),
+            workload=tuple(minimal),
+            history=final_history,
+            registry_fingerprint=self.fingerprint(),
+        )
+
+    # ....................... #
+
+    def explore_scenario(
+        self,
+        scenario: Scenario,
+        *,
+        act_count: int = 20,
+        concurrency: int = 4,
+        seeds: Sequence[int],
+        perturb: bool = True,
+        epoch: datetime = DEFAULT_EPOCH,
+    ) -> ViolationReport | None:
+        """Drive a generative :class:`Scenario` per seed; on a violation, minimize + report.
+
+        Each seed arranges valid state (serially, capturing real ids), then samples
+        *act_count* enabled act calls and runs them concurrently under perturbation. The
+        first violating seed's act phase is minimized to a 1-minimal set that still fails;
+        arrange stays fixed. The report carries the seed, minimized act workload, full
+        recorded history (arrange + act), and the registry fingerprint.
+        """
+
+        for seed in seeds:
+            report = self._attempt_scenario(
+                scenario,
+                act_count=act_count,
+                concurrency=concurrency,
+                seed=seed,
+                perturb=perturb,
+                epoch=epoch,
+            )
+            if report is not None:
+                return report
+
+        return None
+
+    # ....................... #
+
+    def explore_scenario_hypothesis(
+        self,
+        scenario: Scenario,
+        *,
+        max_act: int = 20,
+        concurrency: int = 4,
+        perturb: bool = True,
+        epoch: datetime = DEFAULT_EPOCH,
+        max_examples: int = 200,
+    ) -> ViolationReport | None:
+        """Drive a scenario with Hypothesis as the generate + shrink engine.
+
+        Hypothesis searches the ``(seed, act-plan)`` space and, on a violation, shrinks to a
+        minimal counterexample with its general-purpose shrinker — simplifying the seed and
+        the act sequence far past the greedy drop of :meth:`explore_scenario`. Each candidate
+        still runs on the deterministic loop, so the returned report reproduces exactly.
+
+        Returns the minimized :class:`ViolationReport`, or ``None`` if no violation is found
+        within *max_examples*. Requires an act phase (no act rules → nothing to search).
+        """
+
+        try:
+            from hypothesis import find, settings, strategies
+            from hypothesis.errors import NoSuchExample
+
+        except ImportError as error:  # pragma: no cover - optional extra
+            raise RuntimeError(
+                "explore_scenario_hypothesis needs hypothesis; install forze[dst]"
+            ) from error
+
+        if not scenario.act:
+            return None
+
+        schedule_seed_of = (  # pyright: ignore[reportUnknownVariableType]
+            (lambda seed: seed)  # pyright: ignore[reportUnknownLambdaType]
+            if perturb
+            else (lambda _seed: None)  # pyright: ignore[reportUnknownLambdaType]
+        )
+        plans = strategies.tuples(
+            strategies.integers(min_value=0, max_value=2**31 - 1),
+            strategies.lists(
+                strategies.sampled_from(range(len(scenario.act))), max_size=max_act
+            ),
+        )
+
+        def run(example: tuple[int, list[int]]) -> History:
+            seed, plan = example
+            history, _ = self._run_scenario(
+                scenario,
+                act_workload=None,
+                act_count=0,
+                act_plan=plan,
+                concurrency=concurrency,
+                seed=seed,
+                schedule_seed=schedule_seed_of(
+                    seed
+                ),  # pyright: ignore[reportUnknownArgumentType]
+                epoch=epoch,
+            )
+            return history
+
+        try:
+            seed, plan = find(
+                plans,
+                lambda example: bool(check(run(example), self.invariants)),
+                settings=settings(max_examples=max_examples, deadline=None),
+            )
+
+        except NoSuchExample:
+            return None
+
+        history, generated = self._run_scenario(
+            scenario,
+            act_workload=None,
+            act_count=0,
+            act_plan=plan,
+            concurrency=concurrency,
+            seed=seed,
+            schedule_seed=schedule_seed_of(
+                seed
+            ),  # pyright: ignore[reportUnknownArgumentType]
+            epoch=epoch,
+        )
+
+        return ViolationReport(
+            seed=seed,
+            schedule_seed=schedule_seed_of(
+                seed
+            ),  # pyright: ignore[reportUnknownArgumentType]
+            violations=tuple(check(history, self.invariants)),
+            workload=tuple(generated),
+            history=history,
+            registry_fingerprint=self.fingerprint(),
+        )
+
+    # ....................... #
+
+    def _probe_reactive(
+        self, base: Scenario, *, seed: int, epoch: datetime
+    ) -> frozenset[str]:
+        """Find operations triggered reactively (saga steps / event handlers) by a probe.
+
+        Fires each act rule once against the arranged state and diffs the engine trace: an
+        operation that the trace shows *invoked* but that the harness never *directly* drove
+        was triggered as a cascade — so it is an internal effect, not an entry point.
+        """
+
+        reactive: set[str] = set()
+
+        for rule in base.act:
+            probe = Scenario(state=base.state, arrange=base.arrange, act=(rule,))
+            history, _ = self._run_scenario(
+                probe,
+                act_workload=None,
+                act_count=1,
+                concurrency=1,
+                seed=seed,
+                schedule_seed=None,
+                epoch=epoch,
+            )
+
+            direct = {
+                event.fields.get("op")
+                for event in history.events
+                if event.kind == "operation"
+            }
+            invoked = {
+                event.fields.get("op")
+                for event in history.events
+                if event.kind == "trace"
+                and event.fields.get("trace_domain") == "operation"
+                and event.fields.get("phase") == "invoke"
+            }
+            reactive.update(str(op) for op in (invoked - direct) if op is not None)
+
+        return frozenset(reactive)
+
+    # ....................... #
+
+    def derive_scenario(
+        self,
+        *,
+        create_verbs: frozenset[str] = DEFAULT_CREATE_VERBS,
+        arrange_each: int = 1,
+        probe: bool = True,
+        seed: int = 0,
+        epoch: datetime = DEFAULT_EPOCH,
+    ) -> Scenario:
+        """Infer a draft :class:`Scenario` from the catalog, then refine it reactively.
+
+        Starts from the static, name-driven catalog derivation (see
+        :func:`forze_dst.derive.derive_scenario`); then, unless *probe* is disabled, runs a
+        one-shot probe per act rule to drop operations that are only ever triggered as
+        cascades (saga steps, domain-event handlers) — they fire automatically when their
+        trigger runs, so driving them directly would be unrealistic.
+        """
+
+        base = _derive_from_catalog(
+            self.operations, create_verbs=create_verbs, arrange_each=arrange_each
+        )
+
+        if not probe:
+            return base
+
+        reactive = self._probe_reactive(base, seed=seed, epoch=epoch)
+
+        if not reactive:
+            return base
+
+        return Scenario(
+            state=base.state,
+            arrange=base.arrange,
+            act=tuple(rule for rule in base.act if rule.op not in reactive),
+        )
