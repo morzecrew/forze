@@ -3,10 +3,11 @@
 import base64
 import hashlib
 import hmac
-import secrets
 from typing import Protocol
 
 import attrs
+
+from forze.base.primitives import current_entropy_source
 
 # ----------------------- #
 
@@ -36,7 +37,7 @@ class HmacTokenService:
     # ....................... #
 
     def generate_token(self) -> str:
-        raw = secrets.token_bytes(self.config.length)
+        raw = current_entropy_source().random_bytes(self.config.length)
 
         return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 

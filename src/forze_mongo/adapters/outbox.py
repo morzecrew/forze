@@ -11,7 +11,7 @@ require_mongo()
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, final
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
@@ -27,7 +27,7 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
-from forze.base.primitives import HlcTimestamp, JsonDict, utcnow, uuid7
+from forze.base.primitives import HlcTimestamp, JsonDict, utcnow, uuid4, uuid7
 from forze_mongo.execution.deps.configs.outbox import MongoOutboxConfig
 from forze_mongo.kernel.client import MongoClientPort
 from forze_mongo.kernel.relation import resolve_mongo_collection

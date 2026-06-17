@@ -25,8 +25,6 @@ from typing import (
     cast,
     final,
 )
-from uuid import uuid4
-
 import aioboto3
 import attrs
 from pydantic import SecretStr
@@ -39,6 +37,7 @@ if TYPE_CHECKING:
 from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_delay
 from forze.base.exceptions import exc
+from forze.base.primitives import uuid4
 
 from .._logger import logger
 from .constants import SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES

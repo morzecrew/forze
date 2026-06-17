@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import random
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import timedelta
@@ -17,7 +16,7 @@ from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, current_entropy_source
 
 from .runner import QueueConsumer
 
@@ -71,7 +70,7 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
                 await asyncio.sleep(
                     # Desynchronization jitter, not security randomness.
                     self.restart_backoff.total_seconds()
-                    * random.uniform(1.0, 1.5)  # nosec B311
+                    * current_entropy_source().as_random().uniform(1.0, 1.5)
                 )
 
         if self.task is not None and not self.task.done():

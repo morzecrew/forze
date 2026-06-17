@@ -9,7 +9,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import uuid
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any, Mapping, Sequence, TypeVar, cast
@@ -41,7 +40,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import payload_aad
 from forze.base.crypto import unpack_envelope
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict, stable_payload_fingerprint
+from forze.base.primitives import JsonDict, stable_payload_fingerprint, uuid4
 from forze.base.serialization import default_model_codec
 
 # ----------------------- #
@@ -710,7 +709,7 @@ class SearchResultSnapshot:
         max_n = self.effective_snapshot_max_ids(snap_opt, rs_spec)
         to_store = list(ordered_hits)[:max_n]
         capped = pool_len_before_cap > len(to_store)
-        run_id = str(uuid.uuid4())
+        run_id = str(uuid4())
 
         await self.store.put_run(
             run_id=run_id,
@@ -747,7 +746,7 @@ class SearchResultSnapshot:
 
         capped = pool_len_before_cap > len(sliced)
 
-        run_id = str(uuid.uuid4())
+        run_id = str(uuid4())
 
         await self.store.put_run(
             run_id=run_id,

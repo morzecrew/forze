@@ -26,12 +26,12 @@ require_redis()
 # ....................... #
 
 import asyncio
-import random
 import time
 from typing import Any, Awaitable, Callable, Sequence
 
 import attrs
 
+from forze.base.primitives import current_entropy_source
 from forze_redis.kernel._logger import logger
 
 # ----------------------- #
@@ -285,7 +285,9 @@ class InvalidationHub:
                 )
                 self._notify_reset()
                 # Reconnect jitter — not security randomness.
-                await asyncio.sleep(backoff * random.uniform(0.8, 1.2))  # nosec B311
+                await asyncio.sleep(
+                    backoff * current_entropy_source().as_random().uniform(0.8, 1.2)
+                )
                 backoff = min(backoff * 2.0, _BACKOFF_MAX_S)
 
             finally:

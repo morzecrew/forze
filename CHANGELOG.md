@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Ambient entropy seam (`EntropySource`)** — `forze.base.primitives` adds `EntropySource`/`SystemEntropySource`/`SeededEntropySource` + `current_entropy_source`/`bind_entropy_source` (and a seam-routed `token_urlsafe` helper), the entropy twin of the `TimeSource` seam: random bytes/bits/floats, the stdlib-`random` API (via `EntropySource.as_random()`), and random `uuid4` ids read the context-active source, so a scope can make them deterministic and seed-replayable without changing call sites. Default is the system CSPRNG (production unchanged); `SeededEntropySource` is simulation-only and not cryptographically secure. AEAD nonces, backoff/relay jitter, opaque identity tokens, and the no-arg `uuid4()` / `uuid7()`'s random bits now route through it — binding both a `FrozenTimeSource` and a `SeededEntropySource` makes the full UUID (and an end-to-end aggregate→outbox→inbox run) byte-identical (previously a uuid's low 54 bits were always random). A determinism guard (wired into `just quality`) fails the build if raw entropy primitives reappear outside the seam.
+
 ## [0.4.1] - 2026-06-17
 
 ### Added

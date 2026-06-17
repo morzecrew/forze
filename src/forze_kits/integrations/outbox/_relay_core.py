@@ -61,7 +61,7 @@ from forze.application.integrations.outbox import (
     is_encrypted_payload,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import utcnow
+from forze.base.primitives import current_entropy_source, utcnow
 
 if TYPE_CHECKING:
     from forze.application.contracts.outbox import OutboxClaim
@@ -70,8 +70,6 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 PublishOne = Callable[["OutboxClaim", Any], Awaitable[None]]
-
-_RNG = random.Random()  # nosec B311 - backoff jitter, not cryptographic material
 
 # Published ids are marked in chunks of this size (one UPDATE per chunk
 # instead of one per row). Bounds the redelivery window after a crash to one
@@ -122,7 +120,9 @@ def compute_retry_delay(
         multiplier=2.0,
         jitter="equal",
     )
-    seconds = compute_delay(strategy, attempts, 0.0, rng or _RNG)
+    seconds = compute_delay(
+        strategy, attempts, 0.0, rng or current_entropy_source().as_random()
+    )
 
     return timedelta(seconds=seconds)
 
