@@ -17,6 +17,13 @@ from .invariants import (
     monotonic_per,
     no_duplicate_effect,
 )
+from .linearizability import (
+    RegisterSpec,
+    SequentialSpec,
+    is_linearizable,
+    linearizable,
+    record_operation,
+)
 from .loop import (
     RealIOForbidden,
     SimulationDeadlock,
@@ -72,4 +79,9 @@ __all__ = [
     "minimize",
     "explore",
     "ViolationReport",
+    "SequentialSpec",
+    "RegisterSpec",
+    "record_operation",
+    "is_linearizable",
+    "linearizable",
 ]
