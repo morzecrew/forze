@@ -4431,7 +4431,7 @@ fallback and hedge:</p>
 </tr>
 <tr>
 <td><strong>Bulkhead</strong></td>
-<td>cap concurrent calls, fixed or <a href="#bulkheads">adaptive</a>, with an optional managed queue</td>
+<td>cap concurrent calls — fixed, or <a href="#bulkheads">adaptive / delay-based</a> — with an optional managed queue</td>
 </tr>
 <tr>
 <td><strong>Fallback / Hedge</strong></td>
@@ -4538,11 +4538,24 @@ threshold" — outliers can't move a quantile, only a genuinely shifted
 distribution can. Each backoff opens a fresh measurement epoch, so the
 decision to shrink again is made from the <em>new</em> concurrency's latencies, not
 the stale history that justified the last one.</p>
+<p>A third kind, <strong><code>GradientBulkheadStrategy</code></strong>, drops the threshold entirely.
+Where AIMD reacts once latency crosses a number you have to pick, the Gradient2
+controller (from Netflix's <code>concurrency-limits</code>) <em>learns</em> the no-load latency
+baseline and tracks the gradient between it and recent latency — finding the
+load/latency knee on its own:</p>
+<div class="highlight"><pre><span></span><code><span class="n">GradientBulkheadStrategy</span><span class="p">(</span><span class="n">max_concurrency</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>   <span class="c1"># no latency_threshold to tune</span>
+</code></pre></div>
+<p>It probes the limit up gently while latency sits near baseline and contracts it
+as latency inflates (bounded so one spike can't more than roughly halve it),
+with a no-load guard so a lightly-loaded service never ratchets the limit up on
+noise. Only successful completions feed it — like AIMD, failures are the
+breaker's job. The three bulkhead kinds are mutually exclusive within a policy.</p>
 <h3 id="managing-the-queue">Managing the queue<a class="headerlink" href="#managing-the-queue" title="Permanent link">&para;</a></h3>
 <p>When a bulkhead has a queue (<code>max_queue &gt;= 1</code>), a size bound alone isn't
 enough under sustained overload — a short queue that never empties still adds
-its full length of latency to every call. Both bulkhead kinds take two opt-in
-controls for that, straight from Facebook's <em>Fail at Scale</em>:</p>
+its full length of latency to every call. Every bulkhead kind takes three
+opt-in controls for that — the first two from Facebook's <em>Fail at Scale</em>, the
+last Netflix-style prioritized shedding:</p>
 <ul>
 <li><strong><code>queue_target=</code></strong> (CoDel) — bound queueing by the <em>time</em> a waiter
   experiences. While the queue has recently been empty, a waiter may sojourn
@@ -4553,7 +4566,17 @@ controls for that, straight from Facebook's <em>Fail at Scale</em>:</p>
   first: its client is the one most likely still listening. FIFO otherwise.
   LIFO starves the old tail under overload by design, so pair it with
   <code>queue_target</code> to shed that tail instead of parking it forever.</li>
+<li><strong><code>prioritized=True</code></strong> — make shedding <em>criticality-aware</em>. Under a full
+  queue a higher-criticality arrival displaces the lowest-criticality waiter
+  instead of being rejected, and lower tiers get a tighter CoDel allowance so
+  they shed first. Tiers come from the task-scoped <code>Criticality</code>
+  (<code>BEST_EFFORT &lt; DEGRADED &lt; NORMAL &lt; CRITICAL</code>, default <code>NORMAL</code>), bound at the
+  boundary like a deadline — so a background prefetch sheds before a user's
+  interactive call:</li>
 </ul>
+<div class="highlight"><pre><span></span><code><span class="k">with</span> <span class="n">bind_criticality</span><span class="p">(</span><span class="n">Criticality</span><span class="o">.</span><span class="n">BEST_EFFORT</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">prefetch</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+</code></pre></div>
 <p>A parked waiter whose <a href="../deadlines/">invocation deadline</a> has already expired
 is failed at wake instead of being granted a slot it can no longer use — no
 knob needed.</p>
@@ -4637,12 +4660,17 @@ can't run inside a single <code>run()</code> call; guard the consumption loop in
 replicas each enforce <code>permits/per</code> independently (a fleet-effective rate of
 <code>permits × replicas</code>), and a circuit opened on one replica protects only that
 replica. <code>forze[redis]</code> makes both <strong>shared</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="n">redis_circuit_breaker_store</span><span class="p">,</span> <span class="n">redis_rate_limit_store</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">redis_circuit_breaker_store</span><span class="p">,</span>
+    <span class="n">redis_latency_digest_store</span><span class="p">,</span>
+    <span class="n">redis_rate_limit_store</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="n">ResilienceDepsModule</span><span class="p">(</span>
     <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>
     <span class="n">breaker_store</span><span class="o">=</span><span class="n">redis_circuit_breaker_store</span><span class="p">(</span><span class="n">redis</span><span class="p">),</span>
     <span class="n">rate_limit_store</span><span class="o">=</span><span class="n">redis_rate_limit_store</span><span class="p">(</span><span class="n">redis</span><span class="p">),</span>
+    <span class="n">latency_digest_store</span><span class="o">=</span><span class="n">redis_latency_digest_store</span><span class="p">(</span><span class="n">redis</span><span class="p">),</span>  <span class="c1"># see below</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>The shared rate limiter keeps its token bucket in Redis, mutated atomically on
@@ -4652,11 +4680,14 @@ the circuit for all. Both <strong>fail open</strong>: on a Redis error they fall
 the process-local implementation (emitting a <code>*_store_degraded</code> trace event),
 so a coordination-store hiccup degrades to per-replica behavior instead of
 failing calls.</p>
-<p>Bulkheads deliberately stay process-local — fleet capacity is
-<code>max_concurrency × replicas</code> by design, and the <a href="#bulkheads">adaptive
-bulkhead</a> converges across uncoordinated replicas without shared
-state. The rest of the fleet story — drain, readiness, singleton startup
-steps — is in <a href="../shutdown-and-fleets/">Shutdown &amp; fleets</a>.</p>
+<p>Bulkhead <em>capacity</em> stays process-local by design — fleet capacity is
+<code>max_concurrency × replicas</code>, and the <a href="#bulkheads">adaptive bulkhead</a> converges
+across uncoordinated replicas like N TCP flows. Its congestion <em>signal</em> can be
+shared, though: for a <code>latency_quantile</code> policy, <code>latency_digest_store</code> keeps
+the latency sketch in Redis (a mergeable DDSketch), so every replica's adaptive
+limit reacts to the <em>fleet's</em> p95 instead of its own — same fail-open posture
+as the other two stores. The rest of the fleet story — drain, readiness,
+singleton startup steps — is in <a href="../shutdown-and-fleets/">Shutdown &amp; fleets</a>.</p>
 
 
 
