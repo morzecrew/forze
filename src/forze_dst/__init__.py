@@ -11,11 +11,20 @@ from __future__ import annotations
 from .derive import DEFAULT_CREATE_VERBS, derive_scenario
 from .faults import (
     CrashInterceptor,
+    FaultPolicy,
+    FaultRule,
     FaultyQueueCommand,
     PortFaultInterceptor,
     SimulatedCrash,
     TransportFault,
     TransportFaultPolicy,
+)
+from .latency import (
+    Constant,
+    Exponential,
+    LatencyProfile,
+    LatencyRule,
+    Uniform,
 )
 from .harness import OperationCase, Simulation
 from .invariants import (
@@ -89,6 +98,13 @@ __all__ = [
     "PortFaultInterceptor",
     "CrashInterceptor",
     "SimulatedCrash",
+    "FaultPolicy",
+    "FaultRule",
+    "LatencyProfile",
+    "LatencyRule",
+    "Constant",
+    "Uniform",
+    "Exponential",
     "TransportFault",
     "Event",
     "History",

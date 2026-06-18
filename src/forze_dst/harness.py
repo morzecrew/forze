@@ -35,6 +35,8 @@ from forze_dst.reactive import ReactiveMap
 from forze_dst.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
+from forze_dst.faults import compile_fault_policy
+from forze_dst.latency import compile_latency
 from forze_dst.scenario import Scenario
 from forze_dst.scheduler import SystematicScheduler, pct_scheduler_factory
 from forze_dst.time_source import DEFAULT_EPOCH
@@ -159,8 +161,12 @@ class Simulation:
     REPRODUCIBILITY RULE: the factory MUST derive every interceptor's RNG from its ``seed``
     argument (``PortFaultInterceptor(rng=random.Random(seed), ...)``). Closing over a fixed
     seed decouples the fault stream from the run and breaks replay/minimization — the whole
-    point of a single seed driving all nondeterminism. (Plan 2's declarative fault config will
-    derive these RNGs itself, removing the footgun.)"""
+    point of a single seed driving all nondeterminism. (The declarative ``SimulationConfig
+    .faults`` derives its RNG itself, removing the footgun; prefer it.)"""
+
+    _active_config: SimulationConfig | None = attrs.field(default=None, init=False)
+    """The config of the in-progress :meth:`run`, so the per-run helpers can compile its
+    seeded faults / latency from the derived sub-seeds. Run-scoped; ``None`` between runs."""
 
     # ....................... #
 
@@ -192,66 +198,72 @@ class Simulation:
         Returns the first violating seed's minimized, reproducible counterexample, or ``None``.
         """
 
-        if config.strategy is Strategy.OP_CASE:
-            if cases is None:
-                raise ValueError("OP_CASE strategy requires cases=")
+        # Run-scoped: the per-run helpers compile this config's seeded faults/latency.
+        self._active_config = config
+        try:
+            if config.strategy is Strategy.OP_CASE:
+                if cases is None:
+                    raise ValueError("OP_CASE strategy requires cases=")
 
-            return self._explore(
-                cases=cases,
-                count=config.count,
-                concurrency=config.concurrency,
-                seeds=config.seeds,
-                perturb=config.perturb,
-                epoch=config.epoch,
-            )
+                return self._explore(
+                    cases=cases,
+                    count=config.count,
+                    concurrency=config.concurrency,
+                    seeds=config.seeds,
+                    perturb=config.perturb,
+                    epoch=config.epoch,
+                )
 
-        sc = scenario if scenario is not None else self.derive_scenario()
+            sc = scenario if scenario is not None else self.derive_scenario()
 
-        if config.strategy is Strategy.SCENARIO:
-            factory = (
-                pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
-                if config.scheduler is SchedulerKind.PCT
-                else None
-            )
-            return self._explore_scenario(
+            if config.strategy is Strategy.SCENARIO:
+                factory = (
+                    pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
+                    if config.scheduler is SchedulerKind.PCT
+                    else None
+                )
+                return self._explore_scenario(
+                    sc,
+                    act_count=config.act_count,
+                    concurrency=config.concurrency,
+                    seeds=config.seeds,
+                    perturb=config.perturb,
+                    epoch=config.epoch,
+                    scheduler_factory=factory,
+                )
+
+            if config.strategy is Strategy.HYPOTHESIS:
+                return self._explore_scenario_hypothesis(
+                    sc,
+                    max_act=config.act_count,
+                    concurrency=config.concurrency,
+                    perturb=config.perturb,
+                    epoch=config.epoch,
+                    max_examples=config.max_examples,
+                )
+
+            # DPOR — drives its own systematic scheduler over one fixed workload.
+            return self._explore_scenario_dpor(
                 sc,
                 act_count=config.act_count,
                 concurrency=config.concurrency,
-                seeds=config.seeds,
-                perturb=config.perturb,
+                seed=config.dpor_seed,
+                max_runs=config.max_runs,
                 epoch=config.epoch,
-                scheduler_factory=factory,
             )
 
-        if config.strategy is Strategy.HYPOTHESIS:
-            return self._explore_scenario_hypothesis(
-                sc,
-                max_act=config.act_count,
-                concurrency=config.concurrency,
-                perturb=config.perturb,
-                epoch=config.epoch,
-                max_examples=config.max_examples,
-            )
-
-        # DPOR — drives its own systematic scheduler over one fixed workload.
-        return self._explore_scenario_dpor(
-            sc,
-            act_count=config.act_count,
-            concurrency=config.concurrency,
-            seed=config.dpor_seed,
-            max_runs=config.max_runs,
-            epoch=config.epoch,
-        )
+        finally:
+            self._active_config = None
 
     # ....................... #
 
     def _frozen_deps(self, seed: int) -> Any:
         """Build the run's resolved, runtime-traced deps from the factory.
 
-        The factory may return a single module or several (e.g. a mock module plus a
-        ``DomainEventsDepsModule`` wiring saga / event-handler cascades). When
-        :attr:`interceptors` is set, the seed-derived chain is registered deps-scoped so
-        every resolved configurable port runs through it (fresh per run → reproducible).
+        *seed* is the run's **fault** sub-seed (``derive_seed(master, "fault")``). The
+        declarative ``config.faults`` is compiled here with ``random.Random(seed)`` — seeded
+        by construction, no caller RNG — and registered deps-scoped alongside any manual
+        :attr:`interceptors` factory, so every resolved configurable port runs through them.
         """
 
         produced = self.deps()
@@ -263,10 +275,39 @@ class Simulation:
 
         registry = DepsRegistry.from_modules(*modules).with_tracing(runtime=True)
 
+        interceptors: list[PortInterceptor] = []
+
         if self.interceptors is not None:
-            registry = registry.with_interceptors(*self.interceptors(seed))
+            interceptors.extend(self.interceptors(seed))
+
+        if self._active_config is not None and self._active_config.faults is not None:
+            interceptors.append(
+                compile_fault_policy(
+                    self._active_config.faults,
+                    random.Random(seed),  # nosec B311 - seeded sim faults, not crypto
+                )
+            )
+
+        if interceptors:
+            registry = registry.with_interceptors(*interceptors)
 
         return registry.freeze().resolve()
+
+    # ....................... #
+
+    def _latency_for(self, seed: int) -> LatencyModel | None:
+        """The run's latency model: the config profile (compiled from the latency sub-seed) if
+        set, else the manual :attr:`latency` callable escape hatch. *seed* is the master."""
+
+        if self._active_config is not None and self._active_config.latency is not None:
+            return compile_latency(
+                self._active_config.latency,
+                random.Random(  # nosec B311 - seeded sim latency, not crypto
+                    derive_seed(seed, "latency")
+                ),
+            )
+
+        return self.latency
 
     # ....................... #
 
@@ -385,7 +426,7 @@ class Simulation:
                 seed=derive_seed(seed, "entropy"),
                 schedule_seed=schedule_seed,
                 epoch=epoch,
-                latency=self.latency,
+                latency=self._latency_for(seed),
             )
 
         return recorder.history
@@ -633,7 +674,7 @@ class Simulation:
                 schedule_seed=schedule_seed,
                 epoch=epoch,
                 scheduler=scheduler,
-                latency=self.latency,
+                latency=self._latency_for(seed),
             )
 
         return recorder.history, generated

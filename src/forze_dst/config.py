@@ -19,6 +19,8 @@ from typing import Sequence
 
 import attrs
 
+from forze_dst.faults import FaultPolicy
+from forze_dst.latency import LatencyProfile
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
@@ -105,9 +107,16 @@ class SimulationConfig:
     pct_steps: int = 50
     """PCT: scheduling steps over which change points are placed."""
 
-    # Streams added by later work-streams: ``latency`` (LatencyProfile, S2),
-    # ``faults`` (FaultPolicy, S2), ``cluster`` (ClusterConfig, S6). Until then latency stays
-    # on ``Simulation.latency``.
+    # Nondeterminism streams (compiled per-run from sub-seeds derived from the master seed).
+    faults: FaultPolicy | None = None
+    """Declarative, seeded fault injection over the port seam (error / timeout / crash).
+    Compiled with ``derive_seed(seed, "fault")`` — no caller-supplied RNG. ``cluster``
+    (ClusterConfig) is added by S6."""
+
+    latency: LatencyProfile | None = None
+    """Declarative, seeded simulated-I/O latency (per-route distributions). Compiled with
+    ``derive_seed(seed, "latency")``. Overrides ``Simulation.latency`` (the raw-callable escape
+    hatch) when set."""
 
     # ....................... #
 

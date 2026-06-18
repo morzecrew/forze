@@ -312,3 +312,101 @@ class CrashInterceptor:
             )
 
         return await nxt(call)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(frozen=True, kw_only=True)
+class FaultRule:
+    """One fault rule: which calls it matches, and the per-eligible-call fault probabilities.
+
+    *surface* / *route* / *op* (any ``None`` matches anything) select eligible calls. Each
+    non-zero rate is rolled independently on a matched call; the first kind that fires wins
+    (crash > error > timeout). All rolls draw from the policy's seeded fault RNG, so they are
+    part of the reproducible fault stream.
+    """
+
+    surface: str | None = None
+    route: str | None = None
+    op: str | None = None
+    error: float = 0.0
+    """P(raise a retryable ``exc.infrastructure`` — a transient downstream failure)."""
+    timeout: float = 0.0
+    """P(raise ``exc.timeout`` — the call exceeded its budget)."""
+    crash: float = 0.0
+    """P(raise ``SimulatedCrash`` — the process dies; only a restart recovers)."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(frozen=True, kw_only=True)
+class FaultPolicy:
+    """A declarative, ordered set of :class:`FaultRule` s — the seeded, no-crutch fault surface.
+
+    The harness compiles it (via :func:`compile_fault_policy`) with a fault RNG **derived from
+    the run's master seed** (``derive_seed(seed, "fault")``), so faults are seeded by
+    construction — the caller never supplies an RNG — and reproduce from one seed. The first
+    matching rule applies (routing order). Works over any resolved port via the interception
+    seam, no per-port wrapping.
+    """
+
+    rules: tuple[FaultRule, ...] = ()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(kw_only=True)
+class _FaultPolicyInterceptor:
+    """The compiled :class:`FaultPolicy` — rolls the first matching rule's faults per call."""
+
+    rules: tuple[FaultRule, ...]
+    rng: random.Random
+
+    # ....................... #
+
+    def _match(self, call: PortCall) -> FaultRule | None:
+        for rule in self.rules:
+            if _call_matches(call, surface=rule.surface, route=rule.route, op=rule.op):
+                return rule
+
+        return None
+
+    # ....................... #
+
+    async def around(self, call: PortCall, nxt: PortNext) -> object:
+        rule = self._match(call)
+
+        if rule is not None:
+            where = f"{call.surface}[{call.route}].{call.op}"
+
+            if rule.crash > 0.0 and self.rng.random() < rule.crash:
+                raise SimulatedCrash(f"simulated crash at {where}")
+
+            if rule.error > 0.0 and self.rng.random() < rule.error:
+                raise exc.infrastructure(
+                    f"injected fault at {where}", code="dst.injected_port_fault"
+                )
+
+            if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
+                raise exc.timeout(
+                    f"injected timeout at {where}", code="dst.injected_timeout"
+                )
+
+        return await nxt(call)
+
+
+# ....................... #
+
+
+def compile_fault_policy(
+    policy: FaultPolicy, rng: random.Random
+) -> _FaultPolicyInterceptor:
+    """Compile *policy* into a seam interceptor that shares one seeded fault RNG."""
+
+    return _FaultPolicyInterceptor(rules=policy.rules, rng=rng)
