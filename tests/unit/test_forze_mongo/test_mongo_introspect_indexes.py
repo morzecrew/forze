@@ -44,3 +44,25 @@ async def test_invalidate_collection_clears_cache() -> None:
     await intro.list_indexes(database="app", collection="docs")
 
     assert client.list_indexes.await_count == 2
+
+@pytest.mark.asyncio
+async def test_list_indexes_preserves_special_index_directions() -> None:
+    # Regression: non-btree indexes carry a STRING direction
+    # ("text"/"2dsphere"/"hashed"/"vector"); int(v) used to crash here.
+    client = MagicMock(spec=MongoClient)
+    client.list_indexes = AsyncMock(
+        return_value=[
+            {"name": "title_text", "key": {"title": "text"}, "unique": False},
+            {"name": "loc_2dsphere", "key": {"loc": "2dsphere"}, "unique": False},
+            {"name": "h_hashed", "key": {"h": "hashed"}, "unique": False},
+            {"name": "mixed", "key": {"a": 1, "b": -1}, "unique": False},
+        ],
+    )
+
+    intro = MongoIntrospector(client=client)
+    indexes = await intro.list_indexes(database="app", collection="docs")
+
+    assert indexes[0].keys == (("title", "text"),)
+    assert indexes[1].keys == (("loc", "2dsphere"),)
+    assert indexes[2].keys == (("h", "hashed"),)
+    assert indexes[3].keys == (("a", 1), ("b", -1))

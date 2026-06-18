@@ -24,6 +24,43 @@ def test_params_to_query_parameters() -> None:
     assert qps[0]["parameterType"] == {"type": "STRING"}
 
 
+class _ArrayParams(BaseModel):
+    ids: list[int] = []
+    tags: list[str] = []
+    opt: int | None = None
+
+
+def test_empty_array_param_carries_typed_array_from_annotation() -> None:
+    # Regression: an empty list must still emit ``arrayType`` (BigQuery 400s
+    # on an ARRAY parameter without it), derived from the field annotation.
+    qps = {q["name"]: q for q in params_to_query_parameters(_ArrayParams())}
+
+    assert qps["ids"]["parameterType"] == {
+        "type": "ARRAY",
+        "arrayType": {"type": "INT64"},
+    }
+    assert qps["ids"]["parameterValue"] == {"arrayValues": []}
+    assert qps["tags"]["parameterType"]["arrayType"] == {"type": "STRING"}
+
+
+def test_none_param_typed_from_annotation_not_string() -> None:
+    # Regression: ``None`` for an ``int | None`` field is typed INT64, not STRING.
+    qps = {q["name"]: q for q in params_to_query_parameters(_ArrayParams())}
+    assert qps["opt"]["parameterType"] == {"type": "INT64"}
+    assert qps["opt"]["parameterValue"] == {"value": None}
+
+
+def test_non_empty_array_param_emits_values() -> None:
+    qps = {
+        q["name"]: q
+        for q in params_to_query_parameters(_ArrayParams(ids=[1, 2], tags=["a"]))
+    }
+    assert qps["ids"]["parameterType"]["arrayType"] == {"type": "INT64"}
+    assert qps["ids"]["parameterValue"] == {
+        "arrayValues": [{"value": "1"}, {"value": "2"}],
+    }
+
+
 def test_build_sync_query_request_named_params() -> None:
     body = build_sync_query_request(
         "SELECT @day",

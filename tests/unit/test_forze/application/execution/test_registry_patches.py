@@ -515,12 +515,12 @@ def _route_patched_reg(
 ) -> OperationRegistry:
     """
     Create an operation registry with transaction routes configured for selected operations.
-    
+
     Parameters:
         handlers (dict[str, object]): Mapping of operation keys to handler objects
         selector (StrKeySelector.Spec): Selector specification determining which operations receive the route
         route (str): The transaction route value to apply
-    
+
     Returns:
         OperationRegistry: A registry with transaction routes applied to matching operations
     """

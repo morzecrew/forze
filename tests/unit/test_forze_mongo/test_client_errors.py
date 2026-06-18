@@ -144,6 +144,19 @@ class TestMongoErrorHandler:
         assert isinstance(result, CoreException) and result.kind == ExceptionKind.INFRASTRUCTURE
         assert "authorization" in result.summary
 
+    def test_operation_failure_message_mentioning_authorization_without_code_13(
+        self,
+    ) -> None:
+        from pymongo.errors import OperationFailure
+
+        # A non-auth failure whose message merely contains "not authorized"
+        # must not be classified as an authorization error (code-based, not
+        # substring-based).
+        e = OperationFailure("validator: 'not authorized' is invalid", code=121)
+        result = _mongo_eh(e, site="x")
+        assert isinstance(result, CoreException)
+        assert "authorization" not in result.summary
+
     def test_operation_failure_generic(self) -> None:
         from pymongo.errors import OperationFailure
 

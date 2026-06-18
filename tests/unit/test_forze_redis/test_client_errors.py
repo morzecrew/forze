@@ -34,8 +34,13 @@ class TestRedisErrorHandler:
         ("message", "needle"),
         [
             ("WRONGTYPE ...", "wrong type"),
-            ("BUSY ...", "busy"),
+            ("BUSY Redis is busy running a script", "busy"),
+            ("BUSYGROUP Consumer Group name already exists", "busy"),
             ("something else", "response error"),
+            # Leading token is the RESP code: a key/value echoing WRONGTYPE or
+            # BUSY mid-message must NOT be classified by it.
+            ("ERR no such key named WRONGTYPE", "response error"),
+            ("ERR unknown command BUSY", "response error"),
         ],
     )
     def test_response_errors(self, message: str, needle: str) -> None:

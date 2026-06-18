@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from psycopg import errors
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.exceptions import ExceptionKind, exc
 from forze_postgres.kernel.client import errors as client_errors
 
 # ----------------------- #
@@ -120,7 +120,8 @@ class TestPsycopgErrorHandlerBranches:
             (lambda: errors.OutOfMemory(), ExceptionKind.INFRASTRUCTURE),
             (lambda: errors.DiskFull(), ExceptionKind.INFRASTRUCTURE),
             (lambda: errors.IntegrityError(), ExceptionKind.CONFLICT),
-            (lambda: errors.OperationalError(), ExceptionKind.INFRASTRUCTURE),
+            # No SQLSTATE → client-side connectivity failure → transient.
+            (lambda: errors.OperationalError(), ExceptionKind.CONCURRENCY),
             (lambda: errors.ProgrammingError(), ExceptionKind.INFRASTRUCTURE),
             (lambda: errors.GroupingError(), ExceptionKind.INFRASTRUCTURE),
         ],
@@ -141,6 +142,16 @@ class TestPsycopgErrorHandlerBranches:
         assert out is not None
         assert out.kind == ExceptionKind.CONCURRENCY
         assert "retry" in out.summary.lower()
+
+    def test_operational_error_classified_by_sqlstate_not_message_locale(self) -> None:
+        # A localized (non-English) connectivity message with no SQLSTATE must
+        # still map to concurrency — classification must not depend on message
+        # text matching English markers.
+        raised = errors.OperationalError("Verbindung unerwartet geschlossen")
+        assert raised.sqlstate is None
+        out = client_errors._psycopg_eh(raised, site="op")
+        assert out is not None
+        assert out.kind == ExceptionKind.CONCURRENCY
 
     def test_unknown_exception_becomes_infrastructure_error(self) -> None:
         out = client_errors._psycopg_eh(RuntimeError("weird"), site="my_op")

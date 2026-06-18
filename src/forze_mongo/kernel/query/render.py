@@ -49,6 +49,27 @@ _SCALAR_ELEM_CMP: dict[str, str] = {
 """DSL comparison op → Mongo aggregation/query operator for element predicates."""
 
 
+def _reject_operator_field(field: str) -> None:
+    """Reject field names whose path segments begin with ``$``.
+
+    Mongo treats any ``$``-prefixed key as a query/aggregation operator, so an
+    unvalidated field name like ``$where`` would inject server-side behavior
+    (e.g. JavaScript evaluation) instead of matching a document field. Stored
+    Mongo field names can never start with ``$``, so this is a safe
+    defense-in-depth guard -- the Mongo analogue of Postgres identifier quoting
+    and Meilisearch ``safe_attribute``.
+    """
+
+    if any(seg.startswith("$") for seg in field.split(".")):
+        raise exc.precondition(
+            f"Invalid Mongo field name {field!r}: path segments must not start "
+            "with '$'.",
+        )
+
+
+# ....................... #
+
+
 MONGO_QUERY_CAPABILITIES = attrs.evolve(
     FULL_QUERY_CAPABILITIES, supports_hierarchy=False
 )
@@ -179,13 +200,13 @@ class MongoQueryRenderer:
         expr = group_key.expr
 
         if isinstance(expr, GroupRef):
-            return f"${expr.field}"
+            return self._field_ref(expr.field)
 
         trunc = expr
 
         return {
             "$dateTrunc": {
-                "date": f"${trunc.field}",
+                "date": self._field_ref(trunc.field),
                 "unit": trunc.unit,
                 "timezone": self._mongo_date_trunc_timezone(trunc),
                 "startOfWeek": "monday",
@@ -221,7 +242,7 @@ class MongoQueryRenderer:
         if computed.field is None:
             raise exc.internal("Computed field has no field path")
 
-        field_ref = f"${computed.field}"
+        field_ref = self._field_ref(computed.field)
 
         match computed.function:
             case "$sum":
@@ -340,6 +361,7 @@ class MongoQueryRenderer:
 
     @staticmethod
     def _field_ref(path: str) -> str:
+        _reject_operator_field(path)
         return f"${path}"
 
     # ....................... #
@@ -407,7 +429,7 @@ class MongoQueryRenderer:
         op: QueryOp.All,  # type: ignore[valid-type]
         value: Any,
     ) -> JsonDict:
-        ref = f"${field}"
+        ref = self._field_ref(field)
 
         match op:
             case "$eq":
@@ -937,6 +959,8 @@ class MongoQueryRenderer:
     # ....................... #
 
     def _render_field(self, field: str, op: QueryOp.All, value: Any) -> JsonDict:  # type: ignore[valid-type]
+        _reject_operator_field(field)
+
         match op:
             case "$null" | "$empty":
                 return self._render_unary(field, op, value)

@@ -163,16 +163,16 @@ def _mongo_eh(  # skipcq: PY-R1000
                     details=details,
                 )
 
-            msg = str(exc)
-
-            if "not authorized" in msg.lower() or "unauthorized" in msg.lower():
+            # Classify by the server error code (13 = Unauthorized), not by
+            # matching English substrings in the message text.
+            if code == 13:
                 return CoreException.infrastructure(
                     "Mongo authorization error.",
                     details=details,
                 )
 
             return CoreException.infrastructure(
-                f"Mongo operation failure during {site}: {msg}",
+                f"Mongo operation failure during {site}: {exc}",
                 details=details,
             )
 

@@ -82,7 +82,12 @@ def _parse_index_info(doc: dict[str, object]) -> MongoIndexInfo:
 
     key_doc = cast(JsonDict, key_doc)
 
-    keys = tuple((str(k), int(v)) for k, v in key_doc.items())
+    # Direction is ``1``/``-1`` for btree indexes but a string for special
+    # index types (``"text"``, ``"2dsphere"``, ``"2d"``, ``"hashed"``,
+    # ``"vector"``); ``int(v)`` would crash on those, so keep non-int verbatim.
+    keys = tuple(
+        (str(k), v if isinstance(v, int) else str(v)) for k, v in key_doc.items()
+    )
     unique = bool(doc.get("unique", False))
 
     return MongoIndexInfo(name=name, keys=keys, unique=unique)
