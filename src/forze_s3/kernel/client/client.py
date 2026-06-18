@@ -1138,7 +1138,7 @@ class S3Client(S3ClientPort):
         completed = [
             {
                 "PartNumber": p.part_number,
-                "ETag": p.etag if p.etag.startswith('"') else f'"{p.etag}"',
+                "ETag": _quote_etag(p.etag),
             }
             for p in ordered
         ]
@@ -1226,6 +1226,24 @@ def _s3_sse_request_headers(sse: ObjectStorageSSE | None) -> dict[str, str]:
         headers["x-amz-server-side-encryption-aws-kms-key-id"] = sse.key_id
 
     return headers
+
+
+# ....................... #
+
+
+def _quote_etag(etag: str) -> str:
+    """Normalize a part ETag to exactly one pair of surrounding quotes.
+
+    ``CompleteMultipartUpload`` requires quoted part ETags. Trims surrounding
+    whitespace and avoids double-wrapping an already-quoted value (the old
+    ``startswith('"')``-only check mangled a whitespace-padded ETag into
+    ``" "abc""``).
+    """
+
+    etag = etag.strip()
+    if etag.startswith('"') and etag.endswith('"') and len(etag) >= 2:
+        return etag
+    return f'"{etag}"'
 
 
 # ....................... #

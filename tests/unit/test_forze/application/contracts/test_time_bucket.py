@@ -38,6 +38,25 @@ def test_parse_aggregate_timezone_invalid_offset_raises() -> None:
         parse_aggregate_timezone("+99:00")
 
 
+def test_parse_aggregate_timezone_no_colon_forms() -> None:
+    assert parse_aggregate_timezone("+0530").offset == timedelta(hours=5, minutes=30)
+    assert parse_aggregate_timezone("+05").offset == timedelta(hours=5)
+
+
+def test_parse_aggregate_timezone_max_offset_boundary() -> None:
+    assert parse_aggregate_timezone("+14:00").offset == timedelta(hours=14)
+    # Beyond the real ±14:00 maximum.
+    with pytest.raises(CoreException, match="out of range"):
+        parse_aggregate_timezone("+14:30")
+
+
+def test_parse_aggregate_timezone_ambiguous_three_digits_rejected() -> None:
+    # ``+123`` must not silently parse as 1h23m; not a valid offset and (not
+    # being a zone) it falls through to the unknown-timezone error.
+    with pytest.raises(CoreException, match="Unknown timezone"):
+        parse_aggregate_timezone("+123")
+
+
 def test_parse_aggregate_timezone_unknown_iana_raises() -> None:
     with pytest.raises(CoreException, match="Unknown timezone"):
         parse_aggregate_timezone("Not/A_Real_Zone")

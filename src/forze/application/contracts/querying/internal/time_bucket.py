@@ -11,7 +11,9 @@ from forze.base.exceptions import exc
 
 # ----------------------- #
 
-_TIMEZONE_OFFSET_RE = re.compile(r"^([+-])(\d{1,2})(?::?(\d{2}))?\Z")
+# Hours are exactly two digits so an ambiguous no-colon ``+123`` cannot parse as
+# 1h23m; accepts ``+05``, ``+0530``, ``+05:30``.
+_TIMEZONE_OFFSET_RE = re.compile(r"^([+-])(\d{2})(?::?(\d{2}))?\Z")
 
 TimeBucketMode = Literal["iana", "fixed"]
 
@@ -51,7 +53,8 @@ def parse_aggregate_timezone(wire: str | None) -> ResolvedTimeBucketTimezone:
         sign = -1 if m.group(1) == "-" else 1
         h = int(m.group(2))
         mm = int(m.group(3) or 0)
-        if h > 14 or mm > 59:
+        if mm > 59 or h * 60 + mm > 14 * 60:
+            # Max real UTC offset is ±14:00; reject ±14:30, ±15:00, ±09:99, …
             raise exc.internal(f"Timezone offset out of range: {wire!r}")
 
         total_min = sign * (h * 60 + mm)
