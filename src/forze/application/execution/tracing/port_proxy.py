@@ -59,7 +59,7 @@ class TracingPortProxy:
 
             @wraps(attr)
             async def traced_async_gen(*args: Any, **kwargs: Any) -> Any:
-                await cooperative_point()
+                await cooperative_point(self.surface, self.route, name)
                 self._record_call(name)
                 async for item in attr(*args, **kwargs):
                     yield item
@@ -70,7 +70,7 @@ class TracingPortProxy:
 
             @wraps(attr)
             async def traced_async(*args: Any, **kwargs: Any) -> Any:
-                await cooperative_point()
+                await cooperative_point(self.surface, self.route, name)
                 self._record_call(name)
                 return await attr(*args, **kwargs)
 

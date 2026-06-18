@@ -44,6 +44,8 @@ from .recorder import (
     current_recorder,
     record_event,
 )
+from forze.application.execution.tracing.cooperative import LatencyModel
+
 from .runtime import run_simulation
 from .scenario import ModelState, Rule, Scenario
 from .scheduler import (
@@ -106,6 +108,7 @@ __all__ = [
     "linearizable",
     "Simulation",
     "OperationCase",
+    "LatencyModel",
     "Scenario",
     "Rule",
     "ModelState",

@@ -11,7 +11,10 @@ import random
 from datetime import datetime
 from typing import Awaitable, Callable
 
-from forze.application.execution.tracing.cooperative import cooperative_scheduling
+from forze.application.execution.tracing.cooperative import (
+    LatencyModel,
+    cooperative_scheduling,
+)
 from forze.base.primitives import (
     SeededEntropySource,
     bind_entropy_source,
@@ -31,6 +34,7 @@ def run_simulation[T](
     epoch: datetime = DEFAULT_EPOCH,
     schedule_seed: int | None = None,
     scheduler: object | None = None,
+    latency: LatencyModel | None = None,
 ) -> T:
     """Run *scenario* on a deterministic virtual-time loop with seeded entropy.
 
@@ -43,6 +47,10 @@ def run_simulation[T](
     each tick from a separate seeded RNG, or *scheduler* for a custom strategy (e.g. a
     :class:`~forze_dst.scheduler.PCTScheduler`) — *scheduler* takes precedence. ``None`` for
     both keeps deterministic FIFO order. Either way the run is reproducible.
+
+    *latency* models simulated I/O delay: a ``(surface, route, op) -> seconds`` function called
+    at each port boundary to advance the virtual clock (a real downstream takes time). Lets
+    time-dependent bugs surface without artificial sleeps in handlers. ``None`` = instant ports.
 
     Raises :class:`~forze_dst.loop.SimulationDeadlock` if the scenario
     blocks with no pending timer, or :class:`~forze_dst.loop.RealIOForbidden`
@@ -65,7 +73,7 @@ def run_simulation[T](
         with (
             bind_time_source(time_source),
             bind_entropy_source(entropy),
-            cooperative_scheduling(),
+            cooperative_scheduling(latency=latency),
         ):
             return loop.run_until_complete(scenario())
 

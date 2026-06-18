@@ -24,14 +24,15 @@ import attrs
 from forze.application.execution import DepsModule, DepsRegistry, ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import FrozenOperationRegistry
+from forze.application.execution.tracing.cooperative import LatencyModel
 from forze.base.exceptions import CoreException
 from forze.base.primitives import monotonic
 from forze_dst.derive import DEFAULT_CREATE_VERBS
 from forze_dst.derive import derive_scenario as _derive_from_catalog
 from forze_dst.invariants import Invariant, check
 from forze_dst.oracle import ViolationReport, minimize
-from forze_dst.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.reactive import ReactiveMap
+from forze_dst.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
 from forze_dst.scheduler import SystematicScheduler
@@ -137,6 +138,11 @@ class Simulation:
     observe: Hook | None = None
     """Optional - record domain facts after the workload (e.g. final balances) via
     ``record_event`` so invariants can assert over them."""
+
+    latency: LatencyModel | None = None
+    """Optional - simulated I/O latency: ``(surface, route, op) -> seconds``, applied at each
+    port boundary to advance the virtual clock (a real downstream takes time). Lets
+    time-dependent bugs surface without artificial sleeps in handlers."""
 
     # ....................... #
 
@@ -286,7 +292,11 @@ class Simulation:
 
         with bind_recorder(recorder):
             run_simulation(
-                scenario, seed=seed, schedule_seed=schedule_seed, epoch=epoch
+                scenario,
+                seed=seed,
+                schedule_seed=schedule_seed,
+                epoch=epoch,
+                latency=self.latency,
             )
 
         return recorder.history
@@ -534,6 +544,7 @@ class Simulation:
                 schedule_seed=schedule_seed,
                 epoch=epoch,
                 scheduler=scheduler,
+                latency=self.latency,
             )
 
         return recorder.history, generated
