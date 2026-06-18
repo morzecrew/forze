@@ -9,11 +9,27 @@ from __future__ import annotations
 
 import typer
 
+from forze.base.primitives import utcnow
 from forze_cli._compat import require_dst
 from forze_cli.loader import load_simulation
-from forze_dst import SchedulerKind, SimulationConfig, Strategy
+from forze_dst import (
+    Constant,
+    FaultPolicy,
+    FaultRule,
+    LatencyProfile,
+    LatencyRule,
+    RegressionEntry,
+    SchedulerKind,
+    SimulationConfig,
+    Strategy,
+    append_regression,
+    entry_from_report,
+    load_regressions,
+)
 
 # ----------------------- #
+
+_DEFAULT_CORPUS = "dst-regressions.jsonl"
 
 dst_app = typer.Typer(
     no_args_is_help=True,
@@ -54,6 +70,57 @@ def _parse_seeds(spec: str) -> list[int]:
 # ....................... #
 
 
+def _faults(fault_error: float) -> FaultPolicy | None:
+    """A broad transient-error policy (all ports) from the CLI knob, or ``None``."""
+
+    if fault_error <= 0.0:
+        return None
+
+    return FaultPolicy(rules=(FaultRule(error=fault_error),))
+
+
+def _latency(latency: float) -> LatencyProfile | None:
+    """A constant per-call latency (all ports) from the CLI knob, or ``None``."""
+
+    if latency <= 0.0:
+        return None
+
+    return LatencyProfile(rules=(LatencyRule(dist=Constant(latency)),))
+
+
+def _config(
+    *,
+    strategy: Strategy,
+    seed_list: list[int],
+    act_count: int,
+    concurrency: int,
+    max_examples: int,
+    max_runs: int,
+    pct: bool,
+    depth: int,
+    fault_error: float,
+    latency: float,
+) -> SimulationConfig:
+    """Assemble a :class:`SimulationConfig` from the shared CLI knobs (run + replay)."""
+
+    return SimulationConfig(
+        strategy=strategy,
+        seeds=seed_list,
+        act_count=act_count,
+        concurrency=concurrency,
+        max_examples=max_examples,
+        max_runs=max_runs,
+        dpor_seed=seed_list[0] if seed_list else 0,
+        scheduler=SchedulerKind.PCT if pct else SchedulerKind.RANDOM,
+        pct_depth=depth,
+        faults=_faults(fault_error),
+        latency=_latency(latency),
+    )
+
+
+# ....................... #
+
+
 @dst_app.command()
 def run(
     target: str = typer.Argument(
@@ -67,6 +134,18 @@ def run(
     max_runs: int = typer.Option(500, help="DPOR: interleavings to explore."),
     pct: bool = typer.Option(False, help="Scenario strategy: use the PCT scheduler."),
     depth: int = typer.Option(3, help="PCT: target bug depth."),
+    fault_error: float = typer.Option(
+        0.0, help="Inject a transient error at every port with this probability [0,1]."
+    ),
+    latency: float = typer.Option(
+        0.0, help="Inject this constant per-port latency (seconds of virtual time)."
+    ),
+    save_regression: bool = typer.Option(
+        False, help="On a violation, append the seed to the regression corpus."
+    ),
+    regression_file: str = typer.Option(
+        _DEFAULT_CORPUS, help="Regression corpus path (JSON Lines)."
+    ),
 ) -> None:
     """Explore an auto-derived scenario; print the counterexample (exit 1 if one is found)."""
 
@@ -85,16 +164,17 @@ def run(
     seed_list = _parse_seeds(seeds)
 
     report = sim.run(
-        SimulationConfig(
+        _config(
             strategy=strategy,
-            seeds=seed_list,
+            seed_list=seed_list,
             act_count=act_count,
             concurrency=concurrency,
             max_examples=max_examples,
             max_runs=max_runs,
-            dpor_seed=seed_list[0] if seed_list else 0,
-            scheduler=SchedulerKind.PCT if pct else SchedulerKind.RANDOM,
-            pct_depth=depth,
+            pct=pct,
+            depth=depth,
+            fault_error=fault_error,
+            latency=latency,
         ),
         scenario=scenario,
     )
@@ -104,7 +184,111 @@ def run(
         return
 
     typer.echo(report.format())
+
+    if save_regression:
+        append_regression(
+            regression_file,
+            entry_from_report(
+                report,
+                target=target,
+                found_at=utcnow().isoformat(),
+            ),
+        )
+        typer.echo(f"\n↳ saved seed {report.seed} to {regression_file}")
+
     raise typer.Exit(code=1)
+
+
+# ....................... #
+
+
+@dst_app.command()
+def replay(
+    target: str = typer.Option(
+        "", help="Override the app for every seed; default replays each entry's saved target."
+    ),
+    regression_file: str = typer.Option(
+        _DEFAULT_CORPUS, help="Regression corpus path (JSON Lines)."
+    ),
+    strategy: Strategy = typer.Option(Strategy.SCENARIO, help="Exploration strategy."),
+    act_count: int = typer.Option(8, help="Act operations per run."),
+    concurrency: int = typer.Option(4, help="Max concurrent operations."),
+    max_examples: int = typer.Option(200, help="Hypothesis: examples to try."),
+    max_runs: int = typer.Option(500, help="DPOR: interleavings to explore."),
+    pct: bool = typer.Option(False, help="Scenario strategy: use the PCT scheduler."),
+    depth: int = typer.Option(3, help="PCT: target bug depth."),
+    fault_error: float = typer.Option(0.0, help="Transient-error probability per port."),
+    latency: float = typer.Option(0.0, help="Constant per-port latency (virtual seconds)."),
+) -> None:
+    """Re-run every saved regression seed; exit 1 if any still violates (the CI guard).
+
+    Replay each corpus seed against its app (or *target* if given) with the same exploration
+    knobs used to find it. A seed that still violates is a live (or regressed) bug — printed
+    and counted toward a non-zero exit. A changed registry fingerprint is flagged (the saved
+    seed may no longer reproduce the original path).
+    """
+
+    entries = load_regressions(regression_file)
+
+    if not entries:
+        typer.echo(f"✓ no regression seeds in {regression_file}")
+        return
+
+    grouped: dict[str, list[RegressionEntry]] = {}
+    for entry in entries:
+        chosen = target or entry.target
+        if not chosen:
+            typer.echo(
+                f"⚠ seed {entry.seed} has no saved target and none was given — skipping"
+            )
+            continue
+        grouped.setdefault(chosen, []).append(entry)
+
+    failures = 0
+    checked = 0
+
+    for app, group in grouped.items():
+        sim = load_simulation(app)
+        fingerprint = sim.fingerprint()
+        scenario = sim.derive_scenario()
+
+        for entry in group:
+            checked += 1
+
+            if (
+                entry.registry_fingerprint
+                and entry.registry_fingerprint != fingerprint
+            ):
+                typer.echo(
+                    f"⚠ seed {entry.seed}: registry changed since saved — replay may "
+                    "not reproduce the original path"
+                )
+
+            report = sim.run(
+                _config(
+                    strategy=strategy,
+                    seed_list=[entry.seed],
+                    act_count=act_count,
+                    concurrency=concurrency,
+                    max_examples=max_examples,
+                    max_runs=max_runs,
+                    pct=pct,
+                    depth=depth,
+                    fault_error=fault_error,
+                    latency=latency,
+                ),
+                scenario=scenario,
+            )
+
+            if report is not None:
+                failures += 1
+                typer.echo(report.format())
+
+    if failures:
+        typer.echo(f"\n✗ {failures}/{checked} regression seed(s) still violate")
+        raise typer.Exit(code=1)
+
+    typer.echo(f"✓ {checked} regression seed(s) clean")
 
 
 # ....................... #

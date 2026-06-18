@@ -40,6 +40,9 @@ _OP_START = "op_start"
 _OPERATION = "operation"
 _TRACE = "trace"
 _STRUCTURAL = frozenset({_OP_START, _OPERATION, _TRACE})
+_ENVIRONMENT = frozenset({"fault", "latency"})
+"""Kinds the simulator *injected* (seeded faults + latency) — rendered as a separate timeline,
+not mixed into the app's observed domain facts."""
 
 # ....................... #
 
@@ -51,6 +54,20 @@ def _short(value: object, limit: int = 60) -> str:
     text = " ".join(text.split())
 
     return f"{text[: limit - 1]}…" if len(text) > limit else text
+
+
+# ....................... #
+
+
+def _injection_target(event: Event) -> str:
+    """The ``surface[route].op`` an injected fault/latency event targeted, for the timeline."""
+
+    surface = event.fields.get("surface") or "?"
+    route = event.fields.get("route")
+    op = event.fields.get("op")
+    target = f"{surface}[{route}]" if route else str(surface)
+
+    return f"{target}.{op}" if op else target
 
 
 # ....................... #
@@ -122,6 +139,10 @@ class CausalGraph:
     facts: tuple[Event, ...]
     """Recorded events that are neither operations nor engine trace (e.g. ``observe``
     facts such as a final balance, or app ``record_event`` calls)."""
+    timeline: tuple[Event, ...] = ()
+    """The environment the simulator *injected*, in virtual-time order — seeded faults
+    (error / timeout / crash / drop / duplicate / delay) and latency. Reproducible from the
+    seed; rendered as its own timeline so a counterexample shows what was done *to* the app."""
 
     # ....................... #
 
@@ -198,9 +219,19 @@ class CausalGraph:
         spans.sort(key=lambda span: (span.start_seq, span.end_seq))
         spans = cls._attribute(spans, steps)
 
-        facts = tuple(e for e in history.events if e.kind not in _STRUCTURAL)
+        timeline = tuple(
+            sorted(
+                (e for e in history.events if e.kind in _ENVIRONMENT),
+                key=lambda e: (e.at, e.seq),
+            )
+        )
+        facts = tuple(
+            e
+            for e in history.events
+            if e.kind not in _STRUCTURAL and e.kind not in _ENVIRONMENT
+        )
 
-        return cls(spans=tuple(spans), facts=facts)
+        return cls(spans=tuple(spans), facts=facts, timeline=timeline)
 
     # ....................... #
 
@@ -295,6 +326,20 @@ def format_report(report: ViolationReport) -> str:
             else "()"
         )
         lines.append(f"    [{index}] {op}{suffix}")
+
+    if graph.timeline:
+        lines.extend(("", "  injected environment (faults + latency, by virtual time):"))
+
+        for event in graph.timeline:
+            where = _injection_target(event)
+            if event.kind == "fault":
+                detail = str(event.fields.get("fault"))
+                seconds = event.fields.get("seconds")
+                if seconds is not None:
+                    detail += f" {float(seconds):.3f}s"
+            else:  # latency
+                detail = f"latency {float(event.fields.get('seconds', 0.0)):.3f}s"
+            lines.append(f"    @t={event.at:.6f}  {detail} → {where}")
 
     if groups := graph.concurrent_groups():
         lines.extend(("", "  concurrency (overlapping spans ran as a race):"))

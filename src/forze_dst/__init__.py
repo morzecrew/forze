@@ -50,6 +50,12 @@ from .loop import (
     SimulationDeadlock,
     SimulationEventLoop,
 )
+from .corpus import (
+    RegressionEntry,
+    append_regression,
+    entry_from_report,
+    load_regressions,
+)
 from .oracle import ViolationReport, explore, minimize, run_recorded
 from .reactive import ReactiveMap
 from .report import CausalGraph, OperationSpan, TraceStep, format_report
@@ -126,6 +132,10 @@ __all__ = [
     "minimize",
     "explore",
     "ViolationReport",
+    "RegressionEntry",
+    "append_regression",
+    "entry_from_report",
+    "load_regressions",
     "CausalGraph",
     "OperationSpan",
     "TraceStep",

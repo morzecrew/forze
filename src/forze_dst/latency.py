@@ -16,6 +16,8 @@ from typing import final
 import attrs
 
 from forze.application.execution.interception import LatencyModel
+from forze.base.primitives import monotonic
+from forze_dst.recorder import record_event
 
 # ----------------------- #
 
@@ -103,7 +105,21 @@ def compile_latency(profile: LatencyProfile, rng: random.Random) -> LatencyModel
                 and (rule.route is None or route == rule.route)
                 and (rule.op is None or op == rule.op)
             ):
-                return rule.dist.sample(rng)
+                seconds = rule.dist.sample(rng)
+
+                if seconds > 0.0:
+                    # Surface the injected delay on the report's environment timeline (a no-op
+                    # outside a recorded run). Stamped at the sample point, before time advances.
+                    record_event(
+                        "latency",
+                        at=monotonic(),
+                        surface=surface,
+                        route=route,
+                        op=op,
+                        seconds=seconds,
+                    )
+
+                return seconds
 
         return 0.0
 

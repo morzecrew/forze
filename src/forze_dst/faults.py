@@ -30,8 +30,28 @@ import attrs
 
 from forze.application.execution.interception import PortCall, PortNext
 from forze.base.exceptions import exc
+from forze.base.primitives import monotonic
+from forze_dst.recorder import record_event
 
 # ----------------------- #
+
+
+def _record_fault(fault: str, call: PortCall, **extra: object) -> None:
+    """Record an injected fault as a virtual-time-stamped ``fault`` event for the report.
+
+    A no-op outside a recorded simulation (the recorder is unbound), so the fault interceptors
+    stay usable standalone. The event feeds the report's injected-environment timeline, so a
+    counterexample shows exactly which faults the seed produced and when (in virtual time)."""
+
+    record_event(
+        "fault",
+        at=monotonic(),
+        fault=fault,
+        surface=call.surface,
+        route=call.route,
+        op=call.op,
+        **extra,
+    )
 
 
 class SimulatedCrash(BaseException):
@@ -101,6 +121,7 @@ class PortFaultInterceptor:
             and self.probability > 0.0
             and self.rng.random() < self.probability
         ):
+            _record_fault("error", call)
             raise exc.infrastructure(
                 f"injected transient fault at {call.surface}[{call.route}].{call.op}",
                 code=self.code,
@@ -142,6 +163,7 @@ class CrashInterceptor:
             and self.probability > 0.0
             and self.rng.random() < self.probability
         ):
+            _record_fault("crash", call)
             raise SimulatedCrash(
                 f"simulated crash at {call.surface}[{call.route}].{call.op}"
             )
@@ -304,14 +326,17 @@ class _FaultPolicyInterceptor:
 
         # Raise-faults short-circuit the call entirely.
         if rule.crash > 0.0 and self.rng.random() < rule.crash:
+            _record_fault("crash", call)
             raise SimulatedCrash(f"simulated crash at {where}")
 
         if rule.error > 0.0 and self.rng.random() < rule.error:
+            _record_fault("error", call)
             raise exc.infrastructure(
                 f"injected fault at {where}", code="dst.injected_port_fault"
             )
 
         if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
+            _record_fault("timeout", call)
             raise exc.timeout(
                 f"injected timeout at {where}", code="dst.injected_timeout"
             )
@@ -319,14 +344,18 @@ class _FaultPolicyInterceptor:
         # Transport faults. Drop skips the real call; delay advances virtual time before it
         # (never rewriting the call's args); duplicate re-runs it (a redelivery).
         if rule.drop > 0.0 and self.rng.random() < rule.drop:
+            _record_fault("drop", call)
             return self._dropped(call)
 
         if rule.delay > 0.0 and self.rng.random() < rule.delay:
-            await asyncio.sleep(self.rng.uniform(0.0, rule.max_delay.total_seconds()))
+            seconds = self.rng.uniform(0.0, rule.max_delay.total_seconds())
+            _record_fault("delay", call, seconds=seconds)
+            await asyncio.sleep(seconds)
 
         result = await nxt(call)
 
         if rule.duplicate > 0.0 and self.rng.random() < rule.duplicate:
+            _record_fault("duplicate", call)
             await nxt(call)
 
         return result

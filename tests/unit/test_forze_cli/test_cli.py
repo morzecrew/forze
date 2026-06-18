@@ -234,6 +234,56 @@ class TestRun:
         assert result.exit_code == 1
 
 
+class TestRegressionLoop:
+    def test_save_and_replay_round_trip(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from forze_dst import load_regressions
+
+        corpus = str(tmp_path / "regressions.jsonl")
+
+        # Find the bug and save the seed to the corpus.
+        found = runner.invoke(
+            app,
+            [
+                "dst", "run", _ref("RACY"),
+                "--act-count", "3", "--concurrency", "3",
+                "--save-regression", "--regression-file", corpus,
+            ],
+        )
+        assert found.exit_code == 1
+        assert "saved seed" in found.stdout
+
+        entries = load_regressions(corpus)
+        assert len(entries) == 1
+        assert entries[0].target == _ref("RACY")
+        assert "no_duplicate_effect" in entries[0].invariants
+
+        # Replaying against the (still buggy) app reproduces the violation → exit 1.
+        replay_buggy = runner.invoke(
+            app,
+            ["dst", "replay", "--regression-file", corpus, "--act-count", "3", "--concurrency", "3"],
+        )
+        assert replay_buggy.exit_code == 1
+        assert "still violate" in replay_buggy.stdout
+
+        # Replaying the same seed against the FIXED app (CLEAN) is clean → exit 0.
+        replay_fixed = runner.invoke(
+            app,
+            [
+                "dst", "replay", "--target", _ref("CLEAN"),
+                "--regression-file", corpus, "--act-count", "3", "--concurrency", "3",
+            ],
+        )
+        assert replay_fixed.exit_code == 0
+        assert "clean" in replay_fixed.stdout
+
+    def test_replay_empty_corpus_is_clean(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        result = runner.invoke(
+            app, ["dst", "replay", "--regression-file", str(tmp_path / "absent.jsonl")]
+        )
+        assert result.exit_code == 0
+        assert "no regression seeds" in result.stdout
+
+
 class TestInspect:
     def test_topology(self) -> None:
         result = runner.invoke(app, ["dst", "topology", _ref("RACY")])
