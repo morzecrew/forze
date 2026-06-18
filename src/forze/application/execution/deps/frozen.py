@@ -215,8 +215,17 @@ class FrozenDeps:
         is what gets cached.
         """
 
+        from ..interception import current_interceptors
+
         cache_key = (key, route)
-        use_cache = not self.resolution_tracer.enabled
+        # Bypass the port cache while a run-scoped (ambient) interceptor chain is bound — the
+        # same way resolution tracing bypasses it. A port cached *before* the binding (e.g.
+        # DST's cooperative / fault / partition chain) would otherwise be reused bare and skip
+        # the chain; re-resolving rewraps each call against the current chain. Production binds
+        # no ambient interceptors, so the cache stays fully on (zero cost). Deps-scoped
+        # interceptors are fixed at resolve time and stay cached — their proxy reads the ambient
+        # chain per call, so only an ambient binding can go stale.
+        use_cache = not self.resolution_tracer.enabled and not current_interceptors()
 
         if use_cache:
             cached = ctx.cached_port(cache_key, spec)

@@ -24,7 +24,6 @@ import sys
 from typing import Any
 
 from forze.application.execution.operations.registry import FrozenOperationRegistry
-
 from forze_dst import Simulation
 
 # ----------------------- #
@@ -34,6 +33,9 @@ def _ensure_cwd_importable() -> None:
     cwd = os.getcwd()
     if cwd not in sys.path:
         sys.path.insert(0, cwd)
+
+
+# ....................... #
 
 
 def _coerce(obj: Any) -> Simulation | None:
@@ -51,7 +53,7 @@ def _coerce(obj: Any) -> Simulation | None:
         # need a Simulation.
         return Simulation(
             operations=obj,
-            deps=lambda: MockDepsModule(),
+            deps=MockDepsModule,
             invariants=[no_unexpected_error()],
         )
 
@@ -92,8 +94,10 @@ def _discover(module_path: str) -> Simulation:
     public = [value for name, value in vars(module).items() if not name.startswith("_")]
 
     simulations = [value for value in public if isinstance(value, Simulation)]
+
     if len(simulations) == 1:
         return simulations[0]
+
     if len(simulations) > 1:
         raise ValueError(
             f"{module_path!r} exposes several Simulations — name one with 'module:attr'"
@@ -102,8 +106,10 @@ def _discover(module_path: str) -> Simulation:
     registries = [
         value for value in public if isinstance(value, FrozenOperationRegistry)
     ]
+
     if len(registries) == 1:
         return _coerce(registries[0])  # type: ignore[return-value]  # not None for a registry
+
     if len(registries) > 1:
         raise ValueError(
             f"{module_path!r} exposes several registries — name one with 'module:attr'"
@@ -127,11 +133,13 @@ def load_simulation(ref: str) -> Simulation:
     obj = load_object(ref)
 
     simulation = _coerce(obj)
+
     if simulation is not None:
         return simulation
 
     if callable(obj):
         simulation = _coerce(obj())
+
         if simulation is not None:
             return simulation
 

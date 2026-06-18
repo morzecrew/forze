@@ -20,9 +20,9 @@ import base64
 import hashlib
 import random
 import secrets
-from random import Random
 from contextlib import contextmanager
 from contextvars import ContextVar
+from random import Random
 from typing import Iterator, Protocol, final, runtime_checkable
 from uuid import UUID
 from uuid import uuid4 as uuid4_func
@@ -69,19 +69,19 @@ class EntropySource(Protocol):
 class SystemEntropySource:
     """The real system CSPRNG — the default source (identical to direct stdlib reads)."""
 
-    def random_bytes(self, n: int) -> bytes:
+    def random_bytes(self, n: int) -> bytes:  # noqa: PYL-R0201
         return secrets.token_bytes(n)
 
-    def randbits(self, k: int) -> int:
+    def randbits(self, k: int) -> int:  # noqa: PYL-R0201
         return secrets.randbits(k)
 
-    def random(self) -> float:
-        return random.random()  # nosec B311 - default system source, see module docstring
+    def random(self) -> float:  # noqa: PYL-R0201
+        return random.random()  # nosec B311 - system CSPRNG default
 
-    def uuid4(self) -> UUID:
+    def uuid4(self) -> UUID:  # noqa: PYL-R0201
         return uuid4_func()
 
-    def as_random(self) -> Random:
+    def as_random(self) -> Random:  # noqa: PYL-R0201
         # A fresh CSPRNG-backed generator (os.urandom under the hood), matching the
         # non-deterministic intent of the jitter/backoff call sites it serves.
         return random.SystemRandom()
@@ -103,7 +103,9 @@ class SeededEntropySource:
     seed: int
     _rng: Random = attrs.field(
         default=attrs.Factory(
-            lambda self: Random(self.seed),  # nosec B311 - deterministic sim RNG, not crypto
+            lambda self: Random(
+                self.seed
+            ),  # nosec B311 - deterministic sim RNG, not crypto
             takes_self=True,
         ),
         init=False,

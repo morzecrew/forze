@@ -29,12 +29,11 @@ def maybe_wrap_interceptors(
     when both are empty the port is returned bare (zero cost in production). Applied
     **innermost** — inside the runtime-tracing and resilience wraps.
 
-    Contract: a *wrapped* port reads the ambient chain per call, so ambient interceptors bound
-    later still apply to it; but the wrap *decision* is made once per resolve (and ports are
-    cached per scope), so ambient interceptors must be bound **before** the ports they should
-    wrap are first resolved — a port resolved while no interceptor exists stays bare and won't
-    retroactively pick up a later ambient binding. ``run_simulation`` honors this (it binds the
-    cooperative interceptor before the scenario resolves any port).
+    A *wrapped* port reads the ambient chain per call, so ambient interceptors bound later
+    still apply to it. A port resolved and cached while no interceptor existed would stay bare
+    — so ``resolve_configurable`` bypasses the port cache whenever an ambient chain is bound
+    (the same as under resolution tracing), re-resolving and rewrapping each call against the
+    current chain. A binding established at any time is therefore picked up.
     """
 
     from ..interception import current_interceptors, wrap_intercepted

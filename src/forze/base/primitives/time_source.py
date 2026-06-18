@@ -53,15 +53,15 @@ class TimeSource(Protocol):
 class SystemTimeSource:
     """The real wall clock — the default source (identical to direct stdlib reads)."""
 
-    def now(self) -> datetime:
+    def now(self) -> datetime:  # noqa: PYL-R0201
         return datetime.now(UTC)
 
-    def uuid(self) -> UUID:
+    def uuid(self) -> UUID:  # noqa: PYL-R0201
         from .uuid import uuid7  # lazy: avoids the uuid <-> time_source import cycle
 
         return uuid7(timestamp_ns=time.time_ns())
 
-    def monotonic(self) -> float:
+    def monotonic(self) -> float:  # noqa: PYL-R0201
         return time.monotonic()
 
 
@@ -88,7 +88,7 @@ class FrozenTimeSource:
 
         return result
 
-    def monotonic(self) -> float:
+    def monotonic(self) -> float:  # noqa: PYL-R0201
         # Only the *wall* clock is frozen (deterministic timestamps/ids); relative
         # timing stays real, so deadlines/idle-timeouts still elapse under a frozen
         # source. Virtual, deterministic relative time is the simulation source's job.

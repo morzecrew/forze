@@ -35,9 +35,13 @@ from forze.application.execution.lifecycle import FrozenLifecyclePlan
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze.base.primitives import derive_seed
+from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
+from forze_dst.coverage import Behavior, CoverageStats, behavioral_coverage
 from forze_dst.derive import DEFAULT_CREATE_VERBS
 from forze_dst.derive import derive_scenario as _derive_from_catalog
+from forze_dst.faults import SimulatedCrash, compile_crash, compile_fault_policy
 from forze_dst.invariants import Invariant, check
+from forze_dst.latency import compile_latency
 from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.reactive import ReactiveMap
 from forze_dst.recorder import (
@@ -48,10 +52,6 @@ from forze_dst.recorder import (
     record_event,
 )
 from forze_dst.runtime import run_simulation
-from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
-from forze_dst.coverage import Behavior, CoverageStats, behavioral_coverage
-from forze_dst.faults import SimulatedCrash, compile_crash, compile_fault_policy
-from forze_dst.latency import compile_latency
 from forze_dst.scenario import Scenario
 from forze_dst.scheduler import SystematicScheduler, pct_scheduler_factory
 from forze_dst.time_source import DEFAULT_EPOCH
@@ -62,6 +62,8 @@ DepsFactory = Callable[[], "DepsModule | Sequence[DepsModule]"]
 InterceptorFactory = Callable[[int], "Sequence[PortInterceptor]"]
 Hook = Callable[[ExecutionContext], Awaitable[None]]
 
+# ....................... #
+
 
 def _outcome_signature(history: History) -> tuple[Any, ...]:
     """The observable effect order of a run — operations + recorded facts, ignoring trace.
@@ -71,9 +73,11 @@ def _outcome_signature(history: History) -> tuple[Any, ...]:
     """
 
     return tuple(
-        (event.kind, event.fields.get("op"), event.fields.get("outcome"))
-        if event.kind == "operation"
-        else (event.kind, tuple(sorted(event.fields.items(), key=lambda kv: kv[0])))
+        (
+            (event.kind, event.fields.get("op"), event.fields.get("outcome"))
+            if event.kind == "operation"
+            else (event.kind, tuple(sorted(event.fields.items(), key=lambda kv: kv[0])))
+        )
         for event in history.events
         if event.kind not in ("trace", "op_start")
     )
@@ -300,7 +304,9 @@ class Simulation:
                 # interleaving scheduler (PCT when selected) just like the scenario strategy.
                 sc = scenario if scenario is not None else self.derive_scenario()
                 factory = (
-                    pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
+                    pct_scheduler_factory(
+                        depth=config.pct_depth, steps=config.pct_steps
+                    )
                     if config.scheduler is SchedulerKind.PCT
                     else None
                 )
@@ -331,7 +337,9 @@ class Simulation:
 
             if config.strategy is Strategy.SCENARIO:
                 factory = (
-                    pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
+                    pct_scheduler_factory(
+                        depth=config.pct_depth, steps=config.pct_steps
+                    )
                     if config.scheduler is SchedulerKind.PCT
                     else None
                 )
@@ -536,7 +544,8 @@ class Simulation:
 
     def _latency_for(self, seed: int) -> LatencyModel | None:
         """The run's latency model: the config profile (compiled from the latency sub-seed) if
-        set, else the manual :attr:`latency` callable escape hatch. *seed* is the master."""
+        set, else the manual :attr:`latency` callable escape hatch. *seed* is the master.
+        """
 
         if self._active_config is not None and self._active_config.latency is not None:
             return compile_latency(
@@ -741,7 +750,9 @@ class Simulation:
 
             try:
                 await run_operation(self.operations, op, arg, ctx)
-            except Exception:  # nosec B110 # noqa: BLE001 — outcome captured by the engine trace; one call's failure must never abort the batch
+            except (
+                Exception
+            ):  # nosec B110 # noqa: BLE001 — outcome captured by the engine trace; one call's failure must never abort the batch
                 pass
 
     # ....................... #
@@ -983,7 +994,9 @@ class Simulation:
         """
 
         config = self._active_config
-        assert config is not None and config.crash is not None  # nosec B101 - run() guard
+        assert (
+            config is not None and config.crash is not None
+        )  # nosec B101 - run() guard
         crash_policy = config.crash
 
         recorder = Recorder(seed=seed)
@@ -997,11 +1010,11 @@ class Simulation:
             # --- Phase 1: workload under the seeded crash, on a bare (kill-able) context.
             crash = compile_crash(
                 crash_policy,
-                random.Random(derive_seed(seed, "crash")),  # nosec B311 - seeded sim crash
+                random.Random(
+                    derive_seed(seed, "crash")
+                ),  # nosec B311 - seeded sim crash
             )
-            registry = self._registry_from_modules(
-                modules, fault_seed, extra=(crash,)
-            )
+            registry = self._registry_from_modules(modules, fault_seed, extra=(crash,))
             ctx = ExecutionContext(deps=registry.resolve())
             rng = random.Random(derive_seed(seed, "input"))  # nosec B311
             state = scenario.state()
@@ -1258,7 +1271,9 @@ class Simulation:
                 act_plan=plan,
                 concurrency=concurrency,
                 seed=seed,
-                schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
+                schedule_seed=schedule_seed_of(
+                    seed
+                ),  # pyright: ignore[reportUnknownArgumentType]
                 epoch=epoch,
             )
             return history
@@ -1280,13 +1295,17 @@ class Simulation:
             act_plan=plan,
             concurrency=concurrency,
             seed=seed,
-            schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
+            schedule_seed=schedule_seed_of(
+                seed
+            ),  # pyright: ignore[reportUnknownArgumentType]
             epoch=epoch,
         )
 
         return ViolationReport(
             seed=seed,
-            schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
+            schedule_seed=schedule_seed_of(
+                seed
+            ),  # pyright: ignore[reportUnknownArgumentType]
             violations=tuple(check(history, self.invariants)),
             workload=tuple(generated),
             history=history,

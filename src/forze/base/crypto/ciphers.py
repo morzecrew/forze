@@ -68,8 +68,8 @@ class AesGcmAead:
 
     # ....................... #
 
+    @staticmethod
     def seal(
-        self,
         *,
         key: bytes,
         plaintext: bytes,
@@ -77,12 +77,13 @@ class AesGcmAead:
     ) -> tuple[bytes, bytes]:
         nonce = current_entropy_source().random_bytes(_NONCE_SIZE)
         ciphertext = AESGCM(key).encrypt(nonce, plaintext, aad)
+
         return nonce, ciphertext
 
     # ....................... #
 
+    @staticmethod
     def open(
-        self,
         *,
         key: bytes,
         nonce: bytes,
@@ -120,8 +121,8 @@ class ChaCha20Poly1305Aead:
 
     # ....................... #
 
+    @staticmethod
     def seal(
-        self,
         *,
         key: bytes,
         plaintext: bytes,
@@ -129,12 +130,13 @@ class ChaCha20Poly1305Aead:
     ) -> tuple[bytes, bytes]:
         nonce = current_entropy_source().random_bytes(_NONCE_SIZE)
         ciphertext = ChaCha20Poly1305(key).encrypt(nonce, plaintext, aad)
+
         return nonce, ciphertext
 
     # ....................... #
 
+    @staticmethod
     def open(
-        self,
         *,
         key: bytes,
         nonce: bytes,

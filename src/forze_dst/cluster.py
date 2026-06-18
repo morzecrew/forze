@@ -82,7 +82,10 @@ class _PartitionInterceptor:
     """
 
     node_id: int
+    """The node's id."""
+
     schedule: PartitionSchedule
+    """The partition schedule."""
 
     # ....................... #
 
@@ -90,7 +93,9 @@ class _PartitionInterceptor:
         if self.schedule.gates(call.surface) and self.schedule.isolated_at(
             self.node_id, monotonic()
         ):
-            await asyncio.sleep(0)  # yield so the unreachable failure interleaves at the boundary
+            await asyncio.sleep(
+                0
+            )  # yield so the unreachable failure interleaves at the boundary
             record_event(
                 "partition",
                 at=monotonic(),
@@ -99,6 +104,7 @@ class _PartitionInterceptor:
                 route=call.route,
                 op=call.op,
             )
+
             raise exc.infrastructure(
                 f"node {self.node_id} partitioned from {call.surface}",
                 code="dst.partition",
@@ -217,7 +223,9 @@ class Cluster:
                             "crash", node=node_id
                         )  # the node died; cluster proceeds
 
-                    except Exception as error:  # noqa: BLE001 — one node's failure must not abort the cluster
+                    except (
+                        Exception
+                    ) as error:  # noqa: BLE001 — one node's failure must not abort the cluster
                         # Record it so an invariant can catch a node that stopped on an
                         # unexpected error (e.g. a bug in a port call outside the op trace),
                         # rather than leaving the cluster history looking clean.
@@ -321,7 +329,8 @@ class Cluster:
 
     # ....................... #
 
-    def _latency(self, seed: int, config: SimulationConfig) -> LatencyModel | None:
+    @staticmethod
+    def _latency(seed: int, config: SimulationConfig) -> LatencyModel | None:
         """The run's compiled latency model (from the seed-derived latency RNG), if declared."""
 
         if config.latency is None:

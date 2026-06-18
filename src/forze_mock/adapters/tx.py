@@ -108,7 +108,7 @@ class MockTxManagerAdapter(TransactionManagerPort):
     "forgot to run it in the same transaction" bugs in tests.
     """
 
-    state: MockState | None = attrs.field(default=None)
+    state: "MockState | None" = attrs.field(default=None)
 
     # ....................... #
 
@@ -175,7 +175,7 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
     handler-mutated Python objects, captured lists, etc. — cannot be restored.
     """
 
-    state: MockState
+    state: "MockState"
 
     # ....................... #
 
@@ -266,7 +266,7 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
     "double effect" from an aborted transaction) yet preserves the interleavings DST explores.
     """
 
-    state: MockState
+    state: "MockState"
 
     # ....................... #
 
@@ -313,7 +313,10 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
         # mutated in place, so it is reverted by a coarse deep-snapshot rather than the
         # journal. Only the root sets these up; nested scopes (savepoints) share them —
         # savepoint-level partial rollback is not modelled.
-        mvcc_enabled = isolation in (IsolationLevel.SNAPSHOT, IsolationLevel.SERIALIZABLE)
+        mvcc_enabled = isolation in (
+            IsolationLevel.SNAPSHOT,
+            IsolationLevel.SERIALIZABLE,
+        )
 
         mvcc = (
             MvccTx.begin(

@@ -254,12 +254,9 @@ class DocumentCache[R: BaseModel]:
 
         cached = self._l1.get(self._l1_key(pk))
 
-        if cached is None:
-            return None
-
         # Hand out a copy so a caller mutating the result cannot poison the
         # cached instance (and vice versa).
-        return cast(R, cached).model_copy()
+        return None if cached is None else cast(R, cached).model_copy()
 
     # ....................... #
 
@@ -335,7 +332,8 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
-    def _xf_meta(self, delta: float, ttl: timedelta | None) -> JsonDict:
+    @staticmethod
+    def _xf_meta(delta: float, ttl: timedelta | None) -> JsonDict:
         meta: JsonDict = {"at": current_time_source().now().timestamp(), "d": delta}
 
         if ttl is not None:
@@ -912,8 +910,10 @@ class DocumentCache[R: BaseModel]:
             # Backend data is committed by construction: safe to warm L1.
             self._l1_put(casted.id, cast(R, casted))
 
-        by_pk: dict[UUID, Any] = dict(l1_docs)
-        by_pk.update({x.id: x for x in hits_validated_cast})
-        by_pk.update({x.id: x for x in miss_res_cast})
+        by_pk: dict[UUID, Any] = (
+            l1_docs
+            | {x.id: x for x in hits_validated_cast}
+            | {x.id: x for x in miss_res_cast}
+        )
 
         return [cast(R, by_pk[pk]) for pk in pks]
