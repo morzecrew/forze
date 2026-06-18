@@ -165,3 +165,34 @@ def test_latency_model_receives_call_dimensions() -> None:
 
     asyncio.run(run())
     assert seen == [("docs", "orders", "step")]
+
+
+def test_interceptor_can_rewrite_awaitable_call_args() -> None:
+    # An interceptor that rewrites the call must have the real port see the rewritten args
+    # (the terminal honors the continuation's PortCall, not the original closure args).
+    @attrs.define(slots=True, frozen=True)
+    class _Upper:
+        async def around(self, call: PortCall, nxt: PortNext) -> Any:
+            return await nxt(attrs.evolve(call, args=(call.args[0].upper(),)))
+
+    fake = _FakePort()
+    port = wrap_intercepted(fake, interceptors=(_Upper(),), surface="fake", route=None)
+
+    assert asyncio.run(port.step("hi")) == "HI"  # terminal used the rewritten arg
+    assert fake.order == ["HI"]  # the real port saw the rewritten value
+
+
+def test_interceptor_can_rewrite_async_gen_call_args() -> None:
+    @attrs.define(slots=True, frozen=True)
+    class _DropOne:
+        async def around(self, call: PortCall, nxt: PortNext) -> Any:
+            return await nxt(attrs.evolve(call, args=(call.args[0] - 1,)))
+
+    port = wrap_intercepted(
+        _FakePort(), interceptors=(_DropOne(),), surface="fake", route=None
+    )
+
+    async def run() -> list[int]:
+        return [i async for i in port.stream(3)]
+
+    assert asyncio.run(run()) == [0, 1]  # rewritten 3 -> 2

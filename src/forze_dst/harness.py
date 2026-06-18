@@ -132,7 +132,16 @@ def _project_operation_events(trace_events: Sequence[Any]) -> None:
     recorder's ``op_start`` anchors by global ordinal (for the call id). The projected event
     carries the trace's own sequence numbers as the span interval (``start_seq``/``end_seq`` —
     true execution order, which never collides, unlike a shared virtual-time stamp). A boundary
-    with no terminal (the process crashed mid-call) is projected ``incomplete``."""
+    with no terminal (the process crashed mid-call) is projected ``incomplete``.
+
+    Correlation guarantee: the **multiset** of ``(op, outcome)`` is exact, so the detection
+    invariants (:func:`no_unexpected_error`, :func:`operation_succeeds`) are sound — a failed
+    operation is never missed. Per-*call* attribution (which ``call_id`` an outcome / duration /
+    span belongs to) is best-effort: concurrent calls of the *same* op whose terminals complete
+    out of invoke order — or cascade (saga / event-handler) invokes that have no ``op_start`` —
+    can pair a terminal to the wrong invoke, mislabeling the report and the per-call verdict of
+    :func:`completes_within` / :func:`single_key_per_operation`. Exact per-call attribution would
+    need a per-invocation correlation id carried on the trace (a tracer enrichment, deferred)."""
 
     recorder = current_recorder()
 
@@ -331,6 +340,13 @@ class Simulation:
                     seeds=config.seeds,
                     perturb=config.perturb,
                     epoch=config.epoch,
+                    scheduler_factory=(
+                        pct_scheduler_factory(
+                            depth=config.pct_depth, steps=config.pct_steps
+                        )
+                        if config.scheduler is SchedulerKind.PCT
+                        else None
+                    ),
                 )
 
             sc = scenario if scenario is not None else self.derive_scenario()
@@ -614,6 +630,7 @@ class Simulation:
         seed: int,
         schedule_seed: int | None,
         epoch: datetime,
+        scheduler: object | None = None,
     ) -> History:
         recorder = Recorder(seed=seed)
 
@@ -642,6 +659,7 @@ class Simulation:
                 scenario,
                 seed=derive_seed(seed, "entropy"),
                 schedule_seed=schedule_seed,
+                scheduler=scheduler,
                 epoch=epoch,
                 latency=self._latency_for(seed),
             )
@@ -659,9 +677,17 @@ class Simulation:
         seed: int,
         perturb: bool,
         epoch: datetime,
+        scheduler_factory: Callable[[int], object] | None = None,
     ) -> ViolationReport | None:
         schedule_seed = derive_seed(seed, "schedule") if perturb else None
         workload = self._generate(cases, count, seed)
+
+        # Fresh per run (a PCT scheduler is stateful) so the initial run, every minimization
+        # predicate, and the final replay explore the same interleaving.
+        def make_scheduler() -> object | None:
+            if scheduler_factory is None:
+                return None
+            return scheduler_factory(derive_seed(seed, "schedule"))
 
         def run(items: Sequence[_Call]) -> History:
             return self._run(
@@ -670,6 +696,7 @@ class Simulation:
                 seed=seed,
                 schedule_seed=schedule_seed,
                 epoch=epoch,
+                scheduler=make_scheduler(),
             )
 
         if not check(run(workload), self.invariants):
@@ -700,6 +727,7 @@ class Simulation:
         seeds: Sequence[int],
         perturb: bool = True,
         epoch: datetime = DEFAULT_EPOCH,
+        scheduler_factory: Callable[[int], object] | None = None,
     ) -> ViolationReport | None:
         """Generate + run a seeded workload per seed; on a violation, minimize and report.
 
@@ -717,6 +745,7 @@ class Simulation:
                 seed=seed,
                 perturb=perturb,
                 epoch=epoch,
+                scheduler_factory=scheduler_factory,
             )
             if report is not None:
                 return report

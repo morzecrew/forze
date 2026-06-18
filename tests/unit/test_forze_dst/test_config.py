@@ -209,3 +209,31 @@ def test_run_fifo_is_deterministic_no_perturbation() -> None:
 def test_op_case_requires_cases() -> None:
     with pytest.raises(ValueError, match="OP_CASE"):
         _sim().run(SimulationConfig(strategy=Strategy.OP_CASE, seeds=range(1)))
+
+
+def test_op_case_honors_pct_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
+    # OP_CASE with scheduler=PCT must build a PCT scheduler, not silently fall back to the
+    # random schedule-seed shuffle.
+    from forze_dst import OperationCase, harness
+
+    calls: list[object] = []
+    real = harness.pct_scheduler_factory
+
+    def spy(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return real(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(harness, "pct_scheduler_factory", spy)
+
+    _sim().run(
+        SimulationConfig(
+            strategy=Strategy.OP_CASE,
+            scheduler=SchedulerKind.PCT,
+            seeds=range(2),
+            count=2,
+            concurrency=2,
+        ),
+        cases=[OperationCase(op="create_order")],
+    )
+
+    assert calls, "OP_CASE with scheduler=PCT built no PCT scheduler"

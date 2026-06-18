@@ -95,8 +95,9 @@ class InterceptingPortProxy:
                     kwargs=kwargs,
                 )
 
-                async def terminal(_c: PortCall) -> Any:
-                    return attr(*args, **kwargs)
+                async def terminal(c: PortCall) -> Any:
+                    # Honor the (possibly interceptor-rewritten) call, not the original args.
+                    return attr(*c.args, **c.kwargs)
 
                 gen = await run_chain(self._chain(), call, terminal)
 
@@ -117,8 +118,9 @@ class InterceptingPortProxy:
                     kwargs=kwargs,
                 )
 
-                async def terminal(_c: PortCall) -> Any:
-                    return await attr(*args, **kwargs)
+                async def terminal(c: PortCall) -> Any:
+                    # Honor the (possibly interceptor-rewritten) call, not the original args.
+                    return await attr(*c.args, **c.kwargs)
 
                 return await run_chain(self._chain(), call, terminal)
 
