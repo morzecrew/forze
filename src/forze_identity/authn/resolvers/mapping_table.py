@@ -1,5 +1,4 @@
 from typing import Any, final
-from uuid import uuid4
 
 import attrs
 
@@ -10,6 +9,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.primitives import uuid4
 from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..domain.models.identity_mapping import (

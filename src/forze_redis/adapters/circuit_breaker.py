@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from typing import Any, cast, final
 
@@ -16,6 +15,7 @@ from forze.application.execution.resilience import (
     Transition,
 )
 from forze.application.execution.tracing import record as trace_record
+from forze.base.primitives import monotonic
 
 from ..kernel.client import RedisClientPort
 from ..kernel.scripts import CIRCUIT_BREAKER_ADMIT, CIRCUIT_BREAKER_RECORD
@@ -50,7 +50,7 @@ class RedisCircuitBreakerStore(CircuitBreakerStore):
     namespace: str = _DEFAULT_NAMESPACE
     local_cache_ttl: float = 0.25
     fallback: CircuitBreakerStore = attrs.field(factory=InMemoryCircuitBreakerStore)
-    clock: Callable[[], float] = time.monotonic
+    clock: Callable[[], float] = monotonic
 
     _cache: dict[BreakerKey, tuple[str, float]] = attrs.field(factory=dict, init=False)
 

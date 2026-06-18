@@ -7,6 +7,7 @@ import attrs
 from forze.domain.models import DomainEvent
 
 from ..context import ExecutionContext
+from ..tracing.emit import record
 from .handler import DomainEventRegistry
 
 # ----------------------- #
@@ -32,6 +33,12 @@ class InProcessDomainEventDispatcher:
         """Dispatch *events* to their registered handlers within the current scope."""
 
         for event in events:
+            record(
+                domain="domain",
+                op="dispatch",
+                surface=type(event).__name__,
+                deps=self.ctx.deps,
+            )
             for factory in self.registry.factories_for(event):
                 handler = factory(self.ctx)
                 await handler(event)

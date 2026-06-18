@@ -183,6 +183,19 @@ class MockState:
     """Authn events recorded by :class:`~forze_mock.adapters.events.RecordingAuthnEventSink`
     (test observability; appended in emission order)."""
 
+    mvcc_version: int = attrs.field(default=0)
+    """Monotonic commit counter for MVCC (snapshot/serializable) transactions."""
+
+    mvcc_commit_log: list[tuple[int, dict[str, frozenset[Any]]]] = attrs.field(
+        factory=list
+    )
+    """Committed write-sets ``(version, {namespace: frozenset[key]})`` for MVCC conflict
+    detection. Pruned below the oldest in-flight transaction's begin-version (an entry only
+    matters to a transaction that began before it), so it stays bounded across a run."""
+
+    mvcc_active: list[int] = attrs.field(factory=list)
+    """Begin-versions of in-flight MVCC transactions (one entry each), for log pruning."""
+
     __lock: threading.RLock = attrs.field(
         factory=threading.RLock, init=False, repr=False
     )
@@ -216,13 +229,43 @@ class MockState:
         with self.__lock:
             if self.__tx_serializer is None:
                 self.__tx_serializer = asyncio.Lock()
+
             return self.__tx_serializer
+
+    # ....................... #
+
+    def snapshot_identity(self) -> dict[str, Any]:
+        """Deep-copy the transaction-participating identity substores (for journal rollback).
+
+        Identity records are mutated **in place** (e.g. ``session["revoked_at"] = now``), so
+        per-key journaling can't revert them — a deep snapshot is the only faithful undo.
+        Restored coarsely (whole-substore) on rollback: unlike the document / outbox / inbox
+        per-entry undo, a concurrent transaction's identity write committed in the window is
+        also reverted. Acceptable because identity is rarely mutated by concurrent
+        transactions; use the strict manager when that matters.
+        """
+
+        with self.__lock:
+            return {
+                key: copy.deepcopy(self.identity.get(key, {}))
+                for key in self.TX_IDENTITY_SUBSTORES
+            }
+
+    # ....................... #
+
+    def restore_identity(self, snapshot: dict[str, Any]) -> None:
+        """Restore the identity substores from :meth:`snapshot_identity`, in place."""
+
+        with self.__lock:
+            for key in self.TX_IDENTITY_SUBSTORES:
+                self.identity[key] = copy.deepcopy(snapshot.get(key, {}))
 
     # ....................... #
 
     def next_id(self, prefix: str = "mock") -> str:
         with self.__lock:
             self.__seq += 1
+
             return f"{prefix}-{self.__seq}"
 
     # ....................... #

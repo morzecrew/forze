@@ -115,10 +115,7 @@ def combine_fingerprint(base: str, *secret_tags: str) -> str:
 
     tags = [tag for tag in secret_tags if tag]
 
-    if not tags:
-        return base
-
-    return "\x1f".join((base, *tags))
+    return "\x1f".join((base, *tags)) if tags else base
 
 
 # ....................... #

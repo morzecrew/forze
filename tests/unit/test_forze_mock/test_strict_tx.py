@@ -137,8 +137,8 @@ class TestRootRollback:
         assert store[keep.id]["name"] == "keep"
         assert gone.id in store
 
-    async def test_default_noop_mode_keeps_writes_on_rollback(self) -> None:
-        # Compat pin: without strict_tx, the documented no-op semantics stay.
+    async def test_default_journal_mode_rolls_back_writes(self) -> None:
+        # The default is now faithful atomicity: a failed transaction leaves no writes.
         state = MockState()
         ctx = context_from_modules(MockDepsModule(state=state))
 
@@ -147,7 +147,19 @@ class TestRootRollback:
                 await ctx.document.command(SPEC).create(ThingCreate(name="a"))
                 raise _Boom()
 
-        assert len(_docs(state)) == 1
+        assert len(_docs(state)) == 0  # rolled back
+
+    async def test_none_mode_keeps_writes_on_rollback(self) -> None:
+        # Opt-out: the legacy no-op manager still leaves partial writes on rollback.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state, transactions="none"))
+
+        with pytest.raises(_Boom):
+            async with ctx.tx_ctx.scope("mock"):
+                await ctx.document.command(SPEC).create(ThingCreate(name="a"))
+                raise _Boom()
+
+        assert len(_docs(state)) == 1  # no-op manager: write persists
 
 
 class TestOutboxAtomicity:

@@ -17,6 +17,8 @@ from .adapters import (
     MockDurableWorkflowScheduleCommandAdapter,
     MockDurableWorkflowScheduleQueryAdapter,
     MockFederatedSearchAdapter,
+    MockHttpRegistry,
+    MockHttpServiceAdapter,
     MockHubSearchAdapter,
     MockIdempotencyAdapter,
     MockKeyManagement,
@@ -38,7 +40,7 @@ from .adapters.identity import (
     MockTenantManagementPort,
     MockTenantResolverPort,
 )
-from .embeddings import MockHashEmbeddingsProvider
+from .adapters.embeddings import MockHashEmbeddingsProvider
 from .execution import (
     MockDepsModule,
     MockRouteConfig,
@@ -84,6 +86,8 @@ __all__ = [
     "MockStreamAdapter",
     "MockStreamGroupAdapter",
     "MockDistributedLockAdapter",
+    "MockHttpServiceAdapter",
+    "MockHttpRegistry",
     "MockDurableWorkflowCommandAdapter",
     "MockDurableWorkflowQueryAdapter",
     "MockDurableWorkflowScheduleCommandAdapter",

@@ -29,7 +29,7 @@ from forze_kits.integrations.outbox import (
     OutboxRelay,
 )
 from forze_mock import MockDepsModule, MockStateDepKey
-from forze_mock.outbox_adapter import MockOutboxRow
+from forze_mock.adapters.outbox import MockOutboxRow
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #

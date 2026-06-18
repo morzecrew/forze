@@ -9,7 +9,9 @@ from examples.quickstart.app import app
 
 def test_quickstart_crud() -> None:
     with TestClient(app) as client:
-        created = client.post("/users", json={"name": "Ada", "email": "ada@example.com"})
+        created = client.post(
+            "/users", json={"name": "Ada", "email": "ada@example.com"}
+        )
         assert created.status_code == 200
         user = created.json()
         assert user["name"] == "Ada"

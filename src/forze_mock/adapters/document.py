@@ -53,6 +53,8 @@ from forze.application.integrations.document._limits import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
+from forze_mock.adapters._journal import JournalingStore
+from forze_mock.adapters._mvcc import current_mvcc_tx
 from forze_mock.query._types import (
     C,
     D,
@@ -103,7 +105,21 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     def _store(self) -> dict[UUID, JsonDict]:
         ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
         with self.state.lock:
-            return self.state.documents.setdefault(ns, {})
+            store = self.state.documents.get(ns)
+            if not isinstance(store, JournalingStore):
+                # Make the namespace store journaling so writes are atomic under a
+                # transaction (coercing a plain dict left by setup/snapshot, in place).
+                store = JournalingStore(store or {})
+                self.state.documents[ns] = store
+
+            # Under a snapshot/serializable transaction, reads and writes route through the
+            # MVCC overlay (buffered writes + as-of-begin snapshot reads) instead of the live
+            # store; read-committed (the default) uses the write-through store directly.
+            mvcc = current_mvcc_tx()
+            if mvcc is not None:
+                return cast("dict[UUID, JsonDict]", mvcc.view(ns, store))
+
+            return store
 
     def _doc_visible(self, doc: JsonDict) -> bool:
         if not self.tenant_aware:

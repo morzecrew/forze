@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import secrets
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any, AsyncGenerator, Callable, Final
@@ -13,6 +12,7 @@ from forze.application.contracts.dlock import (
     DistributedLockCommandPort,
 )
 from forze.base.exceptions import CoreException, exc
+from forze.base.primitives import current_entropy_source
 
 # ----------------------- #
 
@@ -120,7 +120,7 @@ class DistributedLockScope:
                 if remaining <= 0:
                     return None
 
-                # Base delay plus optional jitter, all in seconds. ``randbelow`` counts
+                # Base delay plus optional jitter, all in seconds. ``randrange`` counts
                 # integer steps; previously ms-sized steps were added to ``retry_interval``
                 # in seconds, inflating sleeps by ~1000x.
                 retry_s = self.retry_interval.total_seconds()
@@ -130,7 +130,8 @@ class DistributedLockScope:
                     jitter_max_ns = int(jitter_s * 1_000_000_000)
 
                     extra_s = (
-                        secrets.randbelow(jitter_max_ns + 1) / 1_000_000_000
+                        current_entropy_source().as_random().randrange(jitter_max_ns + 1)
+                        / 1_000_000_000
                         if jitter_max_ns > 0
                         else 0.0
                     )

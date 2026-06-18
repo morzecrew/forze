@@ -12,8 +12,10 @@ from forze.application.contracts.deps import DepKey
 from forze.application.execution.tracing import RuntimeTrace
 from forze.base.primitives import StrKey
 
+from ..interception import PortInterceptorChain
 from .port_instrumentation import (
     maybe_wrap_configurable,
+    maybe_wrap_interceptors,
     maybe_wrap_port_policy,
     record_simple_resolve,
 )
@@ -44,6 +46,9 @@ class FrozenDepsRegistry:
     runtime_tracer: RuntimeTracer = attrs.field(default=NOOP_RUNTIME_TRACER)
     """Runtime tracer applied when resolving."""
 
+    interceptors: PortInterceptorChain = attrs.field(factory=tuple)
+    """Deps-scoped port interceptors applied to every resolved configurable port."""
+
     # ....................... #
 
     def resolve(self) -> FrozenDeps:
@@ -53,6 +58,7 @@ class FrozenDepsRegistry:
             store=self.store,
             resolution_tracer=self.resolution_tracer,
             runtime_tracer=self.runtime_tracer,
+            interceptors=self.interceptors,
         )
 
 
@@ -72,6 +78,9 @@ class FrozenDeps:
 
     runtime_tracer: RuntimeTracer = attrs.field(default=NOOP_RUNTIME_TRACER)
     """Optional recorder for runtime port and transaction events."""
+
+    interceptors: PortInterceptorChain = attrs.field(factory=tuple)
+    """Deps-scoped port interceptors applied to every resolved configurable port."""
 
     _resolution: ResolutionContext = attrs.field(
         default=attrs.Factory(
@@ -122,6 +131,9 @@ class FrozenDeps:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        key: str | None = None,
+        outcome: str | None = None,
+        error: str | None = None,
     ) -> None:
         """Append a runtime tracing event when :attr:`runtime_tracer` is enabled."""
 
@@ -133,6 +145,9 @@ class FrozenDeps:
             phase=phase,
             tx_depth=tx_depth,
             tx_route=tx_route,
+            key=key,
+            outcome=outcome,
+            error=error,
         )
 
     # ....................... #
@@ -200,8 +215,17 @@ class FrozenDeps:
         is what gets cached.
         """
 
+        from ..interception import current_interceptors
+
         cache_key = (key, route)
-        use_cache = not self.resolution_tracer.enabled
+        # Bypass the port cache while a run-scoped (ambient) interceptor chain is bound — the
+        # same way resolution tracing bypasses it. A port cached *before* the binding (e.g.
+        # DST's cooperative / fault / partition chain) would otherwise be reused bare and skip
+        # the chain; re-resolving rewraps each call against the current chain. Production binds
+        # no ambient interceptors, so the cache stays fully on (zero cost). Deps-scoped
+        # interceptors are fixed at resolve time and stay cached — their proxy reads the ambient
+        # chain per call, so only an ambient binding can go stale.
+        use_cache = not self.resolution_tracer.enabled and not current_interceptors()
 
         if use_cache:
             cached = ctx.cached_port(cache_key, spec)
@@ -215,7 +239,11 @@ class FrozenDeps:
         try:
             factory = self.store.get_provider(key, route=route)
             result = factory(ctx, spec)
-            port = maybe_wrap_configurable(self, ctx, key, spec, route, result)
+            # Innermost (closest to the real port): interceptor chain, then runtime tracing,
+            # then the resilience port policy outermost (so a fault interceptor's transient
+            # error is retryable by the policy).
+            port = maybe_wrap_interceptors(self, ctx, key, spec, route, result)
+            port = maybe_wrap_configurable(self, ctx, key, spec, route, port)
             port = maybe_wrap_port_policy(self, ctx, key, route, port)
 
         finally:

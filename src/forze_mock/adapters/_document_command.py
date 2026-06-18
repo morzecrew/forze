@@ -168,9 +168,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         await self._dispatch_domain_events([domain])
 
-        if not return_new:
-            return None
-        return self._to_read(serialized)
+        return self._to_read(serialized) if return_new else None
 
     # ....................... #
 
@@ -455,25 +453,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             serialized = self._domain_codec().encode_persistence_mapping(updated)
             self._store()[pk] = serialized
 
-            if diff:
-                write_diff: JsonDict = {**dict(diff), REV_FIELD: updated.rev}
-            else:
-                write_diff = {}
+            write_diff = {**dict(diff), REV_FIELD: updated.rev} if diff else {}
 
         await self._dispatch_domain_events([updated])
 
         if not return_new:
-            if return_diff:
-                return write_diff
-
-            return None
+            return write_diff if return_diff else None
 
         read_result = self._to_read(serialized)
 
-        if return_diff:
-            return read_result, write_diff
-
-        return read_result
+        return (read_result, write_diff) if return_diff else read_result
 
     # ....................... #
 
@@ -521,10 +510,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         return_diff: bool = False,
     ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
         if not updates:
-            if not return_new:
-                return None
-
-            return []
+            return [] if return_new else None
 
         pks = [u[0] for u in updates]
         if len(set(pks)) != len(pks):
@@ -606,6 +592,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         with self.state.lock:
             store = self._store()
+
             for pk, raw in list(store.items()):
                 if not _match_filters(raw, filters):
                     continue
@@ -627,10 +614,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         await self._dispatch_domain_events(mutated)
 
-        if return_new:
-            return results
-
-        return n
+        return results if return_new else n
 
     # ....................... #
 
@@ -666,6 +650,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             raise exc.internal("Update command type is not supported for this model")
 
         eff = 200 if chunk_size is None else chunk_size
+
         if eff < 1:
             raise exc.internal("chunk_size must be positive")
 
@@ -684,13 +669,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     ]
                 }
             )
+
             page = await self.project_many(
                 [ID_FIELD, REV_FIELD],
                 filters=chunk_filter,
                 pagination={"limit": eff},
                 sorts={ID_FIELD: "asc"},
             )
+
             rows = page.hits
+
             if not rows:
                 break
 
@@ -700,6 +688,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 out.extend(
                     await self.update_many(updates, return_new=True),
                 )
+
             else:
                 await self.update_many(updates, return_new=False)
 
@@ -709,10 +698,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             if len(rows) < eff:
                 break
 
-        if return_new:
-            return out
-
-        return n_total
+        return out if return_new else n_total
 
     # ....................... #
 
@@ -733,9 +719,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             serialized = self._domain_codec().encode_persistence_mapping(updated)
             self._store()[pk] = serialized
 
-        if not return_new:
-            return None
-        return self._to_read(serialized)
+        return self._to_read(serialized) if return_new else None
 
     # ....................... #
 
@@ -762,16 +746,17 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         return_new: bool = True,
     ) -> Sequence[R] | None:
         if not pks:
-            if not return_new:
-                return None
+            return [] if return_new else None
 
-            return []
         if len(set(pks)) != len(pks):
             raise exc.internal("Primary keys must be unique")
+
         if return_new:
             return [await self.touch(pk, return_new=True) for pk in pks]
+
         for pk in pks:
             await self.touch(pk, return_new=False)
+
         return None
 
     # ....................... #
@@ -788,6 +773,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     async def kill_many(self, pks: Sequence[UUID]) -> None:
         if len(set(pks)) != len(pks):
             raise exc.internal("Primary keys must be unique")
+
         for pk in pks:
             await self.kill(pk)
 
@@ -796,6 +782,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     def _supports_soft_delete(self) -> bool:
         if self.domain_model is None:
             return False
+
         return "is_deleted" in getattr(self.domain_model, "model_fields", {})
 
     # ....................... #
@@ -828,9 +815,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             current_raw = dict(self._ensure_exists(pk))
             current = self._to_domain(current_raw)
             self._check_rev(current.rev, rev)
+
             if cast(Any, current).is_deleted:
                 serialized = self._domain_codec().encode_persistence_mapping(current)
                 self._store()[pk] = serialized
+
             else:
                 updated = current.model_copy(
                     update={
@@ -843,9 +832,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._domain_codec().encode_persistence_mapping(updated)
                 self._store()[pk] = serialized
 
-        if not return_new:
-            return None
-        return self._to_read(serialized)
+        return self._to_read(serialized) if return_new else None
 
     # ....................... #
 
@@ -873,15 +860,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> Sequence[R] | None:
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
-        if not deletes:
-            if not return_new:
-                return None
 
-            return []
+        if not deletes:
+            return [] if return_new else None
+
         if return_new:
             return [await self.delete(pk, r, return_new=True) for pk, r in deletes]
+
         for pk, r in deletes:
             await self.delete(pk, r, return_new=False)
+
         return None
 
     # ....................... #
@@ -909,13 +897,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
+
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
             current = self._to_domain(current_raw)
             self._check_rev(current.rev, rev)
+
             if not cast(Any, current).is_deleted:
                 serialized = self._domain_codec().encode_persistence_mapping(current)
                 self._store()[pk] = serialized
+
             else:
                 updated = current.model_copy(
                     update={
@@ -928,9 +919,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._domain_codec().encode_persistence_mapping(updated)
                 self._store()[pk] = serialized
 
-        if not return_new:
-            return None
-        return self._to_read(serialized)
+        return self._to_read(serialized) if return_new else None
 
     # ....................... #
 
@@ -958,13 +947,14 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> Sequence[R] | None:
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
-        if not restores:
-            if not return_new:
-                return None
 
-            return []
+        if not restores:
+            return [] if return_new else None
+
         if return_new:
             return [await self.restore(pk, r, return_new=True) for pk, r in restores]
+
         for pk, r in restores:
             await self.restore(pk, r, return_new=False)
+
         return None

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import random
 from contextlib import suppress
 from datetime import timedelta
 from typing import Any, final
@@ -19,7 +18,7 @@ from forze.application.contracts.stream import StreamSpec
 from forze.application.execution.context import ExecutionContext
 from forze.application.contracts.outbox import OutboxRelayResult
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, current_entropy_source
 
 from ._relay_core import validate_retry_options
 from .relay import OutboxRelay
@@ -155,7 +154,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 await asyncio.sleep(
                     self.interval.total_seconds()
                     # Desynchronization jitter, not security randomness.
-                    * (1.0 + random.uniform(-self.jitter, self.jitter))  # nosec B311
+                    * (
+                        1.0
+                        + current_entropy_source().as_random().uniform(
+                            -self.jitter, self.jitter
+                        )
+                    )
                 )
 
         if self.task is not None and not self.task.done():

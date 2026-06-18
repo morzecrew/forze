@@ -1,0 +1,35 @@
+"""Port interception seam — a public, composable middleware chain around port calls.
+
+Production registers no interceptors (the resolved port is returned bare — zero cost).
+Simulation registers them — deps-scoped via
+:meth:`~forze.application.execution.deps.registry.DepsRegistry.with_interceptors` or
+run-scoped via :func:`bind_interceptors` — for cooperative yielding, I/O latency, and
+(via the DST layer) fault injection, all at the seam rather than in application handlers.
+"""
+
+from .builtin import CooperativeInterceptor, LatencyModel
+from .protocol import (
+    PortCall,
+    PortInterceptor,
+    PortInterceptorChain,
+    PortNext,
+    bind_interceptors,
+    current_interceptors,
+)
+from .proxy import InterceptingPortProxy, run_chain, wrap_intercepted
+
+# ----------------------- #
+
+__all__ = [
+    "CooperativeInterceptor",
+    "InterceptingPortProxy",
+    "LatencyModel",
+    "PortCall",
+    "PortInterceptor",
+    "PortInterceptorChain",
+    "PortNext",
+    "bind_interceptors",
+    "current_interceptors",
+    "run_chain",
+    "wrap_intercepted",
+]

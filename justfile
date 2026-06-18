@@ -58,7 +58,7 @@ _uv_cmd name strict *command:
 test *args='':
     {{ _uv_sync }}
 
-    uv run pytest -m "not perf" {{ args }}
+    uv run pytest -m "not perf and not fuzz" {{ args }}
 
 # Save a local perf baseline for the gated (in-process) benchmark subset
 perf-save:
@@ -100,6 +100,13 @@ perf *args='tests/perf':
         {{ args }}
 
 
+# Run the extended DST fuzz (many seeds; intended for a nightly CI job)
+fuzz *args='tests/unit/test_forze_dst':
+    {{ _uv_sync }}
+
+    uv run pytest -m fuzz {{ args }}
+
+
 # Run all quality checks
 [arg("strict", long, short="s", value="true", help="Enable strict mode (fail on error in any check)")]
 quality strict="false":
@@ -108,6 +115,7 @@ quality strict="false":
     just _uv_cmd "Linting" {{ strict }} ruff check "src"
     just _uv_cmd "Types" {{ strict }} mypy "src"
     just _uv_cmd "Imports" {{ strict }} lint-imports
+    just _uv_cmd "Determinism" {{ strict }} pytest "tests/unit/test_determinism_guard.py" -q
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .
     just _uv_cmd "Security" {{ strict }} bandit -c pyproject.toml -r "src"

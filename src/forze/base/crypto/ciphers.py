@@ -10,7 +10,6 @@ substitute a FIPS module or HSM-backed cipher — but unless there is a specific
 reason, :class:`AesGcmAead` is the right default.
 """
 
-import os
 from typing import final
 
 import attrs
@@ -18,6 +17,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 
 from ..exceptions import exc
+from ..primitives.entropy_source import current_entropy_source
 
 # ----------------------- #
 
@@ -68,21 +68,22 @@ class AesGcmAead:
 
     # ....................... #
 
+    @staticmethod
     def seal(
-        self,
         *,
         key: bytes,
         plaintext: bytes,
         aad: bytes = b"",
     ) -> tuple[bytes, bytes]:
-        nonce = os.urandom(_NONCE_SIZE)
+        nonce = current_entropy_source().random_bytes(_NONCE_SIZE)
         ciphertext = AESGCM(key).encrypt(nonce, plaintext, aad)
+
         return nonce, ciphertext
 
     # ....................... #
 
+    @staticmethod
     def open(
-        self,
         *,
         key: bytes,
         nonce: bytes,
@@ -120,21 +121,22 @@ class ChaCha20Poly1305Aead:
 
     # ....................... #
 
+    @staticmethod
     def seal(
-        self,
         *,
         key: bytes,
         plaintext: bytes,
         aad: bytes = b"",
     ) -> tuple[bytes, bytes]:
-        nonce = os.urandom(_NONCE_SIZE)
+        nonce = current_entropy_source().random_bytes(_NONCE_SIZE)
         ciphertext = ChaCha20Poly1305(key).encrypt(nonce, plaintext, aad)
+
         return nonce, ciphertext
 
     # ....................... #
 
+    @staticmethod
     def open(
-        self,
         *,
         key: bytes,
         nonce: bytes,

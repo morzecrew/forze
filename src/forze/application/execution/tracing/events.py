@@ -17,6 +17,10 @@ class TracingEvent:
     seq: int
     """Monotonic sequence number within the trace."""
 
+    at: float = 0.0
+    """Monotonic clock reading (via the time seam) when recorded — virtual time under
+    simulation, real ``monotonic`` in production. ``0.0`` when unstamped."""
+
     domain: str
     """Contract family (for example ``tx``, ``document``, ``search``)."""
 
@@ -37,6 +41,21 @@ class TracingEvent:
 
     tx_route: str | None = None
     """Transaction route name when inside or entering a scope."""
+
+    key: str | None = None
+    """Entity / correlation key the call targets (e.g. a document primary key), when one is
+    cheaply available. Recorded id-only (UUID / int) — never free-form values — so the trace
+    stays free of PII without a redaction pass."""
+
+    outcome: str | None = None
+    """Terminal outcome of an operation event; ``None`` for non-terminal or non-operation
+    events. For an operation boundary: ``ok`` (completed), ``failed`` (raised a declared
+    domain failure — a :class:`~forze.base.exceptions.CoreException`, an expected outcome), or
+    ``error`` (raised an unhandled exception — a bug). The ``failed`` / ``error`` split makes
+    the trace the single source of truth for the domain-failure-vs-bug distinction."""
+
+    error: str | None = None
+    """Exception type name when ``outcome`` is ``failed`` or ``error``."""
 
 
 # ....................... #

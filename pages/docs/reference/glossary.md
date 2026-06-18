@@ -90,6 +90,9 @@ summary: Quick reference for Forze terminology
 **Transaction route**
 :   A transactional boundary that groups operations. Configured per-request or per-saga step.
 
+**Isolation level**
+:   The transaction isolation an operation requires — `READ_COMMITTED < SNAPSHOT < SERIALIZABLE`. Declared with `set_isolation(...)` and enforced fail-closed against the route's transaction manager.
+
 ---
 
 ## Identity and tenancy

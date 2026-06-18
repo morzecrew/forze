@@ -190,3 +190,11 @@ class TestUuid4:
         r1 = uuid4(None)
         r2 = uuid4(None)
         assert r1 != r2
+
+    def test_falsy_but_provided_values_are_deterministic(self) -> None:
+        # 0 / "" / False are valid inputs, not "missing" — derive deterministically from them.
+        for val in (0, "", False, []):
+            assert uuid4(val) == uuid4(val)
+        # And distinct falsy values derive distinct ids (not collapsed to random / each other).
+        assert uuid4(0) != uuid4(1)
+        assert uuid4(0) != uuid4("")

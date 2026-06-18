@@ -24,8 +24,6 @@ admission machinery (counter, wait queue, CoDel). It reads no clock and no
 context, so it is fully deterministic under test.
 """
 
-from __future__ import annotations
-
 import attrs
 
 from forze.base.exceptions import exc
@@ -43,27 +41,27 @@ class Gradient2Limiter:
     learned.
     """
 
-    initial_limit: int = attrs.field()
+    initial_limit: int
     """Starting (and typical resting) concurrency limit."""
 
-    max_limit: int = attrs.field()
+    max_limit: int
     """Ceiling the limit never exceeds."""
 
-    min_limit: int = attrs.field(default=1)
+    min_limit: int = 1
     """Floor the limit never drops below."""
 
-    rtt_tolerance: float = attrs.field(default=1.5)
+    rtt_tolerance: float = 1.5
     """Latency-rise headroom before contracting: ``1.5`` tolerates a 50% rise
     over baseline before the gradient drops below ``1.0``."""
 
-    smoothing: float = attrs.field(default=0.2)
+    smoothing: float = 0.2
     """EWMA factor applied to limit *increases* (gentle ramp up)."""
 
-    long_window: int = attrs.field(default=600)
+    long_window: int = 600
     """Samples over which the no-load baseline RTT is averaged (the larger the
     window, the more the long average reflects uncongested latency)."""
 
-    queue_size: float = attrs.field(default=4.0)
+    queue_size: float = 4.0
     """Standing headroom added each step: the limit probes up by this much (then
     smoothed) while latency is healthy."""
 

@@ -3,6 +3,7 @@
 import inspect
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, cast
+from uuid import UUID
 
 import attrs
 
@@ -35,7 +36,20 @@ class TracingPortProxy:
 
     # ....................... #
 
-    def _record_call(self, name: str) -> None:
+    @staticmethod
+    def _key_of(args: tuple[Any, ...]) -> str | None:
+        """The targeted entity key, when the first positional arg is an id.
+
+        Captured id-only (``UUID`` / ``int`` — e.g. a document primary key) so the trace
+        carries a per-entity key for assertions without recording free-form (possibly PII)
+        values. ``None`` when the call is not keyed by a leading id (creates, queries)."""
+
+        if args and isinstance(args[0], (UUID, int)):
+            return str(args[0])
+
+        return None
+
+    def _record_call(self, name: str, args: tuple[Any, ...] = ()) -> None:
         record(
             domain=self.domain,
             op=name,
@@ -43,6 +57,7 @@ class TracingPortProxy:
             route=self.route,
             phase=self.phase,
             tx_depth=self.tx_depth_getter(),
+            key=self._key_of(args),
             deps=self.deps,
         )
 
@@ -54,18 +69,28 @@ class TracingPortProxy:
         if not callable(attr):
             return attr
 
+        if inspect.isasyncgenfunction(attr):
+
+            @wraps(attr)
+            async def traced_async_gen(*args: Any, **kwargs: Any) -> Any:
+                self._record_call(name, args)
+                async for item in attr(*args, **kwargs):
+                    yield item
+
+            return traced_async_gen
+
         if inspect.iscoroutinefunction(attr):
 
             @wraps(attr)
             async def traced_async(*args: Any, **kwargs: Any) -> Any:
-                self._record_call(name)
+                self._record_call(name, args)
                 return await attr(*args, **kwargs)
 
             return traced_async
 
         @wraps(attr)
         def traced_sync(*args: Any, **kwargs: Any) -> Any:
-            self._record_call(name)
+            self._record_call(name, args)
             return attr(*args, **kwargs)
 
         return traced_sync

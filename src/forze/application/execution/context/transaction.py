@@ -1,11 +1,13 @@
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import AsyncGenerator, Awaitable, Callable
+from typing import AsyncContextManager, AsyncGenerator, Awaitable, Callable, cast
 
 import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.transaction import (
+    IsolationAware,
+    IsolationLevel,
     TransactionHandle,
     TransactionManagerPort,
 )
@@ -119,14 +121,48 @@ class TransactionContext:
 
     # ....................... #
 
+    @staticmethod
+    def _open_root(
+        tx: TransactionManagerPort,
+        *,
+        read_only: bool,
+        isolation: IsolationLevel | None,
+    ) -> AsyncContextManager[None]:
+        """Open the root transaction, forwarding ``isolation`` only to IsolationAware managers.
+
+        The fail-closed check in :meth:`scope` guarantees an ``IsolationAware`` manager
+        whenever ``isolation`` is set, so non-isolation managers keep their original
+        single-argument call (no signature break).
+        """
+
+        if isolation is None:
+            return tx.transaction(read_only=read_only)
+
+        return cast(IsolationAware, tx).transaction(
+            read_only=read_only, isolation=isolation
+        )
+
+    # ....................... #
+
     @asynccontextmanager
     async def scope(
-        self, route: StrKey, *, read_only: bool | None = None
+        self,
+        route: StrKey,
+        *,
+        read_only: bool | None = None,
+        isolation: IsolationLevel | None = None,
     ) -> AsyncGenerator[None]:
         """Enter a transaction scope.
 
         ``read_only`` opens a read-only transaction where the backend supports it (a
         ``QUERY`` operation passes this), so the database rejects writes.
+
+        ``isolation`` requests an explicit :class:`IsolationLevel` (honored at root only,
+        like ``read_only``). It is checked fail-closed at first resolve: the resolved manager
+        must be :class:`IsolationAware` and report the level in its
+        :class:`TxCapabilities`, else ``exc.configuration`` — a manager that cannot guarantee
+        the requested isolation never silently runs weaker. ``None`` leaves the manager's
+        default.
 
         Transaction options are honored only at the **root** scope: nested scopes are
         savepoints that inherit the root's options, so ``read_only`` is never forwarded
@@ -166,6 +202,15 @@ class TransactionContext:
                     code="tx_nested_read_only_conflict",
                 )
 
+            if isolation is not None and isolation != cur_scope.isolation:
+                raise exc.precondition(
+                    f"Nested tx scope requested isolation={isolation.name} but the root "
+                    f"scope is isolation="
+                    f"{cur_scope.isolation.name if cur_scope.isolation else None}; "
+                    "transaction options are honored only at root",
+                    code="tx_nested_isolation_conflict",
+                )
+
             token_d = self.__tx_depth.set(depth + 1)
 
             try:
@@ -178,26 +223,48 @@ class TransactionContext:
             return
 
         root_read_only = bool(read_only)
+        route_name = str(getattr(route, "value", route))
+
+        # Fail-closed isolation check (root only): only managers that report capabilities can
+        # honor an explicit level; a non-reporting manager cannot guarantee any, so reject.
+        if isolation is not None:
+            if not isinstance(tx, IsolationAware):
+                raise exc.configuration(
+                    f"Operation requires isolation={isolation.name} on route "
+                    f"{route_name!r}, but its transaction manager does not report isolation "
+                    "capabilities (not IsolationAware)",
+                    code="tx_isolation_unsupported",
+                )
+
+            supported = tx.capabilities().isolation
+
+            if isolation not in supported:
+                raise exc.configuration(
+                    f"Operation requires isolation={isolation.name} on route "
+                    f"{route_name!r}, but its transaction manager supports only "
+                    f"{sorted(level.name for level in supported)}",
+                    code="tx_isolation_unsupported",
+                )
 
         token_h = self.__tx_handle.set(
-            TransactionHandle(scope=tx.scope_key, read_only=root_read_only)
+            TransactionHandle(
+                scope=tx.scope_key, read_only=root_read_only, isolation=isolation
+            )
         )
         token_d = self.__tx_depth.set(1)
         token_cb = self.__cb_stack.set([])
-        route_name = str(getattr(route, "value", route))
 
         self._tx_tracer.on_scope_enter(route=route_name, depth=1)
 
         deferred: list[Callable[[], Awaitable[None]]] | None = None
 
         try:
-            async with tx.transaction(read_only=root_read_only):
+            async with self._open_root(tx, read_only=root_read_only, isolation=isolation):
                 yield
 
-        except BaseException:
-            raise
-
-        else:
+            # Reached only on a clean exit (no exception thrown into the scope) — capture the
+            # after-commit callbacks to drain below. An escaping exception skips this, leaving
+            # ``deferred`` as ``None`` so nothing is run after a rollback.
             deferred = self.__cb_stack.get()
 
         finally:

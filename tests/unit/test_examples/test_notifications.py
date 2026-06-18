@@ -13,7 +13,9 @@ from examples.recipes.notifications.app import (
 
 
 async def test_notification_delivered() -> None:
-    ctx = ExecutionContext(deps=DepsRegistry.from_modules(MockDepsModule()).freeze().resolve())
+    ctx = ExecutionContext(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze().resolve()
+    )
     senders = RecordingSenders()
 
     await stage_welcome(ctx, "ada@example.com")

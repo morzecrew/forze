@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import timedelta
 from typing import final
 
@@ -14,6 +13,7 @@ from forze.application.contracts.dlock import (
     DistributedLockQueryPort,
     DistributedLockSpec,
 )
+from forze.base.primitives import monotonic
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
 
@@ -49,7 +49,7 @@ class MockDistributedLockAdapter(
     # ....................... #
 
     def _now(self) -> float:
-        return time.monotonic()
+        return monotonic()
 
     def _is_expired(self, expires_at: float) -> bool:
         return self._now() >= expires_at

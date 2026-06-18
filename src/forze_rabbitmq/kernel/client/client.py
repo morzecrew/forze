@@ -10,7 +10,6 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Mapping, Sequence, final
-from uuid import uuid4
 
 import attrs
 from aio_pika import DeliveryMode, Message, connect_robust
@@ -23,7 +22,7 @@ from aio_pika.abc import (
 
 from forze.application.contracts.queue import resolve_delivery_delay
 from forze.base.exceptions import exc
-from forze.base.primitives import ContextScopedResource, GuardedLifecycle
+from forze.base.primitives import ContextScopedResource, GuardedLifecycle, uuid4
 
 from .._logger import logger
 from .errors import exc_interceptor

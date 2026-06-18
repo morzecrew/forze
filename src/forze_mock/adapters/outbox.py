@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any, final
 from uuid import UUID
@@ -18,9 +18,22 @@ from forze.application.contracts.outbox import (
     StagedOutboxEntry,
 )
 from forze.base.primitives import utcnow, uuid7
+from forze_mock.adapters._journal import record_undo
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+
+# ----------------------- #
+
+
+def _remove_row(store: list[Any], row: Any) -> Callable[[], None]:
+    """Build an undo thunk that removes *row* from *store* (no-op if already gone)."""
+
+    def _undo() -> None:
+        if row in store:
+            store.remove(row)
+
+    return _undo
 
 # ----------------------- #
 
@@ -90,23 +103,26 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 if existing is not None:
                     continue
 
-                store.append(
-                    MockOutboxRow(
-                        id=uuid7(),
-                        outbox_route=route,
-                        event_id=event.event_id,
-                        event_type=event.event_type,
-                        payload=dict(entry.payload_json),
-                        status=OutboxStatus.PENDING,
-                        tenant_id=event.tenant_id,
-                        execution_id=event.execution_id,
-                        correlation_id=event.correlation_id,
-                        causation_id=event.causation_id,
-                        occurred_at=event.occurred_at,
-                        created_at=utcnow(),
-                        ordering_key=event.ordering_key,
-                    )
+                row = MockOutboxRow(
+                    id=uuid7(),
+                    outbox_route=route,
+                    event_id=event.event_id,
+                    event_type=event.event_type,
+                    payload=dict(entry.payload_json),
+                    status=OutboxStatus.PENDING,
+                    tenant_id=event.tenant_id,
+                    execution_id=event.execution_id,
+                    correlation_id=event.correlation_id,
+                    causation_id=event.causation_id,
+                    occurred_at=event.occurred_at,
+                    created_at=utcnow(),
+                    ordering_key=event.ordering_key,
                 )
+                store.append(row)
+                # Atomic with the business write: a rolled-back transaction removes exactly
+                # this row (the row's uuid7 id makes the removal unambiguous), leaving
+                # concurrent transactions' rows intact.
+                record_undo(_remove_row(store, row))
                 written += 1
 
         return written

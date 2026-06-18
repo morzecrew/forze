@@ -1,0 +1,44 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+seed: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: |md
+        ### One master seed
+        per swept value
+    |
+}
+
+streams: {
+    label: "independent sub-seeds  ·  derive_seed(seed, label)"
+    grid-columns: 4
+
+    schedule: "schedule\ninterleaving"
+    faults: "faults\nerror · crash · drop"
+    latency: "latency\nper-route delay"
+    inputs: "inputs\ngenerated args"
+}
+
+run: {
+    shape: rectangle
+    label: |md
+        ### Deterministic run
+        virtual-time loop · byte-identical replay
+    |
+}
+
+seed -> streams: derive
+streams -> run: drive

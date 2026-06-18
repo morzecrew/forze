@@ -19,7 +19,6 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcon
 from contextvars import ContextVar
 from datetime import timedelta
 from typing import Any, AsyncGenerator, Literal, Sequence, final, overload
-from uuid import uuid4
 
 import attrs
 from psycopg import AsyncConnection, Column, sql
@@ -27,7 +26,7 @@ from psycopg.abc import Params, QueryNoTemplate
 from psycopg_pool import AsyncConnectionPool
 
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, uuid4
 
 from .._logger import logger
 from .errors import exc_interceptor

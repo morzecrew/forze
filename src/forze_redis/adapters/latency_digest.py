@@ -15,7 +15,6 @@ never become a per-call single point of failure. A backoff drops the shared
 hash (a fleet-wide fresh epoch), and an idle digest expires by TTL.
 """
 
-import time
 from typing import Callable, final
 
 import attrs
@@ -27,7 +26,7 @@ from forze.application.execution.resilience import (
     LatencyDigestStore,
 )
 from forze.application.execution.tracing import record as trace_record
-from forze.base.primitives import DDSketch
+from forze.base.primitives import DDSketch, monotonic
 
 from ..kernel.client import RedisClientPort
 from ..kernel.scripts import (
@@ -59,7 +58,7 @@ class RedisLatencyDigestStore(LatencyDigestStore):
     window_ttl_ms: int = _DEFAULT_WINDOW_TTL_MS
     local_cache_ttl: float = 0.25
     fallback: LatencyDigestStore = attrs.Factory(InMemoryLatencyDigestStore)
-    clock: Callable[[], float] = time.monotonic
+    clock: Callable[[], float] = monotonic
 
     # ....................... #
 

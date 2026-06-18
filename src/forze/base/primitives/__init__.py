@@ -3,7 +3,16 @@
 from .buffer import ContextualBuffer, ContextVarTrace
 from .cell import OnceCell
 from .context_scope import ContextScopedResource
-from .datetime import utcnow
+from .datetime import monotonic, utcnow
+from .entropy_source import (
+    EntropySource,
+    SeededEntropySource,
+    SystemEntropySource,
+    bind_entropy_source,
+    current_entropy_source,
+    derive_seed,
+    token_urlsafe,
+)
 from .fingerprint import (
     build_routing_fingerprint,
     combine_fingerprint,
@@ -44,11 +53,19 @@ from .uuid import uuid4, uuid7
 
 __all__ = [
     "utcnow",
+    "monotonic",
     "TimeSource",
     "SystemTimeSource",
     "FrozenTimeSource",
     "bind_time_source",
     "current_time_source",
+    "EntropySource",
+    "SystemEntropySource",
+    "SeededEntropySource",
+    "bind_entropy_source",
+    "derive_seed",
+    "current_entropy_source",
+    "token_urlsafe",
     "CacheLane",
     "InflightLane",
     "CachedInflightLane",

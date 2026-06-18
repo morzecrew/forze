@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import datetime, timedelta
 from typing import (
     Any,
@@ -23,7 +22,7 @@ from forze.application.contracts.queue import (
     resolve_delivery_delay,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import utcnow
+from forze.base.primitives import monotonic, utcnow
 from forze.base.serialization import (
     ModelCodec,
 )
@@ -296,16 +295,16 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
         # must not be able to wedge a finite idle timeout into an endless loop.
         idle_seconds = None if timeout is None else timeout.total_seconds()
         idle_deadline = (
-            None if idle_seconds is None else time.monotonic() + idle_seconds
+            None if idle_seconds is None else monotonic() + idle_seconds
         )
         while True:
             batch = await self.receive(queue, limit=1, timeout=timeout)
             if batch:
                 yield batch[0]
                 if idle_seconds is not None:
-                    idle_deadline = time.monotonic() + idle_seconds
+                    idle_deadline = monotonic() + idle_seconds
                 continue
-            if idle_deadline is not None and time.monotonic() >= idle_deadline:
+            if idle_deadline is not None and monotonic() >= idle_deadline:
                 return
             await asyncio.sleep(_CONSUME_POLL_INTERVAL)
 

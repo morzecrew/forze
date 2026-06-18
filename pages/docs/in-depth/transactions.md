@@ -64,6 +64,36 @@ read-only transaction where it supports one (Postgres `BEGIN … READ ONLY`) and
 rejects accidental writes. You rarely set this by hand — the operation kind does
 it for you.
 
+## Isolation
+
+Most operations are fine at the backend's default isolation. When one needs a
+stronger guarantee — no lost update, no write skew — declare it on the operation
+and the kernel holds the backend to it:
+
+```python
+plan = (
+    OperationPlan()
+    .bind_tx()
+    .set_route("orders")
+    .set_isolation(IsolationLevel.SERIALIZABLE)
+    .finish()
+)
+```
+
+The level is **fail-closed**. When the root scope is first entered, the kernel
+checks that the route's transaction manager actually supports it (a manager opts
+in by reporting its `TxCapabilities`); if it can't — or reports nothing — the
+operation raises `exc.configuration` (`code="tx_isolation_unsupported"`) rather
+than silently running weaker isolation. Declaring isolation without a transaction
+route is rejected at registry freeze for the same reason: there is no transaction
+to carry it.
+
+`IsolationLevel` is intent-named and ordered — `READ_COMMITTED < SNAPSHOT <
+SERIALIZABLE` — and each adapter maps it to its backend's spelling. The mock
+honors all three through an in-memory MVCC overlay (it rejects the write-write,
+write-skew, and phantom conflicts the level forbids), so an isolation-dependent
+bug is catchable in a unit test or under [simulation](deterministic-simulation.md).
+
 ## After the commit
 
 Some work must happen **only if** the transaction commits — publishing an event,
@@ -83,39 +113,46 @@ Deferred work is also **cancellation-protected**: a client disconnect or a
 callbacks can't skip them — they run to completion, then the cancellation
 re-raises. A committed transaction is never left half-announced.
 
-## Strict transactions under mock
+## Transactions under the mock
 
-By default, the mock plane's transaction manager is a **no-op**: a write inside
-a transaction that later rolls back still persists, so a "forgot to run it in
-the same transaction" bug is invisible in tests. Opt into real rollback
-semantics when wiring:
+The mock transaction manager is **faithful by default** (`transactions="journal"`).
+Each write records an undo, and an aborted transaction replays its journal in
+reverse — undoing *only its own* writes. So a "forgot to run it in the same
+transaction" bug fails in tests exactly as it would in production, and because
+nothing restores a global snapshot, concurrent transactions still interleave
+freely — the basis [simulation](deterministic-simulation.md) needs.
 
-```python
-from forze_mock import MockDepsModule
+Rollback covers exactly what a database transaction would:
 
-module = MockDepsModule(strict_tx=True)
-```
-
-Strict mode rolls back exactly what a database transaction would:
-
-- **Rolls back** — documents, outbox rows, inbox marks, and the
-  document-backed identity stores. A handler that stages an outbox event and
-  then fails leaves *no* rows behind, same as Postgres.
+- **Rolls back** — documents, outbox rows, inbox marks, and the document-backed
+  identity stores. A handler that stages an outbox event and then fails leaves
+  *no* rows behind, same as Postgres.
 - **Survives rollback, on purpose** — queues, streams, storage blobs, caches,
   counters, idempotency keys, locks, search and analytics state. Those backends
-  are not transactional in production; rolling them back would make the mock
-  *less* faithful, hiding the very cross-system consistency gaps the
-  [outbox pattern](#after-the-commit) exists to close.
+  are not transactional in production; rolling them back would hide the very
+  cross-system consistency gaps the [outbox pattern](#after-the-commit) exists to
+  close.
 
-Nested scopes behave as savepoints — an inner rollback reverts only the inner
-writes. `QUERY` operations open their root `read_only=True`, and strict mode
-enforces it: a write to a participating store raises a precondition error with
-code `read_only_tx`, mirroring Postgres `BEGIN … READ ONLY`.
+Nested scopes behave as savepoints (an inner rollback reverts only the inner
+writes); a `QUERY` root enforces `read_only` (a write to a participating store
+raises a precondition error, `code="read_only_tx"`); and the manager honors the
+declared [isolation](#isolation) level through its MVCC overlay.
 
-!!! warning "Strict roots serialize, and Python objects don't roll back"
+Two other modes are opt-in when wiring `MockDepsModule`:
 
-    Rollback restores a global snapshot of the shared mock state, so concurrent
-    root transactions on one `MockState` are **serialized** (real databases
-    serialize conflicting writers anyway). And only mock stores are restored —
-    in-process side effects outside them, like a handler mutating a Python
-    object it captured, cannot be rolled back.
+=== "Strict (serializing)"
+
+    `transactions="strict"` (or `strict_tx=True`) restores a global snapshot on
+    rollback — simpler, but concurrent root transactions on one `MockState`
+    **serialize** (real databases serialize conflicting writers anyway). Reach
+    for it only when you specifically want that behavior.
+
+=== "None (legacy)"
+
+    `transactions="none"` is the old no-op: writes persist through a rollback. It
+    hides transaction bugs — kept only for comparison.
+
+!!! note "Only mock stores roll back"
+
+    Rollback reverts the mock stores, not arbitrary in-process side effects — a
+    handler that mutates a Python object it captured cannot be rolled back.

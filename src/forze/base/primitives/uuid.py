@@ -13,16 +13,15 @@ Notes:
 """
 
 import hashlib
-import secrets
 from datetime import UTC, datetime, timezone
 from typing import Any
 from uuid import UUID
-from uuid import uuid4 as uuid4_func
 from zoneinfo import ZoneInfo
 
 import orjson
 
 from ..exceptions import exc
+from .entropy_source import current_entropy_source
 from .time_source import current_time_source
 
 # ----------------------- #
@@ -95,7 +94,7 @@ def uuid7(
     uuid_int |= 0x7 << 76  # Bits 48–51 (version 7)
     uuid_int |= (sub_ms_ns & 0xFFFFF) << 56  # Bits 52–71 (20 bits)
 
-    random_bits = secrets.randbits(54)  # 54-bit random
+    random_bits = current_entropy_source().randbits(54)  # 54-bit random
     uuid_int |= random_bits
 
     # Set variant (RFC 4122) in bits 62–63 to 0b10
@@ -213,4 +212,10 @@ def uuid4(val: Any | None = None) -> UUID:
     SHA-256 hash of ``val``. When omitted, a random UUIDv4 is returned.
     """
 
-    return _uuid4_from_any(val) if val else uuid4_func()
+    # ``is not None`` (not truthiness): a falsy-but-provided value (``0``, ``""``, ``False``)
+    # is a valid input to derive a deterministic id from — only an omitted ``val`` is random.
+    return (
+        _uuid4_from_any(val)
+        if val is not None
+        else current_entropy_source().uuid4()
+    )

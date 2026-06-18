@@ -8,6 +8,7 @@ import attrs
 
 from forze.application._logger import logger
 
+from ..interception import PortInterceptor, PortInterceptorChain
 from .container import Deps
 from .frozen import FrozenDepsRegistry
 from .module import DepsModule
@@ -96,6 +97,9 @@ class DepsRegistry:
     runtime_tracer: RuntimeTracer | None = attrs.field(default=None)
     """When set, used when resolving (overrides env and freeze kwargs)."""
 
+    interceptors: PortInterceptorChain = attrs.field(factory=tuple)
+    """Deps-scoped port interceptors applied to every resolved configurable port."""
+
     # ....................... #
 
     @classmethod
@@ -168,6 +172,19 @@ class DepsRegistry:
 
     # ....................... #
 
+    def with_interceptors(self, *interceptors: PortInterceptor) -> Self:
+        """Return a registry that wraps every resolved configurable port in *interceptors*.
+
+        Interceptors run as an ordered chain (first = outermost) inside the resilience
+        port-policy wrap. Production registers none (the port is returned bare).
+        """
+
+        return attrs.evolve(
+            self, interceptors=(*self.interceptors, *interceptors)
+        )
+
+    # ....................... #
+
     def freeze(
         self,
         *,
@@ -218,6 +235,7 @@ class DepsRegistry:
             store=store,
             resolution_tracer=resolution_tracer,
             runtime_tracer=runtime_tracer,
+            interceptors=self.interceptors,
         )
 
     # ....................... #

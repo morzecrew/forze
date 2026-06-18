@@ -8,15 +8,18 @@ resilience executor, port wrappers). A boundary binds it once per invocation;
 everything downstream on the same task — nested scopes, dispatched
 operations, resilience strategies — inherits it for free.
 
-Values are **absolute** :func:`time.monotonic` instants. Binding is
-tighten-only: a nested bind can shorten the budget but never extend it past
-the enclosing deadline (gRPC-style propagation).
+Values are **absolute** monotonic instants from the ambient time seam
+(:func:`~forze.base.primitives.monotonic`), so a bound simulation clock makes
+deadlines advance in virtual time. Binding is tighten-only: a nested bind can
+shorten the budget but never extend it past the enclosing deadline (gRPC-style
+propagation).
 """
 
-import time
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import Generator
+
+from forze.base.primitives import monotonic
 
 # ----------------------- #
 
@@ -29,7 +32,7 @@ _deadline_var: ContextVar[float | None] = ContextVar(
 
 
 def current_deadline() -> float | None:
-    """The absolute :func:`time.monotonic` deadline, or ``None`` when unbound."""
+    """The absolute monotonic deadline (ambient time seam), or ``None`` when unbound."""
 
     return _deadline_var.get()
 
@@ -45,7 +48,7 @@ def remaining_time() -> float | None:
     if deadline is None:
         return None
 
-    return max(0.0, deadline - time.monotonic())
+    return max(0.0, deadline - monotonic())
 
 
 # ....................... #
@@ -61,7 +64,7 @@ def set_deadline(timeout: float) -> Token[float | None]:
     outside the engine.
     """
 
-    requested = time.monotonic() + timeout
+    requested = monotonic() + timeout
     existing = _deadline_var.get()
     effective = requested if existing is None else min(existing, requested)
 

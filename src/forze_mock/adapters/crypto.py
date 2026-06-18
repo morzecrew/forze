@@ -16,13 +16,13 @@ while needing zero infrastructure.
 from __future__ import annotations
 
 import hashlib
-import os
 from typing import final
 
 import attrs
 
 from forze.application.contracts.crypto import DataKey, KeyRef
 from forze.base.exceptions import exc
+from forze.base.primitives import current_entropy_source
 
 # ----------------------- #
 
@@ -51,7 +51,7 @@ class MockKeyManagement:
 
     async def generate_data_key(self, key_ref: KeyRef) -> DataKey:
         version = key_ref.version or "v1"
-        plaintext = os.urandom(_DEK_SIZE)
+        plaintext = current_entropy_source().random_bytes(_DEK_SIZE)
         kek = self._kek(key_ref)
         wrapped = bytes(d ^ k for d, k in zip(plaintext, kek))
         return DataKey(

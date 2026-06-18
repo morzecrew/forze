@@ -16,3 +16,17 @@ def utcnow() -> datetime:
     """
 
     return current_time_source().now()
+
+
+# ....................... #
+
+
+def monotonic() -> float:
+    """Return a monotonic clock reading (fractional seconds), via the active TimeSource.
+
+    The relative-timing twin of :func:`utcnow` — for deadlines, backoff, and TTLs.
+    Defaults to ``time.monotonic()``; a bound simulation source ties it to the virtual
+    event-loop clock so timed work is deterministic. Never wall-clock.
+    """
+
+    return current_time_source().monotonic()

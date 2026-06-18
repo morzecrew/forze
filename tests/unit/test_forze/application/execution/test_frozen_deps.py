@@ -222,6 +222,42 @@ class TestFrozenDepsPortCache:
         assert first is not second
         assert calls[0] == 2
 
+    def test_ambient_interceptors_bypass_cache(self) -> None:
+        # A port resolved + cached BEFORE an ambient interceptor chain is bound would otherwise
+        # be reused bare and skip the chain (the DST cooperative/fault/partition foot-gun).
+        # While a chain is bound the cache is bypassed, so each resolve rebuilds and rewraps.
+        import attrs
+
+        from forze.application.execution.interception import (
+            PortCall,
+            PortNext,
+            bind_interceptors,
+        )
+
+        @attrs.define(slots=True, frozen=True)
+        class _Noop:
+            async def around(self, call: PortCall, nxt: PortNext) -> object:
+                return await nxt(call)
+
+        reg, calls = self._counting_reg()
+        ctx = self._ctx(reg)
+
+        ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)  # cached bare
+        assert calls[0] == 1
+
+        with bind_interceptors(_Noop()):
+            first = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+            second = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+
+            assert first is not second  # the stale pre-binding entry is not reused
+            assert calls[0] == 3  # both rebuilt under the binding
+
+        # Outside the binding the cache is in force again (zero cost in production) — it serves
+        # the original cached entry, no rebuild.
+        third = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+        fourth = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+        assert third is fourth and calls[0] == 3
+
     def test_cache_is_per_scope(self) -> None:
         reg, _ = self._counting_reg()
         ctx_a = self._ctx(reg)

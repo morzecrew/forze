@@ -81,4 +81,5 @@
         ]
     },
     "remote.autoForwardPortsFallback": 0,
+    "chatgpt.commentCodeLensEnabled": false,
 }

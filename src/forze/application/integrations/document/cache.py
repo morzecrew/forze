@@ -2,8 +2,6 @@
 
 import asyncio
 import math
-import random
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Protocol, Sequence, cast, runtime_checkable
 from uuid import UUID
@@ -21,7 +19,12 @@ from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import (
+    JsonDict,
+    current_entropy_source,
+    current_time_source,
+    monotonic,
+)
 from forze.base.serialization import CACHE_DUMP_EXCLUDE_OPTS, ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 
@@ -251,12 +254,9 @@ class DocumentCache[R: BaseModel]:
 
         cached = self._l1.get(self._l1_key(pk))
 
-        if cached is None:
-            return None
-
         # Hand out a copy so a caller mutating the result cannot poison the
         # cached instance (and vice versa).
-        return cast(R, cached).model_copy()
+        return None if cached is None else cast(R, cached).model_copy()
 
     # ....................... #
 
@@ -312,7 +312,7 @@ class DocumentCache[R: BaseModel]:
         if last_update_at.tzinfo is None:
             last_update_at = last_update_at.replace(tzinfo=timezone.utc)
 
-        age = max(0.0, (datetime.now(timezone.utc) - last_update_at).total_seconds())
+        age = max(0.0, (current_time_source().now() - last_update_at).total_seconds())
         seconds = min(
             max(cfg.alpha * age, cfg.min_ttl.total_seconds()),
             cfg.max_ttl.total_seconds(),
@@ -332,8 +332,9 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
-    def _xf_meta(self, delta: float, ttl: timedelta | None) -> JsonDict:
-        meta: JsonDict = {"at": time.time(), "d": delta}
+    @staticmethod
+    def _xf_meta(delta: float, ttl: timedelta | None) -> JsonDict:
+        meta: JsonDict = {"at": current_time_source().now().timestamp(), "d": delta}
 
         if ttl is not None:
             meta["ttl"] = ttl.total_seconds()
@@ -458,9 +459,10 @@ class DocumentCache[R: BaseModel]:
         expiry = at + ttl_s
 
         # Refresh-election probability, not security randomness.
-        rand = max(random.random(), 1e-12)  # nosec B311
+        rand = max(current_entropy_source().random(), 1e-12)
 
-        return time.time() - delta * beta * math.log(rand) >= expiry
+        now = current_time_source().now().timestamp()
+        return now - delta * beta * math.log(rand) >= expiry
 
     # ....................... #
 
@@ -799,9 +801,9 @@ class DocumentCache[R: BaseModel]:
         self._inflight[key] = future
 
         try:
-            start = time.monotonic()
+            start = monotonic()
             res = await fetch()
-            delta = time.monotonic() - start
+            delta = monotonic() - start
             future.set_result(res)
 
         except BaseException as error:
@@ -908,8 +910,10 @@ class DocumentCache[R: BaseModel]:
             # Backend data is committed by construction: safe to warm L1.
             self._l1_put(casted.id, cast(R, casted))
 
-        by_pk: dict[UUID, Any] = dict(l1_docs)
-        by_pk.update({x.id: x for x in hits_validated_cast})
-        by_pk.update({x.id: x for x in miss_res_cast})
+        by_pk: dict[UUID, Any] = (
+            l1_docs
+            | {x.id: x for x in hits_validated_cast}
+            | {x.id: x for x in miss_res_cast}
+        )
 
         return [cast(R, by_pk[pk]) for pk in pks]

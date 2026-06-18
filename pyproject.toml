@@ -65,6 +65,7 @@ dev = [
     "dirty-equals>=0.11",
     "polyfactory>=3.3.0",
     "hypothesis>=6.153.0",
+    "typer>=0.12.0",
     "py-spy>=0.4.2",
     # Lakehouse fixture writers for forze_duckdb integration tests (delta/iceberg are
     # read via DuckDB extensions at runtime; these only create the tables to read).
@@ -143,6 +144,8 @@ inngest = ["inngest>=0.5.18"]
 meilisearch = ["meilisearch-python-sdk>=7.2.1"]
 http = ["httpx>=0.28.0"]
 mcp = ["fastmcp>=3.0.0", "mcp>=1.27.0"]
+dst = ["polyfactory>=3.3.0", "hypothesis>=6.153.0"]
+cli = ["typer>=0.12.0"]
 
 # ....................... #
 
@@ -150,6 +153,9 @@ mcp = ["fastmcp>=3.0.0", "mcp>=1.27.0"]
 homepage = "https://github.com/morzecrew/forze"
 documentation = "https://morzecrew.github.io/forze/"
 changelog = "https://github.com/morzecrew/forze/blob/main/CHANGELOG.md"
+
+[project.scripts]
+forze = "forze_cli:main"
 
 # ....................... #
 # Build
@@ -177,6 +183,8 @@ packages = [
     "src/forze_kits",
     "src/forze_fastapi",
     "src/forze_mock",
+    "src/forze_dst",
+    "src/forze_cli",
     "src/forze_mongo",
     "src/forze_firestore",
     "src/forze_postgres",
@@ -229,6 +237,7 @@ timeout_method = "thread"
 markers = [
     "perf: Performance benchmark (excluded from default just test; not all perf tests need Docker)",
     "perf_gate: In-process, deterministic benchmark gated for regressions in CI (same-runner A/B vs merge-base)",
+    "fuzz: Extended DST fuzz over many seeds (excluded from default just test; run via just fuzz, e.g. nightly)",
     "integration: Integration test",
     "unit: Unit test",
     "asyncio: Async test",
@@ -252,8 +261,6 @@ omit = [
     "*/forze_redis/execution/deps/module.py",
     "*/forze_meilisearch/execution/deps/module.py",
     "*/forze_neo4j/execution/deps/module.py",
-    # Mock
-    "*/forze_mock/*",
 ]
 
 [tool.coverage.report]
@@ -267,6 +274,12 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.",
     "if TYPE_CHECKING:",
+    # ``@overload`` stubs (and their ``...`` bodies) are type-checker-only: the
+    # runtime impl follows them, so they are never executed. Excluding them keeps
+    # branch coverage honest instead of penalizing typed overloaded signatures.
+    "@overload",
+    "@(typing\\.)?overload",
+    "^\\s*\\.\\.\\.$",
 ]
 
 # ....................... #
@@ -286,6 +299,8 @@ root_packages = [
     "forze_kits",
     "forze_fastapi",
     "forze_mock",
+    "forze_dst",
+    "forze_cli",
     "forze_postgres",
     "forze_redis",
     "forze_s3",
@@ -397,6 +412,8 @@ type = "protected"
 protected_modules = [
     "forze_fastapi",
     "forze_mock",
+    "forze_dst",
+    "forze_cli",
     "forze_postgres",
     "forze_redis",
     "forze_s3",
@@ -417,7 +434,7 @@ protected_modules = [
     "forze_neo4j",
     "forze_mcp",
 ]
-allowed_importers = []
+allowed_importers = ["forze_cli"]
 as_packages = true
 
 # ....................... #
@@ -429,6 +446,8 @@ paths = [
     "src/forze_kits",
     "src/forze_fastapi",
     "src/forze_mock",
+    "src/forze_dst",
+    "src/forze_cli",
     "src/forze_postgres",
     "src/forze_redis",
     "src/forze_s3",
@@ -470,6 +489,8 @@ known_first_party = [
     "forze_kits",
     "forze_fastapi",
     "forze_mock",
+    "forze_dst",
+    "forze_cli",
     "forze_postgres",
     "forze_redis",
     "forze_s3",

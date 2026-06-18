@@ -153,7 +153,7 @@ class TestHedge:
 
 class TestPassthrough:
     async def test_run_hedged_runs_once(self) -> None:
-        from forze_mock.resilience import PassthroughResilienceExecutor
+        from forze_mock.adapters.resilience import PassthroughResilienceExecutor
 
         calls = 0
 

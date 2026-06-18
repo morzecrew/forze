@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any, Sequence, final
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import attrs
 
@@ -53,7 +53,7 @@ from forze.application.contracts.authn.value_objects.tokens import (
     IssuedTokens,
 )
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import StrKey, utcnow
+from forze.base.primitives import StrKey, utcnow, uuid4
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.state import MockState
 

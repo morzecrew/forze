@@ -40,7 +40,7 @@ from forze_kits.integrations.outbox._relay_core import (
 )
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters import MockState
-from forze_mock.outbox_adapter import MockOutboxRow, MockOutboxStore
+from forze_mock.adapters.outbox import MockOutboxRow, MockOutboxStore
 
 # ----------------------- #
 

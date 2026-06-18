@@ -76,6 +76,6 @@ from forze_mock import MockDepsModule
 # wire MockDepsModule in place of the real integration modules
 ```
 
-By default mock transactions are no-ops; pass `strict_tx=True` to make
-rollbacks revert the DB-backed mock stores — see
-[Strict transactions under mock](../in-depth/transactions.md#strict-transactions-under-mock).
+Mock transactions are faithful by default — a rollback undoes the writes, so
+transaction bugs surface in tests — see
+[Transactions under the mock](../in-depth/transactions.md#transactions-under-the-mock).
