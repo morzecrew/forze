@@ -59,9 +59,7 @@ def normalize_pg_type(base: str) -> str:
 
 # ....................... #
 
-_INDEXDEF_PARENS_RE = re.compile(
-    r"using\s+\w+\s*\((.*)\)\s*(where\s+.*)?$", re.IGNORECASE | re.DOTALL
-)
+_USING_PARENS_RE = re.compile(r"using\s+\w+\s*\(", re.IGNORECASE)
 
 # ....................... #
 
@@ -70,14 +68,45 @@ def extract_index_expr_from_indexdef(indexdef: str) -> str | None:
     """
     Try to extract the single (...) expression part from:
       CREATE INDEX ... USING gin (<expr>) ...
-    This is intentionally simple and may fail for exotic definitions.
+
+    Returns the content of the parenthesis group that follows ``USING <am>``,
+    matched by balanced parentheses so trailing clauses (``WITH (...)``,
+    ``INCLUDE (...)``, ``WHERE ...``, tablespace) are not swallowed. Returns
+    ``None`` for definitions without that shape or with unbalanced parens.
     """
 
-    m = _INDEXDEF_PARENS_RE.search(indexdef.strip())
+    m = _USING_PARENS_RE.search(indexdef)
 
-    if not m:
+    if m is None:
         return None
 
-    expr = m.group(1).strip()
+    open_idx = m.end() - 1  # position of the opening '('
+    depth = 0
+    in_str = False
+    i = open_idx
 
-    return expr or None
+    while i < len(indexdef):
+        ch = indexdef[i]
+
+        if in_str:
+            if ch == "'":
+                # Doubled '' is an escaped quote inside the literal.
+                if i + 1 < len(indexdef) and indexdef[i + 1] == "'":
+                    i += 2
+                    continue
+                in_str = False
+
+        elif ch == "'":
+            in_str = True
+
+        elif ch == "(":
+            depth += 1
+
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return indexdef[open_idx + 1 : i].strip() or None
+
+        i += 1
+
+    return None

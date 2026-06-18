@@ -1099,6 +1099,70 @@ async def test_postgres_pgroonga_v2_ranked_search_uses_score_v1(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_postgres_pgroonga_coalesced_array_index_resolves_and_searches(
+    pg_client: PostgresClient,
+) -> None:
+    """Regression: an ``ARRAY[COALESCE(col, ''::text), ...]`` index resolves.
+
+    DBAs commonly declare PGroonga multi-column indexes with COALESCE/cast
+    wrappers (matching the ``coalesce(col::text, '')`` form Forze emits on the
+    query side). The index-field parser must extract the underlying columns
+    rather than choke on the wrapped ARRAY elements.
+    """
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    heap = f"cz_heap_{suffix}"
+    proj = f"cz_proj_{suffix}"
+    idx = f"cz_idx_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {heap} (
+            id uuid PRIMARY KEY,
+            doc_title text NOT NULL,
+            doc_body text NOT NULL
+        );
+        CREATE VIEW {proj} AS
+        SELECT id, doc_title AS title, doc_body AS content FROM {heap};
+        CREATE INDEX {idx}
+        ON {heap} USING pgroonga (
+            (ARRAY[COALESCE(doc_title, ''::text), COALESCE(doc_body, ''::text)])
+        );
+        """
+    )
+    await pg_client.execute(
+        f"INSERT INTO {heap} (id, doc_title, doc_body) VALUES (%(id)s, 'alpha', 'beta gamma')",
+        {"id": uuid4()},
+    )
+
+    introspector = PostgresIntrospector(client=pg_client)
+    spec = SearchSpec(
+        name=f"cz_{suffix}",
+        model_type=SearchableModel,
+        fields=["title", "content"],
+    )
+    adapter = PostgresPGroongaSearchAdapter(
+        spec=spec,
+        relation=("public", proj),
+        index_relation=("public", idx),
+        index_heap_relation=("public", heap),
+        client=pg_client,
+        model_type=SearchableModel,
+        codec=spec.resolved_read_codec,
+        introspector=introspector,
+        tenant_provider=None,
+        tenant_aware=False,
+        index_field_map={"title": "doc_title", "content": "doc_body"},
+    )
+
+    page = await adapter.search_page("gamma")
+    assert page.count == 1
+    assert page.hits[0].title == "alpha"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
     pg_client: PostgresClient,
 ) -> None:

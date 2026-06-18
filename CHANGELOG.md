@@ -55,6 +55,12 @@ Lands **Deterministic Simulation Testing (DST)** as a native framework capabilit
 
 - **`forze_mock` internal restructure** — the package's misplaced root modules moved under `adapters/` (`forze_mock.outbox_adapter` → `forze_mock.adapters.outbox`, `forze_mock.embeddings` → `forze_mock.adapters.embeddings`, `forze_mock.resilience` → `forze_mock.adapters.resilience`; all also re-exported from `forze_mock.adapters`), and the per-spec `Configurable*` factories were extracted out of the `MockDepsModule` module into `forze_mock.execution.factories`. Public top-level imports (`from forze_mock import …`) are unchanged; only direct deep-submodule imports of those three modules need updating. `forze_mock` is now under coverage enforcement (95.8%).
 
+### Fixed
+
+- **Robust Postgres index-definition parsing for search** — hardened the catalog parsers that recover index expressions for `forze_postgres` search:
+  - **PGroonga multi-column resolution accepts COALESCE/cast wrappers** — indexes declared as `ARRAY[COALESCE(col, ''::text), …]` or with per-element `::type` casts now resolve (previously rejected with "unsupported ARRAY element"). The parser is parenthesis/bracket- and string-literal-aware (no longer shredding function arguments on commas, truncating on a nested `]`, or miscounting depth on a literal default) and peels the `COALESCE(col, <default>)`/`::type` idioms that match Forze's own `coalesce(col::text, '')` query-side rebuild; non-reproducible transforms (e.g. `lower(col)`) still fail closed. `ARRAY` detection now keys on the `ARRAY[` constructor, so a single-column index over a column whose name contains `array` is no longer misclassified as multi-column.
+  - **Index expression extraction no longer swallows trailing clauses** — recovering the indexed expression from `pg_get_indexdef` (the fallback for column indexes, including a `tsvector` column feeding FTS) now uses balanced-parenthesis matching, so `WITH (...)` storage options, `INCLUDE (...)`, `WHERE`, and tablespace clauses are not captured into the expression. Previously a greedy match produced e.g. `tsv) WITH (fastupdate = off)`, which was injected as raw SQL and broke FTS on a `tsvector` column with index storage options.
+
 ## [0.4.1] - 2026-06-17
 
 ### Added
