@@ -1,25 +1,26 @@
-"""Deterministic simulation of a real forze app: a concurrent double-charge.
+"""Deterministic simulation of a real forze app — and why faithful transactions matter.
 
-This is ordinary forze code — handlers talk to **ports** (``ctx.document``) and emit a
-**domain event**; nothing here knows about DST. Under simulation, ``MockDepsModule`` covers
-every port in-memory (fresh per run), the engine trace captures the activity, and the
-*Simulation* (deps + an ``observe`` hook + an invariant) is the only test-side code. No DST
-calls leak into the handlers.
+This is ordinary forze code: handlers talk to **ports** (``ctx.document``), emit a **domain
+event**, and run **inside a transaction** (the operations carry a tx route, as real write
+operations do). Nothing here knows about DST; the *Simulation* (deps + ``observe`` + an
+invariant) is the only test-side code.
 
-The bug: ``pay_order`` reads the order, checks "not paid", *then* (after an await) marks it
-paid and writes a payment. Two concurrent payments both pass the check → two payment rows
-for one order. The test-side ``observe`` counts payments and the invariant flags the
-duplicate; DST minimizes to the two racing payments.
+``pay_order`` charges (writes a payment row) and flips the order to paid in **one
+transaction**, guarded by the order's ``rev`` (optimistic concurrency). Two concurrent
+payments race: both read the order unpaid, both write a payment, both try the ``rev``-guarded
+update — the loser's update conflicts, so its **whole transaction rolls back, including its
+payment row**. Exactly one charge. The app is *correct*, and DST reports **no violation**.
+
+The point: this is only trustworthy because the mock models transactions faithfully. Under
+the legacy no-op manager (``MockDepsModule(transactions="none")``) the loser's payment would
+*not* roll back, and DST would report a **false** double-charge. Faithful, concurrency-
+preserving atomicity (the default) is what keeps DST's findings honest.
 
 Try it (from the repo root)::
 
-    forze dst run      examples.recipes.dst_payments.app:simulation --strategy dpor
+    forze dst run      examples.recipes.dst_payments.app:simulation   # ✓ no violation
     forze dst topology examples.recipes.dst_payments.app:simulation
     forze dst derive   examples.recipes.dst_payments.app:simulation
-
-    # ad-hoc — point at just the registry; the CLI auto-mocks deps and applies the built-in
-    # "no unexpected error" safety net (domain rules like double-charge need the Simulation):
-    forze dst run examples.recipes.dst_payments.app:registry
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.domain.handler import DomainEventRegistry
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.descriptors import OperationDescriptor
+from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import (
     BaseDTO,
@@ -172,12 +174,18 @@ _EVENTS = DomainEventRegistry()
 _EVENTS.register(OrderPaid, _on_order_paid)
 
 
+# Each operation runs in a transaction (as a real write operation does), so the faithful
+# mock transaction manager gives it atomicity: a failed/aborted operation leaves no writes.
+_TX_PLAN = OperationPlan().bind_tx().set_route("mock").finish(deep=False)
+
+
 registry = OperationRegistry(
     handlers={
         "create_order": lambda ctx: _CreateOrder(ctx=ctx),
         "pay_order": lambda ctx: _PayOrder(ctx=ctx),
         "notify": lambda ctx: _Notify(ctx=ctx),
     },
+    plans={op: _TX_PLAN for op in ("create_order", "pay_order", "notify")},
     descriptors={
         "create_order": OperationDescriptor(
             input_type=None, output_type=None, description="Create an order."
@@ -192,6 +200,7 @@ registry = OperationRegistry(
         ),
     },
 ).freeze()
+
 _HOLDER["registry"] = registry
 
 

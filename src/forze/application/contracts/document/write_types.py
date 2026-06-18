@@ -1,6 +1,6 @@
 """Write-side model type bundle for document aggregates."""
 
-from typing import Generic, NotRequired, TypedDict, TypeVar, final
+from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
 
 from forze.domain.models import BaseDTO, Document
 
@@ -8,7 +8,7 @@ from forze.domain.models import BaseDTO, Document
 
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=BaseDTO)
-U = TypeVar("U", bound=BaseDTO)
+U = TypeVar("U", bound=BaseDTO, default=Any)
 
 # ....................... #
 

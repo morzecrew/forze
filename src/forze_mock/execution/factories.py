@@ -91,6 +91,7 @@ from forze_mock.adapters import (
     MockStorageAdapter,
     MockStreamAdapter,
     MockStreamGroupAdapter,
+    MockJournalTxManagerAdapter,
     MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
 )
@@ -126,6 +127,13 @@ def mock_txmanager(context: ExecutionContext) -> TransactionManagerPort:
 
 def mock_strict_txmanager(context: ExecutionContext) -> TransactionManagerPort:
     return MockStrictTxManagerAdapter(state=context.deps.provide(MockStateDepKey))
+
+
+# ....................... #
+
+
+def mock_journal_txmanager(context: ExecutionContext) -> TransactionManagerPort:
+    return MockJournalTxManagerAdapter(state=context.deps.provide(MockStateDepKey))
 
 
 # ....................... #

@@ -194,6 +194,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockStreamGroup,
     ConfigurableMockTokenLifecycle,
     ConstantMockPortFactory,
+    mock_journal_txmanager,
     mock_strict_txmanager,
     mock_txmanager,
     route_stubs,
@@ -240,15 +241,22 @@ class MockDepsModule(DepsModule):
     resilience: Literal["passthrough", "real"] = "passthrough"
     domain_events: DomainEventRegistry | None = attrs.field(default=None)
 
-    strict_tx: bool = attrs.field(default=False)
-    """Opt into :class:`~forze_mock.adapters.tx.MockStrictTxManagerAdapter`.
+    transactions: Literal["journal", "none", "strict"] = attrs.field(default="journal")
+    """Which mock transaction manager to wire (default ``"journal"``):
 
-    When true, transaction rollbacks restore the DB-backed mock stores
-    (documents, outbox, inbox, document-backed identity), root transactions on
-    the same state serialize, and writes inside a read-only root raise
-    (``code="read_only_tx"``). Default ``False`` keeps the documented no-op
-    transaction manager — zero behavior change.
+    - ``"journal"`` (default) — :class:`~forze_mock.adapters.tx.MockJournalTxManagerAdapter`:
+      concurrency-preserving **atomicity** via a per-transaction undo journal (a failed
+      operation leaves no partial writes), with row-``rev`` optimistic concurrency and
+      read-only-root enforcement. The faithful default — makes simulation/DST findings
+      trustworthy without serializing concurrent transactions.
+    - ``"none"`` — the legacy no-op manager: writes inside a rolled-back transaction
+      **persist**. Only for tests that deliberately assert that unfaithful behavior.
+    - ``"strict"`` — :class:`~forze_mock.adapters.tx.MockStrictTxManagerAdapter`: whole-store
+      snapshot/restore atomicity, but **serializes** root transactions (no interleaving).
     """
+
+    strict_tx: bool = attrs.field(default=False)
+    """Back-compat alias: when true, forces ``transactions="strict"``."""
 
     authn_events: bool = attrs.field(default=False)
     """Register :class:`~forze_mock.adapters.events.RecordingAuthnEventSink`
@@ -261,6 +269,16 @@ class MockDepsModule(DepsModule):
     """Optional fixed-window login lockout for password authn routes, backed by
     the in-memory mock counter (route ``authn_lockout``). ``None`` disables it,
     mirroring the real :class:`~forze_identity.authn.AuthnDepsModule`."""
+
+    def _txmanager_factory(self) -> Any:
+        """Pick the transaction-manager factory (``strict_tx`` forces strict for back-compat)."""
+
+        mode = "strict" if self.strict_tx else self.transactions
+        return {
+            "journal": mock_journal_txmanager,
+            "none": mock_txmanager,
+            "strict": mock_strict_txmanager,
+        }[mode]
 
     def __call__(self) -> Deps:
         document = ConfigurableMockDocument(module=self)
@@ -315,9 +333,7 @@ class MockDepsModule(DepsModule):
             GraphCommandDepKey: graph,
             GraphRawQueryDepKey: graph,
             HttpServiceDepKey: ConfigurableMockHttpService(module=self),
-            TransactionManagerDepKey: (
-                mock_strict_txmanager if self.strict_tx else mock_txmanager
-            ),
+            TransactionManagerDepKey: self._txmanager_factory(),
             QueueQueryDepKey: ConfigurableMockQueue(module=self),
             QueueCommandDepKey: ConfigurableMockQueue(module=self, command=True),
             PubSubCommandDepKey: ConfigurableMockPubSub(module=self, command=True),

@@ -216,6 +216,7 @@ class MockState:
         with self.__lock:
             if self.__tx_serializer is None:
                 self.__tx_serializer = asyncio.Lock()
+
             return self.__tx_serializer
 
     # ....................... #
@@ -223,6 +224,7 @@ class MockState:
     def next_id(self, prefix: str = "mock") -> str:
         with self.__lock:
             self.__seq += 1
+
             return f"{prefix}-{self.__seq}"
 
     # ....................... #
