@@ -1,0 +1,40 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+sweep: {
+    shape: rectangle
+    label: "Sweep seeds"
+}
+
+minimize: {
+    shape: rectangle
+    label: "Minimize"
+}
+
+report: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: "ViolationReport\nseed + minimal workload"
+}
+
+corpus: {
+    shape: rectangle
+    label: "Regression corpus"
+}
+
+sweep -> minimize: "violation"
+minimize -> report: reproduce
+report -> corpus: "save"
+corpus -> sweep: "replay"

@@ -1,0 +1,183 @@
+---
+title: Deterministic simulation
+icon: lucide/dice-6
+summary: Point DST at a real app — one seed reproduces the whole run (schedule, faults, latency, crashes, partitions) and hands back a minimal counterexample
+---
+
+[Testing](testing.md) swaps real adapters for in-memory ones so a handler runs without Docker. Deterministic Simulation Testing (DST) goes further: it takes your **real operations**, runs them concurrently on a virtual-time event loop, and explores the interleavings, faults, and delays a production system would hit — then, when an invariant breaks, hands back the **smallest workload that still breaks it**, reproducible from a single seed.
+
+Nothing in your app changes. Handlers talk to ports exactly as they do in production; the simulation lives entirely on the test side.
+
+!!! tip "The one promise"
+
+    One master seed parametrises **every** source of nondeterminism — the operation
+    interleaving, injected faults, simulated latency, generated inputs, crash points, and
+    network partitions. `(your app, seed)` is a pure function: the same seed replays the
+    exact same run, byte for byte. That is what makes a found bug reproducible instead of
+    "flaky."
+
+![One master seed derives independent sub-seeds — schedule, faults, latency, inputs — that drive a deterministic, replayable run](../_diagrams/light/dst-seed.svg#only-light){ data-src="../_diagrams/light/dst-seed.svg#only-light" }
+![One master seed derives independent sub-seeds — schedule, faults, latency, inputs — that drive a deterministic, replayable run](../_diagrams/dark/dst-seed.svg#only-dark){ data-src="../_diagrams/dark/dst-seed.svg#only-dark" }
+
+## Point it at your app
+
+A `Simulation` needs three things: your operation **registry**, a **deps factory** (one `MockDepsModule()` auto-mocks every port, built fresh per run so each starts clean), and the **invariants** that must hold. An optional `observe` hook records domain facts the invariants assert over.
+
+```python
+--8<-- "recipes/dst_payments/app.py:simulation"
+```
+
+Then sweep seeds:
+
+```python
+from forze_dst import SimulationConfig
+
+report = simulation.run(SimulationConfig(seeds=range(64)))
+
+if report is not None:
+    print(report.format())  # a readable, reproducible counterexample
+```
+
+`run` generates a meaningful workload (it reads your operation catalog to build an arrange→act scenario — `forze dst derive` below prints it), runs it under perturbed interleavings, and checks the invariants. On the first violating seed it **minimises** the workload to a 1-minimal set that still fails and returns a `ViolationReport`; a clean sweep returns `None`. There is nothing to assert about *how* — point it at the app and go.
+
+The app under test here is ordinary Forze code. `pay_order` charges, then flips the order to paid — but it charges *before* the optimistic-concurrency-guarded transition, so two concurrent payments both charge:
+
+```python
+--8<-- "recipes/dst_payments/app.py:handler"
+```
+
+DST finds the race, shrinks it to **two** contending payments, and reports the seed that reproduces it.
+
+## Invariants — what must hold
+
+An invariant reads the recorded history and returns the violations it found. The generic `expect(kind, predicate, message=...)` (above) covers most domain rules. The built-ins read the engine trace directly, so they need no handler instrumentation:
+
+<div class="grid cards" markdown>
+
+-   :lucide-shield-alert: **`no_unexpected_error()`**
+
+    The zero-instrumentation safety net: any operation that raised a non-domain exception (a bug — `KeyError`, `TypeError`) is a violation; declared `CoreException` domain failures pass. Point DST at *any* app and immediately catch crashes under concurrency.
+
+-   :lucide-copy: **`no_duplicate_effect(kind, by=...)`**
+
+    Each recorded effect is unique on a key — exactly-once. Catches a non-idempotent consumer applying a redelivered message twice.
+
+-   :lucide-lock: **`mutual_exclusion(kind, resource=, start=, end=)`**
+
+    No two holds of a resource overlap — a distributed lock / critical section, or no split-brain across nodes.
+
+-   :lucide-list-checks: **`operation_succeeds(*ops)` · `completes_within(op, seconds)` · `single_key_per_operation(op)`**
+
+    Named ops must reach `ok`; an op must finish within a virtual-time budget; an op must touch one entity key (the *wrong-entity* guard) — all from the trace alone.
+
+</div>
+
+`linearizable(spec)` checks a recorded operation history against a sequential specification (Wing-Gong, per key) for the strongest single-object consistency guarantee.
+
+## Inject the environment
+
+A real system errors, times out, and is slow. Declare that environment on the config and DST applies it at the port boundary — over **any** resolved port, seeded from the master seed, with the app untouched.
+
+```python
+from forze_dst import FaultPolicy, FaultRule, LatencyProfile, LatencyRule, Exponential
+
+report = simulation.run(SimulationConfig(
+    seeds=range(200),
+    faults=FaultPolicy(rules=(
+        FaultRule(surface="document_command", error=0.2),   # 20% transient failures
+    )),
+    latency=LatencyProfile(rules=(
+        LatencyRule(dist=Exponential(mean=0.05), surface="document_command"),
+    )),
+))
+```
+
+A `FaultRule` matches `(surface, route, op)` and rolls, per matched call: `error` (a retryable failure), `timeout`, `crash`, and the transport behaviours `drop` (silent loss), `duplicate` (redelivery), and `delay` (advance virtual time before the call). A `LatencyProfile` samples a per-route distribution — `Constant`, `Uniform`, or `Exponential`. Both are **seeded by construction** — you never pass an RNG, so the run stays reproducible.
+
+!!! note "Virtual time is free"
+
+    A `delay` or latency advances a *virtual* clock, so a workload spanning minutes of
+    simulated time runs in real-wall milliseconds — and time-dependent bugs (a TTL that
+    expires mid-operation) surface with no `sleep` in your handlers.
+
+## Crash and restart
+
+Set a `CrashPolicy` and a run becomes a crash → restart → recovery scenario. The process *dies* at a matched port boundary (the in-flight transaction rolls back, committed state persists), then a fresh runtime restarts over the **same persisted store**, an optional `recover` pass redrives interrupted work, and the invariants check the post-recovery world.
+
+```python
+from forze_dst import CrashPolicy
+
+report = simulation.run(SimulationConfig(
+    seeds=range(64),
+    crash=CrashPolicy(surface="document_command", route="orders", op="update"),
+))
+```
+
+This is how you catch recovery bugs: a charge committed before a crashed follow-up write leaves an orphan that survives the restart when the operation is non-transactional — while the same operation routed through a transaction rolls the partial write back atomically.
+
+## Across N nodes
+
+A `Cluster` runs *N* real runtimes over one shared store, from one master seed, under **network partitions** — the distributed capstone. A partition cuts a node-group off from the gated port surfaces for a window of virtual time (modelled as *unreachable* — a retryable error), so a correct retry/outbox flow heals while a fire-and-forget one loses work. The distributed invariants are the same ones (`mutual_exclusion` for no split-brain, `no_duplicate_effect` for exactly-once).
+
+```python
+from forze_dst import Cluster, ClusterConfig, Partition, PartitionSchedule
+from forze_mock.state import MockState
+
+async def node(node_id: int, ctx) -> None:
+    ...  # this node's work, over ctx ports on the shared store
+
+report = Cluster(deps=lambda state: MockDepsModule(state=state), node=node,
+                 state_factory=MockState, invariants=[...]).run(
+    SimulationConfig(seeds=range(32), cluster=ClusterConfig(
+        nodes=3,
+        partitions=PartitionSchedule(
+            windows=(Partition(start=0.5, end=1.5, isolated=frozenset({1})),),
+            surfaces=frozenset({"queue_command"}),
+        ),
+    )),
+)
+```
+
+On a violation the cluster minimises by **dropping nodes** — the smallest cluster that still breaks, usually two.
+
+## The loop — find, reproduce, minimise, regress
+
+![A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever](../_diagrams/light/dst-loop.svg#only-light){ data-src="../_diagrams/light/dst-loop.svg#only-light" }
+![A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever](../_diagrams/dark/dst-loop.svg#only-dark){ data-src="../_diagrams/dark/dst-loop.svg#only-dark" }
+
+A `ViolationReport.format()` renders the whole counterexample: the minimised workload, the concurrency that triggered it, the causal trace (each operation and the port calls it caused), an **injected-environment timeline** (the faults, latency, and partitions the simulator applied, in virtual-time order), and the violated invariant. Everything needed to understand *and* reproduce the failure.
+
+The command line wires the loop end to end against an import string pointing at your `Simulation`:
+
+```bash
+# explore — prints the counterexample, exits 1 if one is found (CI-friendly)
+forze dst run examples.recipes.dst_payments.app:simulation --seeds 0-200
+
+# inject a broad environment and lock a found seed into a regression corpus
+forze dst run app:simulation --fault-error 0.2 --latency 0.05 --save-regression
+
+# re-run every saved seed — the regression guard (exits 1 if any still violates)
+forze dst replay
+
+# explore until behaviour saturates, then report what was covered
+forze dst coverage app:simulation
+
+# inspect the auto-derived workload and the reactive cascade topology
+forze dst derive    app:simulation
+forze dst topology  app:simulation
+```
+
+`--save-regression` appends the found seed (with the registry fingerprint and the exploration knobs) to a JSON-Lines corpus; `replay` reproduces each saved seed under the configuration it was found with, so a fixed bug stays fixed.
+
+!!! warning "DST is only as honest as the mock"
+
+    DST trusts that the in-memory transaction manager rolls back faithfully. The default
+    (`MockDepsModule(transactions="journal")`) is atomic without serialising, so a found
+    race is real. The legacy no-op manager would report *false* double-charges — see
+    [Transactions](transactions.md).
+
+## See also
+
+- [Testing](testing.md) — unit and integration testing with mocks
+- [Concurrency & conflicts](concurrency-conflicts.md) — the optimistic-concurrency model DST exercises
+- [Transactions](transactions.md) — why faithful rollback keeps DST findings trustworthy

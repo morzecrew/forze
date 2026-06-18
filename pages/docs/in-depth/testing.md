@@ -29,28 +29,14 @@ async def test_create_user():
 
 Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state. Write a user in one test, query it in the same test, and the data is there.
 
-## Strict transaction mode
+## Transaction rollback in tests
 
-By default, mock transactions are no-ops: a write inside a transaction that rolls back still persists. This hides bugs where you forget to run operations in the same transaction.
+Mock transactions are **faithful by default**: a write inside a transaction that rolls back is undone, so a "forgot to run it in the same transaction" bug fails in your unit test exactly as it would in production. No flag needed.
 
-Enable strict mode to get real rollback semantics:
+- **Rolls back** — documents, outbox rows, inbox marks, and document-backed identity stores. A handler that stages an outbox event and then fails leaves no rows behind.
+- **Survives rollback** — queues, streams, storage blobs, caches, counters, idempotency keys, locks, search and analytics state (these aren't transactional in production either).
 
-```python
-module = MockDepsModule(strict_tx=True)
-```
-
-Strict mode rolls back exactly what a database transaction would:
-
-- **Rolls back** — documents, outbox rows, inbox marks, and document-backed identity stores
-- **Survives rollback** — queues, streams, storage blobs, caches, counters, idempotency keys, locks, search and analytics state (these aren't transactional in production either)
-
-Strict mode catches transaction bugs in unit tests before they reach production.
-
-!!! warning "Strict roots serialize"
-
-    Strict mode restores a global snapshot on rollback, so concurrent root
-    transactions on one `MockState` are serialized. Real databases serialize
-    conflicting writers anyway, but this can slow down test parallelization.
+The default journal mode is atomic *without* serializing, so concurrent transactions still interleave. Two modes are opt-in — `MockDepsModule(transactions="strict")` (a serializing global-snapshot manager) and `transactions="none"` (the legacy no-op). See [Transactions](transactions.md#transactions-under-the-mock) for the full picture, and [Deterministic simulation](deterministic-simulation.md) for exploring concurrency and isolation under the faithful default.
 
 ## Testing with identity context
 

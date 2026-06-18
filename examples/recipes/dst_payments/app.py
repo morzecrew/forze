@@ -120,6 +120,7 @@ class _CreateOrder(Handler[None, UUID]):
         return order.id  # the handle DST threads into pay_order
 
 
+# --8<-- [start:handler]
 @attrs.define(slots=True, kw_only=True)
 class _PayOrder(Handler[PayCmd, None]):
     ctx: ExecutionContext
@@ -143,6 +144,7 @@ class _PayOrder(Handler[PayCmd, None]):
         )
         # Emitting a domain event triggers the registered handler (a saga-style cascade).
         await DomainDeps(ctx=self.ctx)().dispatch([OrderPaid(order_id=args.order_id)])
+# --8<-- [end:handler]
 
 
 @attrs.define(slots=True, kw_only=True)
@@ -209,6 +211,7 @@ _HOLDER["registry"] = registry
 # observe hook reading final state via the same ports, and the domain invariant.
 
 
+# --8<-- [start:simulation]
 async def _observe(ctx: ExecutionContext) -> None:
     payments = await ctx.document.query(PAYMENT_SPEC).count()
     record_event("payments", total=payments)
@@ -226,3 +229,4 @@ simulation = Simulation(
         )
     ],
 )
+# --8<-- [end:simulation]

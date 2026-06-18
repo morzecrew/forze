@@ -64,6 +64,7 @@ nav = [
             "in-depth/shutdown-and-fleets.md",
             "in-depth/observability.md",
             "in-depth/testing.md",
+            "in-depth/deterministic-simulation.md",
         ] },
     ] },
     { "Integrations" = [
