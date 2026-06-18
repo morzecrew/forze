@@ -38,8 +38,8 @@ _journal: ContextVar[list[UndoThunk] | None] = ContextVar(
 # ....................... #
 
 
-def record_undo(undo: UndoThunk) -> None:
-    """Record an *undo* thunk on the active transaction journal (a no-op outside a tx).
+def record_undo(thunk: UndoThunk) -> None:
+    """Record an undo *thunk* on the active transaction journal (a no-op outside a tx).
 
     The seam for non-dict participating stores (outbox ``list``, inbox ``set``): the adapter
     performs its write, then records how to revert exactly that write so a rollback leaves no
@@ -49,7 +49,7 @@ def record_undo(undo: UndoThunk) -> None:
     journal = _journal.get()
 
     if journal is not None:
-        journal.append(undo)
+        journal.append(thunk)
 
 
 # ....................... #

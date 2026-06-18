@@ -212,6 +212,11 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
     def _make_write_pipe_transport(self, *args: Any, **kwargs: Any) -> Any:
         raise _forbidden("opening a pipe")
 
+    def _make_subprocess_transport(self, *args: Any, **kwargs: Any) -> Any:
+        # A subprocess runs real, off-loop work in wall-clock time — surface it instead of
+        # letting ``subprocess_exec`` / ``subprocess_shell`` bypass the virtual-time boundary.
+        raise _forbidden("spawning a subprocess")
+
     def run_in_executor(  # type: ignore[override]  # deliberately incompatible: always raises
         self,
         executor: Any,

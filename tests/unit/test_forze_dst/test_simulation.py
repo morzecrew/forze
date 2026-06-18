@@ -129,10 +129,20 @@ class TestLeakGuards:
                 loop._make_datagram_transport,
                 loop._make_read_pipe_transport,
                 loop._make_write_pipe_transport,
+                loop._make_subprocess_transport,
             )
             for make in makers:
                 with pytest.raises(RealIOForbidden):
                     make(None, None)
+        finally:
+            loop.close()
+
+    def test_cross_thread_wakeup_forbidden(self) -> None:
+        loop = SimulationEventLoop()
+        try:
+            # A threadsafe wakeup can only come from a real foreign thread → refuse it.
+            with pytest.raises(RealIOForbidden):
+                loop.call_soon_threadsafe(lambda: None)
         finally:
             loop.close()
 
