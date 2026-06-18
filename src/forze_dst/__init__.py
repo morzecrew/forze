@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from .derive import DEFAULT_CREATE_VERBS, derive_scenario
 from .faults import (
+    CrashInterceptor,
     FaultyQueueCommand,
     PortFaultInterceptor,
+    SimulatedCrash,
     TransportFault,
     TransportFaultPolicy,
 )
@@ -84,6 +86,8 @@ __all__ = [
     "TransportFaultPolicy",
     "FaultyQueueCommand",
     "PortFaultInterceptor",
+    "CrashInterceptor",
+    "SimulatedCrash",
     "TransportFault",
     "Event",
     "History",

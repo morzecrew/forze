@@ -32,6 +32,40 @@ class TransportFault(RuntimeError):
     """A simulated *retryable* transport failure (e.g. a transient enqueue error)."""
 
 
+# ....................... #
+
+
+class SimulatedCrash(BaseException):
+    """A simulated process crash (``kill -9``) at a port boundary.
+
+    A :class:`BaseException`, not an :class:`Exception`, so it bypasses application
+    ``except Exception`` handling — the operation gets no chance to compensate, modeling the
+    process simply dying. The in-flight transaction is rolled back (the store's crash
+    recovery — committed state stays consistent; uncommitted work is lost), and only a
+    **restart** over the persisted store recovers; work an operation deferred to after a
+    commit but had not yet performed is gone until a recovery pass re-drives it.
+    """
+
+
+# ....................... #
+
+
+def _call_matches(
+    call: PortCall,
+    *,
+    surface: str | None,
+    route: str | None,
+    op: str | None,
+) -> bool:
+    """Whether *call* matches the (surface, route, op) selector (``None`` matches anything)."""
+
+    return (
+        (surface is None or call.surface == surface)
+        and (route is None or call.route == route)
+        and (op is None or call.op == op)
+    )
+
+
 @final
 @attrs.define(frozen=True, kw_only=True)
 class TransportFaultPolicy:
@@ -215,18 +249,9 @@ class PortFaultInterceptor:
 
     # ....................... #
 
-    def _matches(self, call: PortCall) -> bool:
-        return (
-            (self.surface is None or call.surface == self.surface)
-            and (self.route is None or call.route == self.route)
-            and (self.op is None or call.op == self.op)
-        )
-
-    # ....................... #
-
     async def around(self, call: PortCall, nxt: PortNext) -> object:
         if (
-            self._matches(call)
+            _call_matches(call, surface=self.surface, route=self.route, op=self.op)
             and self.transient > 0.0
             and self.rng.random() < self.transient
         ):
@@ -234,6 +259,45 @@ class PortFaultInterceptor:
                 f"injected transient fault at {call.surface}[{call.route}].{call.op}",
                 code=self.code,
                 details={"surface": call.surface, "route": call.route, "op": call.op},
+            )
+
+        return await nxt(call)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(kw_only=True)
+class CrashInterceptor:
+    """Raise a :class:`SimulatedCrash` at a matched port boundary — the process dies mid-I/O.
+
+    The seam-level crash primitive (WS4): unlike :class:`PortFaultInterceptor` (a retryable
+    ``CoreException`` the application can catch and compensate), the crash is a
+    :class:`BaseException`, so the operation gets no inline recovery — the in-flight
+    transaction rolls back and the system is only made whole by a restart over the persisted
+    store. The fault RNG is dedicated, so a fixed seed replays the exact crash point.
+
+    *surface* / *route* / *op* (any ``None`` matches anything) select the eligible calls;
+    *probability* is the per-eligible-call crash chance.
+    """
+
+    rng: random.Random
+    probability: float = 1.0
+    surface: str | None = None
+    route: str | None = None
+    op: str | None = None
+
+    # ....................... #
+
+    async def around(self, call: PortCall, nxt: PortNext) -> object:
+        if (
+            _call_matches(call, surface=self.surface, route=self.route, op=self.op)
+            and self.probability > 0.0
+            and self.rng.random() < self.probability
+        ):
+            raise SimulatedCrash(
+                f"simulated crash at {call.surface}[{call.route}].{call.op}"
             )
 
         return await nxt(call)
