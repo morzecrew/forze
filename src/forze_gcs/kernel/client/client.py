@@ -312,6 +312,16 @@ class GCSClient(GCSClientPort):
         storage = self.__require_storage()
         custom: dict[str, str] = dict(metadata) if metadata is not None else {}
 
+        # Tags are emulated as ``forze-tag-*`` custom metadata and split back out
+        # on read; a user metadata key in that namespace would be misread as a
+        # tag (and could collide with a real tag), so reject it at write time.
+        reserved = sorted(k for k in custom if k.startswith(TAG_METADATA_PREFIX))
+        if reserved:
+            raise exc.precondition(
+                f"Object metadata keys must not start with the reserved tag "
+                f"prefix {TAG_METADATA_PREFIX!r}: {reserved}.",
+            )
+
         if tags:
             for tag_key, tag_value in tags.items():
                 custom[f"{TAG_METADATA_PREFIX}{tag_key}"] = tag_value

@@ -561,13 +561,17 @@ class S3Client(S3ClientPort):
         data = await body.read()
 
         content_range = resp.get("ContentRange", "")
-        total = _parse_total_from_content_range(content_range)
+        parsed_total = _parse_total_from_content_range(content_range)
+
+        # Unknown total: ContentRange absent (non-conforming backend) or an
+        # ``.../*`` unknown-length form (S3-compatible gateways). Derive a
+        # best-effort total from the satisfied range rather than returning 0.
+        total = parsed_total if parsed_total is not None else (start + len(data))
 
         if not content_range:
             # S3 always returns ContentRange for a satisfied range; synthesize
             # defensively if a non-conforming backend omits it.
             end_byte = start + len(data) - 1 if data else start
-            total = total or (start + len(data))
             content_range = f"bytes {start}-{end_byte}/{total}"
 
         object_body = ObjectBody(
@@ -1227,19 +1231,20 @@ def _s3_sse_request_headers(sse: ObjectStorageSSE | None) -> dict[str, str]:
 # ....................... #
 
 
-def _parse_total_from_content_range(content_range: str) -> int:
+def _parse_total_from_content_range(content_range: str) -> int | None:
     """Parse the total object size out of a ``bytes start-end/total`` header.
 
-    Returns ``0`` when the header is absent or non-conforming (the caller
-    synthesizes a best-effort range in that case).
+    Returns ``None`` when the total is unknown (``bytes start-end/*``) or the
+    header is absent/non-conforming, so the caller can synthesize a best-effort
+    total instead of mistaking it for an explicit ``0`` (an empty object).
     """
 
     if not content_range or "/" not in content_range:
-        return 0
+        return None
 
     total_part = content_range.rsplit("/", 1)[-1].strip()
 
-    return int(total_part) if total_part.isdigit() else 0
+    return int(total_part) if total_part.isdigit() else None
 
 
 # ....................... #
