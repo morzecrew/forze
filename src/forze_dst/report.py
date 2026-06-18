@@ -166,12 +166,20 @@ class CausalGraph:
 
             call_id = event.fields.get("call_id")
             start = starts.get(call_id)
-            start_seq = start.seq if start is not None else event.seq
+            # The span interval is in the engine trace's own sequence space (true execution
+            # order, which never collides — unlike a shared virtual-time stamp). The projected
+            # operation event carries it; fall back to the op_start anchor / recorder seq.
+            start_seq = int(
+                event.fields.get(
+                    "start_seq", start.seq if start is not None else event.seq
+                )
+            )
+            end_seq = int(event.fields.get("end_seq", event.seq))
             outcome = str(event.fields.get("outcome", "ok"))
             detail = (
                 f"error={event.fields.get('error')}"
-                if outcome == "error"
-                else _short(event.fields.get("result"))
+                if outcome in ("error", "failed")
+                else outcome
             )
 
             spans.append(
@@ -179,7 +187,7 @@ class CausalGraph:
                     call_id=int(call_id) if isinstance(call_id, int) else -1,
                     op=str(event.fields.get("op")),
                     start_seq=start_seq,
-                    end_seq=event.seq,
+                    end_seq=end_seq,
                     outcome=outcome,
                     detail=detail,
                     invoked_at=float(event.fields.get("invoked_at", event.at)),
@@ -299,7 +307,7 @@ def format_report(report: ViolationReport) -> str:
         lines.extend(("", "  causal trace (by execution order):"))
 
         for span in graph.spans:
-            mark = "✗" if span.outcome == "error" else "·"
+            mark = "·" if span.outcome == "ok" else "✗"
             lines.append(
                 f"    {mark} {span.op}#{span.call_id} → {span.outcome} [{span.detail}]"
             )

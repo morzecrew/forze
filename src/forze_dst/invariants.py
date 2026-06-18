@@ -158,7 +158,9 @@ def no_unexpected_error() -> Invariant:
     zero-instrumentation safety net — it holds against any operation registry without a
     single app-written invariant, so ``forze dst run`` is useful on an uninstrumented app.
 
-    Requires the harness to tag operation errors (it records ``unexpected`` on each).
+    Reads the operation outcome from the engine trace (the single source of truth): the engine
+    classifies each failed operation ``failed`` (a declared ``CoreException`` — expected) or
+    ``error`` (an unhandled exception — a bug); this flags only the latter.
     """
 
     def _check(history: History) -> list[Violation]:
@@ -172,7 +174,126 @@ def no_unexpected_error() -> Invariant:
                 events=(event,),
             )
             for event in history.of_kind("operation")
-            if event.fields.get("outcome") == "error" and event.fields.get("unexpected")
+            if event.fields.get("outcome") == "error"
+        ]
+
+    return _check
+
+
+def operation_succeeds(*ops: str) -> Invariant:
+    """Each named operation must always reach a successful (``ok``) outcome.
+
+    Stricter than :func:`no_unexpected_error`: a *declared* domain failure (``failed``) on these
+    operations is flagged too — for operations a scenario guarantees should succeed (e.g. a
+    confirm after a valid arrange). With no *ops* it applies to every operation. Reads the
+    operation outcome the engine trace records (the single source), projected into the history.
+    """
+
+    wanted = frozenset(ops)
+
+    def _check(history: History) -> list[Violation]:
+        return [
+            Violation(
+                invariant="operation_succeeds",
+                message=(
+                    f"operation {event.fields.get('op')!r} did not succeed "
+                    f"(outcome={event.fields.get('outcome')})"
+                ),
+                events=(event,),
+            )
+            for event in history.of_kind("operation")
+            if (not wanted or event.fields.get("op") in wanted)
+            and event.fields.get("outcome") != "ok"
+        ]
+
+    return _check
+
+
+def completes_within(op: str, seconds: float) -> Invariant:
+    """Every ``op`` operation must finish within *seconds* of **virtual** time (invoke→return).
+
+    Reads the operation span the engine trace records (projected into the history). A slow
+    downstream — modeled by a seeded ``LatencyProfile`` — that pushes an operation past its
+    deadline is caught here with zero handler instrumentation: the time twin of a concurrency
+    invariant, surfaced from the converged trace alone.
+    """
+
+    def _check(history: History) -> list[Violation]:
+        violations: list[Violation] = []
+
+        for event in history.of_kind("operation"):
+            if event.fields.get("op") != op:
+                continue
+
+            elapsed = float(event.fields.get("returned_at", event.at)) - float(
+                event.fields.get("invoked_at", event.at)
+            )
+
+            if elapsed > seconds:
+                violations.append(
+                    Violation(
+                        invariant="completes_within",
+                        message=f"operation {op!r} took {elapsed:.6f}s > {seconds}s",
+                        events=(event,),
+                    )
+                )
+
+        return violations
+
+    return _check
+
+
+def single_key_per_operation(op: str, *, surface: str = "document_command") -> Invariant:
+    """Each ``op`` execution must touch at most one entity **key** on *surface*.
+
+    Reads the entity key the engine trace records for every keyed port call and attributes each
+    call to the operation span that contains it (in the trace's own sequence space — true
+    execution order). An operation that writes to two different keys — the classic *wrong-entity*
+    bug (charged the wrong account) — is caught from the trace alone: no payload capture, no
+    handler instrumentation. Each call is credited to its innermost (most-recently-started) span,
+    so overlapping same-op spans under concurrency are not double-counted.
+    """
+
+    def _check(history: History) -> list[Violation]:
+        spans = [
+            (
+                int(event.fields.get("start_seq", -1)),
+                int(event.fields.get("end_seq", -1)),
+                event,
+            )
+            for event in history.of_kind("operation")
+            if event.fields.get("op") == op
+        ]
+
+        if not spans:
+            return []
+
+        keys_by_span: dict[int, set[Any]] = defaultdict(set)
+
+        for event in history.of_kind("trace"):
+            if event.fields.get("surface") != surface or event.fields.get("key") is None:
+                continue
+
+            seq = int(event.fields.get("trace_seq", -1))
+            covering = [span for span in spans if span[0] <= seq <= span[1]]
+
+            if not covering:
+                continue
+
+            owner = max(covering, key=lambda span: span[0])  # innermost (latest start)
+            keys_by_span[owner[2].seq].add(event.fields["key"])
+
+        return [
+            Violation(
+                invariant="single_key_per_operation",
+                message=(
+                    f"operation {op!r} touched multiple keys on {surface}: "
+                    f"{sorted(str(key) for key in keys_by_span[event.seq])}"
+                ),
+                events=(event,),
+            )
+            for _, _, event in spans
+            if len(keys_by_span[event.seq]) > 1
         ]
 
     return _check

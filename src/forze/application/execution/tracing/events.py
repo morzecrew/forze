@@ -48,11 +48,14 @@ class TracingEvent:
     stays free of PII without a redaction pass."""
 
     outcome: str | None = None
-    """Terminal outcome of an operation event (``ok`` / ``error``); ``None`` for non-terminal
-    or non-operation events."""
+    """Terminal outcome of an operation event; ``None`` for non-terminal or non-operation
+    events. For an operation boundary: ``ok`` (completed), ``failed`` (raised a declared
+    domain failure — a :class:`~forze.base.exceptions.CoreException`, an expected outcome), or
+    ``error`` (raised an unhandled exception — a bug). The ``failed`` / ``error`` split makes
+    the trace the single source of truth for the domain-failure-vs-bug distinction."""
 
     error: str | None = None
-    """Exception type name when ``outcome == "error"``."""
+    """Exception type name when ``outcome`` is ``failed`` or ``error``."""
 
 
 # ....................... #

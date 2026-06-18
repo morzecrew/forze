@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncGenerator, Awaitable, Callable, Sequence, cast, final
@@ -33,14 +34,19 @@ from forze.application.execution.interception import LatencyModel, PortIntercept
 from forze.application.execution.lifecycle import FrozenLifecyclePlan
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import FrozenOperationRegistry
-from forze.base.exceptions import CoreException
-from forze.base.primitives import derive_seed, monotonic
+from forze.base.primitives import derive_seed
 from forze_dst.derive import DEFAULT_CREATE_VERBS
 from forze_dst.derive import derive_scenario as _derive_from_catalog
 from forze_dst.invariants import Invariant, check
 from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.reactive import ReactiveMap
-from forze_dst.recorder import History, Recorder, bind_recorder, record_event
+from forze_dst.recorder import (
+    History,
+    Recorder,
+    bind_recorder,
+    current_recorder,
+    record_event,
+)
 from forze_dst.runtime import run_simulation
 from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
 from forze_dst.faults import SimulatedCrash, compile_crash, compile_fault_policy
@@ -76,7 +82,16 @@ def _outcome_signature(history: History) -> tuple[Any, ...]:
 
 
 def _fold_runtime_trace(ctx: ExecutionContext) -> None:
-    """Fold the engine's runtime trace into the recorded history, keeping each event's stamp."""
+    """Fold the engine's runtime trace into history, then project per-op ``operation`` events.
+
+    The engine trace is the single source of truth for execution events — ports, transactions,
+    domain dispatch, and the operation invoke→complete|error boundary (the engine classifies the
+    terminal ``ok`` / ``failed`` / ``error``). Each event is folded as a ``trace`` event keeping
+    its stamp. Operation outcomes are then **projected** into convenience ``operation`` events,
+    one per boundary, sourced entirely from the trace and correlated to the harness's ``op_start``
+    anchors for the call id (an ``op_start`` is immediately followed by its invoke with no
+    intervening await, so the i-th anchor matches the i-th invoke). The harness records no
+    operation outcome of its own — the trace is the single source (decision D6=c)."""
 
     trace = ctx.deps.runtime_trace()
 
@@ -97,6 +112,64 @@ def _fold_runtime_trace(ctx: ExecutionContext) -> None:
             key=event.key,
             outcome=event.outcome,
             error=event.error,
+        )
+
+    _project_operation_events(trace.events)
+
+
+# ....................... #
+
+
+def _project_operation_events(trace_events: Sequence[Any]) -> None:
+    """Project ``operation`` events from the folded trace's operation boundaries.
+
+    Each invoke is matched to its terminal (complete/error) per op in FIFO order, and to the
+    recorder's ``op_start`` anchors by global ordinal (for the call id). The projected event
+    carries the trace's own sequence numbers as the span interval (``start_seq``/``end_seq`` —
+    true execution order, which never collides, unlike a shared virtual-time stamp). A boundary
+    with no terminal (the process crashed mid-call) is projected ``incomplete``."""
+
+    recorder = current_recorder()
+
+    if recorder is None:
+        return
+
+    op_starts = [e for e in recorder.history.events if e.kind == "op_start"]
+    invokes = [
+        e for e in trace_events if e.domain == "operation" and e.phase == "invoke"
+    ]
+
+    terminals: dict[str, deque[Any]] = defaultdict(deque)
+    for event in trace_events:
+        if event.domain == "operation" and event.phase in ("complete", "error"):
+            terminals[event.op].append(event)
+
+    for index, invoke in enumerate(invokes):
+        anchor = op_starts[index] if index < len(op_starts) else None
+        call_id = anchor.fields.get("call_id") if anchor is not None else -1
+
+        queue = terminals.get(invoke.op)
+        terminal = queue.popleft() if queue else None
+
+        if terminal is None:
+            outcome, error = "incomplete", None
+            returned_at, end_seq = invoke.at, invoke.seq
+        else:
+            outcome = terminal.outcome or "ok"
+            error = terminal.error
+            returned_at, end_seq = terminal.at, terminal.seq
+
+        record_event(
+            "operation",
+            at=returned_at,
+            call_id=call_id,
+            op=invoke.op,
+            outcome=outcome,
+            error=error,
+            invoked_at=invoke.at,
+            returned_at=returned_at,
+            start_seq=invoke.seq,
+            end_seq=end_seq,
         )
 
 
@@ -560,35 +633,24 @@ class Simulation:
         op: str,
         arg: Any,
     ) -> None:
-        """Run one operation concurrently, recording its start marker and outcome."""
+        """Run one operation concurrently, anchoring its span start.
+
+        Only an ``op_start`` anchor (carrying the call id) is recorded here; the operation's
+        **outcome** is the engine trace's to record (``run_operation`` emits an invoke→complete/
+        error boundary, classified ``ok``/``failed``/``error``), and the harness projects per-op
+        ``operation`` events from that single source when folding the trace (see
+        :func:`_fold_runtime_trace`). A domain failure or a bug is swallowed here so one call's
+        failure never aborts the concurrent batch; a :class:`SimulatedCrash` (a ``BaseException``)
+        is *not* caught — it propagates to model the process dying.
+        """
 
         async with semaphore:
             record_event("op_start", call_id=call_id, op=op)
-            invoked = monotonic()
 
             try:
-                result = await run_operation(self.operations, op, arg, ctx)
-                record_event(
-                    "operation",
-                    call_id=call_id,
-                    op=op,
-                    outcome="ok",
-                    result=result,
-                    invoked_at=invoked,
-                    returned_at=monotonic(),
-                )
-
-            except Exception as error:
-                record_event(
-                    "operation",
-                    call_id=call_id,
-                    op=op,
-                    outcome="error",
-                    error=type(error).__name__,
-                    unexpected=not isinstance(error, CoreException),
-                    invoked_at=invoked,
-                    returned_at=monotonic(),
-                )
+                await run_operation(self.operations, op, arg, ctx)
+            except Exception:  # nosec B110 # noqa: BLE001 — outcome captured by the engine trace; one call's failure must never abort the batch
+                pass
 
     # ....................... #
 
@@ -600,39 +662,20 @@ class Simulation:
         op: str,
         arg: Any,
     ) -> tuple[bool, Any]:
-        """Run one arrange operation serially; record it and return ``(ok, result)``.
+        """Run one arrange operation serially; anchor its span and return ``(ok, result)``.
 
-        A failed arrange op produces nothing into the model (``ok`` is ``False``) but is
-        still recorded, so the report shows where setup broke down.
+        A failed arrange op produces nothing into the model (``ok`` is ``False``). Only the
+        ``op_start`` anchor is recorded; the outcome lives in the engine trace (projected at
+        fold time). The result is returned directly so arrange can capture produced handles.
         """
 
         record_event("op_start", call_id=call_id, op=op)
-        invoked = monotonic()
 
         try:
             result = await run_operation(self.operations, op, arg, ctx)
-            record_event(
-                "operation",
-                call_id=call_id,
-                op=op,
-                outcome="ok",
-                result=result,
-                invoked_at=invoked,
-                returned_at=monotonic(),
-            )
             return True, result
 
-        except Exception as error:
-            record_event(
-                "operation",
-                call_id=call_id,
-                op=op,
-                outcome="error",
-                error=type(error).__name__,
-                unexpected=not isinstance(error, CoreException),
-                invoked_at=invoked,
-                returned_at=monotonic(),
-            )
+        except Exception:
             return False, None
 
     # ....................... #
@@ -1265,10 +1308,13 @@ class Simulation:
                 epoch=epoch,
             )
 
+            # Ops the harness drove directly carry an ``op_start`` anchor; a cascade (saga step
+            # / event handler) is invoked deep in a handler and has none — so it shows up in the
+            # trace's invokes but not here, which is exactly the cascade set.
             direct = {
                 event.fields.get("op")
                 for event in history.events
-                if event.kind == "operation"
+                if event.kind == "op_start"
             }
             invoked = {
                 event.fields.get("op")

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from forze.application.contracts.durable.function import DurableFunctionSpec
 from forze.application.contracts.execution import Handler, OnSuccess
 from forze.application.contracts.transaction import AfterCommitPort
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 
 from ...context.active_operation import active_operation_var
@@ -196,11 +196,16 @@ async def run_operation(
     try:
         result = await resolved(args)
     except Exception as error:
+        # Classify the failure for the trace: a declared domain failure (a CoreException —
+        # an expected, handled outcome) is recorded as ``failed``, while any other exception
+        # is an unhandled bug, recorded as ``error``. This makes the runtime trace the single
+        # source of truth for the domain-failure-vs-bug distinction (consumed e.g. by DST's
+        # ``no_unexpected_error``), with no separate classification needed downstream.
         record(
             domain="operation",
             op=str(op),
             phase="error",
-            outcome="error",
+            outcome="failed" if isinstance(error, CoreException) else "error",
             error=type(error).__name__,
             deps=ctx.deps,
         )
