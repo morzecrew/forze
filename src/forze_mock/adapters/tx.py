@@ -17,6 +17,10 @@ from forze_mock.adapters._journal import (
     _journal,  # pyright: ignore[reportPrivateUsage]
     undo,
 )
+from forze_mock.adapters._mvcc import (
+    MvccTx,
+    _mvcc_tx,  # pyright: ignore[reportPrivateUsage]
+)
 
 if TYPE_CHECKING:
     from forze_mock.state import MockState
@@ -274,12 +278,10 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
     # ....................... #
 
     def capabilities(self) -> TxCapabilities:
-        # Write-through with a per-transaction undo journal + row-``rev`` OCC: read-committed
-        # today. Snapshot / serializable (an MVCC read overlay) are a separate, planned step
-        # — until then an operation requiring them fails closed rather than silently running
-        # weaker.
+        # Read-committed by default (write-through journal + row-``rev`` OCC); snapshot and
+        # serializable are honored via the MVCC buffered overlay (see ``adapters._mvcc``).
         return TxCapabilities(
-            isolation=frozenset({IsolationLevel.READ_COMMITTED}),
+            isolation=frozenset(IsolationLevel),
             savepoints=False,
             read_only=True,
         )
@@ -293,33 +295,56 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
         isolation: IsolationLevel | None = None,
     ) -> AbstractAsyncContextManager[None]:
         self.state.tx_read_only_calls.append(read_only)
-        return self._transaction(read_only=read_only)
+        return self._transaction(read_only=read_only, isolation=isolation)
 
     # ....................... #
 
     @asynccontextmanager
-    async def _transaction(self, *, read_only: bool) -> AsyncGenerator[None]:
+    async def _transaction(
+        self, *, read_only: bool, isolation: IsolationLevel | None
+    ) -> AsyncGenerator[None]:
         depth = _journal_tx_depth.get()
         is_root = depth == 0
         token_depth = _journal_tx_depth.set(depth + 1)
 
-        # Root owns the journal + read-only flag; nested scopes (savepoints) share them, so a
-        # nested write is undone iff the root rolls back (savepoint-level partial rollback is
-        # not modelled — a documented v1 limitation).
-        token_journal = _journal.set([]) if is_root else None
+        # Snapshot / serializable use the MVCC buffered overlay (reads from an as-of-begin
+        # snapshot, writes buffered, validated + published at commit). Read-committed (the
+        # default) uses the write-through undo journal. Only the root sets either up; nested
+        # scopes (savepoints) share it — savepoint-level partial rollback is not modelled.
+        mvcc_enabled = isolation in (IsolationLevel.SNAPSHOT, IsolationLevel.SERIALIZABLE)
+
+        mvcc = (
+            MvccTx.begin(
+                self.state, serializable=isolation is IsolationLevel.SERIALIZABLE
+            )
+            if is_root and mvcc_enabled
+            else None
+        )
+        token_mvcc = _mvcc_tx.set(mvcc) if mvcc is not None else None
+        token_journal = _journal.set([]) if is_root and mvcc is None else None
         token_ro = _mock_tx_read_only.set(read_only) if is_root else None
 
         try:
             yield
 
+            # Validate + publish the overlay on the success path (a serialization conflict
+            # raises, falling through to the abort branch which discards the overlay).
+            if mvcc is not None:
+                mvcc.validate(self.state)
+                mvcc.commit(self.state)
+
         except BaseException:
-            if is_root:
+            if is_root and mvcc is None:
                 if journal := _journal.get():
                     undo(journal)
+            # An MVCC abort needs no undo: buffered writes never reached the live store.
 
             raise
 
         finally:
+            if token_mvcc is not None:
+                _mvcc_tx.reset(token_mvcc)
+
             if token_ro is not None:
                 _mock_tx_read_only.reset(token_ro)
 

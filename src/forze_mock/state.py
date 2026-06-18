@@ -183,6 +183,15 @@ class MockState:
     """Authn events recorded by :class:`~forze_mock.adapters.events.RecordingAuthnEventSink`
     (test observability; appended in emission order)."""
 
+    mvcc_version: int = attrs.field(default=0)
+    """Monotonic commit counter for MVCC (snapshot/serializable) transactions."""
+
+    mvcc_commit_log: list[tuple[int, dict[str, frozenset[Any]]]] = attrs.field(
+        factory=list
+    )
+    """Committed write-sets ``(version, {namespace: frozenset[key]})`` for MVCC conflict
+    detection (append-only across a run)."""
+
     __lock: threading.RLock = attrs.field(
         factory=threading.RLock, init=False, repr=False
     )

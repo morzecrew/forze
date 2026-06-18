@@ -34,6 +34,7 @@ from forze_mock import MockDepsModule
 from forze_mock.adapters.tx import (
     MockJournalTxManagerAdapter,
     MockStrictTxManagerAdapter,
+    MockTxManagerAdapter,
 )
 from forze_mock.state import MockState
 
@@ -88,13 +89,19 @@ def test_read_committed_against_journal_is_allowed() -> None:
 
 
 def test_isolation_beyond_capabilities_fails_closed() -> None:
-    # The journal manager is read-committed only; requiring serializable is rejected.
-    tx = _ctx(MockJournalTxManagerAdapter(state=MockState()))
+    # The no-op manager reports read-committed only; requiring serializable is rejected.
+    tx = _ctx(MockTxManagerAdapter(state=MockState()))
 
     with pytest.raises(CoreException) as excinfo:
         asyncio.run(_enter(tx, isolation=IsolationLevel.SERIALIZABLE))
 
     assert excinfo.value.code == "tx_isolation_unsupported"
+
+
+def test_journal_now_supports_serializable() -> None:
+    # WS5: the journal manager honors snapshot/serializable via the MVCC overlay.
+    tx = _ctx(MockJournalTxManagerAdapter(state=MockState()))
+    asyncio.run(_enter(tx, isolation=IsolationLevel.SERIALIZABLE))
 
 
 def test_isolation_against_non_reporting_manager_fails_closed() -> None:
@@ -178,9 +185,9 @@ def _run_op(*, isolation: IsolationLevel, transactions: str) -> None:
 
 
 def test_operation_declared_isolation_beyond_caps_fails_closed_end_to_end() -> None:
-    # The journal default is read-committed; an op declaring serializable is rejected.
+    # The no-op manager is read-committed only; an op declaring serializable is rejected.
     with pytest.raises(CoreException) as excinfo:
-        _run_op(isolation=IsolationLevel.SERIALIZABLE, transactions="journal")
+        _run_op(isolation=IsolationLevel.SERIALIZABLE, transactions="none")
 
     assert excinfo.value.code == "tx_isolation_unsupported"
 
