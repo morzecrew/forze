@@ -275,3 +275,68 @@ class TestLatencyProfile:
     def test_no_latency_leaves_the_clock_at_zero(self) -> None:
         report = _latency_sim().run(_config(), scenario=_LATENCY_SCENARIO)
         assert report is None  # the create is instant; virtual time stays at 0
+
+
+# ....................... #
+# Unit coverage for the distribution primitives + compile helpers.
+
+
+class TestDistributions:
+    def test_constant_uniform_exponential_sample(self) -> None:
+        import random
+
+        from forze_dst.latency import Constant, Exponential, Uniform, compile_latency
+
+        rng = random.Random(0)
+        assert Constant(1.5).sample(rng) == 1.5
+        assert 0.0 <= Uniform(0.0, 1.0).sample(rng) <= 1.0
+        assert Exponential(2.0).sample(rng) >= 0.0
+        assert Exponential(0.0).sample(rng) == 0.0  # non-positive mean → no delay
+
+    def test_compile_latency_first_match_else_zero(self) -> None:
+        import random
+
+        from forze_dst.latency import Constant, LatencyProfile, LatencyRule, compile_latency
+
+        model = compile_latency(
+            LatencyProfile(rules=(LatencyRule(dist=Constant(0.3), route="r"),)),
+            random.Random(0),
+        )
+        assert model("s", "r", "op") == 0.3  # matched
+        assert model("s", "other", "op") == 0.0  # no rule → 0
+
+
+class TestDropFault:
+    def test_drop_short_circuits_with_synthetic_ids(self) -> None:
+        import random
+
+        from forze.application.execution.interception import PortCall
+        from forze_dst.faults import FaultPolicy, FaultRule, compile_fault_policy
+
+        interceptor = compile_fault_policy(
+            FaultPolicy(rules=(FaultRule(drop=1.0),)), random.Random(0)
+        )
+
+        async def nxt(_call: PortCall) -> object:
+            raise AssertionError("dropped call must not reach the port")
+
+        async def go() -> None:
+            one = await interceptor.around(
+                PortCall(surface="queue_command", route="q", op="enqueue", args=("q", object())),
+                nxt,
+            )
+            assert isinstance(one, str)
+            many = await interceptor.around(
+                PortCall(
+                    surface="queue_command",
+                    route="q",
+                    op="enqueue_many",
+                    args=("q", [object(), object(), object()]),
+                ),
+                nxt,
+            )
+            assert isinstance(many, list) and len(many) == 3
+
+        import asyncio
+
+        asyncio.run(go())

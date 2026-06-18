@@ -13,11 +13,8 @@ from .faults import (
     CrashInterceptor,
     FaultPolicy,
     FaultRule,
-    FaultyQueueCommand,
     PortFaultInterceptor,
     SimulatedCrash,
-    TransportFault,
-    TransportFaultPolicy,
 )
 from .latency import (
     Constant,
@@ -93,8 +90,6 @@ __all__ = [
     "generate_workload",
     "run_workload",
     "simulate_workload",
-    "TransportFaultPolicy",
-    "FaultyQueueCommand",
     "PortFaultInterceptor",
     "CrashInterceptor",
     "SimulatedCrash",
@@ -105,7 +100,6 @@ __all__ = [
     "Constant",
     "Uniform",
     "Exponential",
-    "TransportFault",
     "Event",
     "History",
     "Recorder",

@@ -1,46 +1,37 @@
-"""Seed-driven fault injection.
+"""Seed-driven fault injection — entirely over the core port-interception seam.
 
-Two complementary surfaces, each driven by a dedicated fault RNG (separate from the
-application entropy seam and the scheduler RNG, so faults vary independently and a fixed
-fault seed replays the exact failure sequence):
+A dedicated fault RNG (separate from the application entropy seam and the scheduler RNG, so
+faults vary independently and a fixed fault seed replays the exact failure sequence) drives
+every fault at the port boundary, over *any* resolved port, with no hand-wiring of a specific
+adapter — the app under test is never modified.
 
-* **Seam-based, over any port** (the modern path, via the core port-interception seam) —
-  :class:`PortFaultInterceptor` injects a transient (retryable) failure, and
-  :class:`CrashInterceptor` a process crash, at a matched port boundary on *any* resolved
-  port, with no hand-wiring.
-* **Transport-specific, queue-port wrapper** — :class:`TransportFaultPolicy` +
-  :class:`FaultyQueueCommand` wrap a :class:`~forze.application.contracts.queue.QueueCommandPort`
-  to inject the richer broker behaviours the seam interceptors do not yet model: duplicate
-  delivery (exercise inbox idempotency), silent drops (broker loss), and delivery delays
-  (which, varied per message, reorder arrivals in virtual time).
+* **Declarative** — :class:`FaultPolicy` / :class:`FaultRule` (the blessed surface): per
+  ``(surface, route, op)`` rates for every fault kind, compiled by the harness from a sub-seed
+  derived from the run's master seed (so faults are seeded *by construction* — no caller RNG).
+* **Primitives** — :class:`PortFaultInterceptor` (one transient error) and
+  :class:`CrashInterceptor` (one :class:`SimulatedCrash`) for direct, single-kind use.
 
-Division of labour: use the seam interceptors for transient/crash faults over real
-registries; use the queue wrapper for duplicate/drop/delay until those are modelled at the
-seam (a `TransportFaultInterceptor` is a planned follow-up that would retire the wrapper).
-Both target the *port interfaces* (core contracts), not the mock, so the fault layer stays
-free of any adapter dependency.
+Fault kinds: ``error`` (retryable ``exc.infrastructure``), ``timeout`` (``exc.timeout``),
+``crash`` (``SimulatedCrash``) — all raise-faults over any port; and the transport behaviours
+``drop`` (silent loss — short-circuit, no real call), ``duplicate`` (the call runs twice — a
+redelivery), and ``delay`` (advance virtual time before the call, reordering arrivals). The
+seam never modifies the call's arguments — a delay is a virtual-time advance, not a rewritten
+``delay`` parameter — so the injected environment stays faithful to the real app.
 """
 
 from __future__ import annotations
 
+import asyncio
 import random
-from datetime import datetime, timedelta
-from typing import Mapping, Sequence, final
+from datetime import timedelta
+from typing import final
 
 import attrs
 
-from forze.application.contracts.queue import QueueCommandPort
 from forze.application.execution.interception import PortCall, PortNext
 from forze.base.exceptions import exc
 
 # ----------------------- #
-
-
-class TransportFault(RuntimeError):
-    """A simulated *retryable* transport failure (e.g. a transient enqueue error)."""
-
-
-# ....................... #
 
 
 class SimulatedCrash(BaseException):
@@ -75,160 +66,6 @@ def _call_matches(
 
 
 @final
-@attrs.define(frozen=True, kw_only=True)
-class TransportFaultPolicy:
-    """Per-operation fault probabilities for a simulated transport.
-
-    Each is an independent probability in ``[0, 1]`` rolled per enqueue. ``delay`` adds
-    a visibility delay drawn uniformly in ``(0, max_delay]`` — varying it per message
-    reorders arrivals (the seam's stand-in for broker reordering).
-    """
-
-    transient: float = 0.0
-    """P(enqueue raises a retryable :class:`TransportFault` before storing)."""
-
-    duplicate: float = 0.0
-    """P(an accepted message is stored an extra time — a redelivered duplicate)."""
-
-    drop: float = 0.0
-    """P(enqueue is silently lost — models broker loss; breaks at-least-once without
-    an outbox/durable redelivery to recover it)."""
-
-    delay: float = 0.0
-    """P(a message's visibility is delayed)."""
-
-    max_delay: timedelta = timedelta(seconds=5)
-    """Upper bound for an injected delay (drawn uniformly in ``(0, max_delay]``)."""
-
-    def __attrs_post_init__(self) -> None:
-        for name in ("transient", "duplicate", "drop", "delay"):
-            value = getattr(self, name)
-            if not 0.0 <= value <= 1.0:
-                raise ValueError(f"{name} probability must be in [0, 1], got {value}")
-
-
-# ....................... #
-
-
-@final
-@attrs.define(kw_only=True)
-class FaultyQueueCommand[M](QueueCommandPort[M]):
-    """A :class:`QueueCommandPort` that injects :class:`TransportFaultPolicy` faults."""
-
-    inner: QueueCommandPort[M]
-    policy: TransportFaultPolicy
-    rng: random.Random
-
-    # ....................... #
-
-    def _roll(self, probability: float) -> bool:
-        return probability > 0.0 and self.rng.random() < probability
-
-    def _extra_delay(self) -> timedelta | None:
-        if not self._roll(self.policy.delay):
-            return None
-        seconds = self.rng.uniform(0.0, self.policy.max_delay.total_seconds())
-        return timedelta(seconds=seconds)
-
-    def _dropped_id(self) -> str:
-        # An accepted-then-lost message: a plausible, deterministic synthetic id.
-        return f"fault-dropped-{self.rng.getrandbits(48):012x}"
-
-    @staticmethod
-    def _combine(base: timedelta | None, extra: timedelta | None) -> timedelta | None:
-        if base is None:
-            return extra
-        return base if extra is None else base + extra
-
-    # ....................... #
-
-    async def enqueue(
-        self,
-        queue: str,
-        payload: M,
-        *,
-        type: str | None = None,
-        key: str | None = None,
-        enqueued_at: datetime | None = None,
-        delay: timedelta | None = None,
-        not_before: datetime | None = None,
-        headers: Mapping[str, str] | None = None,
-    ) -> str:
-        if self._roll(self.policy.transient):
-            raise TransportFault("simulated transient enqueue failure")
-
-        if self._roll(self.policy.drop):
-            return self._dropped_id()
-
-        message_id = await self.inner.enqueue(
-            queue,
-            payload,
-            type=type,
-            key=key,
-            enqueued_at=enqueued_at,
-            delay=self._combine(delay, self._extra_delay()),
-            not_before=not_before,
-            headers=headers,
-        )
-
-        if self._roll(self.policy.duplicate):
-            await self.inner.enqueue(
-                queue,
-                payload,
-                type=type,
-                key=key,
-                enqueued_at=enqueued_at,
-                delay=self._combine(delay, self._extra_delay()),
-                not_before=not_before,
-                headers=headers,
-            )
-
-        return message_id
-
-    # ....................... #
-
-    async def enqueue_many(
-        self,
-        queue: str,
-        payloads: Sequence[M],
-        *,
-        type: str | None = None,
-        key: str | None = None,
-        enqueued_at: datetime | None = None,
-        delay: timedelta | None = None,
-        not_before: datetime | None = None,
-        headers: Mapping[str, str] | None = None,
-        message_headers: Sequence[Mapping[str, str]] | None = None,
-    ) -> list[str]:
-        # Route each item through the single-message fault path so per-message
-        # transient/drop/duplicate/delay all apply; preserves the batch's id list.
-        ids: list[str] = []
-        for index, payload in enumerate(payloads):
-            per_headers = (
-                message_headers[index]
-                if message_headers is not None and index < len(message_headers)
-                else headers
-            )
-            ids.append(
-                await self.enqueue(
-                    queue,
-                    payload,
-                    type=type,
-                    key=key,
-                    enqueued_at=enqueued_at,
-                    delay=delay,
-                    not_before=not_before,
-                    headers=per_headers,
-                )
-            )
-
-        return ids
-
-
-# ....................... #
-
-
-@final
 @attrs.define(kw_only=True)
 class PortFaultInterceptor:
     """Inject a transient downstream failure at a port boundary — over **any** port.
@@ -237,10 +74,8 @@ class PortFaultInterceptor:
     dedicated fault RNG, raises a retryable ``exc.infrastructure`` *before* the real call
     on the matched port operations — modeling a real adapter failing mid-operation
     (a dropped connection, a timeout). It plugs into the core port-interception seam, so it
-    works against **real registries** without wrapping a specific port by hand. It covers
-    *transient* faults over any port; the richer transport behaviours (duplicate / drop /
-    delay) still live in :class:`FaultyQueueCommand` (see the module docstring's division of
-    labour) until they too are modelled at the seam.
+    works against **real registries** without wrapping a specific port by hand. A single-kind
+    primitive; for several kinds / rates / selectors use the declarative :class:`FaultPolicy`.
 
     Placed inside the resilience port-policy wrap, so the injected transient is retryable by
     a declared policy. The RNG is separate from the application entropy seam and the
@@ -337,6 +172,22 @@ class FaultRule:
     """P(raise ``exc.timeout`` — the call exceeded its budget)."""
     crash: float = 0.0
     """P(raise ``SimulatedCrash`` — the process dies; only a restart recovers)."""
+    drop: float = 0.0
+    """P(silently drop — the real call is skipped and a synthetic result returned; models
+    broker loss. Target a fire-and-forget op, e.g. queue ``enqueue``)."""
+    duplicate: float = 0.0
+    """P(the call runs twice — a redelivered duplicate; exercises inbox idempotency)."""
+    delay: float = 0.0
+    """P(advance virtual time before the call by ``uniform(0, max_delay]`` — a slow/reordered
+    delivery; the call's own arguments are never modified)."""
+    max_delay: timedelta = timedelta(seconds=5)
+    """Upper bound for an injected :attr:`delay` (drawn uniformly in ``(0, max_delay]``)."""
+
+    def __attrs_post_init__(self) -> None:
+        for name in ("error", "timeout", "crash", "drop", "duplicate", "delay"):
+            value: float = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} probability must be in [0, 1], got {value}")
 
 
 # ....................... #
@@ -379,26 +230,61 @@ class _FaultPolicyInterceptor:
 
     # ....................... #
 
+    def _dropped(self, call: PortCall) -> object:
+        """A synthetic result for a silently-dropped call (so the caller still gets an id).
+
+        Shaped for queue enqueue (returns a message id / list of ids); ``None`` otherwise.
+        """
+
+        token = f"dst-dropped-{self.rng.getrandbits(48):012x}"
+
+        if call.op == "enqueue_many":
+            payloads = call.args[1] if len(call.args) > 1 else ()
+            return [token for _ in payloads]
+
+        if call.op == "enqueue":
+            return token
+
+        return None
+
+    # ....................... #
+
     async def around(self, call: PortCall, nxt: PortNext) -> object:
         rule = self._match(call)
 
-        if rule is not None:
-            where = f"{call.surface}[{call.route}].{call.op}"
+        if rule is None:
+            return await nxt(call)
 
-            if rule.crash > 0.0 and self.rng.random() < rule.crash:
-                raise SimulatedCrash(f"simulated crash at {where}")
+        where = f"{call.surface}[{call.route}].{call.op}"
 
-            if rule.error > 0.0 and self.rng.random() < rule.error:
-                raise exc.infrastructure(
-                    f"injected fault at {where}", code="dst.injected_port_fault"
-                )
+        # Raise-faults short-circuit the call entirely.
+        if rule.crash > 0.0 and self.rng.random() < rule.crash:
+            raise SimulatedCrash(f"simulated crash at {where}")
 
-            if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
-                raise exc.timeout(
-                    f"injected timeout at {where}", code="dst.injected_timeout"
-                )
+        if rule.error > 0.0 and self.rng.random() < rule.error:
+            raise exc.infrastructure(
+                f"injected fault at {where}", code="dst.injected_port_fault"
+            )
 
-        return await nxt(call)
+        if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
+            raise exc.timeout(
+                f"injected timeout at {where}", code="dst.injected_timeout"
+            )
+
+        # Transport faults. Drop skips the real call; delay advances virtual time before it
+        # (never rewriting the call's args); duplicate re-runs it (a redelivery).
+        if rule.drop > 0.0 and self.rng.random() < rule.drop:
+            return self._dropped(call)
+
+        if rule.delay > 0.0 and self.rng.random() < rule.delay:
+            await asyncio.sleep(self.rng.uniform(0.0, rule.max_delay.total_seconds()))
+
+        result = await nxt(call)
+
+        if rule.duplicate > 0.0 and self.rng.random() < rule.duplicate:
+            await nxt(call)
+
+        return result
 
 
 # ....................... #
