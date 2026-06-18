@@ -237,3 +237,29 @@ def test_op_case_honors_pct_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert calls, "OP_CASE with scheduler=PCT built no PCT scheduler"
+
+
+def test_hypothesis_honors_pct_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
+    # HYPOTHESIS with scheduler=PCT must build a PCT scheduler (only DPOR ignores the scheduler).
+    from forze_dst import harness
+
+    calls: list[object] = []
+    real = harness.pct_scheduler_factory
+
+    def spy(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return real(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(harness, "pct_scheduler_factory", spy)
+
+    _sim().run(
+        SimulationConfig(
+            strategy=Strategy.HYPOTHESIS,
+            scheduler=SchedulerKind.PCT,
+            act_count=4,
+            max_examples=20,
+        ),
+        scenario=_SCENARIO,
+    )
+
+    assert calls, "HYPOTHESIS with scheduler=PCT built no PCT scheduler"

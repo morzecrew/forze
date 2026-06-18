@@ -377,6 +377,13 @@ class Simulation:
                     perturb=config.perturb,
                     epoch=config.epoch,
                     max_examples=config.max_examples,
+                    scheduler_factory=(
+                        pct_scheduler_factory(
+                            depth=config.pct_depth, steps=config.pct_steps
+                        )
+                        if config.scheduler is SchedulerKind.PCT
+                        else None
+                    ),
                 )
 
             # DPOR — drives its own systematic scheduler over one fixed workload.
@@ -417,6 +424,13 @@ class Simulation:
         try:
             sc = scenario if scenario is not None else self.derive_scenario()
 
+            # Honor the requested interleaving scheduler (PCT when selected), like run().
+            factory = (
+                pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
+                if config.scheduler is SchedulerKind.PCT
+                else None
+            )
+
             behaviors: set[Behavior] = set()
             new_by_seed: list[tuple[int, int]] = []
             seeds_run = 0
@@ -428,6 +442,10 @@ class Simulation:
                 schedule_seed = (
                     derive_seed(seed, "schedule") if config.perturb else None
                 )
+                # Fresh PCT scheduler per seed (it is stateful).
+                scheduler = (
+                    None if factory is None else factory(derive_seed(seed, "schedule"))
+                )
                 history, _ = self._run_scenario(
                     sc,
                     act_workload=None,
@@ -436,6 +454,7 @@ class Simulation:
                     seed=seed,
                     schedule_seed=schedule_seed,
                     epoch=config.epoch,
+                    scheduler=scheduler,
                 )
                 seeds_run += 1
 
@@ -445,7 +464,8 @@ class Simulation:
                 behaviors |= covered
 
                 if check(history, self.invariants):
-                    # A bug beats coverage: stop and hand back the minimized counterexample.
+                    # A bug beats coverage: stop and hand back the minimized counterexample
+                    # (``_attempt_scenario`` rebuilds a fresh scheduler per minimization run).
                     violation = self._attempt_scenario(
                         sc,
                         act_count=config.act_count,
@@ -453,6 +473,7 @@ class Simulation:
                         seed=seed,
                         perturb=config.perturb,
                         epoch=config.epoch,
+                        scheduler_factory=factory,
                     )
                     if violation is not None:
                         break
@@ -1257,6 +1278,7 @@ class Simulation:
         perturb: bool = True,
         epoch: datetime = DEFAULT_EPOCH,
         max_examples: int = 200,
+        scheduler_factory: Callable[[int], object] | None = None,
     ) -> ViolationReport | None:
         """Drive a scenario with Hypothesis as the generate + shrink engine.
 
@@ -1284,6 +1306,13 @@ class Simulation:
         def schedule_seed_of(seed: int) -> int | None:
             return derive_seed(seed, "schedule") if perturb else None
 
+        # Fresh PCT scheduler per example (it is stateful), keyed by the example's seed so the
+        # found counterexample reproduces under the same interleaving.
+        def make_scheduler(seed: int) -> object | None:
+            if scheduler_factory is None:
+                return None
+            return scheduler_factory(derive_seed(seed, "schedule"))
+
         plans = strategies.tuples(
             strategies.integers(min_value=0, max_value=2**31 - 1),
             strategies.lists(
@@ -1304,6 +1333,7 @@ class Simulation:
                     seed
                 ),  # pyright: ignore[reportUnknownArgumentType]
                 epoch=epoch,
+                scheduler=make_scheduler(seed),
             )
             return history
 
@@ -1328,6 +1358,7 @@ class Simulation:
                 seed
             ),  # pyright: ignore[reportUnknownArgumentType]
             epoch=epoch,
+            scheduler=make_scheduler(seed),
         )
 
         return ViolationReport(

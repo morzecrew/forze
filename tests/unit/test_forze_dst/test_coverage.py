@@ -23,6 +23,7 @@ from forze_dst import (
     ModelState,
     Rule,
     Scenario,
+    SchedulerKind,
     Simulation,
     SimulationConfig,
     Strategy,
@@ -174,6 +175,33 @@ def _racy_sim() -> Simulation:
 
 
 class TestCoverageGuidedSweep:
+    def test_honors_pct_scheduler(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        # coverage() with scheduler=PCT must build a PCT scheduler, not silently shuffle.
+        from forze_dst import harness
+
+        calls: list[object] = []
+        real = harness.pct_scheduler_factory
+
+        def spy(**kwargs: object) -> object:
+            calls.append(kwargs)
+            return real(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(harness, "pct_scheduler_factory", spy)
+
+        _clean_sim().coverage(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO,
+                scheduler=SchedulerKind.PCT,
+                seeds=range(2),
+                act_count=2,
+                concurrency=2,
+                coverage_plateau=0,
+            ),
+            scenario=_MAKE_SCENARIO,
+        )
+
+        assert calls, "coverage() with scheduler=PCT built no PCT scheduler"
+
     def test_saturates_and_stops_early(self) -> None:
         stats = _clean_sim().coverage(
             SimulationConfig(
