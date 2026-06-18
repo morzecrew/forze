@@ -62,6 +62,59 @@ class SchedulerKind(StrEnum):
 
 
 @attrs.define(frozen=True, kw_only=True)
+class Partition:
+    """One network-partition window: nodes cut off from the shared infrastructure.
+
+    During ``[start, end)`` of virtual time, every node in :attr:`isolated` cannot reach the
+    gated port surfaces (its calls raise a retryable *unreachable* error — modeling a network
+    split where the broker/store lives on the other side); the rest of the cluster proceeds.
+    The window heals at ``end``. Group-based by design (decision D7): a set of nodes is split
+    off as a unit; per-link asymmetric loss is a deferred fidelity pass.
+    """
+
+    start: float
+    end: float
+    isolated: frozenset[int]
+
+
+@attrs.define(frozen=True, kw_only=True)
+class PartitionSchedule:
+    """A seeded set of :class:`Partition` windows + which port surfaces a split cuts."""
+
+    windows: tuple[Partition, ...] = ()
+    surfaces: frozenset[str] = frozenset()
+    """Port surfaces a partition makes unreachable (e.g. ``queue_command``, ``dlock``,
+    ``document_command``). Empty ⇒ every surface is cut (a total split)."""
+
+    def isolated_at(self, node_id: int, at: float) -> bool:
+        """Whether *node_id* is cut off from the cluster at virtual time *at*."""
+
+        return any(
+            window.start <= at < window.end and node_id in window.isolated
+            for window in self.windows
+        )
+
+    def gates(self, surface: str | None) -> bool:
+        """Whether a partition cuts the given *surface* (all surfaces when none are named)."""
+
+        return not self.surfaces or surface in self.surfaces
+
+
+@attrs.define(frozen=True, kw_only=True)
+class ClusterConfig:
+    """Topology for a multi-runtime (distributed) DST run — N nodes over one shared store."""
+
+    nodes: int = 3
+    """How many real ``ExecutionRuntime`` nodes run concurrently over the shared ``MockState``."""
+
+    partitions: PartitionSchedule | None = None
+    """The network partitions to inject (``None`` ⇒ a fully-connected cluster)."""
+
+
+# ....................... #
+
+
+@attrs.define(frozen=True, kw_only=True)
 class SimulationConfig:
     """The full spec for a DST exploration; one seed drives every stream.
 
@@ -124,6 +177,12 @@ class SimulationConfig:
     before the workload, graceful drain + shutdown after — instead of a bare ``ExecutionContext``
     (decision D4: keep both; bare is the default, lighter, with no background-task interference).
     The crash/restart scenario always restarts under the runtime regardless of this flag."""
+
+    cluster: ClusterConfig | None = None
+    """Topology for a multi-runtime (distributed) run driven by :class:`~forze_dst.Cluster`:
+    N nodes over one shared store, with optional network partitions. One master seed still
+    drives the whole cluster (each node derives independent fault sub-seeds). ``None`` for a
+    single-process run."""
 
     crash: CrashPolicy | None = None
     """When set, ``run()`` executes the crash → restart → recovery scenario instead of the plain

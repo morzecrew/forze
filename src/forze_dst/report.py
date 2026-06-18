@@ -40,9 +40,9 @@ _OP_START = "op_start"
 _OPERATION = "operation"
 _TRACE = "trace"
 _STRUCTURAL = frozenset({_OP_START, _OPERATION, _TRACE})
-_ENVIRONMENT = frozenset({"fault", "latency"})
-"""Kinds the simulator *injected* (seeded faults + latency) — rendered as a separate timeline,
-not mixed into the app's observed domain facts."""
+_ENVIRONMENT = frozenset({"fault", "latency", "partition"})
+"""Kinds the simulator *injected* (seeded faults, latency, network partitions) — rendered as a
+separate timeline, not mixed into the app's observed domain facts."""
 
 # ....................... #
 
@@ -337,6 +337,8 @@ def format_report(report: ViolationReport) -> str:
                 seconds = event.fields.get("seconds")
                 if seconds is not None:
                     detail += f" {float(seconds):.3f}s"
+            elif event.kind == "partition":
+                detail = f"partition (node {event.fields.get('node')} cut off)"
             else:  # latency
                 detail = f"latency {float(event.fields.get('seconds', 0.0)):.3f}s"
             lines.append(f"    @t={event.at:.6f}  {detail} → {where}")
