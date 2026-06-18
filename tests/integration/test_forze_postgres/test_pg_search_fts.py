@@ -351,6 +351,72 @@ async def test_fts_adapter_v2_direct_projection_heap_and_index_field_map(
 
 
 @pytest.mark.asyncio
+async def test_fts_tsvector_column_index_with_storage_options(
+    pg_client: PostgresClient,
+) -> None:
+    """Regression: a gin index on a ``tsvector`` *column* with storage options.
+
+    A column index has no ``pg_get_expr`` expression, so the tsvector
+    expression is recovered from ``pg_get_indexdef`` -- which carries a trailing
+    ``WITH (fastupdate = off)``. Balanced-paren extraction must yield ``tsv``,
+    not ``tsv) WITH (fastupdate = off)`` (the latter is injected as raw SQL into
+    the match predicate and produces a syntax error).
+    """
+
+    suffix = uuid4().hex[:12]
+    heap = f"fts_tsvcol_{suffix}"
+    proj = f"fts_tsvcol_proj_{suffix}"
+    idx = f"idx_fts_tsvcol_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {heap} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL,
+            tsv tsvector NOT NULL
+        );
+        CREATE VIEW {proj} AS SELECT id, title, content FROM {heap};
+        CREATE INDEX {idx} ON {heap} USING gin (tsv) WITH (fastupdate = off);
+        """
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO {heap} (id, title, content, tsv)
+        VALUES (
+            %(id)s, 'hello fts', 'world',
+            to_tsvector('english', 'hello fts' || ' ' || 'world')
+        )
+        """,
+        {"id": uuid4()},
+    )
+
+    introspector = PostgresIntrospector(client=pg_client)
+    spec = SearchSpec(
+        name="fts_tsvcol",
+        model_type=FtsArticle,
+        fields=["title", "content"],
+    )
+    adapter = PostgresFTSSearchAdapter(
+        spec=spec,
+        index_relation=("public", idx),
+        relation=("public", proj),
+        index_heap_relation=("public", heap),
+        fts_groups={"A": ("title",), "B": ("content",)},
+        client=pg_client,
+        model_type=FtsArticle,
+        codec=spec.resolved_read_codec,
+        introspector=introspector,
+        tenant_provider=None,
+        tenant_aware=False,
+    )
+
+    page = await adapter.search_page("hello")
+    assert page.count == 1
+    assert page.hits[0].title == "hello fts"
+
+
+@pytest.mark.asyncio
 async def test_fts_search_with_cursor_ranked_and_browse(
     pg_client: PostgresClient,
 ) -> None:

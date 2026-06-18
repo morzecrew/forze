@@ -97,6 +97,34 @@ async def test_get_index_def_and_info_and_invalidate(
 
 
 @pytest.mark.asyncio
+async def test_gin_index_mentioning_tsvector_is_not_fts(
+    pg_client: PostgresClient,
+) -> None:
+    """Regression: a plain GIN index whose definition merely contains the word
+    ``tsvector`` (here, a jsonb column name) must not be misclassified as FTS.
+    """
+    t = f"intro_jsonbtbl_{uuid4().hex[:12]}"
+    idx = f"idx_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            tsvector_meta jsonb NOT NULL
+        );
+        CREATE INDEX {idx}
+        ON {t} USING gin (tsvector_meta);
+        """
+    )
+
+    intro = PostgresIntrospector(client=pg_client)
+    info = await intro.get_index_info(schema="public", index=idx)
+
+    assert info.amname == "gin"
+    assert info.engine == "unknown"
+    intro.clear()
+
+
+@pytest.mark.asyncio
 async def test_get_primary_key_columns_simple_and_composite(
     pg_client: PostgresClient,
 ) -> None:

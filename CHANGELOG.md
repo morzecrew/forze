@@ -55,6 +55,10 @@ Lands **Deterministic Simulation Testing (DST)** as a native framework capabilit
 
 - **`forze_mock` internal restructure** — the package's misplaced root modules moved under `adapters/` (`forze_mock.outbox_adapter` → `forze_mock.adapters.outbox`, `forze_mock.embeddings` → `forze_mock.adapters.embeddings`, `forze_mock.resilience` → `forze_mock.adapters.resilience`; all also re-exported from `forze_mock.adapters`), and the per-spec `Configurable*` factories were extracted out of the `MockDepsModule` module into `forze_mock.execution.factories`. Public top-level imports (`from forze_mock import …`) are unchanged; only direct deep-submodule imports of those three modules need updating. `forze_mock` is now under coverage enforcement (95.8%).
 
+### Fixed
+
+- **`forze_postgres` search index-definition parsing hardened** — index expressions from the Postgres catalog are now parsed with a shared balanced-delimiter scanner that skips single-quoted literals, double-quoted identifiers, and dollar-quoted bodies. PGroonga multi-column resolution accepts `ARRAY[COALESCE(col, ''::text), …]` / `::type` casts (previously rejected) but **fails closed** on expressions it cannot reproduce as `coalesce(col::text, '')` — non-empty/column COALESCE defaults, transforms like `lower(col)`, and any `ARRAY[...]` that is not the whole expression (nested or with trailing text). Index-expression extraction no longer swallows trailing `WITH (...)`/`INCLUDE (...)`/`WHERE` clauses, and GIN→FTS classification keys on a real `to_tsvector(` call (outside literals) rather than a bare `"tsvector"` substring, while still detecting nested/weighted FTS.
+
 ## [0.4.1] - 2026-06-17
 
 ### Added
