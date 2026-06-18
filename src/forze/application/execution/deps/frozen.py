@@ -131,6 +131,9 @@ class FrozenDeps:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        key: str | None = None,
+        outcome: str | None = None,
+        error: str | None = None,
     ) -> None:
         """Append a runtime tracing event when :attr:`runtime_tracer` is enabled."""
 
@@ -142,6 +145,9 @@ class FrozenDeps:
             phase=phase,
             tx_depth=tx_depth,
             tx_route=tx_route,
+            key=key,
+            outcome=outcome,
+            error=error,
         )
 
     # ....................... #

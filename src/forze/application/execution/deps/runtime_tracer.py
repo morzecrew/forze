@@ -34,6 +34,9 @@ class RuntimeTracer(Protocol):
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        key: str | None = None,
+        outcome: str | None = None,
+        error: str | None = None,
     ) -> None:
         """Append a runtime event when enabled."""
         ...
@@ -68,8 +71,11 @@ class NoopRuntimeTracer:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        key: str | None = None,
+        outcome: str | None = None,
+        error: str | None = None,
     ) -> None:
-        del domain, op, surface, route, phase, tx_depth, tx_route
+        del domain, op, surface, route, phase, tx_depth, tx_route, key, outcome, error
         return
 
     def snapshot(self) -> RuntimeTrace | None:
@@ -121,6 +127,9 @@ class RecordingRuntimeTracer:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        key: str | None = None,
+        outcome: str | None = None,
+        error: str | None = None,
     ) -> None:
         self._trace.get_or_create().next_event(
             domain=domain,
@@ -131,6 +140,9 @@ class RecordingRuntimeTracer:
             tx_depth=tx_depth,
             tx_route=tx_route,
             at=monotonic(),
+            key=key,
+            outcome=outcome,
+            error=error,
         )
 
     # ....................... #

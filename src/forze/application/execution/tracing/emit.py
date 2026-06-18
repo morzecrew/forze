@@ -30,6 +30,9 @@ def record(
     phase: str | None = None,
     tx_depth: int = 0,
     tx_route: str | None = None,
+    key: str | None = None,
+    outcome: str | None = None,
+    error: str | None = None,
     deps: "FrozenDeps | None" = None,
 ) -> None:
     """Append a runtime event when tracing is enabled on the active or given *deps*."""
@@ -53,4 +56,7 @@ def record(
         phase=phase,
         tx_depth=tx_depth,
         tx_route=tx_route,
+        key=key,
+        outcome=outcome,
+        error=error,
     )

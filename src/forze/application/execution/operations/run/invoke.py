@@ -195,11 +195,24 @@ async def run_operation(
     record(domain="operation", op=str(op), phase="invoke", deps=ctx.deps)
     try:
         result = await resolved(args)
-    except Exception:
-        record(domain="operation", op=str(op), phase="error", deps=ctx.deps)
+    except Exception as error:
+        record(
+            domain="operation",
+            op=str(op),
+            phase="error",
+            outcome="error",
+            error=type(error).__name__,
+            deps=ctx.deps,
+        )
         raise
 
-    record(domain="operation", op=str(op), phase="complete", deps=ctx.deps)
+    record(
+        domain="operation",
+        op=str(op),
+        phase="complete",
+        outcome="ok",
+        deps=ctx.deps,
+    )
     return result
 
 

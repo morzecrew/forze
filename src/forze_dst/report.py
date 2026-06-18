@@ -70,6 +70,8 @@ class TraceStep:
     route: str | None
     phase: str | None
     tx_depth: int
+    key: str | None = None
+    """Entity key the call targeted (e.g. a document primary key), when available."""
 
     # ....................... #
 
@@ -78,7 +80,8 @@ class TraceStep:
         target = self.surface or self.domain
         if self.route:  # spec / transaction route, e.g. document_command[orders]
             target = f"{target}[{self.route}]"
-        return f"{target}.{self.op}" if self.op else target
+        base = f"{target}.{self.op}" if self.op else target
+        return f"{base} key={self.key}" if self.key else base
 
 
 # ....................... #
@@ -146,6 +149,7 @@ class CausalGraph:
                     route=event.fields.get("route"),
                     phase=event.fields.get("phase"),
                     tx_depth=int(event.fields.get("tx_depth", 0)),
+                    key=event.fields.get("key"),
                 )
                 for event in history.events
                 if event.kind == _TRACE

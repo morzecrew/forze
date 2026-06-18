@@ -42,6 +42,18 @@ class TracingEvent:
     tx_route: str | None = None
     """Transaction route name when inside or entering a scope."""
 
+    key: str | None = None
+    """Entity / correlation key the call targets (e.g. a document primary key), when one is
+    cheaply available. Recorded id-only (UUID / int) — never free-form values — so the trace
+    stays free of PII without a redaction pass."""
+
+    outcome: str | None = None
+    """Terminal outcome of an operation event (``ok`` / ``error``); ``None`` for non-terminal
+    or non-operation events."""
+
+    error: str | None = None
+    """Exception type name when ``outcome == "error"``."""
+
 
 # ....................... #
 

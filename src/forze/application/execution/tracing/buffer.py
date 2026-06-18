@@ -65,6 +65,9 @@ class RuntimeTrace:
         tx_depth: int = 0,
         tx_route: str | None = None,
         at: float = 0.0,
+        key: str | None = None,
+        outcome: str | None = None,
+        error: str | None = None,
     ) -> TracingEvent:
         """Build and record an event with the next sequence number."""
 
@@ -78,6 +81,9 @@ class RuntimeTrace:
             phase=phase,
             tx_depth=tx_depth,
             tx_route=tx_route,
+            key=key,
+            outcome=outcome,
+            error=error,
         )
         self._next_seq += 1
         self.record(event)
@@ -104,6 +110,15 @@ class RuntimeTrace:
 
             if event.tx_route is not None:
                 parts.append(f"tx={event.tx_route}")
+
+            if event.key is not None:
+                parts.append(f"key={event.key}")
+
+            if event.outcome is not None:
+                parts.append(f"outcome={event.outcome}")
+
+            if event.error is not None:
+                parts.append(f"error={event.error}")
 
             parts.append(f"depth={event.tx_depth}")
             lines.append(" ".join(parts))
