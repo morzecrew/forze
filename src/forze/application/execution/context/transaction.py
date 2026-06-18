@@ -262,10 +262,9 @@ class TransactionContext:
             async with self._open_root(tx, read_only=root_read_only, isolation=isolation):
                 yield
 
-        except BaseException:
-            raise
-
-        else:
+            # Reached only on a clean exit (no exception thrown into the scope) — capture the
+            # after-commit callbacks to drain below. An escaping exception skips this, leaving
+            # ``deferred`` as ``None`` so nothing is run after a rollback.
             deferred = self.__cb_stack.get()
 
         finally:
