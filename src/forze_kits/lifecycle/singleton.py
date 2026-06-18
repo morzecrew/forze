@@ -77,6 +77,14 @@ def singleton_lifecycle_step(
     completion marker in your own storage; one-shot work like migrations is
     better run as a deploy step, not a runtime step.
 
+    This guards **startup only** — the lock is released the moment startup
+    returns. Do **not** use it for a step whose startup launches long-lived
+    background work (a poller, relay, or scheduler): after release another
+    replica acquires the lock and launches a *duplicate*. A fleet-wide
+    *lifetime* singleton needs the lock held across the step's whole life with
+    a renewing lease, which this helper does not provide — run such work behind
+    your own held-lease leader election instead.
+
     The lock command port is resolved from the execution context at startup
     time (``ctx.dlock.command(spec)``) — you pass the *spec*, not a live port,
     so the guard composes into a lifecycle plan before any scope exists.
