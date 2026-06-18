@@ -4,6 +4,7 @@ import pytest
 
 from forze_postgres.kernel.catalog.introspect.utils import (
     extract_index_expr_from_indexdef,
+    index_expr_uses_to_tsvector,
     normalize_pg_type,
 )
 
@@ -99,3 +100,33 @@ class TestExtractIndexExprFromIndexdef:
             extract_index_expr_from_indexdef("CREATE INDEX i ON t USING gin (a, b")
             is None
         )
+
+
+class TestIndexExprUsesToTsvector:
+    """Tests for :func:`index_expr_uses_to_tsvector` (GIN -> FTS classification)."""
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            "to_tsvector('english'::regconfig, (title || ' ' || body))",
+            "TO_TSVECTOR('english', body)",
+            "to_tsvector ('simple', col)",  # whitespace before paren
+        ],
+    )
+    def test_detects_to_tsvector_call(self, expr: str) -> None:
+        assert index_expr_uses_to_tsvector(expr) is True
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            None,
+            # Bare "tsvector" substring must NOT classify as FTS: a JSON key,
+            # a column name, or a literal default that merely mentions the word.
+            "(data ->> 'tsvector'::text)",
+            "COALESCE(tsvector_meta, ''::text)",
+            "(my_tsvector_col)",
+            "to_tsvector",  # name without a call paren
+        ],
+    )
+    def test_does_not_misfire_on_substring(self, expr: str | None) -> None:
+        assert index_expr_uses_to_tsvector(expr) is False

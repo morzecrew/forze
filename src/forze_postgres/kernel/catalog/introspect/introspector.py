@@ -26,7 +26,11 @@ from .types import (
     PostgresRelationTriggers,
     PostgresType,
 )
-from .utils import extract_index_expr_from_indexdef, normalize_pg_type
+from .utils import (
+    extract_index_expr_from_indexdef,
+    index_expr_uses_to_tsvector,
+    normalize_pg_type,
+)
 
 # ----------------------- #
 
@@ -346,7 +350,7 @@ class PostgresIntrospector:
                 elem = r["array_elem_type"]
 
                 if not elem:
-                    base = normalize_pg_type(str(r["full_type"]).rstrip("[]"))
+                    base = normalize_pg_type(str(r["full_type"]).removesuffix("[]"))
 
                 else:
                     base = normalize_pg_type(str(elem))
@@ -743,21 +747,23 @@ class PostgresIntrospector:
 
         has_tsvector_col = bool(row.get("has_tsvector_col") or False)
 
-        engine: PostgresIndexEngine = "unknown"
-        idx_l = indexdef.lower()
-
-        if amname == "pgroonga":
-            engine = "pgroonga"
-
-        elif amname == "gin":
-            if has_tsvector_col or ("to_tsvector(" in idx_l) or ("tsvector" in idx_l):
-                engine = "fts"
-
         if expr_s is None:
             maybe = extract_index_expr_from_indexdef(indexdef)
 
             if maybe:
                 expr_s = maybe
+
+        engine: PostgresIndexEngine = "unknown"
+
+        if amname == "pgroonga":
+            engine = "pgroonga"
+
+        elif amname == "gin":
+            # FTS when a tsvector column is indexed, or the expression is a
+            # to_tsvector(...) call -- not a bare "tsvector" substring match,
+            # which misfires on plain GIN indexes that merely mention the word.
+            if has_tsvector_col or index_expr_uses_to_tsvector(expr_s):
+                engine = "fts"
 
         info = PostgresIndexInfo(
             schema=schema,

@@ -60,6 +60,22 @@ def normalize_pg_type(base: str) -> str:
 # ....................... #
 
 _USING_PARENS_RE = re.compile(r"using\s+\w+\s*\(", re.IGNORECASE)
+_TO_TSVECTOR_CALL_RE = re.compile(r"\bto_tsvector\s*\(", re.IGNORECASE)
+
+# ....................... #
+
+
+def index_expr_uses_to_tsvector(expr: str | None) -> bool:
+    """Whether an index expression is a ``to_tsvector(...)`` call (FTS).
+
+    Detects the ``to_tsvector(`` call form specifically. A bare ``"tsvector"
+    in indexdef`` substring check misfires on a plain GIN index whose
+    definition merely mentions the word (e.g. a JSON key ``data->>'tsvector'``
+    or a column named ``tsvector_meta``), wrongly classifying it as full-text.
+    """
+
+    return expr is not None and _TO_TSVECTOR_CALL_RE.search(expr) is not None
+
 
 # ....................... #
 
