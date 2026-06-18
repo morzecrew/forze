@@ -167,8 +167,16 @@ def gcp_credential_dedup_tag(
 def connection_string_fingerprint(dsn: str) -> str:
     """Fingerprint a connection URL/DSN for LRU dedup.
 
-    Includes scheme, host, port, path, username, sorted query parameters, and a one-way
-    password tag when a password is present in the URI (the raw password is never stored).
+    Includes scheme, the full host list, path, username, sorted query parameters,
+    and a one-way password tag when a password is present in the URI (the raw
+    password is never stored).
+
+    The host list is taken from the raw netloc (after stripping any
+    ``user:pass@`` userinfo) rather than ``parsed.hostname``/``parsed.port``:
+    multi-host DSNs (Mongo replica sets, Redis Sentinel, AMQP clusters) carry a
+    comma-separated ``host:port,host:port`` authority that ``parsed.port``
+    cannot parse (it raises :class:`ValueError`) and that ``parsed.hostname``
+    truncates to the first host (so distinct host sets would collide).
     """
 
     parsed = urlparse(dsn)
@@ -177,11 +185,14 @@ def connection_string_fingerprint(dsn: str) -> str:
     options = query.get("options", [""])[0]
     query_canonical = "&".join(f"{key}={query[key][0]}" for key in sorted(query))
 
+    # Authority after any userinfo; ``rpartition`` matches how urllib splits the
+    # host portion. Lowercased because hostnames are case-insensitive.
+    hosts = parsed.netloc.rpartition("@")[2].lower()
+
     return build_routing_fingerprint(
         public=[
             parsed.scheme or "",
-            parsed.hostname or "",
-            str(parsed.port or ""),
+            hosts,
             parsed.path or "",
             parsed.username or "",
             sslmode,

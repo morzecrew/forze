@@ -21,12 +21,18 @@ def normalize_pg_type(  # sourcery skip: assign-if-exp, reintroduce-else
 
     b = base.strip().lower()
 
-    # timestamptz
+    # timestamptz / timetz
     if b == "timestamp with time zone":
         return "timestamptz"
 
     if b == "timestamp without time zone":
         return "timestamp"
+
+    if b == "time with time zone":
+        return "timetz"
+
+    if b == "time without time zone":
+        return "time"
 
     # varchar
     if b.startswith("character varying"):
@@ -57,6 +63,29 @@ def normalize_pg_type(  # sourcery skip: assign-if-exp, reintroduce-else
         return "bool"
 
     return b
+
+
+# ....................... #
+
+_TYPE_MODIFIER_RE = re.compile(r"\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\)")
+
+# ....................... #
+
+
+def strip_type_modifier(type_name: str) -> str:
+    """Drop a numeric type modifier (precision/scale/length) from a type name.
+
+    ``numeric(10,2)`` -> ``numeric``; ``timestamp(3) with time zone`` ->
+    ``timestamp with time zone``; ``bit(8)`` -> ``bit``; ``varchar(255)`` ->
+    ``varchar``. Array ``[]`` markers and the rest of the spelling are left
+    intact. Type modifiers are always numeric, so non-modifier parentheses
+    (none occur in Postgres type names) are unaffected.
+
+    Use this for type *comparison* only; :class:`PostgresType.base` deliberately
+    keeps the modifier so casts can reproduce the column's precision/scale.
+    """
+
+    return _TYPE_MODIFIER_RE.sub("", type_name)
 
 
 # ....................... #

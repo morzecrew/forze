@@ -43,10 +43,7 @@ def parse_sort_value(
     placement.
     """
 
-    where = ""
-
-    if field is not None:
-        where = f" for field {field!r}"
+    where = f" for field {field!r}" if field is not None else ""
 
     if spec_name is not None:
         where += f" on spec {spec_name!r}"

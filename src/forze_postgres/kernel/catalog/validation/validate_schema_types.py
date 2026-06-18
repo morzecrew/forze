@@ -11,6 +11,10 @@ from pydantic.fields import FieldInfo
 
 from forze.base.exceptions import exc
 from forze_postgres.kernel.catalog.introspect.types import PostgresType
+from forze_postgres.kernel.catalog.introspect.utils import (
+    normalize_pg_type,
+    strip_type_modifier,
+)
 
 # ----------------------- #
 
@@ -114,9 +118,13 @@ def validate_field_type_compatibility(
             continue
 
         actual = pg_t.base
+        # Compare modifier-insensitively: a column declared NUMERIC(10,2) or
+        # TIMESTAMP(3) WITH TIME ZONE is compatible with the same base type.
+        # ``actual`` is kept raw for the error message / details.
+        comparable = normalize_pg_type(strip_type_modifier(actual))
 
         if pg_t.is_array:
-            elem_ok = actual in expected
+            elem_ok = comparable in expected
             if not elem_ok:
                 raise exc.internal(
                     f"Postgres schema validation failed for {label!r}: "
@@ -133,7 +141,7 @@ def validate_field_type_compatibility(
                 )
             continue
 
-        if actual not in expected:
+        if comparable not in expected:
             raise exc.internal(
                 f"Postgres schema validation failed for {label!r}: "
                 f"field {name!r} column type {actual!r} "

@@ -5,9 +5,9 @@ from typing import Sequence
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.codecs import stored_field_names_for
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
-from forze.application.contracts.codecs import stored_field_names_for
 from forze.domain.models import DocumentHistory
 from forze_postgres.kernel._logger import logger
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
@@ -27,7 +27,9 @@ def _write_field_names_union(
     create: type[BaseModel],
     update: type[BaseModel] | None,
 ) -> frozenset[str]:
-    names = stored_field_names_for(domain, include_computed=False) | stored_field_names_for(
+    names = stored_field_names_for(
+        domain, include_computed=False
+    ) | stored_field_names_for(
         create,
         include_computed=False,
     )
@@ -95,12 +97,13 @@ class PostgresDocumentSchemaSpec:
                 f"Document {self.name!r}: history_enabled requires history_relation.",
             )
 
-        if self.write_relation is not None:
-            if self.write_domain_model is None or self.write_create_model is None:
-                raise exc.internal(
-                    f"Document {self.name!r}: write_relation requires "
-                    "write_domain_model and write_create_model.",
-                )
+        if self.write_relation is not None and (
+            self.write_domain_model is None or self.write_create_model is None
+        ):
+            raise exc.internal(
+                f"Document {self.name!r}: write_relation requires "
+                "write_domain_model and write_create_model.",
+            )
 
 
 # ....................... #
@@ -115,10 +118,8 @@ async def _require_columns(
     label: str,
 ) -> None:
     types = await introspector.get_column_types(schema=schema, relation=relation)
-    have = frozenset(types.keys())
-    missing = required - have
 
-    if missing:
+    if missing := required - frozenset(types.keys()):
         raise exc.internal(
             f"Postgres schema validation failed for {label!r} ({schema}.{relation}): "
             f"missing columns {sorted(missing)}.",
@@ -219,10 +220,8 @@ def _warn_read_not_subset_of_write(
         stored_field_names_for(spec.read_model, include_computed=False)
         - spec.read_omit_fields
     )
-    write_cols = frozenset(write_column_types.keys())
-    extra = read_fields - write_cols
 
-    if extra:
+    if extra := read_fields - frozenset(write_column_types.keys()):
         logger.warning(
             "Postgres schema validation for document %r: read fields %s are not on "
             "write relation %s.%s (expected for views; silence with read_omit_fields).",
@@ -375,7 +374,9 @@ async def validate_postgres_document_schemas(
 
         if spec.history_relation is not None:
             hist_need = (
-                frozenset(stored_field_names_for(DocumentHistory, include_computed=False))
+                frozenset(
+                    stored_field_names_for(DocumentHistory, include_computed=False)
+                )
                 - spec.history_omit_fields
             )
 
