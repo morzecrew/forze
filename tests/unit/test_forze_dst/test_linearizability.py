@@ -20,10 +20,43 @@ from forze_dst import (
     run_recorded,
 )
 from forze_dst.linearizability import _Op, is_linearizable
+from forze_dst.recorder import Event, History
 
 # ----------------------- #
 
 _SPEC = RegisterSpec()
+
+
+def test_ignores_harness_operation_events_without_linearizability_fields() -> None:
+    # The harness projects ``operation`` events (the default ``op_kind``) that carry no ``key``;
+    # the checker must skip them — not ``KeyError`` — and evaluate the recorded register ops.
+    history = History(
+        seed=0,
+        events=(
+            Event(seq=0, kind="operation", at=0.0, fields={"op": "pay", "outcome": "ok"}),
+            Event(
+                seq=1,
+                kind="operation",
+                at=1.0,
+                fields={
+                    "key": "r", "op": "write", "args": (1,), "result": None,
+                    "invoked_at": 0.0, "returned_at": 1.0,
+                },
+            ),
+            Event(
+                seq=2,
+                kind="operation",
+                at=2.0,
+                fields={
+                    "key": "r", "op": "read", "args": (), "result": 0,  # stale → not linearizable
+                    "invoked_at": 2.0, "returned_at": 3.0,
+                },
+            ),
+        ),
+    )
+
+    violations = check(history, [linearizable(_SPEC)])  # must not raise KeyError
+    assert [v.invariant for v in violations] == ["linearizable"]
 
 
 def _op(op: str, args: tuple, result: object, invoked: float, returned: float) -> _Op:

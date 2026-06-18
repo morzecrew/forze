@@ -296,8 +296,14 @@ class Simulation:
         self._active_config = config
         try:
             if config.crash is not None:
-                # Crash → restart → recovery: scenario-shaped (arrange/act), strategy-agnostic.
+                # Crash → restart → recovery: scenario-shaped (arrange/act). Honors the chosen
+                # interleaving scheduler (PCT when selected) just like the scenario strategy.
                 sc = scenario if scenario is not None else self.derive_scenario()
+                factory = (
+                    pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
+                    if config.scheduler is SchedulerKind.PCT
+                    else None
+                )
                 return self._explore_crash_restart(
                     sc,
                     act_count=config.act_count,
@@ -305,6 +311,7 @@ class Simulation:
                     seeds=config.seeds,
                     perturb=config.perturb,
                     epoch=config.epoch,
+                    scheduler_factory=factory,
                 )
 
             if config.strategy is Strategy.OP_CASE:
@@ -863,11 +870,15 @@ class Simulation:
         scheduler_factory: Callable[[int], object] | None = None,
     ) -> ViolationReport | None:
         schedule_seed = derive_seed(seed, "schedule") if perturb else None
-        scheduler = (
-            None
-            if scheduler_factory is None
-            else scheduler_factory(derive_seed(seed, "schedule"))
-        )
+
+        # A PCT scheduler is stateful (it consumes priorities/change points as it runs), so a
+        # fresh instance is built per run — the initial run, every minimization predicate, and
+        # the final replay must all explore the SAME schedule, or a counterexample minimized
+        # against a mutated interleaving fails to reproduce from the reported seed.
+        def make_scheduler() -> object | None:
+            if scheduler_factory is None:
+                return None
+            return scheduler_factory(derive_seed(seed, "schedule"))
 
         def run(act: Sequence[tuple[str, Any]] | None) -> History:
             history, _ = self._run_scenario(
@@ -878,7 +889,7 @@ class Simulation:
                 seed=seed,
                 schedule_seed=schedule_seed,
                 epoch=epoch,
-                scheduler=scheduler,
+                scheduler=make_scheduler(),
             )
             return history
 
@@ -890,7 +901,7 @@ class Simulation:
             seed=seed,
             schedule_seed=schedule_seed,
             epoch=epoch,
-            scheduler=scheduler,
+            scheduler=make_scheduler(),
         )
 
         if not check(history, self.invariants):
@@ -958,6 +969,7 @@ class Simulation:
         seed: int,
         schedule_seed: int | None,
         epoch: datetime,
+        scheduler: object | None = None,
     ) -> tuple[History, list[tuple[str, Any]]]:
         """Run one crash → restart → recovery attempt over a single persisted store.
 
@@ -1044,6 +1056,7 @@ class Simulation:
                 driver,
                 seed=derive_seed(seed, "entropy"),
                 schedule_seed=schedule_seed,
+                scheduler=scheduler,
                 epoch=epoch,
                 latency=self._latency_for(seed),
             )
@@ -1061,8 +1074,16 @@ class Simulation:
         seed: int,
         perturb: bool,
         epoch: datetime,
+        scheduler_factory: Callable[[int], object] | None = None,
     ) -> ViolationReport | None:
         schedule_seed = derive_seed(seed, "schedule") if perturb else None
+
+        # Fresh per run (a PCT scheduler is stateful) so the initial run, every minimization
+        # predicate, and the final replay all explore the same interleaving.
+        def make_scheduler() -> object | None:
+            if scheduler_factory is None:
+                return None
+            return scheduler_factory(derive_seed(seed, "schedule"))
 
         def run(act: Sequence[tuple[str, Any]] | None) -> History:
             history, _ = self._run_crash_restart(
@@ -1073,6 +1094,7 @@ class Simulation:
                 seed=seed,
                 schedule_seed=schedule_seed,
                 epoch=epoch,
+                scheduler=make_scheduler(),
             )
             return history
 
@@ -1084,6 +1106,7 @@ class Simulation:
             seed=seed,
             schedule_seed=schedule_seed,
             epoch=epoch,
+            scheduler=make_scheduler(),
         )
 
         if not check(history, self.invariants):
@@ -1115,6 +1138,7 @@ class Simulation:
         seeds: Sequence[int],
         perturb: bool,
         epoch: datetime,
+        scheduler_factory: Callable[[int], object] | None = None,
     ) -> ViolationReport | None:
         """Sweep seeds running the crash → restart → recovery scenario; report the first bug.
 
@@ -1132,6 +1156,7 @@ class Simulation:
                 seed=seed,
                 perturb=perturb,
                 epoch=epoch,
+                scheduler_factory=scheduler_factory,
             )
             if report is not None:
                 return report

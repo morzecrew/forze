@@ -366,3 +366,30 @@ def test_mvcc_validate_and_commit_conflicts() -> None:
     snap.validate(state)  # no write-write overlap → no raise
     snap.commit(state)
     assert state.documents["flags"]["y"] == {"id": "y", "v": 1}
+
+
+def test_serializable_scan_conflicts_with_a_concurrent_insert_phantom() -> None:
+    state = MockState()
+    state.documents["slots"] = {}
+
+    # A serializable transaction scans the namespace (finds it empty), then a concurrent
+    # transaction inserts a NEW key. The inserted key was never in the scanner's read-set, so
+    # key-level tracking alone would miss it — namespace-scan tracking catches the phantom.
+    scanner = MvccTx.begin(state, serializable=True)
+    list(scanner.view("slots", state.documents["slots"]).keys())  # scan for absence
+
+    state.mvcc_version += 1
+    state.mvcc_commit_log.append((state.mvcc_version, {"slots": frozenset({"new"})}))
+
+    try:
+        scanner.validate(state)
+        raise AssertionError("expected a phantom serialization failure")
+    except CoreException as error:
+        assert error.code == "serialization_failure"
+
+    # Snapshot isolation does not track the scan → the same situation is allowed.
+    snap = MvccTx.begin(state, serializable=False)
+    list(snap.view("slots", state.documents["slots"]).keys())
+    state.mvcc_version += 1
+    state.mvcc_commit_log.append((state.mvcc_version, {"slots": frozenset({"new2"})}))
+    snap.validate(state)  # no raise

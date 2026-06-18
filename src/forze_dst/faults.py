@@ -35,6 +35,13 @@ from forze_dst.recorder import record_event
 
 # ----------------------- #
 
+_TRANSPORT_OPS = frozenset(
+    {"enqueue", "enqueue_many", "publish", "publish_many", "produce", "send"}
+)
+"""Broker-delivery operations. ``drop`` (loss) and ``duplicate`` (redelivery) model transport
+behaviour, so they only apply to these — duplicating a document/outbox/idempotency write would
+fabricate states that model no real redelivery."""
+
 
 def _record_fault(fault: str, call: PortCall, **extra: object) -> None:
     """Record an injected fault as a virtual-time-stamped ``fault`` event for the report.
@@ -121,6 +128,7 @@ class PortFaultInterceptor:
             and self.probability > 0.0
             and self.rng.random() < self.probability
         ):
+            await asyncio.sleep(0)  # yield so the failure interleaves at the port boundary
             _record_fault("error", call)
             raise exc.infrastructure(
                 f"injected transient fault at {call.surface}[{call.route}].{call.op}",
@@ -163,6 +171,7 @@ class CrashInterceptor:
             and self.probability > 0.0
             and self.rng.random() < self.probability
         ):
+            await asyncio.sleep(0)  # yield so the crash interleaves at the port boundary
             _record_fault("crash", call)
             raise SimulatedCrash(
                 f"simulated crash at {call.surface}[{call.route}].{call.op}"
@@ -323,27 +332,36 @@ class _FaultPolicyInterceptor:
             return await nxt(call)
 
         where = f"{call.surface}[{call.route}].{call.op}"
+        transport = call.op in _TRANSPORT_OPS
 
-        # Raise-faults short-circuit the call entirely.
+        # Raise-faults short-circuit the call entirely. Yield first (``sleep(0)``) so the failure
+        # still interleaves with concurrent operations at the port boundary — on a short-circuit
+        # the inner cooperative interceptor never runs, so without this the failure path would be
+        # atomic and hide exactly the interleavings DST explores.
         if rule.crash > 0.0 and self.rng.random() < rule.crash:
+            await asyncio.sleep(0)
             _record_fault("crash", call)
             raise SimulatedCrash(f"simulated crash at {where}")
 
         if rule.error > 0.0 and self.rng.random() < rule.error:
+            await asyncio.sleep(0)
             _record_fault("error", call)
             raise exc.infrastructure(
                 f"injected fault at {where}", code="dst.injected_port_fault"
             )
 
         if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
+            await asyncio.sleep(0)
             _record_fault("timeout", call)
             raise exc.timeout(
                 f"injected timeout at {where}", code="dst.injected_timeout"
             )
 
-        # Transport faults. Drop skips the real call; delay advances virtual time before it
-        # (never rewriting the call's args); duplicate re-runs it (a redelivery).
-        if rule.drop > 0.0 and self.rng.random() < rule.drop:
+        # Transport behaviours (only on broker-delivery ops). Drop skips the real call; delay
+        # advances virtual time before it (never rewriting the call's args); duplicate re-runs
+        # it (a redelivery).
+        if transport and rule.drop > 0.0 and self.rng.random() < rule.drop:
+            await asyncio.sleep(0)
             _record_fault("drop", call)
             return self._dropped(call)
 
@@ -354,7 +372,7 @@ class _FaultPolicyInterceptor:
 
         result = await nxt(call)
 
-        if rule.duplicate > 0.0 and self.rng.random() < rule.duplicate:
+        if transport and rule.duplicate > 0.0 and self.rng.random() < rule.duplicate:
             _record_fault("duplicate", call)
             await nxt(call)
 

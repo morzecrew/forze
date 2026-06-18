@@ -7,6 +7,8 @@ the common case needs no driver script — point at your registry-backed simulat
 
 from __future__ import annotations
 
+from typing import Any
+
 import typer
 
 from forze.base.primitives import utcnow
@@ -118,6 +120,50 @@ def _config(
     )
 
 
+def _explore_snapshot(
+    *,
+    strategy: Strategy,
+    act_count: int,
+    concurrency: int,
+    max_examples: int,
+    max_runs: int,
+    pct: bool,
+    depth: int,
+    fault_error: float,
+    latency: float,
+) -> dict[str, Any]:
+    """The exploration knobs needed to reproduce a find — saved on the regression entry."""
+
+    return {
+        "strategy": strategy.value,
+        "act_count": act_count,
+        "concurrency": concurrency,
+        "max_examples": max_examples,
+        "max_runs": max_runs,
+        "pct": pct,
+        "depth": depth,
+        "fault_error": fault_error,
+        "latency": latency,
+    }
+
+
+def _config_from_snapshot(explore: dict[str, Any], seed: int) -> SimulationConfig:
+    """Rebuild the run config for a single *seed* from a saved exploration snapshot."""
+
+    return _config(
+        strategy=Strategy(explore["strategy"]),
+        seed_list=[seed],
+        act_count=explore["act_count"],
+        concurrency=explore["concurrency"],
+        max_examples=explore["max_examples"],
+        max_runs=explore["max_runs"],
+        pct=explore["pct"],
+        depth=explore["depth"],
+        fault_error=explore["fault_error"],
+        latency=explore["latency"],
+    )
+
+
 # ....................... #
 
 
@@ -192,6 +238,17 @@ def run(
                 report,
                 target=target,
                 found_at=utcnow().isoformat(),
+                explore=_explore_snapshot(
+                    strategy=strategy,
+                    act_count=act_count,
+                    concurrency=concurrency,
+                    max_examples=max_examples,
+                    max_runs=max_runs,
+                    pct=pct,
+                    depth=depth,
+                    fault_error=fault_error,
+                    latency=latency,
+                ),
             ),
         )
         typer.echo(f"\n↳ saved seed {report.seed} to {regression_file}")
@@ -312,8 +369,13 @@ def replay(
                     "not reproduce the original path"
                 )
 
-            report = sim.run(
-                _config(
+            # Reproduce under the saved exploration knobs (so a regression found under one
+            # configuration is not silently reported clean); fall back to the CLI flags only for
+            # legacy entries saved before the snapshot existed.
+            cfg = (
+                _config_from_snapshot(entry.explore, entry.seed)
+                if entry.explore
+                else _config(
                     strategy=strategy,
                     seed_list=[entry.seed],
                     act_count=act_count,
@@ -324,9 +386,9 @@ def replay(
                     depth=depth,
                     fault_error=fault_error,
                     latency=latency,
-                ),
-                scenario=scenario,
+                )
             )
+            report = sim.run(cfg, scenario=scenario)
 
             if report is not None:
                 failures += 1

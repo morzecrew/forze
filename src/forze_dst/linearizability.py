@@ -162,6 +162,11 @@ def is_linearizable(ops: Sequence[_Op], spec: SequentialSpec) -> bool:
 
 
 def _ops_from(history: History, op_kind: str) -> list[_Op]:
+    # Only events emitted by ``record_operation`` carry the linearizability fields (``key`` /
+    # ``args`` / ``result`` / interval). The default ``op_kind="operation"`` collides with the
+    # operation-boundary events the harness projects for every op, which have no ``key`` — skip
+    # those so ``linearizable()`` over a normal ``Simulation`` history checks the recorded
+    # register operations instead of raising ``KeyError``.
     return [
         _Op(
             key=event.fields["key"],
@@ -172,6 +177,7 @@ def _ops_from(history: History, op_kind: str) -> list[_Op]:
             returned_at=event.fields["returned_at"],
         )
         for event in history.of_kind(op_kind)
+        if "key" in event.fields and "invoked_at" in event.fields
     ]
 
 

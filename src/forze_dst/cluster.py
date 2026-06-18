@@ -90,6 +90,7 @@ class _PartitionInterceptor:
         if self.schedule.gates(call.surface) and self.schedule.isolated_at(
             self.node_id, monotonic()
         ):
+            await asyncio.sleep(0)  # yield so the unreachable failure interleaves at the boundary
             record_event(
                 "partition",
                 at=monotonic(),
@@ -216,10 +217,13 @@ class Cluster:
                             "crash", node=node_id
                         )  # the node died; cluster proceeds
 
-                    except (
-                        Exception
-                    ):  # nosec B110 # noqa: BLE001 — a node's failure must not abort the cluster
-                        pass
+                    except Exception as error:  # noqa: BLE001 — one node's failure must not abort the cluster
+                        # Record it so an invariant can catch a node that stopped on an
+                        # unexpected error (e.g. a bug in a port call outside the op trace),
+                        # rather than leaving the cluster history looking clean.
+                        record_event(
+                            "node_error", node=node_id, error=type(error).__name__
+                        )
                     finally:
                         _fold_runtime_trace(ctx)
 

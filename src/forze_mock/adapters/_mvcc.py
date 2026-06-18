@@ -52,13 +52,17 @@ class IsolatedStoreView:
     """A per-namespace dict-like view: reads from overlay→snapshot, writes buffer to overlay.
 
     Returned by :meth:`MvccTx.view` in place of the live store, so the document adapter's
-    reads and writes route through the overlay with no call-site changes. Every read records
-    its key(s) in *reads* for serializable conflict detection.
+    reads and writes route through the overlay with no call-site changes. A point read records
+    its key in *reads*; a **scan** additionally marks the namespace in *scanned* — a predicate
+    read — so a concurrent insert of a *new* matching key is caught as a phantom under
+    serializable (key-level read tracking alone would miss it).
     """
 
     snapshot: dict[Any, Any]
     overlay: dict[Any, Any]
     reads: set[Any]
+    ns: str = ""
+    scanned: set[str] = attrs.field(factory=set)
 
     # ....................... #
 
@@ -112,28 +116,28 @@ class IsolatedStoreView:
 
         return merged
 
-    def values(self) -> Any:
+    def _scan(self) -> dict[Any, Any]:
+        # A scan is a predicate read: record every visible key AND mark the namespace scanned,
+        # so a concurrent insert of a new matching key conflicts under serializable (phantom).
         merged = self._merged()
-        self.reads.update(merged.keys())  # a scan reads every visible key
-        return merged.values()
+        self.reads.update(merged.keys())
+        self.scanned.add(self.ns)
+        return merged
+
+    def values(self) -> Any:
+        return self._scan().values()
 
     def items(self) -> Any:
-        merged = self._merged()
-        self.reads.update(merged.keys())
-        return merged.items()
+        return self._scan().items()
 
     def keys(self) -> Any:
-        merged = self._merged()
-        self.reads.update(merged.keys())
-        return merged.keys()
+        return self._scan().keys()
 
     def __iter__(self) -> Iterator[Any]:
-        merged = self._merged()
-        self.reads.update(merged.keys())
-        return iter(merged)
+        return iter(self._scan())
 
     def __len__(self) -> int:
-        return len(self._merged())
+        return len(self._scan())
 
 
 # ....................... #
@@ -148,6 +152,8 @@ class MvccTx:
     snapshots: dict[str, dict[Any, Any]] = attrs.field(factory=dict)
     overlays: dict[str, dict[Any, Any]] = attrs.field(factory=dict)
     reads: dict[str, set[Any]] = attrs.field(factory=dict)
+    scans: set[str] = attrs.field(factory=set)
+    """Namespaces this transaction scanned (predicate reads) — for phantom detection."""
 
     # ....................... #
 
@@ -191,6 +197,8 @@ class MvccTx:
             snapshot=self.snapshots.setdefault(ns, {}),
             overlay=self.overlays.setdefault(ns, {}),
             reads=self.reads.setdefault(ns, set()),
+            ns=ns,
+            scanned=self.scans,
         )
 
     # ....................... #
@@ -202,7 +210,8 @@ class MvccTx:
         """Raise on a conflict with any transaction committed after this one began.
 
         Snapshot rejects write-write (lost update); serializable also rejects read-write
-        (write skew).
+        (write skew) and, for any namespace this transaction *scanned*, a concurrent write to
+        that namespace — including the insert of a new matching key (phantom / write skew).
         """
 
         for version, write_sets in state.mvcc_commit_log:
@@ -217,7 +226,17 @@ class MvccTx:
                         code="serialization_failure",
                     )
 
-                if self.serializable and (self.reads.get(ns, set()) & committed_keys):
+                if not self.serializable:
+                    continue
+
+                if ns in self.scans:
+                    raise exc.concurrency(
+                        "Phantom conflict: a concurrent transaction wrote to a namespace "
+                        "this transaction scanned (phantom / write skew prevented)",
+                        code="serialization_failure",
+                    )
+
+                if self.reads.get(ns, set()) & committed_keys:
                     raise exc.concurrency(
                         "Read-write conflict: a concurrent transaction modified a row "
                         "this transaction read (write skew prevented)",

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
@@ -42,6 +42,10 @@ class RegressionEntry:
     """Names of the invariants that were violated."""
     found_at: str | None = None
     """When the seed was saved (ISO-8601), stamped by the caller (real wall time)."""
+    explore: dict[str, Any] | None = None
+    """Snapshot of the exploration knobs the seed was found under (strategy / scheduler /
+    act_count / faults / …). ``replay`` reproduces with these rather than the current CLI flags,
+    so a regression found under one configuration is not silently reported clean under another."""
 
     # ....................... #
 
@@ -56,6 +60,7 @@ class RegressionEntry:
                 "registry_fingerprint": self.registry_fingerprint,
                 "invariants": list(self.invariants),
                 "found_at": self.found_at,
+                "explore": self.explore,
             }
         )
 
@@ -74,6 +79,7 @@ class RegressionEntry:
             registry_fingerprint=data.get("registry_fingerprint"),
             invariants=tuple(data.get("invariants", ())),
             found_at=data.get("found_at"),
+            explore=data.get("explore"),
         )
 
 
@@ -85,8 +91,13 @@ def entry_from_report(
     *,
     target: str | None = None,
     found_at: str | None = None,
+    explore: dict[str, Any] | None = None,
 ) -> RegressionEntry:
-    """Build a :class:`RegressionEntry` from a violating report (+ the caller's context)."""
+    """Build a :class:`RegressionEntry` from a violating report (+ the caller's context).
+
+    *explore* is the exploration-knob snapshot needed to reproduce (so ``replay`` does not
+    depend on the current CLI flags matching the find).
+    """
 
     return RegressionEntry(
         seed=report.seed,
@@ -95,6 +106,7 @@ def entry_from_report(
         registry_fingerprint=report.registry_fingerprint,
         invariants=tuple(sorted({v.invariant for v in report.violations})),
         found_at=found_at,
+        explore=explore,
     )
 
 

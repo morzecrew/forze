@@ -340,3 +340,32 @@ class TestDropFault:
         import asyncio
 
         asyncio.run(go())
+
+    def test_drop_and_duplicate_skip_non_transport_ops(self) -> None:
+        import asyncio
+        import random
+
+        from forze.application.execution.interception import PortCall
+        from forze_dst.faults import FaultPolicy, FaultRule, compile_fault_policy
+
+        # A broad rule (no selector) must NOT drop or duplicate a non-transport call — a document
+        # write runs exactly once and returns its real result, not a synthetic id / double-apply.
+        interceptor = compile_fault_policy(
+            FaultPolicy(rules=(FaultRule(drop=1.0, duplicate=1.0),)), random.Random(0)
+        )
+        calls = 0
+
+        async def nxt(_call: PortCall) -> str:
+            nonlocal calls
+            calls += 1
+            return "ok"
+
+        async def go() -> None:
+            result = await interceptor.around(
+                PortCall(surface="document_command", route="orders", op="update", args=("id",)),
+                nxt,
+            )
+            assert result == "ok"  # not dropped
+            assert calls == 1  # not duplicated
+
+        asyncio.run(go())

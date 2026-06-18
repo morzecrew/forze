@@ -183,6 +183,13 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         # Single-threaded: there is no other thread to wake.
         pass
 
+    def call_soon_threadsafe(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        # The simulation is single-threaded and ``_write_to_self`` is a no-op, so a threadsafe
+        # wakeup can only come from a real foreign thread — which would inject callbacks whose
+        # timing depends on wall-clock thread scheduling, breaking determinism. Refuse it (the
+        # in-loop path uses ``call_soon``); make such work inline for simulation.
+        raise _forbidden("scheduling a callback from another thread (call_soon_threadsafe)")
+
     def close(self) -> None:
         self._selector.close()
         super().close()
