@@ -195,3 +195,26 @@ def test_operation_declared_isolation_beyond_caps_fails_closed_end_to_end() -> N
 def test_operation_declared_isolation_within_caps_runs_end_to_end() -> None:
     # The strict manager reports every level, so the same declaration runs.
     _run_op(isolation=IsolationLevel.SERIALIZABLE, transactions="strict")
+
+
+def test_declared_isolation_without_route_fails_closed() -> None:
+    # ``set_isolation`` with no ``set_route`` would run the op non-transactionally and silently
+    # drop the requirement — registry freeze must reject it (fail-closed isolation contract).
+    plan = (
+        OperationPlan()
+        .bind_tx()
+        .set_isolation(IsolationLevel.SERIALIZABLE)
+        .finish(deep=False)
+    )
+    with pytest.raises(CoreException) as excinfo:
+        OperationRegistry(
+            handlers={"op": lambda ctx: _Noop(ctx=ctx)},
+            plans={"op": plan},
+            descriptors={
+                "op": OperationDescriptor(
+                    input_type=None, output_type=None, description="x"
+                )
+            },
+        ).freeze()
+
+    assert "isolation" in str(excinfo.value) and "route" in str(excinfo.value)

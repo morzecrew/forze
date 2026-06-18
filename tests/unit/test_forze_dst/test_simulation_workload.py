@@ -144,3 +144,17 @@ class TestWorkloadGenerator:
             generate_workload([op], seed=0, count=-1)
         with pytest.raises(ValueError):
             run_simulation(lambda: run_workload([op], concurrency=0), seed=0)
+
+    def test_invalid_weights_are_rejected(self) -> None:
+        with pytest.raises(ValueError):  # negative weight skews sampling
+            generate_workload(
+                [OpSpec(name="x", make=lambda: asyncio.sleep(0), weight=-1.0)],
+                seed=0,
+                count=5,
+            )
+        with pytest.raises(ValueError):  # no positive weight at all
+            generate_workload(
+                [OpSpec(name="x", make=lambda: asyncio.sleep(0), weight=0.0)],
+                seed=0,
+                count=5,
+            )

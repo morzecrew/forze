@@ -212,4 +212,10 @@ def uuid4(val: Any | None = None) -> UUID:
     SHA-256 hash of ``val``. When omitted, a random UUIDv4 is returned.
     """
 
-    return _uuid4_from_any(val) if val else current_entropy_source().uuid4()
+    # ``is not None`` (not truthiness): a falsy-but-provided value (``0``, ``""``, ``False``)
+    # is a valid input to derive a deterministic id from — only an omitted ``val`` is random.
+    return (
+        _uuid4_from_any(val)
+        if val is not None
+        else current_entropy_source().uuid4()
+    )

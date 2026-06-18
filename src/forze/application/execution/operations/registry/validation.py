@@ -123,15 +123,29 @@ class RegistryFreezeValidator:
         handlers: StrKeyMapping[HandlerFactory],
         resolution: PlanResolution,
     ) -> None:
-        """Reject resolved plans with transaction stages but no route."""
+        """Reject resolved plans with transaction stages or declared isolation but no route."""
 
         for op in handlers:
             plan = resolution.resolve(str(op))
 
-            if plan.tx_requires_route() and plan.tx_route() is None:
+            if plan.tx_route() is not None:
+                continue
+
+            if plan.tx_requires_route():
                 raise exc.internal(
                     f"Operation {op!r} has transaction stages or dispatch "
                     "but no transaction route"
+                )
+
+            # Declaring an isolation level without a transaction route would run the operation
+            # non-transactionally and silently drop the requirement — fail closed instead.
+            isolation = plan.tx_isolation()
+
+            if isolation is not None:
+                raise exc.configuration(
+                    f"Operation {op!r} declares isolation={isolation.name} but no "
+                    "transaction route (set_isolation requires a bound tx route via "
+                    "set_route); isolation cannot be honored without a transaction.",
                 )
 
     # ....................... #

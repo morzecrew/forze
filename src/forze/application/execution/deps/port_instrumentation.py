@@ -28,6 +28,13 @@ def maybe_wrap_interceptors(
     The effective chain is the deps-scoped interceptors plus the ambient (run-scoped) chain;
     when both are empty the port is returned bare (zero cost in production). Applied
     **innermost** — inside the runtime-tracing and resilience wraps.
+
+    Contract: a *wrapped* port reads the ambient chain per call, so ambient interceptors bound
+    later still apply to it; but the wrap *decision* is made once per resolve (and ports are
+    cached per scope), so ambient interceptors must be bound **before** the ports they should
+    wrap are first resolved — a port resolved while no interceptor exists stays bare and won't
+    retroactively pick up a later ambient binding. ``run_simulation`` honors this (it binds the
+    cooperative interceptor before the scenario resolves any port).
     """
 
     from ..interception import current_interceptors, wrap_intercepted

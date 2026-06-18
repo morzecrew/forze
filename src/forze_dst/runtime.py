@@ -58,6 +58,11 @@ def run_simulation[T](
     if it touches real I/O or a thread executor.
     """
 
+    if epoch.tzinfo is None:
+        # A naive epoch's ``.timestamp()`` is interpreted in the host's local timezone, so
+        # ``now()`` / ``uuid7`` derivation would vary by machine — defeating reproducibility.
+        raise ValueError("epoch must be timezone-aware (e.g. tzinfo=UTC)")
+
     schedule_rng = (
         None if schedule_seed is None else random.Random(schedule_seed)  # nosec B311 - deterministic sim schedule, not crypto
     )

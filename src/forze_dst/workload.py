@@ -57,6 +57,12 @@ def generate_workload(
     rng = random.Random(seed)  # nosec B311 - deterministic workload generation, not crypto
     weights = [op.weight for op in catalog]
 
+    if any(weight < 0.0 for weight in weights):
+        raise ValueError("OpSpec weights must be non-negative")
+
+    if sum(weights) <= 0.0:
+        raise ValueError("at least one OpSpec must have a positive weight")
+
     return rng.choices(list(catalog), weights=weights, k=count)
 
 

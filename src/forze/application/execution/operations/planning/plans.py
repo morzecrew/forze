@@ -15,6 +15,7 @@ from forze.application.contracts.execution import (
     OnSuccess,
     ProvidesIdempotency,
 )
+from forze.application.contracts.transaction import IsolationLevel
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
@@ -112,6 +113,13 @@ class OperationPlan:
         """Transaction route for this plan, if set."""
 
         return self._tx.route
+
+    # ....................... #
+
+    def tx_isolation(self) -> IsolationLevel | None:
+        """Required transaction isolation for this plan, if declared."""
+
+        return self._tx.isolation
 
     # ....................... #
 

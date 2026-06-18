@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from types import MappingProxyType
 from typing import Any, Iterator, Mapping, final
 
 import attrs
@@ -65,7 +66,9 @@ class Recorder:
                 seq=self._seq,
                 kind=kind,
                 at=monotonic() if at is None else at,
-                fields=dict(fields),
+                # A read-only view so recorded history can't be mutated after the fact
+                # (the immutability the `History`/`Event` contract promises).
+                fields=MappingProxyType(dict(fields)),
             )
         )
         self._seq += 1

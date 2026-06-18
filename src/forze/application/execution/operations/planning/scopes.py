@@ -526,8 +526,18 @@ class ResolvedTransactionScope(ResolvedScope):
         # re-asserting on every operation call. Registry freezing performs the
         # same check earlier with an operation-scoped message (see
         # ``PlanValidation.validate_resolved_plans``).
-        if self.route is None and not self.empty:
-            raise exc.internal("Transaction scope has stages but no route set")
+        if self.route is None:
+            if not self.empty:
+                raise exc.internal("Transaction scope has stages but no route set")
+
+            # A declared isolation level with no route would run non-transactionally and drop
+            # the requirement; ``run_resolved_operation_plan`` runs a route-less scope's handler
+            # directly, so fail closed here (the contract it relies on).
+            if self.isolation is not None:
+                raise exc.configuration(
+                    "Transaction scope declares an isolation level but no route; "
+                    "isolation requires a bound transaction route."
+                )
 
     # ....................... #
 

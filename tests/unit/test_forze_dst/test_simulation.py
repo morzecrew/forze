@@ -120,6 +120,16 @@ class TestLeakGuards:
         with pytest.raises(SimulationDeadlock):
             run_simulation(scenario)
 
+    def test_naive_epoch_rejected(self) -> None:
+        # A naive epoch's timestamp() is host-timezone-dependent → non-reproducible time/ids.
+        from datetime import datetime
+
+        async def scenario() -> None:
+            return None
+
+        with pytest.raises(ValueError):
+            run_simulation(scenario, epoch=datetime(2020, 1, 1))  # noqa: DTZ001 - the point
+
     def test_real_io_transports_forbidden(self) -> None:
         loop = SimulationEventLoop()
         try:
