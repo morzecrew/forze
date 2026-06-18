@@ -18,7 +18,6 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
-from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import (
     BaseDTO,
@@ -26,7 +25,7 @@ from forze.domain.models import (
     Document,
     ReadDocument,
 )
-from forze_dst import ModelState, Rule, Scenario, Simulation
+from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
 from forze_dst.recorder import History
 from forze_mock import MockDepsModule
 
@@ -52,7 +51,9 @@ class ThingRead(ReadDocument):
 THING_SPEC = DocumentSpec(
     name="things",
     read=ThingRead,
-    write=DocumentWriteTypes(domain=Thing, create_cmd=ThingCreate, update_cmd=ThingUpdate),
+    write=DocumentWriteTypes(
+        domain=Thing, create_cmd=ThingCreate, update_cmd=ThingUpdate
+    ),
 )
 
 
@@ -102,9 +103,7 @@ _REGISTRY = OperationRegistry(
         "bump": OperationDescriptor(
             input_type=BumpCmd, output_type=None, description="x"
         ),
-        "boom": OperationDescriptor(
-            input_type=None, output_type=None, description="x"
-        ),
+        "boom": OperationDescriptor(input_type=None, output_type=None, description="x"),
     },
 ).freeze()
 
@@ -137,7 +136,12 @@ def test_trace_carries_entity_key_and_ok_outcome() -> None:
     )
     Simulation(
         operations=_REGISTRY, deps=lambda: MockDepsModule(), invariants=[invariant]
-    ).explore_scenario(scenario, act_count=1, concurrency=1, seeds=range(1))
+    ).run(
+        SimulationConfig(
+            strategy=Strategy.SCENARIO, act_count=1, concurrency=1, seeds=range(1)
+        ),
+        scenario=scenario,
+    )
 
     trace = [event for event in seen[-1].events if event.kind == "trace"]
 
@@ -172,7 +176,12 @@ def test_trace_records_operation_error_outcome() -> None:
     )
     Simulation(
         operations=_REGISTRY, deps=lambda: MockDepsModule(), invariants=[invariant]
-    ).explore_scenario(scenario, act_count=1, concurrency=1, seeds=range(1))
+    ).run(
+        SimulationConfig(
+            strategy=Strategy.SCENARIO, act_count=1, concurrency=1, seeds=range(1)
+        ),
+        scenario=scenario,
+    )
 
     trace = [event for event in seen[-1].events if event.kind == "trace"]
     errored = [

@@ -26,7 +26,9 @@ _LOCK_SPEC = DistributedLockSpec(name="locks")
 _HOLD = 1.0  # virtual seconds the critical section spans (so holds are real intervals)
 _RETRY = 0.05
 
-_MUTUAL_EXCLUSION = mutual_exclusion("hold", resource="resource", start="start", end="end")
+_MUTUAL_EXCLUSION = mutual_exclusion(
+    "hold", resource="resource", start="start", end="end"
+)
 _NO_LOST_UPDATE = expect(
     "result",
     lambda event: event.fields["final"] == event.fields["expected"],

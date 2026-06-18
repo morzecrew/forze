@@ -37,11 +37,11 @@ class SequentialSpec(Protocol):
     operation in a candidate order only when this ``result`` equals the one recorded.
     """
 
-    def initial(self) -> Any:
-        ...  # pragma: no cover
+    def initial(self) -> Any: ...  # pragma: no cover
 
-    def apply(self, state: Any, op: str, args: tuple[Any, ...]) -> tuple[Any, Any]:
-        ...  # pragma: no cover
+    def apply(
+        self, state: Any, op: str, args: tuple[Any, ...]
+    ) -> tuple[Any, Any]: ...  # pragma: no cover
 
 
 @final

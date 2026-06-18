@@ -16,6 +16,8 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.registry import OperationRegistry
 
 from forze_dst import (
+    SimulationConfig,
+    Strategy,
     ModelState,
     Simulation,
     derive_scenario,
@@ -103,20 +105,18 @@ class TestDeriveScenario:
 
     def test_derived_scenario_finds_double_charge(self) -> None:
         sim = _payments_simulation()
-        report = sim.explore_scenario(
-            derive_scenario(sim.operations),
-            act_count=6,
-            concurrency=6,
-            seeds=range(5),
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO, act_count=6, concurrency=6, seeds=range(5)
+            ),
+            scenario=derive_scenario(sim.operations),
         )
         assert report is not None
         assert report.violations[0].invariant == "no_duplicate_effect"
         assert [op for op, _ in report.workload] == ["pay_order", "pay_order"]
 
     def test_arrange_each_multiplies_producers(self) -> None:
-        scenario = derive_scenario(
-            _payments_simulation().operations, arrange_each=3
-        )
+        scenario = derive_scenario(_payments_simulation().operations, arrange_each=3)
         assert [rule.op for rule in scenario.arrange] == ["create_order"] * 3
 
     def test_arg_builder_fills_entity_field_from_pool(self) -> None:
@@ -128,7 +128,9 @@ class TestDeriveScenario:
 
         arg = scenario.act[0].arg(state, random.Random(0))
         assert isinstance(arg, PayDTO)
-        assert arg.order_id == "the-order"  # filled from the arranged pool, not generated
+        assert (
+            arg.order_id == "the-order"
+        )  # filled from the arranged pool, not generated
 
 
 class TestArgBuilderBranches:

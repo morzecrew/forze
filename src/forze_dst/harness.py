@@ -196,7 +196,7 @@ class Simulation:
             if cases is None:
                 raise ValueError("OP_CASE strategy requires cases=")
 
-            return self.explore(
+            return self._explore(
                 cases=cases,
                 count=config.count,
                 concurrency=config.concurrency,
@@ -213,7 +213,7 @@ class Simulation:
                 if config.scheduler is SchedulerKind.PCT
                 else None
             )
-            return self.explore_scenario(
+            return self._explore_scenario(
                 sc,
                 act_count=config.act_count,
                 concurrency=config.concurrency,
@@ -224,7 +224,7 @@ class Simulation:
             )
 
         if config.strategy is Strategy.HYPOTHESIS:
-            return self.explore_scenario_hypothesis(
+            return self._explore_scenario_hypothesis(
                 sc,
                 max_act=config.act_count,
                 concurrency=config.concurrency,
@@ -234,7 +234,7 @@ class Simulation:
             )
 
         # DPOR — drives its own systematic scheduler over one fixed workload.
-        return self.explore_scenario_dpor(
+        return self._explore_scenario_dpor(
             sc,
             act_count=config.act_count,
             concurrency=config.concurrency,
@@ -433,7 +433,7 @@ class Simulation:
 
     # ....................... #
 
-    def explore(
+    def _explore(
         self,
         *,
         cases: Sequence[OperationCase],
@@ -703,7 +703,7 @@ class Simulation:
 
     # ....................... #
 
-    def explore_scenario(
+    def _explore_scenario(
         self,
         scenario: Scenario,
         *,
@@ -744,7 +744,7 @@ class Simulation:
 
     # ....................... #
 
-    def explore_scenario_hypothesis(
+    def _explore_scenario_hypothesis(
         self,
         scenario: Scenario,
         *,
@@ -796,9 +796,7 @@ class Simulation:
                 act_plan=plan,
                 concurrency=concurrency,
                 seed=seed,
-                schedule_seed=schedule_seed_of(
-                    seed
-                ),  # pyright: ignore[reportUnknownArgumentType]
+                schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
                 epoch=epoch,
             )
             return history
@@ -820,17 +818,13 @@ class Simulation:
             act_plan=plan,
             concurrency=concurrency,
             seed=seed,
-            schedule_seed=schedule_seed_of(
-                seed
-            ),  # pyright: ignore[reportUnknownArgumentType]
+            schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
             epoch=epoch,
         )
 
         return ViolationReport(
             seed=seed,
-            schedule_seed=schedule_seed_of(
-                seed
-            ),  # pyright: ignore[reportUnknownArgumentType]
+            schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
             violations=tuple(check(history, self.invariants)),
             workload=tuple(generated),
             history=history,
@@ -839,7 +833,7 @@ class Simulation:
 
     # ....................... #
 
-    def explore_scenario_dpor(
+    def _explore_scenario_dpor(
         self,
         scenario: Scenario,
         *,

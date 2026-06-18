@@ -99,7 +99,9 @@ def _discover(module_path: str) -> Simulation:
             f"{module_path!r} exposes several Simulations — name one with 'module:attr'"
         )
 
-    registries = [value for value in public if isinstance(value, FrozenOperationRegistry)]
+    registries = [
+        value for value in public if isinstance(value, FrozenOperationRegistry)
+    ]
     if len(registries) == 1:
         return _coerce(registries[0])  # type: ignore[return-value]  # not None for a registry
     if len(registries) > 1:

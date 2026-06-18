@@ -60,7 +60,9 @@ def _reactive_simulation() -> Simulation:
                 input_type=None, output_type=None, description="Checkout."
             ),
             "fulfill": OperationDescriptor(
-                input_type=FulfillDTO, output_type=None, description="Fulfill (reactive)."
+                input_type=FulfillDTO,
+                output_type=None,
+                description="Fulfill (reactive).",
             ),
         },
     ).freeze()
@@ -183,7 +185,11 @@ class TestDomainEventCascade:
         assert rmap.entry_points() == frozenset({"place"})
 
         rendered = rmap.format()
-        assert "place →" in rendered and "[ThingHappened]" in rendered and "react" in rendered
+        assert (
+            "place →" in rendered
+            and "[ThingHappened]" in rendered
+            and "react" in rendered
+        )
 
     def test_derive_scenario_drops_the_event_handler_op(self) -> None:
         refined = _event_cascade_simulation().derive_scenario(probe=True)

@@ -71,7 +71,9 @@ class ItemRead(ReadDocument):
 ORDER_SPEC = DocumentSpec(
     name="orders",
     read=OrderRead,
-    write=DocumentWriteTypes(domain=Order, create_cmd=OrderCreate, update_cmd=OrderUpdate),
+    write=DocumentWriteTypes(
+        domain=Order, create_cmd=OrderCreate, update_cmd=OrderUpdate
+    ),
 )
 ITEM_SPEC = DocumentSpec(
     name="items",

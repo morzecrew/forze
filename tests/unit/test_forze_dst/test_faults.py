@@ -65,7 +65,9 @@ async def _flow(
     state = MockState()
     ctx = context_from_modules(MockDepsModule(state=state))
     adapter = MockQueueAdapter[_Payload](state=state, namespace=_QUEUE, codec=_CODEC)
-    cmd = FaultyQueueCommand(inner=adapter, policy=policy, rng=random.Random(fault_seed))
+    cmd = FaultyQueueCommand(
+        inner=adapter, policy=policy, rng=random.Random(fault_seed)
+    )
 
     # Relay: publish each event, retrying transient faults (at-least-once at publish).
     for event_id, value in _events():
@@ -95,7 +97,9 @@ async def _flow(
     return applied
 
 
-def _run(*, policy: TransportFaultPolicy, fault_seed: int = 1, dedup: bool) -> list[str]:
+def _run(
+    *, policy: TransportFaultPolicy, fault_seed: int = 1, dedup: bool
+) -> list[str]:
     return run_simulation(
         lambda: _flow(policy=policy, fault_seed=fault_seed, dedup=dedup), seed=0
     )

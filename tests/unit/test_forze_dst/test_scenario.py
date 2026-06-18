@@ -23,6 +23,8 @@ from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import exc
 
 from forze_dst import (
+    SimulationConfig,
+    Strategy,
     ModelState,
     Rule,
     Scenario,
@@ -120,8 +122,11 @@ def _payments_scenario() -> Scenario:
 
 class TestScenarioModel:
     def test_finds_concurrent_double_charge_and_minimizes(self) -> None:
-        report = _payments_simulation(atomic=False).explore_scenario(
-            _payments_scenario(), act_count=6, concurrency=6, seeds=range(5)
+        report = _payments_simulation(atomic=False).run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO, act_count=6, concurrency=6, seeds=range(5)
+            ),
+            scenario=_payments_scenario(),
         )
 
         assert report is not None
@@ -132,14 +137,20 @@ class TestScenarioModel:
         assert report.registry_fingerprint
 
     def test_atomic_payment_has_no_violation(self) -> None:
-        report = _payments_simulation(atomic=True).explore_scenario(
-            _payments_scenario(), act_count=6, concurrency=6, seeds=range(20)
+        report = _payments_simulation(atomic=True).run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO, act_count=6, concurrency=6, seeds=range(20)
+            ),
+            scenario=_payments_scenario(),
         )
         assert report is None
 
     def test_report_shows_arrange_context_and_the_race(self) -> None:
-        report = _payments_simulation(atomic=False).explore_scenario(
-            _payments_scenario(), act_count=6, concurrency=6, seeds=range(5)
+        report = _payments_simulation(atomic=False).run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO, act_count=6, concurrency=6, seeds=range(5)
+            ),
+            scenario=_payments_scenario(),
         )
         assert report is not None
 
@@ -151,8 +162,14 @@ class TestScenarioModel:
 
 class TestHypothesisExplore:
     def test_hypothesis_finds_and_shrinks_double_charge(self) -> None:
-        report = _payments_simulation(atomic=False).explore_scenario_hypothesis(
-            _payments_scenario(), max_act=8, concurrency=6, max_examples=50
+        report = _payments_simulation(atomic=False).run(
+            SimulationConfig(
+                strategy=Strategy.HYPOTHESIS,
+                act_count=8,
+                concurrency=6,
+                max_examples=50,
+            ),
+            scenario=_payments_scenario(),
         )
 
         assert report is not None
@@ -165,8 +182,14 @@ class TestHypothesisExplore:
         assert report.format() == report.format()
 
     def test_hypothesis_clean_when_atomic(self) -> None:
-        report = _payments_simulation(atomic=True).explore_scenario_hypothesis(
-            _payments_scenario(), max_act=8, concurrency=6, max_examples=50
+        report = _payments_simulation(atomic=True).run(
+            SimulationConfig(
+                strategy=Strategy.HYPOTHESIS,
+                act_count=8,
+                concurrency=6,
+                max_examples=50,
+            ),
+            scenario=_payments_scenario(),
         )
         assert report is None
 
@@ -176,8 +199,9 @@ class TestHypothesisExplore:
             arrange=(Rule(op="create_order", produces="order"),),
             act=(),
         )
-        report = _payments_simulation(atomic=False).explore_scenario_hypothesis(
-            scenario, max_examples=10
+        report = _payments_simulation(atomic=False).run(
+            SimulationConfig(strategy=Strategy.HYPOTHESIS, max_examples=10),
+            scenario=scenario,
         )
         assert report is None
 
@@ -197,11 +221,11 @@ class TestNoUnexpectedError:
         )
 
     def test_flags_an_unexpected_exception(self) -> None:
-        report = self._sim(KeyError("boom")).explore_scenario(
-            Scenario(state=ModelState, act=(Rule(op="boom"),)),
-            act_count=1,
-            concurrency=1,
-            seeds=range(1),
+        report = self._sim(KeyError("boom")).run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO, act_count=1, concurrency=1, seeds=range(1)
+            ),
+            scenario=Scenario(state=ModelState, act=(Rule(op="boom"),)),
         )
         assert report is not None
         assert report.violations[0].invariant == "no_unexpected_error"
@@ -209,11 +233,11 @@ class TestNoUnexpectedError:
 
     def test_ignores_a_domain_coreexception(self) -> None:
         # A declared domain failure is an expected outcome — not a bug.
-        report = self._sim(exc.validation("bad input")).explore_scenario(
-            Scenario(state=ModelState, act=(Rule(op="boom"),)),
-            act_count=1,
-            concurrency=1,
-            seeds=range(3),
+        report = self._sim(exc.validation("bad input")).run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO, act_count=1, concurrency=1, seeds=range(3)
+            ),
+            scenario=Scenario(state=ModelState, act=(Rule(op="boom"),)),
         )
         assert report is None
 
@@ -280,8 +304,11 @@ class TestScenarioMechanics:
             ),
             act=(Rule(op="boom"),),  # act error path
         )
-        report = sim.explore_scenario(
-            scenario, act_count=3, concurrency=1, seeds=range(1)
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO, act_count=3, concurrency=1, seeds=range(1)
+            ),
+            scenario=scenario,
         )
         assert report is not None
         assert report.violations[0].message == "an operation errored"

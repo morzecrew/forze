@@ -20,6 +20,9 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.registry import OperationRegistry
 
 from forze_dst import (
+    SchedulerKind,
+    SimulationConfig,
+    Strategy,
     ModelState,
     PCTScheduler,
     RandomScheduler,
@@ -29,7 +32,6 @@ from forze_dst import (
     SystematicScheduler,
     expect,
     no_duplicate_effect,
-    pct_scheduler_factory,
     record_event,
     run_simulation,
 )
@@ -72,7 +74,9 @@ class TestRandomScheduler:
 
 class TestPCTScheduler:
     def test_reproducible_for_a_fixed_seed(self) -> None:
-        assert _run_with_pct(7) == _run_with_pct(7)  # same scheduler seed → same interleaving
+        assert _run_with_pct(7) == _run_with_pct(
+            7
+        )  # same scheduler seed → same interleaving
 
     def test_explores_more_than_one_interleaving(self) -> None:
         orders = {tuple(_run_with_pct(seed)) for seed in range(30)}
@@ -172,12 +176,17 @@ def _payments_scenario() -> Scenario:
 
 class TestPCTDrivesHarness:
     def test_pct_scheduler_finds_double_charge(self) -> None:
-        report = _payments_simulation().explore_scenario(
-            _payments_scenario(),
-            act_count=6,
-            concurrency=6,
-            seeds=range(5),
-            scheduler_factory=pct_scheduler_factory(depth=3, steps=12),
+        report = _payments_simulation().run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO,
+                scheduler=SchedulerKind.PCT,
+                act_count=6,
+                concurrency=6,
+                seeds=range(5),
+                pct_depth=3,
+                pct_steps=12,
+            ),
+            scenario=_payments_scenario(),
         )
         assert report is not None
         assert report.violations[0].invariant == "no_duplicate_effect"
@@ -216,19 +225,28 @@ class TestSystematicSchedulerUnit:
 
 class TestDPOR:
     def test_finds_double_charge_systematically(self) -> None:
-        report = _payments_simulation().explore_scenario_dpor(
-            _payments_scenario(), act_count=3, concurrency=3, max_runs=200
+        report = _payments_simulation().run(
+            SimulationConfig(
+                strategy=Strategy.DPOR, act_count=3, concurrency=3, max_runs=200
+            ),
+            scenario=_payments_scenario(),
         )
         assert report is not None
         assert report.violations[0].invariant == "no_duplicate_effect"
         assert all(op == "pay_order" for op, _ in report.workload)
 
     def test_reproducible(self) -> None:
-        a = _payments_simulation().explore_scenario_dpor(
-            _payments_scenario(), act_count=3, concurrency=3, max_runs=200
+        a = _payments_simulation().run(
+            SimulationConfig(
+                strategy=Strategy.DPOR, act_count=3, concurrency=3, max_runs=200
+            ),
+            scenario=_payments_scenario(),
         )
-        b = _payments_simulation().explore_scenario_dpor(
-            _payments_scenario(), act_count=3, concurrency=3, max_runs=200
+        b = _payments_simulation().run(
+            SimulationConfig(
+                strategy=Strategy.DPOR, act_count=3, concurrency=3, max_runs=200
+            ),
+            scenario=_payments_scenario(),
         )
         assert a is not None and b is not None
         assert a.workload == b.workload
@@ -242,9 +260,7 @@ class TestDPOR:
             async def __call__(self, _args: None) -> None:
                 record_event("touched", ok=True)
 
-        registry = OperationRegistry(
-            handlers={"noop": lambda _c: _Noop()}
-        ).freeze()
+        registry = OperationRegistry(handlers={"noop": lambda _c: _Noop()}).freeze()
         sim = Simulation(
             operations=registry,
             deps=lambda: MockDepsModule(),
@@ -252,7 +268,10 @@ class TestDPOR:
         )
         scenario = Scenario(state=ModelState, act=(Rule(op="noop"),))
 
-        report = sim.explore_scenario_dpor(
-            scenario, act_count=3, concurrency=3, max_runs=200
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.DPOR, act_count=3, concurrency=3, max_runs=200
+            ),
+            scenario=scenario,
         )
         assert report is None

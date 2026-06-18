@@ -79,6 +79,8 @@ class ReactiveMap:
         if len(lines) == 1:
             lines.append("  (no cascades)")
 
-        lines.append(f"entry points: {', '.join(sorted(self.entry_points())) or '(none)'}")
+        lines.append(
+            f"entry points: {', '.join(sorted(self.entry_points())) or '(none)'}"
+        )
 
         return "\n".join(lines)

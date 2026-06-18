@@ -7,13 +7,11 @@ the common case needs no driver script — point at your registry-backed simulat
 
 from __future__ import annotations
 
-from enum import Enum
-
 import typer
 
 from forze_cli._compat import require_dst
 from forze_cli.loader import load_simulation
-from forze_dst import pct_scheduler_factory
+from forze_dst import SchedulerKind, SimulationConfig, Strategy
 
 # ----------------------- #
 
@@ -33,17 +31,6 @@ def _ensure_extra() -> None:  # pyright: ignore[reportUnusedFunction]
     """Guard every ``dst`` command on the DST extra being installed."""
 
     require_dst()
-
-
-# ....................... #
-
-
-class Strategy(str, Enum):
-    """Exploration strategy for ``dst run``."""
-
-    scenario = "scenario"
-    hypothesis = "hypothesis"
-    dpor = "dpor"
 
 
 # ....................... #
@@ -72,7 +59,7 @@ def run(
     target: str = typer.Argument(
         ..., help="Import string 'module:attr' of a Simulation."
     ),
-    strategy: Strategy = typer.Option(Strategy.scenario, help="Exploration strategy."),
+    strategy: Strategy = typer.Option(Strategy.SCENARIO, help="Exploration strategy."),
     seeds: str = typer.Option("0-20", help="Seeds: 'N' | 'A-B' | 'a,b,c'."),
     act_count: int = typer.Option(8, help="Act operations per run."),
     concurrency: int = typer.Option(4, help="Max concurrent operations."),
@@ -95,33 +82,22 @@ def run(
         return
 
     scenario = sim.derive_scenario()
+    seed_list = _parse_seeds(seeds)
 
-    if strategy is Strategy.hypothesis:
-        report = sim.explore_scenario_hypothesis(
-            scenario,
-            max_act=act_count,
+    report = sim.run(
+        SimulationConfig(
+            strategy=strategy,
+            seeds=seed_list,
+            act_count=act_count,
             concurrency=concurrency,
             max_examples=max_examples,
-        )
-
-    elif strategy is Strategy.dpor:
-        seed_list = _parse_seeds(seeds)
-        report = sim.explore_scenario_dpor(
-            scenario,
-            act_count=act_count,
-            concurrency=concurrency,
-            seed=seed_list[0] if seed_list else 0,
             max_runs=max_runs,
-        )
-
-    else:
-        report = sim.explore_scenario(
-            scenario,
-            act_count=act_count,
-            concurrency=concurrency,
-            seeds=_parse_seeds(seeds),
-            scheduler_factory=(pct_scheduler_factory(depth=depth) if pct else None),
-        )
+            dpor_seed=seed_list[0] if seed_list else 0,
+            scheduler=SchedulerKind.PCT if pct else SchedulerKind.RANDOM,
+            pct_depth=depth,
+        ),
+        scenario=scenario,
+    )
 
     if report is None:
         typer.echo("✓ no violation found")

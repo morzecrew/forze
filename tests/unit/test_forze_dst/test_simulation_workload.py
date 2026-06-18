@@ -76,9 +76,7 @@ async def _record_order(n: int) -> tuple[int, ...]:
 
 
 def _run_order(*, schedule_seed: int | None) -> tuple[int, ...]:
-    return run_simulation(
-        lambda: _record_order(8), seed=0, schedule_seed=schedule_seed
-    )
+    return run_simulation(lambda: _record_order(8), seed=0, schedule_seed=schedule_seed)
 
 
 # ....................... #
@@ -132,7 +130,9 @@ class TestWorkloadGenerator:
         assert len(results) == 30
         # atomic ops are safe under perturbation: value == number of "incr" draws.
         expected_incr = sum(
-            1 for op in generate_workload(catalog, seed=2, count=30) if op.name == "incr"
+            1
+            for op in generate_workload(catalog, seed=2, count=30)
+            if op.name == "incr"
         )
         assert counter.value == expected_incr
 

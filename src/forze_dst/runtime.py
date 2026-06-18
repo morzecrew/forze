@@ -59,9 +59,7 @@ def run_simulation[T](
     """
 
     schedule_rng = (
-        None
-        if schedule_seed is None
-        else random.Random(schedule_seed)  # nosec B311 - deterministic sim schedule, not crypto
+        None if schedule_seed is None else random.Random(schedule_seed)  # nosec B311 - deterministic sim schedule, not crypto
     )
     loop = SimulationEventLoop(schedule_rng=schedule_rng, scheduler=scheduler)
     time_source = SimulationTimeSource(loop=loop, epoch=epoch)

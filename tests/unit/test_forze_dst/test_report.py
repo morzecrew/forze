@@ -21,6 +21,8 @@ from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
 from forze_dst import (
+    SimulationConfig,
+    Strategy,
     CausalGraph,
     OperationCase,
     Simulation,
@@ -89,8 +91,11 @@ def _lost_deposit_simulation() -> Simulation:
 
 class TestCausalGraph:
     def test_reconstructs_spans_and_detects_the_race(self) -> None:
-        report = _lost_deposit_simulation().explore(
-            cases=[OperationCase(op="deposit")], count=6, concurrency=6, seeds=range(5)
+        report = _lost_deposit_simulation().run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE, count=6, concurrency=6, seeds=range(5)
+            ),
+            cases=[OperationCase(op="deposit")],
         )
         assert report is not None
 
@@ -109,8 +114,11 @@ class TestCausalGraph:
     def test_pure_in_memory_op_has_no_side_effect_steps(self) -> None:
         # The ledger touches no ports, so spans carry no side-effect steps — the
         # operation boundaries are represented by the spans themselves, not re-listed.
-        report = _lost_deposit_simulation().explore(
-            cases=[OperationCase(op="deposit")], count=6, concurrency=6, seeds=range(5)
+        report = _lost_deposit_simulation().run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE, count=6, concurrency=6, seeds=range(5)
+            ),
+            cases=[OperationCase(op="deposit")],
         )
         assert report is not None
         graph = CausalGraph.from_history(report.history)
@@ -156,8 +164,11 @@ class TestSideEffectSteps:
             # Force a report so we can inspect the causal trace of a port-touching op.
             invariants=[expect("operation", lambda _e: False, message="forced")],
         )
-        report = sim.explore(
-            cases=[OperationCase(op="store")], count=3, concurrency=1, seeds=range(1)
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE, count=3, concurrency=1, seeds=range(1)
+            ),
+            cases=[OperationCase(op="store")],
         )
         assert report is not None
 
@@ -176,8 +187,11 @@ class TestSideEffectSteps:
 
 class TestFormatReport:
     def test_render_is_readable_and_complete(self) -> None:
-        report = _lost_deposit_simulation().explore(
-            cases=[OperationCase(op="deposit")], count=6, concurrency=6, seeds=range(5)
+        report = _lost_deposit_simulation().run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE, count=6, concurrency=6, seeds=range(5)
+            ),
+            cases=[OperationCase(op="deposit")],
         )
         assert report is not None
 
@@ -199,12 +213,21 @@ class TestFormatReport:
         history = History(
             seed=7,
             events=(
-                Event(seq=0, kind="op_start", at=0.0, fields={"call_id": 0, "op": "boom"}),
+                Event(
+                    seq=0, kind="op_start", at=0.0, fields={"call_id": 0, "op": "boom"}
+                ),
                 Event(
                     seq=1,
                     kind="operation",
                     at=0.0,
-                    fields={"call_id": 0, "op": "boom", "outcome": "error", "error": "RuntimeError", "invoked_at": 0.0, "returned_at": 0.0},
+                    fields={
+                        "call_id": 0,
+                        "op": "boom",
+                        "outcome": "error",
+                        "error": "RuntimeError",
+                        "invoked_at": 0.0,
+                        "returned_at": 0.0,
+                    },
                 ),
             ),
         )

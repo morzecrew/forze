@@ -28,7 +28,12 @@ _SPEC = RegisterSpec()
 
 def _op(op: str, args: tuple, result: object, invoked: float, returned: float) -> _Op:
     return _Op(
-        key="r", op=op, args=args, result=result, invoked_at=invoked, returned_at=returned
+        key="r",
+        op=op,
+        args=args,
+        result=result,
+        invoked_at=invoked,
+        returned_at=returned,
     )
 
 
@@ -75,11 +80,19 @@ class TestChecker:
             _SPEC.apply(0, "increment", ())
 
     def test_partition_per_key(self) -> None:
-        good = _Op(key="a", op="write", args=(1,), result=None, invoked_at=0.0, returned_at=1.0)
-        good_read = _Op(key="a", op="read", args=(), result=1, invoked_at=2.0, returned_at=3.0)
+        good = _Op(
+            key="a", op="write", args=(1,), result=None, invoked_at=0.0, returned_at=1.0
+        )
+        good_read = _Op(
+            key="a", op="read", args=(), result=1, invoked_at=2.0, returned_at=3.0
+        )
         # key "b": stale read → that partition is not linearizable, failing the whole.
-        bad_write = _Op(key="b", op="write", args=(9,), result=None, invoked_at=0.0, returned_at=1.0)
-        bad_read = _Op(key="b", op="read", args=(), result=0, invoked_at=2.0, returned_at=3.0)
+        bad_write = _Op(
+            key="b", op="write", args=(9,), result=None, invoked_at=0.0, returned_at=1.0
+        )
+        bad_read = _Op(
+            key="b", op="read", args=(), result=0, invoked_at=2.0, returned_at=3.0
+        )
         assert is_linearizable([good, good_read], _SPEC)
         assert not is_linearizable([good, good_read, bad_write, bad_read], _SPEC)
 
@@ -111,7 +124,10 @@ def _build(register_factory):
                 else:
                     async with record_operation("r", "read") as call:
                         call.result = await register.read()
-                await asyncio.sleep(1)  # separate intervals: a sequential real-time order
+                await asyncio.sleep(
+                    1
+                )  # separate intervals: a sequential real-time order
+
         return scenario
 
     return build

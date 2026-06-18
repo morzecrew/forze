@@ -60,9 +60,7 @@ def _task_of(handle: Any) -> asyncio.Task[Any] | None:
 
     owner = getattr(getattr(handle, "_callback", None), "__self__", None)
 
-    return (
-        owner if isinstance(owner, asyncio.Task) else None
-    )  # pyright: ignore[reportUnknownVariableType]
+    return owner if isinstance(owner, asyncio.Task) else None  # pyright: ignore[reportUnknownVariableType]
 
 
 # ....................... #

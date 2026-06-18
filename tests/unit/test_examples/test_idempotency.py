@@ -9,7 +9,9 @@ from examples.recipes.idempotency.app import idempotent_create
 
 
 async def test_idempotent_create_dedupes() -> None:
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
+    )
     async with runtime.scope():
         first, second = await idempotent_create(runtime.get_context())
     assert first.id == second.id

@@ -20,6 +20,8 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.registry import OperationRegistry
 
 from forze_dst import (
+    SimulationConfig,
+    Strategy,
     History,
     OperationCase,
     Simulation,
@@ -58,7 +60,9 @@ def _make_simulation(*, atomic: bool) -> Simulation:
         handlers={"deposit": lambda _ctx: _Deposit(ledger=ledger, atomic=atomic)},
         descriptors={
             "deposit": OperationDescriptor(
-                input_type=DepositDTO, output_type=None, description="Deposit into the ledger."
+                input_type=DepositDTO,
+                output_type=None,
+                description="Deposit into the ledger.",
             )
         },
     ).freeze()
@@ -90,8 +94,11 @@ def _make_simulation(*, atomic: bool) -> Simulation:
 class TestTurnkeyHarness:
     def test_finds_lost_deposit_minimized_and_stamped(self) -> None:
         sim = _make_simulation(atomic=False)
-        report = sim.explore(
-            cases=[OperationCase(op="deposit")], count=6, concurrency=6, seeds=range(5)
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE, count=6, concurrency=6, seeds=range(5)
+            ),
+            cases=[OperationCase(op="deposit")],
         )
 
         assert report is not None
@@ -105,8 +112,11 @@ class TestTurnkeyHarness:
 
     def test_atomic_implementation_has_no_violation(self) -> None:
         sim = _make_simulation(atomic=True)
-        report = sim.explore(
-            cases=[OperationCase(op="deposit")], count=6, concurrency=6, seeds=range(20)
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE, count=6, concurrency=6, seeds=range(20)
+            ),
+            cases=[OperationCase(op="deposit")],
         )
         assert report is None
 
@@ -119,14 +129,20 @@ class TestTurnkeyHarness:
             note: str
 
         changed = OperationRegistry(
-            handlers={"deposit": lambda _ctx: _Deposit(ledger={"balance": 0, "expected": 0}, atomic=True)},
+            handlers={
+                "deposit": lambda _ctx: _Deposit(
+                    ledger={"balance": 0, "expected": 0}, atomic=True
+                )
+            },
             descriptors={
                 "deposit": OperationDescriptor(
                     input_type=WideDepositDTO, output_type=None, description="Deposit."
                 )
             },
         ).freeze()
-        other = Simulation(operations=changed, deps=lambda: MockDepsModule()).fingerprint()
+        other = Simulation(
+            operations=changed, deps=lambda: MockDepsModule()
+        ).fingerprint()
         assert other != same  # a changed input contract → a different fingerprint
 
 
@@ -153,15 +169,17 @@ class TestHarnessMechanics:
             },
         ).freeze()
 
-        sim = Simulation(operations=registry, deps=lambda: MockDepsModule())  # no invariants
-        report = sim.explore(
+        sim = Simulation(
+            operations=registry, deps=lambda: MockDepsModule()
+        )  # no invariants
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE, count=8, concurrency=4, seeds=range(2)
+            ),
             cases=[
                 OperationCase(op="rec", inputs=lambda _rng: DepositDTO(amount=7)),
                 OperationCase(op="noop"),
             ],
-            count=8,
-            concurrency=4,
-            seeds=range(2),
         )
         assert report is None  # no invariants declared → nothing to violate
         assert 7 in seen  # the explicit input factory was used (not auto-generated)
@@ -186,8 +204,11 @@ class TestHarnessMechanics:
         sim = Simulation(
             operations=registry, deps=lambda: MockDepsModule(), invariants=[capture]
         )
-        report = sim.explore(
-            cases=[OperationCase(op="noop")], count=2, concurrency=2, seeds=range(1)
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE, count=2, concurrency=2, seeds=range(1)
+            ),
+            cases=[OperationCase(op="noop")],
         )
 
         assert report is None
@@ -216,8 +237,11 @@ class TestHarnessMechanics:
         sim = Simulation(
             operations=registry, deps=lambda: MockDepsModule(), invariants=[no_errors]
         )
-        report = sim.explore(
-            cases=[OperationCase(op="boom")], count=3, concurrency=1, seeds=range(1)
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE, count=3, concurrency=1, seeds=range(1)
+            ),
+            cases=[OperationCase(op="boom")],
         )
         assert report is not None
         assert report.violations[0].message == "an operation errored"

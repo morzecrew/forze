@@ -33,7 +33,9 @@ def _build_lost_update(workers: Sequence[str]):
 
         async def increment() -> None:
             current = counter["value"]
-            await asyncio.sleep(0)  # yield: a peer can interleave between read and write
+            await asyncio.sleep(
+                0
+            )  # yield: a peer can interleave between read and write
             counter["value"] = current + 1
 
         semaphore = asyncio.Semaphore(max(1, len(workers)))

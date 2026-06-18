@@ -10,6 +10,7 @@ from __future__ import annotations
 from typer.testing import CliRunner
 
 from forze_cli.app import app
+from forze_dst import SimulationConfig, Strategy
 
 from examples.recipes.dst_reservation_ttl.app import AUTH_LATENCY, TTL, simulation
 
@@ -26,8 +27,11 @@ def test_latency_exceeds_ttl() -> None:
 
 
 def test_dst_finds_the_expired_confirmation() -> None:
-    report = simulation.explore_scenario(
-        simulation.derive_scenario(), act_count=3, concurrency=2, seeds=range(3)
+    report = simulation.run(
+        SimulationConfig(
+            strategy=Strategy.SCENARIO, act_count=3, concurrency=2, seeds=range(3)
+        ),
+        scenario=simulation.derive_scenario(),
     )
     assert report is not None
     assert "confirmed after it expired" in report.violations[0].message
@@ -36,8 +40,11 @@ def test_dst_finds_the_expired_confirmation() -> None:
 
 
 def test_clock_fast_forwarded_past_the_ttl() -> None:
-    report = simulation.explore_scenario(
-        simulation.derive_scenario(), act_count=3, concurrency=2, seeds=range(3)
+    report = simulation.run(
+        SimulationConfig(
+            strategy=Strategy.SCENARIO, act_count=3, concurrency=2, seeds=range(3)
+        ),
+        scenario=simulation.derive_scenario(),
     )
     assert report is not None
     # The violation is stamped at virtual time past the TTL (the latency elapsed), proving

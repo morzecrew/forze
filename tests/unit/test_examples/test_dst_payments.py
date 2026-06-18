@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 
 from forze_cli.app import app
 from forze_cli.loader import load_simulation
-from forze_dst import Simulation, expect
+from forze_dst import Simulation, SimulationConfig, Strategy, expect
 from forze_mock import MockDepsModule
 
 from examples.recipes.dst_payments.app import (
@@ -32,7 +32,9 @@ _REGISTRY = "examples.recipes.dst_payments.app:registry"
 _MODULE = "examples.recipes.dst_payments.app"
 
 _INVARIANT = [
-    expect("payments", lambda e: e.fields["total"] <= 1, message="charged more than once")
+    expect(
+        "payments", lambda e: e.fields["total"] <= 1, message="charged more than once"
+    )
 ]
 
 
@@ -40,8 +42,11 @@ class TestFaithfulTransactions:
     def test_faithful_default_is_correct_no_false_positive(self) -> None:
         # Default (journal) tx manager: the loser's rev-conflict rolls back its whole
         # transaction (including its payment), so the app is correct → no violation.
-        report = simulation.explore_scenario(
-            simulation.derive_scenario(), act_count=4, concurrency=4, seeds=range(8)
+        report = simulation.run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO, act_count=4, concurrency=4, seeds=range(8)
+            ),
+            scenario=simulation.derive_scenario(),
         )
         assert report is None
 
@@ -54,8 +59,11 @@ class TestFaithfulTransactions:
             observe=_observe,
             invariants=_INVARIANT,
         )
-        report = unfaithful.explore_scenario(
-            unfaithful.derive_scenario(), act_count=4, concurrency=4, seeds=range(5)
+        report = unfaithful.run(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO, act_count=4, concurrency=4, seeds=range(5)
+            ),
+            scenario=unfaithful.derive_scenario(),
         )
         assert report is not None
         assert "charged more than once" in report.violations[0].message
@@ -80,14 +88,26 @@ class TestExampleShape:
 
         source = inspect.getsource(example._PayOrder)
         assert "record_event" not in source  # observation is a test-side observe hook
-        assert "sleep(" not in source  # the real port awaits are the interleaving points
+        assert (
+            "sleep(" not in source
+        )  # the real port awaits are the interleaving points
 
 
 class TestViaCLI:
     def test_run_is_clean_under_faithful_tx(self) -> None:
         result = runner.invoke(
             app,
-            ["dst", "run", _TARGET, "--strategy", "dpor", "--act-count", "4", "--concurrency", "4"],
+            [
+                "dst",
+                "run",
+                _TARGET,
+                "--strategy",
+                "dpor",
+                "--act-count",
+                "4",
+                "--concurrency",
+                "4",
+            ],
         )
         assert result.exit_code == 0
         assert "no violation" in result.stdout

@@ -107,7 +107,9 @@ class TestDstCorpus:
 
     def test_known_bug_stays_caught(self) -> None:
         # Guards the oracle's sensitivity: the lost-update bug must still be found.
-        report = explore(_lossy_counter, list(range(6)), [_NO_LOST_UPDATE], seeds=_CORPUS)
+        report = explore(
+            _lossy_counter, list(range(6)), [_NO_LOST_UPDATE], seeds=_CORPUS
+        )
         assert report is not None
 
     @pytest.mark.fuzz

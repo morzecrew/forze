@@ -32,6 +32,8 @@ from forze.domain.models import (
     ReadDocument,
 )
 from forze_dst import (
+    SimulationConfig,
+    Strategy,
     ModelState,
     PortFaultInterceptor,
     Rule,
@@ -206,8 +208,11 @@ def _simulation(*, tx_routed: bool) -> Simulation:
 def test_fault_interceptor_finds_partial_failure_on_real_registry() -> None:
     # Non-transactional ``pay``: the injected fault on the update leaves the payment behind,
     # so DST finds the orphan — proving the seam carries a fault interceptor over real ports.
-    report = _simulation(tx_routed=False).explore_scenario(
-        _SCENARIO, act_count=1, concurrency=1, seeds=range(3)
+    report = _simulation(tx_routed=False).run(
+        SimulationConfig(
+            strategy=Strategy.SCENARIO, act_count=1, concurrency=1, seeds=range(3)
+        ),
+        scenario=_SCENARIO,
     )
 
     assert report is not None
@@ -217,8 +222,11 @@ def test_fault_interceptor_finds_partial_failure_on_real_registry() -> None:
 def test_transaction_routed_pay_survives_the_same_injected_fault() -> None:
     # Same fault, but ``pay`` runs in a transaction: the faithful journal manager rolls the
     # whole operation back, so there is no orphan — faults compose with faithful transactions.
-    report = _simulation(tx_routed=True).explore_scenario(
-        _SCENARIO, act_count=1, concurrency=1, seeds=range(3)
+    report = _simulation(tx_routed=True).run(
+        SimulationConfig(
+            strategy=Strategy.SCENARIO, act_count=1, concurrency=1, seeds=range(3)
+        ),
+        scenario=_SCENARIO,
     )
 
     assert report is None

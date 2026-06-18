@@ -67,7 +67,9 @@ class PaymentRead(ReadDocument):
 ORDER_SPEC = DocumentSpec(
     name="orders",
     read=OrderRead,
-    write=DocumentWriteTypes(domain=Order, create_cmd=OrderCreate, update_cmd=OrderUpdate),
+    write=DocumentWriteTypes(
+        domain=Order, create_cmd=OrderCreate, update_cmd=OrderUpdate
+    ),
 )
 PAYMENT_SPEC = DocumentSpec(
     name="payments",
@@ -146,7 +148,9 @@ def _sim() -> Simulation:
         deps=lambda: MockDepsModule(),
         observe=_observe,
         invariants=[
-            expect("payments", lambda e: e.fields["total"] <= 1, message="double charge")
+            expect(
+                "payments", lambda e: e.fields["total"] <= 1, message="double charge"
+            )
         ],
     )
 

@@ -50,7 +50,7 @@ def _short(value: object, limit: int = 60) -> str:
     text = repr(value)
     text = " ".join(text.split())
 
-    return f"{text[:limit - 1]}…" if len(text) > limit else text
+    return f"{text[: limit - 1]}…" if len(text) > limit else text
 
 
 # ....................... #
