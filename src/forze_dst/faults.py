@@ -154,6 +154,51 @@ class CrashInterceptor:
 
 @final
 @attrs.define(frozen=True, kw_only=True)
+class CrashPolicy:
+    """Declarative crash injection for the crash/restart scenario — seeded by construction.
+
+    Selects the port boundary at which the process *dies* (a :class:`SimulatedCrash`); the
+    harness compiles it (:func:`compile_crash`) with a crash sub-seed derived from the run's
+    master seed (``derive_seed(seed, "crash")``), so the crash point varies independently yet
+    reproduces from one seed. Set on :class:`~forze_dst.SimulationConfig.crash` to turn a run
+    into a crash → restart → recovery scenario.
+
+    *surface* / *route* / *op* (any ``None`` matches anything) select the eligible calls;
+    *probability* is the per-eligible-call crash chance.
+    """
+
+    surface: str | None = None
+    route: str | None = None
+    op: str | None = None
+    probability: float = 1.0
+
+    def __attrs_post_init__(self) -> None:
+        if not 0.0 <= self.probability <= 1.0:
+            raise ValueError(
+                f"probability must be in [0, 1], got {self.probability}"
+            )
+
+
+# ....................... #
+
+
+def compile_crash(policy: CrashPolicy, rng: random.Random) -> CrashInterceptor:
+    """Compile *policy* into a seam crash interceptor driven by the seeded crash RNG."""
+
+    return CrashInterceptor(
+        rng=rng,
+        probability=policy.probability,
+        surface=policy.surface,
+        route=policy.route,
+        op=policy.op,
+    )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(frozen=True, kw_only=True)
 class FaultRule:
     """One fault rule: which calls it matches, and the per-eligible-call fault probabilities.
 

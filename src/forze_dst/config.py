@@ -19,7 +19,7 @@ from typing import Sequence
 
 import attrs
 
-from forze_dst.faults import FaultPolicy
+from forze_dst.faults import CrashPolicy, FaultPolicy
 from forze_dst.latency import LatencyProfile
 from forze_dst.time_source import DEFAULT_EPOCH
 
@@ -117,6 +117,22 @@ class SimulationConfig:
     """Declarative, seeded simulated-I/O latency (per-route distributions). Compiled with
     ``derive_seed(seed, "latency")``. Overrides ``Simulation.latency`` (the raw-callable escape
     hatch) when set."""
+
+    # Runtime / crash-restart.
+    runtime: bool = False
+    """Drive the workload inside the real ``ExecutionRuntime.scope()`` — lifecycle startup runs
+    before the workload, graceful drain + shutdown after — instead of a bare ``ExecutionContext``
+    (decision D4: keep both; bare is the default, lighter, with no background-task interference).
+    The crash/restart scenario always restarts under the runtime regardless of this flag."""
+
+    crash: CrashPolicy | None = None
+    """When set, ``run()`` executes the crash → restart → recovery scenario instead of the plain
+    workload: the workload runs under a seeded :class:`~forze_dst.faults.CrashPolicy` (compiled
+    with ``derive_seed(seed, "crash")``), the process *dies* at a matched port boundary (no
+    graceful shutdown), then a fresh runtime restarts over the SAME persisted store and the
+    ``Simulation.recover`` pass runs before the invariants are checked. Finds recovery bugs —
+    lost after-commit work, partial non-transactional writes. Uses the scenario machinery
+    (arrange → act), auto-deriving the scenario when none is passed."""
 
     # ....................... #
 

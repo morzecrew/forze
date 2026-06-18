@@ -11,6 +11,7 @@ from __future__ import annotations
 from .derive import DEFAULT_CREATE_VERBS, derive_scenario
 from .faults import (
     CrashInterceptor,
+    CrashPolicy,
     FaultPolicy,
     FaultRule,
     PortFaultInterceptor,
@@ -92,6 +93,7 @@ __all__ = [
     "simulate_workload",
     "PortFaultInterceptor",
     "CrashInterceptor",
+    "CrashPolicy",
     "SimulatedCrash",
     "FaultPolicy",
     "FaultRule",

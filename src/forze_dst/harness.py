@@ -16,13 +16,21 @@ from __future__ import annotations
 
 import asyncio
 import random
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Sequence, cast, final
+from typing import Any, AsyncGenerator, Awaitable, Callable, Sequence, cast, final
 
 import attrs
 
-from forze.application.execution import DepsModule, DepsRegistry, ExecutionContext
+from forze.application.execution import (
+    DepsModule,
+    DepsRegistry,
+    ExecutionContext,
+    ExecutionRuntime,
+    FrozenDepsRegistry,
+)
 from forze.application.execution.interception import LatencyModel, PortInterceptor
+from forze.application.execution.lifecycle import FrozenLifecyclePlan
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze.base.exceptions import CoreException
@@ -35,7 +43,7 @@ from forze_dst.reactive import ReactiveMap
 from forze_dst.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
-from forze_dst.faults import compile_fault_policy
+from forze_dst.faults import SimulatedCrash, compile_crash, compile_fault_policy
 from forze_dst.latency import compile_latency
 from forze_dst.scenario import Scenario
 from forze_dst.scheduler import SystematicScheduler, pct_scheduler_factory
@@ -144,7 +152,19 @@ class Simulation:
 
     observe: Hook | None = None
     """Optional - record domain facts after the workload (e.g. final balances) via
-    ``record_event`` so invariants can assert over them."""
+    ``record_event`` so invariants can assert over them. On a crash/restart run it runs after
+    the restart (over the recovered state), so the invariants see the post-recovery world."""
+
+    recover: Hook | None = None
+    """Optional - a recovery pass run after a crash/restart restart, before :attr:`observe`,
+    e.g. drive the outbox relay once to redeliver events the crash interrupted. Runs inside the
+    restart runtime scope (lifecycle startup has completed), over the persisted store."""
+
+    lifecycle: FrozenLifecyclePlan = attrs.field(factory=FrozenLifecyclePlan)
+    """The lifecycle plan driven when ``SimulationConfig.runtime`` is set — and always on the
+    crash/restart *restart* phase: startup runs before the workload / recovery, graceful drain +
+    shutdown after. Empty by default (``scope()`` just builds the context). A startup step is the
+    natural home for app-side recovery (relay drain, lease reclaim) that should run on every boot."""
 
     latency: LatencyModel | None = None
     """Optional - simulated I/O latency: ``(surface, route, op) -> seconds``, applied at each
@@ -201,6 +221,18 @@ class Simulation:
         # Run-scoped: the per-run helpers compile this config's seeded faults/latency.
         self._active_config = config
         try:
+            if config.crash is not None:
+                # Crash → restart → recovery: scenario-shaped (arrange/act), strategy-agnostic.
+                sc = scenario if scenario is not None else self.derive_scenario()
+                return self._explore_crash_restart(
+                    sc,
+                    act_count=config.act_count,
+                    concurrency=config.concurrency,
+                    seeds=config.seeds,
+                    perturb=config.perturb,
+                    epoch=config.epoch,
+                )
+
             if config.strategy is Strategy.OP_CASE:
                 if cases is None:
                     raise ValueError("OP_CASE strategy requires cases=")
@@ -257,25 +289,38 @@ class Simulation:
 
     # ....................... #
 
-    def _frozen_deps(self, seed: int) -> Any:
-        """Build the run's resolved, runtime-traced deps from the factory.
-
-        *seed* is the run's **fault** sub-seed (``derive_seed(master, "fault")``). The
-        declarative ``config.faults`` is compiled here with ``random.Random(seed)`` — seeded
-        by construction, no caller RNG — and registered deps-scoped alongside any manual
-        :attr:`interceptors` factory, so every resolved configurable port runs through them.
-        """
+    def _modules(self) -> tuple[DepsModule, ...]:
+        """Build a fresh set of deps modules from the factory (fresh state per call)."""
 
         produced = self.deps()
-        modules: tuple[DepsModule, ...] = (
+        return (
             tuple(produced)
             if isinstance(produced, (list, tuple))
             else (cast("DepsModule", produced),)
         )
 
+    # ....................... #
+
+    def _registry_from_modules(
+        self,
+        modules: tuple[DepsModule, ...],
+        seed: int,
+        *,
+        extra: Sequence[PortInterceptor] = (),
+    ) -> FrozenDepsRegistry:
+        """Freeze *modules* into a runtime-traced registry with the run's seam interceptors.
+
+        *seed* is the run's **fault** sub-seed (``derive_seed(master, "fault")``). The
+        declarative ``config.faults`` is compiled here with ``random.Random(seed)`` — seeded by
+        construction, no caller RNG — and registered deps-scoped alongside any *extra*
+        interceptors (e.g. the crash interceptor) and the manual :attr:`interceptors` factory, so
+        every resolved configurable port runs through them. Passing the same *modules* twice
+        rebuilds the registry over the SAME state — the seam the crash/restart restart relies on.
+        """
+
         registry = DepsRegistry.from_modules(*modules).with_tracing(runtime=True)
 
-        interceptors: list[PortInterceptor] = []
+        interceptors: list[PortInterceptor] = list(extra)
 
         if self.interceptors is not None:
             interceptors.extend(self.interceptors(seed))
@@ -291,7 +336,36 @@ class Simulation:
         if interceptors:
             registry = registry.with_interceptors(*interceptors)
 
-        return registry.freeze().resolve()
+        return registry.freeze()
+
+    # ....................... #
+
+    def _frozen_registry(self, seed: int) -> FrozenDepsRegistry:
+        """The run's frozen, runtime-traced deps registry over a fresh module set."""
+
+        return self._registry_from_modules(self._modules(), seed)
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def _context(self, fault_seed: int) -> AsyncGenerator[ExecutionContext]:
+        """Yield the run's :class:`ExecutionContext` — bare by default, runtime-scoped on opt-in.
+
+        With ``SimulationConfig.runtime`` set, the context is driven inside the real
+        :meth:`ExecutionRuntime.scope` (lifecycle startup before the body, graceful drain +
+        shutdown after) — the faithful path. Otherwise a bare context is built directly (the
+        proven default: no background-task interference). *fault_seed* is the run's fault
+        sub-seed, threaded into the registry's seeded interceptors.
+        """
+
+        registry = self._frozen_registry(fault_seed)
+
+        if self._active_config is not None and self._active_config.runtime:
+            runtime = ExecutionRuntime(deps=registry, lifecycle=self.lifecycle)
+            async with runtime.scope():
+                yield runtime.get_context()
+        else:
+            yield ExecutionContext(deps=registry.resolve())
 
     # ....................... #
 
@@ -370,55 +444,24 @@ class Simulation:
         recorder = Recorder(seed=seed)
 
         async def scenario() -> None:
-            ctx = ExecutionContext(deps=self._frozen_deps(derive_seed(seed, "fault")))
+            async with self._context(derive_seed(seed, "fault")) as ctx:
+                if self.setup is not None:
+                    await self.setup(ctx)
 
-            if self.setup is not None:
-                await self.setup(ctx)
-
-            semaphore = asyncio.Semaphore(concurrency)
-
-            async def run_one(call: _Call, index: int) -> None:
-                async with semaphore:
-                    # A start marker so the causal graph has a sequence-based interval
-                    # per call — robust to concurrent ops sharing a virtual-time stamp
-                    # (an ``await`` interleaves them without advancing the clock).
-                    record_event("op_start", call_id=index, op=call.op)
-                    invoked = monotonic()
-
-                    try:
-                        result = await run_operation(
-                            self.operations, call.op, call.arg, ctx
+                semaphore = asyncio.Semaphore(concurrency)
+                await asyncio.gather(
+                    *(
+                        self._run_call(
+                            ctx, semaphore, call_id=index, op=call.op, arg=call.arg
                         )
-                        record_event(
-                            "operation",
-                            call_id=index,
-                            op=call.op,
-                            outcome="ok",
-                            result=result,
-                            invoked_at=invoked,
-                            returned_at=monotonic(),
-                        )
+                        for index, call in enumerate(workload)
+                    )
+                )
 
-                    except Exception as error:
-                        record_event(
-                            "operation",
-                            call_id=index,
-                            op=call.op,
-                            outcome="error",
-                            error=type(error).__name__,
-                            unexpected=not isinstance(error, CoreException),
-                            invoked_at=invoked,
-                            returned_at=monotonic(),
-                        )
+                if self.observe is not None:
+                    await self.observe(ctx)
 
-            await asyncio.gather(
-                *(run_one(call, index) for index, call in enumerate(workload))
-            )
-
-            if self.observe is not None:
-                await self.observe(ctx)
-
-            _fold_runtime_trace(ctx)
+                _fold_runtime_trace(ctx)
 
         with bind_recorder(recorder):
             run_simulation(
@@ -621,51 +664,50 @@ class Simulation:
         async def driver() -> None:
             nonlocal generated
 
-            ctx = ExecutionContext(deps=self._frozen_deps(derive_seed(seed, "fault")))
+            async with self._context(derive_seed(seed, "fault")) as ctx:
+                if self.setup is not None:
+                    await self.setup(ctx)
 
-            if self.setup is not None:
-                await self.setup(ctx)
+                rng = random.Random(derive_seed(seed, "input"))  # nosec B311
+                state = scenario.state()
 
-            rng = random.Random(derive_seed(seed, "input"))  # nosec B311
-            state = scenario.state()
+                # Arrange: serial, real ids captured into the model. Negative call ids keep
+                # arrange spans distinct from (and never confused as concurrent with) act.
+                for index, rule in enumerate(scenario.arrange):
+                    if not rule.is_enabled(state):
+                        continue
 
-            # Arrange: serial, real ids captured into the model. Negative call ids keep
-            # arrange spans distinct from (and never confused as concurrent with) act.
-            for index, rule in enumerate(scenario.arrange):
-                if not rule.is_enabled(state):
-                    continue
+                    arg = rule.arg(state, rng)
+                    ok, result = await self._run_arrange_call(
+                        ctx, call_id=-(index + 1), op=rule.op, arg=arg
+                    )
 
-                arg = rule.arg(state, rng)
-                ok, result = await self._run_arrange_call(
-                    ctx, call_id=-(index + 1), op=rule.op, arg=arg
+                    if ok and rule.produces is not None:
+                        state.add(rule.produces, rule.capture(result))
+
+                if act_workload is not None:
+                    generated = list(act_workload)
+                elif act_plan is not None:
+                    generated = [
+                        (rule.op, rule.arg(state, rng))
+                        for index in act_plan
+                        if (rule := scenario.act[index]).is_enabled(state)
+                    ]
+                else:
+                    generated = scenario.generate_act(state, act_count, rng)
+
+                semaphore = asyncio.Semaphore(concurrency)
+                await asyncio.gather(
+                    *(
+                        self._run_call(ctx, semaphore, call_id=index, op=op, arg=arg)
+                        for index, (op, arg) in enumerate(generated)
+                    )
                 )
 
-                if ok and rule.produces is not None:
-                    state.add(rule.produces, rule.capture(result))
+                if self.observe is not None:
+                    await self.observe(ctx)
 
-            if act_workload is not None:
-                generated = list(act_workload)
-            elif act_plan is not None:
-                generated = [
-                    (rule.op, rule.arg(state, rng))
-                    for index in act_plan
-                    if (rule := scenario.act[index]).is_enabled(state)
-                ]
-            else:
-                generated = scenario.generate_act(state, act_count, rng)
-
-            semaphore = asyncio.Semaphore(concurrency)
-            await asyncio.gather(
-                *(
-                    self._run_call(ctx, semaphore, call_id=index, op=op, arg=arg)
-                    for index, (op, arg) in enumerate(generated)
-                )
-            )
-
-            if self.observe is not None:
-                await self.observe(ctx)
-
-            _fold_runtime_trace(ctx)
+                _fold_runtime_trace(ctx)
 
         with bind_recorder(recorder):
             run_simulation(
@@ -741,6 +783,232 @@ class Simulation:
             history=final_history,
             registry_fingerprint=self.fingerprint(),
         )
+
+    # ....................... #
+
+    async def _drive_act(
+        self,
+        ctx: ExecutionContext,
+        generated: Sequence[tuple[str, Any]],
+        *,
+        concurrency: int,
+    ) -> bool:
+        """Run the act workload concurrently; return whether a :class:`SimulatedCrash` fired.
+
+        On a crash the surviving in-flight tasks are cancelled — the process *dies*, so no
+        sibling operation keeps running into the restart phase (they share the loop).
+        """
+
+        semaphore = asyncio.Semaphore(concurrency)
+        tasks = [
+            asyncio.ensure_future(
+                self._run_call(ctx, semaphore, call_id=index, op=op, arg=arg)
+            )
+            for index, (op, arg) in enumerate(generated)
+        ]
+
+        try:
+            await asyncio.gather(*tasks)
+            return False
+
+        except SimulatedCrash:
+            record_event("crash", phase="act")
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            return True
+
+    # ....................... #
+
+    def _run_crash_restart(
+        self,
+        scenario: Scenario,
+        *,
+        act_workload: Sequence[tuple[str, Any]] | None,
+        act_count: int,
+        concurrency: int,
+        seed: int,
+        schedule_seed: int | None,
+        epoch: datetime,
+    ) -> tuple[History, list[tuple[str, Any]]]:
+        """Run one crash → restart → recovery attempt over a single persisted store.
+
+        The deps modules are built **once**, so the ``MockState`` they hold is the durable store
+        that survives the crash. Phase 1 drives arrange + act on a bare context behind a seeded
+        :class:`~forze_dst.faults.CrashPolicy`; when the crash fires the process dies (no graceful
+        shutdown — the in-flight tx rolls back, committed state persists). Phase 2 restarts a
+        **fresh** runtime over the SAME modules (lifecycle startup runs), drives the optional
+        :attr:`recover` pass, then :attr:`observe` — all under the restart scope. Both phases'
+        runtime traces are folded into one history, so the invariants see the whole arc.
+        """
+
+        config = self._active_config
+        assert config is not None and config.crash is not None  # nosec B101 - run() guard
+        crash_policy = config.crash
+
+        recorder = Recorder(seed=seed)
+        generated: list[tuple[str, Any]] = []
+        modules = self._modules()
+        fault_seed = derive_seed(seed, "fault")
+
+        async def driver() -> None:
+            nonlocal generated
+
+            # --- Phase 1: workload under the seeded crash, on a bare (kill-able) context.
+            crash = compile_crash(
+                crash_policy,
+                random.Random(derive_seed(seed, "crash")),  # nosec B311 - seeded sim crash
+            )
+            registry = self._registry_from_modules(
+                modules, fault_seed, extra=(crash,)
+            )
+            ctx = ExecutionContext(deps=registry.resolve())
+            rng = random.Random(derive_seed(seed, "input"))  # nosec B311
+            state = scenario.state()
+
+            try:
+                if self.setup is not None:
+                    await self.setup(ctx)
+
+                for index, rule in enumerate(scenario.arrange):
+                    if not rule.is_enabled(state):
+                        continue
+
+                    arg = rule.arg(state, rng)
+                    ok, result = await self._run_arrange_call(
+                        ctx, call_id=-(index + 1), op=rule.op, arg=arg
+                    )
+
+                    if ok and rule.produces is not None:
+                        state.add(rule.produces, rule.capture(result))
+
+                if act_workload is not None:
+                    generated = list(act_workload)
+                else:
+                    generated = scenario.generate_act(state, act_count, rng)
+
+                await self._drive_act(ctx, generated, concurrency=concurrency)
+
+            except SimulatedCrash:
+                # A crash during setup/arrange (serial, outside the act gather).
+                record_event("crash", phase="arrange")
+
+            finally:
+                _fold_runtime_trace(ctx)  # the pre-crash trace
+
+            # --- Phase 2: restart over the SAME persisted store, full runtime lifecycle.
+            restart = self._registry_from_modules(modules, fault_seed)
+            runtime = ExecutionRuntime(deps=restart, lifecycle=self.lifecycle)
+
+            async with runtime.scope():
+                rctx = runtime.get_context()
+
+                if self.recover is not None:
+                    await self.recover(rctx)
+
+                if self.observe is not None:
+                    await self.observe(rctx)
+
+                _fold_runtime_trace(rctx)  # the post-restart trace
+
+        with bind_recorder(recorder):
+            run_simulation(
+                driver,
+                seed=derive_seed(seed, "entropy"),
+                schedule_seed=schedule_seed,
+                epoch=epoch,
+                latency=self._latency_for(seed),
+            )
+
+        return recorder.history, generated
+
+    # ....................... #
+
+    def _attempt_crash_restart(
+        self,
+        scenario: Scenario,
+        *,
+        act_count: int,
+        concurrency: int,
+        seed: int,
+        perturb: bool,
+        epoch: datetime,
+    ) -> ViolationReport | None:
+        schedule_seed = derive_seed(seed, "schedule") if perturb else None
+
+        def run(act: Sequence[tuple[str, Any]] | None) -> History:
+            history, _ = self._run_crash_restart(
+                scenario,
+                act_workload=act,
+                act_count=act_count,
+                concurrency=concurrency,
+                seed=seed,
+                schedule_seed=schedule_seed,
+                epoch=epoch,
+            )
+            return history
+
+        history, act_workload = self._run_crash_restart(
+            scenario,
+            act_workload=None,
+            act_count=act_count,
+            concurrency=concurrency,
+            seed=seed,
+            schedule_seed=schedule_seed,
+            epoch=epoch,
+        )
+
+        if not check(history, self.invariants):
+            return None
+
+        # Minimize the act phase; the seeded crash re-fires on whatever matched call survives.
+        minimal = minimize(
+            act_workload, lambda subset: bool(check(run(subset), self.invariants))
+        )
+        final_history = run(minimal)
+
+        return ViolationReport(
+            seed=seed,
+            schedule_seed=schedule_seed,
+            violations=tuple(check(final_history, self.invariants)),
+            workload=tuple(minimal),
+            history=final_history,
+            registry_fingerprint=self.fingerprint(),
+        )
+
+    # ....................... #
+
+    def _explore_crash_restart(
+        self,
+        scenario: Scenario,
+        *,
+        act_count: int,
+        concurrency: int,
+        seeds: Sequence[int],
+        perturb: bool,
+        epoch: datetime,
+    ) -> ViolationReport | None:
+        """Sweep seeds running the crash → restart → recovery scenario; report the first bug.
+
+        Each seed drives arrange + act, dies at its own (seeded) crash point, restarts over the
+        persisted store, recovers, and is checked against the invariants. The first seed whose
+        post-recovery world violates an invariant (lost after-commit work, a partial
+        non-transactional write) is minimized and reported, reproducible from that one seed.
+        """
+
+        for seed in seeds:
+            report = self._attempt_crash_restart(
+                scenario,
+                act_count=act_count,
+                concurrency=concurrency,
+                seed=seed,
+                perturb=perturb,
+                epoch=epoch,
+            )
+            if report is not None:
+                return report
+
+        return None
 
     # ....................... #
 
