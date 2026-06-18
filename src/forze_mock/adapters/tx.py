@@ -123,8 +123,6 @@ class MockTxManagerAdapter(TransactionManagerPort):
         # weakest declared level (and an explicit stronger requirement fails closed).
         return TxCapabilities(
             isolation=frozenset({IsolationLevel.READ_COMMITTED}),
-            savepoints=False,
-            read_only=False,
         )
 
     # ....................... #
@@ -193,8 +191,6 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
         # serializable; nested scopes are real savepoints.
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
-            savepoints=True,
-            read_only=True,
         )
 
     # ....................... #
@@ -252,19 +248,22 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
 class MockJournalTxManagerAdapter(TransactionManagerPort):
     """Concurrency-preserving atomicity via a per-transaction undo journal — the default.
 
-    Writes to participating stores go through immediately (write-through), but each is
-    recorded in a per-task journal (see :mod:`forze_mock.adapters._journal`); an escaping
+    Writes to participating stores go through immediately (write-through), but each records an
+    undo thunk in a per-task journal (see :mod:`forze_mock.adapters._journal`); an escaping
     exception replays the journal in reverse, undoing **only this transaction's** writes — so
     a failed operation leaves no partial writes, while concurrent transactions interleave
-    freely (no global serialization, unlike :class:`MockStrictTxManagerAdapter`). Write-write
-    conflicts are caught by the document row ``rev`` (optimistic concurrency). A read-only
-    root rejects writes to participating stores (``QUERY`` operations), like Postgres
-    ``BEGIN ... READ ONLY``.
+    freely (no global serialization, unlike :class:`MockStrictTxManagerAdapter`). Coverage
+    spans every participating store: documents and the outbox/inbox per-entry, identity via a
+    coarse deep snapshot (it is mutated in place). Write-write conflicts on documents are
+    caught by the row ``rev`` (optimistic concurrency). A read-only root rejects writes to
+    participating stores (``QUERY`` operations), like Postgres ``BEGIN ... READ ONLY``.
+
+    Read-committed by default (write-through, so a concurrent transaction can observe a
+    not-yet-committed row — a rollback then undoes it). Snapshot / serializable isolation is
+    honored for the document store via the MVCC overlay (see :mod:`forze_mock.adapters._mvcc`).
 
     Faithful enough to make DST findings trustworthy: it rolls back partial writes (no false
     "double effect" from an aborted transaction) yet preserves the interleavings DST explores.
-    Visibility is write-through — a concurrent transaction can observe a not-yet-committed row
-    (a rollback then undoes it); snapshot / serializable isolation is a separate concern.
     """
 
     state: MockState
@@ -282,8 +281,6 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
         # serializable are honored via the MVCC buffered overlay (see ``adapters._mvcc``).
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
-            savepoints=False,
-            read_only=True,
         )
 
     # ....................... #
@@ -307,10 +304,15 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
         is_root = depth == 0
         token_depth = _journal_tx_depth.set(depth + 1)
 
-        # Snapshot / serializable use the MVCC buffered overlay (reads from an as-of-begin
-        # snapshot, writes buffered, validated + published at commit). Read-committed (the
-        # default) uses the write-through undo journal. Only the root sets either up; nested
-        # scopes (savepoints) share it — savepoint-level partial rollback is not modelled.
+        # Snapshot / serializable additionally use the MVCC buffered overlay for the DOCUMENT
+        # store (reads from an as-of-begin snapshot, writes buffered, validated + published at
+        # commit). The undo journal is ALWAYS active at the root: under read-committed it
+        # covers document writes too (write-through JournalingStore); under MVCC, documents go
+        # through the overlay instead, so the journal then covers only the non-document
+        # participating stores (outbox `list`, inbox `set`, via `record_undo`). Identity is
+        # mutated in place, so it is reverted by a coarse deep-snapshot rather than the
+        # journal. Only the root sets these up; nested scopes (savepoints) share them —
+        # savepoint-level partial rollback is not modelled.
         mvcc_enabled = isolation in (IsolationLevel.SNAPSHOT, IsolationLevel.SERIALIZABLE)
 
         mvcc = (
@@ -321,8 +323,9 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
             else None
         )
         token_mvcc = _mvcc_tx.set(mvcc) if mvcc is not None else None
-        token_journal = _journal.set([]) if is_root and mvcc is None else None
+        token_journal = _journal.set([]) if is_root else None
         token_ro = _mock_tx_read_only.set(read_only) if is_root else None
+        identity_snapshot = self.state.snapshot_identity() if is_root else None
 
         try:
             yield
@@ -334,14 +337,23 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
                 mvcc.commit(self.state)
 
         except BaseException:
-            if is_root and mvcc is None:
+            if is_root:
+                # Revert this transaction's writes across every participating store: the undo
+                # journal (documents under read-committed; outbox/inbox always) and the
+                # identity deep-snapshot. The MVCC document overlay needs no undo — its
+                # buffered writes never reached the live store.
                 if journal := _journal.get():
                     undo(journal)
-            # An MVCC abort needs no undo: buffered writes never reached the live store.
+
+                if identity_snapshot is not None:
+                    self.state.restore_identity(identity_snapshot)
 
             raise
 
         finally:
+            if mvcc is not None:
+                mvcc.finish(self.state)
+
             if token_mvcc is not None:
                 _mvcc_tx.reset(token_mvcc)
 

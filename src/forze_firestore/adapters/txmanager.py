@@ -12,8 +12,12 @@ from typing import AsyncGenerator, final
 import attrs
 
 from forze.application.contracts.transaction import (
+    IsolationLevel as CoreIsolationLevel,
+)
+from forze.application.contracts.transaction import (
     TransactionManagerPort,
     TransactionScopeKey,
+    TxCapabilities,
 )
 
 from ..kernel.client import FirestoreClientPort
@@ -42,10 +46,22 @@ class FirestoreTxManagerAdapter(TransactionManagerPort):
 
     # ....................... #
 
+    def capabilities(self) -> TxCapabilities:
+        # Firestore transactions are always serializable, which satisfies any requested level.
+        return TxCapabilities(isolation=frozenset(CoreIsolationLevel))
+
+    # ....................... #
+
     @asynccontextmanager
-    async def transaction(self, *, read_only: bool = False) -> AsyncGenerator[None]:
+    async def transaction(
+        self,
+        *,
+        read_only: bool = False,
+        isolation: CoreIsolationLevel | None = None,
+    ) -> AsyncGenerator[None]:
         # ``read_only`` accepted for interface parity; Firestore transactions have no
-        # read-only mode. The Phase-1 port guard still blocks writes in a QUERY operation.
+        # read-only mode. ``isolation`` is accepted and always satisfied — Firestore
+        # transactions are serializable. The Phase-1 port guard still blocks writes in a QUERY.
         logger.debug("Starting Firestore transaction (read_only=%s)", read_only)
 
         async with self.client.transaction():

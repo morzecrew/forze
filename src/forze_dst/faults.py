@@ -1,16 +1,24 @@
-"""Seed-driven fault injection for in-memory message transports.
+"""Seed-driven fault injection.
 
-Wraps a :class:`~forze.application.contracts.queue.QueueCommandPort` and, from a
-dedicated fault RNG, injects the failures a real broker exhibits — transient enqueue
-errors (force at-least-once retry), duplicate delivery (exercise inbox idempotency),
-silent drops (model broker loss), and delivery delays (which, varied per message,
-also reorder arrivals in virtual time). The RNG is separate from both the application
-entropy seam and the scheduler RNG, so faults vary independently and a fixed fault
-seed replays the exact failure sequence — any bug it surfaces reproduces.
+Two complementary surfaces, each driven by a dedicated fault RNG (separate from the
+application entropy seam and the scheduler RNG, so faults vary independently and a fixed
+fault seed replays the exact failure sequence):
 
-These wrap the *port interfaces* (core contracts), not the mock, so the fault layer
-stays free of any adapter dependency; a test supplies the in-memory adapter as the
-wrapped inner.
+* **Seam-based, over any port** (the modern path, via the core port-interception seam) —
+  :class:`PortFaultInterceptor` injects a transient (retryable) failure, and
+  :class:`CrashInterceptor` a process crash, at a matched port boundary on *any* resolved
+  port, with no hand-wiring.
+* **Transport-specific, queue-port wrapper** — :class:`TransportFaultPolicy` +
+  :class:`FaultyQueueCommand` wrap a :class:`~forze.application.contracts.queue.QueueCommandPort`
+  to inject the richer broker behaviours the seam interceptors do not yet model: duplicate
+  delivery (exercise inbox idempotency), silent drops (broker loss), and delivery delays
+  (which, varied per message, reorder arrivals in virtual time).
+
+Division of labour: use the seam interceptors for transient/crash faults over real
+registries; use the queue wrapper for duplicate/drop/delay until those are modelled at the
+seam (a `TransportFaultInterceptor` is a planned follow-up that would retire the wrapper).
+Both target the *port interfaces* (core contracts), not the mock, so the fault layer stays
+free of any adapter dependency.
 """
 
 from __future__ import annotations
@@ -229,19 +237,22 @@ class PortFaultInterceptor:
     dedicated fault RNG, raises a retryable ``exc.infrastructure`` *before* the real call
     on the matched port operations — modeling a real adapter failing mid-operation
     (a dropped connection, a timeout). It plugs into the core port-interception seam, so it
-    works against **real registries** without wrapping a specific port by hand — the
-    seam-based successor to :class:`FaultyQueueCommand` (which targets one queue port).
+    works against **real registries** without wrapping a specific port by hand. It covers
+    *transient* faults over any port; the richer transport behaviours (duplicate / drop /
+    delay) still live in :class:`FaultyQueueCommand` (see the module docstring's division of
+    labour) until they too are modelled at the seam.
 
     Placed inside the resilience port-policy wrap, so the injected transient is retryable by
     a declared policy. The RNG is separate from the application entropy seam and the
     scheduler RNG, so faults vary independently and a fixed fault seed replays them.
 
     *surface* / *route* / *op* (any left ``None`` matches anything) select which calls are
-    eligible; *transient* is the per-eligible-call probability of a fault.
+    eligible; *probability* is the per-eligible-call chance of a fault (named to match
+    :class:`CrashInterceptor`).
     """
 
     rng: random.Random
-    transient: float = 1.0
+    probability: float = 1.0
     surface: str | None = None
     route: str | None = None
     op: str | None = None
@@ -252,8 +263,8 @@ class PortFaultInterceptor:
     async def around(self, call: PortCall, nxt: PortNext) -> object:
         if (
             _call_matches(call, surface=self.surface, route=self.route, op=self.op)
-            and self.transient > 0.0
-            and self.rng.random() < self.transient
+            and self.probability > 0.0
+            and self.rng.random() < self.probability
         ):
             raise exc.infrastructure(
                 f"injected transient fault at {call.surface}[{call.route}].{call.op}",

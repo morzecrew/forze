@@ -194,7 +194,7 @@ def _simulation(*, tx_routed: bool) -> Simulation:
                 surface="document_command",
                 route="orders",
                 op="update",
-                transient=1.0,
+                probability=1.0,
             ),
         ),
     )

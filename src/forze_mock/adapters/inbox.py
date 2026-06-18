@@ -7,6 +7,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.inbox import InboxPort
+from forze_mock.adapters._journal import record_undo
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
@@ -41,5 +42,9 @@ class MockInboxAdapter(MockTenancyMixin, InboxPort):
             if key in self.state.inbox:
                 return False
 
-            self.state.inbox.add(key)
+            marks = self.state.inbox
+            marks.add(key)
+            # Atomic with the business write: a rolled-back transaction discards exactly
+            # this mark (leaving any concurrently-added mark intact).
+            record_undo(lambda: marks.discard(key))
             return True

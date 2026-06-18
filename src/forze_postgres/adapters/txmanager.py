@@ -12,17 +12,29 @@ from typing import AsyncGenerator, final
 import attrs
 
 from forze.application.contracts.transaction import (
+    IsolationLevel as CoreIsolationLevel,
+)
+from forze.application.contracts.transaction import (
     TransactionManagerPort,
     TransactionScopeKey,
+    TxCapabilities,
 )
 
 from ..kernel.client import PostgresClientPort, PostgresTransactionOptions
+from ..kernel.client.types import IsolationLevel as PgIsolationLevel
 from ._logger import logger
 
 # ----------------------- #
 
 PostgresTxScopeKey = TransactionScopeKey("postgres")
 """Key used to scope the Postgres transaction."""
+
+_PG_ISOLATION: dict[CoreIsolationLevel, PgIsolationLevel] = {
+    CoreIsolationLevel.READ_COMMITTED: "read_committed",
+    CoreIsolationLevel.SNAPSHOT: "repeatable_read",  # Postgres snapshot isolation
+    CoreIsolationLevel.SERIALIZABLE: "serializable",
+}
+"""Map the kernel's intent-named isolation to the Postgres level (Postgres can do all three)."""
 
 # ....................... #
 
@@ -48,20 +60,36 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
 
     # ....................... #
 
+    def capabilities(self) -> TxCapabilities:
+        # Postgres honors every level natively (snapshot via REPEATABLE READ).
+        return TxCapabilities(isolation=frozenset(CoreIsolationLevel))
+
+    # ....................... #
+
     @asynccontextmanager
-    async def transaction(self, *, read_only: bool = False) -> AsyncGenerator[None]:
+    async def transaction(
+        self,
+        *,
+        read_only: bool = False,
+        isolation: CoreIsolationLevel | None = None,
+    ) -> AsyncGenerator[None]:
         """Open Postgres transaction for the duration of the context.
 
         ``read_only`` (set for ``QUERY`` operations) opens the transaction with
         ``BEGIN ... READ ONLY`` so the database rejects writes. A route configured
         read-only at construction stays read-only regardless (restrictive OR).
+
+        ``isolation`` (a kernel :class:`IsolationLevel`, validated against
+        :meth:`capabilities` before this runs) maps to the Postgres level on the ``BEGIN``.
         """
 
-        options = (
-            attrs.evolve(self.options, read_only=True)
-            if read_only and not self.options.read_only
-            else self.options
-        )
+        options = self.options
+
+        if read_only and not options.read_only:
+            options = attrs.evolve(options, read_only=True)
+
+        if isolation is not None:
+            options = attrs.evolve(options, isolation=_PG_ISOLATION[isolation])
 
         logger.debug("Starting transaction (read_only=%s)", options.read_only)
 

@@ -50,13 +50,12 @@ class TxCapabilities:
     """
 
     isolation: frozenset[IsolationLevel]
-    """Isolation levels this manager can honor."""
+    """Isolation levels this manager can honor.
 
-    savepoints: bool = False
-    """Whether nested scopes are real savepoints (partial rollback)."""
-
-    read_only: bool = False
-    """Whether a read-only root is enforced (writes rejected)."""
+    The capability report intentionally covers only what the kernel **enforces** at resolve
+    (the declared isolation). Other transaction features (savepoints / partial rollback,
+    read-only enforcement) are honored by the adapter at runtime, not advertised here — add
+    a field only when the kernel grows a fail-closed check that consults it."""
 
 
 # ....................... #

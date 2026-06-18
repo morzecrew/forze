@@ -43,9 +43,6 @@ from forze.base.exceptions import exc
 _TOMBSTONE: Any = object()
 """Overlay marker for a key deleted within the transaction."""
 
-# A committed write-set: (version, {namespace: frozenset[key]}).
-CommitLogEntry = tuple[int, dict[str, frozenset[Any]]]
-
 
 # ....................... #
 
@@ -159,12 +156,31 @@ class MvccTx:
         # Eager as-of-begin snapshot of every document namespace (shallow: rows are replaced,
         # never mutated in place, so holding the prior row refs is a faithful snapshot).
         snapshots = {ns: dict(store) for ns, store in state.documents.items()}
+        begin_version = state.mvcc_version
+        state.mvcc_active.append(begin_version)
 
         return cls(
-            begin_version=state.mvcc_version,
+            begin_version=begin_version,
             serializable=serializable,
             snapshots=snapshots,
         )
+
+    # ....................... #
+
+    def finish(self, state: Any) -> None:
+        """Deregister this transaction and prune the commit log below the oldest in-flight one.
+
+        Called once on transaction end (commit or abort). An entry only matters to a
+        transaction whose begin-version precedes it, so once no in-flight transaction began
+        before an entry, the entry can never be consulted again and is dropped — keeping the
+        log bounded and ``validate`` from degrading to O(commits) per call across a run.
+        """
+
+        state.mvcc_active.remove(self.begin_version)
+        horizon = min(state.mvcc_active) if state.mvcc_active else state.mvcc_version
+        state.mvcc_commit_log[:] = [
+            entry for entry in state.mvcc_commit_log if entry[0] > horizon
+        ]
 
     # ....................... #
 

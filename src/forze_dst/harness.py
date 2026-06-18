@@ -150,10 +150,16 @@ class Simulation:
 
     interceptors: InterceptorFactory | None = None
     """Optional - per-run port interceptors (e.g. seeded fault injection). A factory
-    ``seed -> interceptors`` so each run gets a fresh, seed-derived chain (reproducible per
-    seed); registered deps-scoped on every resolved configurable port, inside the
-    runtime-tracing and resilience wraps. The cooperative/latency interceptor is added
-    separately (run-scoped) by ``run_simulation``."""
+    ``seed -> interceptors`` so each run gets a fresh, seed-derived chain; registered
+    deps-scoped on every resolved configurable port, inside the runtime-tracing and resilience
+    wraps. The cooperative/latency interceptor is added separately (run-scoped) by
+    ``run_simulation``.
+
+    REPRODUCIBILITY RULE: the factory MUST derive every interceptor's RNG from its ``seed``
+    argument (``PortFaultInterceptor(rng=random.Random(seed), ...)``). Closing over a fixed
+    seed decouples the fault stream from the run and breaks replay/minimization — the whole
+    point of a single seed driving all nondeterminism. (Plan 2's declarative fault config will
+    derive these RNGs itself, removing the footgun.)"""
 
     # ....................... #
 
