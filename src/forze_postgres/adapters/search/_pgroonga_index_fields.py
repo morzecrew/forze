@@ -8,6 +8,7 @@ from forze.application.contracts.search import SearchSpec
 from forze.base.exceptions import exc
 
 from ...kernel.catalog.introspect.types import PostgresIndexInfo
+from ...kernel.catalog.introspect.utils import find_balanced_span, mask_sql_literals
 from ...kernel.gateways import PostgresQualifiedName
 
 # ----------------------- #
@@ -15,6 +16,9 @@ from ...kernel.gateways import PostgresQualifiedName
 _ARRAY_PREFIX_RE = re.compile(r"ARRAY\s*\[", re.IGNORECASE)
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _COALESCE_PREFIX_RE = re.compile(r"^coalesce\s*\(", re.IGNORECASE)
+# The only COALESCE default Forze reproduces on the query side: the empty
+# string ``''`` (optionally cast), matching its ``coalesce(col::text, '')`` rebuild.
+_EMPTY_DEFAULT_RE = re.compile(r"^''(\s*::\s*\w+(\s*\[\s*\])?)?$")
 
 # Bounds the wrapper-peeling loop; each iteration strictly shrinks the string,
 # so this is only a safety backstop against a pathological expression.
@@ -24,14 +28,15 @@ _MAX_PEEL = 64
 
 
 def pgroonga_index_uses_array_expr(expr: str | None) -> bool:
-    """Whether the indexed expression is a multi-column ``ARRAY[...]`` form.
+    """Whether the indexed expression is a top-level ``ARRAY[...]`` form.
 
-    Detects the ``ARRAY[`` constructor specifically -- a bare substring check
-    would misfire on a single-column index over a column whose name merely
-    contains ``array`` (e.g. ``COALESCE(array_field, '')``).
+    True only when ``ARRAY[...]`` is the whole expression (after peeling
+    wrapping parentheses), with nothing trailing it -- so neither an ``ARRAY[``
+    inside a quoted literal/column name nor one nested in another transform
+    (e.g. ``concat('ARRAY[x]', body)``) is mistaken for a multi-column index.
     """
 
-    return expr is not None and _ARRAY_PREFIX_RE.search(expr) is not None
+    return expr is not None and _top_level_array_inner(expr) is not None
 
 
 # ....................... #
@@ -60,14 +65,11 @@ def parse_pgroonga_index_heap_columns(
 
     if expr is not None:
         expr_stripped = expr.strip()
-        if pgroonga_index_uses_array_expr(expr_stripped):
-            inner = _extract_array_inner(expr_stripped)
-            if inner is not None:
-                return _split_pgroonga_array_inner(
-                    inner, index_qname=index_qname
-                )
+        inner = _top_level_array_inner(expr_stripped)
+        if inner is not None:
+            return _split_pgroonga_array_inner(inner, index_qname=index_qname)
 
-        single = _extract_pgroonga_column(_mask_string_literals(expr_stripped))
+        single = _extract_pgroonga_column(expr_stripped)
         if single is not None:
             return (single,)
 
@@ -91,7 +93,7 @@ def _split_pgroonga_array_inner(
     qn = index_qname.string()
     parts: list[str] = []
 
-    for piece in _split_top_level_commas(_mask_string_literals(inner)):
+    for piece in _split_top_level_commas(inner):
         element = piece.strip()
         if not element:
             continue
@@ -115,124 +117,67 @@ def _split_pgroonga_array_inner(
 # ....................... #
 
 
-def _extract_array_inner(expr: str) -> str | None:
-    """Return the contents of the first balanced ``ARRAY[...]`` constructor.
+def _top_level_array_inner(expr: str) -> str | None:
+    """Contents of a top-level ``ARRAY[...]`` constructor, else ``None``.
 
-    Tracks parenthesis/bracket nesting (and single-quoted literals) so an
-    element containing ``]`` -- e.g. an array subscript ``tags[1]`` -- does not
-    terminate the scan early the way a non-greedy ``\\[(.*?)\\]`` would.
+    Requires ``ARRAY[...]`` to be the entire expression after peeling wrapping
+    parentheses, with no trailing text -- so an ``ARRAY[`` inside a literal or
+    nested in another transform (e.g. ``concat(ARRAY[x], y)`` or
+    ``ARRAY[x] || y``) is rejected rather than parsed as a multi-column index.
+    Literals are skipped via :func:`find_balanced_span`, so a ``]`` inside an
+    element (e.g. ``tags[1]``) or a quoted default does not end the scan early.
     """
 
-    m = _ARRAY_PREFIX_RE.search(expr)
+    s = expr.strip()
+
+    # Peel parentheses that wrap the whole expression: ``(ARRAY[...])``.
+    while s.startswith("("):
+        close = find_balanced_span(s, 0)
+        if close != len(s) - 1:
+            break
+        s = s[1:-1].strip()
+
+    m = _ARRAY_PREFIX_RE.match(s)
     if m is None:
         return None
 
     open_idx = m.end() - 1  # position of the opening '['
-    depth = 0
-    in_str = False
-    i = open_idx
+    close = find_balanced_span(s, open_idx)
+    if close is None or close != len(s) - 1:
+        return None  # trailing expression text after ARRAY[...]
 
-    while i < len(expr):
-        ch = expr[i]
-
-        if in_str:
-            if ch == "'":
-                if i + 1 < len(expr) and expr[i + 1] == "'":
-                    i += 2
-                    continue
-                in_str = False
-
-        elif ch == "'":
-            in_str = True
-
-        elif ch in "([":
-            depth += 1
-
-        elif ch in ")]":
-            depth -= 1
-            if depth == 0:
-                return expr[open_idx + 1 : i]
-
-        i += 1
-
-    return None
-
-
-# ....................... #
-
-
-def _mask_string_literals(s: str) -> str:
-    """Replace single-quoted literal *contents* with ``x``, preserving length.
-
-    Structural scans below (paren depth, top-level commas, casts) only ever
-    care about characters outside string literals -- a column name never lives
-    inside a literal. Masking lets those scans stay literal-naive while a
-    ``COALESCE`` default such as ``')'`` or ``','`` can no longer corrupt depth
-    or split positions. Quote characters and length are preserved so positions
-    still line up; doubled ``''`` (an escaped quote) is kept verbatim.
-    """
-
-    out: list[str] = []
-    in_str = False
-    i = 0
-    n = len(s)
-
-    while i < n:
-        ch = s[i]
-
-        if in_str:
-            if ch == "'":
-                if i + 1 < n and s[i + 1] == "'":
-                    out.append("''")
-                    i += 2
-                    continue
-                in_str = False
-                out.append("'")
-            else:
-                out.append("x")
-
-        elif ch == "'":
-            in_str = True
-            out.append("'")
-
-        else:
-            out.append(ch)
-
-        i += 1
-
-    return "".join(out)
+    return s[open_idx + 1 : close]
 
 
 # ....................... #
 
 
 def _split_top_level_commas(inner: str) -> list[str]:
-    """Split on commas that sit at parenthesis/bracket depth zero.
+    """Split on commas at parenthesis/bracket depth zero (literal-aware).
 
     Unlike ``str.split(",")`` this keeps function arguments intact, so
     ``COALESCE(name, ''::text), COALESCE(code, ''::text)`` splits into the two
-    ``COALESCE(...)`` elements rather than four fragments. Callers pass a
-    string with literals already masked (see :func:`_mask_string_literals`),
-    so a comma inside a literal default does not split here.
+    ``COALESCE(...)`` elements rather than four fragments. Structure is read
+    from a literal-masked copy (see :func:`mask_sql_literals`) while the
+    returned slices come from the original, so a parenthesis/comma inside a
+    literal default neither corrupts depth nor splits the element.
     """
 
+    masked = mask_sql_literals(inner)
     parts: list[str] = []
-    buf: list[str] = []
+    start = 0
     depth = 0
 
-    for ch in inner:
+    for i, ch in enumerate(masked):
         if ch in "([":
             depth += 1
         elif ch in ")]":
             depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(inner[start:i])
+            start = i + 1
 
-        if ch == "," and depth == 0:
-            parts.append("".join(buf))
-            buf = []
-        else:
-            buf.append(ch)
-
-    parts.append("".join(buf))
+    parts.append(inner[start:])
 
     return parts
 
@@ -240,76 +185,60 @@ def _split_top_level_commas(inner: str) -> list[str]:
 # ....................... #
 
 
-def _balanced_outer_parens(s: str) -> bool:
-    """Whether a single pair of parentheses wraps the entire string."""
+def _top_level_double_colon(masked: str) -> int | None:
+    """Index of the first depth-zero ``::`` cast operator, else ``None``.
 
-    if not (s.startswith("(") and s.endswith(")")):
-        return False
-
-    depth = 0
-    for i, ch in enumerate(s):
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                return i == len(s) - 1
-
-    return False
-
-
-# ....................... #
-
-
-def _strip_trailing_cast(s: str) -> str:
-    """Drop a ``::type`` cast applied at depth zero, leaving the operand.
-
-    ``name::text`` -> ``name``; a ``::`` nested inside a call (e.g.
-    ``COALESCE(name::text, '')``) sits at depth > 0 and is left untouched.
+    Operates on a literal-masked string; a ``::`` nested in a call (e.g.
+    ``COALESCE(name::text, '')``) sits at depth > 0 and is ignored.
     """
 
     depth = 0
-    for i in range(len(s) - 1):
-        ch = s[i]
+    for i in range(len(masked) - 1):
+        ch = masked[i]
         if ch in "([":
             depth += 1
         elif ch in ")]":
             depth = max(0, depth - 1)
-        elif ch == ":" and s[i + 1] == ":" and depth == 0:
-            return s[:i].rstrip()
+        elif ch == ":" and masked[i + 1] == ":" and depth == 0:
+            return i
 
-    return s
+    return None
 
 
 # ....................... #
 
 
-def _coalesce_first_arg(s: str) -> str | None:
-    """First argument of a whole-string ``COALESCE(...)`` call, else ``None``.
+def _coalesce_reproducible_first_arg(s: str, masked: str) -> str | None:
+    """First arg of a whole-string ``COALESCE(col, '')`` call, else ``None``.
 
-    Only unwraps when ``COALESCE(...)`` spans the entire expression; the heap
-    column is the first argument and the remaining (default) arguments are
-    irrelevant to Forze's ``coalesce(col::text, '')`` query-side rebuild.
+    Only unwraps when ``COALESCE(...)`` spans the entire expression AND every
+    default (non-first) argument is the empty-string literal ``''`` (optionally
+    cast) -- the sole default Forze reproduces with its ``coalesce(col::text,
+    '')`` query-side rebuild. A non-empty default or a column fallback (e.g.
+    ``COALESCE(title, 'missing')`` / ``COALESCE(title, other)``) returns
+    ``None`` so the caller fails closed rather than silently searching a
+    different expression than the index declares (which would miss rows indexed
+    through that default). ``s`` is the original text; ``masked`` its
+    literal-masked copy, used for structural scanning.
     """
 
-    match = _COALESCE_PREFIX_RE.match(s)
-    if match is None:
+    if _COALESCE_PREFIX_RE.match(masked) is None:
         return None
 
-    open_idx = match.end() - 1
-    depth = 0
-    for i in range(open_idx, len(s)):
-        if s[i] == "(":
-            depth += 1
-        elif s[i] == ")":
-            depth -= 1
-            if depth == 0:
-                if i != len(s) - 1:
-                    return None
-                args = _split_top_level_commas(s[open_idx + 1 : i])
-                return args[0].strip() if args else None
+    open_idx = masked.index("(")
+    close = find_balanced_span(masked, open_idx)
+    if close is None or close != len(masked) - 1:
+        return None
 
-    return None
+    args = _split_top_level_commas(s[open_idx + 1 : close])
+    if not args:
+        return None
+
+    for default in args[1:]:
+        if _EMPTY_DEFAULT_RE.match(default.strip()) is None:
+            return None
+
+    return args[0].strip()
 
 
 # ....................... #
@@ -318,10 +247,11 @@ def _coalesce_first_arg(s: str) -> str | None:
 def _extract_pgroonga_column(element: str) -> str | None:
     """Reduce one index expression element to a bare heap column name.
 
-    Peels the wrappers Forze faithfully reproduces -- enclosing parentheses,
-    a trailing ``::type`` cast, and ``COALESCE(col, <default>)`` -- and returns
-    the underlying column name, or ``None`` when the element is a transform
-    Forze cannot reproduce on the query side.
+    Peels only the wrappers Forze faithfully reproduces on the query side --
+    enclosing parentheses, a trailing ``::type`` cast, and ``COALESCE(col, '')``
+    with an empty-string default -- and returns the underlying column name, or
+    ``None`` when the element is something Forze cannot reproduce (a transform
+    such as ``lower(col)``, or a ``COALESCE`` with a non-empty/column default).
     """
 
     s = element.strip()
@@ -330,16 +260,18 @@ def _extract_pgroonga_column(element: str) -> str | None:
         if not s:
             return None
 
-        if _balanced_outer_parens(s):
+        masked = mask_sql_literals(s)
+
+        if masked.startswith("(") and find_balanced_span(masked, 0) == len(masked) - 1:
             s = s[1:-1].strip()
             continue
 
-        without_cast = _strip_trailing_cast(s)
-        if without_cast != s:
-            s = without_cast.strip()
+        cut = _top_level_double_colon(masked)
+        if cut is not None:
+            s = s[:cut].rstrip()
             continue
 
-        coalesced = _coalesce_first_arg(s)
+        coalesced = _coalesce_reproducible_first_arg(s, masked)
         if coalesced is not None:
             s = coalesced
             continue

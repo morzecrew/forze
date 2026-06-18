@@ -125,21 +125,66 @@ def test_parse_unreproducible_transform_raises(expr: str) -> None:
         parse_pgroonga_index_heap_columns(expr, (), index_qname=_IDX)
 
 
-def test_parse_array_with_subscript_element_balanced() -> None:
-    # Regression: a ']' inside an element (array subscript) must not terminate
-    # the ARRAY[...] scan early the way a non-greedy ``\\[(.*?)\\]`` would.
+def test_parse_array_element_with_empty_default_balanced() -> None:
+    # A bare column alongside an empty-default COALESCE element resolves; the
+    # balanced, literal-aware scan keeps each element intact.
     assert parse_pgroonga_index_heap_columns(
         "(ARRAY[name, COALESCE(code, ''::text)])",
         (),
         index_qname=_IDX,
     ) == ("name", "code")
-    # An element literal containing ']' is preserved by the balanced scan, so
-    # the COALESCE default ']' does not truncate the array before ``code``.
-    assert parse_pgroonga_index_heap_columns(
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # A non-empty/structural literal default is not the empty-string form
+        # Forze rebuilds, so it must fail closed -- but the literal-aware scan
+        # must still structure the element correctly (not corrupt depth) before
+        # rejecting it, rather than crash or mis-split.
+        "(ARRAY[COALESCE(name, 'a,b'), code])",
+        "(ARRAY[COALESCE(name, '(x)'), code])",
+        "(ARRAY[COALESCE(name, '],['::text), code])",
         "(ARRAY[COALESCE(name, ']'::text), code])",
-        (),
-        index_qname=_IDX,
-    ) == ("name", "code")
+        "(COALESCE(name, ',(['))",
+    ],
+)
+def test_parse_nonempty_literal_default_fails_closed(expr: str) -> None:
+    with pytest.raises(CoreException, match="Cannot resolve PGroonga index columns"):
+        parse_pgroonga_index_heap_columns(expr, (), index_qname=_IDX)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # Forze rebuilds the match as ``coalesce(col::text, '')``; a COALESCE
+        # with a non-empty literal default or a column fallback indexes values
+        # Forze cannot reproduce, so accepting it would silently miss rows.
+        "(ARRAY[COALESCE(title, 'missing'), body])",
+        "(COALESCE(title, 'missing'::text))",
+        "(ARRAY[COALESCE(title, fallback_col), body])",
+        "(COALESCE(title, other_col))",
+    ],
+)
+def test_parse_coalesce_non_empty_default_fails_closed(expr: str) -> None:
+    with pytest.raises(CoreException, match="Cannot resolve PGroonga index columns"):
+        parse_pgroonga_index_heap_columns(expr, (), index_qname=_IDX)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # ARRAY[...] must be the whole expression (after peeling parens). An
+        # ARRAY nested in a transform, or with trailing text, is a different
+        # expression than Forze would search, so it must be rejected.
+        "(concat(ARRAY[title], body))",
+        "(ARRAY[a, b] || extra)",
+        "(ARRAY[a, b]::text[])",
+    ],
+)
+def test_parse_non_top_level_array_fails_closed(expr: str) -> None:
+    with pytest.raises(CoreException, match="Cannot resolve PGroonga index columns"):
+        parse_pgroonga_index_heap_columns(expr, (), index_qname=_IDX)
 
 
 @pytest.mark.parametrize(
@@ -152,6 +197,13 @@ def test_parse_array_with_subscript_element_balanced() -> None:
         # Must not misfire on a column whose name merely contains "array".
         ("COALESCE(array_field, ''::text)", False),
         ("(my_array_col)", False),
+        # An ARRAY[ inside a quoted literal default is not the constructor
+        # (including one carrying a comma that could fool a naive split).
+        ("(COALESCE(col, 'ARRAY[x]'::text))", False),
+        ("(COALESCE(title, 'ARRAY[a,b]'))", False),
+        # ARRAY nested in a transform / with trailing text is not top-level.
+        ("(concat(ARRAY[title], body))", False),
+        ("(ARRAY[a, b] || extra)", False),
     ],
 )
 def test_pgroonga_index_uses_array_expr_detects_constructor(
@@ -167,6 +219,17 @@ def test_parse_single_column_named_like_array() -> None:
         (),
         index_qname=_IDX,
     ) == ("array_field",)
+
+
+def test_parse_single_column_with_array_in_literal_default_fails_closed() -> None:
+    # The ARRAY[ inside the quoted default is not the constructor (not array),
+    # and the non-empty default is not reproducible, so this fails closed.
+    with pytest.raises(CoreException, match="Cannot resolve PGroonga index columns"):
+        parse_pgroonga_index_heap_columns(
+            "(COALESCE(col, 'ARRAY[x]'::text))",
+            (),
+            index_qname=_IDX,
+        )
 
 
 def test_parse_unparseable_raises() -> None:

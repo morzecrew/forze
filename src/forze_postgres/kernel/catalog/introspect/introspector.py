@@ -144,7 +144,8 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    def __normalize_schema(self, schema: str | None) -> str:
+    @staticmethod
+    def __normalize_schema(schema: str | None) -> str:
         return schema or "public"
 
     # ....................... #
@@ -599,8 +600,8 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    @staticmethod
     def _index_def_stub(
-        self,
         *,
         schema: str,
         index: str,
@@ -748,9 +749,7 @@ class PostgresIntrospector:
         has_tsvector_col = bool(row.get("has_tsvector_col") or False)
 
         if expr_s is None:
-            maybe = extract_index_expr_from_indexdef(indexdef)
-
-            if maybe:
+            if maybe := extract_index_expr_from_indexdef(indexdef):
                 expr_s = maybe
 
         engine: PostgresIndexEngine = "unknown"
