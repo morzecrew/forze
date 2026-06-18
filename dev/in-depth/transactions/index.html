@@ -1165,6 +1165,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Isolation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#after-the-commit" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1176,10 +1187,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#strict-transactions-under-mock" class="md-nav__link">
+  <a href="#transactions-under-the-mock" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Strict transactions under mock
+        Transactions under the mock
       </span>
     </span>
   </a>
@@ -1743,6 +1754,35 @@
     
   
   Testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deterministic-simulation/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-dice-6" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M16 8h.01M16 12h.01M16 16h.01M8 8h.01M8 12h.01M8 16h.01"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Deterministic simulation
 
     
   </span>
@@ -4166,6 +4206,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Isolation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#after-the-commit" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4177,10 +4228,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#strict-transactions-under-mock" class="md-nav__link">
+  <a href="#transactions-under-the-mock" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Strict transactions under mock
+        Transactions under the mock
       </span>
     </span>
   </a>
@@ -4338,6 +4389,30 @@ transaction inside a database one and expect them to commit together.</p>
 read-only transaction where it supports one (Postgres <code>BEGIN … READ ONLY</code>) and
 rejects accidental writes. You rarely set this by hand — the operation kind does
 it for you.</p>
+<h2 id="isolation">Isolation<a class="headerlink" href="#isolation" title="Permanent link">&para;</a></h2>
+<p>Most operations are fine at the backend's default isolation. When one needs a
+stronger guarantee — no lost update, no write skew — declare it on the operation
+and the kernel holds the backend to it:</p>
+<div class="highlight"><pre><span></span><code><span class="n">plan</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">OperationPlan</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">bind_tx</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">set_route</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">set_isolation</span><span class="p">(</span><span class="n">IsolationLevel</span><span class="o">.</span><span class="n">SERIALIZABLE</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The level is <strong>fail-closed</strong>. When the root scope is first entered, the kernel
+checks that the route's transaction manager actually supports it (a manager opts
+in by reporting its <code>TxCapabilities</code>); if it can't — or reports nothing — the
+operation raises <code>exc.configuration</code> (<code>code="tx_isolation_unsupported"</code>) rather
+than silently running weaker isolation. Declaring isolation without a transaction
+route is rejected at registry freeze for the same reason: there is no transaction
+to carry it.</p>
+<p><code>IsolationLevel</code> is intent-named and ordered — <code>READ_COMMITTED &lt; SNAPSHOT &lt;
+SERIALIZABLE</code> — and each adapter maps it to its backend's spelling. The mock
+honors all three through an in-memory MVCC overlay (it rejects the write-write,
+write-skew, and phantom conflicts the level forbids), so an isolation-dependent
+bug is catchable in a unit test or under <a href="../deterministic-simulation/">simulation</a>.</p>
 <h2 id="after-the-commit">After the commit<a class="headerlink" href="#after-the-commit" title="Permanent link">&para;</a></h2>
 <p>Some work must happen <strong>only if</strong> the transaction commits — publishing an event,
 sending a notification, enqueuing a job. Doing it inside the scope risks acting
@@ -4351,37 +4426,47 @@ mechanism is the foundation of the transactional outbox — covered next.</p>
 <a href="../deadlines/">deadline</a> expiring between the commit and the deferred
 callbacks can't skip them — they run to completion, then the cancellation
 re-raises. A committed transaction is never left half-announced.</p>
-<h2 id="strict-transactions-under-mock">Strict transactions under mock<a class="headerlink" href="#strict-transactions-under-mock" title="Permanent link">&para;</a></h2>
-<p>By default, the mock plane's transaction manager is a <strong>no-op</strong>: a write inside
-a transaction that later rolls back still persists, so a "forgot to run it in
-the same transaction" bug is invisible in tests. Opt into real rollback
-semantics when wiring:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockDepsModule</span>
-
-<span class="n">module</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">strict_tx</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</code></pre></div>
-<p>Strict mode rolls back exactly what a database transaction would:</p>
+<h2 id="transactions-under-the-mock">Transactions under the mock<a class="headerlink" href="#transactions-under-the-mock" title="Permanent link">&para;</a></h2>
+<p>The mock transaction manager is <strong>faithful by default</strong> (<code>transactions="journal"</code>).
+Each write records an undo, and an aborted transaction replays its journal in
+reverse — undoing <em>only its own</em> writes. So a "forgot to run it in the same
+transaction" bug fails in tests exactly as it would in production, and because
+nothing restores a global snapshot, concurrent transactions still interleave
+freely — the basis <a href="../deterministic-simulation/">simulation</a> needs.</p>
+<p>Rollback covers exactly what a database transaction would:</p>
 <ul>
-<li><strong>Rolls back</strong> — documents, outbox rows, inbox marks, and the
-  document-backed identity stores. A handler that stages an outbox event and
-  then fails leaves <em>no</em> rows behind, same as Postgres.</li>
+<li><strong>Rolls back</strong> — documents, outbox rows, inbox marks, and the document-backed
+  identity stores. A handler that stages an outbox event and then fails leaves
+  <em>no</em> rows behind, same as Postgres.</li>
 <li><strong>Survives rollback, on purpose</strong> — queues, streams, storage blobs, caches,
   counters, idempotency keys, locks, search and analytics state. Those backends
-  are not transactional in production; rolling them back would make the mock
-  <em>less</em> faithful, hiding the very cross-system consistency gaps the
-  <a href="#after-the-commit">outbox pattern</a> exists to close.</li>
+  are not transactional in production; rolling them back would hide the very
+  cross-system consistency gaps the <a href="#after-the-commit">outbox pattern</a> exists to
+  close.</li>
 </ul>
-<p>Nested scopes behave as savepoints — an inner rollback reverts only the inner
-writes. <code>QUERY</code> operations open their root <code>read_only=True</code>, and strict mode
-enforces it: a write to a participating store raises a precondition error with
-code <code>read_only_tx</code>, mirroring Postgres <code>BEGIN … READ ONLY</code>.</p>
-<div class="admonition warning">
-<p class="admonition-title">Strict roots serialize, and Python objects don't roll back</p>
-<p>Rollback restores a global snapshot of the shared mock state, so concurrent
-root transactions on one <code>MockState</code> are <strong>serialized</strong> (real databases
-serialize conflicting writers anyway). And only mock stores are restored —
-in-process side effects outside them, like a handler mutating a Python
-object it captured, cannot be rolled back.</p>
+<p>Nested scopes behave as savepoints (an inner rollback reverts only the inner
+writes); a <code>QUERY</code> root enforces <code>read_only</code> (a write to a participating store
+raises a precondition error, <code>code="read_only_tx"</code>); and the manager honors the
+declared <a href="#isolation">isolation</a> level through its MVCC overlay.</p>
+<p>Two other modes are opt-in when wiring <code>MockDepsModule</code>:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Strict (serializing)</label><label for="__tabbed_1_2">None (legacy)</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p><code>transactions="strict"</code> (or <code>strict_tx=True</code>) restores a global snapshot on
+rollback — simpler, but concurrent root transactions on one <code>MockState</code>
+<strong>serialize</strong> (real databases serialize conflicting writers anyway). Reach
+for it only when you specifically want that behavior.</p>
+</div>
+<div class="tabbed-block">
+<p><code>transactions="none"</code> is the old no-op: writes persist through a rollback. It
+hides transaction bugs — kept only for comparison.</p>
+</div>
+</div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Only mock stores roll back</p>
+<p>Rollback reverts the mock stores, not arbitrary in-process side effects — a
+handler that mutates a Python object it captured cannot be rolled back.</p>
 </div>
 
 

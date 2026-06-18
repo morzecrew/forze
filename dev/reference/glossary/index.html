@@ -1620,6 +1620,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../in-depth/deterministic-simulation/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-dice-6" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M16 8h.01M16 12h.01M16 16h.01M8 8h.01M8 12h.01M8 16h.01"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Deterministic simulation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -4321,6 +4350,8 @@
 :   The mapping from a spec name to its adapter configuration. Not to be confused with HTTP routes.</p>
 <p><strong>Transaction route</strong>
 :   A transactional boundary that groups operations. Configured per-request or per-saga step.</p>
+<p><strong>Isolation level</strong>
+:   The transaction isolation an operation requires — <code>READ_COMMITTED &lt; SNAPSHOT &lt; SERIALIZABLE</code>. Declared with <code>set_isolation(...)</code> and enforced fail-closed against the route's transaction manager.</p>
 <hr />
 <h2 id="identity-and-tenancy">Identity and tenancy<a class="headerlink" href="#identity-and-tenancy" title="Permanent link">&para;</a></h2>
 <p><strong>AuthnIdentity</strong>

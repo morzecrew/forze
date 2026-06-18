@@ -18,7 +18,7 @@
         <link rel="prev" href="../observability/">
       
       
-        <link rel="next" href="../../integrations/">
+        <link rel="next" href="../deterministic-simulation/">
       
       
         
@@ -1692,10 +1692,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#strict-transaction-mode" class="md-nav__link">
+  <a href="#transaction-rollback-in-tests" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Strict transaction mode
+        Transaction rollback in tests
       </span>
     </span>
   </a>
@@ -1772,6 +1772,35 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deterministic-simulation/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-dice-6" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M16 8h.01M16 12h.01M16 16h.01M8 8h.01M8 12h.01M8 16h.01"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Deterministic simulation
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -4155,10 +4184,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#strict-transaction-mode" class="md-nav__link">
+  <a href="#transaction-rollback-in-tests" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Strict transaction mode
+        Transaction rollback in tests
       </span>
     </span>
   </a>
@@ -4356,23 +4385,13 @@
         <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 </code></pre></div>
 <p>Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state. Write a user in one test, query it in the same test, and the data is there.</p>
-<h2 id="strict-transaction-mode">Strict transaction mode<a class="headerlink" href="#strict-transaction-mode" title="Permanent link">&para;</a></h2>
-<p>By default, mock transactions are no-ops: a write inside a transaction that rolls back still persists. This hides bugs where you forget to run operations in the same transaction.</p>
-<p>Enable strict mode to get real rollback semantics:</p>
-<div class="highlight"><pre><span></span><code><span class="n">module</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">strict_tx</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</code></pre></div>
-<p>Strict mode rolls back exactly what a database transaction would:</p>
+<h2 id="transaction-rollback-in-tests">Transaction rollback in tests<a class="headerlink" href="#transaction-rollback-in-tests" title="Permanent link">&para;</a></h2>
+<p>Mock transactions are <strong>faithful by default</strong>: a write inside a transaction that rolls back is undone, so a "forgot to run it in the same transaction" bug fails in your unit test exactly as it would in production. No flag needed.</p>
 <ul>
-<li><strong>Rolls back</strong> — documents, outbox rows, inbox marks, and document-backed identity stores</li>
-<li><strong>Survives rollback</strong> — queues, streams, storage blobs, caches, counters, idempotency keys, locks, search and analytics state (these aren't transactional in production either)</li>
+<li><strong>Rolls back</strong> — documents, outbox rows, inbox marks, and document-backed identity stores. A handler that stages an outbox event and then fails leaves no rows behind.</li>
+<li><strong>Survives rollback</strong> — queues, streams, storage blobs, caches, counters, idempotency keys, locks, search and analytics state (these aren't transactional in production either).</li>
 </ul>
-<p>Strict mode catches transaction bugs in unit tests before they reach production.</p>
-<div class="admonition warning">
-<p class="admonition-title">Strict roots serialize</p>
-<p>Strict mode restores a global snapshot on rollback, so concurrent root
-transactions on one <code>MockState</code> are serialized. Real databases serialize
-conflicting writers anyway, but this can slow down test parallelization.</p>
-</div>
+<p>The default journal mode is atomic <em>without</em> serializing, so concurrent transactions still interleave. Two modes are opt-in — <code>MockDepsModule(transactions="strict")</code> (a serializing global-snapshot manager) and <code>transactions="none"</code> (the legacy no-op). See <a href="../transactions/#transactions-under-the-mock">Transactions</a> for the full picture, and <a href="../deterministic-simulation/">Deterministic simulation</a> for exploring concurrency and isolation under the faithful default.</p>
 <h2 id="testing-with-identity-context">Testing with identity context<a class="headerlink" href="#testing-with-identity-context" title="Permanent link">&para;</a></h2>
 <p>For handlers that depend on <code>AuthnIdentity</code> or <code>TenantIdentity</code>, mock the identity plane:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnIdentity</span>
@@ -4530,13 +4549,13 @@ conflicting writers anyway, but this can slow down test parallelization.</p>
         
         
           
-          <a href="../../integrations/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
+          <a href="../deterministic-simulation/" class="md-footer__link md-footer__link--next" aria-label="Next: Deterministic simulation">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Overview
+                Deterministic simulation
               </div>
             </div>
             <div class="md-footer__button md-icon">

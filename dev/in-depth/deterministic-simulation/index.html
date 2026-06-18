@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/core-concepts/domain-layer/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/in-depth/deterministic-simulation/">
       
       
-        <link rel="prev" href="../architecture/">
+        <link rel="prev" href="../testing/">
       
       
-        <link rel="next" href="../application-layer/">
+        <link rel="next" href="../../integrations/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Domain - Forze</title>
+        <title>Deterministic simulation - Forze</title>
       
     
     
@@ -92,7 +92,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#the-aggregate-and-its-family" class="md-skip">
+        <a href="#point-it-at-your-app" class="md-skip">
           Skip to content
         </a>
       
@@ -146,7 +146,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Domain
+              Deterministic simulation
             
           </span>
         </div>
@@ -287,7 +287,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../overview/" class="md-tabs__link">
+        <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
   Learn
@@ -711,8 +711,6 @@
                 
   
   
-    
-  
   
   
     
@@ -728,11 +726,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
           <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
@@ -752,7 +750,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_1">
             <span class="md-nav__icon md-icon"></span>
             
@@ -769,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../overview/" class="md-nav__link">
+      <a href="../../core-concepts/overview/" class="md-nav__link">
         
   
   
@@ -798,7 +796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../architecture/" class="md-nav__link">
+      <a href="../../core-concepts/architecture/" class="md-nav__link">
         
   
   
@@ -824,36 +822,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-box" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Domain
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../core-concepts/domain-layer/" class="md-nav__link">
         
   
   
@@ -870,58 +842,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#the-aggregate-and-its-family" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The aggregate and its family
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rules-live-with-the-data" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Rules live with the data
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reusable-concerns-mixins" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Reusable concerns: mixins
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -934,7 +854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../application-layer/" class="md-nav__link">
+      <a href="../../core-concepts/application-layer/" class="md-nav__link">
         
   
   
@@ -963,7 +883,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/" class="md-nav__link">
+      <a href="../../core-concepts/contracts/" class="md-nav__link">
         
   
   
@@ -992,7 +912,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../runtime/" class="md-nav__link">
+      <a href="../../core-concepts/runtime/" class="md-nav__link">
         
   
   
@@ -1082,7 +1002,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/wiring/" class="md-nav__link">
+      <a href="../wiring/" class="md-nav__link">
         
   
   
@@ -1111,7 +1031,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/capability-execution/" class="md-nav__link">
+      <a href="../capability-execution/" class="md-nav__link">
         
   
   
@@ -1140,7 +1060,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/transactions/" class="md-nav__link">
+      <a href="../transactions/" class="md-nav__link">
         
   
   
@@ -1169,7 +1089,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/errors/" class="md-nav__link">
+      <a href="../errors/" class="md-nav__link">
         
   
   
@@ -1198,7 +1118,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/concurrency-conflicts/" class="md-nav__link">
+      <a href="../concurrency-conflicts/" class="md-nav__link">
         
   
   
@@ -1227,7 +1147,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/idempotency/" class="md-nav__link">
+      <a href="../idempotency/" class="md-nav__link">
         
   
   
@@ -1317,7 +1237,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/reading-data/" class="md-nav__link">
+      <a href="../reading-data/" class="md-nav__link">
         
   
   
@@ -1346,7 +1266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/events-sagas/" class="md-nav__link">
+      <a href="../events-sagas/" class="md-nav__link">
         
   
   
@@ -1436,7 +1356,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/identity/" class="md-nav__link">
+      <a href="../identity/" class="md-nav__link">
         
   
   
@@ -1465,7 +1385,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/multi-tenancy/" class="md-nav__link">
+      <a href="../multi-tenancy/" class="md-nav__link">
         
   
   
@@ -1494,7 +1414,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/encryption/" class="md-nav__link">
+      <a href="../encryption/" class="md-nav__link">
         
   
   
@@ -1528,6 +1448,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1543,11 +1465,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
         
           
           <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
@@ -1567,7 +1489,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1584,7 +1506,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/deadlines/" class="md-nav__link">
+      <a href="../deadlines/" class="md-nav__link">
         
   
   
@@ -1613,7 +1535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/resilience/" class="md-nav__link">
+      <a href="../resilience/" class="md-nav__link">
         
   
   
@@ -1642,7 +1564,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/shutdown-and-fleets/" class="md-nav__link">
+      <a href="../shutdown-and-fleets/" class="md-nav__link">
         
   
   
@@ -1671,7 +1593,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/observability/" class="md-nav__link">
+      <a href="../observability/" class="md-nav__link">
         
   
   
@@ -1700,7 +1622,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../in-depth/testing/" class="md-nav__link">
+      <a href="../testing/" class="md-nav__link">
         
   
   
@@ -1726,10 +1648,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../in-depth/deterministic-simulation/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-dice-6" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M16 8h.01M16 12h.01M16 16h.01M8 8h.01M8 12h.01M8 16h.01"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Deterministic simulation
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1746,6 +1694,102 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#point-it-at-your-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Point it at your app
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#invariants-what-must-hold" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Invariants — what must hold
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inject-the-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Inject the environment
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#crash-and-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Crash and restart
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#across-n-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Across N nodes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-loop-find-reproduce-minimise-regress" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The loop — find, reproduce, minimise, regress
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See also
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4118,10 +4162,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-aggregate-and-its-family" class="md-nav__link">
+  <a href="#point-it-at-your-app" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The aggregate and its family
+        Point it at your app
       </span>
     </span>
   </a>
@@ -4129,10 +4173,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rules-live-with-the-data" class="md-nav__link">
+  <a href="#invariants-what-must-hold" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Rules live with the data
+        Invariants — what must hold
       </span>
     </span>
   </a>
@@ -4140,10 +4184,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reusable-concerns-mixins" class="md-nav__link">
+  <a href="#inject-the-environment" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Reusable concerns: mixins
+        Inject the environment
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#crash-and-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Crash and restart
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#across-n-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Across N nodes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-loop-find-reproduce-minimise-regress" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The loop — find, reproduce, minimise, regress
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See also
       </span>
     </span>
   </a>
@@ -4205,7 +4293,7 @@
     
     
       <li class="md-path__item">
-        <a href="../overview/" class="md-path__link">
+        <a href="../../core-concepts/overview/" class="md-path__link">
           
   
   <span class="md-ellipsis">
@@ -4230,11 +4318,11 @@
     
     
       <li class="md-path__item">
-        <a href="../overview/" class="md-path__link">
+        <a href="../deadlines/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Foundations
+    Running in production
   </span>
 
         </a>
@@ -4254,154 +4342,184 @@
   
 
 
-  <h1 id="__skip">Domain</h1>
+  <h1 id="__skip">Deterministic simulation</h1>
 
-<p>The domain layer is the <strong>stable center</strong> of a Forze service. It holds your
-business entities and the rules that govern them, in plain Python — no database
-drivers, no HTTP, no adapters. Change the database engine or the web framework
-and this layer doesn't move.</p>
-<div class="admonition abstract">
-<p class="admonition-title">The rule</p>
-<p>Domain code imports from no other layer — only Pydantic models, dataclasses,
-and standard Python. If it needs a database to run, it doesn't belong here.</p>
+<p><a href="../testing/">Testing</a> swaps real adapters for in-memory ones so a handler runs without Docker. Deterministic Simulation Testing (DST) goes further: it takes your <strong>real operations</strong>, runs them concurrently on a virtual-time event loop, and explores the interleavings, faults, and delays a production system would hit — then, when an invariant breaks, hands back the <strong>smallest workload that still breaks it</strong>, reproducible from a single seed.</p>
+<p>Nothing in your app changes. Handlers talk to ports exactly as they do in production; the simulation lives entirely on the test side.</p>
+<div class="admonition tip">
+<p class="admonition-title">The one promise</p>
+<p>One master seed parametrises <strong>every</strong> source of nondeterminism — the operation
+interleaving, injected faults, simulated latency, generated inputs, crash points, and
+network partitions. <code>(your app, seed)</code> is a pure function: the same seed replays the
+exact same run, byte for byte. That is what makes a found bug reproducible instead of
+"flaky."</p>
 </div>
-<h2 id="the-aggregate-and-its-family">The aggregate and its family<a class="headerlink" href="#the-aggregate-and-its-family" title="Permanent link">&para;</a></h2>
-<p>You model a business entity as an <strong>aggregate</strong>. Around it sits a small family of
-frozen, purpose-built types that carry data across boundaries.</p>
-<p><a class="glightbox" data-gallery="light" data-title="The aggregate family: commands and mixins feed the aggregate; the aggregate projects to a read model" data-type="image" href="../../_diagrams/light/domain-models.svg#only-light"><img alt="The aggregate family: commands and mixins feed the aggregate; the aggregate projects to a read model" src="../../_diagrams/light/domain-models.svg#only-light" /></a>
-<a class="glightbox" data-gallery="dark" data-title="The aggregate family: commands and mixins feed the aggregate; the aggregate projects to a read model" data-type="image" href="../../_diagrams/dark/domain-models.svg#only-dark"><img alt="The aggregate family: commands and mixins feed the aggregate; the aggregate projects to a read model" src="../../_diagrams/dark/domain-models.svg#only-dark" /></a></p>
-<table>
-<thead>
-<tr>
-<th>Type</th>
-<th>Role</th>
-<th>Base class</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Aggregate</strong></td>
-<td>The entity with identity, versioning, and rules</td>
-<td><code>Document</code></td>
-</tr>
-<tr>
-<td><strong>Create command</strong></td>
-<td>Frozen input that creates one</td>
-<td><code>BaseDTO</code></td>
-</tr>
-<tr>
-<td><strong>Update command</strong></td>
-<td>Frozen partial-update payload (all fields optional)</td>
-<td><code>BaseDTO</code></td>
-</tr>
-<tr>
-<td><strong>Read model</strong></td>
-<td>Frozen projection returned from queries</td>
-<td><code>ReadDocument</code></td>
-</tr>
-</tbody>
-</table>
-<div class="admonition note">
-<p class="admonition-title">CreateDocumentCmd is deprecated</p>
-<p><code>CreateDocumentCmd</code> still works as an alias for <code>BaseDTO</code> but is deprecated.
-Use <code>BaseDTO</code> for new create commands.</p>
-</div>
-<p>You build an aggregate by subclassing <code>Document</code>, which carries four built-in
-fields so you don't redefine identity and versioning every time:</p>
-<table>
-<thead>
-<tr>
-<th>Field</th>
-<th>Type</th>
-<th>Purpose</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>id</code></td>
-<td><code>UUID</code></td>
-<td>Identity, assigned once (frozen)</td>
-</tr>
-<tr>
-<td><code>rev</code></td>
-<td><code>int</code></td>
-<td>Revision, bumped on each write (frozen)</td>
-</tr>
-<tr>
-<td><code>created_at</code></td>
-<td><code>datetime</code></td>
-<td>Creation time (frozen)</td>
-</tr>
-<tr>
-<td><code>last_update_at</code></td>
-<td><code>datetime</code></td>
-<td>Last write time</td>
-</tr>
-</tbody>
-</table>
-<div class="admonition note">
-<p class="admonition-title">Aggregates that emit events</p>
-<p>Compose <code>AggregateRoot</code> alongside <code>Document</code> —
-<code>class Order(Document, AggregateRoot)</code> — to add an in-process event buffer.
-Behaviour methods record <code>DomainEvent</code>s that the application layer drains and
-dispatches after the operation commits.</p>
-</div>
-<h2 id="rules-live-with-the-data">Rules live with the data<a class="headerlink" href="#rules-live-with-the-data" title="Permanent link">&para;</a></h2>
-<p>The payoff of a domain layer is that <strong>invariants are enforced where the data
-lives</strong>, not scattered across handlers. Two mechanisms attach rules to an
-aggregate:</p>
-<ul>
-<li><strong><code>@invariant</code></strong> — a check enforced on create and after every update.</li>
-<li><strong><code>@update_validator</code></strong> — a rule that runs only when an update touches
-  relevant fields, with the before state, after state, and the diff in hand.</li>
-</ul>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.domain.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">Document</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.domain.validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">update_validator</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.exceptions</span><span class="w"> </span><span class="kn">import</span> <span class="n">exc</span>
+<p><a class="glightbox" data-gallery="light" data-title="One master seed derives independent sub-seeds — schedule, faults, latency, inputs — that drive a deterministic, replayable run" data-type="image" href="../../_diagrams/light/dst-seed.svg#only-light"><img alt="One master seed derives independent sub-seeds — schedule, faults, latency, inputs — that drive a deterministic, replayable run" src="../../_diagrams/light/dst-seed.svg#only-light" /></a>
+<a class="glightbox" data-gallery="dark" data-title="One master seed derives independent sub-seeds — schedule, faults, latency, inputs — that drive a deterministic, replayable run" data-type="image" href="../../_diagrams/dark/dst-seed.svg#only-dark"><img alt="One master seed derives independent sub-seeds — schedule, faults, latency, inputs — that drive a deterministic, replayable run" src="../../_diagrams/dark/dst-seed.svg#only-dark" /></a></p>
+<h2 id="point-it-at-your-app">Point it at your app<a class="headerlink" href="#point-it-at-your-app" title="Permanent link">&para;</a></h2>
+<p>A <code>Simulation</code> needs three things: your operation <strong>registry</strong>, a <strong>deps factory</strong> (one <code>MockDepsModule()</code> auto-mocks every port, built fresh per run so each starts clean), and the <strong>invariants</strong> that must hold. An optional <code>observe</code> hook records domain facts the invariants assert over.</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_observe</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">payments</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">PAYMENT_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
+    <span class="n">record_event</span><span class="p">(</span><span class="s2">&quot;payments&quot;</span><span class="p">,</span> <span class="n">total</span><span class="o">=</span><span class="n">payments</span><span class="p">)</span>
 
 
-<span class="k">class</span><span class="w"> </span><span class="nc">Order</span><span class="p">(</span><span class="n">Document</span><span class="p">):</span>
-    <span class="n">customer</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">total</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">status</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;pending&quot;</span>
-
-    <span class="nd">@update_validator</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;total&quot;</span><span class="p">})</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_total_is_final_once_shipped</span><span class="p">(</span><span class="n">before</span><span class="p">,</span> <span class="n">after</span><span class="p">,</span> <span class="n">diff</span><span class="p">):</span>
-        <span class="k">if</span> <span class="n">before</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;shipped&quot;</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">domain</span><span class="p">(</span><span class="s2">&quot;A shipped order&#39;s total is final.&quot;</span><span class="p">)</span>
+<span class="n">simulation</span> <span class="o">=</span> <span class="n">Simulation</span><span class="p">(</span>
+    <span class="n">operations</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span>
+    <span class="n">deps</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">domain_events</span><span class="o">=</span><span class="n">_EVENTS</span><span class="p">),</span>
+    <span class="n">observe</span><span class="o">=</span><span class="n">_observe</span><span class="p">,</span>
+    <span class="n">invariants</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">expect</span><span class="p">(</span>
+            <span class="s2">&quot;payments&quot;</span><span class="p">,</span>
+            <span class="k">lambda</span> <span class="n">event</span><span class="p">:</span> <span class="n">event</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;total&quot;</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">,</span>
+            <span class="n">message</span><span class="o">=</span><span class="s2">&quot;an order was charged more than once&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">],</span>
+<span class="p">)</span>
 </code></pre></div>
-<p>Updates are structured. <code>order.update({"total": 99})</code> returns a <strong>new immutable
-instance</strong> and a minimal diff, runs the validators, and bumps <code>last_update_at</code>.
-A patch that changes nothing returns the original and an empty diff.</p>
-<h2 id="reusable-concerns-mixins">Reusable concerns: mixins<a class="headerlink" href="#reusable-concerns-mixins" title="Permanent link">&para;</a></h2>
-<p>Common domain concerns ship as composable mixins in <code>forze_kits</code> (included in the
-default install). Each adds one focused capability — no deep inheritance chains.</p>
-<table>
-<thead>
-<tr>
-<th>Mixin</th>
-<th>Adds</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Soft deletion</strong></td>
-<td>An <code>is_deleted</code> flag plus a validator that blocks edits to deleted records</td>
-</tr>
-<tr>
-<td><strong>Metadata</strong></td>
-<td><code>name</code>, <code>display_name</code>, and <code>description</code> with normalized string types</td>
-</tr>
-<tr>
-<td><strong>Number id</strong></td>
-<td>A human-readable <code>number_id</code>, populated by a counter on create</td>
-</tr>
-<tr>
-<td><strong>Creator id</strong></td>
-<td>A frozen <code>creator_id</code>, injected from the current actor context</td>
-</tr>
-</tbody>
-</table>
+<p>Then sweep seeds:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">SimulationConfig</span>
+
+<span class="n">report</span> <span class="o">=</span> <span class="n">simulation</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">SimulationConfig</span><span class="p">(</span><span class="n">seeds</span><span class="o">=</span><span class="nb">range</span><span class="p">(</span><span class="mi">64</span><span class="p">)))</span>
+
+<span class="k">if</span> <span class="n">report</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">format</span><span class="p">())</span>  <span class="c1"># a readable, reproducible counterexample</span>
+</code></pre></div>
+<p><code>run</code> generates a meaningful workload (it reads your operation catalog to build an arrange→act scenario — <code>forze dst derive</code> below prints it), runs it under perturbed interleavings, and checks the invariants. On the first violating seed it <strong>minimises</strong> the workload to a 1-minimal set that still fails and returns a <code>ViolationReport</code>; a clean sweep returns <code>None</code>. There is nothing to assert about <em>how</em> — point it at the app and go.</p>
+<p>The app under test here is ordinary Forze code. <code>pay_order</code> charges, then flips the order to paid — but it charges <em>before</em> the optimistic-concurrency-guarded transition, so two concurrent payments both charge:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@attrs</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">kw_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">_PayOrder</span><span class="p">(</span><span class="n">Handler</span><span class="p">[</span><span class="n">PayCmd</span><span class="p">,</span> <span class="kc">None</span><span class="p">]):</span>
+    <span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="n">PayCmd</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">order</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">ORDER_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">order_id</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">order</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">order</span><span class="o">.</span><span class="n">paid</span><span class="p">:</span>  <span class="c1"># pyright: ignore[reportUnnecessaryComparison]</span>
+            <span class="k">return</span>
+
+        <span class="c1"># BUG: the charge (a side effect) happens *before* the optimistic-concurrency-guarded</span>
+        <span class="c1"># transition. Two payments that interleave at the port boundaries above both read</span>
+        <span class="c1"># rev=0 and both create a payment row; the rev guard then lets only one ``update``</span>
+        <span class="c1"># win (the other conflicts) — but both already charged. The fix is to update first</span>
+        <span class="c1"># and charge only once the guarded write succeeds. (No artificial yield — the real</span>
+        <span class="c1"># ``await`` port calls are the interleaving points under simulation.)</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">PAYMENT_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+            <span class="n">PaymentCreate</span><span class="p">(</span><span class="n">order_id</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">order_id</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">ORDER_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+            <span class="n">args</span><span class="o">.</span><span class="n">order_id</span><span class="p">,</span> <span class="n">order</span><span class="o">.</span><span class="n">rev</span><span class="p">,</span> <span class="n">OrderUpdate</span><span class="p">(</span><span class="n">paid</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="c1"># Emitting a domain event triggers the registered handler (a saga-style cascade).</span>
+        <span class="k">await</span> <span class="n">DomainDeps</span><span class="p">(</span><span class="n">ctx</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">ctx</span><span class="p">)()</span><span class="o">.</span><span class="n">dispatch</span><span class="p">([</span><span class="n">OrderPaid</span><span class="p">(</span><span class="n">order_id</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">order_id</span><span class="p">)])</span>
+</code></pre></div>
+<p>DST finds the race, shrinks it to <strong>two</strong> contending payments, and reports the seed that reproduces it.</p>
+<h2 id="invariants-what-must-hold">Invariants — what must hold<a class="headerlink" href="#invariants-what-must-hold" title="Permanent link">&para;</a></h2>
+<p>An invariant reads the recorded history and returns the violations it found. The generic <code>expect(kind, predicate, message=...)</code> (above) covers most domain rules. The built-ins read the engine trace directly, so they need no handler instrumentation:</p>
+<div class="grid cards">
+<ul>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-shield-alert" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1zM12 8v4M12 16h.01"/></svg></span> <strong><code>no_unexpected_error()</code></strong></p>
+<p>The zero-instrumentation safety net: any operation that raised a non-domain exception (a bug — <code>KeyError</code>, <code>TypeError</code>) is a violation; declared <code>CoreException</code> domain failures pass. Point DST at <em>any</em> app and immediately catch crashes under concurrency.</p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></span> <strong><code>no_duplicate_effect(kind, by=...)</code></strong></p>
+<p>Each recorded effect is unique on a key — exactly-once. Catches a non-idempotent consumer applying a redelivered message twice.</p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> <strong><code>mutual_exclusion(kind, resource=, start=, end=)</code></strong></p>
+<p>No two holds of a resource overlap — a distributed lock / critical section, or no split-brain across nodes.</p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-list-checks" viewBox="0 0 24 24"><path d="M13 5h8M13 12h8M13 19h8M3 17l2 2 4-4M3 7l2 2 4-4"/></svg></span> <strong><code>operation_succeeds(*ops)</code> · <code>completes_within(op, seconds)</code> · <code>single_key_per_operation(op)</code></strong></p>
+<p>Named ops must reach <code>ok</code>; an op must finish within a virtual-time budget; an op must touch one entity key (the <em>wrong-entity</em> guard) — all from the trace alone.</p>
+</li>
+</ul>
+</div>
+<p><code>linearizable(spec)</code> checks a recorded operation history against a sequential specification (Wing-Gong, per key) for the strongest single-object consistency guarantee.</p>
+<h2 id="inject-the-environment">Inject the environment<a class="headerlink" href="#inject-the-environment" title="Permanent link">&para;</a></h2>
+<p>A real system errors, times out, and is slow. Declare that environment on the config and DST applies it at the port boundary — over <strong>any</strong> resolved port, seeded from the master seed, with the app untouched.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">FaultPolicy</span><span class="p">,</span> <span class="n">FaultRule</span><span class="p">,</span> <span class="n">LatencyProfile</span><span class="p">,</span> <span class="n">LatencyRule</span><span class="p">,</span> <span class="n">Exponential</span>
+
+<span class="n">report</span> <span class="o">=</span> <span class="n">simulation</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">SimulationConfig</span><span class="p">(</span>
+    <span class="n">seeds</span><span class="o">=</span><span class="nb">range</span><span class="p">(</span><span class="mi">200</span><span class="p">),</span>
+    <span class="n">faults</span><span class="o">=</span><span class="n">FaultPolicy</span><span class="p">(</span><span class="n">rules</span><span class="o">=</span><span class="p">(</span>
+        <span class="n">FaultRule</span><span class="p">(</span><span class="n">surface</span><span class="o">=</span><span class="s2">&quot;document_command&quot;</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="mf">0.2</span><span class="p">),</span>   <span class="c1"># 20% transient failures</span>
+    <span class="p">)),</span>
+    <span class="n">latency</span><span class="o">=</span><span class="n">LatencyProfile</span><span class="p">(</span><span class="n">rules</span><span class="o">=</span><span class="p">(</span>
+        <span class="n">LatencyRule</span><span class="p">(</span><span class="n">dist</span><span class="o">=</span><span class="n">Exponential</span><span class="p">(</span><span class="n">mean</span><span class="o">=</span><span class="mf">0.05</span><span class="p">),</span> <span class="n">surface</span><span class="o">=</span><span class="s2">&quot;document_command&quot;</span><span class="p">),</span>
+    <span class="p">)),</span>
+<span class="p">))</span>
+</code></pre></div>
+<p>A <code>FaultRule</code> matches <code>(surface, route, op)</code> and rolls, per matched call: <code>error</code> (a retryable failure), <code>timeout</code>, <code>crash</code>, and the transport behaviours <code>drop</code> (silent loss), <code>duplicate</code> (redelivery), and <code>delay</code> (advance virtual time before the call). A <code>LatencyProfile</code> samples a per-route distribution — <code>Constant</code>, <code>Uniform</code>, or <code>Exponential</code>. Both are <strong>seeded by construction</strong> — you never pass an RNG, so the run stays reproducible.</p>
+<div class="admonition note">
+<p class="admonition-title">Virtual time is free</p>
+<p>A <code>delay</code> or latency advances a <em>virtual</em> clock, so a workload spanning minutes of
+simulated time runs in real-wall milliseconds — and time-dependent bugs (a TTL that
+expires mid-operation) surface with no <code>sleep</code> in your handlers.</p>
+</div>
+<h2 id="crash-and-restart">Crash and restart<a class="headerlink" href="#crash-and-restart" title="Permanent link">&para;</a></h2>
+<p>Set a <code>CrashPolicy</code> and a run becomes a crash → restart → recovery scenario. The process <em>dies</em> at a matched port boundary (the in-flight transaction rolls back, committed state persists), then a fresh runtime restarts over the <strong>same persisted store</strong>, an optional <code>recover</code> pass redrives interrupted work, and the invariants check the post-recovery world.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">CrashPolicy</span>
+
+<span class="n">report</span> <span class="o">=</span> <span class="n">simulation</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">SimulationConfig</span><span class="p">(</span>
+    <span class="n">seeds</span><span class="o">=</span><span class="nb">range</span><span class="p">(</span><span class="mi">64</span><span class="p">),</span>
+    <span class="n">crash</span><span class="o">=</span><span class="n">CrashPolicy</span><span class="p">(</span><span class="n">surface</span><span class="o">=</span><span class="s2">&quot;document_command&quot;</span><span class="p">,</span> <span class="n">route</span><span class="o">=</span><span class="s2">&quot;orders&quot;</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="s2">&quot;update&quot;</span><span class="p">),</span>
+<span class="p">))</span>
+</code></pre></div>
+<p>This is how you catch recovery bugs: a charge committed before a crashed follow-up write leaves an orphan that survives the restart when the operation is non-transactional — while the same operation routed through a transaction rolls the partial write back atomically.</p>
+<h2 id="across-n-nodes">Across N nodes<a class="headerlink" href="#across-n-nodes" title="Permanent link">&para;</a></h2>
+<p>A <code>Cluster</code> runs <em>N</em> real runtimes over one shared store, from one master seed, under <strong>network partitions</strong> — the distributed capstone. A partition cuts a node-group off from the gated port surfaces for a window of virtual time (modelled as <em>unreachable</em> — a retryable error), so a correct retry/outbox flow heals while a fire-and-forget one loses work. The distributed invariants are the same ones (<code>mutual_exclusion</code> for no split-brain, <code>no_duplicate_effect</code> for exactly-once).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">Cluster</span><span class="p">,</span> <span class="n">ClusterConfig</span><span class="p">,</span> <span class="n">Partition</span><span class="p">,</span> <span class="n">PartitionSchedule</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock.state</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockState</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">node</span><span class="p">(</span><span class="n">node_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="o">...</span>  <span class="c1"># this node&#39;s work, over ctx ports on the shared store</span>
+
+<span class="n">report</span> <span class="o">=</span> <span class="n">Cluster</span><span class="p">(</span><span class="n">deps</span><span class="o">=</span><span class="k">lambda</span> <span class="n">state</span><span class="p">:</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">state</span><span class="o">=</span><span class="n">state</span><span class="p">),</span> <span class="n">node</span><span class="o">=</span><span class="n">node</span><span class="p">,</span>
+                 <span class="n">state_factory</span><span class="o">=</span><span class="n">MockState</span><span class="p">,</span> <span class="n">invariants</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">])</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+    <span class="n">SimulationConfig</span><span class="p">(</span><span class="n">seeds</span><span class="o">=</span><span class="nb">range</span><span class="p">(</span><span class="mi">32</span><span class="p">),</span> <span class="n">cluster</span><span class="o">=</span><span class="n">ClusterConfig</span><span class="p">(</span>
+        <span class="n">nodes</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+        <span class="n">partitions</span><span class="o">=</span><span class="n">PartitionSchedule</span><span class="p">(</span>
+            <span class="n">windows</span><span class="o">=</span><span class="p">(</span><span class="n">Partition</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">isolated</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="mi">1</span><span class="p">})),),</span>
+            <span class="n">surfaces</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;queue_command&quot;</span><span class="p">}),</span>
+        <span class="p">),</span>
+    <span class="p">)),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>On a violation the cluster minimises by <strong>dropping nodes</strong> — the smallest cluster that still breaks, usually two.</p>
+<h2 id="the-loop-find-reproduce-minimise-regress">The loop — find, reproduce, minimise, regress<a class="headerlink" href="#the-loop-find-reproduce-minimise-regress" title="Permanent link">&para;</a></h2>
+<p><a class="glightbox" data-gallery="light" data-title="A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever" data-type="image" href="../../_diagrams/light/dst-loop.svg#only-light"><img alt="A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever" src="../../_diagrams/light/dst-loop.svg#only-light" /></a>
+<a class="glightbox" data-gallery="dark" data-title="A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever" data-type="image" href="../../_diagrams/dark/dst-loop.svg#only-dark"><img alt="A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever" src="../../_diagrams/dark/dst-loop.svg#only-dark" /></a></p>
+<p>A <code>ViolationReport.format()</code> renders the whole counterexample: the minimised workload, the concurrency that triggered it, the causal trace (each operation and the port calls it caused), an <strong>injected-environment timeline</strong> (the faults, latency, and partitions the simulator applied, in virtual-time order), and the violated invariant. Everything needed to understand <em>and</em> reproduce the failure.</p>
+<p>The command line wires the loop end to end against an import string pointing at your <code>Simulation</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># explore — prints the counterexample, exits 1 if one is found (CI-friendly)</span>
+forze<span class="w"> </span>dst<span class="w"> </span>run<span class="w"> </span>examples.recipes.dst_payments.app:simulation<span class="w"> </span>--seeds<span class="w"> </span><span class="m">0</span>-200
+
+<span class="c1"># inject a broad environment and lock a found seed into a regression corpus</span>
+forze<span class="w"> </span>dst<span class="w"> </span>run<span class="w"> </span>app:simulation<span class="w"> </span>--fault-error<span class="w"> </span><span class="m">0</span>.2<span class="w"> </span>--latency<span class="w"> </span><span class="m">0</span>.05<span class="w"> </span>--save-regression
+
+<span class="c1"># re-run every saved seed — the regression guard (exits 1 if any still violates)</span>
+forze<span class="w"> </span>dst<span class="w"> </span>replay
+
+<span class="c1"># explore until behaviour saturates, then report what was covered</span>
+forze<span class="w"> </span>dst<span class="w"> </span>coverage<span class="w"> </span>app:simulation
+
+<span class="c1"># inspect the auto-derived workload and the reactive cascade topology</span>
+forze<span class="w"> </span>dst<span class="w"> </span>derive<span class="w">    </span>app:simulation
+forze<span class="w"> </span>dst<span class="w"> </span>topology<span class="w">  </span>app:simulation
+</code></pre></div>
+<p><code>--save-regression</code> appends the found seed (with the registry fingerprint and the exploration knobs) to a JSON-Lines corpus; <code>replay</code> reproduces each saved seed under the configuration it was found with, so a fixed bug stays fixed.</p>
+<div class="admonition warning">
+<p class="admonition-title">DST is only as honest as the mock</p>
+<p>DST trusts that the in-memory transaction manager rolls back faithfully. The default
+(<code>MockDepsModule(transactions="journal")</code>) is atomic without serialising, so a found
+race is real. The legacy no-op manager would report <em>false</em> double-charges — see
+<a href="../transactions/">Transactions</a>.</p>
+</div>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../testing/">Testing</a> — unit and integration testing with mocks</li>
+<li><a href="../concurrency-conflicts/">Concurrency &amp; conflicts</a> — the optimistic-concurrency model DST exercises</li>
+<li><a href="../transactions/">Transactions</a> — why faithful rollback keeps DST findings trustworthy</li>
+</ul>
 
 
 
@@ -4442,7 +4560,7 @@ default install). Each adds one focused capability — no deep inheritance chain
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../architecture/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Architecture">
+          <a href="../testing/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Testing">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4452,20 +4570,20 @@ default install). Each adds one focused capability — no deep inheritance chain
                 Previous
               </span>
               <div class="md-ellipsis">
-                Architecture
+                Testing
               </div>
             </div>
           </a>
         
         
           
-          <a href="../application-layer/" class="md-footer__link md-footer__link--next" aria-label="Next: Application">
+          <a href="../../integrations/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Application
+                Overview
               </div>
             </div>
             <div class="md-footer__button md-icon">
