@@ -203,6 +203,54 @@ def run(
 
 
 @dst_app.command()
+def coverage(
+    target: str = typer.Argument(
+        ..., help="Import string 'module:attr' of a Simulation."
+    ),
+    seeds: str = typer.Option("0-200", help="Seed pool: 'N' | 'A-B' | 'a,b,c'."),
+    act_count: int = typer.Option(8, help="Act operations per run."),
+    concurrency: int = typer.Option(4, help="Max concurrent operations."),
+    plateau: int = typer.Option(
+        8, help="Stop after this many consecutive seeds add no new behavior (0 = full sweep)."
+    ),
+    fault_error: float = typer.Option(0.0, help="Transient-error probability per port."),
+    latency: float = typer.Option(0.0, help="Constant per-port latency (virtual seconds)."),
+) -> None:
+    """Coverage-guided sweep: explore until behavior saturates; print a coverage report.
+
+    Runs seeds while new behavior keeps appearing and stops once it plateaus, so the pool
+    right-sizes itself. Prints how much behavior was covered and which seeds mattered; exits 1
+    if the sweep hit an invariant violation (printing the minimized counterexample too).
+    """
+
+    sim = load_simulation(target)
+    seed_list = _parse_seeds(seeds)
+
+    stats = sim.coverage(
+        SimulationConfig(
+            strategy=Strategy.SCENARIO,
+            seeds=seed_list,
+            act_count=act_count,
+            concurrency=concurrency,
+            coverage_plateau=plateau,
+            faults=_faults(fault_error),
+            latency=_latency(latency),
+        ),
+        scenario=sim.derive_scenario(),
+    )
+
+    typer.echo(stats.format())
+
+    if stats.violation is not None:
+        typer.echo("")
+        typer.echo(stats.violation.format())
+        raise typer.Exit(code=1)
+
+
+# ....................... #
+
+
+@dst_app.command()
 def replay(
     target: str = typer.Option(
         "", help="Override the app for every seed; default replays each entry's saved target."

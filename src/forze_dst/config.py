@@ -160,6 +160,12 @@ class SimulationConfig:
     pct_steps: int = 50
     """PCT: scheduling steps over which change points are placed."""
 
+    # Coverage-guided exploration (``Simulation.coverage``).
+    coverage_plateau: int = 8
+    """Stop a coverage-guided sweep after this many consecutive seeds add no new behavioral
+    coverage (the exploration has saturated). ``0`` disables early-stop (sweep every seed).
+    Lets a sweep right-size itself instead of guessing a fixed seed count."""
+
     # Nondeterminism streams (compiled per-run from sub-seeds derived from the master seed).
     faults: FaultPolicy | None = None
     """Declarative, seeded fault injection over the port seam (error / timeout / crash).

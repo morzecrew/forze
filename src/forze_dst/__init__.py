@@ -79,6 +79,7 @@ from .config import (
     Strategy,
 )
 from .cluster import Cluster
+from .coverage import CoverageStats, behavioral_coverage
 from .scenario import ModelState, Rule, Scenario
 from .scheduler import (
     PCTScheduler,
@@ -166,6 +167,8 @@ __all__ = [
     "ClusterConfig",
     "Partition",
     "PartitionSchedule",
+    "CoverageStats",
+    "behavioral_coverage",
     "derive_scenario",
     "DEFAULT_CREATE_VERBS",
     "ReactiveMap",

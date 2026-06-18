@@ -49,6 +49,7 @@ from forze_dst.recorder import (
 )
 from forze_dst.runtime import run_simulation
 from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
+from forze_dst.coverage import Behavior, CoverageStats, behavioral_coverage
 from forze_dst.faults import SimulatedCrash, compile_crash, compile_fault_policy
 from forze_dst.latency import compile_latency
 from forze_dst.scenario import Scenario
@@ -355,6 +356,90 @@ class Simulation:
                 seed=config.dpor_seed,
                 max_runs=config.max_runs,
                 epoch=config.epoch,
+            )
+
+        finally:
+            self._active_config = None
+
+    # ....................... #
+
+    def coverage(
+        self,
+        config: SimulationConfig,
+        *,
+        scenario: Scenario | None = None,
+    ) -> CoverageStats:
+        """Coverage-guided sweep: explore seeds while behavior grows, stop once it saturates.
+
+        Each seed runs the (auto-derived or given) scenario once; its behavioral coverage —
+        operation outcomes, port edges, injected faults — accumulates. The sweep stops early
+        after ``config.coverage_plateau`` consecutive seeds add nothing new (the exploration has
+        saturated), so a ``seeds=range(500)`` pool right-sizes itself instead of running all 500.
+        If a seed violates an invariant the sweep stops there and the minimized report rides along
+        on :attr:`CoverageStats.violation`. Faults / latency apply exactly as in :meth:`run`.
+
+        Returns a :class:`CoverageStats` — how much behavior was exercised, which seeds added it,
+        and whether it saturated. The streams are still seeded, so the whole sweep reproduces.
+        """
+
+        self._active_config = config
+        try:
+            sc = scenario if scenario is not None else self.derive_scenario()
+
+            behaviors: set[Behavior] = set()
+            new_by_seed: list[tuple[int, int]] = []
+            seeds_run = 0
+            plateau = 0
+            plateaued = False
+            violation: ViolationReport | None = None
+
+            for seed in config.seeds:
+                schedule_seed = (
+                    derive_seed(seed, "schedule") if config.perturb else None
+                )
+                history, _ = self._run_scenario(
+                    sc,
+                    act_workload=None,
+                    act_count=config.act_count,
+                    concurrency=config.concurrency,
+                    seed=seed,
+                    schedule_seed=schedule_seed,
+                    epoch=config.epoch,
+                )
+                seeds_run += 1
+
+                covered = behavioral_coverage(history)
+                fresh = covered - behaviors
+                new_by_seed.append((seed, len(fresh)))
+                behaviors |= covered
+
+                if check(history, self.invariants):
+                    # A bug beats coverage: stop and hand back the minimized counterexample.
+                    violation = self._attempt_scenario(
+                        sc,
+                        act_count=config.act_count,
+                        concurrency=config.concurrency,
+                        seed=seed,
+                        perturb=config.perturb,
+                        epoch=config.epoch,
+                    )
+                    if violation is not None:
+                        break
+
+                if fresh:
+                    plateau = 0
+                else:
+                    plateau += 1
+                    if config.coverage_plateau and plateau >= config.coverage_plateau:
+                        plateaued = True
+                        break
+
+            return CoverageStats(
+                behaviors=frozenset(behaviors),
+                seeds_run=seeds_run,
+                new_by_seed=tuple(new_by_seed),
+                plateaued=plateaued,
+                violation=violation,
             )
 
         finally:

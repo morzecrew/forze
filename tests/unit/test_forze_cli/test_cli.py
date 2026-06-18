@@ -284,6 +284,28 @@ class TestRegressionLoop:
         assert "no regression seeds" in result.stdout
 
 
+class TestCoverage:
+    def test_clean_app_reports_coverage_and_exits_zero(self) -> None:
+        result = runner.invoke(
+            app,
+            ["dst", "coverage", _ref("CLEAN"), "--seeds", "8", "--plateau", "2",
+             "--act-count", "3", "--concurrency", "2"],
+        )
+        assert result.exit_code == 0
+        assert "coverage report" in result.stdout
+        assert "behaviors covered" in result.stdout
+
+    def test_violation_exits_one_with_counterexample(self) -> None:
+        result = runner.invoke(
+            app,
+            ["dst", "coverage", _ref("RACY"), "--seeds", "10",
+             "--act-count", "3", "--concurrency", "3"],
+        )
+        assert result.exit_code == 1
+        assert "coverage report" in result.stdout
+        assert "DST counterexample" in result.stdout
+
+
 class TestInspect:
     def test_topology(self) -> None:
         result = runner.invoke(app, ["dst", "topology", _ref("RACY")])
