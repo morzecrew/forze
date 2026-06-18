@@ -19,6 +19,11 @@ _COALESCE_PREFIX_RE = re.compile(r"^coalesce\s*\(", re.IGNORECASE)
 # The only COALESCE default Forze reproduces on the query side: the empty
 # string ``''`` (optionally cast), matching its ``coalesce(col::text, '')`` rebuild.
 _EMPTY_DEFAULT_RE = re.compile(r"^''(\s*::\s*\w+(\s*\[\s*\])?)?$")
+# What may legitimately follow a top-level ``::`` for it to be a whole-expression
+# cast: a (possibly schema-qualified / multi-word / parameterized / array) type
+# name and nothing else. An operator after it (e.g. ``text || code``) means the
+# cast applied to a sub-expression, so the ``::`` must not be peeled.
+_CAST_TYPE_TAIL_RE = re.compile(r"^\s*[A-Za-z_][\w .]*(\s*\([^()]*\))?(\s*\[\s*\])*\s*$")
 
 # Bounds the wrapper-peeling loop; each iteration strictly shrinks the string,
 # so this is only a safety backstop against a pathological expression.
@@ -267,7 +272,7 @@ def _extract_pgroonga_column(element: str) -> str | None:
             continue
 
         cut = _top_level_double_colon(masked)
-        if cut is not None:
+        if cut is not None and _CAST_TYPE_TAIL_RE.match(masked[cut + 2 :]):
             s = s[:cut].rstrip()
             continue
 

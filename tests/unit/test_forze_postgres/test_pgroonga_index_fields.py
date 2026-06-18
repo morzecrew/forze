@@ -188,6 +188,40 @@ def test_parse_non_top_level_array_fails_closed(expr: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "expr",
+    [
+        # A ``::`` cast that applies to a sub-expression (operator/extra text
+        # after the type) must not be peeled to the first operand, else Forze
+        # would search a column instead of the indexed concatenation.
+        "(name::text || code)",
+        "(ARRAY[name::text || code, body])",
+        "((a || b)::text)",
+        "(name::text::varchar)",
+    ],
+)
+def test_parse_cast_on_subexpression_fails_closed(expr: str) -> None:
+    with pytest.raises(CoreException, match="Cannot resolve PGroonga index columns"):
+        parse_pgroonga_index_heap_columns(expr, (), index_qname=_IDX)
+
+
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        # A cast that wraps the whole (preceding) expression is still peeled.
+        ("(name::text)", ("name",)),
+        ("(COALESCE(name, '')::text)", ("name",)),
+        ("(id::int[])", ("id",)),
+        ("(ts::timestamp with time zone)", ("ts",)),
+        ("(ARRAY[name::text, code::varchar(255)])", ("name", "code")),
+    ],
+)
+def test_parse_whole_expression_cast_resolves(
+    expr: str, expected: tuple[str, ...]
+) -> None:
+    assert parse_pgroonga_index_heap_columns(expr, (), index_qname=_IDX) == expected
+
+
+@pytest.mark.parametrize(
     ("expr", "expected"),
     [
         ("(ARRAY[a, b])", True),
