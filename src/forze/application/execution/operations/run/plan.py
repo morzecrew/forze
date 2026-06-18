@@ -4,7 +4,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, Awaitable, Callable, Protocol, cast
 
 from forze.application.contracts.execution import Failure, Handler, Success
-from forze.application.contracts.transaction import AfterCommitPort
+from forze.application.contracts.transaction import AfterCommitPort, IsolationLevel
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
@@ -32,7 +32,11 @@ class TransactionRunner(Protocol):
     """
 
     def __call__(
-        self, route: StrKey, *, read_only: bool | None = None
+        self,
+        route: StrKey,
+        *,
+        read_only: bool | None = None,
+        isolation: IsolationLevel | None = None,
     ) -> AbstractAsyncContextManager[None]: ...
 
 
@@ -121,6 +125,7 @@ async def run_resolved_tx_scope[Args, R](
     tx_runner: TransactionRunner,
     defer_after_commit: AfterCommitPort,
     read_only: bool | None = None,
+    isolation: IsolationLevel | None = None,
 ) -> R:
     """Run the transaction scope around the handler."""
 
@@ -129,7 +134,7 @@ async def run_resolved_tx_scope[Args, R](
     if route is None:
         raise exc.internal("Transaction route is required to run a transaction scope")
 
-    async with tx_runner(route, read_only=read_only):
+    async with tx_runner(route, read_only=read_only, isolation=isolation):
         if tx.body_empty:
             # No transaction-scope body hooks: run the handler directly inside the
             # transaction (after-commit stages are still handled below).
@@ -191,6 +196,7 @@ async def run_resolved_operation_plan[Args, R](
             # QUERY explicitly requests a read-only transaction; other kinds leave
             # the option unspecified so a nested scope inherits the root's value.
             read_only=True if plan.kind is OperationKind.QUERY else None,
+            isolation=plan.tx.isolation,
         )
 
     return await run_resolved_scope(plan.outer, transactional_core, args)

@@ -1,5 +1,6 @@
 """Transaction manager and scoped port contracts."""
 
+from enum import IntEnum
 from typing import (
     AsyncContextManager,
     Awaitable,
@@ -12,6 +13,53 @@ from typing import (
 import attrs
 
 # ----------------------- #
+
+
+@final
+class IsolationLevel(IntEnum):
+    """Transaction isolation level, ordered weakest → strongest.
+
+    Intent-named (the *guarantee*, not a SQL keyword): an adapter maps each to its backend's
+    spelling in :meth:`IsolationAware.capabilities` (e.g. ``SNAPSHOT`` → Postgres ``REPEATABLE
+    READ``). Ordered so ``required <= supplied`` and "at least as strong as" comparisons are
+    direct.
+
+    - ``READ_COMMITTED`` — each statement sees the latest committed data.
+    - ``SNAPSHOT`` — the whole transaction reads a single consistent snapshot (no
+      non-repeatable reads / phantoms), but write-skew is permitted.
+    - ``SERIALIZABLE`` — the outcome is equivalent to some serial order (write-skew rejected).
+    """
+
+    READ_COMMITTED = 1
+    SNAPSHOT = 2
+    SERIALIZABLE = 3
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class TxCapabilities:
+    """What a transaction manager supports — its reported, fail-closed contract.
+
+    A required isolation not in :attr:`isolation` is rejected at first resolve (see
+    :meth:`~forze.application.execution.context.transaction.TransactionContext.scope`); a
+    manager that does not report capabilities at all (not :class:`IsolationAware`) cannot
+    satisfy *any* explicit isolation requirement.
+    """
+
+    isolation: frozenset[IsolationLevel]
+    """Isolation levels this manager can honor."""
+
+    savepoints: bool = False
+    """Whether nested scopes are real savepoints (partial rollback)."""
+
+    read_only: bool = False
+    """Whether a read-only root is enforced (writes rejected)."""
+
+
+# ....................... #
 
 
 @final
@@ -35,6 +83,10 @@ class TransactionHandle:
 
     read_only: bool = attrs.field(default=False, kw_only=True)
     """Whether the root transaction was opened read-only (nested scopes inherit it)."""
+
+    isolation: "IsolationLevel | None" = attrs.field(default=None, kw_only=True)
+    """Isolation level of the root transaction, if one was requested (nested scopes inherit
+    it). ``None`` leaves the manager's default."""
 
 
 # ....................... #
@@ -78,5 +130,39 @@ class TransactionManagerPort(Protocol):
         Transaction options (isolation, ``read_only``) are honored only at the root —
         the kernel never forwards ``read_only`` to nested calls, and implementations
         must not attempt mid-transaction option changes.
+
+        Isolation is opt-in: a manager that can honor an explicit
+        :class:`IsolationLevel` implements :class:`IsolationAware` (reporting its
+        :class:`TxCapabilities` and accepting an ``isolation`` argument). Managers that do
+        not implement it run at their default isolation, and any operation declaring an
+        explicit isolation against such a manager is rejected at first resolve (fail-closed).
         """
+        ...
+
+
+# ....................... #
+
+
+@runtime_checkable
+class IsolationAware(Protocol):
+    """Opt-in extension for transaction managers that can honor an explicit isolation level.
+
+    Kept separate from :class:`TransactionManagerPort` so adding isolation does not force
+    every existing manager to change: a manager implements this only when it can report and
+    honor isolation. The kernel checks an operation's required isolation against
+    :meth:`capabilities` at first resolve and passes ``isolation`` to :meth:`transaction`
+    only for managers that implement this protocol.
+    """
+
+    def capabilities(self) -> TxCapabilities:
+        """Report the isolation levels and features this manager supports."""
+        ...
+
+    def transaction(
+        self,
+        *,
+        read_only: bool = False,
+        isolation: "IsolationLevel | None" = None,
+    ) -> AsyncContextManager[None]:
+        """Open a transaction at *isolation* (honored at root only; nested inherits)."""
         ...

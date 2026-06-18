@@ -12,6 +12,7 @@ from forze.application.contracts.execution.value_objects import (
     ExecutionGraph,
     ExecutionPipeline,
 )
+from forze.application.contracts.transaction import IsolationLevel
 from forze.base.exceptions import exc
 from forze.base.primitives import AbstractSequence, StrKey
 
@@ -142,6 +143,9 @@ class TransactionScope(Scope):
     route: StrKey | None = None
     """Transaction route for this scope."""
 
+    isolation: IsolationLevel | None = None
+    """Required isolation level for this scope, or ``None`` for the manager's default."""
+
     after_commit: AbstractSequence["OnSuccessStep"] = attrs.field(
         factory=AbstractSequence
     )
@@ -193,8 +197,21 @@ class TransactionScope(Scope):
         else:
             route = None
 
+        isolations = {
+            scope.isolation for scope in scopes if scope.isolation is not None
+        }
+
+        if len(isolations) > 1:
+            raise exc.internal(
+                "Conflicting transaction isolation levels for one operation: "
+                + ", ".join(sorted(level.name for level in isolations))
+            )
+
+        isolation = isolations.pop() if isolations else None
+
         return cls(
             route=route,
+            isolation=isolation,
             after_commit=merged_after_commit,
             dispatch_after_commit=merged_dispatch_after_commit,
             # from outer scope
@@ -219,6 +236,7 @@ class TransactionScope(Scope):
 
         return FrozenTransactionScope(
             route=self.route,
+            isolation=self.isolation,
             after_commit=frozen_after_commit,
             dispatch_after_commit=frozen_dispatch_after_commit,
             # from outer scope
@@ -319,6 +337,9 @@ class FrozenTransactionScope(FrozenScope):
     route: StrKey | None = None
     """Transaction route for this scope."""
 
+    isolation: IsolationLevel | None = None
+    """Required isolation level for this scope, or ``None`` for the manager's default."""
+
     after_commit: ExecutionGraph["OnSuccessStep"] = attrs.field(factory=ExecutionGraph)
     """After commit steps for this scope."""
 
@@ -353,6 +374,7 @@ class FrozenTransactionScope(FrozenScope):
 
         return ResolvedTransactionScope(
             route=self.route,
+            isolation=self.isolation,
             after_commit=resolved_after_commit,
             dispatch_after_commit=resolved_dispatch_after_commit,
             # from outer scope
@@ -458,6 +480,9 @@ class ResolvedTransactionScope(ResolvedScope):
 
     route: StrKey | None = None
     """Transaction route for this scope."""
+
+    isolation: IsolationLevel | None = None
+    """Required isolation level for this scope, or ``None`` for the manager's default."""
 
     after_commit: ExecutionGraph["OnSuccess[Any, Any]"] = attrs.field(
         factory=ExecutionGraph

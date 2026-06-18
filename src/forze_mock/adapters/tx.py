@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING, AsyncGenerator, final
 import attrs
 
 from forze.application.contracts.transaction import (
+    IsolationLevel,
     TransactionManagerPort,
     TransactionScopeKey,
+    TxCapabilities,
 )
 from forze.base.exceptions import exc
 from forze_mock.adapters._journal import (
@@ -112,10 +114,22 @@ class MockTxManagerAdapter(TransactionManagerPort):
 
     # ....................... #
 
+    def capabilities(self) -> TxCapabilities:
+        # A no-op manager gives no isolation or atomicity guarantee; it can only honor the
+        # weakest declared level (and an explicit stronger requirement fails closed).
+        return TxCapabilities(
+            isolation=frozenset({IsolationLevel.READ_COMMITTED}),
+            savepoints=False,
+            read_only=False,
+        )
+
+    # ....................... #
+
     def transaction(
         self,
         *,
         read_only: bool = False,
+        isolation: IsolationLevel | None = None,
     ) -> AbstractAsyncContextManager[None]:
         if self.state is not None:
             self.state.tx_read_only_calls.append(read_only)
@@ -169,10 +183,23 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
 
     # ....................... #
 
+    def capabilities(self) -> TxCapabilities:
+        # Root transactions are globally serialized (per-state lock) and rolled back via a
+        # whole-store snapshot, so this manager trivially satisfies every level up to
+        # serializable; nested scopes are real savepoints.
+        return TxCapabilities(
+            isolation=frozenset(IsolationLevel),
+            savepoints=True,
+            read_only=True,
+        )
+
+    # ....................... #
+
     def transaction(
         self,
         *,
         read_only: bool = False,
+        isolation: IsolationLevel | None = None,
     ) -> AbstractAsyncContextManager[None]:
         self.state.tx_read_only_calls.append(read_only)
         return self._transaction(read_only=read_only)
@@ -246,10 +273,24 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
 
     # ....................... #
 
+    def capabilities(self) -> TxCapabilities:
+        # Write-through with a per-transaction undo journal + row-``rev`` OCC: read-committed
+        # today. Snapshot / serializable (an MVCC read overlay) are a separate, planned step
+        # — until then an operation requiring them fails closed rather than silently running
+        # weaker.
+        return TxCapabilities(
+            isolation=frozenset({IsolationLevel.READ_COMMITTED}),
+            savepoints=False,
+            read_only=True,
+        )
+
+    # ....................... #
+
     def transaction(
         self,
         *,
         read_only: bool = False,
+        isolation: IsolationLevel | None = None,
     ) -> AbstractAsyncContextManager[None]:
         self.state.tx_read_only_calls.append(read_only)
         return self._transaction(read_only=read_only)

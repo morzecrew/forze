@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, Self, overlo
 
 import attrs
 
+from forze.application.contracts.transaction import IsolationLevel
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
@@ -249,5 +250,19 @@ class TransactionScopeBinder[P: _Parent, R](ScopeBinder[P, R]):
         """Reset the transaction route."""
 
         new_acc = attrs.evolve(self._acc, route=None)
+
+        return self._patch_acc(new_acc)
+
+    # ....................... #
+
+    def set_isolation(self, isolation: IsolationLevel) -> Self:
+        """Require an explicit isolation level for this transaction.
+
+        Checked fail-closed at first resolve: the route's manager must be
+        :class:`~forze.application.contracts.transaction.IsolationAware` and report the level,
+        else operation execution raises ``exc.configuration``.
+        """
+
+        new_acc = attrs.evolve(self._acc, isolation=isolation)
 
         return self._patch_acc(new_acc)
