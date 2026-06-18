@@ -117,10 +117,7 @@ class InMemoryCircuitBreakerStore(CircuitBreakerStore):
     ) -> Transition:
         state = self._state_for(key, strat)
 
-        if ok:
-            return state.on_success(self.clock())
-
-        return state.on_failure(self.clock())
+        return state.on_success(self.clock()) if ok else state.on_failure(self.clock())
 
 
 # ....................... #
@@ -156,6 +153,8 @@ class InMemoryRateLimitStore(RateLimitStore):
     """Process-local token buckets keyed by ``(policy, route)`` (the default store)."""
 
     clock: Callable[[], float] = attrs.field(default=monotonic)
+
+    # ....................... #
 
     _states: dict[RateLimitKey, RateLimitState] = attrs.field(factory=dict, init=False)
 
@@ -236,7 +235,8 @@ class InMemoryLatencyDigestStore(LatencyDigestStore):
     """
 
     _estimators: dict[LatencyDigestKey, WindowedP2Quantile] = attrs.field(
-        factory=dict, init=False
+        factory=dict,
+        init=False,
     )
 
     # ....................... #

@@ -146,7 +146,9 @@ class InProcessResilienceExecutor:
     """Adaptive hedge-delay state (windowed P² quantile per policy/route)."""
 
     _metrics_sink: MetricsSink | None = attrs.field(
-        default=None, init=False, repr=False
+        default=None,
+        init=False,
+        repr=False,
     )
     """Optional always-on metrics callback (see :data:`MetricsSink`)."""
 
@@ -288,11 +290,13 @@ class InProcessResilienceExecutor:
             budget.on_call()
 
         delay_state = self._hedge_delay_for(hedge, pol, route)
+
         delay = (
             delay_state.delay()
             if delay_state is not None
             else (hedge.delay.total_seconds())
         )
+
         tasks: set[asyncio.Future[T]] = set()
         errors: list[BaseException] = []
         attempts = 0
@@ -314,6 +318,7 @@ class InProcessResilienceExecutor:
         # hedged call doesn't double-weight one logical request. Sampling
         # winners-of-races instead would bias the quantile down, making the
         # delay ever more eager (the classic hedging feedback spiral).
+
         primary_start = self.clock()
         primary = spawn()
         hedge_won = False
@@ -366,6 +371,7 @@ class InProcessResilienceExecutor:
                 # slowest calls from the distribution. Guarded by `hedge_won`:
                 # a *caller* cancellation can land at any elapsed time, and
                 # recording it would feed arbitrary garbage into the quantile.
+
                 delay_state.observe(self.clock() - primary_start)
 
             for task in tasks:
@@ -390,6 +396,7 @@ class InProcessResilienceExecutor:
         # throttled calls are rejected before consuming a bulkhead slot or
         # registering a breaker outcome. Mirrors ResiliencePolicy's canonical
         # order.
+
         call: Callable[[], Awaitable[T]] = fn
         timeout = pol.timeout
 
@@ -476,6 +483,7 @@ class InProcessResilienceExecutor:
         # queueing, and rate-limit rejection all share the remaining budget.
         # Raises non-retryable TIMEOUT — distinct from the per-attempt
         # TimeoutStrategy, which raises retryable INFRASTRUCTURE.
+
         remaining = remaining_time()
 
         if remaining is not None:
@@ -521,6 +529,7 @@ class InProcessResilienceExecutor:
 
         except TimeoutError as error:
             self._emit("timeout", pol, route)
+
             raise exc.infrastructure(
                 f"Resilience timeout after {strat.timeout.total_seconds()}s "
                 f"for policy {pol.name!r}",
@@ -567,6 +576,7 @@ class InProcessResilienceExecutor:
                 # Deadline-aware retry: when the backoff sleep would outlive
                 # the invocation deadline, surface the real error now instead
                 # of sleeping into a guaranteed deadline timeout.
+
                 deadline_left = remaining_time()
 
                 if deadline_left is not None and delay >= deadline_left:
@@ -575,6 +585,7 @@ class InProcessResilienceExecutor:
 
                 prev_delay = delay
                 self._emit("retry_attempt", pol, route)
+
                 await self.sleep(delay)
 
     # ....................... #
@@ -602,19 +613,28 @@ class InProcessResilienceExecutor:
         except CoreException as error:
             ok = not exception_egress_policy(error.kind).retryable
             self._breaker_outcome(
-                await self.breaker_store.record(key, strat, ok), pol, route
+                await self.breaker_store.record(key, strat, ok),
+                pol,
+                route,
             )
+
             raise
 
         except Exception:
             self._breaker_outcome(
-                await self.breaker_store.record(key, strat, False), pol, route
+                await self.breaker_store.record(key, strat, False),
+                pol,
+                route,
             )
+
             raise
 
         self._breaker_outcome(
-            await self.breaker_store.record(key, strat, True), pol, route
+            await self.breaker_store.record(key, strat, True),
+            pol,
+            route,
         )
+
         return result
 
     # ....................... #
@@ -636,6 +656,7 @@ class InProcessResilienceExecutor:
         if probability > 0.0 and self.rng.random() < probability:
             state.record_request(now)
             self._emit("throttle_reject", pol, route)
+
             raise exc.throttled(
                 f"Adaptive throttle shedding for policy {pol.name!r}",
                 code="adaptive_throttle",
@@ -838,7 +859,9 @@ class InProcessResilienceExecutor:
         # A zero-duration completion (clock resolution / no advance) carries no
         # latency signal — don't feed the gradient controller a non-positive rtt.
         if elapsed > 0.0 and state.on_complete(
-            elapsed, self.clock(), inflight=inflight
+            elapsed,
+            self.clock(),
+            inflight=inflight,
         ):
             self._emit("bulkhead_backoff", pol, route)
 

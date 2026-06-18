@@ -39,17 +39,37 @@ class BreakerState:
     """Rolling-window circuit breaker state keyed by ``(policy, route)``."""
 
     failure_ratio: float
+    """The ratio of failures to total calls required to trip the breaker."""
+
     window: float
+    """The window size in seconds."""
+
     min_throughput: int
+    """The minimum throughput required to trip the breaker."""
+
     break_duration: float
+    """The duration in seconds that the breaker will remain open after tripping."""
+
     half_open_max_calls: int
+    """The maximum number of calls that can be made during the half-open phase."""
 
     phase: BreakerPhase = "closed"
+    """The current phase of the breaker."""
+
     window_start: float = 0.0
+    """The timestamp of the start of the current window."""
+
     successes: int = 0
+    """The number of successful calls in the current window."""
+
     failures: int = 0
+    """The number of failed calls in the current window."""
+
     opened_at: float = 0.0
+    """The timestamp of the start of the half-open phase."""
+
     half_open_calls: int = 0
+    """The number of calls made during the half-open phase."""
 
     # ....................... #
 
@@ -176,9 +196,16 @@ class BudgetState:
     """Token-bucket retry budget keyed by ``(policy, route)``."""
 
     ratio: float
+    """The ratio of calls to successful completions required to spend a token."""
+
     min_throughput: int
+    """The number of calls allowed to retry freely before the cap engages (warmup)."""
+
     calls: int = 0
+    """The number of calls made."""
+
     tokens: float = 0.0
+    """The number of tokens available."""
 
     # ....................... #
 
@@ -228,12 +255,25 @@ class AdaptiveBulkheadState:
     """
 
     latency_threshold: float
+    """The latency threshold in seconds."""
+
     min_concurrency: int
+    """The minimum concurrency limit."""
+
     max_concurrency: int
+    """The maximum concurrency limit."""
+
     max_queue: int
+    """The maximum number of calls allowed to wait for a slot before rejection."""
+
     backoff_ratio: float
+    """The multiplicative decrease applied on a latency breach."""
+
     increase_step: float
+    """The additive recovery applied on a latency breach."""
+
     cooldown: float
+    """The minimum spacing between decreases — coalesces a burst of slow completions into one backoff instead of collapsing the limit to the floor."""
 
     clock: Callable[[], float] = monotonic
     """Time source for queue sojourn/congestion tracking (injectable for tests).
@@ -267,9 +307,12 @@ class AdaptiveBulkheadState:
     """Delay-based (Gradient2) controller. When set, :meth:`on_complete` delegates
     the limit to it (the AIMD fields are unused); ``None`` keeps the AIMD law."""
 
+    # ....................... #
+
     limit: float = attrs.field(
         default=attrs.Factory(
-            lambda self: float(self.max_concurrency), takes_self=True
+            lambda self: float(self.max_concurrency),
+            takes_self=True,
         ),
         init=False,
     )
@@ -318,9 +361,7 @@ class AdaptiveBulkheadState:
         incoming = current_criticality()
 
         return any(
-            crit < incoming
-            for waiter, _, _, crit in self._waiters
-            if not waiter.done()
+            crit < incoming for waiter, _, _, crit in self._waiters if not waiter.done()
         )
 
     # ....................... #
@@ -400,6 +441,7 @@ class AdaptiveBulkheadState:
             key=lambda entry: entry[3],
         )
         self._waiters.remove(victim)
+
         victim[0].set_exception(
             exc.infrastructure(
                 "Bulkhead queue shed: displaced by a higher-criticality request",
@@ -555,9 +597,18 @@ class HedgeDelayState:
     """
 
     quantile: float
+    """The quantile of observed primary-attempt latencies."""
+
     fixed_delay: float
+    """The fixed delay in seconds."""
+
     floor: float | None = None
+    """The floor for the adaptive delay."""
+
     cap: float | None = None
+    """The cap for the adaptive delay."""
+
+    # ....................... #
 
     _estimator: WindowedP2Quantile = attrs.field(
         default=attrs.Factory(
@@ -608,12 +659,22 @@ class AdaptiveThrottleState:
     """
 
     k: float
+    """The ratio of calls to successful completions required to spend a token."""
+
     window: float
+    """The window size in seconds."""
+
     min_throughput: int
+    """The number of calls allowed to retry freely before the cap engages (warmup)."""
 
     window_start: float = 0.0
+    """The timestamp of the start of the current window."""
+
     requests: int = 0
+    """The number of calls made."""
+
     accepts: int = 0
+    """The number of successful completions."""
 
     # ....................... #
 

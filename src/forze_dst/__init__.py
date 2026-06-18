@@ -9,7 +9,12 @@ time reads track it.
 from __future__ import annotations
 
 from .derive import DEFAULT_CREATE_VERBS, derive_scenario
-from .faults import FaultyQueueCommand, TransportFault, TransportFaultPolicy
+from .faults import (
+    FaultyQueueCommand,
+    PortFaultInterceptor,
+    TransportFault,
+    TransportFaultPolicy,
+)
 from .harness import OperationCase, Simulation
 from .invariants import (
     Invariant,
@@ -44,7 +49,7 @@ from .recorder import (
     current_recorder,
     record_event,
 )
-from forze.application.execution.tracing.cooperative import LatencyModel
+from forze.application.execution.interception import LatencyModel
 
 from .runtime import run_simulation
 from .scenario import ModelState, Rule, Scenario
@@ -78,6 +83,7 @@ __all__ = [
     "simulate_workload",
     "TransportFaultPolicy",
     "FaultyQueueCommand",
+    "PortFaultInterceptor",
     "TransportFault",
     "Event",
     "History",

@@ -22,9 +22,9 @@ from typing import Any, Awaitable, Callable, Sequence, cast, final
 import attrs
 
 from forze.application.execution import DepsModule, DepsRegistry, ExecutionContext
+from forze.application.execution.interception import LatencyModel, PortInterceptor
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import FrozenOperationRegistry
-from forze.application.execution.tracing.cooperative import LatencyModel
 from forze.base.exceptions import CoreException
 from forze.base.primitives import monotonic
 from forze_dst.derive import DEFAULT_CREATE_VERBS
@@ -41,6 +41,7 @@ from forze_dst.time_source import DEFAULT_EPOCH
 # ----------------------- #
 
 DepsFactory = Callable[[], "DepsModule | Sequence[DepsModule]"]
+InterceptorFactory = Callable[[int], "Sequence[PortInterceptor]"]
 Hook = Callable[[ExecutionContext], Awaitable[None]]
 
 
@@ -144,6 +145,13 @@ class Simulation:
     port boundary to advance the virtual clock (a real downstream takes time). Lets
     time-dependent bugs surface without artificial sleeps in handlers."""
 
+    interceptors: InterceptorFactory | None = None
+    """Optional - per-run port interceptors (e.g. seeded fault injection). A factory
+    ``seed -> interceptors`` so each run gets a fresh, seed-derived chain (reproducible per
+    seed); registered deps-scoped on every resolved configurable port, inside the
+    runtime-tracing and resilience wraps. The cooperative/latency interceptor is added
+    separately (run-scoped) by ``run_simulation``."""
+
     # ....................... #
 
     def fingerprint(self) -> str:
@@ -158,11 +166,13 @@ class Simulation:
 
     # ....................... #
 
-    def _frozen_deps(self) -> Any:
+    def _frozen_deps(self, seed: int) -> Any:
         """Build the run's resolved, runtime-traced deps from the factory.
 
         The factory may return a single module or several (e.g. a mock module plus a
-        ``DomainEventsDepsModule`` wiring saga / event-handler cascades).
+        ``DomainEventsDepsModule`` wiring saga / event-handler cascades). When
+        :attr:`interceptors` is set, the seed-derived chain is registered deps-scoped so
+        every resolved configurable port runs through it (fresh per run → reproducible).
         """
 
         produced = self.deps()
@@ -172,12 +182,12 @@ class Simulation:
             else (cast("DepsModule", produced),)
         )
 
-        return (
-            DepsRegistry.from_modules(*modules)
-            .with_tracing(runtime=True)
-            .freeze()
-            .resolve()
-        )
+        registry = DepsRegistry.from_modules(*modules).with_tracing(runtime=True)
+
+        if self.interceptors is not None:
+            registry = registry.with_interceptors(*self.interceptors(seed))
+
+        return registry.freeze().resolve()
 
     # ....................... #
 
@@ -240,7 +250,7 @@ class Simulation:
         recorder = Recorder(seed=seed)
 
         async def scenario() -> None:
-            ctx = ExecutionContext(deps=self._frozen_deps())
+            ctx = ExecutionContext(deps=self._frozen_deps(seed))
 
             if self.setup is not None:
                 await self.setup(ctx)
@@ -491,7 +501,7 @@ class Simulation:
         async def driver() -> None:
             nonlocal generated
 
-            ctx = ExecutionContext(deps=self._frozen_deps())
+            ctx = ExecutionContext(deps=self._frozen_deps(seed))
 
             if self.setup is not None:
                 await self.setup(ctx)

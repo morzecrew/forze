@@ -12,8 +12,10 @@ from forze.application.contracts.deps import DepKey
 from forze.application.execution.tracing import RuntimeTrace
 from forze.base.primitives import StrKey
 
+from ..interception import PortInterceptorChain
 from .port_instrumentation import (
     maybe_wrap_configurable,
+    maybe_wrap_interceptors,
     maybe_wrap_port_policy,
     record_simple_resolve,
 )
@@ -44,6 +46,9 @@ class FrozenDepsRegistry:
     runtime_tracer: RuntimeTracer = attrs.field(default=NOOP_RUNTIME_TRACER)
     """Runtime tracer applied when resolving."""
 
+    interceptors: PortInterceptorChain = attrs.field(factory=tuple)
+    """Deps-scoped port interceptors applied to every resolved configurable port."""
+
     # ....................... #
 
     def resolve(self) -> FrozenDeps:
@@ -53,6 +58,7 @@ class FrozenDepsRegistry:
             store=self.store,
             resolution_tracer=self.resolution_tracer,
             runtime_tracer=self.runtime_tracer,
+            interceptors=self.interceptors,
         )
 
 
@@ -72,6 +78,9 @@ class FrozenDeps:
 
     runtime_tracer: RuntimeTracer = attrs.field(default=NOOP_RUNTIME_TRACER)
     """Optional recorder for runtime port and transaction events."""
+
+    interceptors: PortInterceptorChain = attrs.field(factory=tuple)
+    """Deps-scoped port interceptors applied to every resolved configurable port."""
 
     _resolution: ResolutionContext = attrs.field(
         default=attrs.Factory(
@@ -215,7 +224,11 @@ class FrozenDeps:
         try:
             factory = self.store.get_provider(key, route=route)
             result = factory(ctx, spec)
-            port = maybe_wrap_configurable(self, ctx, key, spec, route, result)
+            # Innermost (closest to the real port): interceptor chain, then runtime tracing,
+            # then the resilience port policy outermost (so a fault interceptor's transient
+            # error is retryable by the policy).
+            port = maybe_wrap_interceptors(self, ctx, key, spec, route, result)
+            port = maybe_wrap_configurable(self, ctx, key, spec, route, port)
             port = maybe_wrap_port_policy(self, ctx, key, route, port)
 
         finally:

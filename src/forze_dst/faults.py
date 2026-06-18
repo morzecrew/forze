@@ -22,6 +22,8 @@ from typing import Mapping, Sequence, final
 import attrs
 
 from forze.application.contracts.queue import QueueCommandPort
+from forze.application.execution.interception import PortCall, PortNext
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -179,3 +181,59 @@ class FaultyQueueCommand[M](QueueCommandPort[M]):
             )
 
         return ids
+
+
+# ....................... #
+
+
+@final
+@attrs.define(kw_only=True)
+class PortFaultInterceptor:
+    """Inject a transient downstream failure at a port boundary — over **any** port.
+
+    A :class:`~forze.application.execution.interception.PortInterceptor` that, from a
+    dedicated fault RNG, raises a retryable ``exc.infrastructure`` *before* the real call
+    on the matched port operations — modeling a real adapter failing mid-operation
+    (a dropped connection, a timeout). It plugs into the core port-interception seam, so it
+    works against **real registries** without wrapping a specific port by hand — the
+    seam-based successor to :class:`FaultyQueueCommand` (which targets one queue port).
+
+    Placed inside the resilience port-policy wrap, so the injected transient is retryable by
+    a declared policy. The RNG is separate from the application entropy seam and the
+    scheduler RNG, so faults vary independently and a fixed fault seed replays them.
+
+    *surface* / *route* / *op* (any left ``None`` matches anything) select which calls are
+    eligible; *transient* is the per-eligible-call probability of a fault.
+    """
+
+    rng: random.Random
+    transient: float = 1.0
+    surface: str | None = None
+    route: str | None = None
+    op: str | None = None
+    code: str = "dst.injected_port_fault"
+
+    # ....................... #
+
+    def _matches(self, call: PortCall) -> bool:
+        return (
+            (self.surface is None or call.surface == self.surface)
+            and (self.route is None or call.route == self.route)
+            and (self.op is None or call.op == self.op)
+        )
+
+    # ....................... #
+
+    async def around(self, call: PortCall, nxt: PortNext) -> object:
+        if (
+            self._matches(call)
+            and self.transient > 0.0
+            and self.rng.random() < self.transient
+        ):
+            raise exc.infrastructure(
+                f"injected transient fault at {call.surface}[{call.route}].{call.op}",
+                code=self.code,
+                details={"surface": call.surface, "route": call.route, "op": call.op},
+            )
+
+        return await nxt(call)

@@ -75,11 +75,9 @@ class ResilienceDepsModule:
             **(self.spec.policies if self.spec is not None else {}),
         }
 
-        unknown = sorted(
+        if unknown := sorted(
             str(pp.policy) for pp in self.port_policies if pp.policy not in policies
-        )
-
-        if unknown:
+        ):
             raise exc.configuration(
                 "Port policies reference unknown resilience policies: "
                 + ", ".join(unknown),
