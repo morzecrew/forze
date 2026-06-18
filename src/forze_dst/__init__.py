@@ -54,6 +54,7 @@ from .recorder import (
 from forze.application.execution.interception import LatencyModel
 
 from .runtime import run_simulation
+from .config import SchedulerKind, SimulationConfig, Strategy
 from .scenario import ModelState, Rule, Scenario
 from .scheduler import (
     PCTScheduler,
@@ -122,6 +123,9 @@ __all__ = [
     "Scenario",
     "Rule",
     "ModelState",
+    "SimulationConfig",
+    "Strategy",
+    "SchedulerKind",
     "derive_scenario",
     "DEFAULT_CREATE_VERBS",
     "ReactiveMap",

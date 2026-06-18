@@ -11,6 +11,7 @@ from forze.base.primitives import (
     bind_entropy_source,
     bind_time_source,
     current_entropy_source,
+    derive_seed,
     uuid4,
     uuid7,
 )
@@ -114,3 +115,31 @@ class TestExplicitTimestampUuid7IsSeamed:
         a = uuid7(timestamp_ms=1_700_000_000_000)
         b = uuid7(timestamp_ms=1_700_000_000_000)
         assert a != b
+
+
+class TestDeriveSeed:
+    """One master seed → independent, stable sub-seeds per stream."""
+
+    def test_deterministic(self) -> None:
+        assert derive_seed(0, "schedule") == derive_seed(0, "schedule")
+
+    def test_stable_value_across_runs(self) -> None:
+        # A fixed hash (not PYTHONHASHSEED-salted ``hash()``) → a constant across processes.
+        assert derive_seed(0, "schedule") == 4223464447449377271
+
+    def test_independent_by_label(self) -> None:
+        # Different streams of the same seed must not coincide.
+        labels = ("schedule", "fault", "entropy", "input")
+        derived = {derive_seed(7, label) for label in labels}
+        assert len(derived) == len(labels)
+
+    def test_independent_by_master(self) -> None:
+        assert derive_seed(0, "schedule") != derive_seed(1, "schedule")
+
+    def test_order_insensitive(self) -> None:
+        # Keyed by label, not position: adding a new stream never shifts existing sub-seeds.
+        assert derive_seed(5, "fault") == derive_seed(5, "fault")
+        # "schedule" is unaffected by whether other labels are derived before/after it.
+        before = derive_seed(5, "schedule")
+        derive_seed(5, "a_new_stream_added_later")
+        assert derive_seed(5, "schedule") == before

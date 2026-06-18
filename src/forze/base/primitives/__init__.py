@@ -10,6 +10,7 @@ from .entropy_source import (
     SystemEntropySource,
     bind_entropy_source,
     current_entropy_source,
+    derive_seed,
     token_urlsafe,
 )
 from .fingerprint import (
@@ -62,6 +63,7 @@ __all__ = [
     "SystemEntropySource",
     "SeededEntropySource",
     "bind_entropy_source",
+    "derive_seed",
     "current_entropy_source",
     "token_urlsafe",
     "CacheLane",

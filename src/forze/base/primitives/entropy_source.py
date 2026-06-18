@@ -17,6 +17,7 @@ context that produces durable secrets.
 """
 
 import base64
+import hashlib
 import random
 import secrets
 from random import Random
@@ -174,3 +175,20 @@ def token_urlsafe(nbytes: int) -> str:
 
     raw = current_entropy_source().random_bytes(nbytes)
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+# ....................... #
+
+
+def derive_seed(seed: int, label: str) -> int:
+    """Derive a stable, independent sub-seed from a master *seed*, keyed by *label*.
+
+    Cross-machine / cross-process stable — a fixed hash, **not** Python's ``hash()`` (which
+    is PYTHONHASHSEED-salted) — and **order-insensitive**: keyed by *label*, so adding a new
+    derived stream never shifts existing sub-seeds, and a saved (regression) seed keeps its
+    meaning. Lets one master seed drive several independent nondeterminism streams
+    (schedule, faults, entropy, inputs) that vary independently yet reproduce exactly.
+    """
+
+    digest = hashlib.blake2b(f"{seed}:{label}".encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big")

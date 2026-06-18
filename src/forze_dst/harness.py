@@ -26,7 +26,7 @@ from forze.application.execution.interception import LatencyModel, PortIntercept
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze.base.exceptions import CoreException
-from forze.base.primitives import monotonic
+from forze.base.primitives import derive_seed, monotonic
 from forze_dst.derive import DEFAULT_CREATE_VERBS
 from forze_dst.derive import derive_scenario as _derive_from_catalog
 from forze_dst.invariants import Invariant, check
@@ -34,8 +34,9 @@ from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.reactive import ReactiveMap
 from forze_dst.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
+from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
 from forze_dst.scenario import Scenario
-from forze_dst.scheduler import SystematicScheduler
+from forze_dst.scheduler import SystematicScheduler, pct_scheduler_factory
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
@@ -175,6 +176,75 @@ class Simulation:
 
     # ....................... #
 
+    def run(
+        self,
+        config: SimulationConfig,
+        *,
+        scenario: Scenario | None = None,
+        cases: Sequence[OperationCase] | None = None,
+    ) -> ViolationReport | None:
+        """Explore under *config* — the single, config-driven entrypoint.
+
+        One master seed per swept value drives every nondeterminism stream (schedule / faults
+        / entropy / inputs), each an independent sub-seed; ``config.strategy`` selects how the
+        workload is generated and explored. Provide *cases* for ``OP_CASE``; for the scenario
+        strategies *scenario* is used, or auto-derived from the operation catalog if omitted.
+        Returns the first violating seed's minimized, reproducible counterexample, or ``None``.
+        """
+
+        if config.strategy is Strategy.OP_CASE:
+            if cases is None:
+                raise ValueError("OP_CASE strategy requires cases=")
+
+            return self.explore(
+                cases=cases,
+                count=config.count,
+                concurrency=config.concurrency,
+                seeds=config.seeds,
+                perturb=config.perturb,
+                epoch=config.epoch,
+            )
+
+        sc = scenario if scenario is not None else self.derive_scenario()
+
+        if config.strategy is Strategy.SCENARIO:
+            factory = (
+                pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
+                if config.scheduler is SchedulerKind.PCT
+                else None
+            )
+            return self.explore_scenario(
+                sc,
+                act_count=config.act_count,
+                concurrency=config.concurrency,
+                seeds=config.seeds,
+                perturb=config.perturb,
+                epoch=config.epoch,
+                scheduler_factory=factory,
+            )
+
+        if config.strategy is Strategy.HYPOTHESIS:
+            return self.explore_scenario_hypothesis(
+                sc,
+                max_act=config.act_count,
+                concurrency=config.concurrency,
+                perturb=config.perturb,
+                epoch=config.epoch,
+                max_examples=config.max_examples,
+            )
+
+        # DPOR — drives its own systematic scheduler over one fixed workload.
+        return self.explore_scenario_dpor(
+            sc,
+            act_count=config.act_count,
+            concurrency=config.concurrency,
+            seed=config.dpor_seed,
+            max_runs=config.max_runs,
+            epoch=config.epoch,
+        )
+
+    # ....................... #
+
     def _frozen_deps(self, seed: int) -> Any:
         """Build the run's resolved, runtime-traced deps from the factory.
 
@@ -231,7 +301,7 @@ class Simulation:
         count: int,
         seed: int,
     ) -> list[_Call]:
-        rng = random.Random(seed)  # nosec B311
+        rng = random.Random(derive_seed(seed, "input"))  # nosec B311
         weights = [case.weight for case in cases]
 
         chosen = rng.choices(
@@ -259,7 +329,7 @@ class Simulation:
         recorder = Recorder(seed=seed)
 
         async def scenario() -> None:
-            ctx = ExecutionContext(deps=self._frozen_deps(seed))
+            ctx = ExecutionContext(deps=self._frozen_deps(derive_seed(seed, "fault")))
 
             if self.setup is not None:
                 await self.setup(ctx)
@@ -312,7 +382,7 @@ class Simulation:
         with bind_recorder(recorder):
             run_simulation(
                 scenario,
-                seed=seed,
+                seed=derive_seed(seed, "entropy"),
                 schedule_seed=schedule_seed,
                 epoch=epoch,
                 latency=self.latency,
@@ -332,7 +402,7 @@ class Simulation:
         perturb: bool,
         epoch: datetime,
     ) -> ViolationReport | None:
-        schedule_seed = seed if perturb else None
+        schedule_seed = derive_seed(seed, "schedule") if perturb else None
         workload = self._generate(cases, count, seed)
 
         def run(items: Sequence[_Call]) -> History:
@@ -510,12 +580,12 @@ class Simulation:
         async def driver() -> None:
             nonlocal generated
 
-            ctx = ExecutionContext(deps=self._frozen_deps(seed))
+            ctx = ExecutionContext(deps=self._frozen_deps(derive_seed(seed, "fault")))
 
             if self.setup is not None:
                 await self.setup(ctx)
 
-            rng = random.Random(seed)  # nosec B311
+            rng = random.Random(derive_seed(seed, "input"))  # nosec B311
             state = scenario.state()
 
             # Arrange: serial, real ids captured into the model. Negative call ids keep
@@ -559,7 +629,7 @@ class Simulation:
         with bind_recorder(recorder):
             run_simulation(
                 driver,
-                seed=seed,
+                seed=derive_seed(seed, "entropy"),
                 schedule_seed=schedule_seed,
                 epoch=epoch,
                 scheduler=scheduler,
@@ -581,8 +651,12 @@ class Simulation:
         epoch: datetime,
         scheduler_factory: Callable[[int], object] | None = None,
     ) -> ViolationReport | None:
-        schedule_seed = seed if perturb else None
-        scheduler = None if scheduler_factory is None else scheduler_factory(seed)
+        schedule_seed = derive_seed(seed, "schedule") if perturb else None
+        scheduler = (
+            None
+            if scheduler_factory is None
+            else scheduler_factory(derive_seed(seed, "schedule"))
+        )
 
         def run(act: Sequence[tuple[str, Any]] | None) -> History:
             history, _ = self._run_scenario(
@@ -704,7 +778,7 @@ class Simulation:
             return None
 
         def schedule_seed_of(seed: int) -> int | None:
-            return seed if perturb else None
+            return derive_seed(seed, "schedule") if perturb else None
 
         plans = strategies.tuples(
             strategies.integers(min_value=0, max_value=2**31 - 1),
