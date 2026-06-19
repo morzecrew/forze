@@ -1145,6 +1145,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#two-phase-handlers-work-before-the-write" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Two-phase handlers: work before the write
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#nesting" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3156,6 +3167,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../recipes/two-phase-handler/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-split" viewBox="0 0 24 24"><path d="M16 3h5v5M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3M15 9l6-6"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Call a service before the write
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -4186,6 +4226,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#two-phase-handlers-work-before-the-write" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Two-phase handlers: work before the write
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#nesting" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4360,6 +4411,19 @@ under <code>tx={...}</code>. Everything inside commits together:</p>
 <p>The route must be registered for transactions when you wire the module —
 <code>PostgresDepsModule(client=pg, ..., tx={"orders"})</code> — otherwise the scope can't
 resolve a transaction manager.</p>
+<div class="admonition tip">
+<p class="admonition-title">A scope holds a connection only from the first query</p>
+<p>With <code>lazy_transaction</code> enabled (the default) on the Postgres, Mongo, and
+Firestore clients, opening a scope acquires no pooled connection (and issues
+no <code>BEGIN</code> / <code>startTransaction</code> / <code>_begin</code>) until the <strong>first query</strong> inside
+it. Parsing, computing, or calling an
+external service before you touch the database no longer parks a connection
+idle-in-transaction — so keep cheap-but-slow work <em>before</em> the first query and
+the transaction stays short. A scope that runs no query holds nothing and
+commits nothing. One consequence: a connection-acquire or connect failure now
+surfaces at the first query rather than at scope entry (retries that wrap the
+whole operation are unaffected).</p>
+</div>
 <h2 id="what-commits-together">What commits together<a class="headerlink" href="#what-commits-together" title="Permanent link">&para;</a></h2>
 <p>A scope has a <strong>scope key</strong> — the <em>kind</em> of transaction, such as a database
 versus a cache. A port joins the active transaction only if its scope key
@@ -4372,6 +4436,35 @@ Postgres write and a Redis write do <strong>not</strong>. When you need consiste
 <em>across</em> systems, you don't reach for a bigger transaction — you stage the
 cross-system effect and apply it after commit (see <a href="#after-the-commit">below</a>
 and <a href="../events-sagas/">Events &amp; sagas</a>).</p>
+</div>
+<h2 id="two-phase-handlers-work-before-the-write">Two-phase handlers: work before the write<a class="headerlink" href="#two-phase-handlers-work-before-the-write" title="Permanent link">&para;</a></h2>
+<p>Lazy acquisition keeps the transaction off the connection until your first query —
+but only for work that runs <em>before</em> that query. When an external call has to sit
+<em>between</em> a read and a write, split the handler into two phases instead:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">QuoteAndCreate</span><span class="p">(</span><span class="n">TwoPhaseDocumentHandler</span><span class="p">[</span><span class="n">QuoteRequest</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="n">WidgetRead</span><span class="p">,</span> <span class="n">WidgetCreate</span><span class="p">]):</span>
+    <span class="n">enrich</span><span class="p">:</span> <span class="n">PricingService</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">prepare</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>                 <span class="c1"># outside the transaction</span>
+        <span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">enrich</span><span class="o">.</span><span class="n">quote</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">sku</span><span class="p">)</span>   <span class="c1"># external call — no tx held</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">apply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">price</span><span class="p">):</span>            <span class="c1"># inside the transaction</span>
+        <span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">writer</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">WidgetCreate</span><span class="p">(</span><span class="n">price</span><span class="o">=</span><span class="n">price</span><span class="p">))</span>
+</code></pre></div>
+<p>Register it with <code>.two_phase()</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">registry</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="s2">&quot;quote&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">two_phase</span><span class="p">()</span><span class="o">.</span><span class="n">bind_tx</span><span class="p">()</span><span class="o">.</span><span class="n">set_route</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+</code></pre></div>
+<p>The engine runs <code>prepare</code> in the outer scope — <strong>before</strong> the transaction opens —
+and threads its return value into <code>apply</code>, which runs inside the transaction. So
+the transaction wraps only the writes, never the external call.</p>
+<div class="admonition note">
+<p class="admonition-title">What <code>prepare</code> can and can't do</p>
+<p><code>prepare</code> runs under the read-only flag, so it cannot acquire a write port
+(use <code>self.reader</code> for reads, <code>self.writer</code> only in <code>apply</code>). Its reads run
+<em>outside</em> <code>apply</code>'s transaction, so there's no read/write atomicity between the
+phases — validate on write in <code>apply</code> (an optimistic-concurrency <code>rev</code> check).
+<code>prepare</code> runs <strong>exactly once</strong> per invocation: if a retry or hedge wrap
+re-runs the operation, only <code>apply</code> repeats — with the payload <code>prepare</code>
+already produced.</p>
 </div>
 <h2 id="nesting">Nesting<a class="headerlink" href="#nesting" title="Permanent link">&para;</a></h2>
 <p>Scopes nest naturally. A nested scope of the <strong>same kind</strong> joins the outer
@@ -4583,7 +4676,7 @@ handler that mutates a Python object it captured cannot be rolled back.</p>
       
         <script src="../../_javascripts/theme.js"></script>
       
-        <script src="../../_javascripts/hero2.js"></script>
+        <script src="../../_javascripts/hero.js"></script>
       
     
   </body>

@@ -27,7 +27,7 @@
 
     /* Red-hot accents (reserved — used only where metal is "heated").
        Tuned red-forward (not yellow): glowing-steel orange cooling to ember red. */
-    --fz-orange: #ff6a1f;
+    --fz-orange: var(--md-accent-fg-color);
     --fz-orange-2: #f0461a;
     --fz-orange-deep: #d2350f;
     --fz-amber: #ff8a3a;
@@ -144,7 +144,7 @@
 
 /* steel cooling into red-hot — mirrors the logo */
 .fz-title .fz-grad {
-    background: linear-gradient(114deg, #93aed6 0%, #c98a55 62%, var(--fz-orange) 79%, var(--fz-orange-2) 100%);
+    background: linear-gradient(114deg, #859dc1 0%, #8e7276 49%, var(--fz-orange) 79%, var(--fz-orange-2) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -252,14 +252,14 @@
 .fz-code__bar {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
+    gap: 0.5rem;
     padding: 0.7rem 1rem;
     background: rgba(255, 255, 255, 0.02);
 }
 
 .fz-dot {
-    width: 11px;
-    height: 11px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
 }
 
@@ -427,11 +427,11 @@
     font-size: 0.88rem;
     color: var(--fz-muted);
     white-space: nowrap;
+    text-decoration: none;
     transition: color .2s ease, border-color .2s ease;
 }
 
 .fz-chip:hover {
-    color: var(--fz-text);
     border-color: var(--fz-border-strong);
 }
 
@@ -448,7 +448,7 @@
 }
 
 .fz-chip:hover i {
-    background-color: var(--fz-orange);
+    background-color: var(--md-accent-fg-color);
     opacity: 1;
 }
 

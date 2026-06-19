@@ -169,6 +169,9 @@
         <loc>https://morzecrew.github.io/forze/dev/recipes/add-idempotency/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/two-phase-handler/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/authn-authz-tenancy-fastapi/</loc>
       </url>
       <url>
