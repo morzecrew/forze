@@ -284,7 +284,7 @@
 
 .fz-code pre {
     margin: 0;
-    padding: 1.15rem 1.25rem 1.35rem;
+    padding: 1rem 1rem 1.5rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 0.84rem;
     line-height: 1.7;
@@ -298,14 +298,15 @@
 
 .fz-code code {
     white-space: pre;
+    background: transparent;
 }
 
 .tk-kw {
-    color: #ff7a3a;
+    color: var(--md-accent-fg-color);
 }
 
 .tk-cls {
-    color: #c99a6c;
+    color: #e6b4a4
 }
 
 .tk-fn {
@@ -345,7 +346,7 @@
     z-index: -1;
 }
 
-.fz-swap.is-on::after {
+.fz-swap .is-on::after {
     opacity: 1;
 }
 
