@@ -62,6 +62,8 @@
     
       <link rel="stylesheet" href="./_stylesheets/extra.css">
     
+      <link rel="stylesheet" href="./_stylesheets/hero.css">
+    
     <script>__md_scope=new URL(".",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
     
       
@@ -89,8 +91,7 @@
     <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
     <div data-md-component="skip">
       
-        
-        <a href="#forze" class="md-skip">
+        <a href="#__skip" class="md-skip">
           Skip to content
         </a>
       
@@ -434,8 +435,6 @@
       
       
       
-      
-        
       
       
       <a href="" class="md-nav__link md-nav__link--active">
@@ -4005,8 +4004,6 @@
                     
                     
                     
-                      
-                    
                     
                   
                   <div class="md-sidebar__inner">
@@ -4016,8 +4013,6 @@
 <nav class="md-nav md-nav--secondary" aria-label="On this page">
   
   
-  
-    
   
   
 </nav>
@@ -4046,15 +4041,160 @@
   
 
 
-<div class="forze-hero">
-<canvas aria-hidden="true" class="forze-hero__canvas" id="forze-hero-canvas"></canvas>
-<div class="forze-hero__text">
-<h1 id="forze">Forze <!-- markdownlint-disable-line --><a class="headerlink" href="#forze" title="Permanent link">&para;</a></h1>
-<p>Backend services with <strong>clear boundaries</strong> — swap any infrastructure without
-touching business logic.</p>
-<p><a class="md-button md-button--primary" href="get-started/introduction/">Get started</a>
-<a class="md-button" href="get-started/quickstart/">Quickstart in 10 minutes</a></p>
-</div>
+<!-- =====================================================================
+     Forze homepage hero.
+     Styles:  stylesheets/forze-home.css   (add to extra_css)
+     Script:  javascripts/forze-home.js    (add to extra_javascript)
+     Links below are relative to the docs root so they work on GitHub Pages.
+===================================================================== -->
+<div class="fz" markdown="0">
+
+  <!-- HERO -->
+  <section class="fz-hero">
+    <canvas class="fz-hero__canvas" aria-hidden="true"></canvas>
+    <div class="fz-wrap fz-hero__inner">
+
+      <div class="fz-hero__copy">
+        <h1 class="fz-title fz-reveal" data-d="1">
+          Build once.<br>
+          <span class="fz-grad">Swap anything.</span>
+        </h1>
+
+        <p class="fz-lede fz-reveal" data-d="2">
+          Backend services with <strong>clear boundaries</strong> — write your business logic against contracts, then plug in any database, queue, or cache without touching a single line of domain code.
+        </p>
+
+        <div class="fz-cta fz-reveal" data-d="3">
+          <a class="fz-btn fz-btn--primary" href="get-started/introduction/">
+            Get started
+
+          </a>
+          <a class="fz-btn fz-btn--ghost" href="get-started/quickstart/">
+            Quickstart in 10 min
+          </a>
+        </div>
+
+        <div class="fz-meta fz-reveal" data-d="4">
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> No vendor lock-in
+          </span>
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Type-safe contracts
+          </span>
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Testable by design
+          </span>
+        </div>
+      </div>
+
+      <!-- CODE WINDOW -->
+      <div class="fz-code fz-reveal" data-d="2">
+        <div class="fz-code__bar">
+          <span class="fz-dot fz-dot--r"></span>
+          <span class="fz-dot fz-dot--y"></span>
+          <span class="fz-dot fz-dot--g"></span>
+          <span class="fz-code__file">app.py</span>
+        </div>
+<pre><code><span class="tk-com"># Business logic depends on a contract, not a vendor</span>
+<span class="tk-kw">class</span> <span class="tk-cls">PlaceOrder</span>(<span class="tk-cls">Handler</span>):
+    orders: <span class="tk-cls">OrderCommandPort</span>
+    items: <span class="tk-cls">OrderItemCommandPort</span>
+
+    <span class="tk-kw">async def</span> <span class="tk-fn">main</span>(<span class="tk-dim">self</span>, args: <span class="tk-cls">OrderCreateArgs</span>):
+        order = <span class="tk-kw">await</span> self.orders.<span class="tk-fn">create</span>(args.metadata)
+        items = <span class="tk-kw">await</span> self.items.<span class="tk-fn">create_many</span>(args.items)
+
+        <span class="tk-kw">return</span> order.id
+
+<span class="tk-com"># Swap infrastructure — domain code never changes</span>
+runtime = <span class="tk-cls">ExecutionRuntime</span>(deps=<span class="fz-swap">PostgresDepsModule</span>(...))
+</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- INTEGRATIONS MARQUEE -->
+  <section class="fz-strip">
+    <div class="fz-strip__label">Plug into the infrastructure you already use</div>
+    <div class="fz-marquee">
+      <div class="fz-marquee__track" data-logos>
+        <!-- chips (with real brand logos) are generated by forze-home.js -->
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES
+  <section class="fz-section">
+    <div class="fz-wrap">
+      <div class="fz-section__head fz-reveal">
+        <div class="fz-kicker">Why Forze</div>
+        <h2 class="fz-h2">Architecture that keeps its promises</h2>
+        <p class="fz-sub">Hexagonal by design. Your domain sits in the center, infrastructure lives at the edges, and contracts keep them honest.</p>
+      </div>
+
+      <div class="fz-grid">
+        <div class="fz-card fz-reveal" data-d="1">
+          <span class="fz-card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.4 7.7 8 10 4.6-2.3 8-5 8-10V6l-8-4Z"/></svg></span>
+          <h3>Clear boundaries</h3>
+          <p>Domain and application layers never import a driver. Dependencies point inward, so your core logic stays pure and portable.</p>
+        </div>
+        <div class="fz-card fz-reveal" data-d="2">
+          <span class="fz-card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M21 3l-7 7M8 21H3v-5M3 21l7-7"/></svg></span>
+          <h3>Swap any adapter</h3>
+          <p>Move from Postgres to Mongo, or SQS to RabbitMQ, by changing one line of wiring — not your business code.</p>
+        </div>
+        <div class="fz-card fz-reveal" data-d="3">
+          <span class="fz-card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11V7a3 3 0 0 1 6 0v4M5 11h14v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1Z"/></svg></span>
+          <h3>Transactions &amp; idempotency</h3>
+          <p>Built-in units of work, outbox/inbox, and idempotency keys make exactly-once behavior the default, not an afterthought.</p>
+        </div>
+        <div class="fz-card fz-reveal fz-card--wide" data-d="1">
+          <span class="fz-card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4 20-7Z"/></svg></span>
+          <h3>Events, sagas &amp; multi-tenancy</h3>
+          <p>Compose long-running workflows with sagas, broadcast domain events, and isolate tenants with first-class identity, access, and encryption primitives — all wired through the same contract model.</p>
+        </div>
+        <div class="fz-card fz-reveal" data-d="2">
+          <span class="fz-card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></span>
+          <h3>Observable &amp; resilient</h3>
+          <p>Deadlines, retries, and tracing come baked in, so production behavior is predictable under load and easy to debug.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  STATS
+  <section class="fz-section" style="padding-top:0">
+    <div class="fz-wrap">
+      <div class="fz-stats fz-reveal">
+        <div class="fz-stat"><div class="fz-stat__n" data-count="20" data-suffix="+">0</div><div class="fz-stat__l">Integrations ready to plug in</div></div>
+        <div class="fz-stat"><div class="fz-stat__n" data-count="3">0</div><div class="fz-stat__l">Clean architectural layers</div></div>
+        <div class="fz-stat"><div class="fz-stat__n" data-count="1">0</div><div class="fz-stat__l">Line to swap infrastructure</div></div>
+        <div class="fz-stat"><div class="fz-stat__n" data-count="100" data-suffix="%">0</div><div class="fz-stat__l">Type-safe contracts</div></div>
+      </div>
+    </div>
+  </section>
+
+  CTA BAND
+  <section class="fz-section" style="padding-top:0">
+    <div class="fz-wrap">
+      <div class="fz-band fz-reveal">
+        <h2>Ship a backend that outlives its infrastructure</h2>
+        <p>Start with the 10-minute quickstart, then explore the core concepts behind ports, adapters, and the Forze runtime.</p>
+        <div class="fz-cta">
+          <a class="fz-btn fz-btn--primary" href="get-started/quickstart/">
+            Start the quickstart
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a class="fz-btn fz-btn--ghost" href="https://github.com/morzecrew/forze">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5A11.5 11.5 0 0 0 .5 12 11.5 11.5 0 0 0 8.4 23c.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.6-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5Z"/></svg>
+            Star on GitHub
+          </a>
+        </div>
+      </div>
+      <p class="fz-foot-note">Open source · Built for teams who refuse to marry their database.</p>
+    </div>
+  </section> -->
+
 </div>
 
   
@@ -4099,7 +4239,7 @@ touching business logic.</p>
       
         
       
-      <nav class="md-footer__inner md-grid" aria-label="Footer" hidden>
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
         
           
@@ -4159,7 +4299,7 @@ touching business logic.</p>
       
         <script src="./_javascripts/theme.js"></script>
       
-        <script src="./_javascripts/hero.js"></script>
+        <script src="./_javascripts/hero2.js"></script>
       
     
   </body>
