@@ -727,6 +727,8 @@ class MongoQueryRenderer:
 
         match inner:
             case QueryField(name, op, value):
+                if name != ELEM_SCALAR_FIELD:
+                    _reject_operator_field(name)
                 ref = this if name == ELEM_SCALAR_FIELD else f"{this}.{name}"
                 return self._elem_field_cond_expr(ref, op, value)
 
@@ -750,6 +752,8 @@ class MongoQueryRenderer:
             case QueryElem(sub_path, sub_quantifier, sub_inner):
                 # ``$`` sentinel = quantify over the element itself (a scalar
                 # array-of-arrays); a named path = a sub-array of an object element.
+                if sub_path != ELEM_SCALAR_FIELD:
+                    _reject_operator_field(sub_path)
                 ref = this if sub_path == ELEM_SCALAR_FIELD else f"{this}.{sub_path}"
                 return self._elem_quant_expr(
                     ref,
@@ -918,6 +922,7 @@ class MongoQueryRenderer:
                 raise exc.internal(f"Invalid object element inner: {part!r}")
 
             f = part
+            _reject_operator_field(f.name)
             spec = out.setdefault(f.name, {})
 
             if f.op in ("$like", "$ilike", "$regex"):

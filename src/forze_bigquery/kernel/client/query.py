@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, get_args, get_origin
@@ -148,6 +149,12 @@ def _infer_parameter(value: Any, annotation: Any = None) -> tuple[JsonDict, Json
 
     if isinstance(value, str):
         return {"type": "STRING"}, {"value": value}
+
+    if isinstance(value, (bytes, bytearray)):
+        # BigQuery wire format encodes BYTES as base64.
+        return {"type": "BYTES"}, {
+            "value": base64.b64encode(bytes(value)).decode("ascii")
+        }
 
     if isinstance(value, (list, tuple)):
         return _infer_array_parameter(value, annotation)

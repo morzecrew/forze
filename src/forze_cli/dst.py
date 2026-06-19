@@ -72,10 +72,10 @@ def _parse_seeds(spec: str) -> list[int]:
         seeds: list[int] = []
         for part in spec.split(","):
             part = part.strip()
-            if part:
-                seeds.extend(_parse_seed_token(part))
-        if not seeds:
-            raise typer.BadParameter(f"no seeds parsed from {spec!r}")
+            if not part:
+                # Empty token: leading/trailing/double comma, e.g. "1,", ",1", "1,,2".
+                raise typer.BadParameter(f"empty seed token in {spec!r}")
+            seeds.extend(_parse_seed_token(part))
         return seeds
 
     if "-" in spec:

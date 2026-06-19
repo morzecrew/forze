@@ -1237,7 +1237,7 @@ def _quote_etag(etag: str) -> str:
     ``CompleteMultipartUpload`` requires quoted part ETags. Trims surrounding
     whitespace and avoids double-wrapping an already-quoted value (the old
     ``startswith('"')``-only check mangled a whitespace-padded ETag into
-    ``" "abc""``).
+    ``" "abc""``).
     """
 
     etag = etag.strip()

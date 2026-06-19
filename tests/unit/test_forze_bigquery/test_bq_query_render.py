@@ -61,6 +61,29 @@ def test_non_empty_array_param_emits_values() -> None:
     }
 
 
+class _BytesParams(BaseModel):
+    blob: bytes
+    blobs: list[bytes] = []
+
+
+def test_bytes_param_typed_and_base64_encoded() -> None:
+    qps = {q["name"]: q for q in params_to_query_parameters(_BytesParams(blob=b"hi"))}
+    assert qps["blob"]["parameterType"] == {"type": "BYTES"}
+    assert qps["blob"]["parameterValue"] == {"value": "aGk="}  # base64("hi")
+
+
+def test_bytes_array_param_typed_and_encoded() -> None:
+    qps = {
+        q["name"]: q
+        for q in params_to_query_parameters(_BytesParams(blob=b"x", blobs=[b"hi"]))
+    }
+    assert qps["blobs"]["parameterType"] == {
+        "type": "ARRAY",
+        "arrayType": {"type": "BYTES"},
+    }
+    assert qps["blobs"]["parameterValue"] == {"arrayValues": [{"value": "aGk="}]}
+
+
 def test_build_sync_query_request_named_params() -> None:
     body = build_sync_query_request(
         "SELECT @day",

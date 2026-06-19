@@ -181,8 +181,8 @@ def connection_string_fingerprint(dsn: str) -> str:
 
     parsed = urlparse(dsn)
     query = parse_qs(parsed.query)
-    sslmode = query.get("sslmode", [""])[0]
-    options = query.get("options", [""])[0]
+    # All query parameters (sslmode, options, …) are canonicalized here; no
+    # need to also list any individually below.
     query_canonical = "&".join(f"{key}={query[key][0]}" for key in sorted(query))
 
     # Authority after any userinfo; ``rpartition`` matches how urllib splits the
@@ -195,8 +195,6 @@ def connection_string_fingerprint(dsn: str) -> str:
             hosts,
             parsed.path or "",
             parsed.username or "",
-            sslmode,
-            options,
             query_canonical,
         ],
         secret=[parsed.password],

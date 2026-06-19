@@ -189,7 +189,10 @@ class TestParseSeeds:
     def test_range_within_comma_list(self) -> None:
         assert _parse_seeds("1-3,5") == [1, 2, 3, 5]
 
-    @pytest.mark.parametrize("spec", ["7-3", "-5", "abc", "", "1,x", "3-"])
+    @pytest.mark.parametrize(
+        "spec",
+        ["7-3", "-5", "abc", "", "1,x", "3-", "1,", ",1", "1,,2", ","],
+    )
     def test_malformed_specs_raise_bad_parameter(self, spec: str) -> None:
         # Reversed range / non-numeric / empty must fail loudly, not crash or
         # silently produce an empty seed set (a false-clean DST run).
