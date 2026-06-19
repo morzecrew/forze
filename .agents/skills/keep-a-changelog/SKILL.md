@@ -81,8 +81,41 @@ Do not include:
   - same categories inside as needed
 - Reference links at the bottom exist (for example `[unreleased]: ...`, `[0.1.1]: ...`)
 
+The six categories above are the baseline. Additional semantic sections MAY be
+introduced when a change does not fit the basics (for example a dedicated
+`### Security` callout, or another clearly-named category). Add them only when
+they improve clarity; do not invent categories for changes that already fit.
+
 **Important:**
 Do not add or modify bottom reference links unless explicitly asked.
+
+### Entry formatting (MUST FOLLOW)
+
+- **Blank line between entries.** Every list item is separated from the next by
+  one blank line. Never stack bullets directly on adjacent lines.
+
+```text
+# wrong
+- Something
+- Something 2
+```
+
+```text
+# right
+- Something
+
+- Something 2
+```
+
+- **Self-contained.** Each entry must stand on its own without referencing other
+  entries, commits, or external context.
+- **Compact.** Up to 3 sentences and at most 320 characters per entry.
+- **Minimal inline code.** Use inline code (`` `like_this` ``) as sparingly as
+  possible — only for an essential identifier such as a symbol or flag. Prefer
+  plain prose.
+- **No structural extras.** Entries must NOT contain tables, migration
+  instructions, upgrade steps, code blocks, or similar. The changelog records
+  what changed, not how to adapt to it.
 
 ## Categorization rules
 
@@ -109,7 +142,9 @@ When the user says "update changelog", "add to changelog", or provides a list of
 1. Extract notable user-facing changes from the user summary, commits, PR descriptions, or diffs.
 2. Exclude non-user-facing and non-notable changes.
 3. Place each remaining change under the best category in `## [Unreleased]`.
-4. Preserve existing formatting and spacing.
+4. Preserve existing formatting and spacing, and apply the entry formatting rules
+   (blank line between entries, self-contained, ≤ 3 sentences / 320 characters,
+   minimal inline code, no tables or migration steps).
 5. Output:
    - a patch/diff, or
    - the updated `## [Unreleased]` block

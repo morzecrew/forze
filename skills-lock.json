@@ -27,7 +27,8 @@
     "gitmoji-conventional": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
-      "computedHash": "f0822e8699f1c0fcd0edb445b7304c3c5f24c03ca8512f27c0c0548f050b6b8d"
+      "skillPath": "skills/gitmoji-conventional/SKILL.md",
+      "computedHash": "04f650082028234bc8ba634c0d12ca5313fea81ac019eaf95ee0c453d2499fdd"
     },
     "greploop": {
       "source": "greptileai/skills",
@@ -38,7 +39,8 @@
     "keep-a-changelog": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
-      "computedHash": "d70cabc3ee6e135da14173efed3f62235e389b2ceb5cd5fdfdd644c609ae62f7"
+      "skillPath": "skills/keep-a-changelog/SKILL.md",
+      "computedHash": "ab914eaf08316316fbdd4ff1078e0f323b7c0e24254f2ece140c4c5157af6380"
     },
     "python-background-jobs": {
       "source": "wshobson/agents",

@@ -1,12 +1,3 @@
-/* =========================================================================
-   Forze — custom homepage interactions
-   Drop into:  docs/javascripts/forze-home.js
-   Register in mkdocs.yml:
-     extra_javascript:
-       - javascripts/forze-home.js
-   Self-contained, no dependencies. Safe to load on every page — it no-ops
-   when the hero markup isn't present.
-   ========================================================================= */
 (function () {
     "use strict";
 
@@ -106,7 +97,7 @@
         // Embers drifting up from the lower-left "heat source" (the forge).
         // Reuses this canvas + RAF loop, so there's no extra GPU cost.
         var embers = [];
-        var MAX_EMBERS = 40;
+        var MAX_EMBERS = 0;
         function spawnEmber() {
             embers.push({
                 x: W * (Math.random() * 0.3), // hug the left edge
@@ -176,7 +167,7 @@
                 var lit = cell.lit;
                 var r = Math.round(126 + (255 - 126) * lit);
                 var g = Math.round(155 + (110 - 155) * lit);
-                var b = Math.round(196 + (40 - 196) * lit);
+                var b = Math.round(196 + (66 - 196) * lit);
                 var a = 0.06 + lit * 0.82;
                 hexPath(cell.cx, cell.cy, R - 1);
                 ctx.strokeStyle =

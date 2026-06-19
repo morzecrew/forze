@@ -176,6 +176,10 @@
   text-underline-offset: 2px;
 }
 
+[data-md-component="outdated"] a:hover {
+  color: #fff !important;
+}
+
 [data-md-component="outdated"] .forze-banner__close {
   position: absolute;
   top: 50%;
@@ -319,4 +323,10 @@
   margin-left: auto;
   margin-right: auto;
   max-width: 72rem;
+}
+
+* {
+  /* --md-accent-fg-color: #aa6e42; */
+  --md-accent-fg-color--alternative: #f0461a;
+  --md-accent-fg-color--transparent: rgb(from var(--md-accent-fg-color) r g b / 0.1);
 }

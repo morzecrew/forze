@@ -26,6 +26,7 @@ ignore:
   - ~/.config
   - ~/.local
   - tests
+  - pages
 
 metrics:
   quality_threshold: 30.0
