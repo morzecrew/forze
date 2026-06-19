@@ -6,6 +6,7 @@ from forze.base.serialization import (
     ModelCodec,
     ModelDumpExcludeOptions,
     default_model_codec,
+    model_codec_for,
     stored_field_names_for,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "ModelCodec",
     "ModelDumpExcludeOptions",
     "default_model_codec",
+    "model_codec_for",
     "stored_field_names_for",
 ]

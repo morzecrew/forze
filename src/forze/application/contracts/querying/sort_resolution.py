@@ -237,17 +237,28 @@ def _subpath_resolves(annotation: Any, segments: list[str]) -> bool:
     return _is_any_like(annotation)
 
 
-def field_path_resolves(model: type[BaseModel], field: str) -> bool:
+def field_path_resolves(
+    model: type[BaseModel],
+    field: str,
+    *,
+    materialized: frozenset[str] = frozenset(),
+) -> bool:
     """Whether a (possibly dotted) sort/field path resolves on *model*.
 
     Validates the top-level segment against the model and walks nested Pydantic
     models and ``str``-keyed mappings for dotted paths. ``Any``/untyped
     intermediates are treated as walkable (can't be disproved), so this catches
     the common typo / wrong-field case without rejecting genuine dynamic paths.
+
+    *materialized* names computed fields persisted for this spec; a single-segment
+    path naming one resolves (it is a stored, sortable scalar).
     """
 
     segments = field.split(".")
     head = segments[0]
+
+    if len(segments) == 1 and head in materialized:
+        return True
 
     if not head or head not in model.model_fields:
         return False
@@ -265,19 +276,23 @@ def validate_runtime_sort_fields(
     *,
     model: type[BaseModel],
     backend: str,
+    materialized: frozenset[str] = frozenset(),
 ) -> None:
     """Raise when a runtime sort references a field absent from the read *model*.
 
     Backends that hand sort fields straight to the driver (Mongo, Firestore)
     otherwise silently mis-sort (or drop rows) on an unknown field; this gives
     them the same fail-loud, path-aware validation Postgres gets from SQL.
+
+    *materialized* names computed fields persisted for this spec, so they are
+    sortable despite living in ``model_computed_fields``.
     """
 
     if not sorts:
         return
 
     for field in sorts:
-        if not field_path_resolves(model, field):
+        if not field_path_resolves(model, field, materialized=materialized):
             raise exc.configuration(
                 f"Sort field {field!r} is not on the {backend} read model "
                 f"({model.__name__}).",

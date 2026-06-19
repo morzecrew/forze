@@ -7,7 +7,7 @@ from .codec_rows import (
     materialize_mapping_rows,
     resolve_model_codec,
 )
-from .defaults import default_model_codec, stored_field_names_for
+from .defaults import default_model_codec, model_codec_for, stored_field_names_for
 from .diff import (
     apply_dict_patch,
     calculate_dict_difference,
@@ -29,6 +29,7 @@ __all__ = [
     "PERSISTENCE_DUMP_EXCLUDE_OPTS",
     "CACHE_DUMP_EXCLUDE_OPTS",
     "default_model_codec",
+    "model_codec_for",
     "stored_field_names_for",
     "resolve_model_codec",
     "codec_for_alt_model",

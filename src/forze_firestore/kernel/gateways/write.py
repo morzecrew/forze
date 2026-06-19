@@ -269,7 +269,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             if rev is not None:
                 await self._validate_history((current, rev, update))
 
-            _, diff = current.update(update)
+            _, diff = current.update(update, materialized=self.read_codec.materialized)
 
         else:
             _, diff = current.touch()

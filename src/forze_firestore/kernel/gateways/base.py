@@ -254,7 +254,12 @@ class FirestoreGateway[M: BaseModel](
         if not sorts:
             return None
 
-        validate_runtime_sort_fields(sorts, model=self.model_type, backend="firestore")
+        validate_runtime_sort_fields(
+            sorts,
+            model=self.model_type,
+            backend="firestore",
+            materialized=self.read_codec.materialized,
+        )
         resolved = resolve_sort_keys(sorts)
         assert_default_null_ordering(resolved, backend="firestore")
 

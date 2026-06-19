@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from forze.domain.models import BaseDTO, Document, DocumentHistory
 
-from ..codecs import ModelCodec, default_model_codec
+from ..codecs import ModelCodec, default_model_codec, model_codec_for
 from .write_types import DocumentWriteTypes
 
 # ----------------------- #
@@ -60,10 +60,17 @@ def document_codecs_for_spec(
     read: type[R],
     write: DocumentWriteTypes[D, C, U] | None,
     history_enabled: bool,
+    materialized: frozenset[str] = frozenset(),
 ) -> DocumentCodecs[R, D, C, U]:
-    """Build default codecs from document spec model types."""
+    """Build default codecs from document spec model types.
 
-    read_codec = default_model_codec(read)
+    *materialized* names ``@computed_field`` members on the read and domain models
+    that are persisted (and thus queryable); they are threaded into the read,
+    domain, and create codecs so those fields are written to storage. Create/update
+    commands never carry materialized fields (a derived value cannot be set directly).
+    """
+
+    read_codec = model_codec_for(read, materialized=materialized)
     domain: ModelCodec[D, Any] | None = None
     create: ModelCodec[D, Any] | None = None
     update: ModelCodec[U, Any] | None = None
@@ -71,8 +78,8 @@ def document_codecs_for_spec(
 
     if write is not None:
         domain_type = write["domain"]
-        domain = default_model_codec(domain_type)
-        create = default_model_codec(domain_type)
+        domain = model_codec_for(domain_type, materialized=materialized)
+        create = model_codec_for(domain_type, materialized=materialized)
 
         if "update_cmd" in write:
             update = default_model_codec(write["update_cmd"])

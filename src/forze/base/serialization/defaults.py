@@ -14,6 +14,7 @@ from .pydantic_codec import PydanticModelCodec
 
 __all__ = [
     "default_model_codec",
+    "model_codec_for",
     "stored_field_names_for",
 ]
 
@@ -23,12 +24,15 @@ __all__ = [
 _CODEC_CACHE: dict[type, ModelCodec[Any, Any]] = {}
 
 
-def _build_codec(model_type: type) -> ModelCodec[Any, Any]:
+def _build_codec(
+    model_type: type,
+    materialized: frozenset[str] = frozenset(),
+) -> ModelCodec[Any, Any]:
     if issubclass(model_type, BaseModel):
-        return PydanticModelCodec(model_type)  # type: ignore[return-value]
+        return PydanticModelCodec(model_type, materialized)  # type: ignore[return-value]
 
     if issubclass(model_type, msgspec.Struct):
-        return MsgspecModelCodec(model_type)  # type: ignore[return-value]
+        return MsgspecModelCodec(model_type, materialized)  # type: ignore[return-value]
 
     raise exc.configuration(
         f"Unsupported model type {model_type!r}; "
@@ -50,6 +54,25 @@ def default_model_codec[T](model_type: type[T]) -> ModelCodec[T, Any]:
         _CODEC_CACHE[model_type] = codec
 
     return codec
+
+
+def model_codec_for[T](
+    model_type: type[T],
+    *,
+    materialized: frozenset[str] = frozenset(),
+) -> ModelCodec[T, Any]:
+    """Return a :class:`ModelCodec` for *model_type*, optionally with materialized fields.
+
+    With no materialized fields this is :func:`default_model_codec` (cached). When
+    *materialized* is non-empty the codec persists those ``@computed_field`` names
+    (and reports them via ``persisted_field_names``); such codecs are built fresh
+    rather than cached, since the materialized set is a per-spec concern.
+    """
+
+    if not materialized:
+        return default_model_codec(model_type)
+
+    return _build_codec(model_type, materialized)
 
 
 # ....................... #

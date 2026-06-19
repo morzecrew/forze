@@ -109,6 +109,7 @@ def validate_runtime_filter_fields(
     filters: QueryFilterExpression | None,  # type: ignore[valid-type]
     *,
     model: type[BaseModel],
+    materialized: frozenset[str] = frozenset(),
 ) -> None:
     """Raise when a runtime filter references a top-level field absent from *model*.
 
@@ -117,12 +118,15 @@ def validate_runtime_filter_fields(
     root-level filter check, so Mongo/Firestore/mock fail loud rather than
     silently matching nothing on a non-stored field. Element-quantifier inner
     predicates are relative to the array element and are not validated here.
+
+    *materialized* names computed fields that are persisted for this spec, so they
+    are filterable despite living in ``model_computed_fields``.
     """
 
     if filters is None:
         return
 
-    fields = model.model_fields
+    fields = frozenset(model.model_fields) | materialized
     unknown = sorted(
         root for root in collect_filter_field_roots(filters) if root not in fields
     )

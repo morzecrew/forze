@@ -264,7 +264,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if filters is None:
             return
 
-        validate_runtime_filter_fields(filters, model=self.read_model)
+        validate_runtime_filter_fields(
+            filters,
+            model=self.read_model,
+            materialized=self.spec.materialized,
+        )
         expr = QueryFilterExpressionParser.parse(filters)
         validate_query_field_types(expr, self.read_model)
 
@@ -492,7 +496,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 else ordered_rows
             )
         else:
-            validate_runtime_sort_fields(sorts, model=self.read_model, backend="mock")
+            validate_runtime_sort_fields(
+                sorts,
+                model=self.read_model,
+                backend="mock",
+                materialized=self.spec.materialized,
+            )
             total = len(filtered)
             ordered_docs = _sort_docs(filtered, sorts)
             if return_type is not None:
@@ -911,7 +920,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # cursor from the last returned row.
         self._validate_filter_types(filters)
 
-        read_fields = read_fields_for_model(self.read_model)
+        read_fields = read_fields_for_model(self.read_model) | self.spec.materialized
         effective = resolve_effective_sorts(
             sorts=sorts,
             default_sort=self.spec.default_sort,

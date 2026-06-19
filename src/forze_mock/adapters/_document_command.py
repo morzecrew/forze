@@ -446,7 +446,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             current = self._to_domain(current_raw)
             self._check_rev(current.rev, rev)
 
-            updated, diff = current.update(patch)
+            updated, diff = current.update(patch, materialized=self.spec.materialized)
             if diff:
                 updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
 
@@ -598,7 +598,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     continue
 
                 current = self._to_domain(dict(raw))
-                updated, diff = current.update(patch)
+                updated, diff = current.update(patch, materialized=self.spec.materialized)
 
                 if not diff:
                     continue
