@@ -116,6 +116,7 @@ from .pagination import (
     row_passes_keyset_seek,
     row_value_for_sort_key,
     validate_cursor_token,
+    validate_runtime_sort_fields,
     validate_sort_fields,
 )
 from .types import (
@@ -236,6 +237,7 @@ __all__ = [
     "resolved_cursor_limit",
     "row_passes_keyset_seek",
     "validate_cursor_token",
+    "validate_runtime_sort_fields",
     "validate_sort_fields",
     "row_value_for_sort_key",
     "QueryConjunction",

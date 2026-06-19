@@ -364,6 +364,12 @@ class TestApiKeyPrefixConfig:
         with pytest.raises(exc, match="prefix"):
             ApiKeyConfig(prefix="sk live")
 
+    def test_colon_prefix_rejected_at_config(self) -> None:
+        # Ingress splits ``prefix:key`` on the first ':', so a ':' in the prefix
+        # would corrupt the split.
+        with pytest.raises(exc, match="prefix"):
+            ApiKeyConfig(prefix="sk:live")
+
     def test_whitespace_prefix_rejected_on_generate_override(self) -> None:
         svc = ApiKeyService(pepper=b"x" * 32, config=ApiKeyConfig())
 

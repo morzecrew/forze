@@ -14,13 +14,14 @@ from forze.base.primitives import current_entropy_source
 def _validate_prefix(prefix: str) -> None:
     """Reject prefixes that would not survive header transport.
 
-    Ingress parses ``prefix:key`` by splitting on whitespace, so an empty or
-    whitespace-bearing prefix would silently corrupt presented credentials.
+    Ingress parses ``prefix:key`` by splitting on the first ``:``, so a prefix
+    that is empty or contains whitespace or a ``:`` would corrupt the presented
+    credentials.
     """
 
-    if not prefix or any(ch.isspace() for ch in prefix):
+    if not prefix or any(ch.isspace() for ch in prefix) or ":" in prefix:
         raise exc.configuration(
-            "API key prefix must be non-empty and contain no whitespace",
+            "API key prefix must be non-empty and contain no whitespace or ':'",
         )
 
 

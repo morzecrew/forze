@@ -330,6 +330,30 @@ class TestResolveAuthnIngress:
         assert authn.identity.principal_id == uuid5(NAMESPACE_URL, "key:secret-key")
 
     @pytest.mark.asyncio
+    async def test_header_api_key_splits_prefix_on_colon(self) -> None:
+        # ``prefix:secret`` must split on the first colon (matching forze_mcp),
+        # so the verifier receives the bare secret, not ``prefix:secret``.
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _ApiKeyAuthFactory()}))
+        req = Request(
+            {
+                "type": "http",
+                "path": "/",
+                "method": "GET",
+                "headers": [(b"x-api-key", b"sk_live:secret-key")],
+            }
+        )
+
+        authn = await resolve_authn_ingress(
+            HeaderApiKeyAuthn(authn_spec=_API_KEY_SPEC, header_name="X-API-Key"),
+            request=req,
+            ctx=ctx,
+        )
+
+        assert authn is not None
+        # key == "secret-key" (prefix "sk_live" stripped), not the whole header.
+        assert authn.identity.principal_id == uuid5(NAMESPACE_URL, "key:secret-key")
+
+    @pytest.mark.asyncio
     async def test_cookie_token_uses_authentication_port(self) -> None:
         ctx = context_from_deps(Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
         req = Request(

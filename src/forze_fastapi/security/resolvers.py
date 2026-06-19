@@ -27,14 +27,24 @@ from .value_objects import (
 
 
 def _split_authorization(raw: str, sep: str = " ") -> tuple[str, str | None]:
-    """Split an authorization-style header into ``(scheme, value)`` (or ``(value, None)``)."""
+    """Split an authorization-style header into ``(scheme, value)`` (or ``(value, None)``).
 
-    parts: Sequence[str] = raw.strip(sep).split(maxsplit=1)
+    The default whitespace separator collapses runs (so ``Bearer  tok`` yields a
+    clean token); a non-whitespace *sep* (e.g. ``":"`` for ``prefix:key`` API
+    keys) splits on the first occurrence, mirroring ``forze_mcp``'s
+    ``_split_api_key`` so the same key authenticates over FastAPI and MCP.
+    """
 
-    if len(parts) == 1:
-        return parts[0], None
+    raw = raw.strip()
 
-    return parts[0], parts[1]
+    if sep == " ":
+        parts: Sequence[str] = raw.split(maxsplit=1)
+        if len(parts) == 1:
+            return parts[0], None
+        return parts[0], parts[1]
+
+    head, found, tail = raw.partition(sep)
+    return (head, tail) if found else (head, None)
 
 
 # ....................... #

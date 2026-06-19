@@ -12,6 +12,7 @@ from ..sort_resolution import (
     read_fields_for_model,
     resolve_effective_sorts,
     resolve_sort_keys,
+    validate_runtime_sort_fields,
     validate_sort_fields,
 )
 from .cursor_token import (
@@ -49,5 +50,6 @@ __all__ = [
     "row_passes_keyset_seek",
     "row_value_for_sort_key",
     "validate_cursor_token",
+    "validate_runtime_sort_fields",
     "validate_sort_fields",
 ]

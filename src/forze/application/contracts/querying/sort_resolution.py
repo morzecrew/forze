@@ -1,6 +1,8 @@
 """Resolve and normalize sort expressions for stable pagination."""
 
-from typing import Any, Mapping, cast
+from collections.abc import Mapping as MappingABC
+from types import UnionType
+from typing import Any, Mapping, Union, cast, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -13,6 +15,8 @@ from forze.domain.constants import ID_FIELD
 
 _DIRECTIONS = ("asc", "desc")
 _NULLS = ("first", "last")
+
+_MISSING: Any = object()
 
 # ....................... #
 
@@ -166,6 +170,115 @@ def validate_sort_fields(
             )
 
         parse_sort_value(value, field=field, spec_name=spec_name)
+
+
+# ....................... #
+
+
+def _unwrap_optional(annotation: Any) -> Any:
+    if get_origin(annotation) in (Union, UnionType):
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    return annotation
+
+
+def _is_basemodel(annotation: Any) -> bool:
+    return isinstance(annotation, type) and issubclass(annotation, BaseModel)
+
+
+def _is_any_like(annotation: Any) -> bool:
+    # ``Any``, a bare object, or a wide union we cannot meaningfully walk into.
+    if annotation is Any or annotation is object:
+        return True
+    return get_origin(annotation) in (Union, UnionType) and len(get_args(annotation)) > 2
+
+
+def _str_keyed_mapping_value(annotation: Any) -> Any:
+    """Value annotation of a ``str``-keyed mapping, ``None`` for an untyped one,
+    or ``_MISSING`` when *annotation* is not a string-keyed mapping."""
+
+    origin = get_origin(annotation)
+    if origin is None:
+        return None if annotation in (dict, MappingABC) else _MISSING
+
+    if origin is dict or origin is MappingABC or (
+        isinstance(origin, type) and issubclass(origin, MappingABC)
+    ):
+        args = get_args(annotation)
+        if not args:
+            return None
+        if _unwrap_optional(args[0]) in (str, Any):
+            return _unwrap_optional(args[1]) if len(args) == 2 else None
+
+    return _MISSING
+
+
+def _subpath_resolves(annotation: Any, segments: list[str]) -> bool:
+    if not segments:
+        return True
+
+    if _is_basemodel(annotation):
+        info = annotation.model_fields.get(segments[0])
+        if info is None:
+            return False
+        return _subpath_resolves(_unwrap_optional(info.annotation), segments[1:])
+
+    val = _str_keyed_mapping_value(annotation)
+    if val is not _MISSING:
+        # A dynamic-key hop; an untyped value is walkable for any remaining path.
+        return True if val is None else _subpath_resolves(_unwrap_optional(val), segments[1:])
+
+    # A scalar leaf with path left over is invalid; an ``Any``/wide type cannot
+    # be disproved, so allow it (avoid false rejections).
+    return _is_any_like(annotation)
+
+
+def field_path_resolves(model: type[BaseModel], field: str) -> bool:
+    """Whether a (possibly dotted) sort/field path resolves on *model*.
+
+    Validates the top-level segment against the model and walks nested Pydantic
+    models and ``str``-keyed mappings for dotted paths. ``Any``/untyped
+    intermediates are treated as walkable (can't be disproved), so this catches
+    the common typo / wrong-field case without rejecting genuine dynamic paths.
+    """
+
+    segments = field.split(".")
+    head = segments[0]
+
+    if not head or head not in model.model_fields:
+        return False
+
+    if len(segments) == 1:
+        return True
+
+    return _subpath_resolves(
+        _unwrap_optional(model.model_fields[head].annotation), segments[1:]
+    )
+
+
+def validate_runtime_sort_fields(
+    sorts: QuerySortExpression | None,
+    *,
+    model: type[BaseModel],
+    backend: str,
+) -> None:
+    """Raise when a runtime sort references a field absent from the read *model*.
+
+    Backends that hand sort fields straight to the driver (Mongo, Firestore)
+    otherwise silently mis-sort (or drop rows) on an unknown field; this gives
+    them the same fail-loud, path-aware validation Postgres gets from SQL.
+    """
+
+    if not sorts:
+        return
+
+    for field in sorts:
+        if not field_path_resolves(model, field):
+            raise exc.configuration(
+                f"Sort field {field!r} is not on the {backend} read model "
+                f"({model.__name__}).",
+            )
 
 
 # ....................... #
