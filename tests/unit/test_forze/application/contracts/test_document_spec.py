@@ -2,7 +2,7 @@
 
 import msgspec
 import pytest
-from pydantic import BaseModel
+from pydantic import computed_field
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.querying import QueryFieldPolicy
@@ -24,6 +24,44 @@ class _Create(CreateDocumentCmd):
 
 class _PydanticUpdate(BaseDTO):
     name: str | None = None
+
+
+class _PricedRead(ReadDocument):
+    qty: int
+    unit_price: float
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total(self) -> float:
+        return self.qty * self.unit_price
+
+
+class _PricedDomain(Document):
+    qty: int
+    unit_price: float
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total(self) -> float:
+        return self.qty * self.unit_price
+
+
+class _PricedCreate(CreateDocumentCmd):
+    qty: int
+    unit_price: float
+
+
+class _PricedUpdate(BaseDTO):
+    qty: int | None = None
+    unit_price: float | None = None
+
+
+def _priced_write() -> DocumentWriteTypes:
+    return DocumentWriteTypes(
+        domain=_PricedDomain,
+        create_cmd=_PricedCreate,
+        update_cmd=_PricedUpdate,
+    )
 
 
 class _EmptyPydanticUpdate(BaseDTO):
@@ -133,6 +171,90 @@ def test_query_policy_unknown_field_rejected_at_construction() -> None:
             read=_Read,
             query_policy=QueryFieldPolicy(filterable={"nonexistent"}),
         )
+
+
+# ----------------------- #
+# Materialized computed fields
+
+
+def test_materialized_field_is_queryable_and_threaded_into_codecs() -> None:
+    spec = DocumentSpec(
+        name="orders",
+        read=_PricedRead,
+        write=_priced_write(),
+        materialized={"total"},
+    )
+
+    # Discovery surfaces the materialized field as filterable/sortable.
+    assert "total" in spec.filterable_fields()
+    assert "total" in spec.sortable_fields()
+
+    # The read/domain codecs persist it; create stays write-only.
+    codecs = spec.resolved_codecs
+    assert codecs.read.materialized == frozenset({"total"})
+    assert codecs.domain is not None and codecs.domain.materialized == frozenset({"total"})
+    assert codecs.read.persisted_field_names() >= {"qty", "unit_price", "total"}
+
+
+def test_materialized_allows_default_sort_on_derived_field() -> None:
+    spec = DocumentSpec(
+        name="orders",
+        read=_PricedRead,
+        write=_priced_write(),
+        materialized={"total"},
+        default_sort={"total": "desc"},
+    )
+
+    assert spec.default_sort == {"total": "desc"}
+
+
+def test_materialized_unknown_field_rejected() -> None:
+    with pytest.raises(CoreException, match="not .*computed_field.* on the read model"):
+        DocumentSpec(
+            name="orders",
+            read=_PricedRead,
+            write=_priced_write(),
+            materialized={"ghost"},
+        )
+
+
+def test_materialized_non_computed_read_field_rejected() -> None:
+    # ``qty`` is a regular field, not a computed one — it is already persisted and
+    # must not be declared materialized.
+    with pytest.raises(CoreException, match="not .*computed_field"):
+        DocumentSpec(
+            name="orders",
+            read=_PricedRead,
+            write=_priced_write(),
+            materialized={"qty"},
+        )
+
+
+def test_materialized_collision_with_settable_command_rejected() -> None:
+    class _BadUpdate(BaseDTO):
+        total: float | None = None  # tries to set a derived field directly
+
+    with pytest.raises(CoreException, match="cannot be settable on a create/update"):
+        DocumentSpec(
+            name="orders",
+            read=_PricedRead,
+            write=DocumentWriteTypes(
+                domain=_PricedDomain,
+                create_cmd=_PricedCreate,
+                update_cmd=_BadUpdate,
+            ),
+            materialized={"total"},
+        )
+
+
+def test_materialized_on_msgspec_model_rejected_cleanly() -> None:
+    # msgspec structs have no @computed_field, so materializing on one is a clean
+    # configuration error, not a raw AttributeError on ``model_computed_fields``.
+    class _MsgspecRead(msgspec.Struct):
+        a: int
+
+    with pytest.raises(CoreException, match="require a Pydantic model"):
+        DocumentSpec(name="doc", read=_MsgspecRead, materialized={"a"})  # type: ignore[type-var]
 
 
 def test_sensitive_defaults_to_false() -> None:

@@ -111,7 +111,11 @@ class Document(CoreModel):
 
     # ....................... #
 
-    def _calculate_update_diff(self, data: JsonDict) -> tuple[Self, JsonDict]:
+    def _calculate_update_diff(
+        self,
+        data: JsonDict,
+        materialized: frozenset[str] = frozenset(),
+    ) -> tuple[Self, JsonDict]:
         """Merge ``data`` into self with full re-validation and return the result.
 
         The patch is merged into a python-mode dump of the current state and the
@@ -124,9 +128,10 @@ class Document(CoreModel):
           that validates to the current value yields an **empty** diff (semantic
           no-op — no rev bump, no history, no emitters downstream).
 
-        Computed fields are excluded from the dumps: they are derived (not
-        persisted), and the candidate recomputes them, so leaving them in would
-        leak phantom keys into the diff the gateways try to write as columns.
+        The merge input excludes computed fields (the candidate recomputes them),
+        but the diff is taken over the *persisted* dump, which includes any
+        ``materialized`` computed fields — so a derived value that changes because
+        its inputs changed is written by diff-applying gateways and kept in sync.
 
         :returns: The validated candidate instance and the minimal merge patch
             (python-mode values) that represents ``data`` applied to self.
@@ -141,7 +146,10 @@ class Document(CoreModel):
         before = self._dump_stored_fields()
         merged = apply_dict_patch(before, patch)
         candidate = type(self).model_validate(merged)
-        diff = calculate_dict_difference(before, candidate._dump_stored_fields())
+        diff = calculate_dict_difference(
+            self._dump_persisted_fields(materialized),
+            candidate._dump_persisted_fields(materialized),
+        )
 
         return candidate, diff
 
@@ -162,6 +170,30 @@ class Document(CoreModel):
         fields = type(self).model_fields
 
         return {k: v for k, v in dump.items() if k in fields}
+
+    # ....................... #
+
+    def _dump_persisted_fields(
+        self,
+        materialized: frozenset[str] = frozenset(),
+    ) -> JsonDict:
+        """Stored fields plus any *materialized* computed fields.
+
+        With no materialized fields this is exactly :meth:`_dump_stored_fields`.
+        Otherwise it keeps the named ``@computed_field`` values (top level only —
+        materialized fields are stored, queryable scalars), so the update diff
+        carries them when their inputs change.
+        """
+
+        if not materialized:
+            return self._dump_stored_fields()
+
+        # ``include`` limits the dump to declared fields plus the materialized
+        # computed fields, so the other (non-persisted) computed fields are never
+        # evaluated — and pydantic *extras* are dropped, as in _dump_stored_fields.
+        include = frozenset(type(self).model_fields) | materialized
+
+        return self.model_dump(mode="python", include=set(include))
 
     # ....................... #
 
@@ -271,7 +303,12 @@ class Document(CoreModel):
 
     # ....................... #
 
-    def update(self, data: JsonDict) -> tuple[Self, JsonDict]:
+    def update(
+        self,
+        data: JsonDict,
+        *,
+        materialized: frozenset[str] = frozenset(),
+    ) -> tuple[Self, JsonDict]:
         """Apply a validated update and return the new document and diff.
 
         The method:
@@ -297,7 +334,7 @@ class Document(CoreModel):
             tuple(data.keys()),
         )
 
-        candidate, diff = self._calculate_update_diff(data)
+        candidate, diff = self._calculate_update_diff(data, materialized)
 
         if diff:
             now = utcnow()

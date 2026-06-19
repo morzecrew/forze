@@ -5,15 +5,16 @@ from typing import Any, Generic, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
+from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
+from ..codecs import stored_field_names_for
 from ..crypto import FieldEncryption
 from ..querying import QueryFieldPolicy, QuerySortExpression
 from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
-from ..codecs import stored_field_names_for
 from .codecs import DocumentCodecs, document_codecs_for_spec
 from .write_types import DocumentWriteTypes
 
@@ -42,6 +43,20 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     history_enabled: bool = attrs.field(default=False)
     """Enable history for the document aggregate. Defaults to ``False``."""
+
+    materialized: frozenset[str] = attrs.field(
+        default=frozenset(),
+        converter=frozenset,
+    )
+    """``@computed_field`` names on the read and domain models that are persisted
+    (written to storage) so they can be filtered and sorted on, instead of being
+    recomputed only between the database and the interface.
+
+    The derivation stays defined once on the model (the ``@computed_field``); this
+    only opts that derived value into storage. A materialized field must be a
+    ``@computed_field`` on both the read and domain models and must **not** be a
+    settable field on any create/update command (a derived value cannot be set
+    directly). Empty by default."""
 
     sensitive: bool = attrs.field(default=False)
     """Read model carries credential/secret material (password hashes, token digests);
@@ -90,12 +105,16 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             read=self.read,
             write=self.write,
             history_enabled=self.history_enabled,
+            materialized=self.materialized,
         )
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        read_fields = read_fields_for_model(self.read)
+        if self.materialized:
+            self._validate_materialized()
+
+        read_fields = read_fields_for_model(self.read) | self.materialized
 
         if self.default_sort is not None:
             validate_sort_fields(
@@ -118,10 +137,75 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _require_computed_capable(self, model: type, label: str) -> None:
+        """Reject materialized fields on a model that cannot carry ``@computed_field``.
+
+        Computed fields are a Pydantic concept; a msgspec struct (e.g. used as a read
+        or domain model) has none, so declaring materialized fields on it is a clean
+        configuration error rather than a raw ``AttributeError``.
+        """
+
+        if not issubclass(model, BaseModel):
+            raise exc.configuration(
+                f"Materialized fields require a Pydantic model with ``@computed_field``; "
+                f"the {label} model {model.__name__} (spec {self.name!r}) is not one.",
+            )
+
+    # ....................... #
+
+    def _validate_materialized(self) -> None:
+        """Validate materialized fields exist as computed fields and never collide with commands."""
+
+        self._require_computed_capable(self.read, "read")
+
+        if missing_read := self.materialized - frozenset(
+            self.read.model_computed_fields
+        ):
+            raise exc.configuration(
+                f"Materialized field(s) {sorted(missing_read)} are not "
+                f"``@computed_field`` on the read model {self.read.__name__} "
+                f"(spec {self.name!r}).",
+            )
+
+        if self.write is None:
+            return
+
+        domain = self.write["domain"]
+        self._require_computed_capable(domain, "domain")
+
+        if missing_domain := self.materialized - frozenset(
+            domain.model_computed_fields
+        ):
+            raise exc.configuration(
+                f"Materialized field(s) {sorted(missing_domain)} are not "
+                f"``@computed_field`` on the domain model {domain.__name__} "
+                f"(spec {self.name!r}).",
+            )
+
+        settable = stored_field_names_for(
+            self.write["create_cmd"],
+            include_computed=False,
+        )
+
+        if "update_cmd" in self.write:
+            settable |= stored_field_names_for(
+                self.write["update_cmd"],
+                include_computed=False,
+            )
+
+        if collision := self.materialized & settable:
+            raise exc.configuration(
+                f"Field(s) {sorted(collision)} are materialized (derived) and "
+                f"cannot be settable on a create/update command (spec {self.name!r}); "
+                "a derived value is computed, not set directly.",  # nosec B608
+            )
+
+    # ....................... #
+
     def filterable_fields(self) -> frozenset[str]:
         """Field names a governed caller may filter on (policy allow-set, or all read fields)."""
 
-        read_fields = read_fields_for_model(self.read)
+        read_fields = read_fields_for_model(self.read) | self.materialized
 
         if self.query_policy is None:
             return read_fields
@@ -133,7 +217,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     def sortable_fields(self) -> frozenset[str]:
         """Field names a governed caller may sort by (policy allow-set, or all read fields)."""
 
-        read_fields = read_fields_for_model(self.read)
+        read_fields = read_fields_for_model(self.read) | self.materialized
 
         if self.query_policy is None:
             return read_fields
@@ -145,7 +229,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     def aggregatable_fields(self) -> frozenset[str]:
         """Field names a governed caller may group by / aggregate (allow-set, or all read fields)."""
 
-        read_fields = read_fields_for_model(self.read)
+        read_fields = read_fields_for_model(self.read) | self.materialized
 
         if self.query_policy is None:
             return read_fields

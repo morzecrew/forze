@@ -52,6 +52,7 @@ def postgres_document_schema_spec_for_binding(
             read_model=spec.read,
             read_relation=read_rel,
             tenant_aware=tenant_aware,
+            materialized=spec.materialized,
         )
 
     if not isinstance(config, PostgresDocumentConfig):
@@ -95,6 +96,7 @@ def postgres_document_schema_spec_for_binding(
         history_relation=hist,
         bookkeeping_strategy=config.bookkeeping_strategy,
         conflict_target=config.conflict_target,
+        materialized=spec.materialized,
     )
 
 

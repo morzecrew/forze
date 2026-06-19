@@ -6,6 +6,7 @@ import attrs
 import msgspec
 from pydantic import BaseModel
 
+from ..exceptions import exc
 from ..primitives import JsonDict
 from .model_codec import EncodeMode, ModelCodec, ModelDumpExcludeOptions
 from .msgspec import (
@@ -44,6 +45,19 @@ class MsgspecModelCodec[T: msgspec.Struct](ModelCodec[T, SourceType]):
 
     model_type: type[T]  # pyright: ignore[reportIncompatibleMethodOverride]
     """The model type this codec is bound to."""
+
+    materialized: frozenset[str] = frozenset()  # pyright: ignore[reportIncompatibleMethodOverride]
+    """Always empty: msgspec structs have no computed fields to materialize."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.materialized:
+            raise exc.configuration(
+                f"msgspec struct {self.model_type.__name__} cannot declare "
+                f"materialized field(s) {sorted(self.materialized)}; structs have "
+                "no computed fields.",
+            )
 
     # ....................... #
 
@@ -187,6 +201,11 @@ class MsgspecModelCodec[T: msgspec.Struct](ModelCodec[T, SourceType]):
             self.model_type,
             include_computed=include_computed,
         )
+
+    # ....................... #
+
+    def persisted_field_names(self) -> frozenset[str]:
+        return msgspec_field_names(self.model_type, include_computed=False)
 
     # ....................... #
 

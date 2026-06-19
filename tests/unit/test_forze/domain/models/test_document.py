@@ -209,6 +209,45 @@ class TestDocumentUpdateCanonicalization:
         assert set(diff) == {"value", "last_update_at"}
         assert after.doubled == 10
 
+    def test_materialized_computed_field_appears_in_diff_when_changed(self) -> None:
+        # A materialized computed field is persisted, so when its inputs change the
+        # recomputed value must appear in the diff (diff-applying gateways write it).
+        from pydantic import computed_field
+
+        class Doc(Document):
+            value: int
+
+            @computed_field  # type: ignore[prop-decorator]
+            @property
+            def doubled(self) -> int:
+                return self.value * 2
+
+        doc = Doc(value=2)
+        after, diff = doc.update({"value": 5}, materialized=frozenset({"doubled"}))
+
+        assert diff["doubled"] == 10
+        assert set(diff) == {"value", "doubled", "last_update_at"}
+        assert after.doubled == 10
+
+    def test_materialized_field_absent_from_diff_when_unchanged(self) -> None:
+        # The derived value only enters the diff when it actually changes.
+        from pydantic import computed_field
+
+        class Doc(Document):
+            value: int
+            note: str = ""
+
+            @computed_field  # type: ignore[prop-decorator]
+            @property
+            def doubled(self) -> int:
+                return self.value * 2
+
+        doc = Doc(value=2, note="a")
+        _, diff = doc.update({"note": "b"}, materialized=frozenset({"doubled"}))
+
+        assert "doubled" not in diff
+        assert set(diff) == {"note", "last_update_at"}
+
     def test_nested_computed_fields_excluded_from_dump_and_diff(self) -> None:
         # Regression: the round-1 fix only stripped *top-level* computed fields
         # (the explicit model_fields filter). A @computed_field declared on a

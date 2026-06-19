@@ -83,6 +83,11 @@ class PostgresDocumentSchemaSpec:
     history_omit_fields: frozenset[str] = frozenset()
     """History row field names omitted from the physical table."""
 
+    materialized: frozenset[str] = frozenset()
+    """``@computed_field`` names persisted as real columns on the read/write relations
+    (see :attr:`DocumentSpec.materialized`); required to exist so a missing column
+    fails at startup rather than on the first write."""
+
     bookkeeping_strategy: PostgresBookkeepingStrategy | None = None
     """Bookkeeping strategy for the write relation; ``None`` when read-only."""
 
@@ -218,8 +223,8 @@ def _warn_read_not_subset_of_write(
 
     read_fields = (
         stored_field_names_for(spec.read_model, include_computed=False)
-        - spec.read_omit_fields
-    )
+        | spec.materialized
+    ) - spec.read_omit_fields
 
     if extra := read_fields - frozenset(write_column_types.keys()):
         logger.warning(
@@ -269,7 +274,10 @@ async def validate_postgres_document_schemas(
 
     for spec in specs:
         read_need = frozenset(
-            stored_field_names_for(spec.read_model, include_computed=False)
+            (
+                stored_field_names_for(spec.read_model, include_computed=False)
+                | spec.materialized
+            )
             - spec.read_omit_fields,
         )
         await _require_columns(
@@ -306,8 +314,8 @@ async def validate_postgres_document_schemas(
                     spec.write_create_model,
                     spec.write_update_model,
                 )
-                - spec.write_omit_fields
-            )
+                | spec.materialized
+            ) - spec.write_omit_fields
 
             if spec.tenant_aware:
                 write_need = write_need | {TENANT_ID_FIELD}

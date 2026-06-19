@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from forze.application.contracts.document import (
     DocumentCodecs,
@@ -16,7 +16,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.codecs import default_model_codec
 from forze.application.contracts.search import SearchSpec
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
-from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock.adapters import (
     MockCounterAdapter,
     MockDocumentAdapter,
@@ -346,6 +346,108 @@ async def test_document_ensure_and_upsert_tolerate_existing_id() -> None:
     )
     assert upserted.id == created.id
     assert upserted.title == "Updated"
+
+
+class _OrderDoc(Document):
+    qty: int
+    unit_price: float
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total(self) -> float:
+        return self.qty * self.unit_price
+
+
+class _OrderRead(ReadDocument):
+    qty: int
+    unit_price: float
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total(self) -> float:
+        return self.qty * self.unit_price
+
+
+class _OrderCreate(CreateDocumentCmd):
+    qty: int
+    unit_price: float
+
+
+class _OrderUpdate(BaseDTO):
+    qty: int | None = None
+    unit_price: float | None = None
+
+
+def _order_adapter(
+    state: MockState,
+) -> MockDocumentAdapter[_OrderRead, _OrderDoc, _OrderCreate, _OrderUpdate]:
+    spec = DocumentSpec(
+        name="orders",
+        read=_OrderRead,
+        write=DocumentWriteTypes(
+            domain=_OrderDoc,
+            create_cmd=_OrderCreate,
+            update_cmd=_OrderUpdate,
+        ),
+        materialized={"total"},
+    )
+    return MockDocumentAdapter(
+        spec=spec,
+        state=state,
+        namespace="orders",
+        read_model=_OrderRead,
+        domain_model=_OrderDoc,
+    )
+
+
+@pytest.mark.asyncio
+async def test_materialized_field_is_persisted_filterable_and_sortable() -> None:
+    doc = _order_adapter(MockState())
+
+    await doc.create(_OrderCreate(qty=2, unit_price=10.0))  # total 20
+    await doc.create(_OrderCreate(qty=5, unit_price=10.0))  # total 50
+    await doc.create(_OrderCreate(qty=1, unit_price=10.0))  # total 10
+
+    # Filter on the materialized derived field (matches against the stored value).
+    page = await doc.find_many(filters={"$values": {"total": {"$gte": 20}}})
+    assert sorted(row.total for row in page.hits) == [20.0, 50.0]
+
+    # Sort on the materialized derived field.
+    ordered = await doc.find_many(sorts={"total": "desc"})
+    assert [row.total for row in ordered.hits] == [50.0, 20.0, 10.0]
+
+
+@pytest.mark.asyncio
+async def test_materialized_field_recomputed_and_persisted_on_update() -> None:
+    doc = _order_adapter(MockState())
+
+    created = await doc.create(_OrderCreate(qty=2, unit_price=10.0))  # total 20
+    assert created.total == 20.0
+
+    # Change an input; the stored derived value must be recomputed.
+    updated = await doc.update(created.id, created.rev, _OrderUpdate(qty=5))
+    assert updated.total == 50.0
+
+    # The *stored* total is now 50 — a filter on the stale value finds nothing,
+    # and a filter on the new value matches (proves the column was rewritten).
+    assert (await doc.find_many(filters={"$values": {"total": 20.0}})).hits == []
+    matched = await doc.find_many(filters={"$values": {"total": 50.0}})
+    assert [row.id for row in matched.hits] == [created.id]
+
+
+@pytest.mark.asyncio
+async def test_update_matching_rejected_with_materialized() -> None:
+    # Dev/prod parity: real backends reject set-based bulk update on a materialized
+    # aggregate (cannot recompute per row), so the mock must reject it too.
+    doc = _order_adapter(MockState())
+    await doc.create(_OrderCreate(qty=2, unit_price=10.0))
+
+    with pytest.raises(CoreException, match="materialized") as ei:
+        await doc.update_matching(
+            {"$values": {"qty": 2}},
+            _OrderUpdate(unit_price=20.0),
+        )
+    assert ei.value.code == "core.document.materialized_bulk_update_unsupported"
 
 
 @pytest.mark.asyncio

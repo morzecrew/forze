@@ -627,8 +627,15 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
     ) -> list[T]:
         return self.inner.transform_many(sources, mode=mode, exclude=exclude)
 
+    @property
+    def materialized(self) -> frozenset[str]:
+        return self.inner.materialized
+
     def stored_field_names(self, *, include_computed: bool = True) -> frozenset[str]:
         return self.inner.stored_field_names(include_computed=include_computed)
+
+    def persisted_field_names(self) -> frozenset[str]:
+        return self.inner.persisted_field_names()
 
     def encode_json_bytes(
         self,

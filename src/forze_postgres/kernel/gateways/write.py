@@ -795,7 +795,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 if rev is not None:
                     await self._validate_history((current, rev, update))
 
-                _, diff = current.update(update)
+                _, diff = current.update(update, materialized=self.read_codec.materialized)
 
             else:
                 # Always historically consistent because we update only the revision and update timestamp
@@ -1021,7 +1021,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     c: D,
                     u: JsonDict,
                 ) -> tuple[UUID, int, JsonDict] | None:
-                    _, diff = c.update(u)
+                    _, diff = c.update(u, materialized=self.read_codec.materialized)
                     if not diff:
                         return None
 
@@ -1130,6 +1130,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         """
 
         self._require_update_cmd()
+        self._reject_matching_update_with_materialized()
 
         update_data = await self._encode_patch_one(dto)
 

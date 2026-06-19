@@ -446,7 +446,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             current = self._to_domain(current_raw)
             self._check_rev(current.rev, rev)
 
-            updated, diff = current.update(patch)
+            updated, diff = current.update(patch, materialized=self.spec.materialized)
             if diff:
                 updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
 
@@ -571,6 +571,17 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not self.spec.supports_update():
             raise exc.internal("Update command type is not supported for this model")
 
+        # Mirror the real backends: a set-based bulk update cannot recompute a
+        # derived value per row, so reject it here too (the mock could recompute,
+        # but dev/prod parity matters more than the extra capability).
+        if self.spec.materialized:
+            raise exc.precondition(
+                "update_matching is unsupported for aggregates with materialized "
+                f"fields {sorted(self.spec.materialized)}: a set-based update cannot "
+                "recompute a derived value. Update records individually.",
+                code="core.document.materialized_bulk_update_unsupported",
+            )
+
         # ``encode_mapping`` is the codec's non-encrypting path, so the patch is
         # plaintext: it merges cleanly into the decrypted domain and the single
         # ``encode_persistence_mapping(updated)`` below encrypts exactly once (an
@@ -598,7 +609,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     continue
 
                 current = self._to_domain(dict(raw))
-                updated, diff = current.update(patch)
+                updated, diff = current.update(patch, materialized=self.spec.materialized)
 
                 if not diff:
                     continue

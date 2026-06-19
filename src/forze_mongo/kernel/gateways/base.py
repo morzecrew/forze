@@ -293,7 +293,12 @@ class MongoGateway[M: BaseModel](
         if not sorts:
             return None
 
-        validate_runtime_sort_fields(sorts, model=self.model_type, backend="mongo")
+        validate_runtime_sort_fields(
+            sorts,
+            model=self.model_type,
+            backend="mongo",
+            materialized=self.read_codec.materialized,
+        )
         resolved = resolve_sort_keys(sorts)
 
         if not self.computed_null_ordering:
@@ -329,7 +334,12 @@ class MongoGateway[M: BaseModel](
         if not (self.computed_null_ordering and sorts):
             return None
 
-        validate_runtime_sort_fields(sorts, model=self.model_type, backend="mongo")
+        validate_runtime_sort_fields(
+            sorts,
+            model=self.model_type,
+            backend="mongo",
+            materialized=self.read_codec.materialized,
+        )
         resolved = resolve_sort_keys(sorts)
 
         if not any(nulls != default_nulls(d) for _, d, nulls in resolved):

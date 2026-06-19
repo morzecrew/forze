@@ -515,7 +515,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             if rev is not None:
                 await self._validate_history((current, rev, update))
 
-            _, diff = current.update(update)
+            _, diff = current.update(update, materialized=self.read_codec.materialized)
 
         else:
             _, diff = current.touch()
@@ -577,7 +577,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 )
 
             for i, (current, update) in enumerate(zip(currents, updates, strict=True)):
-                _, diff = current.update(update)
+                _, diff = current.update(update, materialized=self.read_codec.materialized)
                 if diff:
                     to_patch.append((i, current, diff))
         else:
@@ -689,6 +689,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         """
 
         self._require_update_cmd()
+        self._reject_matching_update_with_materialized()
 
         update_data = await self._encode_patch_one(dto)
 

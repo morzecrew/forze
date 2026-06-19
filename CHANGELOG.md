@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Materialized derived fields** — `DocumentSpec(..., materialized={...})` can persist selected `@computed_field` values as real columns, making them filterable/sortable. Validation enforces valid materialized names and rejects settable create/update collisions; startup schema checks require matching columns. Set-based `update_matching` is rejected on backends where per-row recomputation is not supported.
+
 - **Two-phase (`prepare`/`apply`) handlers** — `prepare(args)` runs outside the transaction (CPU work / an external call), `apply(args, payload)` inside it, so the transaction wraps only the writes — the explicit complement to lazy acquisition when a call must sit between a read and the write. Register with `registry.bind(op).two_phase().bind_tx().set_route(...)` (a tx route is required — enforced at freeze). `prepare` is read-only (no write ports) and runs **exactly once** per invocation (a retry/hedge re-runs only `apply`). New `TwoPhaseHandler` contract + `forze_kits.aggregates.document.TwoPhaseDocumentHandler` base/`TwoPhaseDocumentBuilder`; recipe at `examples/recipes/two_phase_pricing/`.
 
 Lands **Deterministic Simulation Testing (DST)** as a native framework capability (`forze_dst`): point it at a real Forze app and one master seed reproduces the whole run — schedule, faults, latency, inputs, crashes, network partitions — across single-process and N-node distributed runs, over real registries and real `ExecutionRuntime`s, with zero touches to the app under test.

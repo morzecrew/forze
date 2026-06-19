@@ -127,9 +127,13 @@ class ModelCodecGatewayMixin(Generic[M]):
 
     @cached_property
     def read_fields(self) -> frozenset[str]:
-        """Field names exposed by the model, cached for repeated access."""
+        """Field names persisted for the model (declared + materialized), cached.
 
-        return self.read_codec.stored_field_names(include_computed=False)
+        This is the set of keys a stored row may carry, so it bounds the
+        ``trust_source`` decode and any persisted-field checks.
+        """
+
+        return self.read_codec.persisted_field_names()
 
 
 # ....................... #
@@ -360,6 +364,26 @@ class DocumentWriteCodecMixin(Generic[D]):
 
     # ....................... #
 
+    def _reject_matching_update_with_materialized(self) -> None:
+        """Reject a filter-based bulk update when the aggregate has materialized fields.
+
+        A set-based ``UPDATE … WHERE`` writes the command's fields directly without
+        loading each row, so it cannot recompute a derived (materialized) value from
+        its new inputs — the stored column would silently go stale. Per-record
+        ``update``/``update_many`` recompute correctly; direct callers should use
+        those instead.
+        """
+
+        if self.read_codec.materialized:
+            raise exc.precondition(
+                "update_matching is unsupported for aggregates with materialized "
+                f"fields {sorted(self.read_codec.materialized)}: a set-based update "
+                "cannot recompute a derived value. Update records individually.",
+                code="core.document.materialized_bulk_update_unsupported",
+            )
+
+    # ....................... #
+
     async def _encode_domain_one(self, model: D) -> JsonDict:
         await self._prepare_encode()
         return self.read_codec.encode_persistence_mapping(model)
@@ -455,10 +479,15 @@ class FilterParserMixin(Generic[M]):
         if not filters:
             return None
 
-        # Reject filter fields absent from the read model (incl. computed
-        # fields, which are never stored) so every backend fails loud rather
-        # than silently matching nothing on a non-stored field.
-        validate_runtime_filter_fields(filters, model=self.model_type)
+        # Reject filter fields absent from the read model so every backend fails
+        # loud rather than silently matching nothing on a non-stored field.
+        # Computed fields are excluded unless materialized (persisted for query).
+        codec = getattr(self, "read_codec", None)
+        validate_runtime_filter_fields(
+            filters,
+            model=self.model_type,
+            materialized=codec.materialized if codec else frozenset(),
+        )
 
         expr = self.filter_parser.parse_filter(filters)
 

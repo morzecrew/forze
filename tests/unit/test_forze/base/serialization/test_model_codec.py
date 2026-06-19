@@ -225,3 +225,53 @@ def test_json_bytes_round_trip() -> None:
     model = SampleModel(a=1, b=2)
 
     assert codec.decode_json_bytes(codec.encode_json_bytes(model)) == model
+
+
+# ----------------------- #
+# Materialized computed fields (persisted + queryable)
+
+
+def test_persisted_field_names_excludes_computed_by_default() -> None:
+    codec = PydanticModelCodec(FieldsModel)
+
+    assert codec.materialized == frozenset()
+    assert codec.persisted_field_names() == frozenset({"a"})
+
+
+def test_encode_persistence_mapping_excludes_computed_by_default() -> None:
+    codec = PydanticModelCodec(FieldsModel)
+
+    assert codec.encode_persistence_mapping(FieldsModel(a=3)) == {"a": 3}
+
+
+def test_materialized_field_is_persisted_and_queryable() -> None:
+    codec = PydanticModelCodec(FieldsModel, materialized=frozenset({"doubled"}))
+
+    assert codec.persisted_field_names() == frozenset({"a", "doubled"})
+    assert codec.encode_persistence_mapping(FieldsModel(a=3)) == {"a": 3, "doubled": 6}
+
+
+def test_materialized_field_is_persisted_for_many() -> None:
+    codec = PydanticModelCodec(FieldsModel, materialized=frozenset({"doubled"}))
+
+    assert codec.encode_persistence_mapping_many(
+        [FieldsModel(a=1), FieldsModel(a=4)],
+    ) == [{"a": 1, "doubled": 2}, {"a": 4, "doubled": 8}]
+
+
+def test_materialized_honours_caller_override_keeping_all_computed() -> None:
+    # Caller opting back into all computed fields is unaffected by materialized.
+    codec = PydanticModelCodec(FieldsModel, materialized=frozenset({"doubled"}))
+
+    assert codec.encode_persistence_mapping(
+        FieldsModel(a=3),
+        exclude={"computed_fields": False},
+    ) == {"a": 3, "doubled": 6}
+
+
+def test_materialized_unknown_field_rejected_at_construction() -> None:
+    with pytest.raises(CoreException, match="not computed fields"):
+        PydanticModelCodec(FieldsModel, materialized=frozenset({"a"}))
+
+    with pytest.raises(CoreException, match="not computed fields"):
+        PydanticModelCodec(FieldsModel, materialized=frozenset({"ghost"}))

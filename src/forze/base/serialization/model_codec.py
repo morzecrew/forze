@@ -108,11 +108,31 @@ class ModelCodec[T, TSource](Protocol):
         exclude: ModelDumpExcludeOptions = {"unset": True},
     ) -> list[T]: ...
 
+    @property
+    def materialized(self) -> frozenset[str]:
+        """Computed field names opted into persistence (and thus query).
+
+        Empty for codecs without materialized derived fields. Members are
+        ``@computed_field`` names that are written to storage by
+        :meth:`encode_persistence_mapping` and reported by
+        :meth:`persisted_field_names`, so they can be filtered/sorted on.
+        """
+        ...
+
     def stored_field_names(
         self,
         *,
         include_computed: bool = True,
     ) -> frozenset[str]: ...
+
+    def persisted_field_names(self) -> frozenset[str]:
+        """Field names actually written to storage: declared fields + materialized.
+
+        The single source of truth for "what is persisted" (and therefore
+        queryable). Equals the declared (non-computed) field set unless the
+        codec carries :attr:`materialized` names.
+        """
+        ...
 
     def encode_json_bytes(
         self,
