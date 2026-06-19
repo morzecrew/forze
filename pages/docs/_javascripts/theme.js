@@ -7,7 +7,8 @@
 // page changes, so per-page scheme must be (re)applied in JS.
 (function () {
   function isHome() {
-    return !!document.querySelector(".forze-hero");
+    // Matches the current hero (.fz-hero) and the legacy one (.forze-hero).
+    return !!document.querySelector(".fz-hero, .forze-hero");
   }
 
   function checkedRadio() {
