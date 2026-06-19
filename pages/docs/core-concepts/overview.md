@@ -4,6 +4,9 @@ icon: lucide/compass
 summary: The mental model behind Forze — what it separates, and the vocabulary you'll meet
 ---
 
+This page is the mental model the rest of Learn builds on — what Forze keeps
+separate, why, and the vocabulary you'll meet throughout.
+
 ## Background: DDD and Hexagonal Architecture
 
 Forze builds on two established architectural patterns. You don't need deep expertise in either — but knowing the basics helps you understand why Forze works the way it does.

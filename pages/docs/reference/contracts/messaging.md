@@ -4,6 +4,10 @@ icon: lucide/inbox
 summary: Methods on the queue, outbox, and inbox contracts
 ---
 
+Method-level reference for the three messaging contracts — queue, outbox, and
+inbox. See [Events & sagas](../../in-depth/events-sagas.md) for how they work
+together.
+
 ## Queue
 
 The queue contract has no short `ctx.*` accessor — resolve the ports by dep key:
