@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 import attrs
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
@@ -16,13 +16,14 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.application.integrations.persistence import (
+    DocumentWriteCodecMixin,
     FilterParserMixin,
     HistoryOccMixin,
     ModelCodecGatewayMixin,
     TenantResolvedRelationMixin,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze.base.serialization import ModelCodec, default_model_codec
+from forze.base.serialization import ModelCodec, default_model_codec, model_codec_for
 from forze.domain.models import Document
 
 
@@ -64,6 +65,42 @@ def test_model_codec_gateway_read_fields_cached() -> None:
 def test_filter_parser_compile_filters_none() -> None:
     gw = _FilterGateway(filter_limits=None)
     assert gw.compile_filters(None) is None
+
+
+class _OrderDomain(Document):
+    qty: int
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def doubled(self) -> int:
+        return self.qty * 2
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _WriteGateway(DocumentWriteCodecMixin[_OrderDomain]):
+    codec: ModelCodec[Any, Any]
+
+    @property
+    def read_codec(self) -> ModelCodec[_OrderDomain, Any]:
+        return self.codec
+
+    def _patch_codec(self) -> ModelCodec[Any, Any]:
+        return self.codec
+
+
+def test_reject_matching_update_with_materialized() -> None:
+    gw = _WriteGateway(
+        codec=model_codec_for(_OrderDomain, materialized=frozenset({"doubled"})),
+    )
+    with pytest.raises(CoreException, match="materialized") as ei:
+        gw._reject_matching_update_with_materialized()
+    assert ei.value.code == "core.document.materialized_bulk_update_unsupported"
+
+
+def test_reject_matching_update_noop_without_materialized() -> None:
+    gw = _WriteGateway(codec=default_model_codec(_OrderDomain))
+    # No materialized fields → set-based bulk update is allowed (no raise).
+    gw._reject_matching_update_with_materialized()
 
 
 def test_tenant_id_for_resolve_requires_tenant_when_aware() -> None:

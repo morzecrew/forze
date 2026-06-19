@@ -2,7 +2,7 @@
 
 import msgspec
 import pytest
-from pydantic import BaseModel, computed_field
+from pydantic import computed_field
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.querying import QueryFieldPolicy

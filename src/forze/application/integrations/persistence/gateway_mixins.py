@@ -364,6 +364,26 @@ class DocumentWriteCodecMixin(Generic[D]):
 
     # ....................... #
 
+    def _reject_matching_update_with_materialized(self) -> None:
+        """Reject a filter-based bulk update when the aggregate has materialized fields.
+
+        A set-based ``UPDATE … WHERE`` writes the command's fields directly without
+        loading each row, so it cannot recompute a derived (materialized) value from
+        its new inputs — the stored column would silently go stale. Per-record
+        ``update``/``update_many`` recompute correctly; direct callers should use
+        those instead.
+        """
+
+        if self.read_codec.materialized:
+            raise exc.precondition(
+                "update_matching is unsupported for aggregates with materialized "
+                f"fields {sorted(self.read_codec.materialized)}: a set-based update "
+                "cannot recompute a derived value. Update records individually.",
+                code="core.document.materialized_bulk_update_unsupported",
+            )
+
+    # ....................... #
+
     async def _encode_domain_one(self, model: D) -> JsonDict:
         await self._prepare_encode()
         return self.read_codec.encode_persistence_mapping(model)

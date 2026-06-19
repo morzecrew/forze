@@ -109,6 +109,62 @@ async def test_validate_write_domain_computed_field_does_not_require_column() ->
 
 
 @pytest.mark.asyncio
+async def test_validate_materialized_field_requires_column() -> None:
+    # A materialized computed field IS persisted, so its column must exist —
+    # a missing column fails at startup rather than on the first write.
+    intro = MagicMock(spec=PostgresIntrospector)
+    cols = {
+        "id": _col("id"),
+        "name": _col("name"),
+        "rev": PostgresType(base="int4", is_array=False, not_null=True),
+    }
+    intro.get_column_types = AsyncMock(return_value=cols)  # no 'label' column
+
+    with pytest.raises(CoreException, match="label"):
+        await validate_postgres_document_schemas(
+            intro,
+            [
+                PostgresDocumentSchemaSpec(
+                    name="doc",
+                    read_model=_DomainWithComputed,
+                    read_relation=("public", "t"),
+                    write_domain_model=_DomainWithComputed,
+                    write_create_model=_Create,
+                    write_relation=("public", "t"),
+                    materialized=frozenset({"label"}),
+                ),
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_validate_materialized_field_passes_when_column_present() -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    cols = {
+        "id": _col("id"),
+        "name": _col("name"),
+        "rev": PostgresType(base="int4", is_array=False, not_null=True),
+        "label": _col("label"),
+    }
+    intro.get_column_types = AsyncMock(return_value=cols)
+
+    await validate_postgres_document_schemas(
+        intro,
+        [
+            PostgresDocumentSchemaSpec(
+                name="doc",
+                read_model=_DomainWithComputed,
+                read_relation=("public", "t"),
+                write_domain_model=_DomainWithComputed,
+                write_create_model=_Create,
+                write_relation=("public", "t"),
+                materialized=frozenset({"label"}),
+            ),
+        ],
+    )
+
+
+@pytest.mark.asyncio
 async def test_validate_tenant_aware_write_requires_tenant_column() -> None:
     intro = MagicMock(spec=PostgresIntrospector)
     intro.get_column_types = AsyncMock(
