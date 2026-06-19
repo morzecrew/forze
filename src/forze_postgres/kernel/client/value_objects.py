@@ -70,6 +70,15 @@ class PostgresConfig:
     application_name: str | None = None
     """If set, ``SET application_name`` on each new pool connection."""
 
+    lazy_transaction: bool = False
+    """Defer pool checkout + ``BEGIN`` until the first query inside a transaction.
+
+    When ``True``, opening a root transaction scope holds no pool connection until
+    the first statement runs, so CPU-bound or external work before the first query
+    no longer parks a connection idle-in-transaction. Pre-bound (UoW) and nested
+    (savepoint) paths are unaffected. Off by default during rollout.
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

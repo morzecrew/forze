@@ -229,6 +229,24 @@ class _StubCursor:
         return False
 
 
+class _StubTxn:
+    """``conn.transaction()`` stub recording begin/commit/rollback on the conn."""
+
+    def __init__(self, conn: "_StubConn", savepoint_name: str | None) -> None:
+        self.conn = conn
+        self.savepoint_name = savepoint_name
+
+    async def __aenter__(self) -> "_StubTxn":
+        self.conn.tx_events.append(("begin", self.savepoint_name))
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        self.conn.tx_events.append(
+            ("rollback" if exc_type is not None else "commit", self.savepoint_name)
+        )
+        return False
+
+
 class _StubConn:
     """Connection stub recording autocommit transitions and commit calls."""
 
@@ -240,9 +258,14 @@ class _StubConn:
         self.isolation_level = None
         self.read_only = None
         self.fail_autocommit_restore = False
+        # ("begin"|"commit"|"rollback", savepoint_name|None) in order.
+        self.tx_events: list[tuple[str, str | None]] = []
 
     def cursor(self, *args, **kwargs) -> _StubCursor:
         return self.cursor_obj
+
+    def transaction(self, *, savepoint_name: str | None = None) -> _StubTxn:
+        return _StubTxn(self, savepoint_name)
 
     async def set_autocommit(self, value: bool) -> None:
         if self.fail_autocommit_restore and value is False:
@@ -250,6 +273,12 @@ class _StubConn:
 
         self.autocommit_calls.append(value)
         self.autocommit = value
+
+    async def set_isolation_level(self, value) -> None:
+        self.isolation_level = value
+
+    async def set_read_only(self, value) -> None:
+        self.read_only = value
 
     async def commit(self) -> None:
         self.commit_calls += 1
@@ -400,3 +429,117 @@ class TestPostgresClientRowHelpers:
 
     def test_row_to_dict_empty_description(self) -> None:
         assert PostgresClient._row_to_dict(None, (1, "x")) == {}
+
+
+def _lazy_client_with_stub_pool() -> tuple[PostgresClient, _StubConn, _StubPool]:
+    client, conn, pool = _client_with_stub_pool()
+    client._PostgresClient__lazy_tx = True  # type: ignore[attr-defined]
+    return client, conn, pool
+
+
+class TestLazyTransaction:
+    """``lazy_transaction``: a root scope holds no connection until the first query.
+
+    The scope still counts as a transaction (statements ride its connection, not
+    an autocommit checkout), the connection materializes once and is reused, and
+    the scope commits on clean exit / rolls back on error — all without touching
+    the pool when no statement runs.
+    """
+
+    @pytest.mark.asyncio
+    async def test_open_scope_without_query_checks_out_nothing(self) -> None:
+        client, conn, pool = _lazy_client_with_stub_pool()
+
+        async with client.transaction():
+            # Logically in a transaction, but nothing acquired or begun yet.
+            assert client.is_in_transaction() is True
+            assert pool.checkouts == 0
+            assert conn.tx_events == []
+
+        # An empty lazy scope holds and commits nothing.
+        assert pool.checkouts == 0
+        assert conn.tx_events == []
+        assert not client.is_in_transaction()
+
+    @pytest.mark.asyncio
+    async def test_first_query_materializes_and_commits(self) -> None:
+        client, conn, pool = _lazy_client_with_stub_pool()
+
+        async with client.transaction():
+            assert pool.checkouts == 0
+            await client.execute("INSERT INTO t (v) VALUES (1)")
+            # First statement checked out exactly one connection and opened BEGIN.
+            assert pool.checkouts == 1
+            assert conn.tx_events == [("begin", None)]
+            # Rode the transaction, NOT an autocommit checkout.
+            assert conn.autocommit_calls == []
+            assert conn.cursor_obj.executed == [("INSERT INTO t (v) VALUES (1)", None)]
+
+        # Clean exit commits the materialized transaction.
+        assert conn.tx_events == [("begin", None), ("commit", None)]
+
+    @pytest.mark.asyncio
+    async def test_second_query_reuses_connection(self) -> None:
+        client, conn, pool = _lazy_client_with_stub_pool()
+
+        async with client.transaction():
+            await client.execute("INSERT INTO t (v) VALUES (1)")
+            await client.fetch_all("SELECT 1")
+
+        assert pool.checkouts == 1
+        assert conn.tx_events == [("begin", None), ("commit", None)]
+        assert conn.autocommit_calls == []
+
+    @pytest.mark.asyncio
+    async def test_error_after_materialization_rolls_back(self) -> None:
+        client, conn, pool = _lazy_client_with_stub_pool()
+
+        with pytest.raises(RuntimeError, match="boom"):
+            async with client.transaction():
+                await client.execute("INSERT INTO t (v) VALUES (1)")
+                raise RuntimeError("boom")
+
+        # The exception must reach conn.transaction().__aexit__ as a rollback,
+        # never a commit (the bare-aclose-commits-on-error trap).
+        assert conn.tx_events == [("begin", None), ("rollback", None)]
+
+    @pytest.mark.asyncio
+    async def test_error_before_materialization_holds_nothing(self) -> None:
+        client, conn, pool = _lazy_client_with_stub_pool()
+
+        with pytest.raises(RuntimeError, match="boom"):
+            async with client.transaction():
+                raise RuntimeError("boom")
+
+        assert pool.checkouts == 0
+        assert conn.tx_events == []
+
+    @pytest.mark.asyncio
+    async def test_nested_scope_before_first_query_materializes_root(self) -> None:
+        client, conn, pool = _lazy_client_with_stub_pool()
+
+        async with client.transaction():
+            assert pool.checkouts == 0
+            async with client.transaction():
+                # Entering the nested scope materialized the root and opened a
+                # savepoint on its connection.
+                assert pool.checkouts == 1
+                await client.execute("INSERT INTO t (v) VALUES (1)")
+
+        kinds = [e[0] for e in conn.tx_events]
+        # begin (root) → begin (savepoint) → commit (savepoint) → commit (root)
+        assert kinds == ["begin", "begin", "commit", "commit"]
+        savepoints = [e[1] for e in conn.tx_events]
+        assert savepoints[0] is None and savepoints[1] is not None
+
+    @pytest.mark.asyncio
+    async def test_eager_mode_unchanged_checks_out_eagerly(self) -> None:
+        client, conn, pool = _client_with_stub_pool()  # lazy OFF
+
+        async with client.transaction():
+            # Eager: connection checked out and BEGIN issued on scope entry.
+            assert pool.checkouts == 1
+            assert conn.tx_events == [("begin", None)]
+            assert client.is_in_transaction() is True
+
+        assert conn.tx_events == [("begin", None), ("commit", None)]

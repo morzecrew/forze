@@ -15,7 +15,12 @@ require_psycopg()
 # ....................... #
 
 import asyncio
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    nullcontext,
+)
 from contextvars import ContextVar
 from datetime import timedelta
 from typing import Any, AsyncGenerator, Literal, Sequence, final, overload
@@ -136,6 +141,25 @@ async def _pool_reset_transaction_attributes(conn: AsyncConnection) -> None:
 # ....................... #
 
 
+@attrs.define(slots=True)
+class _PendingTx:
+    """Lazy root-transaction state held in a context var until first use.
+
+    The :class:`AsyncExitStack` is entered around the scope body; materialization
+    pushes the pooled connection, the ``BEGIN`` (``conn.transaction()``), the
+    option-restore callback, and the ``__ctx_conn`` reset onto it. The stack is
+    unwound with the real exception info when the scope body exits, so an error
+    after materialization rolls back (a bare ``aclose()`` would commit on error).
+    """
+
+    options: PostgresTransactionOptions
+    stack: AsyncExitStack
+    conn: AsyncConnection | None = None
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True)
 class PostgresClient(PostgresClientPort):
@@ -160,6 +184,15 @@ class PostgresClient(PostgresClientPort):
         factory=lambda: ContextVar("pg_tx_depth", default=0),
         init=False,
     )
+    __ctx_pending: ContextVar["_PendingTx | None"] = attrs.field(
+        factory=lambda: ContextVar("pg_tx_pending", default=None),
+        init=False,
+    )
+    """Per-scope lazy-transaction state: set on root scope entry, materialized on
+    first query. ``None`` outside a lazy root scope (and always in eager mode)."""
+
+    __lazy_tx: bool = attrs.field(default=False, init=False)
+    """Whether root transaction scopes defer pool checkout to the first query."""
 
     # Connection options
     __acquire_timeout: timedelta = attrs.field(default=timedelta(seconds=5), init=False)
@@ -203,6 +236,8 @@ class PostgresClient(PostgresClientPort):
                 self.__max_concurrent_queries = max(
                     1, config.max_size - config.pool_headroom
                 )
+
+            self.__lazy_tx = config.lazy_transaction
 
             configure = _pool_configure_for_config(config)
 
@@ -281,14 +316,66 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
+    async def _materialize_pending(self) -> AsyncConnection:
+        """Check out the pooled connection and open ``BEGIN`` for a lazy root scope.
+
+        Idempotent: a second call inside the same scope returns the connection
+        materialized by the first. Pushes the pool checkout, the option-restore
+        callback, the ``BEGIN`` (``conn.transaction()``) and the ``__ctx_conn``
+        reset onto the pending scope's exit stack, so they unwind — with the real
+        exception, hence rollback on error — when the scope body exits.
+
+        :raises InfrastructureError: if called with no pending root scope.
+        """
+
+        pending = self.__ctx_pending.get()
+
+        if pending is None:
+            raise exc.internal("No pending transaction to materialize")
+
+        if pending.conn is not None:
+            return pending.conn
+
+        conn = await pending.stack.enter_async_context(
+            self.__require_pool().connection(
+                timeout=self.__acquire_timeout.total_seconds()
+            )
+        )
+
+        # Apply read_only / isolation as connection attributes before BEGIN
+        # (zero round-trips); restore them as the connection returns to the pool.
+        if not self._options_are_default(pending.options):
+            await self._apply_transaction_options(conn, pending.options)
+            pending.stack.push_async_callback(
+                self._restore_transaction_attributes, conn
+            )
+
+        await pending.stack.enter_async_context(conn.transaction())
+
+        token = self.__ctx_conn.set(conn)
+        pending.stack.callback(self.__ctx_conn.reset, token)
+        pending.conn = conn
+
+        return conn
+
+    # ....................... #
+
     @asynccontextmanager
     async def __acquire_conn(self) -> AsyncGenerator[AsyncConnection]:
-        """Yields the context-bound connection or a new one from the pool."""
+        """Yields the context-bound connection or a new one from the pool.
+
+        Inside a lazy root scope that has not yet run a statement, materializes
+        the pending transaction so the scan rides the scope's own connection.
+        """
 
         conn = self.__current_conn()
 
         if conn is not None:
             yield conn
+            return
+
+        if self.__ctx_pending.get() is not None:
+            yield await self._materialize_pending()
             return
 
         async with self.__require_pool().connection(
@@ -326,6 +413,12 @@ class PostgresClient(PostgresClientPort):
             yield conn
             return
 
+        # Inside a lazy root scope, the first statement materializes the pending
+        # transaction and rides its connection (transactional, not autocommit).
+        if self.__ctx_pending.get() is not None:
+            yield await self._materialize_pending()
+            return
+
         async with self.__require_pool().connection(
             timeout=self.__acquire_timeout.total_seconds()
         ) as pooled_conn:
@@ -350,9 +443,17 @@ class PostgresClient(PostgresClientPort):
     # Transaction API
 
     def is_in_transaction(self) -> bool:
-        """Returns ``True`` if the current context is inside a transaction (including nested)."""
+        """Returns ``True`` if the current context is inside a transaction (including nested).
 
-        return self.__ctx_depth.get() > 0 and self.__current_conn() is not None
+        Depth-based (logical): a lazy root scope that has opened but not yet run a
+        statement — so its connection is not materialized — still counts as in a
+        transaction, so the next query materializes the pending scope rather than
+        running a stray autocommit statement. Equivalent to the old
+        ``depth and conn`` test in eager mode, where a non-zero depth always has a
+        bound connection.
+        """
+
+        return self.__ctx_depth.get() > 0
 
     # ....................... #
 
@@ -495,7 +596,7 @@ class PostgresClient(PostgresClientPort):
         self,
         *,
         options: PostgresTransactionOptions | None = None,
-    ) -> AsyncGenerator[AsyncConnection]:
+    ) -> AsyncGenerator[AsyncConnection | None]:
         """Enters a transaction (or nested savepoint), yielding the connection.
 
         Nested calls use savepoints; the top-level call uses psycopg's
@@ -503,14 +604,25 @@ class PostgresClient(PostgresClientPort):
         bound in context (e.g. tests or UoW), that connection is used for the
         top-level transaction instead of acquiring a new one.
 
+        With ``lazy_transaction`` enabled, a root scope acquires no pool
+        connection until the first query (see :meth:`_materialize_pending`); the
+        context manager then yields ``None`` until that point, so callers must run
+        work through the client's query methods rather than the yielded handle.
+
         :param options: Isolation level and read-only mode. All keys optional.
-        :yields: The connection to use for the transaction.
+        :yields: The connection to use for the transaction, or ``None`` for a lazy
+            root scope before its first query.
         """
 
         depth = self.__ctx_depth.get()
         parent_conn = self.__current_conn()
 
         options = options if options is not None else PostgresTransactionOptions()
+
+        # A nested scope opened inside a lazy root that has not run a statement
+        # yet must materialize the root first — a savepoint needs a real BEGIN.
+        if depth > 0 and parent_conn is None and self.__ctx_pending.get() is not None:
+            parent_conn = await self._materialize_pending()
 
         if depth > 0 and parent_conn is not None:
             sp_name = f"fz_sp_{depth}_{uuid4().hex[:12]}"
@@ -558,6 +670,29 @@ class PostgresClient(PostgresClientPort):
                     await self._restore_transaction_attributes(parent_conn)
 
                 self.__ctx_depth.reset(token_depth)
+
+            return
+
+        # Lazy root: register the scope but acquire nothing. The first query (or a
+        # nested scope) materializes the connection + BEGIN via the exit stack,
+        # which unwinds with the real exception on body exit — so an error after
+        # materialization rolls back, and a scope that never queried holds nothing.
+        if self.__lazy_tx:
+            pending = _PendingTx(options=options, stack=AsyncExitStack())
+            token_pending = self.__ctx_pending.set(pending)
+            token_depth = self.__ctx_depth.set(1)
+
+            try:
+                async with pending.stack:
+                    yield None
+
+            except Exception:
+                logger.exception("Error in transaction, rolling back")
+                raise
+
+            finally:
+                self.__ctx_depth.reset(token_depth)
+                self.__ctx_pending.reset(token_pending)
 
             return
 
