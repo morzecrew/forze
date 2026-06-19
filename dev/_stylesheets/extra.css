@@ -176,11 +176,7 @@
   text-underline-offset: 2px;
 }
 
-.forze-banner__link:hover {
-  color: #fff !important;
-}
-
-[data-md-component="outdated"] a:hover {
+a.forze-banner__link:hover {
   color: #fff !important;
 }
 

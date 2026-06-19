@@ -176,7 +176,7 @@
                 var lit = cell.lit;
                 var r = Math.round(126 + (255 - 126) * lit);
                 var g = Math.round(155 + (110 - 155) * lit);
-                var b = Math.round(196 + (40 - 196) * lit);
+                var b = Math.round(196 + (66 - 196) * lit);
                 var a = 0.06 + lit * 0.82;
                 hexPath(cell.cx, cell.cy, R - 1);
                 ctx.strokeStyle =
