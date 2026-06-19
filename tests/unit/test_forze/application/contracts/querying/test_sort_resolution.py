@@ -221,6 +221,23 @@ class TestFieldPathResolves:
         assert field_path_resolves(_Doc, field) is expected
 
 
+def test_field_path_resolves_excludes_computed_field() -> None:
+    from pydantic import computed_field
+
+    class _WithComputed(BaseModel):
+        name: str
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def display(self) -> str:
+            return self.name
+
+    # Computed fields are never serialized to the DB, so they are not sort
+    # targets (Pydantic keeps them in model_computed_fields, not model_fields).
+    assert field_path_resolves(_WithComputed, "name") is True
+    assert field_path_resolves(_WithComputed, "display") is False
+
+
 class TestValidateRuntimeSortFields:
     def test_valid_fields_pass(self) -> None:
         validate_runtime_sort_fields(

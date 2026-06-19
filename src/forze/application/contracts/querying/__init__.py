@@ -73,6 +73,7 @@ from .field_policy import (
     validate_aggregatable_fields,
     validate_field_policy,
     validate_filterable_fields,
+    validate_runtime_filter_fields,
     validate_sortable_fields,
 )
 from .internal import (
@@ -188,6 +189,7 @@ __all__ = [
     "validate_aggregatable_fields",
     "validate_field_policy",
     "validate_filterable_fields",
+    "validate_runtime_filter_fields",
     "validate_sortable_fields",
     "ELEM_SCALAR_FIELD",
     "QuerySortExpression",
