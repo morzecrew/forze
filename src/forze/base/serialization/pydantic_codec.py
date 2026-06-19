@@ -5,6 +5,7 @@ from typing import Iterator, Literal, Sequence, cast
 import attrs
 from pydantic import BaseModel
 
+from ..exceptions import exc
 from ..primitives import JsonDict
 from .model_codec import ModelCodec, ModelDumpExcludeOptions
 from .pydantic import (
@@ -31,6 +32,25 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
 
     model_type: type[T]  # pyright: ignore[reportIncompatibleMethodOverride]
     """The model type this codec is bound to."""
+
+    materialized: frozenset[str] = frozenset()  # pyright: ignore[reportIncompatibleMethodOverride]
+    """``@computed_field`` names persisted (and thus queryable). Empty by default."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not self.materialized:
+            return
+
+        computed = frozenset(self.model_type.model_computed_fields)
+        unknown = self.materialized - computed
+
+        if unknown:
+            raise exc.configuration(
+                f"Materialized field(s) {sorted(unknown)} are not computed fields "
+                f"on {self.model_type.__name__}; only ``@computed_field`` members "
+                "can be materialized.",
+            )
 
     # ....................... #
 
@@ -167,6 +187,14 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
 
     # ....................... #
 
+    def persisted_field_names(self) -> frozenset[str]:
+        return (
+            pydantic_field_names(self.model_type, include_computed=False)
+            | self.materialized
+        )
+
+    # ....................... #
+
     def encode_json_bytes(
         self,
         obj: T,
@@ -188,7 +216,15 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
             ModelDumpExcludeOptions,
             {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
         )
-        return self.encode_mapping(obj, mode=mode, exclude=merged)
+        mapping = self.encode_mapping(obj, mode=mode, exclude=merged)
+
+        if self.materialized and merged.get("computed_fields"):
+            full = self.encode_mapping(obj, mode=mode, exclude=self._keep_computed(exclude))
+            for name in self.materialized:
+                if name in full:
+                    mapping[name] = full[name]
+
+        return mapping
 
     # ....................... #
 
@@ -203,7 +239,31 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
             ModelDumpExcludeOptions,
             {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
         )
-        return self.encode_mapping_many(objs, mode=mode, exclude=merged)
+        mappings = self.encode_mapping_many(objs, mode=mode, exclude=merged)
+
+        if self.materialized and merged.get("computed_fields"):
+            fulls = self.encode_mapping_many(
+                objs, mode=mode, exclude=self._keep_computed(exclude)
+            )
+            for mapping, full in zip(mappings, fulls):
+                for name in self.materialized:
+                    if name in full:
+                        mapping[name] = full[name]
+
+        return mappings
+
+    # ....................... #
+
+    @staticmethod
+    def _keep_computed(exclude: ModelDumpExcludeOptions) -> ModelDumpExcludeOptions:
+        """The caller's exclude options with computed fields kept in the dump.
+
+        Used to recover the materialized ``@computed_field`` values that the
+        persistence dump (which excludes all computed fields) drops, so they can
+        be merged back into the stored mapping.
+        """
+
+        return cast(ModelDumpExcludeOptions, {**exclude, "computed_fields": False})
 
     # ....................... #
 

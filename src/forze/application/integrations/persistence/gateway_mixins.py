@@ -127,9 +127,13 @@ class ModelCodecGatewayMixin(Generic[M]):
 
     @cached_property
     def read_fields(self) -> frozenset[str]:
-        """Field names exposed by the model, cached for repeated access."""
+        """Field names persisted for the model (declared + materialized), cached.
 
-        return self.read_codec.stored_field_names(include_computed=False)
+        This is the set of keys a stored row may carry, so it bounds the
+        ``trust_source`` decode and any persisted-field checks.
+        """
+
+        return self.read_codec.persisted_field_names()
 
 
 # ....................... #

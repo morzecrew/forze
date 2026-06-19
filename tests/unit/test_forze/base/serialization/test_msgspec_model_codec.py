@@ -256,3 +256,17 @@ def test_json_bytes_round_trip() -> None:
     model = SampleStruct(a=1, b=2)
 
     assert codec.decode_json_bytes(codec.encode_json_bytes(model)) == model
+
+def test_persisted_field_names_equals_struct_fields() -> None:
+    codec = MsgspecModelCodec(SampleStruct)
+
+    assert codec.materialized == frozenset()
+    assert codec.persisted_field_names() == msgspec_field_names(
+        SampleStruct,
+        include_computed=False,
+    )
+
+def test_materialized_rejected_for_structs() -> None:
+    # Structs have no computed fields, so materializing one is a wiring error.
+    with pytest.raises(CoreException, match="no computed fields"):
+        MsgspecModelCodec(SampleStruct, materialized=frozenset({"a"}))
