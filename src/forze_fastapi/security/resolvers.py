@@ -39,6 +39,8 @@ def _split_authorization(raw: str, sep: str = " ") -> tuple[str, str | None]:
 
     if sep == " ":
         parts: Sequence[str] = raw.split(maxsplit=1)
+        if not parts:
+            return "", None
         if len(parts) == 1:
             return parts[0], None
         return parts[0], parts[1]
