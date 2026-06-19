@@ -24,10 +24,15 @@ def build_search_query_string(
     if not terms:
         return ""
 
-    if combine == "all":
-        return " ".join(f'"{t}"' for t in terms)
+    # Strip the phrase delimiter from each term so an embedded ``"`` cannot
+    # break phrase boundaries or split the query unexpectedly. (A leading ``-``
+    # remains a Meilisearch negation operator -- documented behaviour.)
+    safe = [t.replace('"', "") for t in terms]
 
-    return " ".join(terms)
+    if combine == "all":
+        return " ".join(f'"{t}"' for t in safe)
+
+    return " ".join(safe)
 
 
 def attributes_to_search_on(

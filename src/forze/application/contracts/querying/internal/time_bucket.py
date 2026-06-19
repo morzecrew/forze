@@ -11,7 +11,13 @@ from forze.base.exceptions import exc
 
 # ----------------------- #
 
-_TIMEZONE_OFFSET_RE = re.compile(r"^([+-])(\d{1,2})(?::?(\d{2}))?\Z")
+# Accepts ``HH:MM`` (group 2/3), compact ``HHMM`` (group 4), or bare ``H``/``HH``
+# (group 5). The no-colon minutes form requires four digits, so an ambiguous
+# ``+123`` matches none of the alternatives and is rejected (vs. parsing as
+# 1h23m); ``+3``, ``+05``, ``+0530`` and ``+05:30`` all parse.
+_TIMEZONE_OFFSET_RE = re.compile(
+    r"^([+-])(?:(\d{1,2}):(\d{2})|(\d{4})|(\d{1,2}))\Z"
+)
 
 TimeBucketMode = Literal["iana", "fixed"]
 
@@ -49,9 +55,14 @@ def parse_aggregate_timezone(wire: str | None) -> ResolvedTimeBucketTimezone:
     m = _TIMEZONE_OFFSET_RE.match(s.replace(" ", ""))
     if m:
         sign = -1 if m.group(1) == "-" else 1
-        h = int(m.group(2))
-        mm = int(m.group(3) or 0)
-        if h > 14 or mm > 59:
+        if m.group(2) is not None:  # HH:MM
+            h, mm = int(m.group(2)), int(m.group(3))
+        elif m.group(4) is not None:  # compact HHMM
+            h, mm = int(m.group(4)[:2]), int(m.group(4)[2:])
+        else:  # bare H / HH
+            h, mm = int(m.group(5)), 0
+        if mm > 59 or h * 60 + mm > 14 * 60:
+            # Max real UTC offset is ±14:00; reject ±14:30, ±15:00, ±09:99, …
             raise exc.internal(f"Timezone offset out of range: {wire!r}")
 
         total_min = sign * (h * 60 + mm)

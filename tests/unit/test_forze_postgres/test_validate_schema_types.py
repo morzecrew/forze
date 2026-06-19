@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime, time
 from typing import Any
 from uuid import UUID
 
@@ -73,6 +73,46 @@ class TestValidateFieldTypeCompatibility:
             validate_field_type_compatibility(
                 model=_Model,
                 column_types={"name": _pg("int4")},
+                omit_fields=frozenset(),
+                label="read",
+            )
+
+    @pytest.mark.parametrize(
+        ("annotation", "column_base"),
+        [
+            # Regression: parameterized type modifiers are compatible with the
+            # same base type and must not be rejected by an exact-match check.
+            (float, "numeric(10,2)"),
+            (float, "numeric(10, 2)"),
+            (datetime, "timestamp(3) with time zone"),
+            (datetime, "timestamp(6) without time zone"),
+            (time, "time(6) without time zone"),
+            (time, "time(6) with time zone"),
+            (str, "character varying(255)"),
+        ],
+    )
+    def test_parameterized_type_modifier_is_compatible(
+        self, annotation: type, column_base: str
+    ) -> None:
+        class Row(BaseModel):
+            value: annotation  # type: ignore[valid-type]
+
+        validate_field_type_compatibility(
+            model=Row,
+            column_types={"value": _pg(column_base)},
+            omit_fields=frozenset(),
+            label="read",
+        )
+
+    def test_parameterized_modifier_still_rejects_incompatible_base(self) -> None:
+        # Stripping the modifier must not turn a genuinely wrong type compatible.
+        class Row(BaseModel):
+            value: int
+
+        with pytest.raises(CoreException, match="incompatible"):
+            validate_field_type_compatibility(
+                model=Row,
+                column_types={"value": _pg("numeric(10,2)")},
                 omit_fields=frozenset(),
                 label="read",
             )

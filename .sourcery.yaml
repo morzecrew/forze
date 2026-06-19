@@ -33,6 +33,9 @@ metrics:
 rule_settings:
   enable:
     - default
+  disable:
+    - extract-method
+    - extract-duplicate-method
   rule_types:
     - refactoring
     - suggestion

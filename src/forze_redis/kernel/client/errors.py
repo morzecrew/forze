@@ -88,14 +88,18 @@ def _redis_eh(  # skipcq: PY-R1000
 
         case redis_errors.ResponseError() as re:
             msg = str(re)
+            # RESP error codes are the leading token (e.g. ``WRONGTYPE ...``,
+            # ``BUSYGROUP ...``). Match on that token, not an unanchored
+            # substring that could hit a key/script name echoed in the message.
+            head = msg.split(" ", 1)[0]
 
-            if "WRONGTYPE" in msg:
+            if head == "WRONGTYPE":
                 return CoreException.infrastructure(
                     "Redis key has wrong type.",
                     details=details,
                 )
 
-            if "BUSY" in msg:
+            if head.startswith("BUSY"):
                 return CoreException.infrastructure(
                     "Redis resource is busy.",
                     details=details,

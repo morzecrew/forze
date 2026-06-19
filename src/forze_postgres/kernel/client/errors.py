@@ -225,20 +225,16 @@ def _psycopg_eh(  # skipcq: PY-R1000
             )
 
         case errors.OperationalError() as oe:
-            msg = str(oe).lower()
-            transient_markers = (
-                "connection",
-                "closed",
-                "timeout",
-                "eof",
-                "reset",
-                "broken pipe",
-                "server closed",
-                "could not receive",
-                "could not send",
-            )
+            # Typed connection/availability errors (class 08*, 57P0x, 53300, …)
+            # are handled by the specific cases above, so an OperationalError
+            # reaching this catch-all with no SQLSTATE is a client-side
+            # connectivity failure (server closed the connection, reset,
+            # timeout, broken pipe) — transient and retryable. Classifying on
+            # SQLSTATE rather than message text keeps this correct regardless of
+            # the server/client message locale (``lc_messages`` / libpq gettext).
+            sqlstate = oe.sqlstate
 
-            if any(s in msg for s in transient_markers):
+            if sqlstate is None or sqlstate.startswith("08"):
                 return CoreException.concurrency(
                     "Transient database connectivity issue. Please retry.",
                     details=details,

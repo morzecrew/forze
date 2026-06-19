@@ -1,5 +1,6 @@
 """Tests for :mod:`forze.base.primitives.fingerprint`."""
 
+import pytest
 from pydantic import SecretStr
 
 from forze.base.primitives.fingerprint import (
@@ -114,6 +115,35 @@ def test_connection_string_fingerprint_differs_by_query_params() -> None:
     fp_c = connection_string_fingerprint(f"{base}?dedup=bbb")
 
     assert fp_a != fp_b != fp_c
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        # Multi-host authorities (replica set / sentinel / cluster) carry a
+        # comma-separated host list that ``urlparse(...).port`` cannot parse.
+        "mongodb://u:topsecret@h1:27017,h2:27017,h3:27017/db?replicaSet=rs0",
+        "redis://h1:26379,h2:26379,h3:26379/0",
+        "amqp://u:topsecret@h1:5672,h2:5672/vhost",
+        # Single-host forms (incl. IPv6) must keep working.
+        "postgresql://u:topsecret@host:5432/db?sslmode=require",
+        "postgresql://u:topsecret@[::1]:5432/db",
+    ],
+)
+def test_connection_string_fingerprint_handles_multi_host_dsn(dsn: str) -> None:
+    # Regression: must not raise ValueError on a comma-separated host list,
+    # and the raw password must never appear in the fingerprint.
+    fp = connection_string_fingerprint(dsn)
+    assert fp
+    assert "topsecret" not in fp
+
+
+def test_connection_string_fingerprint_distinguishes_host_sets() -> None:
+    # Two DSNs differing only in a non-first host must not collide (the old
+    # code fingerprinted only ``parsed.hostname`` = the first host).
+    a = connection_string_fingerprint("mongodb://u:p@h1:27017,h2:27017/db")
+    b = connection_string_fingerprint("mongodb://u:p@h1:27017,h9:27017/db")
+    assert a != b
 
 
 def test_clickhouse_routing_fingerprint_differs_by_password() -> None:

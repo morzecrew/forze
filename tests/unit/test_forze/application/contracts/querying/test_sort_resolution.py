@@ -8,11 +8,13 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.querying.sort_resolution import (
     assert_default_null_ordering,
+    field_path_resolves,
     normalize_sorts_for_keyset,
     parse_sort_value,
     read_fields_for_model,
     resolve_effective_sorts,
     resolve_sort_keys,
+    validate_runtime_sort_fields,
     validate_sort_fields,
 )
 from forze.application.contracts.search import SearchSpec
@@ -186,3 +188,68 @@ class TestSortNullPlacement:
 
         assert ei.value.kind is ExceptionKind.PRECONDITION
         assert ei.value.code == "query_feature_unsupported"
+
+
+class _Inner(BaseModel):
+    city: str
+
+
+class _Doc(BaseModel):
+    id: str
+    name: str
+    addr: _Inner
+    meta: dict[str, str]
+    raw: dict[str, object]
+
+
+class TestFieldPathResolves:
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("name", True),
+            ("id", True),
+            ("nmae", False),  # typo
+            ("addr.city", True),  # nested model
+            ("addr.zip", False),  # missing nested field
+            ("name.x", False),  # subpath under a scalar
+            ("meta.anykey", True),  # str-keyed mapping dynamic key
+            ("raw.a.b", True),  # dict[str, Any] → permissive
+            ("addr", True),  # nested model leaf
+        ],
+    )
+    def test_resolves(self, field: str, expected: bool) -> None:
+        assert field_path_resolves(_Doc, field) is expected
+
+
+def test_field_path_resolves_excludes_computed_field() -> None:
+    from pydantic import computed_field
+
+    class _WithComputed(BaseModel):
+        name: str
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def display(self) -> str:
+            return self.name
+
+    # Computed fields are never serialized to the DB, so they are not sort
+    # targets (Pydantic keeps them in model_computed_fields, not model_fields).
+    assert field_path_resolves(_WithComputed, "name") is True
+    assert field_path_resolves(_WithComputed, "display") is False
+
+
+class TestValidateRuntimeSortFields:
+    def test_valid_fields_pass(self) -> None:
+        validate_runtime_sort_fields(
+            {"name": "asc", "addr.city": "desc"}, model=_Doc, backend="mongo"
+        )
+
+    def test_none_is_noop(self) -> None:
+        validate_runtime_sort_fields(None, model=_Doc, backend="firestore")
+
+    def test_unknown_field_raises(self) -> None:
+        with pytest.raises(CoreException, match="not on the mongo read model") as ei:
+            validate_runtime_sort_fields(
+                {"name": "asc", "nmae": "desc"}, model=_Doc, backend="mongo"
+            )
+        assert ei.value.kind is ExceptionKind.CONFIGURATION

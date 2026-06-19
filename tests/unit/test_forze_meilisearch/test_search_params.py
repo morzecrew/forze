@@ -22,6 +22,12 @@ def test_build_search_query_all() -> None:
     assert build_search_query_string(("a", "b"), combine="all") == '"a" "b"'
 
 
+def test_build_search_query_strips_embedded_quotes() -> None:
+    # An embedded ``"`` must not break phrase boundaries / split the query.
+    assert build_search_query_string(('a"b', "c"), combine="all") == '"ab" "c"'
+    assert build_search_query_string(('a"b', "c"), combine="any") == "ab c"
+
+
 def test_attributes_to_search_on_fields_option() -> None:
     spec = SearchSpec(name="s", model_type=_M, fields=["title", "body"])
     attrs = attributes_to_search_on(spec, {"fields": ["title"]}, {})

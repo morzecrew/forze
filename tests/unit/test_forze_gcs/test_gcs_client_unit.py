@@ -146,6 +146,26 @@ async def test_upload_bytes_passes_nested_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_upload_bytes_rejects_reserved_tag_prefix_in_metadata() -> None:
+    # A user metadata key in the reserved tag namespace would be misread as a
+    # tag on read-back, so it must be rejected at write time.
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.upload = AsyncMock()
+    client._GCSClient__storage = fake_storage
+
+    with pytest.raises(CoreException, match="reserved tag prefix"):
+        await client.upload_bytes(
+            "bucket",
+            "key",
+            b"data",
+            metadata={f"{TAG_METADATA_PREFIX}env": "smuggled"},
+        )
+
+    fake_storage.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_upload_bytes_namespaces_tags_into_custom_metadata() -> None:
     client = GCSClient()
     fake_storage = MagicMock()

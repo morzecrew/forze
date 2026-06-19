@@ -127,6 +127,7 @@ class QueryFilterExpressionParser:
     # ....................... #
 
     def _parse(self, expr: QueryFilterExpression, ctx: _ParseCtx) -> QueryExpr:  # type: ignore[valid-type]
+        # sourcery skip: extract-duplicate-method, inline-immediately-returned-variable
         keys = expr.keys()  # type: ignore[attr-defined]
 
         if _COMBINATOR_KEYS & keys and _CONSTRAINT_KEYS & keys:
@@ -319,10 +320,11 @@ class QueryFilterExpressionParser:
                 raise exc.precondition("Empty $values field map is not allowed")
 
             self._add_clauses(ctx, len(raw))
-            field_nodes: list[QueryExpr] = []
 
-            for op, value in raw.items():
-                field_nodes.append(self._validate_op_impl(field, op, value, ctx))
+            field_nodes: list[QueryExpr] = [
+                self._validate_op_impl(field, op, value, ctx)
+                for op, value in raw.items()
+            ]
 
             self._validate_value_field(field, field_nodes)
 

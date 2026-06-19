@@ -73,6 +73,7 @@ from .field_policy import (
     validate_aggregatable_fields,
     validate_field_policy,
     validate_filterable_fields,
+    validate_runtime_filter_fields,
     validate_sortable_fields,
 )
 from .internal import (
@@ -116,6 +117,7 @@ from .pagination import (
     row_passes_keyset_seek,
     row_value_for_sort_key,
     validate_cursor_token,
+    validate_runtime_sort_fields,
     validate_sort_fields,
 )
 from .types import (
@@ -187,6 +189,7 @@ __all__ = [
     "validate_aggregatable_fields",
     "validate_field_policy",
     "validate_filterable_fields",
+    "validate_runtime_filter_fields",
     "validate_sortable_fields",
     "ELEM_SCALAR_FIELD",
     "QuerySortExpression",
@@ -236,6 +239,7 @@ __all__ = [
     "resolved_cursor_limit",
     "row_passes_keyset_seek",
     "validate_cursor_token",
+    "validate_runtime_sort_fields",
     "validate_sort_fields",
     "row_value_for_sort_key",
     "QueryConjunction",

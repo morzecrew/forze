@@ -15,6 +15,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryFilterLimits,
     validate_query_field_types,
+    validate_runtime_filter_fields,
 )
 from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.exceptions import exc
@@ -453,6 +454,11 @@ class FilterParserMixin(Generic[M]):
 
         if not filters:
             return None
+
+        # Reject filter fields absent from the read model (incl. computed
+        # fields, which are never stored) so every backend fails loud rather
+        # than silently matching nothing on a non-stored field.
+        validate_runtime_filter_fields(filters, model=self.model_type)
 
         expr = self.filter_parser.parse_filter(filters)
 

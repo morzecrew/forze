@@ -11,6 +11,7 @@ policy): the two compose, neither replaces the other.
 from typing import Iterable
 
 import attrs
+from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 
@@ -101,6 +102,35 @@ def validate_filterable_fields(
             f"Filtering on field(s) {sorted(forbidden)} is not allowed for "
             f"{spec_name!r}.",
             code="field_not_filterable",
+        )
+
+
+def validate_runtime_filter_fields(
+    filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    *,
+    model: type[BaseModel],
+) -> None:
+    """Raise when a runtime filter references a top-level field absent from *model*.
+
+    Excludes Pydantic computed fields (kept in ``model_computed_fields``, never
+    serialized to the database) and unknown fields -- matching Postgres's
+    root-level filter check, so Mongo/Firestore/mock fail loud rather than
+    silently matching nothing on a non-stored field. Element-quantifier inner
+    predicates are relative to the array element and are not validated here.
+    """
+
+    if filters is None:
+        return
+
+    fields = model.model_fields
+    unknown = sorted(
+        root for root in collect_filter_field_roots(filters) if root not in fields
+    )
+
+    if unknown:
+        raise exc.configuration(
+            f"Filter field(s) {unknown} are not on the read model "
+            f"({model.__name__}).",
         )
 
 

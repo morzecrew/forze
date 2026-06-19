@@ -95,6 +95,38 @@ async def test_download_range_sends_range_header_and_parses_total() -> None:
     assert api.get_object_calls[0]["Range"] == "bytes=0-4"
 
 
+def test_quote_etag_normalizes_part_etags() -> None:
+    from forze_s3.kernel.client.client import _quote_etag
+
+    assert _quote_etag("abc") == '"abc"'
+    assert _quote_etag('"abc"') == '"abc"'  # already quoted: no double-wrap
+    assert _quote_etag(' "abc" ') == '"abc"'  # whitespace-padded
+
+
+@pytest.mark.asyncio
+async def test_download_range_unknown_total_synthesizes_from_data() -> None:
+    # An S3-compatible gateway may report ``bytes start-end/*`` (unknown total).
+    # The total must be derived from the satisfied range, not reported as 0.
+    api = _FakeApi()
+    api.get_object_result = {
+        "Body": _Body(b"01234"),
+        "ContentRange": "bytes 0-4/*",
+        "ContentType": "text/plain",
+    }
+    client, tok = _client_with(api)
+
+    try:
+        body, content_range, total = await client.download_range_bytes(
+            "b", "k", start=0, end=4
+        )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert body.data == b"01234"
+    assert content_range == "bytes 0-4/*"
+    assert total == 5  # start + len(data), not 0
+
+
 @pytest.mark.asyncio
 async def test_download_range_open_ended_header() -> None:
     api = _FakeApi()

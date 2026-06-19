@@ -10,7 +10,12 @@ def credential_auth_headers(creds: HttpRoutingCredentials) -> dict[str, str]:
 
     headers = dict(creds.headers or {})
 
-    if creds.bearer_token is not None and "Authorization" not in headers:
+    # HTTP header names are case-insensitive: an explicit ``authorization``
+    # header (any casing) must suppress the default bearer, else two conflicting
+    # Authorization headers are sent.
+    has_authorization = any(k.lower() == "authorization" for k in headers)
+
+    if creds.bearer_token is not None and not has_authorization:
         headers["Authorization"] = f"Bearer {creds.bearer_token.get_secret_value()}"
 
     return headers

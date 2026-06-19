@@ -17,18 +17,22 @@
   display: none;
 }
 
-/* Home fits exactly one screen — no vertical scroll. */
+/* Home is a full-bleed, vertically scrolling landing page. Strip the docs
+   content column (max-width + gutters) so the hero can span the viewport. */
 .forze-home {
-  overflow: hidden;
+  overflow-x: clip;
 }
 
 .forze-home .md-main__inner {
-  margin-top: 0;
+  margin: 0;
+  max-width: none;
 }
 
+.forze-home .md-content,
 .forze-home .md-content__inner {
   margin: 0;
   padding: 0;
+  max-width: none;
 }
 
 .forze-home .md-content__inner::before {

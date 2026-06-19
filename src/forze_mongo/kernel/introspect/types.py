@@ -14,8 +14,12 @@ class MongoIndexInfo:
     name: str
     """Index name."""
 
-    keys: tuple[tuple[str, int], ...]
-    """Indexed fields in order with direction (1 or -1)."""
+    keys: tuple[tuple[str, int | str], ...]
+    """Indexed fields in order with direction.
+
+    ``1``/``-1`` for ordinary btree indexes, or a string for special index
+    types (e.g. ``"text"``, ``"2dsphere"``, ``"hashed"``, ``"vector"``).
+    """
 
     unique: bool = attrs.field(default=False)
     """Whether the index enforces uniqueness."""

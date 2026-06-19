@@ -201,3 +201,38 @@ class TestGuardAggregates:
             policy=QueryFieldPolicy(sortable={"category"}), spec_name="orders"
         )
         guard.check(aggregates=_AGG)
+
+
+class TestValidateRuntimeFilterFields:
+    def test_known_fields_pass(self) -> None:
+        from pydantic import BaseModel, computed_field
+
+        from forze.application.contracts.querying import validate_runtime_filter_fields
+
+        class _Doc(BaseModel):
+            id: str
+            name: str
+
+            @computed_field  # type: ignore[prop-decorator]
+            @property
+            def display(self) -> str:
+                return self.name
+
+        # real field → ok
+        validate_runtime_filter_fields(
+            {"$values": {"name": "x"}}, model=_Doc
+        )
+        # no filter → no-op
+        validate_runtime_filter_fields(None, model=_Doc)
+
+        # computed field (not stored) → rejected
+        with pytest.raises(CoreException, match="not on the read model"):
+            validate_runtime_filter_fields(
+                {"$values": {"display": "x"}}, model=_Doc
+            )
+
+        # unknown field → rejected
+        with pytest.raises(CoreException, match="not on the read model"):
+            validate_runtime_filter_fields(
+                {"$values": {"nmae": "x"}}, model=_Doc
+            )

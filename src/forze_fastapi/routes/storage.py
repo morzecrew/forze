@@ -15,6 +15,7 @@ require_fastapi()
 
 # ....................... #
 
+import re
 from functools import partial
 from typing import AbstractSet, Annotated, Any, Awaitable, Callable, Final, Mapping
 from urllib.parse import quote
@@ -217,6 +218,11 @@ def _strong_body_etag(body: bytes) -> str:
 # ....................... #
 
 
+_IF_NONE_MATCH_ETAG_RE = re.compile(r'(?:^|,)\s*(?:W/)?("[^"]*")')
+"""Match one list entity-tag (anchored at start/comma), capturing the quoted
+opaque-tag. Anchoring avoids treating a malformed ``WW/"x"`` as weak ``"x"``."""
+
+
 def _is_not_modified(request: Request, etag: str) -> bool:
     """Whether an ``If-None-Match`` request matches the current *etag*.
 
@@ -231,9 +237,17 @@ def _is_not_modified(request: Request, etag: str) -> bool:
     if inm is None:
         return False
 
-    candidates = {part.strip().removeprefix("W/") for part in inm.split(",")}
+    if inm.strip() == "*":
+        return True
 
-    return etag in candidates or "*" in candidates
+    # Per RFC 7232, If-None-Match is a comma-separated list of entity-tags, each
+    # a (optionally weak ``W/``) quoted-string. The opaque-tag may itself contain
+    # a comma, so extract the quoted tokens rather than splitting on ``,``. Weak
+    # comparison: the ``W/`` prefix is dropped on the request side (this route's
+    # own ETag is strong), leaving the quoted opaque-tag to compare.
+    candidates = set(_IF_NONE_MATCH_ETAG_RE.findall(inm))
+
+    return etag in candidates
 
 
 # ....................... #

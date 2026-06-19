@@ -1087,3 +1087,40 @@ class TestMongoAggregateInternals:
         assert out == {
             "$cond": [{"$eq": ["$category", "books"]}, 1, 0],
         }
+
+
+class TestOperatorFieldGuard:
+    """``$``-prefixed field names must be rejected (Mongo operator injection)."""
+
+    def test_leaf_filter_dollar_field_rejected(self) -> None:
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match=r"must not start"):
+            r.render(QueryField("$where", "$eq", "function() { return true; }"))
+
+    def test_dotted_segment_dollar_field_rejected(self) -> None:
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match=r"must not start"):
+            r.render(QueryField("a.$gt", "$eq", 1))
+
+    def test_field_to_field_compare_dollar_field_rejected(self) -> None:
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match=r"must not start"):
+            r.render(QueryCompare("$where", "$eq", "b"))
+
+    def test_ordinary_field_still_renders(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render(QueryField("user.email", "$eq", "x")) == {"user.email": "x"}
+
+    def test_element_object_match_dollar_field_rejected(self) -> None:
+        # Inner object-element field name ($elemMatch query path).
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match=r"must not start"):
+            r.render(QueryElem("items", "$any", QueryField("$where", "$eq", 1)))
+
+    def test_element_cond_expr_dollar_field_rejected(self) -> None:
+        # Inner element field in the aggregation-expression path.
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match=r"must not start"):
+            r.render_expr_predicate(
+                QueryElem("tags", "$any", QueryField("$gt", "$eq", "z"))
+            )

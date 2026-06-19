@@ -44,6 +44,8 @@ from forze.application.contracts.querying import (
     read_fields_for_model,
     resolve_effective_sorts,
     validate_query_field_types,
+    validate_runtime_filter_fields,
+    validate_runtime_sort_fields,
 )
 from forze.application.integrations.document._limits import (
     DEFAULT_MAX_STREAM_PAGES,
@@ -262,6 +264,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if filters is None:
             return
 
+        validate_runtime_filter_fields(filters, model=self.read_model)
         expr = QueryFilterExpressionParser.parse(filters)
         validate_query_field_types(expr, self.read_model)
 
@@ -489,6 +492,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 else ordered_rows
             )
         else:
+            validate_runtime_sort_fields(sorts, model=self.read_model, backend="mock")
             total = len(filtered)
             ordered_docs = _sort_docs(filtered, sorts)
             if return_type is not None:

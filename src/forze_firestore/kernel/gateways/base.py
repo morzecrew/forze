@@ -21,6 +21,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     assert_default_null_ordering,
     resolve_sort_keys,
+    validate_runtime_sort_fields,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.integrations.persistence import (
@@ -253,6 +254,7 @@ class FirestoreGateway[M: BaseModel](
         if not sorts:
             return None
 
+        validate_runtime_sort_fields(sorts, model=self.model_type, backend="firestore")
         resolved = resolve_sort_keys(sorts)
         assert_default_null_ordering(resolved, backend="firestore")
 

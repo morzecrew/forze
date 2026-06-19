@@ -52,10 +52,24 @@ class TestClickHouseErrorHandler:
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "500" in r.summary
 
-    def test_authentication_message_fallback(self) -> None:
-        r = _clickhouse_eh(RuntimeError("authentication failed"), site="query")
+    def test_authentication_code_maps_to_access_denied(self) -> None:
+        # Real ClickHouse auth errors carry a numeric code: 516 / 497.
+        err = RuntimeError("Code: 516. DB::Exception: default: Authentication failed")
+        r = _clickhouse_eh(err, site="query")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "access denied" in r.summary.lower()
+
+    def test_access_denied_code_maps_to_access_denied(self) -> None:
+        err = RuntimeError("Code: 497. DB::Exception: user is not allowed")
+        r = _clickhouse_eh(err, site="query")
+        assert "access denied" in r.summary.lower()
+
+    def test_message_mentioning_password_without_code_does_not_misfire(self) -> None:
+        # A non-auth error whose text merely contains "password" must not be
+        # classified as access denied.
+        err = RuntimeError("Code: 47. DB::Exception: Unknown column 'password'")
+        r = _clickhouse_eh(err, site="query")
+        assert "access denied" not in r.summary.lower()
 
 
 class TestAssembledChain:

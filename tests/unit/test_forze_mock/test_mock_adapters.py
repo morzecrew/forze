@@ -126,6 +126,7 @@ async def test_document_filter_sort_projection_and_search() -> None:
     assert page.count == 1
     assert page.hits[0].title == "Rust Book"
 
+
     # Field-to-field compare ($compare).
     page = await doc.find_page(
         filters={"$fields": {"title": "category"}},
@@ -173,6 +174,27 @@ async def test_document_filter_sort_projection_and_search() -> None:
     assert deleted.is_deleted is True
     restored = await doc.restore(created.id, deleted.rev)
     assert restored.is_deleted is False
+
+
+@pytest.mark.asyncio
+async def test_find_with_unknown_sort_field_fails_loud() -> None:
+    # Runtime sort on a field absent from the read model must fail loud (parity
+    # with Postgres/Mongo/Firestore), not silently mis-sort.
+    doc = _document_adapter(MockState())
+    with pytest.raises(CoreException, match="not on the mock read model") as ei:
+        await doc.find_many(sorts={"nonexistent_field": "asc"})
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+
+@pytest.mark.asyncio
+async def test_find_with_unknown_filter_field_fails_loud() -> None:
+    # Runtime filter on a field absent from the read model (e.g. a computed
+    # field, never stored) must fail loud, not silently match nothing.
+    doc = _document_adapter(MockState())
+    with pytest.raises(CoreException, match="not on the read model") as ei:
+        await doc.find_many(filters={"$values": {"nonexistent_field": "x"}})
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+
 
 @pytest.mark.asyncio
 async def test_document_aggregates_group_and_validate_return_type() -> None:

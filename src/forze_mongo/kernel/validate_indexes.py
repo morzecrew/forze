@@ -30,7 +30,7 @@ class MongoDocumentIndexSpec:
 # ....................... #
 
 
-def _format_index_keys(keys: tuple[tuple[str, int], ...]) -> str:
+def _format_index_keys(keys: tuple[tuple[str, int | str], ...]) -> str:
     inner = ", ".join(f"{k}: {d}" for k, d in keys)
     return f"{{{inner}}}"
 

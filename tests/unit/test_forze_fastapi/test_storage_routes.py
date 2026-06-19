@@ -356,6 +356,39 @@ class TestStorageDownloadRangeAndConditional:
         assert resp.status_code == 200
         assert resp.content == b"0123456789"
 
+    def test_if_none_match_list_with_comma_containing_tag_still_matches(self) -> None:
+        # An opaque-tag may contain a comma; a naive split would shred the list
+        # and could lose the matching etag. The real etag (a later list element)
+        # must still 304, and a weak validator must too.
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+        etag = client.get(f"/files/{stored['key']}").headers["etag"]
+
+        matched = client.get(
+            f"/files/{stored['key']}",
+            headers={"If-None-Match": f'"a,b,c", W/{etag}'},
+        )
+        assert matched.status_code == 304
+
+    def test_if_none_match_star_returns_304(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        resp = client.get(
+            f"/files/{stored['key']}", headers={"If-None-Match": "*"}
+        )
+        assert resp.status_code == 304
+
+    def test_if_none_match_only_comma_tag_non_matching_returns_200(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        resp = client.get(
+            f"/files/{stored['key']}", headers={"If-None-Match": '"x,y", "z"'}
+        )
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+
     def test_if_none_match_weak_prefix_only_strips_leading_w_slash(self) -> None:
         # ``removeprefix("W/")`` strips a single literal ``W/`` (weak validator)
         # but must NOT over-strip a ``WW/`` prefix the way ``lstrip("W/")`` did

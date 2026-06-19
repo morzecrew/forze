@@ -20,6 +20,7 @@ from forze.application.contracts.querying import (
     QueryFilterLimits,
     QuerySortExpression,
     assert_default_null_ordering,
+    validate_runtime_sort_fields,
     default_nulls,
     resolve_sort_keys,
 )
@@ -292,6 +293,7 @@ class MongoGateway[M: BaseModel](
         if not sorts:
             return None
 
+        validate_runtime_sort_fields(sorts, model=self.model_type, backend="mongo")
         resolved = resolve_sort_keys(sorts)
 
         if not self.computed_null_ordering:
@@ -327,6 +329,7 @@ class MongoGateway[M: BaseModel](
         if not (self.computed_null_ordering and sorts):
             return None
 
+        validate_runtime_sort_fields(sorts, model=self.model_type, backend="mongo")
         resolved = resolve_sort_keys(sorts)
 
         if not any(nulls != default_nulls(d) for _, d, nulls in resolved):
