@@ -137,8 +137,26 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _require_computed_capable(self, model: type, label: str) -> None:
+        """Reject materialized fields on a model that cannot carry ``@computed_field``.
+
+        Computed fields are a Pydantic concept; a msgspec struct (e.g. used as a read
+        or domain model) has none, so declaring materialized fields on it is a clean
+        configuration error rather than a raw ``AttributeError``.
+        """
+
+        if not issubclass(model, BaseModel):
+            raise exc.configuration(
+                f"Materialized fields require a Pydantic model with ``@computed_field``; "
+                f"the {label} model {model.__name__} (spec {self.name!r}) is not one.",
+            )
+
+    # ....................... #
+
     def _validate_materialized(self) -> None:
         """Validate materialized fields exist as computed fields and never collide with commands."""
+
+        self._require_computed_capable(self.read, "read")
 
         if missing_read := self.materialized - frozenset(
             self.read.model_computed_fields
@@ -153,6 +171,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             return
 
         domain = self.write["domain"]
+        self._require_computed_capable(domain, "domain")
 
         if missing_domain := self.materialized - frozenset(
             domain.model_computed_fields

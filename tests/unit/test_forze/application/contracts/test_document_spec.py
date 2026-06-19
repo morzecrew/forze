@@ -247,6 +247,16 @@ def test_materialized_collision_with_settable_command_rejected() -> None:
         )
 
 
+def test_materialized_on_msgspec_model_rejected_cleanly() -> None:
+    # msgspec structs have no @computed_field, so materializing on one is a clean
+    # configuration error, not a raw AttributeError on ``model_computed_fields``.
+    class _MsgspecRead(msgspec.Struct):
+        a: int
+
+    with pytest.raises(CoreException, match="require a Pydantic model"):
+        DocumentSpec(name="doc", read=_MsgspecRead, materialized={"a"})  # type: ignore[type-var]
+
+
 def test_sensitive_defaults_to_false() -> None:
     spec = DocumentSpec(name="doc", read=_Read)
 
