@@ -26,7 +26,10 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_kits.aggregates.document import TwoPhaseDocumentHandler
+from forze_kits.aggregates.document import (
+    TwoPhaseDocumentBuilder,
+    TwoPhaseDocumentHandler,
+)
 from forze_mock import MockDepsModule
 
 # --8<-- [start:domain]
@@ -84,21 +87,25 @@ class PriceAndCreate(
         return await self.pricing.quote(args.item)
 
     async def apply(self, args: QuoteRequest, payload: int) -> ReadOrder:
-        # INSIDE the transaction — self.writer() is the command port.
-        return await self.writer().create(CreateOrder(item=args.item, price=payload))
+        # INSIDE the transaction — self.writer is the command port.
+        return await self.writer.create(CreateOrder(item=args.item, price=payload))
 # --8<-- [end:handler]
 
 
 # --8<-- [start:registry]
 PRICE_AND_CREATE = "orders.price_and_create"
 
-# The handler holds the context (ports resolve per phase) and the pricing service.
+# TwoPhaseDocumentBuilder resolves the read/write ports from the context and hands
+# them to the handler — so the handler declares its ports, not the whole context.
 # .two_phase() splits prepare/apply; the tx route scopes apply's transaction.
 REGISTRY = (
     OperationRegistry(
         handlers={
-            PRICE_AND_CREATE: lambda ctx: PriceAndCreate(
-                ctx=ctx, spec=ORDER_SPEC, pricing=PRICING
+            PRICE_AND_CREATE: TwoPhaseDocumentBuilder(
+                spec=ORDER_SPEC,
+                build=lambda reader, writer: PriceAndCreate(
+                    reader=reader, writer=writer, pricing=PRICING
+                ),
             )
         }
     )

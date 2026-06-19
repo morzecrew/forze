@@ -237,3 +237,22 @@ class HandlerFactory(Protocol):  # pragma: no cover
     """Protocol for a factory that builds a handler."""
 
     def __call__(self, ctx: "ExecutionContext") -> Handler[Any, Any]: ...
+
+
+# ....................... #
+
+
+class TwoPhaseHandlerFactory(Protocol):  # pragma: no cover
+    """Protocol for a factory that builds a two-phase handler."""
+
+    def __call__(self, ctx: "ExecutionContext") -> TwoPhaseHandler[Any, Any, Any]: ...
+
+
+# ....................... #
+
+
+type OperationHandlerFactory = HandlerFactory | TwoPhaseHandlerFactory
+"""A factory the operation registry can hold: a plain or two-phase handler factory."""
+
+type OperationHandler = Handler[Any, Any] | TwoPhaseHandler[Any, Any, Any]
+"""A resolved operation handler: a plain or two-phase handler."""

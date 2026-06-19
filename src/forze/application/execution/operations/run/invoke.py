@@ -5,7 +5,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.durable.function import DurableFunctionSpec
-from forze.application.contracts.execution import Handler, OnSuccess
+from forze.application.contracts.execution import Handler, OnSuccess, TwoPhaseHandler
 from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
@@ -33,8 +33,9 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
     op: StrKey
     """Operation key."""
 
-    handler: Handler[Args, R]
-    """Handler."""
+    handler: Handler[Args, R] | TwoPhaseHandler[Args, Any, R]
+    """Resolved handler — a plain ``Handler`` or, for a two-phase operation, a
+    ``TwoPhaseHandler``. ``run_resolved_operation_plan`` branches on ``plan.two_phase``."""
 
     plan: ResolvedOperationPlan
     """Resolved operation plan."""

@@ -10,6 +10,7 @@ while still firing the outer failure/finally hooks.
 from __future__ import annotations
 
 import asyncio
+from typing import Callable
 
 import attrs
 import pytest
@@ -36,37 +37,40 @@ def ctx() -> ExecutionContext:
     return context_from_deps(MockDepsModule()())
 
 
+# A probe returns the live (tx-depth, read-only) — wired by each test to the
+# context, so the handlers observe engine state without holding the context.
+Probe = Callable[[], "tuple[int, bool]"]
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RecordingTwoPhase(TwoPhaseHandler[str, str, str]):
     """Records (phase, tx-depth, read-only) at each phase; payload = ``payload:<args>``."""
 
-    ctx: ExecutionContext
     order: list[tuple]
+    probe: Probe
 
     async def prepare(self, args: str) -> str:
-        self.order.append(
-            ("prepare", self.ctx.tx_ctx.depth(), self.ctx.inv_ctx.is_read_only())
-        )
+        depth, read_only = self.probe()
+        self.order.append(("prepare", depth, read_only))
         return f"payload:{args}"
 
     async def apply(self, args: str, payload: str) -> str:
-        self.order.append(
-            ("apply", self.ctx.tx_ctx.depth(), self.ctx.inv_ctx.is_read_only(), payload)
-        )
+        depth, read_only = self.probe()
+        self.order.append(("apply", depth, read_only, payload))
         return f"applied:{args}:{payload}"
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PrepareFailsTwoPhase(TwoPhaseHandler[str, str, str]):
-    ctx: ExecutionContext
     order: list[tuple]
+    probe: Probe
 
     async def prepare(self, args: str) -> str:
-        self.order.append(("prepare", self.ctx.tx_ctx.depth()))
+        depth, _ = self.probe()
+        self.order.append(("prepare", depth))
         raise RuntimeError("prepare boom")
 
     async def apply(self, args: str, payload: str) -> str:  # pragma: no cover
-        self.order.append(("apply", self.ctx.tx_ctx.depth()))
         return payload
 
 
@@ -111,9 +115,13 @@ class TestTwoPhaseBoundary:
         self, ctx: ExecutionContext
     ) -> None:
         order: list[tuple] = []
+
+        def probe() -> tuple[int, bool]:
+            return ctx.tx_ctx.depth(), ctx.inv_ctx.is_read_only()
+
         reg = (
             OperationRegistry(
-                handlers={"op": lambda c: RecordingTwoPhase(ctx=c, order=order)}
+                handlers={"op": lambda _c: RecordingTwoPhase(order=order, probe=probe)}
             )
             .bind("op")
             .two_phase()
@@ -136,9 +144,13 @@ class TestTwoPhaseBoundary:
         self, ctx: ExecutionContext
     ) -> None:
         order: list[tuple] = []
+
+        def probe() -> tuple[int, bool]:
+            return ctx.tx_ctx.depth(), ctx.inv_ctx.is_read_only()
+
         reg = (
             OperationRegistry(
-                handlers={"op": lambda c: RecordingTwoPhase(ctx=c, order=order)}
+                handlers={"op": lambda _c: RecordingTwoPhase(order=order, probe=probe)}
             )
             .bind("op")
             .as_query()
@@ -163,9 +175,15 @@ class TestPrepareFailure:
         self, ctx: ExecutionContext
     ) -> None:
         order: list[tuple] = []
+
+        def probe() -> tuple[int, bool]:
+            return ctx.tx_ctx.depth(), ctx.inv_ctx.is_read_only()
+
         reg = (
             OperationRegistry(
-                handlers={"op": lambda c: PrepareFailsTwoPhase(ctx=c, order=order)}
+                handlers={
+                    "op": lambda _c: PrepareFailsTwoPhase(order=order, probe=probe)
+                }
             )
             .bind("op")
             .two_phase()
@@ -202,9 +220,12 @@ class TestTwoPhaseOrdering:
 
             return _before
 
+        def probe() -> tuple[int, bool]:
+            return ctx.tx_ctx.depth(), ctx.inv_ctx.is_read_only()
+
         reg = (
             OperationRegistry(
-                handlers={"op": lambda c: RecordingTwoPhase(ctx=c, order=order)}
+                handlers={"op": lambda _c: RecordingTwoPhase(order=order, probe=probe)}
             )
             .bind("op")
             .two_phase()

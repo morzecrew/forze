@@ -20,8 +20,11 @@ from .protocols import (
     OnFailureFactory,
     OnSuccess,
     OnSuccessFactory,
+    OperationHandler,
+    OperationHandlerFactory,
     ProvidesIdempotency,
     TwoPhaseHandler,
+    TwoPhaseHandlerFactory,
 )
 from .value_objects import (
     BeforeStep,
@@ -60,6 +63,9 @@ __all__ = [
     "Handler",
     "HandlerFactory",
     "TwoPhaseHandler",
+    "TwoPhaseHandlerFactory",
+    "OperationHandler",
+    "OperationHandlerFactory",
     "LifecycleHook",
     "Outcome",
     "ExecutionGraph",

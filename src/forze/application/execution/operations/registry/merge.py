@@ -5,7 +5,7 @@ from typing import Self, final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.execution import HandlerFactory
+from forze.application.contracts.execution import OperationHandlerFactory
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import (
@@ -28,8 +28,8 @@ from .patch import PlanPatch
 class RegistryMerge:
     """Merged handlers, plans, and patches without resolution or validation."""
 
-    handlers: StrKeyMapping[HandlerFactory] = attrs.field(
-        factory=dict[StrKey, HandlerFactory],
+    handlers: StrKeyMapping[OperationHandlerFactory] = attrs.field(
+        factory=dict[StrKey, OperationHandlerFactory],
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Handler factories for operations."""
@@ -87,7 +87,7 @@ class RegistryMerge:
                 cross-registry patch reach without *cross_registry*.
         """
 
-        merged_handlers: dict[StrKey, HandlerFactory] = {}
+        merged_handlers: dict[StrKey, OperationHandlerFactory] = {}
         merged_plans: dict[StrKey, OperationPlan] = {}
         merged_descriptors: dict[StrKey, OperationDescriptor] = {}
         merged_patches: list[PlanPatch] = []
@@ -115,7 +115,7 @@ class RegistryMerge:
 
         def _record_crossings(
             patches: "tuple[PlanPatch, ...] | list[PlanPatch]",
-            handlers: StrKeyMapping[HandlerFactory],
+            handlers: StrKeyMapping[OperationHandlerFactory],
         ) -> None:
             """Record, per patch selector, which *handlers* operations it governs.
 
@@ -125,7 +125,7 @@ class RegistryMerge:
 
             Args:
                 patches (tuple[PlanPatch, ...] | list[PlanPatch]): Patches to test.
-                handlers (StrKeyMapping[HandlerFactory]): Operation keys matched
+                handlers (StrKeyMapping[OperationHandlerFactory]): Operation keys matched
                     against each patch selector.
             """
 

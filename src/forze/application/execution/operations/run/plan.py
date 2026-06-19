@@ -203,7 +203,7 @@ async def run_resolved_tx_scope[Args, R](
 
 async def run_resolved_operation_plan[Args, R](
     plan: ResolvedOperationPlan,
-    handler: Handler[Args, R],
+    handler: Handler[Args, R] | TwoPhaseHandler[Args, Any, R],
     args: Args,
     *,
     tx_runner: TransactionRunner,
@@ -223,9 +223,11 @@ async def run_resolved_operation_plan[Args, R](
 
     async def transactional_core() -> R:
         if plan.two_phase:
-            inner = await _prepare_apply_handler(handler, args, inv_ctx)
+            inner = await _prepare_apply_handler(
+                cast(TwoPhaseHandler[Args, Any, R], handler), args, inv_ctx
+            )
         else:
-            inner = handler
+            inner = cast(Handler[Args, R], handler)
 
         if plan.tx.route is None:
             # A route-less tx scope with stages is rejected at plan-resolution time
@@ -294,7 +296,7 @@ async def _run_prepare[Args, Payload](
 
 
 async def _prepare_apply_handler[Args, R](
-    handler: Handler[Args, R],
+    handler: TwoPhaseHandler[Args, Any, R],
     args: Args,
     inv_ctx: "InvocationContext",
 ) -> Handler[Args, R]:
@@ -308,21 +310,17 @@ async def _prepare_apply_handler[Args, R](
     a COMMAND op is write-capable.
     """
 
-    two_phase = cast(TwoPhaseHandler[Args, Any, R], handler)
-
     once = _prepare_once.get()
 
     if once is None:  # pragma: no cover - set by run_resolved_operation_plan
         raise exc.internal("Two-phase prepare invoked without a once-box")
 
     if once.future is None:
-        once.future = asyncio.ensure_future(
-            _run_prepare(two_phase, args, inv_ctx)
-        )
+        once.future = asyncio.ensure_future(_run_prepare(handler, args, inv_ctx))
 
     payload = await once.future
 
     async def _apply(args: Args) -> R:
-        return await two_phase.apply(args, payload)
+        return await handler.apply(args, payload)
 
     return _apply
