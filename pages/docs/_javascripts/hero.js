@@ -89,10 +89,62 @@
         var dpr = Math.min(window.devicePixelRatio || 1, 2);
 
         var R = 30; // hexagon radius
-        var cells = []; // {cx, cy, lit, life}
+        var cells = []; // {cx, cy, lit, target, hot}
         var W = 0,
             H = 0;
         var sparkClock = 0;
+
+        // Steel base every cell rests at when unlit (matches the old default).
+        var STEEL = [126, 155, 196];
+
+        // Per-cell "hot" colour is sampled from the page's hero gradient
+        // (linear-gradient(114deg, #859dc1, #8e7276, --fz-orange, --fz-orange-2)).
+        // Resolve each stop to RGB once via a hidden probe so theme/accent vars
+        // (and var() nesting) are honoured.
+        function resolveColor(expr) {
+            var probe = document.createElement("span");
+            probe.style.cssText = "display:none;color:" + expr;
+            root.appendChild(probe);
+            var c = getComputedStyle(probe).color; // "rgb(r, g, b)"
+            probe.remove();
+            var m = c.match(/\d+(\.\d+)?/g) || [126, 155, 196];
+            return [+m[0], +m[1], +m[2]];
+        }
+
+        var GRAD = [
+            [0.0, resolveColor("#859dc1")],
+            [0.49, resolveColor("#8e7276")],
+            [0.79, resolveColor("var(--fz-orange)")],
+            [1.0, resolveColor("var(--fz-orange-2)")],
+        ];
+
+        // Sample the gradient at t in [0,1] -> [r,g,b].
+        function sampleGradient(t) {
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            for (var i = 1; i < GRAD.length; i++) {
+                if (t <= GRAD[i][0]) {
+                    var a = GRAD[i - 1],
+                        b = GRAD[i];
+                    var f = (t - a[0]) / (b[0] - a[0] || 1);
+                    return [
+                        a[1][0] + (b[1][0] - a[1][0]) * f,
+                        a[1][1] + (b[1][1] - a[1][1]) * f,
+                        a[1][2] + (b[1][2] - a[1][2]) * f,
+                    ];
+                }
+            }
+            return GRAD[GRAD.length - 1][1].slice();
+        }
+
+        // Vertical palette controls:
+        //   WARM_FLOOR   - bottom fraction of the grid kept steel (0..1).
+        //   WARM_SKEW    - <1 skews the palette toward orange, so orange
+        //                  dominates quickly once above the floor (1 = linear).
+        //   WARM_SCATTER - per-cell random spread, so it reads as a
+        //                  probability distribution rather than a hard line.
+        var WARM_FLOOR = 0.2;
+        var WARM_SKEW = 0.3;
+        var WARM_SCATTER = 0.25;
 
         // Embers drifting up from the lower-left "heat source" (the forge).
         // Reuses this canvas + RAF loop, so there's no extra GPU cost.
@@ -125,7 +177,35 @@
             for (var x = -R; x < W + R; x += hStep) {
                 var offset = col % 2 ? vStep / 2 : 0;
                 for (var y = -R; y < H + R; y += vStep) {
-                    cells.push({ cx: x, cy: y + offset, lit: 0, target: 0 });
+                    var cy = y + offset;
+                    // 0 at the bottom edge, 1 at the top of the grid block.
+                    var fromBottom = H ? (H - cy) / H : 0;
+                    // Stay steel through the bottom WARM_FLOOR band, then skew
+                    // hard toward orange so it dominates above the floor.
+                    var bias = Math.max(
+                        0,
+                        Math.min(
+                            1,
+                            (fromBottom - WARM_FLOOR) / (1 - WARM_FLOOR),
+                        ),
+                    );
+                    bias = Math.pow(bias, WARM_SKEW);
+                    // Per-cell scatter -> a probability distribution, not a line:
+                    // low cells mostly steel, higher cells mostly orange.
+                    var t = Math.max(
+                        0,
+                        Math.min(
+                            1,
+                            bias + (Math.random() * 2 - 1) * WARM_SCATTER,
+                        ),
+                    );
+                    cells.push({
+                        cx: x,
+                        cy: cy,
+                        lit: 0,
+                        target: 0,
+                        hot: sampleGradient(t),
+                    });
                 }
                 col++;
             }
@@ -163,11 +243,14 @@
                 cell.lit += (cell.target - cell.lit) * 0.08;
                 if (cell.target === 1 && cell.lit > 0.92) cell.target = 0;
 
-                // Cool steel by default; heats toward red-hot orange as a cell lights.
+                // Cool steel by default; heats toward this cell's gradient
+                // colour as it lights — lower cells barely warm (their hot
+                // colour is near steel), higher cells flare orange.
                 var lit = cell.lit;
-                var r = Math.round(126 + (255 - 126) * lit);
-                var g = Math.round(155 + (110 - 155) * lit);
-                var b = Math.round(196 + (66 - 196) * lit);
+                var hot = cell.hot;
+                var r = Math.round(STEEL[0] + (hot[0] - STEEL[0]) * lit);
+                var g = Math.round(STEEL[1] + (hot[1] - STEEL[1]) * lit);
+                var b = Math.round(STEEL[2] + (hot[2] - STEEL[2]) * lit);
                 var a = 0.06 + lit * 0.82;
                 hexPath(cell.cx, cell.cy, R - 1);
                 ctx.strokeStyle =
