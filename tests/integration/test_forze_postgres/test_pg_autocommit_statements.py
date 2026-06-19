@@ -179,9 +179,13 @@ async def test_statements_inside_transaction_do_not_touch_autocommit(
 
     client = pg_client_single_conn
 
-    async with client.transaction() as conn:
+    async with client.transaction():
         await client.execute(f"INSERT INTO {ac_table} (value) VALUES (1)")
         assert await client.fetch_value(f"SELECT count(*) FROM {ac_table}") == 1
+
+    # The pooled connection comes back clean — no autocommit leaked into the tx.
+    # (max_size=1: this is the very same physical connection.)
+    async with client.bound_connection() as conn:
         assert conn.autocommit is False
 
     assert await client.fetch_value(f"SELECT count(*) FROM {ac_table}") == 1

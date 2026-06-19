@@ -55,6 +55,16 @@ class MongoConfig:
     min_pool_size: int = 2
     """Minimum pool size."""
 
+    lazy_transaction: bool = True
+    """Defer the server session + ``startTransaction`` until the first operation.
+
+    When ``True`` (the default), opening a transaction scope acquires no session
+    and starts no transaction until the first operation runs, so CPU-bound or
+    external work before the first operation does not count against MongoDB's
+    ``transactionLifetimeLimitSeconds`` (60s default) window. Set ``False`` to
+    restore eager session + ``startTransaction`` at scope entry.
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

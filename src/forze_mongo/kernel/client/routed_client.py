@@ -145,9 +145,9 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
         self,
         *,
         options: MongoTransactionOptions | None = None,
-    ) -> AsyncContextManager[AsyncClientSession]:
+    ) -> AsyncContextManager[AsyncClientSession | None]:
         @asynccontextmanager
-        async def _cm() -> AsyncGenerator[AsyncClientSession]:
+        async def _cm() -> AsyncGenerator[AsyncClientSession | None]:
             inner = await self._get_client()
 
             async with inner.transaction(options=options) as session:

@@ -24,6 +24,18 @@ The route must be registered for transactions when you wire the module —
 `PostgresDepsModule(client=pg, ..., tx={"orders"})` — otherwise the scope can't
 resolve a transaction manager.
 
+!!! tip "A scope holds a connection only from the first query"
+
+    With `lazy_transaction` enabled on the Postgres/Mongo client, opening a scope
+    acquires no pooled connection (and issues no `BEGIN` / `startTransaction`)
+    until the **first query** inside it. Parsing, computing, or calling an
+    external service before you touch the database no longer parks a connection
+    idle-in-transaction — so keep cheap-but-slow work *before* the first query and
+    the transaction stays short. A scope that runs no query holds nothing and
+    commits nothing. One consequence: a connection-acquire or connect failure now
+    surfaces at the first query rather than at scope entry (retries that wrap the
+    whole operation are unaffected).
+
 ## What commits together
 
 A scope has a **scope key** — the *kind* of transaction, such as a database

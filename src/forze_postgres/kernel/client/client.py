@@ -310,9 +310,22 @@ class PostgresClient(PostgresClientPort):
     # Context helpers
 
     def __current_conn(self) -> AsyncConnection | None:
-        """Connection bound to the current context, or ``None``."""
+        """Connection bound to the current context, or ``None``.
 
-        return self.__ctx_conn.get()
+        Falls through to a materialized lazy scope's connection, which is carried
+        on the pending object rather than a context var: it is set during the
+        first query (a different context than the ``transaction()`` generator's
+        ``__aexit__``), and a context-var token cannot be reset across contexts.
+        """
+
+        conn = self.__ctx_conn.get()
+
+        if conn is not None:
+            return conn
+
+        pending = self.__ctx_pending.get()
+
+        return pending.conn if pending is not None else None
 
     # ....................... #
 
@@ -352,8 +365,10 @@ class PostgresClient(PostgresClientPort):
 
         await pending.stack.enter_async_context(conn.transaction())
 
-        token = self.__ctx_conn.set(conn)
-        pending.stack.callback(self.__ctx_conn.reset, token)
+        # The connection is reachable via __current_conn through the pending
+        # object — NOT bound to __ctx_conn here: this runs in the first query's
+        # context, and the matching reset would land in the generator's
+        # __aexit__ context, which a context-var token forbids.
         pending.conn = conn
 
         return conn

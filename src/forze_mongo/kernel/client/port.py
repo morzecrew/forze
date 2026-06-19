@@ -49,7 +49,7 @@ class MongoClientPort(Protocol):
         self,
         *,
         options: MongoTransactionOptions | None = None,
-    ) -> AsyncContextManager[AsyncClientSession]: ...  # pragma: no cover
+    ) -> AsyncContextManager[AsyncClientSession | None]: ...  # pragma: no cover
 
     def find_one(
         self,
