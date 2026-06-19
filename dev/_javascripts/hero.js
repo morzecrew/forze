@@ -1,12 +1,3 @@
-/* =========================================================================
-   Forze — custom homepage interactions
-   Drop into:  docs/javascripts/forze-home.js
-   Register in mkdocs.yml:
-     extra_javascript:
-       - javascripts/forze-home.js
-   Self-contained, no dependencies. Safe to load on every page — it no-ops
-   when the hero markup isn't present.
-   ========================================================================= */
 (function () {
     "use strict";
 

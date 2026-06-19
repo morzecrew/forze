@@ -176,7 +176,7 @@
   text-underline-offset: 2px;
 }
 
-a.forze-banner__link:hover {
+[data-md-component="outdated"] a:hover {
   color: #fff !important;
 }
 
