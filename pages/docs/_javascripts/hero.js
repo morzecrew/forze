@@ -146,21 +146,16 @@
         var WARM_SKEW = 0.3;
         var WARM_SCATTER = 0.25;
 
-        // Embers drifting up from the lower-left "heat source" (the forge).
-        // Reuses this canvas + RAF loop, so there's no extra GPU cost.
-        var embers = [];
-        var MAX_EMBERS = 0;
-        function spawnEmber() {
-            embers.push({
-                x: W * (Math.random() * 0.3), // hug the left edge
-                y: H * (0.82 + Math.random() * 0.22), // start low
-                vx: 0.06 + Math.random() * 0.22, // drift right
-                vy: -(0.18 + Math.random() * 0.4), // rise
-                r: 0.6 + Math.random() * 1.4,
-                life: 0,
-                ttl: 80 + Math.random() * 160,
-            });
-        }
+        // Blink controls — how cells spark and fade:
+        //   SPARK_INTERVAL - frames between sparks (lower = blinks more often).
+        //   SPARK_MIN/MAX  - inclusive range of cells lit per spark.
+        //   BLINK_SPEED    - ease rate toward lit/unlit (higher = snappier).
+        //   BLINK_PEAK     - brightness at which a cell starts fading back out.
+        var SPARK_INTERVAL = 24;
+        var SPARK_MIN = 1;
+        var SPARK_MAX = 1;
+        var BLINK_SPEED = 0.05;
+        var BLINK_PEAK = 0.92;
 
         function buildGrid() {
             var rect = canvas.getBoundingClientRect();
@@ -228,9 +223,11 @@
 
             // occasionally light a random cell
             sparkClock++;
-            if (sparkClock > 8 && cells.length) {
+            if (sparkClock > SPARK_INTERVAL && cells.length) {
                 sparkClock = 0;
-                var n = 1 + Math.floor(Math.random() * 2);
+                var n =
+                    SPARK_MIN +
+                    Math.floor(Math.random() * (SPARK_MAX - SPARK_MIN + 1));
                 for (var k = 0; k < n; k++) {
                     var c = cells[(Math.random() * cells.length) | 0];
                     c.target = 1;
@@ -240,8 +237,8 @@
             for (var i = 0; i < cells.length; i++) {
                 var cell = cells[i];
                 // ease toward target, then decay
-                cell.lit += (cell.target - cell.lit) * 0.08;
-                if (cell.target === 1 && cell.lit > 0.92) cell.target = 0;
+                cell.lit += (cell.target - cell.lit) * BLINK_SPEED;
+                if (cell.target === 1 && cell.lit > BLINK_PEAK) cell.target = 0;
 
                 // Cool steel by default; heats toward this cell's gradient
                 // colour as it lights — lower cells barely warm (their hot
@@ -272,36 +269,6 @@
                         ")";
                     ctx.fill();
                 }
-            }
-
-            // embers / sparks rising from the lower-left forge glow
-            if (embers.length < MAX_EMBERS && Math.random() < 0.25)
-                spawnEmber();
-            for (var e = embers.length - 1; e >= 0; e--) {
-                var p = embers[e];
-                p.life++;
-                p.x += p.vx;
-                p.y += p.vy;
-                p.vy -= 0.0008; // gentle updraft acceleration
-                p.vx += (Math.random() - 0.5) * 0.01; // slight flicker drift
-                var k = p.life / p.ttl;
-                if (k >= 1) {
-                    embers.splice(e, 1);
-                    continue;
-                }
-                var fade = Math.sin(Math.min(k, 1) * Math.PI); // fade in then out
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-                ctx.fillStyle =
-                    "rgba(255," +
-                    (120 + (((1 - k) * 60) | 0)) +
-                    ",50," +
-                    fade * 0.7 +
-                    ")";
-                ctx.shadowColor = "rgba(255,110,40,0.8)";
-                ctx.shadowBlur = 6;
-                ctx.fill();
-                ctx.shadowBlur = 0;
             }
 
             raf = requestAnimationFrame(frame);

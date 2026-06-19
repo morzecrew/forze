@@ -111,15 +111,24 @@ Universal, every page:
 - *Floor:* band 4 (`in-depth/` dips to 5 on its single subject).
 - *Components:* a D2 diagram near the top to anchor band 2 (core-concepts does
   this on every page); an admonition for the one rule that matters most.
-- *Handoff:* an inline "Where this connects" closing sentence with cross-links —
-  not grid cards (cards make a long explanation read like a landing page).
+- *Handoff:* a closing sentence that bridges to the related idea via an inline
+  cross-link (one or two links, woven into prose). The global prev/next footer
+  already handles linear navigation, so the closer earns its place by adding a
+  *conceptual* link — not by restating the next page. A `## See also` list fits
+  when 3+ pages are genuinely related. Grid cards are reserved for true
+  multi-destination pages (a section map, a cross-section CTA), never an ordinary
+  explanation page.
 
 **`recipes/` (how-to)**
 - *Opening:* one-line problem statement, then point to the runnable
   `examples/recipes/<name>/`.
 - *Skeleton:* narrative task steps (problem → model → wire → invoke → Notes).
 - *Floor:* band 4. *Code:* `--8<--` from the example, never scratch code.
-- *Handoff:* grid cards to two or three sibling recipes.
+- *Handoff:* end at the task's natural close (commonly `## Notes`, `## Run it`,
+  or a final caveat), and add a forward inline cross-link where a genuine next
+  recipe exists. A `## Where next` grid card is optional — use it only for a hub
+  recipe that heads a clear chain (e.g. CRUD → cache → idempotency). Do not
+  manufacture sibling links to satisfy a template.
 
 **`integrations/` (reference-practical)**
 - *Opening:* exactly one band-1 sentence — what it provides and when to reach
@@ -140,6 +149,25 @@ When unsure which archetype new content is, ask: is the reader *studying* or
 *working*, and do they want *understanding* or *information/steps*? That places
 it. If a draft wants to both teach a concept and give steps, it is two pages.
 
+### Front-door pages (the appeal layer)
+
+`index.md`, `get-started/introduction.md`, and the opening of `quickstart.md`
+carry an extra job beyond orientation: they must make a skeptical engineer
+*want* to continue. This appeal layer applies on these pages only — never on
+reference, integration, or how-to pages, where punch is noise.
+
+- **Lead with the problem, not the product.** The opening states the pain the
+  reader recognizes; do not describe Forze before the first "what is it"
+  section. The solution belongs in the sections that follow.
+- **Contrast over adjectives.** Show the before/after — an *Instead of / With
+  Forze* table, a concrete swap — not "powerful, flexible, modern".
+- **Calm confidence, honesty as appeal.** Keep a "when not to use it". No hype.
+- **Punch is allowed here** because these are prose pages. Everywhere else the
+  structural contracts govern and punch is out of place.
+
+Appeal is a distinct axis from altitude: a page can be altitude-perfect and dull.
+These pages must pass both.
+
 ## The consistency layer
 
 - **Voice:** second person, present tense, active voice; conversational but
@@ -148,9 +176,12 @@ it. If a draft wants to both teach a concept and give steps, it is two pages.
   reference and integration require a one-line orienter. No page opens cold on
   a heading.
 - **Handoff contract (one rule per archetype, no ad-hoc mixing):**
-  grid cards for journey pages (`get-started/`, `recipes/`); an inline "Where
-  this connects" cross-link for explanation (`core-concepts/`, `in-depth/`);
-  nothing for `reference/` and `integrations/` (end at last content).
+  grid cards for `get-started/` (a linear journey); recipes end at the task's
+  natural close, with an optional `## Where next` grid card only for a hub recipe
+  that heads a chain; an inline forward cross-link woven into a closing sentence
+  for explanation (`core-concepts/`, `in-depth/`), or a short `## See also` list
+  when 3+ pages are related; nothing for `reference/` and `integrations/` (end at
+  last content).
 - **Component discipline — the earns-its-place test:** keep a tab/card/admonition/
   diagram only if removing it loses information. If removing it loses only
   decoration, cut it. No patchwork of components; no walls of unbroken prose.
@@ -164,6 +195,18 @@ it. If a draft wants to both teach a concept and give steps, it is two pages.
   Errors use `from forze.base.exceptions import exc` then `exc.<kind>(...)` — there
   is no `forze.base.errors` and no `ValidationError` symbol. Use the canonical
   vocabulary (appendix) consistently.
+- **External citations:** the first time a page leans on an outside concept (DDD,
+  Hexagonal Architecture, an RFC, a paper), link the canonical source with a
+  tooltip title that glosses it in one line —
+  `[Hexagonal Architecture](url "Alistair Cockburn — the original write-up")`.
+  Strongest on explanation and front-door pages; don't litter every page.
+- **Abbreviations:** define each non-obvious abbreviation once in
+  `pages/_includes/abbreviations.md` (auto-appended site-wide, so any occurrence
+  renders as an `<abbr>` tooltip — no per-page work). Skip anything a backend
+  developer already knows (HTTP, API, SQL, URL, SDK, JWT, TTL, DTO, DSL) — define
+  only the specialized or ambiguous ones where the expansion earns the tooltip.
+  The include is self-contained: the tooltips are the lookup, so there is no
+  separate glossary page or mirrored table to maintain.
 - **No meta:** never tell the reader a page is test-backed, that "the example is
   the spec", or reference test files. Frame sections by behavior, not by how the
   docs are built.
@@ -229,6 +272,12 @@ Verified to render in this setup:
 - Buttons: `[Text](url){ .md-button .md-button--primary }`.
 - Lucide icons: `:lucide-zap:` inline and `icon:` in frontmatter.
 - Light/dark D2 diagrams via the `#only-light` / `#only-dark` image suffix.
+- Abbreviation tooltips: `*[TERM]: Expansion`, defined once in
+  `pages/_includes/abbreviations.md` (kept **outside** `docs/` so it isn't built
+  as an orphan page) and auto-appended via `pymdownx.snippets`. Requires the
+  `abbr` extension and the `content.tooltips` theme feature — both enabled.
+- Tooltips on a link or element: a link title `[text](url "tooltip")`, or
+  `{ title="…" }` on an element via `attr_list`.
 
 Does **not** render here:
 

@@ -159,3 +159,6 @@ default) and provision out of band. Forze includes
 `ObjectStorageTenantProvisioner` (ensures a bucket) and, from `forze_postgres`,
 `PostgresSchemaTenantProvisioner` (`CREATE SCHEMA IF NOT EXISTS`) — teardown is
 opt-in wherever it would destroy data.
+
+Isolating tenants by data boundary pairs naturally with isolating them by key —
+sealing each tenant's data under its own keys is [Encryption](encryption.md).

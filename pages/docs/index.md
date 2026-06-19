@@ -26,7 +26,7 @@ hide:
         </h1>
 
         <p class="fz-lede fz-reveal" data-d="2">
-          Backend services with <strong>clear boundaries</strong> — write your business logic against contracts, then plug in any database, queue, or cache without touching a single line of domain code.
+          Your business logic shouldn't care whether it's Postgres or Mongo behind it. Write it once against <strong>contracts</strong>, then plug in any database, queue, or cache — without touching a line of domain code.
         </p>
 
         <div class="fz-cta fz-reveal" data-d="3">

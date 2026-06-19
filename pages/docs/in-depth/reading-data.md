@@ -70,3 +70,6 @@ querying and index maintenance never mix.
 
 Search is wired like any other capability: a `SearchSpec` resolved from the
 context, with per-engine setup living in each integration.
+
+Reading is one half of the story; writes that change state also emit domain
+events — how those propagate is [Events & sagas](events-sagas.md).

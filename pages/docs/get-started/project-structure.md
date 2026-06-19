@@ -49,3 +49,21 @@ One logical name — `"orders"` — appears in the **spec** (application), the
 **deps module route** (infrastructure), and is resolved in **routes**
 (interface). That shared string is the contract between the layers; keep it
 consistent and everything wires up. Get it wrong and a port won't resolve.
+
+## Next steps
+
+<div class="grid cards" markdown>
+
+-   :lucide-compass: **[Core concepts](../core-concepts/overview.md)**
+
+    ---
+
+    Understand the layers, contracts, and runtime this layout is built around.
+
+-   :lucide-database: **[CRUD on Postgres](../recipes/crud-fastapi-postgres.md)**
+
+    ---
+
+    Put the layout to work with a real Postgres-backed API.
+
+</div>

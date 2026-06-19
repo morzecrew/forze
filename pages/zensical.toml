@@ -177,6 +177,7 @@ features = [
     "content.code.copy",
     "content.code.select",
     "content.code.annotate",
+    "content.tooltips",
 ]
 custom_dir = "overrides"
 logo = "_images/forze-multicolor.png"
@@ -207,8 +208,12 @@ auto_themed = true
 auto_caption = true
 
 [project.markdown_extensions.pymdownx.snippets]
-base_path = ["docs", "../examples", ".."]
+base_path = ["docs", "../examples", "..", "."]
 check_paths = true
+# Site-wide abbreviations: defined once in pages/_includes (outside the docs tree
+# so it isn't built as a page), rendered as <abbr> tooltips on every page.
+auto_append = ["_includes/abbreviations.md"]
+[project.markdown_extensions.abbr]
 [project.markdown_extensions.admonition]
 [project.markdown_extensions.pymdownx.details]
 [project.markdown_extensions.pymdownx.superfences]

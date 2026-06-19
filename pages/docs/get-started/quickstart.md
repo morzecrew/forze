@@ -4,6 +4,10 @@ icon: lucide/zap
 summary: A working in-memory CRUD service in about ten minutes — no Docker
 ---
 
+In about ten minutes — and without Docker — you'll have a running REST service
+whose handlers have no idea what's storing the data. Later you point them at
+Postgres by changing wiring, not code.
+
 ## What you will build
 
 A minimal REST service for a `User` aggregate:

@@ -93,3 +93,7 @@ default install). Each adds one focused capability — no deep inheritance chain
 | **Metadata** | `name`, `display_name`, and `description` with normalized string types |
 | **Number id** | A human-readable `number_id`, populated by a counter on create |
 | **Creator id** | A frozen `creator_id`, injected from the current actor context |
+
+Aggregates define *what* your domain is and the rules it keeps; turning actions
+on them into something the runtime can execute is the
+[application layer](application-layer.md).

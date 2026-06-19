@@ -120,3 +120,6 @@ page](resilience.md#fleet-wide-state). The framework's periodic loops — the
 outbox relay tick, consumer crash-restart backoff — are jittered out of the
 box, so N replicas don't synchronize into a thundering herd against the same
 claim query.
+
+Knowing a fleet drains cleanly — or spots one thundering against a claim query —
+is something you confirm by watching it; that's [Observability](observability.md).
