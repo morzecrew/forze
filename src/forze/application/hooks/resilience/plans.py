@@ -63,6 +63,18 @@ class ResilienceWrap(MiddlewareFactory):
 
     # ....................... #
 
+    def may_replay_handler(self) -> bool:
+        """Marker (:class:`MayReplayHandler`): a resilience policy may be retry-bearing.
+
+        The policy is a name resolved at runtime, so whether it actually retries is
+        not knowable at freeze; report ``True`` conservatively so a two-phase
+        operation wrapped by it must declare ``prepare`` re-run-safe.
+        """
+
+        return True
+
+    # ....................... #
+
     def to_step(
         self,
         *,
@@ -131,6 +143,13 @@ class HedgeWrap(MiddlewareFactory):
         """Marker (``DeclaresHedge``): whether an explicit safety basis was given."""
 
         return self.safety is not None
+
+    # ....................... #
+
+    def may_replay_handler(self) -> bool:
+        """Marker (:class:`MayReplayHandler`): hedging runs the operation concurrently."""
+
+        return True
 
     # ....................... #
 

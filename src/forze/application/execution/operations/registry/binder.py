@@ -76,6 +76,28 @@ class OperationRegistryBinder:
 
     # ....................... #
 
+    def two_phase(self, *, rerun_safe: bool = False) -> Self:
+        """Mark these operations as two-phase (``prepare``/``apply``) handlers.
+
+        The engine runs ``handler.prepare(args)`` outside the transaction (under
+        the read-only flag) and threads its payload into ``handler.apply(args,
+        payload)`` inside the transaction. Requires a transaction route (bind one
+        via ``bind_tx().set_route(...)``), enforced at freeze.
+
+        ``rerun_safe`` asserts ``prepare`` is safe to run more than once; it is
+        **required** when the operation also carries a retry/hedge wrap (which
+        re-runs the operation, hence ``prepare``), and ignored otherwise.
+        """
+
+        return attrs.evolve(
+            self,
+            acc=attrs.evolve(
+                self._acc, two_phase=True, prepare_rerun_safe=rerun_safe
+            ),
+        )
+
+    # ....................... #
+
     def with_deadline(self, deadline: timedelta) -> Self:
         """Declare a per-invocation time budget for these operations.
 

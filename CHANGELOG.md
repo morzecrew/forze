@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Two-phase (`prepare`/`apply`) handlers** — a handler shape where `prepare(args)` runs **outside** the transaction (parsing, CPU work, an external call) and `apply(args, payload)` runs **inside** it, with the engine threading the payload. The transaction wraps only the writes, not the pre-work — the explicit complement to lazy acquisition for the case where an external call must sit between a read and a write. Register with `registry.bind(op).two_phase().bind_tx().set_route(...)`; `prepare` runs under the read-only flag (no write ports). Freeze-time gates: two-phase requires a transaction route, and combining it with a retry/hedge wrap (which may re-run `prepare`) requires `.two_phase(rerun_safe=True)`. New `TwoPhaseHandler` contract and `forze_kits.aggregates.document.TwoPhaseDocumentHandler` base (scopes a read port to `prepare`, the write port to `apply`).
+
 Lands **Deterministic Simulation Testing (DST)** as a native framework capability (`forze_dst`): point it at a real Forze app and one master seed reproduces the whole run — schedule, faults, latency, inputs, crashes, network partitions — across single-process and N-node distributed runs, over real registries and real `ExecutionRuntime`s, with zero touches to the app under test.
 
 **Engine & determinism seams**

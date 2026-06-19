@@ -14,6 +14,7 @@ from .protocols import (
     Handler,
     HandlerFactory,
     LifecycleHook,
+    MayReplayHandler,
     Middleware,
     MiddlewareFactory,
     OnFailure,
@@ -21,6 +22,7 @@ from .protocols import (
     OnSuccess,
     OnSuccessFactory,
     ProvidesIdempotency,
+    TwoPhaseHandler,
 )
 from .value_objects import (
     BeforeStep,
@@ -58,6 +60,8 @@ __all__ = [
     "FinallyFactory",
     "Handler",
     "HandlerFactory",
+    "TwoPhaseHandler",
+    "MayReplayHandler",
     "LifecycleHook",
     "Outcome",
     "ExecutionGraph",

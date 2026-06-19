@@ -6,6 +6,7 @@ from typing import final
 from forze.application.contracts.execution import (
     DeclaresHedge,
     HandlerFactory,
+    MayReplayHandler,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import (
@@ -36,6 +37,7 @@ class RegistryFreezeValidator:
         RegistryFreezeValidator.validate_resolved_plans(handlers, resolution)
         RegistryFreezeValidator.validate_dispatch_graph(handlers, resolution)
         RegistryFreezeValidator.validate_hedge_safety(handlers, resolution)
+        RegistryFreezeValidator.validate_two_phase(handlers, resolution)
 
     # ....................... #
 
@@ -186,6 +188,51 @@ class RegistryFreezeValidator:
                 f"Operation {op!r} is hedged but has no idempotency guard and no "
                 "explicit HedgeWrap(safety=...); concurrent duplicates are unsafe.",
             )
+
+    # ....................... #
+
+    @staticmethod
+    def validate_two_phase(
+        handlers: StrKeyMapping[HandlerFactory],
+        resolution: PlanResolution,
+    ) -> None:
+        """Validate two-phase (``prepare``/``apply``) operations.
+
+        Two gates: (1) a two-phase operation needs a transaction route — the whole
+        point is to run ``prepare`` outside the transaction and ``apply`` inside it.
+        (2) If the operation also carries an **outer** wrap that may re-run it
+        (retry / hedge — :class:`MayReplayHandler`), ``prepare`` runs more than
+        once, so the plan must assert ``prepare`` is safe to re-run
+        (``.two_phase(rerun_safe=True)``). A transaction-scope wrap is irrelevant —
+        it runs inside the transaction, around ``apply`` only.
+        """
+
+        for op in handlers:
+            plan = resolution.resolve(str(op))
+
+            if not plan.two_phase:
+                continue
+
+            if plan.tx_route() is None:
+                raise exc.configuration(
+                    f"Operation {op!r} is two-phase (prepare/apply) but has no "
+                    "transaction route; bind one via bind_tx().set_route(...). "
+                    "Two-phase runs apply inside a transaction.",
+                )
+
+            may_replay = any(
+                isinstance(step.factory, MayReplayHandler)
+                and step.factory.may_replay_handler()
+                for step in plan.iter_outer_wrap_steps()
+            )
+
+            if may_replay and not plan.prepare_rerun_safe:
+                raise exc.configuration(
+                    f"Operation {op!r} is two-phase and carries a retry/hedge wrap "
+                    "that may re-run it, so prepare may run more than once. Declare "
+                    "prepare safe to re-run via .two_phase(rerun_safe=True), or "
+                    "remove the retry/hedge wrap.",
+                )
 
     # ....................... #
 

@@ -22,6 +22,7 @@ it commits.
 |-------|--------------|-------------|
 | `before` | before the handler | auth, input checks, rate limiting |
 | `wrap` | around the whole chain | metrics, retries, logging |
+| `prepare` *(two-phase)* | outside the transaction, before it opens | external calls / compute that feed the write |
 | `tx_before` | inside the transaction, before the handler | locks, preconditions |
 | `on_success` *(tx)* | inside the transaction, after the handler | writes that must commit together |
 | `after_commit` | after the root transaction commits | best-effort follow-up |

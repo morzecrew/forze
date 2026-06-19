@@ -1,12 +1,20 @@
 """Orchestrate execution of a resolved operation plan."""
 
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Awaitable, Callable, Protocol, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, cast
 
-from forze.application.contracts.execution import Failure, Handler, Success
+from forze.application.contracts.execution import (
+    Failure,
+    Handler,
+    Success,
+    TwoPhaseHandler,
+)
 from forze.application.contracts.transaction import AfterCommitPort, IsolationLevel
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+
+if TYPE_CHECKING:
+    from ...context.invocation import InvocationContext
 
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from ..planning.scopes import ResolvedScope, ResolvedTransactionScope
@@ -177,19 +185,31 @@ async def run_resolved_operation_plan[Args, R](
     *,
     tx_runner: TransactionRunner,
     defer_after_commit: AfterCommitPort,
+    inv_ctx: "InvocationContext",
 ) -> R:
-    """Run handler through outer and transaction scopes in plan order."""
+    """Run handler through outer and transaction scopes in plan order.
+
+    For a two-phase plan the handler is a :class:`TwoPhaseHandler`: ``prepare``
+    runs here — inside the outer scope's ``before``/``wrap`` but **before** the
+    transaction opens, under the read-only flag — and its payload is bound into an
+    ``apply`` closure that runs inside the transaction as an ordinary handler body.
+    """
 
     async def transactional_core() -> R:
+        if plan.two_phase:
+            inner = await _prepare_apply_handler(handler, args, inv_ctx)
+        else:
+            inner = handler
+
         if plan.tx.route is None:
             # A route-less tx scope with stages is rejected at plan-resolution time
-            # (``ResolvedTransactionScope.__attrs_post_init__``), so no re-validation
-            # is needed per call.
-            return await handler(args)
+            # (``ResolvedTransactionScope.__attrs_post_init__``); two-phase without a
+            # route is rejected at freeze. So no re-validation is needed per call.
+            return await inner(args)
 
         return await run_resolved_tx_scope(
             plan.tx,
-            handler,
+            inner,
             args,
             tx_runner=tx_runner,
             defer_after_commit=defer_after_commit,
@@ -200,3 +220,37 @@ async def run_resolved_operation_plan[Args, R](
         )
 
     return await run_resolved_scope(plan.outer, transactional_core, args)
+
+
+# ....................... #
+
+
+async def _prepare_apply_handler[Args, R](
+    handler: Handler[Args, R],
+    args: Args,
+    inv_ctx: "InvocationContext",
+) -> Handler[Args, R]:
+    """Run ``prepare`` (outside the transaction, read-only) and return an ``apply``
+    closure to run inside it.
+
+    The read-only flag bars ``prepare`` from acquiring a command (write) port
+    (best-effort — same coverage as a QUERY operation; lazily-resolved ports are
+    caught, eagerly-injected ones are not). The token restores the prior state, so
+    a QUERY two-phase op stays read-only into ``apply`` while a COMMAND op regains
+    write capability.
+    """
+
+    two_phase = cast(TwoPhaseHandler[Args, Any, R], handler)
+
+    ro_token = inv_ctx.set_read_only()
+
+    try:
+        payload = await two_phase.prepare(args)
+
+    finally:
+        inv_ctx.reset_read_only(ro_token)
+
+    async def _apply(args: Args) -> R:
+        return await two_phase.apply(args, payload)
+
+    return _apply

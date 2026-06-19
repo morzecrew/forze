@@ -71,6 +71,21 @@ class OperationPlan:
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification; defaults to ``COMMAND``."""
 
+    two_phase: bool = attrs.field(default=False)
+    """Whether the handler is a two-phase ``prepare``/``apply`` handler.
+
+    When ``True``, the engine runs ``handler.prepare(args)`` in the outer scope —
+    outside the transaction, under the read-only flag — and threads its payload
+    into ``handler.apply(args, payload)`` inside the transaction. Requires a
+    transaction route (validated at freeze)."""
+
+    prepare_rerun_safe: bool = attrs.field(default=False)
+    """Author's assertion that ``prepare`` is safe to run more than once.
+
+    Required at freeze when ``two_phase`` is combined with a wrap that may re-run
+    the operation (retry / hedge — :class:`MayReplayHandler`), since those re-run
+    ``prepare`` per attempt. Irrelevant unless ``two_phase``."""
+
     deadline: timedelta | None = attrs.field(default=None)
     """Per-invocation time budget for this operation, or ``None`` for no cap.
 
@@ -128,6 +143,17 @@ class OperationPlan:
 
         yield from self._outer.wrap.items
         yield from self._tx.wrap.items
+
+    # ....................... #
+
+    def iter_outer_wrap_steps(self) -> Iterable[MiddlewareStep]:
+        """Yield only the **outer** scope's wrap steps.
+
+        These wrap the whole operation (including a two-phase ``prepare``); a
+        transaction-scope wrap runs inside the transaction, around ``apply`` only.
+        """
+
+        yield from self._outer.wrap.items
 
     # ....................... #
 
@@ -233,6 +259,7 @@ class OperationPlan:
             outer=frozen_outer,
             tx=frozen_tx,
             kind=self.kind,
+            two_phase=self.two_phase,
             deadline=self.deadline,
             supports_idempotency_key=self.supports_idempotency_key(),
             required_permissions=self.declared_permission_keys(),
@@ -262,10 +289,19 @@ class OperationPlan:
         deadlines = [plan.deadline for plan in plans if plan.deadline is not None]
         merged_deadline = min(deadlines, default=None)
 
+        # Both are sticky (OR), so they travel with the registration that set
+        # them and a default-``False`` patch never clobbers them: any layer
+        # marking the operation two-phase keeps it so, and any layer asserting
+        # ``prepare`` re-run-safe keeps that assertion.
+        merged_two_phase = any(plan.two_phase for plan in plans)
+        merged_rerun_safe = any(plan.prepare_rerun_safe for plan in plans)
+
         return cls(
             outer=merged_outer,
             tx=merged_tx,
             kind=merged_kind,
+            two_phase=merged_two_phase,
+            prepare_rerun_safe=merged_rerun_safe,
             deadline=merged_deadline,
         )
 
@@ -291,6 +327,9 @@ class FrozenOperationPlan:
 
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification."""
+
+    two_phase: bool = attrs.field(default=False)
+    """Whether the handler is a two-phase ``prepare``/``apply`` handler."""
 
     deadline: timedelta | None = attrs.field(default=None)
     """Per-invocation time budget declared by the plan, or ``None`` for no cap."""
@@ -328,6 +367,7 @@ class FrozenOperationPlan:
             outer=resolved_outer,
             tx=resolved_tx,
             kind=self.kind,
+            two_phase=self.two_phase,
             # Seconds precomputed once at resolve so the per-call hot path
             # never touches timedelta arithmetic.
             deadline_s=(
@@ -351,6 +391,10 @@ class ResolvedOperationPlan:
 
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification."""
+
+    two_phase: bool = attrs.field(default=False)
+    """Whether the handler is a two-phase ``prepare``/``apply`` handler — the engine
+    runs ``prepare`` outside the transaction and ``apply`` inside it."""
 
     deadline_s: float | None = attrs.field(default=None)
     """Plan-declared time budget in seconds (precomputed at resolve), or ``None``."""

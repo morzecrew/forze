@@ -52,6 +52,43 @@ matches; a port of a different kind runs outside it.
     cross-system effect and apply it after commit (see [below](#after-the-commit)
     and [Events & sagas](events-sagas.md)).
 
+## Two-phase handlers: work before the write
+
+Lazy acquisition keeps the transaction off the connection until your first query —
+but only for work that runs *before* that query. When an external call has to sit
+*between* a read and a write, split the handler into two phases instead:
+
+```python
+class QuoteAndCreate(TwoPhaseDocumentHandler[QuoteRequest, int, WidgetRead, WidgetCreate]):
+    enrich: PricingService
+
+    async def prepare(self, args):                 # outside the transaction
+        return await self.enrich.quote(args.sku)   # external call — no tx held
+
+    async def apply(self, args, price):            # inside the transaction
+        return await self.writer().create(WidgetCreate(price=price))
+```
+
+Register it with `.two_phase()`:
+
+```python
+registry.bind("quote").two_phase().bind_tx().set_route("orders").finish()
+```
+
+The engine runs `prepare` in the outer scope — **before** the transaction opens —
+and threads its return value into `apply`, which runs inside the transaction. So
+the transaction wraps only the writes, never the external call.
+
+!!! note "What `prepare` can and can't do"
+
+    `prepare` runs under the read-only flag, so it cannot acquire a write port
+    (use `self.reader()` for reads, `self.writer()` only in `apply`). Its reads run
+    *outside* `apply`'s transaction, so there's no read/write atomicity between the
+    phases — validate on write in `apply` (an optimistic-concurrency `rev` check).
+    And if the operation carries a retry or hedge wrap, `prepare` may run more than
+    once; declare it safe with `.two_phase(rerun_safe=True)` (enforced at freeze),
+    and keep it free of non-idempotent external effects.
+
 ## Nesting
 
 Scopes nest naturally. A nested scope of the **same kind** joins the outer

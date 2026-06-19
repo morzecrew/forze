@@ -76,6 +76,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
                     args,
                     tx_runner=self.tx_runner,
                     defer_after_commit=self.defer_after_commit,
+                    inv_ctx=self.inv_ctx,
                 )
 
             if remaining <= 0.0:
@@ -93,6 +94,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
                         args,
                         tx_runner=self.tx_runner,
                         defer_after_commit=self.defer_after_commit,
+                        inv_ctx=self.inv_ctx,
                     )
 
             except TimeoutError as error:
