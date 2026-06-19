@@ -198,18 +198,21 @@ def _str_keyed_mapping_value(annotation: Any) -> Any:
     """Value annotation of a ``str``-keyed mapping, ``None`` for an untyped one,
     or ``_MISSING`` when *annotation* is not a string-keyed mapping."""
 
-    origin = get_origin(annotation)
-    if origin is None:
-        return None if annotation in (dict, MappingABC) else _MISSING
+    # ``get_origin`` is the parameterized origin (``dict[str, X]`` -> ``dict``);
+    # a bare ``dict``/``Mapping`` annotation has no origin, so fall back to it.
+    origin = get_origin(annotation) or annotation
 
-    if origin is dict or origin is MappingABC or (
+    if origin not in (dict, MappingABC) and not (
         isinstance(origin, type) and issubclass(origin, MappingABC)
     ):
-        args = get_args(annotation)
-        if not args:
-            return None
-        if _unwrap_optional(args[0]) in (str, Any):
-            return _unwrap_optional(args[1]) if len(args) == 2 else None
+        return _MISSING
+
+    args = get_args(annotation)
+    if not args:
+        return None  # untyped mapping → walkable for any value path
+
+    if _unwrap_optional(args[0]) in (str, Any):
+        return _unwrap_optional(args[1]) if len(args) == 2 else None
 
     return _MISSING
 

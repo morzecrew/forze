@@ -30,6 +30,8 @@ _SCALAR_BQ_TYPE: dict[type, str] = {
     bytes: "BYTES",
 }
 
+# ....................... #
+
 
 def params_to_query_parameters(params: BaseModel | JsonDict) -> list[JsonDict]:
     """Convert a params model (or already-lowered dict) to BigQuery ``queryParameters``.
@@ -43,8 +45,7 @@ def params_to_query_parameters(params: BaseModel | JsonDict) -> list[JsonDict]:
     if isinstance(params, BaseModel):
         data = params.model_dump()
         annotations = {
-            name: field.annotation
-            for name, field in type(params).model_fields.items()
+            name: field.annotation for name, field in type(params).model_fields.items()
         }
     else:
         data = dict(params)
@@ -94,6 +95,9 @@ def _list_elem_annotation(annotation: Any) -> Any | None:
     return None
 
 
+# ....................... #
+
+
 def _bq_type_for_annotation(annotation: Any) -> JsonDict | None:
     """Map a Python annotation to a BigQuery ``parameterType``, or ``None`` if unknown."""
 
@@ -117,7 +121,9 @@ def _bq_type_for_annotation(annotation: Any) -> JsonDict | None:
 
 def _infer_parameter(value: Any, annotation: Any = None) -> tuple[JsonDict, JsonDict]:
     if value is None:
-        return (_bq_type_for_annotation(annotation) or {"type": "STRING"}), {"value": None}
+        return (_bq_type_for_annotation(annotation) or {"type": "STRING"}), {
+            "value": None
+        }
 
     if isinstance(value, bool):
         return {"type": "BOOL"}, {"value": value}
@@ -144,41 +150,45 @@ def _infer_parameter(value: Any, annotation: Any = None) -> tuple[JsonDict, Json
         return {"type": "STRING"}, {"value": value}
 
     if isinstance(value, (list, tuple)):
-        elem_annotation = _list_elem_annotation(annotation)
-        elem_type = (
-            _bq_type_for_annotation(elem_annotation)
-            if elem_annotation is not None
-            else None
-        )
-
-        if not value:
-            # Empty arrays carry no value to infer from; BigQuery still requires
-            # ``arrayType``, so a typed list[...] field is needed here.
-            if elem_type is None:
-                raise exc.precondition(
-                    "Cannot infer BigQuery ARRAY element type for an empty list "
-                    "without a typed list parameter field."
-                )
-
-            return {"type": "ARRAY", "arrayType": elem_type}, {"arrayValues": []}
-
-        if elem_type is None:
-            # No annotation: infer from the first non-null element (a leading
-            # ``None`` must not force the whole array to STRING).
-            sample = next((v for v in value if v is not None), value[0])
-            elem_type, _ = _infer_parameter(sample, elem_annotation)
-
-        return (
-            {"type": "ARRAY", "arrayType": elem_type},
-            {
-                "arrayValues": [
-                    _infer_parameter(item, elem_annotation)[1] for item in value
-                ],
-            },
-        )
+        return _infer_array_parameter(value, annotation)
 
     raise exc.precondition(
         f"Unsupported BigQuery query parameter type: {type(value).__name__}"
+    )
+
+
+# ....................... #
+
+
+def _infer_array_parameter(value: Any, annotation: Any) -> tuple[JsonDict, JsonDict]:
+    """Infer the ``ARRAY`` parameter type/value for a list or tuple *value*."""
+    elem_annotation = _list_elem_annotation(annotation)
+    elem_type = (
+        _bq_type_for_annotation(elem_annotation)
+        if elem_annotation is not None
+        else None
+    )
+
+    if not value:
+        # Empty arrays carry no value to infer from; BigQuery still requires
+        # ``arrayType``, so a typed list[...] field is needed here.
+        if elem_type is None:
+            raise exc.precondition(
+                "Cannot infer BigQuery ARRAY element type for an empty list "
+                "without a typed list parameter field."
+            )
+
+        return {"type": "ARRAY", "arrayType": elem_type}, {"arrayValues": []}
+
+    if elem_type is None:
+        # No annotation: infer from the first non-null element (a leading
+        # ``None`` must not force the whole array to STRING).
+        sample = next((v for v in value if v is not None), value[0])
+        elem_type, _ = _infer_parameter(sample, elem_annotation)
+
+    return (
+        {"type": "ARRAY", "arrayType": elem_type},
+        {"arrayValues": [_infer_parameter(item, elem_annotation)[1] for item in value]},
     )
 
 
