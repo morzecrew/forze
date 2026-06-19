@@ -206,6 +206,29 @@ async def test_cancel_before_materialization_holds_nothing(
 
 
 @pytest.mark.asyncio
+async def test_first_op_in_child_context_does_not_leak_token(
+    lazy_mongo_replica: MongoClient,
+) -> None:
+    """Regression: the first operation may materialize the scope in a *different*
+    context than the one that opened it (the resilience executor runs operations
+    in a child context). The session must not be bound to a context var — its
+    token could not be reset across contexts — so it rides the pending object and
+    the scope commits cleanly."""
+
+    client = lazy_mongo_replica
+    coll = await client.collection(f"lazy_{uuid4().hex[:8]}")
+
+    async with client.transaction():
+        # create_task copies the context: the materializing op runs in a child
+        # context while the scope exit unwinds in this (parent) context.
+        await asyncio.create_task(client.insert_one(coll, {"value": 1}))
+        # The parent context sees the materialized session (fall-through).
+        assert _bound_session(client) is not None
+
+    assert await client.count(coll, {"value": 1}) == 1
+
+
+@pytest.mark.asyncio
 async def test_cancel_after_materialization_aborts(
     lazy_mongo_replica: MongoClient,
 ) -> None:

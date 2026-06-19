@@ -26,9 +26,10 @@ resolve a transaction manager.
 
 !!! tip "A scope holds a connection only from the first query"
 
-    With `lazy_transaction` enabled on the Postgres/Mongo client, opening a scope
-    acquires no pooled connection (and issues no `BEGIN` / `startTransaction`)
-    until the **first query** inside it. Parsing, computing, or calling an
+    With `lazy_transaction` enabled (the default) on the Postgres, Mongo, and
+    Firestore clients, opening a scope acquires no pooled connection (and issues
+    no `BEGIN` / `startTransaction` / `_begin`) until the **first query** inside
+    it. Parsing, computing, or calling an
     external service before you touch the database no longer parks a connection
     idle-in-transaction — so keep cheap-but-slow work *before* the first query and
     the transaction stays short. A scope that runs no query holds nothing and

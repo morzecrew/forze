@@ -1,5 +1,6 @@
 """Unit tests for :mod:`forze_postgres.kernel.client.client` helpers (no DB I/O)."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -542,4 +543,28 @@ class TestLazyTransaction:
             assert conn.tx_events == [("begin", None)]
             assert client.is_in_transaction() is True
 
+        assert conn.tx_events == [("begin", None), ("commit", None)]
+
+    @pytest.mark.asyncio
+    async def test_first_query_in_child_context_does_not_leak_token(self) -> None:
+        """Regression: the first query may materialize the scope in a *different*
+        context than the one that opened it — the resilience executor runs the
+        operation in a child context. The materialized connection must NOT be
+        bound to a context var (its token could not be reset across contexts:
+        ``ValueError: Token was created in a different Context``); it rides the
+        pending object, so scope exit commits cleanly."""
+
+        client, conn, pool = _lazy_client_with_stub_pool()
+
+        async with client.transaction():
+            # create_task copies the context: the materializing query runs in a
+            # child context, the scope exit unwinds in this (parent) context.
+            await asyncio.create_task(
+                client.execute("INSERT INTO t (v) VALUES (1)")
+            )
+            # The parent context sees the materialized connection (fall-through).
+            assert await client.fetch_all("SELECT 1") == []
+
+        # Materialized once, committed on a clean exit — no token reset error.
+        assert pool.checkouts == 1
         assert conn.tx_events == [("begin", None), ("commit", None)]
