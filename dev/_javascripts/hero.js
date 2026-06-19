@@ -106,7 +106,7 @@
         // Embers drifting up from the lower-left "heat source" (the forge).
         // Reuses this canvas + RAF loop, so there's no extra GPU cost.
         var embers = [];
-        var MAX_EMBERS = 40;
+        var MAX_EMBERS = 0;
         function spawnEmber() {
             embers.push({
                 x: W * (Math.random() * 0.3), // hug the left edge

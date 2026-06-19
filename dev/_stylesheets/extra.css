@@ -176,6 +176,14 @@
   text-underline-offset: 2px;
 }
 
+.forze-banner__link:hover {
+  color: #fff !important;
+}
+
+[data-md-component="outdated"] a:hover {
+  color: #fff !important;
+}
+
 [data-md-component="outdated"] .forze-banner__close {
   position: absolute;
   top: 50%;
