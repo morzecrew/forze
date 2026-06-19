@@ -188,10 +188,12 @@ class Document(CoreModel):
         if not materialized:
             return self._dump_stored_fields()
 
-        dump = self.model_dump(mode="python")
-        fields = frozenset(type(self).model_fields) | materialized
+        # ``include`` limits the dump to declared fields plus the materialized
+        # computed fields, so the other (non-persisted) computed fields are never
+        # evaluated — and pydantic *extras* are dropped, as in _dump_stored_fields.
+        include = frozenset(type(self).model_fields) | materialized
 
-        return {k: v for k, v in dump.items() if k in fields}
+        return self.model_dump(mode="python", include=set(include))
 
     # ....................... #
 

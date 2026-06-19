@@ -436,6 +436,21 @@ async def test_materialized_field_recomputed_and_persisted_on_update() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_matching_rejected_with_materialized() -> None:
+    # Dev/prod parity: real backends reject set-based bulk update on a materialized
+    # aggregate (cannot recompute per row), so the mock must reject it too.
+    doc = _order_adapter(MockState())
+    await doc.create(_OrderCreate(qty=2, unit_price=10.0))
+
+    with pytest.raises(CoreException, match="materialized") as ei:
+        await doc.update_matching(
+            {"$values": {"qty": 2}},
+            _OrderUpdate(unit_price=20.0),
+        )
+    assert ei.value.code == "core.document.materialized_bulk_update_unsupported"
+
+
+@pytest.mark.asyncio
 async def test_counter_is_async_safe_under_concurrent_increments() -> None:
     state = MockState()
     counter = MockCounterAdapter(state=state, namespace="orders")
