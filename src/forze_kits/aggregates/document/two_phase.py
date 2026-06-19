@@ -76,5 +76,7 @@ class TwoPhaseDocumentHandler[In: Bd, Payload, Out: Bm, C: Cd](
     async def prepare(self, args: In) -> Payload:  # pragma: no cover
         raise NotImplementedError
 
+    # ....................... #
+
     async def apply(self, args: In, payload: Payload) -> Out:  # pragma: no cover
         raise NotImplementedError

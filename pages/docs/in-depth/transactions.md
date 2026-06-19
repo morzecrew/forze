@@ -85,9 +85,9 @@ the transaction wraps only the writes, never the external call.
     (use `self.reader()` for reads, `self.writer()` only in `apply`). Its reads run
     *outside* `apply`'s transaction, so there's no read/write atomicity between the
     phases — validate on write in `apply` (an optimistic-concurrency `rev` check).
-    And if the operation carries a retry or hedge wrap, `prepare` may run more than
-    once; declare it safe with `.two_phase(rerun_safe=True)` (enforced at freeze),
-    and keep it free of non-idempotent external effects.
+    `prepare` runs **exactly once** per invocation: if a retry or hedge wrap
+    re-runs the operation, only `apply` repeats — with the payload `prepare`
+    already produced.
 
 ## Nesting
 

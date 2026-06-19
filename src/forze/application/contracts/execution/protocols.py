@@ -97,10 +97,9 @@ class TwoPhaseHandler[Args, Payload, R](Protocol):  # pragma: no cover
 
     ``prepare`` runs under the read-only flag and must not acquire a command
     (write) port; its database reads run outside ``apply``'s transaction (no
-    read/write atomicity — validate on write in ``apply``). ``prepare`` may run
-    more than once if the operation carries a retry/hedge wrap (see
-    ``prepare_rerun_safe`` on the plan), so keep it free of non-idempotent
-    external effects.
+    read/write atomicity — validate on write in ``apply``). It runs **exactly
+    once** per invocation: a retry or hedge re-runs only ``apply`` (with the shared
+    payload), never ``prepare``.
     """
 
     def prepare(self, args: Args) -> Awaitable[Payload]: ...
@@ -153,23 +152,6 @@ class DeclaresHedge(Protocol):  # pragma: no cover
     """
 
     def hedge_safety_declared(self) -> bool: ...
-
-
-# ....................... #
-
-
-@runtime_checkable
-class MayReplayHandler(Protocol):  # pragma: no cover
-    """Marker: a middleware factory that may run the wrapped operation more than
-    once (retry) or concurrently (hedge).
-
-    Detected structurally at freeze time (like :class:`DeclaresHedge`) so a
-    two-phase operation can be gated: if such a wrap is present, the operation's
-    ``prepare`` phase may re-run, so the plan must declare ``prepare`` safe to
-    re-run (``OperationPlan.prepare_rerun_safe``).
-    """
-
-    def may_replay_handler(self) -> bool: ...
 
 
 # ....................... #

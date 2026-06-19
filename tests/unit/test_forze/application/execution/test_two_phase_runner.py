@@ -9,12 +9,15 @@ while still firing the outer failure/finally hooks.
 
 from __future__ import annotations
 
+import asyncio
+
 import attrs
 import pytest
 
 from forze.application.contracts.execution import (
     BeforeStep,
     FinallyStep,
+    MiddlewareStep,
     OnFailureStep,
     OnSuccessStep,
     TwoPhaseHandler,
@@ -230,3 +233,112 @@ class TestTwoPhaseOrdering:
             "after_commit",
             "outer_os",
         ]
+
+
+# ....................... #
+
+
+class _Retry(Exception):
+    pass
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class CountingTwoPhase(TwoPhaseHandler[str, str, str]):
+    """Counts prepare/apply calls; optionally fails the first apply (to drive a retry)."""
+
+    counts: dict[str, int]
+    fail_first_apply: bool = False
+
+    async def prepare(self, args: str) -> str:
+        self.counts["prepare"] += 1
+        return f"p:{args}"
+
+    async def apply(self, args: str, payload: str) -> str:
+        self.counts["apply"] += 1
+        if self.fail_first_apply and self.counts["apply"] == 1:
+            raise _Retry
+        return f"{payload}:applied"
+
+
+def _retry_once_wrap(_ctx):
+    async def _wrap(next, args):
+        try:
+            return await next(args)
+        except _Retry:
+            return await next(args)  # re-enter the body once
+
+    return _wrap
+
+
+def _hedge_two_wrap(_ctx):
+    async def _wrap(next, args):
+        # Two concurrent attempts (each its own copied context); first result wins.
+        results = await asyncio.gather(
+            next(args), next(args), return_exceptions=True
+        )
+        for r in results:
+            if not isinstance(r, BaseException):
+                return r
+        raise results[0]  # pragma: no cover
+
+    return _wrap
+
+
+class TestPrepareExactlyOnce:
+    """prepare runs exactly once per invocation, even when the body re-runs."""
+
+    @pytest.mark.asyncio
+    async def test_retry_reuses_prepare(self, ctx: ExecutionContext) -> None:
+        counts = {"prepare": 0, "apply": 0}
+        reg = (
+            OperationRegistry(
+                handlers={
+                    "op": lambda _c: CountingTwoPhase(
+                        counts=counts, fail_first_apply=True
+                    )
+                }
+            )
+            .bind("op")
+            .two_phase()
+            .bind_outer()
+            .wrap(MiddlewareStep(id="retry", factory=_retry_once_wrap))
+            .finish(deep=False)
+            .bind_tx()
+            .set_route("mock")
+            .finish(deep=True)
+            .freeze()
+        )
+
+        result = await reg.resolve("op", ctx)("x")
+
+        assert result == "p:x:applied"
+        # apply ran twice (failed then succeeded); prepare ran ONCE.
+        assert counts == {"prepare": 1, "apply": 2}
+
+    @pytest.mark.asyncio
+    async def test_concurrent_hedge_runs_prepare_once(
+        self, ctx: ExecutionContext
+    ) -> None:
+        counts = {"prepare": 0, "apply": 0}
+        reg = (
+            OperationRegistry(
+                handlers={"op": lambda _c: CountingTwoPhase(counts=counts)}
+            )
+            .bind("op")
+            .two_phase()
+            .bind_outer()
+            .wrap(MiddlewareStep(id="hedge", factory=_hedge_two_wrap))
+            .finish(deep=False)
+            .bind_tx()
+            .set_route("mock")
+            .finish(deep=True)
+            .freeze()
+        )
+
+        result = await reg.resolve("op", ctx)("x")
+
+        assert result == "p:x:applied"
+        # Two concurrent attempts each applied, but the shared once-box ran
+        # prepare a single time.
+        assert counts["prepare"] == 1
+        assert counts["apply"] == 2

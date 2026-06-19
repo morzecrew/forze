@@ -1,7 +1,11 @@
 """Orchestrate execution of a resolved operation plan."""
 
+import asyncio
 from contextlib import AbstractAsyncContextManager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, cast
+
+import attrs
 
 from forze.application.contracts.execution import (
     Failure,
@@ -15,6 +19,25 @@ from forze.base.primitives import StrKey
 
 if TYPE_CHECKING:
     from ...context.invocation import InvocationContext
+
+# ----------------------- #
+
+
+@attrs.define(slots=True)
+class _PrepareOnce:
+    """Per-invocation holder for the single ``prepare`` future of a two-phase op.
+
+    Bound above the wrap chain so retries (same context) and hedge attempts
+    (child contexts that share this object by reference via ``copy_context``) all
+    await the same future — ``prepare`` runs exactly once per logical invocation.
+    """
+
+    future: "asyncio.Future[Any] | None" = None
+
+
+_prepare_once: ContextVar[_PrepareOnce | None] = ContextVar(
+    "two_phase_prepare_once", default=None
+)
 
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from ..planning.scopes import ResolvedScope, ResolvedTransactionScope
@@ -193,6 +216,9 @@ async def run_resolved_operation_plan[Args, R](
     runs here — inside the outer scope's ``before``/``wrap`` but **before** the
     transaction opens, under the read-only flag — and its payload is bound into an
     ``apply`` closure that runs inside the transaction as an ordinary handler body.
+    ``prepare`` runs **exactly once** per invocation even when a retry/hedge wrap
+    re-enters the body: a once-box bound here (above the wrap chain) memoizes its
+    future, shared by retries and inherited by hedge child contexts.
     """
 
     async def transactional_core() -> R:
@@ -219,7 +245,49 @@ async def run_resolved_operation_plan[Args, R](
             isolation=plan.tx.isolation,
         )
 
-    return await run_resolved_scope(plan.outer, transactional_core, args)
+    if not plan.two_phase:
+        return await run_resolved_scope(plan.outer, transactional_core, args)
+
+    # Bind the prepare once-box above the wrap chain (run_resolved_scope runs the
+    # retry/hedge wraps). On a clean or early exit, cancel an in-flight prepare so
+    # a cancelled operation never leaks its prepare task.
+    token = _prepare_once.set(_PrepareOnce())
+
+    try:
+        return await run_resolved_scope(plan.outer, transactional_core, args)
+
+    finally:
+        box = _prepare_once.get()
+
+        if box is not None and box.future is not None and not box.future.done():
+            box.future.cancel()
+
+        _prepare_once.reset(token)
+
+
+# ....................... #
+
+
+async def _run_prepare[Args, Payload](
+    two_phase: TwoPhaseHandler[Args, Payload, Any],
+    args: Args,
+    inv_ctx: "InvocationContext",
+) -> Payload:
+    """Run ``prepare`` under the read-only flag.
+
+    The flag bars ``prepare`` from acquiring a command (write) port (best-effort —
+    same coverage as a QUERY operation: lazily-resolved ports are caught, eagerly
+    injected ones are not). Runs in the prepare future's own context, so the flag
+    is scoped to ``prepare`` and never leaks into ``apply``.
+    """
+
+    ro_token = inv_ctx.set_read_only()
+
+    try:
+        return await two_phase.prepare(args)
+
+    finally:
+        inv_ctx.reset_read_only(ro_token)
 
 
 # ....................... #
@@ -230,25 +298,29 @@ async def _prepare_apply_handler[Args, R](
     args: Args,
     inv_ctx: "InvocationContext",
 ) -> Handler[Args, R]:
-    """Run ``prepare`` (outside the transaction, read-only) and return an ``apply``
-    closure to run inside it.
+    """Run ``prepare`` once via the invocation's once-box and return an ``apply``
+    closure to run inside the transaction.
 
-    The read-only flag bars ``prepare`` from acquiring a command (write) port
-    (best-effort — same coverage as a QUERY operation; lazily-resolved ports are
-    caught, eagerly-injected ones are not). The token restores the prior state, so
-    a QUERY two-phase op stays read-only into ``apply`` while a COMMAND op regains
-    write capability.
+    The first caller schedules ``prepare``; retries reuse the completed future and
+    concurrent hedge attempts await the same one (the box is shared across copied
+    contexts), so ``prepare`` runs exactly once. ``apply`` then runs per attempt
+    with the shared payload — a QUERY two-phase op stays read-only into ``apply``,
+    a COMMAND op is write-capable.
     """
 
     two_phase = cast(TwoPhaseHandler[Args, Any, R], handler)
 
-    ro_token = inv_ctx.set_read_only()
+    once = _prepare_once.get()
 
-    try:
-        payload = await two_phase.prepare(args)
+    if once is None:  # pragma: no cover - set by run_resolved_operation_plan
+        raise exc.internal("Two-phase prepare invoked without a once-box")
 
-    finally:
-        inv_ctx.reset_read_only(ro_token)
+    if once.future is None:
+        once.future = asyncio.ensure_future(
+            _run_prepare(two_phase, args, inv_ctx)
+        )
+
+    payload = await once.future
 
     async def _apply(args: Args) -> R:
         return await two_phase.apply(args, payload)
