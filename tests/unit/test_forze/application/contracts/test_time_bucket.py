@@ -43,6 +43,11 @@ def test_parse_aggregate_timezone_no_colon_forms() -> None:
     assert parse_aggregate_timezone("+05").offset == timedelta(hours=5)
 
 
+def test_parse_aggregate_timezone_single_digit_hours() -> None:
+    assert parse_aggregate_timezone("+3").offset == timedelta(hours=3)
+    assert parse_aggregate_timezone("-5").offset == timedelta(hours=-5)
+
+
 def test_parse_aggregate_timezone_max_offset_boundary() -> None:
     assert parse_aggregate_timezone("+14:00").offset == timedelta(hours=14)
     # Beyond the real ±14:00 maximum.
