@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Two-phase (`prepare`/`apply`) handlers** — `prepare(args)` runs outside the transaction (CPU work / an external call), `apply(args, payload)` inside it, so the transaction wraps only the writes — the explicit complement to lazy acquisition when a call must sit between a read and the write. Register with `registry.bind(op).two_phase().bind_tx().set_route(...)` (a tx route is required — enforced at freeze). `prepare` is read-only (no write ports) and runs **exactly once** per invocation (a retry/hedge re-runs only `apply`). New `TwoPhaseHandler` contract + `forze_kits.aggregates.document.TwoPhaseDocumentHandler` base/`TwoPhaseDocumentBuilder`; recipe at `examples/recipes/two_phase_pricing/`.
+
 Lands **Deterministic Simulation Testing (DST)** as a native framework capability (`forze_dst`): point it at a real Forze app and one master seed reproduces the whole run — schedule, faults, latency, inputs, crashes, network partitions — across single-process and N-node distributed runs, over real registries and real `ExecutionRuntime`s, with zero touches to the app under test.
 
 **Engine & determinism seams**
@@ -53,6 +55,7 @@ Lands **Deterministic Simulation Testing (DST)** as a native framework capabilit
 
 ### Changed
 
+- **Lazy transaction acquisition — now the default for Postgres, Mongo, and Firestore** *(behavior change)* — a transaction scope no longer checks out a pooled connection / starts a server session + `BEGIN`/`startTransaction` (or, on Firestore, `_begin`) on entry; it defers to the **first operation** inside the scope. CPU-bound or external work before the first query no longer parks a connection idle-in-transaction (and no longer counts against Mongo's `transactionLifetimeLimitSeconds` / shortens Firestore's open-transaction window), cutting pool pressure for the common "parse / call out, then write" handler. Pre-bound (UoW) and nested (savepoint) paths are unchanged. One consequence: a connection-acquire/connect failure now surfaces at the first operation rather than at scope entry (operation-wrapping retries are unaffected). The client `transaction()` context manager yields `None` until the first operation materializes the transaction — consume the client's query methods, not the yielded handle. Opt out with `PostgresConfig(lazy_transaction=False)` / `MongoConfig(lazy_transaction=False)` / `FirestoreStartupHook(..., lazy_transaction=False)`.
 - **`forze_mock` internal restructure** — the package's misplaced root modules moved under `adapters/` (`forze_mock.outbox_adapter` → `forze_mock.adapters.outbox`, `forze_mock.embeddings` → `forze_mock.adapters.embeddings`, `forze_mock.resilience` → `forze_mock.adapters.resilience`; all also re-exported from `forze_mock.adapters`), and the per-spec `Configurable*` factories were extracted out of the `MockDepsModule` module into `forze_mock.execution.factories`. Public top-level imports (`from forze_mock import …`) are unchanged; only direct deep-submodule imports of those three modules need updating. `forze_mock` is now under coverage enforcement (95.8%).
 
 ### Fixed

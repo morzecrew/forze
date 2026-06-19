@@ -1,7 +1,7 @@
 """Firestore async client with context-bound transactions."""
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Mapping, Sequence, final
 
@@ -69,6 +69,45 @@ async def _tx_rollback(tx: AsyncTransaction) -> None:
         await tx._rollback()  # type: ignore[attr-defined]
 
 
+@asynccontextmanager
+async def _tx_lifecycle(tx: AsyncTransaction) -> AsyncGenerator[AsyncTransaction]:
+    """Begin on entry, commit on a clean exit, roll back on any exception.
+
+    Mirrors the eager :meth:`FirestoreClient.transaction` body so a lazily
+    materialized scope commits/aborts identically; entered onto the pending
+    scope's exit stack, it unwinds with the real exception (commit vs rollback).
+    """
+
+    await _tx_begin(tx)
+
+    try:
+        yield tx
+        await _tx_commit(tx)
+
+    except BaseException:
+        await _tx_rollback(tx)
+        raise
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _PendingFirestoreTx:
+    """Lazy transaction state held in a context var until the first operation.
+
+    The :class:`AsyncExitStack` is entered around the scope body; materialization
+    pushes the transaction lifecycle (:func:`_tx_lifecycle`) onto it, so it
+    unwinds — committing on clean exit, aborting on error — when the body exits.
+    """
+
+    stack: AsyncExitStack
+    tx: AsyncTransaction | None = None
+    lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
+    """Serializes materialization so concurrent first operations in one scope open
+    a single transaction (not one each)."""
+
+
 # ....................... #
 
 
@@ -91,6 +130,16 @@ class FirestoreClient(FirestoreClientPort):
         init=False,
         repr=False,
     )
+    __ctx_pending: ContextVar["_PendingFirestoreTx | None"] = attrs.field(
+        factory=lambda: ContextVar("firestore_tx_pending", default=None),
+        init=False,
+        repr=False,
+    )
+    """Per-scope lazy-transaction state: set on root scope entry, materialized on
+    the first operation. ``None`` outside a lazy root scope (and in eager mode)."""
+
+    __lazy_tx: bool = attrs.field(default=True, init=False)
+    """Whether root transaction scopes defer ``_begin`` to the first operation."""
 
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
@@ -101,8 +150,14 @@ class FirestoreClient(FirestoreClientPort):
         *,
         project_id: str,
         database: str = "(default)",
+        lazy_transaction: bool = True,
     ) -> None:
-        """Initialize the client"""
+        """Initialize the client.
+
+        ``lazy_transaction`` (default ``True``) defers ``_begin`` until the first
+        operation inside a transaction scope; set ``False`` to begin eagerly at
+        scope entry.
+        """
 
         async with self.__init_lock:
             if self.__client is not None:
@@ -110,6 +165,7 @@ class FirestoreClient(FirestoreClientPort):
 
             self.__project_id = project_id
             self.__database_id = database
+            self.__lazy_tx = lazy_transaction
             self.__client = AsyncClient(project=project_id, database=database)
 
     # ....................... #
@@ -166,10 +222,77 @@ class FirestoreClient(FirestoreClientPort):
     # ....................... #
 
     def __current_transaction(self) -> AsyncTransaction | None:
-        return self.__ctx_transaction.get()
+        """Transaction bound to the current context, or ``None``.
+
+        Falls through to a materialized lazy scope's transaction, which is carried
+        on the pending object rather than a context var: it is begun during the
+        first operation (a different context than the ``transaction()`` generator's
+        ``__aexit__``), and a context-var token cannot be reset across contexts.
+        """
+
+        bound = self.__ctx_transaction.get()
+
+        if bound is not None:
+            return bound
+
+        pending = self.__ctx_pending.get()
+
+        return pending.tx if pending is not None else None
+
+    async def _materialize_pending(self) -> AsyncTransaction:
+        """Create + ``_begin`` the transaction for a lazy scope on first use.
+
+        Idempotent within a scope. Enters :func:`_tx_lifecycle` on the pending
+        scope's exit stack so the transaction commits on a clean scope exit and
+        rolls back on error.
+
+        :raises InfrastructureError: if called with no pending root scope.
+        """
+
+        pending = self.__ctx_pending.get()
+
+        if pending is None:
+            raise exc.internal("No pending transaction to materialize")
+
+        if pending.tx is not None:
+            return pending.tx
+
+        # Double-checked lock: concurrent first operations in one scope serialize
+        # here so exactly one creates + begins the transaction; the rest reuse it.
+        async with pending.lock:
+            if pending.tx is not None:
+                return pending.tx
+
+            tx = self.__require_client().transaction()
+            # Reachable via __current_transaction through the pending object — NOT
+            # bound to __ctx_transaction here: this runs in the first operation's
+            # context, and the matching reset would land in the generator's
+            # __aexit__ context, which a context-var token forbids.
+            await pending.stack.enter_async_context(_tx_lifecycle(tx))
+            pending.tx = tx
+
+            return tx
+
+    async def _transaction_for_op(self) -> AsyncTransaction | None:
+        """Transaction to attach to an operation, materializing a lazy scope on
+        first use; ``None`` when outside any transaction scope."""
+
+        current = self.__current_transaction()
+
+        if current is not None:
+            return current
+
+        if self.__ctx_pending.get() is None:
+            return None
+
+        return await self._materialize_pending()
 
     def is_in_transaction(self) -> bool:
-        return self.__ctx_depth.get() > 0 and self.__current_transaction() is not None
+        # Depth-based (logical): a lazy scope that has opened but not yet run an
+        # operation still counts as in a transaction, so the next operation
+        # materializes it. Equivalent to the old ``depth and tx`` test in eager
+        # mode, where a non-zero depth always has a bound transaction.
+        return self.__ctx_depth.get() > 0
 
     def require_transaction(self) -> None:
         if not self.is_in_transaction():
@@ -179,9 +302,14 @@ class FirestoreClient(FirestoreClientPort):
 
     @exc_interceptor.asynccontextmanager("firestore.transaction")  # type: ignore[untyped-decorator]
     @asynccontextmanager
-    async def transaction(self) -> AsyncGenerator[AsyncTransaction]:
+    async def transaction(self) -> AsyncGenerator[AsyncTransaction | None]:
         depth = self.__ctx_depth.get()
         parent = self.__current_transaction()
+
+        # A nested scope opened inside a lazy root that has not run an operation
+        # yet must materialize the root first — a re-entrant scope reuses its tx.
+        if depth > 0 and parent is None and self.__ctx_pending.get() is not None:
+            parent = await self._materialize_pending()
 
         if depth > 0 and parent is not None:
             self.__ctx_depth.set(depth + 1)
@@ -191,6 +319,25 @@ class FirestoreClient(FirestoreClientPort):
 
             finally:
                 self.__ctx_depth.set(depth)
+
+            return
+
+        # Lazy root: register the scope but begin nothing. The first operation
+        # materializes the transaction via the exit stack, which unwinds with the
+        # real exception on body exit — so an error after materialization rolls
+        # back, and a scope that never ran an operation begins/commits nothing.
+        if self.__lazy_tx:
+            pending = _PendingFirestoreTx(stack=AsyncExitStack())
+            token_p = self.__ctx_pending.set(pending)
+            token_d = self.__ctx_depth.set(1)
+
+            try:
+                async with pending.stack:
+                    yield None
+
+            finally:
+                self.__ctx_depth.reset(token_d)
+                self.__ctx_pending.reset(token_p)
 
             return
 
@@ -228,7 +375,7 @@ class FirestoreClient(FirestoreClientPort):
         coll: AsyncCollectionReference,
         doc_id: str,
     ) -> JsonDict | None:
-        tx = self.__current_transaction()
+        tx = await self._transaction_for_op()
         ref = coll.document(doc_id)
         snap = await ref.get(transaction=tx)  # type: ignore[untyped-call]
 
@@ -248,7 +395,7 @@ class FirestoreClient(FirestoreClientPort):
         *,
         merge: bool = False,
     ) -> None:
-        tx = self.__current_transaction()
+        tx = await self._transaction_for_op()
         ref = coll.document(doc_id)
 
         if tx is not None:
@@ -272,7 +419,7 @@ class FirestoreClient(FirestoreClientPort):
         coll: AsyncCollectionReference,
         doc_id: str,
     ) -> None:
-        tx = self.__current_transaction()
+        tx = await self._transaction_for_op()
         ref = coll.document(doc_id)
 
         if tx is not None:
@@ -294,7 +441,7 @@ class FirestoreClient(FirestoreClientPort):
         start_before_id: str | None,
     ) -> Any:
         query: Any = coll
-        tx = self.__current_transaction()
+        tx = await self._transaction_for_op()
 
         if filters is not None:
             query = query.where(filter=filters)
@@ -333,7 +480,7 @@ class FirestoreClient(FirestoreClientPort):
         start_after_id: str | None = None,
         start_before_id: str | None = None,
     ) -> list[JsonDict]:
-        tx = self.__current_transaction()
+        tx = await self._transaction_for_op()
         query = await self._build_query(
             coll,
             filters=filters,
@@ -358,7 +505,7 @@ class FirestoreClient(FirestoreClientPort):
         *,
         filters: BaseFilter | None = None,
     ) -> int:
-        tx = self.__current_transaction()
+        tx = await self._transaction_for_op()
         query = coll
 
         if filters is not None:
@@ -380,7 +527,7 @@ class FirestoreClient(FirestoreClientPort):
         if not documents:
             return
 
-        tx = self.__current_transaction()
+        tx = await self._transaction_for_op()
 
         if tx is not None:
             for doc_id, data in documents:

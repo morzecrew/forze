@@ -28,6 +28,7 @@ async def test_firestore_startup_hook_initializes_client() -> None:
     client.initialize.assert_awaited_once_with(
         project_id="my-project",
         database="(default)",
+        lazy_transaction=True,
     )
 
 

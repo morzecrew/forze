@@ -86,6 +86,30 @@ class Handler[Args, R](Protocol):  # pragma: no cover
 # ....................... #
 
 
+class TwoPhaseHandler[Args, Payload, R](Protocol):  # pragma: no cover
+    """Protocol for a two-phase handler: ``prepare`` outside the transaction,
+    ``apply`` inside it.
+
+    ``prepare`` runs in the outer scope **before** the transaction opens — the
+    place for parsing, CPU work, or external calls — and returns a ``Payload`` the
+    engine threads into ``apply``, which runs **inside** the transaction and does
+    the writes. The transaction therefore wraps only ``apply``, not the pre-work.
+
+    ``prepare`` runs under the read-only flag and must not acquire a command
+    (write) port; its database reads run outside ``apply``'s transaction (no
+    read/write atomicity — validate on write in ``apply``). It runs **exactly
+    once** per invocation: a retry or hedge re-runs only ``apply`` (with the shared
+    payload), never ``prepare``.
+    """
+
+    def prepare(self, args: Args) -> Awaitable[Payload]: ...
+
+    def apply(self, args: Args, payload: Payload) -> Awaitable[R]: ...
+
+
+# ....................... #
+
+
 class LifecycleHook(Protocol):
     """Protocol for a lifecycle hook that can be executed."""
 
@@ -213,3 +237,22 @@ class HandlerFactory(Protocol):  # pragma: no cover
     """Protocol for a factory that builds a handler."""
 
     def __call__(self, ctx: "ExecutionContext") -> Handler[Any, Any]: ...
+
+
+# ....................... #
+
+
+class TwoPhaseHandlerFactory(Protocol):  # pragma: no cover
+    """Protocol for a factory that builds a two-phase handler."""
+
+    def __call__(self, ctx: "ExecutionContext") -> TwoPhaseHandler[Any, Any, Any]: ...
+
+
+# ....................... #
+
+
+type OperationHandlerFactory = HandlerFactory | TwoPhaseHandlerFactory
+"""A factory the operation registry can hold: a plain or two-phase handler factory."""
+
+type OperationHandler = Handler[Any, Any] | TwoPhaseHandler[Any, Any, Any]
+"""A resolved operation handler: a plain or two-phase handler."""

@@ -68,7 +68,7 @@ class PostgresClientPort(Protocol):
         self,
         *,
         options: PostgresTransactionOptions | None = None,
-    ) -> AsyncContextManager[AsyncConnection]: ...  # pragma: no cover
+    ) -> AsyncContextManager[AsyncConnection | None]: ...  # pragma: no cover
 
     @overload
     def execute(

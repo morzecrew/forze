@@ -22,7 +22,7 @@ extra_css = [
 # glightbox.min.js is injected in <head> via overrides/main.html (extrahead), not
 # here — extra_javascript is appended after the theme bundle, too late to define
 # the GLightbox global before the bundle's CDN-gate runs.
-extra_javascript = ["_javascripts/theme.js", "_javascripts/hero2.js"]
+extra_javascript = ["_javascripts/theme.js", "_javascripts/hero.js"]
 
 # ....................... #
 # Navigation
@@ -116,6 +116,7 @@ nav = [
             "recipes/read-only-document-api.md",
             "recipes/cache-reads-with-redis.md",
             "recipes/add-idempotency.md",
+            "recipes/two-phase-handler.md",
         ] },
         { "Identity" = [
             "recipes/authn-authz-tenancy-fastapi.md",

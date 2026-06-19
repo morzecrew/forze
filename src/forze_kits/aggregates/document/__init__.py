@@ -26,6 +26,7 @@ from .handlers import (
     UpdateDocument,
 )
 from .operations import DocumentKernelOp
+from .two_phase import TwoPhaseDocumentBuilder, TwoPhaseDocumentHandler
 from .value_objects import DocumentDTOs, DocumentMappers
 
 # ----------------------- #
@@ -48,6 +49,8 @@ __all__ = [
     "AggregatedListRequestDTO",
     "AggregatedListDocuments",
     "CreateDocument",
+    "TwoPhaseDocumentHandler",
+    "TwoPhaseDocumentBuilder",
     "CursorListDocuments",
     "GetDocument",
     "KillDocument",

@@ -71,6 +71,15 @@ class OperationPlan:
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification; defaults to ``COMMAND``."""
 
+    two_phase: bool = attrs.field(default=False)
+    """Whether the handler is a two-phase ``prepare``/``apply`` handler.
+
+    When ``True``, the engine runs ``handler.prepare(args)`` in the outer scope —
+    outside the transaction, under the read-only flag — and threads its payload
+    into ``handler.apply(args, payload)`` inside the transaction. ``prepare`` runs
+    exactly once per invocation even under retry/hedge. Requires a transaction
+    route (validated at freeze)."""
+
     deadline: timedelta | None = attrs.field(default=None)
     """Per-invocation time budget for this operation, or ``None`` for no cap.
 
@@ -233,6 +242,7 @@ class OperationPlan:
             outer=frozen_outer,
             tx=frozen_tx,
             kind=self.kind,
+            two_phase=self.two_phase,
             deadline=self.deadline,
             supports_idempotency_key=self.supports_idempotency_key(),
             required_permissions=self.declared_permission_keys(),
@@ -262,10 +272,15 @@ class OperationPlan:
         deadlines = [plan.deadline for plan in plans if plan.deadline is not None]
         merged_deadline = min(deadlines, default=None)
 
+        # Sticky (OR), so it travels with the registration that set it and a
+        # default-``False`` patch never clobbers it.
+        merged_two_phase = any(plan.two_phase for plan in plans)
+
         return cls(
             outer=merged_outer,
             tx=merged_tx,
             kind=merged_kind,
+            two_phase=merged_two_phase,
             deadline=merged_deadline,
         )
 
@@ -291,6 +306,9 @@ class FrozenOperationPlan:
 
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification."""
+
+    two_phase: bool = attrs.field(default=False)
+    """Whether the handler is a two-phase ``prepare``/``apply`` handler."""
 
     deadline: timedelta | None = attrs.field(default=None)
     """Per-invocation time budget declared by the plan, or ``None`` for no cap."""
@@ -328,6 +346,7 @@ class FrozenOperationPlan:
             outer=resolved_outer,
             tx=resolved_tx,
             kind=self.kind,
+            two_phase=self.two_phase,
             # Seconds precomputed once at resolve so the per-call hot path
             # never touches timedelta arithmetic.
             deadline_s=(
@@ -351,6 +370,10 @@ class ResolvedOperationPlan:
 
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification."""
+
+    two_phase: bool = attrs.field(default=False)
+    """Whether the handler is a two-phase ``prepare``/``apply`` handler — the engine
+    runs ``prepare`` outside the transaction and ``apply`` inside it."""
 
     deadline_s: float | None = attrs.field(default=None)
     """Plan-declared time budget in seconds (precomputed at resolve), or ``None``."""

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Self
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.execution import DispatchStep, HandlerFactory
+from forze.application.contracts.execution import DispatchStep, OperationHandlerFactory
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import (
@@ -37,8 +37,8 @@ if TYPE_CHECKING:
 class OperationRegistry:
     """Registry for operations."""
 
-    _handlers: StrKeyMapping[HandlerFactory] = attrs.field(
-        factory=dict[StrKey, HandlerFactory],
+    _handlers: StrKeyMapping[OperationHandlerFactory] = attrs.field(
+        factory=dict[StrKey, OperationHandlerFactory],
         alias="handlers",
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
@@ -98,7 +98,7 @@ class OperationRegistry:
     def set_handler(
         self,
         op: StrKey,
-        handler: HandlerFactory,
+        handler: OperationHandlerFactory,
         *,
         override: bool = False,
         namespace: StrKeyNamespace | None = None,
@@ -120,7 +120,7 @@ class OperationRegistry:
 
     def set_handlers(
         self,
-        handlers: StrKeyMapping[HandlerFactory],
+        handlers: StrKeyMapping[OperationHandlerFactory],
         *,
         override: bool = False,
         namespace: StrKeyNamespace | None = None,
@@ -213,7 +213,7 @@ class OperationRegistry:
     def register(
         self,
         op: StrKey,
-        handler: HandlerFactory,
+        handler: OperationHandlerFactory,
         *,
         descriptor: OperationDescriptor | None = None,
         override: bool = False,
@@ -622,8 +622,8 @@ class OperationRegistry:
 class FrozenOperationRegistry:
     """Frozen operation registry."""
 
-    handlers: StrKeyMapping[HandlerFactory] = attrs.field(
-        factory=dict[StrKey, HandlerFactory],
+    handlers: StrKeyMapping[OperationHandlerFactory] = attrs.field(
+        factory=dict[StrKey, OperationHandlerFactory],
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Handler factories for operations."""
@@ -745,9 +745,27 @@ class FrozenOperationRegistry:
 
         resolved_plan = plan.resolve(ctx, self._dispatch)
 
+        built = handler(ctx)
+
+        # A two-phase plan needs a two-phase handler (prepare/apply). The two
+        # factory protocols are structurally identical (both ``__call__(ctx)``), so
+        # this can't be caught at freeze without building the handler — surface a
+        # clear error here (once per resolve) instead of an opaque AttributeError
+        # deep in execution.
+        if resolved_plan.two_phase and not (
+            callable(getattr(built, "prepare", None))
+            and callable(getattr(built, "apply", None))
+        ):
+            raise exc.configuration(
+                f"Operation {op!r} is marked two-phase (.two_phase()) but its handler "
+                f"{type(built).__name__} is not a TwoPhaseHandler — it has no "
+                "prepare/apply. Register a TwoPhaseHandler (e.g. via "
+                "TwoPhaseDocumentBuilder) or drop .two_phase().",
+            )
+
         resolved = ResolvedOperation(
             op=op,
-            handler=handler(ctx),
+            handler=built,
             plan=resolved_plan,
             tx_runner=ctx.tx_ctx.scope,
             defer_after_commit=ctx.tx_ctx.run_or_defer,

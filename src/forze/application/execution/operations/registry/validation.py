@@ -5,7 +5,7 @@ from typing import final
 
 from forze.application.contracts.execution import (
     DeclaresHedge,
-    HandlerFactory,
+    OperationHandlerFactory,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import (
@@ -27,7 +27,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def validate_all(
-        handlers: StrKeyMapping[HandlerFactory],
+        handlers: StrKeyMapping[OperationHandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Run all freeze validations."""
@@ -36,12 +36,13 @@ class RegistryFreezeValidator:
         RegistryFreezeValidator.validate_resolved_plans(handlers, resolution)
         RegistryFreezeValidator.validate_dispatch_graph(handlers, resolution)
         RegistryFreezeValidator.validate_hedge_safety(handlers, resolution)
+        RegistryFreezeValidator.validate_two_phase(handlers, resolution)
 
     # ....................... #
 
     @staticmethod
     def validate_patches(
-        handlers: StrKeyMapping[HandlerFactory],
+        handlers: StrKeyMapping[OperationHandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Validate plan patches before freeze."""
@@ -56,7 +57,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def _validate_orphan_patches(
-        handlers: StrKeyMapping[HandlerFactory],
+        handlers: StrKeyMapping[OperationHandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Reject patches whose selector matches no registered operation."""
@@ -75,7 +76,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def _validate_patch_specificity_conflicts(
-        handlers: StrKeyMapping[HandlerFactory],
+        handlers: StrKeyMapping[OperationHandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Reject equal-specificity patches that cannot merge for the same operation."""
@@ -120,7 +121,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def validate_resolved_plans(
-        handlers: StrKeyMapping[HandlerFactory],
+        handlers: StrKeyMapping[OperationHandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Reject resolved plans with transaction stages or declared isolation but no route."""
@@ -152,7 +153,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def validate_hedge_safety(
-        handlers: StrKeyMapping[HandlerFactory],
+        handlers: StrKeyMapping[OperationHandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Reject hedged operations that are neither idempotency-guarded nor declared safe.
@@ -190,8 +191,36 @@ class RegistryFreezeValidator:
     # ....................... #
 
     @staticmethod
+    def validate_two_phase(
+        handlers: StrKeyMapping[OperationHandlerFactory],
+        resolution: PlanResolution,
+    ) -> None:
+        """Validate two-phase (``prepare``/``apply``) operations.
+
+        A two-phase operation needs a transaction route — the whole point is to run
+        ``prepare`` outside the transaction and ``apply`` inside it. (``prepare``
+        runs exactly once per invocation even under retry/hedge, so no re-run
+        safety declaration is needed.)
+        """
+
+        for op in handlers:
+            plan = resolution.resolve(str(op))
+
+            if not plan.two_phase:
+                continue
+
+            if plan.tx_route() is None:
+                raise exc.configuration(
+                    f"Operation {op!r} is two-phase (prepare/apply) but has no "
+                    "transaction route; bind one via bind_tx().set_route(...). "
+                    "Two-phase runs apply inside a transaction.",
+                )
+
+    # ....................... #
+
+    @staticmethod
     def validate_dispatch_graph(
-        handlers: StrKeyMapping[HandlerFactory],
+        handlers: StrKeyMapping[OperationHandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Validate the dispatch graph (no loops, all targets registered)."""

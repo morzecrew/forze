@@ -211,7 +211,7 @@ class RoutedPostgresClient(
         self,
         *,
         options: PostgresTransactionOptions | None = None,
-    ) -> AsyncGenerator[AsyncConnection]:
+    ) -> AsyncGenerator[AsyncConnection | None]:
         async with self._client_scope() as inner:
             async with inner.transaction(options=options) as conn:
                 yield conn

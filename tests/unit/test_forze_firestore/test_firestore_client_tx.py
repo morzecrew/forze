@@ -90,10 +90,14 @@ def _make_client(
     tx: _FakeTransaction,
     *,
     database: str = "(default)",
+    lazy: bool = False,
 ) -> FirestoreClient:
     client = FirestoreClient()
     client._FirestoreClient__client = _FakeAsyncClient(tx)  # type: ignore[attr-defined]
     client._FirestoreClient__database_id = database  # type: ignore[attr-defined]
+    # The lifecycle tests below exercise the eager begin/commit/rollback path;
+    # lazy behavior has its own class. (Bypassing initialize, so set explicitly.)
+    client._FirestoreClient__lazy_tx = lazy  # type: ignore[attr-defined]
 
     return client
 
@@ -197,6 +201,86 @@ class TestTransactionScope:
                 pass  # pragma: no cover
 
         assert not tx.rolled_back, "rollback must not run for a tx that never began"
+
+
+# ----------------------- #
+
+
+class TestLazyTransactionScope:
+    """``lazy_transaction`` (the default): no ``_begin`` until the first operation.
+
+    The scope still counts as a transaction, the first operation materializes it
+    (begin), a scope that runs no operation begins/commits nothing, and the
+    materialized transaction commits on a clean exit / rolls back on error — even
+    when the first operation runs in a different context than the scope opener.
+    """
+
+    @pytest.mark.asyncio
+    async def test_defers_begin_until_first_operation(self) -> None:
+        tx = _FakeTransaction()
+        client = _make_client(tx, lazy=True)
+        agg = _FakeAggregationQuery(value=5)
+        coll: Any = _FakeCollection(agg)
+
+        async with client.transaction():
+            # Logically in a transaction, but nothing begun yet.
+            assert client.is_in_transaction() is True
+            assert tx.begun is False
+
+            await client.count_documents(coll)
+
+            # The first operation materialized + began the transaction.
+            assert tx.begun is True
+            assert agg.seen_transaction is tx
+
+        assert tx.committed is True
+        assert tx.rolled_back is False
+        assert not client.is_in_transaction()
+
+    @pytest.mark.asyncio
+    async def test_empty_scope_begins_nothing(self) -> None:
+        tx = _FakeTransaction()
+        client = _make_client(tx, lazy=True)
+
+        async with client.transaction():
+            pass  # never materialized
+
+        assert tx.begun is False
+        assert tx.committed is False
+        assert tx.rolled_back is False
+
+    @pytest.mark.asyncio
+    async def test_error_after_materialization_rolls_back(self) -> None:
+        tx = _FakeTransaction()
+        client = _make_client(tx, lazy=True)
+        coll: Any = _FakeCollection(_FakeAggregationQuery())
+
+        with pytest.raises(RuntimeError):
+            async with client.transaction():
+                await client.count_documents(coll)
+                raise RuntimeError("boom")
+
+        assert tx.begun is True
+        assert tx.rolled_back is True
+        assert tx.committed is False
+
+    @pytest.mark.asyncio
+    async def test_first_operation_in_child_context_does_not_leak_token(self) -> None:
+        """The first operation may materialize in a *different* context than the
+        scope opener (the resilience executor runs operations in a child
+        context). The transaction must ride the pending object, not a context var
+        (whose token cannot be reset across contexts), so the scope commits."""
+
+        tx = _FakeTransaction()
+        client = _make_client(tx, lazy=True)
+        coll: Any = _FakeCollection(_FakeAggregationQuery(value=1))
+
+        async with client.transaction():
+            await asyncio.create_task(client.count_documents(coll))
+            assert tx.begun is True
+
+        assert tx.committed is True
+        assert tx.rolled_back is False
 
 
 # ----------------------- #

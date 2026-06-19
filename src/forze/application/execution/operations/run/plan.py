@@ -1,12 +1,43 @@
 """Orchestrate execution of a resolved operation plan."""
 
+import asyncio
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Awaitable, Callable, Protocol, cast
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, cast
 
-from forze.application.contracts.execution import Failure, Handler, Success
+import attrs
+
+from forze.application.contracts.execution import (
+    Failure,
+    Handler,
+    Success,
+    TwoPhaseHandler,
+)
 from forze.application.contracts.transaction import AfterCommitPort, IsolationLevel
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+
+if TYPE_CHECKING:
+    from ...context.invocation import InvocationContext
+
+# ----------------------- #
+
+
+@attrs.define(slots=True)
+class _PrepareOnce:
+    """Per-invocation holder for the single ``prepare`` future of a two-phase op.
+
+    Bound above the wrap chain so retries (same context) and hedge attempts
+    (child contexts that share this object by reference via ``copy_context``) all
+    await the same future — ``prepare`` runs exactly once per logical invocation.
+    """
+
+    future: "asyncio.Future[Any] | None" = None
+
+
+_prepare_once: ContextVar[_PrepareOnce | None] = ContextVar(
+    "two_phase_prepare_once", default=None
+)
 
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from ..planning.scopes import ResolvedScope, ResolvedTransactionScope
@@ -172,24 +203,41 @@ async def run_resolved_tx_scope[Args, R](
 
 async def run_resolved_operation_plan[Args, R](
     plan: ResolvedOperationPlan,
-    handler: Handler[Args, R],
+    handler: Handler[Args, R] | TwoPhaseHandler[Args, Any, R],
     args: Args,
     *,
     tx_runner: TransactionRunner,
     defer_after_commit: AfterCommitPort,
+    inv_ctx: "InvocationContext",
 ) -> R:
-    """Run handler through outer and transaction scopes in plan order."""
+    """Run handler through outer and transaction scopes in plan order.
+
+    For a two-phase plan the handler is a :class:`TwoPhaseHandler`: ``prepare``
+    runs here — inside the outer scope's ``before``/``wrap`` but **before** the
+    transaction opens, under the read-only flag — and its payload is bound into an
+    ``apply`` closure that runs inside the transaction as an ordinary handler body.
+    ``prepare`` runs **exactly once** per invocation even when a retry/hedge wrap
+    re-enters the body: a once-box bound here (above the wrap chain) memoizes its
+    future, shared by retries and inherited by hedge child contexts.
+    """
 
     async def transactional_core() -> R:
+        if plan.two_phase:
+            inner = await _prepare_apply_handler(
+                cast(TwoPhaseHandler[Args, Any, R], handler), args, inv_ctx
+            )
+        else:
+            inner = cast(Handler[Args, R], handler)
+
         if plan.tx.route is None:
             # A route-less tx scope with stages is rejected at plan-resolution time
-            # (``ResolvedTransactionScope.__attrs_post_init__``), so no re-validation
-            # is needed per call.
-            return await handler(args)
+            # (``ResolvedTransactionScope.__attrs_post_init__``); two-phase without a
+            # route is rejected at freeze. So no re-validation is needed per call.
+            return await inner(args)
 
         return await run_resolved_tx_scope(
             plan.tx,
-            handler,
+            inner,
             args,
             tx_runner=tx_runner,
             defer_after_commit=defer_after_commit,
@@ -199,4 +247,82 @@ async def run_resolved_operation_plan[Args, R](
             isolation=plan.tx.isolation,
         )
 
-    return await run_resolved_scope(plan.outer, transactional_core, args)
+    if not plan.two_phase:
+        return await run_resolved_scope(plan.outer, transactional_core, args)
+
+    # Bind the prepare once-box above the wrap chain (run_resolved_scope runs the
+    # retry/hedge wraps). On a clean or early exit, cancel an in-flight prepare so
+    # a cancelled operation never leaks its prepare task.
+    token = _prepare_once.set(_PrepareOnce())
+
+    try:
+        return await run_resolved_scope(plan.outer, transactional_core, args)
+
+    finally:
+        box = _prepare_once.get()
+
+        if box is not None and box.future is not None and not box.future.done():
+            box.future.cancel()
+
+        _prepare_once.reset(token)
+
+
+# ....................... #
+
+
+async def _run_prepare[Args, Payload](
+    two_phase: TwoPhaseHandler[Args, Payload, Any],
+    args: Args,
+    inv_ctx: "InvocationContext",
+) -> Payload:
+    """Run ``prepare`` under the read-only flag.
+
+    The flag bars ``prepare`` from acquiring a command (write) port (best-effort —
+    same coverage as a QUERY operation: lazily-resolved ports are caught, eagerly
+    injected ones are not). Runs in the prepare future's own context, so the flag
+    is scoped to ``prepare`` and never leaks into ``apply``.
+    """
+
+    ro_token = inv_ctx.set_read_only()
+
+    try:
+        return await two_phase.prepare(args)
+
+    finally:
+        inv_ctx.reset_read_only(ro_token)
+
+
+# ....................... #
+
+
+async def _prepare_apply_handler[Args, R](
+    handler: TwoPhaseHandler[Args, Any, R],
+    args: Args,
+    inv_ctx: "InvocationContext",
+) -> Handler[Args, R]:
+    """Run ``prepare`` once via the invocation's once-box and return an ``apply``
+    closure to run inside the transaction.
+
+    The first caller schedules ``prepare``; retries reuse the completed future and
+    concurrent hedge attempts await the same one (the box is shared across copied
+    contexts), so ``prepare`` runs exactly once. ``apply`` then runs per attempt
+    with the shared payload — a QUERY two-phase op stays read-only into ``apply``,
+    a COMMAND op is write-capable.
+    """
+
+    once = _prepare_once.get()
+
+    if once is None:  # pragma: no cover - set by run_resolved_operation_plan
+        raise exc.internal("Two-phase prepare invoked without a once-box")
+
+    if once.future is None:
+        once.future = asyncio.create_task(
+            _run_prepare(handler, args, inv_ctx), name="two-phase-prepare"
+        )
+
+    payload = await once.future
+
+    async def _apply(args: Args) -> R:
+        return await handler.apply(args, payload)
+
+    return _apply

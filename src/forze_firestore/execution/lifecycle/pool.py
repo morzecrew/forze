@@ -29,6 +29,9 @@ class FirestoreStartupHook(LifecycleHook):
     database: str = "(default)"
     """Firestore database id."""
 
+    lazy_transaction: bool = True
+    """Defer ``_begin`` to the first operation inside a transaction scope."""
+
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
@@ -37,6 +40,7 @@ class FirestoreStartupHook(LifecycleHook):
         await client.initialize(
             project_id=self.project_id,
             database=self.database,
+            lazy_transaction=self.lazy_transaction,
         )
 
 

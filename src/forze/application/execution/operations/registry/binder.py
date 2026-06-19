@@ -76,6 +76,20 @@ class OperationRegistryBinder:
 
     # ....................... #
 
+    def two_phase(self) -> Self:
+        """Mark these operations as two-phase (``prepare``/``apply``) handlers.
+
+        The engine runs ``handler.prepare(args)`` outside the transaction (under
+        the read-only flag) and threads its payload into ``handler.apply(args,
+        payload)`` inside the transaction. ``prepare`` runs exactly once per
+        invocation even under retry/hedge. Requires a transaction route (bind one
+        via ``bind_tx().set_route(...)``), enforced at freeze.
+        """
+
+        return attrs.evolve(self, acc=attrs.evolve(self._acc, two_phase=True))
+
+    # ....................... #
+
     def with_deadline(self, deadline: timedelta) -> Self:
         """Declare a per-invocation time budget for these operations.
 

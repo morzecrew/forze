@@ -14,7 +14,7 @@ require_mongo()
 # ....................... #
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Mapping, Sequence, final
 
@@ -32,6 +32,27 @@ from forze.base.primitives import JsonDict
 from .errors import exc_interceptor
 from .port import MongoClientPort
 from .value_objects import MongoConfig, MongoTransactionOptions
+
+# ----------------------- #
+
+
+@attrs.define(slots=True)
+class _PendingMongoTx:
+    """Lazy transaction state held in a context var until the first operation.
+
+    The :class:`AsyncExitStack` is entered around the scope body; materialization
+    pushes the server session and ``startTransaction`` onto it, so they unwind —
+    committing on clean exit and aborting on error — when the body exits (a bare
+    ``aclose()`` would commit on error).
+    """
+
+    options: MongoTransactionOptions
+    stack: AsyncExitStack
+    session: AsyncClientSession | None = None
+    lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
+    """Serializes materialization so concurrent first operations in one scope start
+    a single session + transaction (not one each)."""
+
 
 # ----------------------- #
 
@@ -60,6 +81,16 @@ class MongoClient(MongoClientPort):
         init=False,
         repr=False,
     )
+    __ctx_pending: ContextVar["_PendingMongoTx | None"] = attrs.field(
+        factory=lambda: ContextVar("mongo_tx_pending", default=None),
+        init=False,
+        repr=False,
+    )
+    """Per-scope lazy-transaction state: set on root scope entry, materialized on
+    the first operation. ``None`` outside a lazy root scope (and in eager mode)."""
+
+    __lazy_tx: bool = attrs.field(default=False, init=False)
+    """Whether root transaction scopes defer the session + ``startTransaction``."""
 
     __db_name: str | None = attrs.field(default=None, init=False, repr=False)
 
@@ -92,6 +123,7 @@ class MongoClient(MongoClientPort):
                 uri = uri.get_secret_value()
 
             self.__db_name = db_name
+            self.__lazy_tx = config.lazy_transaction
             self.__client = AsyncMongoClient(
                 uri,
                 appname=config.appname,
@@ -178,16 +210,104 @@ class MongoClient(MongoClientPort):
     # Context helpers
 
     def __current_session(self) -> AsyncClientSession | None:
-        """Session bound to the current context, or ``None``."""
+        """Session bound to the current context, or ``None``.
 
-        return self.__ctx_session.get()
+        Falls through to a materialized lazy scope's session, which is carried on
+        the pending object rather than a context var: it is started during the
+        first operation (a different context than the ``transaction()``
+        generator's ``__aexit__``), and a context-var token cannot be reset across
+        contexts.
+        """
+
+        session = self.__ctx_session.get()
+
+        if session is not None:
+            return session
+
+        pending = self.__ctx_pending.get()
+
+        return pending.session if pending is not None else None
+
+    # ....................... #
+
+    async def _session_for_op(self) -> AsyncClientSession | None:
+        """Session to attach to an operation, materializing a lazy scope on first use.
+
+        Returns the bound session if present, materializes the pending lazy
+        transaction (session + ``startTransaction``) on its first operation, or
+        ``None`` when outside any transaction scope (the operation then runs
+        without a session, as before).
+        """
+
+        session = self.__current_session()
+
+        if session is not None:
+            return session
+
+        if self.__ctx_pending.get() is None:
+            return None
+
+        return await self._materialize_pending()
+
+    # ....................... #
+
+    async def _materialize_pending(self) -> AsyncClientSession:
+        """Start the session + transaction for a lazy root scope on first use.
+
+        Idempotent within a scope. Pushes the session and ``startTransaction``
+        onto the pending scope's exit stack so they unwind — with the real
+        exception, hence abort on error — when the scope body exits.
+
+        :raises InfrastructureError: if called with no pending root scope.
+        """
+
+        pending = self.__ctx_pending.get()
+
+        if pending is None:
+            raise exc.internal("No pending transaction to materialize")
+
+        if pending.session is not None:
+            return pending.session
+
+        # Double-checked lock: concurrent first operations in one scope serialize
+        # here so exactly one starts the session + transaction; the rest reuse it.
+        async with pending.lock:
+            if pending.session is not None:
+                return pending.session
+
+            session = await pending.stack.enter_async_context(
+                self.__acquire_session()
+            )
+
+            await pending.stack.enter_async_context(
+                await session.start_transaction(
+                    read_concern=pending.options.read_concern,
+                    write_concern=pending.options.write_concern,
+                    read_preference=pending.options.read_preference,
+                )
+            )
+
+            # Reachable via __current_session through the pending object — NOT bound
+            # to __ctx_session here: this runs in the first operation's context, and
+            # the matching reset would land in the generator's __aexit__ context,
+            # which a context-var token forbids.
+            pending.session = session
+
+            return session
 
     # ....................... #
 
     def is_in_transaction(self) -> bool:
-        """Return ``True`` if the current context is inside a transaction scope."""
+        """Return ``True`` if the current context is inside a transaction scope.
 
-        return self.__ctx_depth.get() > 0 and self.__current_session() is not None
+        Depth-based (logical): a lazy scope that has opened but not yet run an
+        operation — so its session is not materialized — still counts as in a
+        transaction, so the next operation materializes it. Equivalent to the old
+        ``depth and session`` test in eager mode, where a non-zero depth always
+        has a bound session.
+        """
+
+        return self.__ctx_depth.get() > 0
 
     # ....................... #
 
@@ -226,14 +346,20 @@ class MongoClient(MongoClientPort):
         self,
         *,
         options: MongoTransactionOptions | None = None,
-    ) -> AsyncGenerator[AsyncClientSession]:
+    ) -> AsyncGenerator[AsyncClientSession | None]:
         """Enter a transaction scope, yielding the active session.
 
         MongoDB does not support nested transactions. Nested calls reuse the
         same session/transaction and only the outermost block commits/aborts.
 
+        With ``lazy_transaction`` enabled, a root scope acquires no session until
+        the first operation (see :meth:`_materialize_pending`); the context
+        manager then yields ``None`` until that point, so callers must run work
+        through the client's operations rather than the yielded handle.
+
         :param options: Read/write concerns and read preference.
-        :yields: The session to attach to operations.
+        :yields: The session to attach to operations, or ``None`` for a lazy root
+            scope before its first operation.
         """
 
         depth = self.__ctx_depth.get()
@@ -241,8 +367,10 @@ class MongoClient(MongoClientPort):
 
         options = options if options is not None else MongoTransactionOptions()
 
-        # Nested: just bump depth and reuse session/transaction.
-        if depth > 0 and parent is not None:
+        # Nested: bump depth and reuse the scope. The session may still be
+        # unmaterialized in a lazy scope (``parent`` is ``None``); the first
+        # operation in any nesting level materializes it.
+        if depth > 0:
             self.__ctx_depth.set(depth + 1)
 
             try:
@@ -253,7 +381,26 @@ class MongoClient(MongoClientPort):
 
             return
 
-        # Top-level: create/bind a session and start a transaction.
+        # Lazy root: register the scope but acquire nothing. The first operation
+        # materializes the session + transaction via the exit stack, which unwinds
+        # with the real exception on body exit — so an error after materialization
+        # aborts, and a scope that never ran an operation holds nothing.
+        if self.__lazy_tx:
+            pending = _PendingMongoTx(options=options, stack=AsyncExitStack())
+            token_p = self.__ctx_pending.set(pending)
+            token_d = self.__ctx_depth.set(1)
+
+            try:
+                async with pending.stack:
+                    yield None
+
+            finally:
+                self.__ctx_depth.reset(token_d)
+                self.__ctx_pending.reset(token_p)
+
+            return
+
+        # Eager top-level: create/bind a session and start a transaction.
         async with self.__acquire_session() as session:
             token_s = self.__ctx_session.set(session)
             token_d = self.__ctx_depth.set(1)
@@ -288,7 +435,7 @@ class MongoClient(MongoClientPort):
         Automatically attaches the current session when in a transaction.
         """
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         doc = await coll.find_one(
             filter,
             projection=projection,
@@ -310,7 +457,7 @@ class MongoClient(MongoClientPort):
     ) -> JsonDict | None:
         """Atomically update and return the document after modification."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         doc = await coll.find_one_and_update(
             filter,
             update,
@@ -335,7 +482,7 @@ class MongoClient(MongoClientPort):
     ) -> list[JsonDict]:
         """Find many documents and return them as a list."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         cur = coll.find(filter, projection=projection, sort=sort, session=session)
 
         if skip is not None:
@@ -359,7 +506,7 @@ class MongoClient(MongoClientPort):
     ) -> list[JsonDict]:
         """Run an aggregation pipeline and return documents as a list."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         cur = await coll.aggregate(list(pipeline), session=session)
         docs = await cur.to_list(length=limit)
         return list(docs)
@@ -374,7 +521,7 @@ class MongoClient(MongoClientPort):
     ) -> ObjectId:
         """Insert a single document and return its ``_id``."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         res = await coll.insert_one(document, session=session)
         return res.inserted_id
 
@@ -398,7 +545,7 @@ class MongoClient(MongoClientPort):
         :returns: A list of inserted ``_id`` values.
         """
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         docs = list(documents)
         inserted_ids: list[ObjectId] = []
 
@@ -421,7 +568,7 @@ class MongoClient(MongoClientPort):
     ) -> Any:
         """Run ``bulk_write`` on a collection; returns the driver's result object."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         return await coll.bulk_write(list(operations), ordered=ordered, session=session)
 
     # ....................... #
@@ -435,7 +582,7 @@ class MongoClient(MongoClientPort):
     ) -> Any:
         """``update_one`` with ``upsert=True``; returns the full driver result (e.g. ``upserted_id``)."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         return await coll.update_one(
             flt,
             update,
@@ -456,7 +603,7 @@ class MongoClient(MongoClientPort):
     ) -> int:
         """Update a single document and return matched count."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         res = await coll.update_one(filter, update, upsert=upsert, session=session)
         return int(res.matched_count)
 
@@ -484,7 +631,7 @@ class MongoClient(MongoClientPort):
             return 0
 
         requests = [UpdateOne(f, u) for f, u in operations]
-        session = self.__current_session()
+        session = await self._session_for_op()
         matched_count = 0
 
         for offset in range(0, len(requests), batch_size):
@@ -507,7 +654,7 @@ class MongoClient(MongoClientPort):
     ) -> int:
         """Update multiple documents and return matched count."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         res = await coll.update_many(filter, update, upsert=upsert, session=session)
         return int(res.matched_count)
 
@@ -521,7 +668,7 @@ class MongoClient(MongoClientPort):
     ) -> int:
         """Delete a single document and return deleted count."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         res = await coll.delete_one(filter, session=session)
 
         return int(res.deleted_count)
@@ -540,7 +687,7 @@ class MongoClient(MongoClientPort):
         is needed (the port and all callers pass only ``filter``).
         """
 
-        session = self.__current_session()
+        session = await self._session_for_op()
 
         res = await coll.delete_many(filter, session=session)
         return int(res.deleted_count)
@@ -555,7 +702,7 @@ class MongoClient(MongoClientPort):
     ) -> int:
         """Count documents matching ``filter``."""
 
-        session = self.__current_session()
+        session = await self._session_for_op()
         res = await coll.count_documents(filter, session=session)
         return int(res)
 
@@ -571,6 +718,6 @@ class MongoClient(MongoClientPort):
         """Return raw index specification documents for a collection."""
 
         coll = await self.collection(collection, db_name=database)
-        session = self.__current_session()
+        session = await self._session_for_op()
         cursor = await coll.list_indexes(session=session)
         return [dict(doc) async for doc in cursor]
