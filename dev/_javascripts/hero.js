@@ -48,13 +48,11 @@
             ["Firestore", "firestore", "firestore"],
             ["Neo4j", "neo4j", "neo4j"],
             ["Redis", "redis", "redis"],
-            ["Valkey", "valkey", "redis"],
             ["Amazon S3", "aws", "s3"],
-            ["Google Cloud", "google-cloud", "gcs"],
+            ["Cloud Storage", "google-cloud", "gcs"],
             ["Meilisearch", "meilisearch", "meilisearch"],
             ["BigQuery", "google-bigquery", "bigquery"],
             ["ClickHouse", "clickhouse", "clickhouse"],
-            ["DuckDB", "duckdb", "duckdb"],
             ["RabbitMQ", "rabbitmq", "rabbitmq"],
             ["Amazon SQS", "aws", "sqs"],
             ["Temporal", "temporal", "temporal"],
@@ -62,8 +60,6 @@
             ["FastAPI", "fastapi", "fastapi"],
             ["Socket.IO", "socketdotio", "socketio"],
             ["MCP", "model-context-protocol", "mcp"],
-            ["OIDC", "openid", "oidc"],
-            ["Vault", "vault", "vault"],
         ];
 
         function chip(label, slug, page) {
