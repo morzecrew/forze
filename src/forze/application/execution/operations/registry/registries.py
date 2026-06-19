@@ -745,9 +745,27 @@ class FrozenOperationRegistry:
 
         resolved_plan = plan.resolve(ctx, self._dispatch)
 
+        built = handler(ctx)
+
+        # A two-phase plan needs a two-phase handler (prepare/apply). The two
+        # factory protocols are structurally identical (both ``__call__(ctx)``), so
+        # this can't be caught at freeze without building the handler — surface a
+        # clear error here (once per resolve) instead of an opaque AttributeError
+        # deep in execution.
+        if resolved_plan.two_phase and not (
+            callable(getattr(built, "prepare", None))
+            and callable(getattr(built, "apply", None))
+        ):
+            raise exc.configuration(
+                f"Operation {op!r} is marked two-phase (.two_phase()) but its handler "
+                f"{type(built).__name__} is not a TwoPhaseHandler — it has no "
+                "prepare/apply. Register a TwoPhaseHandler (e.g. via "
+                "TwoPhaseDocumentBuilder) or drop .two_phase().",
+            )
+
         resolved = ResolvedOperation(
             op=op,
-            handler=handler(ctx),
+            handler=built,
             plan=resolved_plan,
             tx_runner=ctx.tx_ctx.scope,
             defer_after_commit=ctx.tx_ctx.run_or_defer,

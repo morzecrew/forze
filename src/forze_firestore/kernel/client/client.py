@@ -103,6 +103,9 @@ class _PendingFirestoreTx:
 
     stack: AsyncExitStack
     tx: AsyncTransaction | None = None
+    lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
+    """Serializes materialization so concurrent first operations in one scope open
+    a single transaction (not one each)."""
 
 
 # ....................... #
@@ -254,15 +257,21 @@ class FirestoreClient(FirestoreClientPort):
         if pending.tx is not None:
             return pending.tx
 
-        tx = self.__require_client().transaction()
-        # Reachable via __current_transaction through the pending object — NOT
-        # bound to __ctx_transaction here: this runs in the first operation's
-        # context, and the matching reset would land in the generator's __aexit__
-        # context, which a context-var token forbids.
-        await pending.stack.enter_async_context(_tx_lifecycle(tx))
-        pending.tx = tx
+        # Double-checked lock: concurrent first operations in one scope serialize
+        # here so exactly one creates + begins the transaction; the rest reuse it.
+        async with pending.lock:
+            if pending.tx is not None:
+                return pending.tx
 
-        return tx
+            tx = self.__require_client().transaction()
+            # Reachable via __current_transaction through the pending object — NOT
+            # bound to __ctx_transaction here: this runs in the first operation's
+            # context, and the matching reset would land in the generator's
+            # __aexit__ context, which a context-var token forbids.
+            await pending.stack.enter_async_context(_tx_lifecycle(tx))
+            pending.tx = tx
+
+            return tx
 
     async def _transaction_for_op(self) -> AsyncTransaction | None:
         """Transaction to attach to an operation, materializing a lazy scope on

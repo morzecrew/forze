@@ -546,6 +546,23 @@ class TestLazyTransaction:
         assert conn.tx_events == [("begin", None), ("commit", None)]
 
     @pytest.mark.asyncio
+    async def test_concurrent_first_statements_materialize_once(self) -> None:
+        """Concurrent first statements in one lazy scope open a single transaction
+        (the pending materialization lock serializes the checkout + BEGIN)."""
+
+        client, conn, pool = _lazy_client_with_stub_pool()
+
+        async with client.transaction():
+            await asyncio.gather(
+                client.execute("INSERT INTO t (v) VALUES (1)"),
+                client.execute("INSERT INTO t (v) VALUES (2)"),
+            )
+
+        # One connection checked out, one BEGIN/COMMIT — not one per statement.
+        assert pool.checkouts == 1
+        assert conn.tx_events == [("begin", None), ("commit", None)]
+
+    @pytest.mark.asyncio
     async def test_first_query_in_child_context_does_not_leak_token(self) -> None:
         """Regression: the first query may materialize the scope in a *different*
         context than the one that opened it — the resilience executor runs the

@@ -155,6 +155,9 @@ class _PendingTx:
     options: PostgresTransactionOptions
     stack: AsyncExitStack
     conn: AsyncConnection | None = None
+    lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
+    """Serializes materialization so concurrent first statements in one scope open
+    a single transaction (not one each)."""
 
 
 # ....................... #
@@ -349,29 +352,35 @@ class PostgresClient(PostgresClientPort):
         if pending.conn is not None:
             return pending.conn
 
-        conn = await pending.stack.enter_async_context(
-            self.__require_pool().connection(
-                timeout=self.__acquire_timeout.total_seconds()
-            )
-        )
+        # Double-checked lock: concurrent first statements in one scope serialize
+        # here so exactly one opens the connection + BEGIN; the rest reuse it.
+        async with pending.lock:
+            if pending.conn is not None:
+                return pending.conn
 
-        # Apply read_only / isolation as connection attributes before BEGIN
-        # (zero round-trips); restore them as the connection returns to the pool.
-        if not self._options_are_default(pending.options):
-            await self._apply_transaction_options(conn, pending.options)
-            pending.stack.push_async_callback(
-                self._restore_transaction_attributes, conn
+            conn = await pending.stack.enter_async_context(
+                self.__require_pool().connection(
+                    timeout=self.__acquire_timeout.total_seconds()
+                )
             )
 
-        await pending.stack.enter_async_context(conn.transaction())
+            # Apply read_only / isolation as connection attributes before BEGIN
+            # (zero round-trips); restore them as the connection returns to the pool.
+            if not self._options_are_default(pending.options):
+                await self._apply_transaction_options(conn, pending.options)
+                pending.stack.push_async_callback(
+                    self._restore_transaction_attributes, conn
+                )
 
-        # The connection is reachable via __current_conn through the pending
-        # object — NOT bound to __ctx_conn here: this runs in the first query's
-        # context, and the matching reset would land in the generator's
-        # __aexit__ context, which a context-var token forbids.
-        pending.conn = conn
+            await pending.stack.enter_async_context(conn.transaction())
 
-        return conn
+            # The connection is reachable via __current_conn through the pending
+            # object — NOT bound to __ctx_conn here: this runs in the first query's
+            # context, and the matching reset would land in the generator's
+            # __aexit__ context, which a context-var token forbids.
+            pending.conn = conn
+
+            return conn
 
     # ....................... #
 

@@ -66,7 +66,7 @@ class QuoteAndCreate(TwoPhaseDocumentHandler[QuoteRequest, int, WidgetRead, Widg
         return await self.enrich.quote(args.sku)   # external call — no tx held
 
     async def apply(self, args, price):            # inside the transaction
-        return await self.writer().create(WidgetCreate(price=price))
+        return await self.writer.create(WidgetCreate(price=price))
 ```
 
 Register it with `.two_phase()`:
@@ -82,7 +82,7 @@ the transaction wraps only the writes, never the external call.
 !!! note "What `prepare` can and can't do"
 
     `prepare` runs under the read-only flag, so it cannot acquire a write port
-    (use `self.reader()` for reads, `self.writer()` only in `apply`). Its reads run
+    (use `self.reader` for reads, `self.writer` only in `apply`). Its reads run
     *outside* `apply`'s transaction, so there's no read/write atomicity between the
     phases — validate on write in `apply` (an optimistic-concurrency `rev` check).
     `prepare` runs **exactly once** per invocation: if a retry or hedge wrap

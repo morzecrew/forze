@@ -316,7 +316,9 @@ async def _prepare_apply_handler[Args, R](
         raise exc.internal("Two-phase prepare invoked without a once-box")
 
     if once.future is None:
-        once.future = asyncio.ensure_future(_run_prepare(handler, args, inv_ctx))
+        once.future = asyncio.create_task(
+            _run_prepare(handler, args, inv_ctx), name="two-phase-prepare"
+        )
 
     payload = await once.future
 

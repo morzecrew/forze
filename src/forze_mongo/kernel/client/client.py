@@ -49,6 +49,9 @@ class _PendingMongoTx:
     options: MongoTransactionOptions
     stack: AsyncExitStack
     session: AsyncClientSession | None = None
+    lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
+    """Serializes materialization so concurrent first operations in one scope start
+    a single session + transaction (not one each)."""
 
 
 # ----------------------- #
@@ -266,23 +269,31 @@ class MongoClient(MongoClientPort):
         if pending.session is not None:
             return pending.session
 
-        session = await pending.stack.enter_async_context(self.__acquire_session())
+        # Double-checked lock: concurrent first operations in one scope serialize
+        # here so exactly one starts the session + transaction; the rest reuse it.
+        async with pending.lock:
+            if pending.session is not None:
+                return pending.session
 
-        await pending.stack.enter_async_context(
-            await session.start_transaction(
-                read_concern=pending.options.read_concern,
-                write_concern=pending.options.write_concern,
-                read_preference=pending.options.read_preference,
+            session = await pending.stack.enter_async_context(
+                self.__acquire_session()
             )
-        )
 
-        # Reachable via __current_session through the pending object — NOT bound
-        # to __ctx_session here: this runs in the first operation's context, and
-        # the matching reset would land in the generator's __aexit__ context,
-        # which a context-var token forbids.
-        pending.session = session
+            await pending.stack.enter_async_context(
+                await session.start_transaction(
+                    read_concern=pending.options.read_concern,
+                    write_concern=pending.options.write_concern,
+                    read_preference=pending.options.read_preference,
+                )
+            )
 
-        return session
+            # Reachable via __current_session through the pending object — NOT bound
+            # to __ctx_session here: this runs in the first operation's context, and
+            # the matching reset would land in the generator's __aexit__ context,
+            # which a context-var token forbids.
+            pending.session = session
+
+            return session
 
     # ....................... #
 

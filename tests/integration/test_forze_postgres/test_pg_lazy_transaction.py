@@ -22,6 +22,7 @@ pytest.importorskip("psycopg")
 
 from datetime import timedelta
 
+from forze.base.exceptions import CoreException
 from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
@@ -243,7 +244,7 @@ async def test_read_only_option_rejects_writes(
 
     client = lazy_single_client
 
-    with pytest.raises(Exception):
+    with pytest.raises(CoreException):
         async with client.transaction(
             options=PostgresTransactionOptions(read_only=True),
         ):

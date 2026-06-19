@@ -18,11 +18,13 @@ import pytest
 from forze.application.contracts.execution import (
     BeforeStep,
     FinallyStep,
+    Handler,
     MiddlewareStep,
     OnFailureStep,
     OnSuccessStep,
     TwoPhaseHandler,
 )
+from forze.base.exceptions import CoreException
 from forze.application.contracts.execution.value_objects import Failure, Success
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.registry import OperationRegistry
@@ -303,6 +305,33 @@ def _hedge_two_wrap(_ctx):
         raise results[0]  # pragma: no cover
 
     return _wrap
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _PlainHandler(Handler[str, str]):
+    async def __call__(self, args: str) -> str:  # pragma: no cover - never reached
+        return args
+
+
+class TestTwoPhaseHandlerTypeGuard:
+    @pytest.mark.asyncio
+    async def test_two_phase_with_plain_handler_raises_at_resolve(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # .two_phase() with a plain Handler (no prepare/apply) is a misconfig; it
+        # surfaces a clear error at resolve, not an opaque AttributeError at runtime.
+        reg = (
+            OperationRegistry(handlers={"op": lambda _c: _PlainHandler()})
+            .bind("op")
+            .two_phase()
+            .bind_tx()
+            .set_route("mock")
+            .finish(deep=True)
+            .freeze()
+        )
+
+        with pytest.raises(CoreException, match="two-phase"):
+            reg.resolve("op", ctx)
 
 
 class TestPrepareExactlyOnce:
