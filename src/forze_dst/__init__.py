@@ -13,7 +13,8 @@ The facade is a thin core plus namespaces — reach into a namespace for depth::
 
 Namespaces: ``invariants`` (the assertion toolkit), ``markers`` (``record_event`` / ``reached``
 — the no-op-in-production annotations you add to app code), ``faults`` / ``latency`` (injection),
-``scheduler`` (interleaving), ``cluster`` (distributed), ``artifacts`` (bundles / sweeps /
+``scheduler`` (interleaving — the ``Fifo`` / ``Random`` / ``Pct`` config variants live here and at
+top level), ``cluster`` (distributed), ``artifacts`` (bundles / sweeps /
 corpus), ``runtime`` (the low-level virtual-time loop), ``oracle`` (recording / report /
 coverage internals), and ``workload`` / ``explore_guided`` / ``derive`` (input generation).
 """
@@ -22,11 +23,12 @@ from __future__ import annotations
 
 # Core — the happy path: build a Simulation, feed inputs, run, read the report.
 from .cluster import Cluster
-from .config import SchedulerKind, SimulationConfig, Strategy
+from .config import SimulationConfig, Strategy
 from .engines.cases import OperationCase
 from .harness import Simulation
 from .oracle import ViolationReport
 from .scenario import ModelState, Rule, Scenario
+from .scheduler import Fifo, Pct, Random
 
 # Namespaces — depth on demand (``forze_dst.<namespace>``).
 from . import (  # noqa: F401  (re-exported namespaces)
@@ -51,7 +53,9 @@ __all__ = [
     "Simulation",
     "SimulationConfig",
     "Strategy",
-    "SchedulerKind",
+    "Fifo",
+    "Random",
+    "Pct",
     "OperationCase",
     "Scenario",
     "Rule",

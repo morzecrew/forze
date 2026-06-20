@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 from forze_dst.engines.cases import OperationCase
-from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
+from forze_dst.config import SimulationConfig, Strategy
 from forze_dst.engines import (
     coverage_sweep,
     crash_restart,
@@ -23,7 +23,6 @@ from forze_dst.engines import (
 )
 from forze_dst.oracle import ViolationReport
 from forze_dst.scenario import Scenario
-from forze_dst.scheduler import pct_scheduler_factory
 
 if TYPE_CHECKING:
     from forze_dst.harness import Simulation
@@ -53,16 +52,6 @@ __all__ = [
 # ....................... #
 
 
-def _pct(config: SimulationConfig):  # type: ignore[no-untyped-def]
-    """A PCT scheduler factory when PCT is selected, else ``None`` (the default shuffle)."""
-
-    return (
-        pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
-        if config.scheduler is SchedulerKind.PCT
-        else None
-    )
-
-
 def dispatch(
     sim: "Simulation",
     config: SimulationConfig,
@@ -89,7 +78,7 @@ def dispatch(
             seeds=config.seeds,
             perturb=config.perturb,
             epoch=config.epoch,
-            scheduler_factory=_pct(config),
+            scheduler_factory=config.scheduler.factory(),
         )
 
     if config.strategy is Strategy.OP_CASE:
@@ -104,7 +93,7 @@ def dispatch(
             seeds=config.seeds,
             perturb=config.perturb,
             epoch=config.epoch,
-            scheduler_factory=_pct(config),
+            scheduler_factory=config.scheduler.factory(),
         )
 
     sc = scenario if scenario is not None else sim.derive_scenario()
@@ -118,7 +107,7 @@ def dispatch(
             seeds=config.seeds,
             perturb=config.perturb,
             epoch=config.epoch,
-            scheduler_factory=_pct(config),
+            scheduler_factory=config.scheduler.factory(),
         )
 
     if config.strategy is Strategy.HYPOTHESIS:
@@ -130,7 +119,7 @@ def dispatch(
             perturb=config.perturb,
             epoch=config.epoch,
             max_examples=config.max_examples,
-            scheduler_factory=_pct(config),
+            scheduler_factory=config.scheduler.factory(),
         )
 
     # DPOR — drives its own systematic scheduler over one fixed workload.

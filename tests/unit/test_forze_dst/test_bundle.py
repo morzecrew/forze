@@ -24,7 +24,8 @@ from forze_dst.cluster import ClusterConfig, Partition, PartitionSchedule
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.invariants import expect
 from forze_dst.latency import Constant, Exponential, LatencyProfile, LatencyRule, LogNormal, Pareto, Uniform
-from forze_dst.config import CrashPolicy, SchedulerKind
+from forze_dst.config import CrashPolicy
+from forze_dst.scheduler import Pct
 from forze_mock import MockDepsModule
 
 # ----------------------- #
@@ -36,10 +37,9 @@ def _rich_config() -> SimulationConfig:
     return SimulationConfig(
         strategy=Strategy.SCENARIO,
         seeds=[0, 1, 2, 3],  # a list (a range would round-trip to a list and break ==)
-        scheduler=SchedulerKind.PCT,
+        scheduler=Pct(depth=4),
         concurrency=3,
         act_count=7,
-        pct_depth=4,
         coverage_plateau=0,
         guided_budget=128,
         reachability_targets=frozenset({"lock-contended", "write-retried"}),

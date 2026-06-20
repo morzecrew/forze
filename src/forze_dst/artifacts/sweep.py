@@ -24,10 +24,11 @@ from typing import Callable, Sequence, final
 
 import attrs
 
-from forze_dst.config import SchedulerKind, SimulationConfig
+from forze_dst.config import SimulationConfig
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
 from forze_dst.oracle.coverage import Behavior
+from forze_dst.scheduler import Fifo, Pct, Random
 
 # ----------------------- #
 
@@ -245,11 +246,7 @@ class SimulationSeedRunner:
     # ....................... #
 
     def _config(self, seed: int) -> SimulationConfig:
-        scheduler = (
-            SchedulerKind.PCT
-            if self.pct
-            else SchedulerKind.RANDOM if self.perturb else SchedulerKind.FIFO
-        )
+        scheduler = Pct() if self.pct else Random() if self.perturb else Fifo()
         faults = (
             FaultPolicy(rules=(FaultRule(error=self.fault_error),))
             if self.fault_error > 0.0

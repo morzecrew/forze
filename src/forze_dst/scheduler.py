@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Any, Protocol, Sequence, final, runtime_checkable
+from typing import Any, Callable, Protocol, Sequence, final, runtime_checkable
 
 import attrs
 
@@ -192,12 +192,94 @@ def pct_scheduler_factory(*, depth: int = 3, steps: int = 50) -> Any:
 
 # ....................... #
 
-# Only the ``Scheduler`` protocol is public — the extension contract for a custom interleaving
-# strategy on the low-level ``run_simulation`` path. The built-in schedulers are selected by
-# ``SchedulerKind`` (+ params) on ``SimulationConfig`` and constructed internally with the run's
-# derived schedule seed — DST owns that RNG, so the rng-taking classes are not exposed (passing
-# your own RNG would defeat reproducibility-from-the-master-seed). They remain importable from
-# this module for the low-level path and their own tests.
+
+@attrs.define(frozen=True, slots=True)
+class Fifo:
+    """Deterministic ready-queue order — one interleaving, no perturbation.
+
+    The reproducible baseline: every run sees the same FIFO ordering. Useful to confirm a bug
+    is order-*dependent* (it vanishes under FIFO) or to get a stable trace.
+    """
+
+    perturb = False
+
+    # ....................... #
+
+    def factory(self) -> None:
+        """No custom scheduler — with :attr:`perturb` ``False`` the loop keeps FIFO order."""
+
+        return None
+
+
+# ....................... #
+
+
+@attrs.define(frozen=True, slots=True)
+class Random:
+    """Seeded ready-queue shuffle each tick — a uniform-random walk over interleavings.
+
+    The default. Cheap and broad, but with no bias toward the rare orderings deep bugs need;
+    the loop builds the shuffle from the run's derived schedule seed (no custom scheduler).
+    """
+
+    perturb = True
+
+    # ....................... #
+
+    def factory(self) -> None:
+        """No custom scheduler — the loop's own seeded shuffle drives the perturbation."""
+
+        return None
+
+
+# ....................... #
+
+
+@attrs.define(frozen=True, slots=True)
+class Pct:
+    """Probabilistic Concurrency Testing — priority + change points, depth-``d`` guarantees.
+
+    *depth* is the bug depth the search targets; *steps* estimates the scheduling ticks the
+    ``depth-1`` change points are spread over. A :class:`PCTScheduler` is built fresh per run
+    (it is stateful) from the run's derived schedule seed — DST owns that RNG, so reproducibility
+    flows from the one master seed.
+    """
+
+    depth: int = 3
+    steps: int = 50
+
+    perturb = True
+
+    # ....................... #
+
+    def factory(self) -> Callable[[int], "PCTScheduler"]:
+        """A per-seed :class:`PCTScheduler` builder carrying this spec's *depth* / *steps*."""
+
+        return pct_scheduler_factory(depth=self.depth, steps=self.steps)
+
+
+# ....................... #
+
+SchedulerSpec = Fifo | Random | Pct
+"""Tagged union selecting the interleaving strategy on :class:`~forze_dst.SimulationConfig`.
+
+Each variant carries only the parameters that apply to it (``Pct(depth, steps)`` — the others
+take none), so an invalid combination (PCT knobs on a non-PCT scheduler) is unrepresentable.
+A variant knows its own ``perturb`` flag and builds its own scheduler ``factory()``."""
+
+
+# ....................... #
+
+# The interleaving strategy is selected by a :class:`SchedulerSpec` variant (``Fifo`` / ``Random``
+# / ``Pct``) on ``SimulationConfig``; each builds its scheduler internally from the run's derived
+# schedule seed — DST owns that RNG, so the rng-taking ``Scheduler`` classes are not exposed
+# (passing your own RNG would defeat reproducibility-from-the-master-seed). The ``Scheduler``
+# protocol stays public as the extension contract for a custom strategy on the low-level
+# ``run_simulation`` path; the concrete schedulers remain importable here for that path and tests.
 __all__ = [
     "Scheduler",
+    "Fifo",
+    "Random",
+    "Pct",
+    "SchedulerSpec",
 ]

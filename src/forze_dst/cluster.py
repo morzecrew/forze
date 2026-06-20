@@ -42,7 +42,6 @@ from forze_dst.config import (
     ClusterConfig,
     Partition,
     PartitionSchedule,
-    SchedulerKind,
     SimulationConfig,
 )
 from forze_dst.engines.projection import fold_runtime_trace
@@ -52,7 +51,6 @@ from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.oracle.invariants import Invariant, check
 from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
-from forze_dst.scheduler import pct_scheduler_factory
 
 # ----------------------- #
 
@@ -358,10 +356,9 @@ class Cluster:
     ) -> tuple[object | None, int | None]:
         """The (scheduler, schedule_seed) for a run, mirroring the single-process harness."""
 
-        if config.scheduler is SchedulerKind.PCT:
-            factory = pct_scheduler_factory(
-                depth=config.pct_depth, steps=config.pct_steps
-            )
+        factory = config.scheduler.factory()
+        if factory is not None:
+            # A built scheduler (PCT) drives the interleaving; the loop ignores schedule_seed.
             return factory(derive_seed(seed, "schedule")), None
 
         return None, (derive_seed(seed, "schedule") if config.perturb else None)

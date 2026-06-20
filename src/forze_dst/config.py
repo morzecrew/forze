@@ -22,6 +22,7 @@ import attrs
 from forze.base.exceptions import exc
 from forze_dst.faults import CrashPolicy, FaultPolicy
 from forze_dst.latency import LatencyProfile
+from forze_dst.scheduler import Random, SchedulerSpec
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
@@ -41,22 +42,6 @@ class Strategy(StrEnum):
 
     DPOR = "dpor"
     """Systematic interleaving search over one fixed workload (``explore_scenario_dpor``)."""
-
-
-# ....................... #
-
-
-class SchedulerKind(StrEnum):
-    """Which interleaving strategy drives the loop (orthogonal to :class:`Strategy`)."""
-
-    FIFO = "fifo"
-    """Deterministic ready-queue order — one interleaving (no perturbation)."""
-
-    RANDOM = "random"
-    """Seeded ready-queue shuffle each tick — explores random interleavings."""
-
-    PCT = "pct"
-    """Probabilistic Concurrency Testing (priority + change points) — depth-d guarantees."""
 
 
 # ....................... #
@@ -172,8 +157,10 @@ class SimulationConfig:
     strategy: Strategy = Strategy.SCENARIO
     """Workload generation + exploration strategy."""
 
-    scheduler: SchedulerKind = SchedulerKind.RANDOM
-    """Interleaving strategy (ignored by DPOR)."""
+    scheduler: SchedulerSpec = attrs.field(factory=Random)
+    """Interleaving strategy — a :class:`~forze_dst.scheduler.SchedulerSpec` variant
+    (``Fifo()`` / ``Random()`` / ``Pct(depth, steps)``); each carries only its own params.
+    Ignored by DPOR (it drives its own systematic scheduler)."""
 
     concurrency: int = 4
     """Max concurrent act operations."""
@@ -196,13 +183,6 @@ class SimulationConfig:
 
     dpor_seed: int = 0
     """DPOR: the single seed whose workload is fixed and re-interleaved."""
-
-    # Scheduler knobs (PCT).
-    pct_depth: int = 3
-    """PCT: bug depth the search targets."""
-
-    pct_steps: int = 50
-    """PCT: scheduling steps over which change points are placed."""
 
     # Coverage-guided exploration (``Simulation.coverage``).
     coverage_plateau: int = 8
@@ -270,4 +250,4 @@ class SimulationConfig:
     def perturb(self) -> bool:
         """Whether interleavings are perturbed (any scheduler other than deterministic FIFO)."""
 
-        return self.scheduler is not SchedulerKind.FIFO
+        return self.scheduler.perturb

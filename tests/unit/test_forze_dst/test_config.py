@@ -20,7 +20,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_dst import ModelState, Rule, Scenario, SchedulerKind, Simulation, SimulationConfig, Strategy
+from forze_dst import Fifo, ModelState, Pct, Rule, Scenario, Simulation, SimulationConfig, Strategy
 from forze_dst.markers import record_event
 from forze_dst.invariants import expect
 from forze_mock import MockDepsModule
@@ -180,7 +180,7 @@ def test_run_hypothesis_finds() -> None:
 def test_run_pct_scheduler_finds() -> None:
     report = _sim().run(
         SimulationConfig(
-            strategy=Strategy.SCENARIO, scheduler=SchedulerKind.PCT, seeds=range(20)
+            strategy=Strategy.SCENARIO, scheduler=Pct(), seeds=range(20)
         ),
         scenario=_SCENARIO,
     )
@@ -189,7 +189,7 @@ def test_run_pct_scheduler_finds() -> None:
 
 def test_run_fifo_is_deterministic_no_perturbation() -> None:
     config = SimulationConfig(
-        strategy=Strategy.SCENARIO, scheduler=SchedulerKind.FIFO, seeds=range(5)
+        strategy=Strategy.SCENARIO, scheduler=Fifo(), seeds=range(5)
     )
     assert config.perturb is False
     # Whatever the FIFO outcome, it is identical across runs.
@@ -204,23 +204,23 @@ def test_op_case_requires_cases() -> None:
 
 
 def test_op_case_honors_pct_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
-    # OP_CASE with scheduler=PCT must build a PCT scheduler, not silently fall back to the
-    # random schedule-seed shuffle.
-    from forze_dst import OperationCase, engines
+    # OP_CASE with a Pct scheduler must build a PCT scheduler, not silently fall back to the
+    # random schedule-seed shuffle. Pct.factory() routes through scheduler.pct_scheduler_factory.
+    from forze_dst import OperationCase, scheduler
 
     calls: list[object] = []
-    real = engines.pct_scheduler_factory
+    real = scheduler.pct_scheduler_factory
 
     def spy(**kwargs: object) -> object:
         calls.append(kwargs)
         return real(**kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(engines, "pct_scheduler_factory", spy)
+    monkeypatch.setattr(scheduler, "pct_scheduler_factory", spy)
 
     _sim().run(
         SimulationConfig(
             strategy=Strategy.OP_CASE,
-            scheduler=SchedulerKind.PCT,
+            scheduler=Pct(),
             seeds=range(2),
             count=2,
             concurrency=2,
@@ -228,30 +228,30 @@ def test_op_case_honors_pct_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
         cases=[OperationCase(op="create_order")],
     )
 
-    assert calls, "OP_CASE with scheduler=PCT built no PCT scheduler"
+    assert calls, "OP_CASE with a Pct scheduler built no PCT scheduler"
 
 
 def test_hypothesis_honors_pct_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
-    # HYPOTHESIS with scheduler=PCT must build a PCT scheduler (only DPOR ignores the scheduler).
-    from forze_dst import engines
+    # HYPOTHESIS with a Pct scheduler must build a PCT scheduler (only DPOR ignores the scheduler).
+    from forze_dst import scheduler
 
     calls: list[object] = []
-    real = engines.pct_scheduler_factory
+    real = scheduler.pct_scheduler_factory
 
     def spy(**kwargs: object) -> object:
         calls.append(kwargs)
         return real(**kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(engines, "pct_scheduler_factory", spy)
+    monkeypatch.setattr(scheduler, "pct_scheduler_factory", spy)
 
     _sim().run(
         SimulationConfig(
             strategy=Strategy.HYPOTHESIS,
-            scheduler=SchedulerKind.PCT,
+            scheduler=Pct(),
             act_count=4,
             max_examples=20,
         ),
         scenario=_SCENARIO,
     )
 
-    assert calls, "HYPOTHESIS with scheduler=PCT built no PCT scheduler"
+    assert calls, "HYPOTHESIS with a Pct scheduler built no PCT scheduler"

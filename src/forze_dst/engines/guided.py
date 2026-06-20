@@ -15,13 +15,12 @@ from typing import TYPE_CHECKING, Sequence
 from forze.base.primitives import derive_seed
 from forze_dst.engines import base, context
 from forze_dst.engines.cases import Call, OperationCase
-from forze_dst.config import SchedulerKind, SimulationConfig
+from forze_dst.config import SimulationConfig
 from forze_dst.engines import op_case
 from forze_dst.explore_guided import Genome, GuidedStats, coverage_guided_search
 from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.invariants import check
 from forze_dst.oracle.recorder import History
-from forze_dst.scheduler import pct_scheduler_factory
 
 if TYPE_CHECKING:
     from forze_dst.harness import Simulation
@@ -44,11 +43,7 @@ def run_guided(
     master = next(iter(config.seeds), 0)
     max_ops = max(config.count * 2, config.count + 8)
 
-    factory = (
-        pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
-        if config.scheduler is SchedulerKind.PCT
-        else None
-    )
+    factory = config.scheduler.factory()
 
     def make_scheduler(seed: int) -> object | None:
         # Fresh per run (a PCT scheduler is stateful), seeded from the genome's seed.

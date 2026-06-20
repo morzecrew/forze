@@ -18,7 +18,6 @@ from forze_dst.config import (
     ClusterConfig,
     Partition,
     PartitionSchedule,
-    SchedulerKind,
     SimulationConfig,
     Strategy,
 )
@@ -33,8 +32,35 @@ from forze_dst.latency import (
     Pareto,
     Uniform,
 )
+from forze_dst.scheduler import Fifo, Pct, Random, SchedulerSpec
 
 # ----------------------- #
+
+
+def _scheduler_to_dict(spec: SchedulerSpec) -> dict[str, Any]:
+    if isinstance(spec, Pct):
+        return {"kind": "pct", "depth": spec.depth, "steps": spec.steps}
+
+    return {"kind": "random" if isinstance(spec, Random) else "fifo"}
+
+
+# ....................... #
+
+
+def _scheduler_from_dict(data: dict[str, Any] | str) -> SchedulerSpec:
+    # Tolerate the pre-tagged-union format: a bare ``"pct"`` string carried ``pct_depth`` /
+    # ``pct_steps`` as sibling keys (handled by the caller, which passes the whole config dict).
+    if isinstance(data, str):
+        return Fifo() if data == "fifo" else Random()
+
+    kind = data["kind"]
+    if kind == "pct":
+        return Pct(depth=data.get("depth", 3), steps=data.get("steps", 50))
+
+    return Fifo() if kind == "fifo" else Random()
+
+
+# ....................... #
 
 
 def _dist_to_dict(dist: Distribution) -> dict[str, Any]:
@@ -198,7 +224,7 @@ def config_to_dict(config: SimulationConfig) -> dict[str, Any]:
     return {
         "strategy": config.strategy.value,
         "seeds": list(config.seeds),
-        "scheduler": config.scheduler.value,
+        "scheduler": _scheduler_to_dict(config.scheduler),
         "concurrency": config.concurrency,
         "epoch": config.epoch.isoformat(),
         "count": config.count,
@@ -206,8 +232,6 @@ def config_to_dict(config: SimulationConfig) -> dict[str, Any]:
         "max_examples": config.max_examples,
         "max_runs": config.max_runs,
         "dpor_seed": config.dpor_seed,
-        "pct_depth": config.pct_depth,
-        "pct_steps": config.pct_steps,
         "coverage_plateau": config.coverage_plateau,
         "guided_budget": config.guided_budget,
         "reachability_targets": sorted(config.reachability_targets),
@@ -274,10 +298,19 @@ def config_from_dict(data: dict[str, Any]) -> SimulationConfig:
         else None
     )
 
+    # Legacy bundles stored ``scheduler`` as a bare ``"pct"`` string with sibling pct_depth/steps.
+    raw_scheduler = data["scheduler"]
+    if isinstance(raw_scheduler, str) and raw_scheduler == "pct":
+        scheduler: SchedulerSpec = Pct(
+            depth=data.get("pct_depth", 3), steps=data.get("pct_steps", 50)
+        )
+    else:
+        scheduler = _scheduler_from_dict(raw_scheduler)
+
     return SimulationConfig(
         strategy=Strategy(data["strategy"]),
         seeds=list(data["seeds"]),
-        scheduler=SchedulerKind(data["scheduler"]),
+        scheduler=scheduler,
         concurrency=data["concurrency"],
         epoch=datetime.fromisoformat(data["epoch"]),
         count=data["count"],
@@ -285,8 +318,6 @@ def config_from_dict(data: dict[str, Any]) -> SimulationConfig:
         max_examples=data["max_examples"],
         max_runs=data["max_runs"],
         dpor_seed=data["dpor_seed"],
-        pct_depth=data["pct_depth"],
-        pct_steps=data["pct_steps"],
         coverage_plateau=data["coverage_plateau"],
         guided_budget=data.get("guided_budget", 256),
         reachability_targets=frozenset(data.get("reachability_targets", ())),

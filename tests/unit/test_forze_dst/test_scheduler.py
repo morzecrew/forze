@@ -19,7 +19,7 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 
-from forze_dst import ModelState, Rule, Scenario, SchedulerKind, Simulation, SimulationConfig, Strategy
+from forze_dst import ModelState, Pct, Rule, Scenario, Simulation, SimulationConfig, Strategy
 from forze_dst.markers import record_event
 from forze_dst.invariants import expect, no_duplicate_effect
 from forze_dst.runtime import run_simulation
@@ -168,12 +168,10 @@ class TestPCTDrivesHarness:
         report = _payments_simulation().run(
             SimulationConfig(
                 strategy=Strategy.SCENARIO,
-                scheduler=SchedulerKind.PCT,
+                scheduler=Pct(depth=3, steps=12),
                 act_count=6,
                 concurrency=6,
                 seeds=range(5),
-                pct_depth=3,
-                pct_steps=12,
             ),
             scenario=_payments_scenario(),
         )

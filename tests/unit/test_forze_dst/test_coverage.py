@@ -19,7 +19,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from forze_dst import ModelState, Rule, Scenario, SchedulerKind, Simulation, SimulationConfig, Strategy
+from forze_dst import ModelState, Pct, Rule, Scenario, Simulation, SimulationConfig, Strategy
 from forze_dst.markers import record_event
 from forze_dst.invariants import expect, operation_succeeds
 from forze_dst.oracle import behavioral_coverage
@@ -167,22 +167,22 @@ def _racy_sim() -> Simulation:
 
 class TestCoverageGuidedSweep:
     def test_honors_pct_scheduler(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-        # coverage() with scheduler=PCT must build a PCT scheduler, not silently shuffle.
-        from forze_dst.engines import coverage_sweep
+        # coverage() with a Pct scheduler must build a PCT scheduler, not silently shuffle.
+        from forze_dst import scheduler
 
         calls: list[object] = []
-        real = coverage_sweep.pct_scheduler_factory
+        real = scheduler.pct_scheduler_factory
 
         def spy(**kwargs: object) -> object:
             calls.append(kwargs)
             return real(**kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(coverage_sweep, "pct_scheduler_factory", spy)
+        monkeypatch.setattr(scheduler, "pct_scheduler_factory", spy)
 
         _clean_sim().coverage(
             SimulationConfig(
                 strategy=Strategy.SCENARIO,
-                scheduler=SchedulerKind.PCT,
+                scheduler=Pct(),
                 seeds=range(2),
                 act_count=2,
                 concurrency=2,
@@ -191,7 +191,7 @@ class TestCoverageGuidedSweep:
             scenario=_MAKE_SCENARIO,
         )
 
-        assert calls, "coverage() with scheduler=PCT built no PCT scheduler"
+        assert calls, "coverage() with a Pct scheduler built no PCT scheduler"
 
     def test_saturates_and_stops_early(self) -> None:
         stats = _clean_sim().coverage(

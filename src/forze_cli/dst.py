@@ -14,7 +14,7 @@ import typer
 from forze.base.primitives import utcnow
 from forze_cli._compat import require_dst
 from forze_cli.loader import load_simulation
-from forze_dst import SchedulerKind, SimulationConfig, Strategy
+from forze_dst import Pct, Random, SimulationConfig, Strategy
 from forze_dst.artifacts import RegressionEntry, append_regression, entry_from_report, load_regressions
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
@@ -145,8 +145,7 @@ def _config(
         max_examples=max_examples,
         max_runs=max_runs,
         dpor_seed=seed_list[0] if seed_list else 0,
-        scheduler=SchedulerKind.PCT if pct else SchedulerKind.RANDOM,
-        pct_depth=depth,
+        scheduler=Pct(depth=depth) if pct else Random(),
         faults=_faults(fault_error),
         latency=_latency(latency),
     )
