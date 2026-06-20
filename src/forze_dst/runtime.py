@@ -46,7 +46,7 @@ def run_simulation[T](
 
     Interleaving control (opt-in): pass *schedule_seed* to shuffle the ready-callback queue
     each tick from a separate seeded RNG, or *scheduler* for a custom strategy (e.g. a
-    :class:`~forze_dst.scheduler.PCTScheduler`) — *scheduler* takes precedence. ``None`` for
+    :class:`~forze_dst.scheduler.PCTReorderer`) — *scheduler* takes precedence. ``None`` for
     both keeps deterministic FIFO order. Either way the run is reproducible.
 
     *latency* models simulated I/O delay: a ``(surface, route, op) -> seconds`` function called

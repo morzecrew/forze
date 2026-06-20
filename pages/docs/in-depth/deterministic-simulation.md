@@ -42,6 +42,8 @@ if report is not None:
 
 `run` builds a meaningful workload from your operation catalog (an arrange→act scenario — `forze dst derive` prints it), runs it under perturbed interleavings, and checks the invariants. On the first violating seed it **minimises** the workload to a 1-minimal set that still fails and returns a `ViolationReport`; a clean sweep returns `None`. There is nothing to assert about *how* — point it at the app and go.
 
+Reach for a preset instead of hand-tuning the config — `SimulationConfig.quick()` while iterating, `.thorough()` before you ship (see [Exploration strategies](dst-exploration.md#presets-dial-intensity-in-one-call)).
+
 The app under test here is ordinary Forze code. `pay_order` charges, then flips the order to paid — but it charges *before* the optimistic-concurrency-guarded transition, so two concurrent payments both charge:
 
 ```python

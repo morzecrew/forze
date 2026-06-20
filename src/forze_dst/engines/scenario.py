@@ -24,7 +24,7 @@ from forze_dst.oracle.invariants import check
 from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
-from forze_dst.scheduler import SystematicScheduler
+from forze_dst.scheduler import SystematicReorderer
 from forze_dst.time_source import DEFAULT_EPOCH
 
 if TYPE_CHECKING:
@@ -236,7 +236,7 @@ def explore(
     minimized to a 1-minimal set that still fails; arrange stays fixed. The report carries the seed,
     minimized act workload, full recorded history (arrange + act), and the registry fingerprint.
 
-    *scheduler_factory* (e.g. :func:`forze_dst.scheduler.pct_scheduler_factory`) supplies a per-seed
+    *scheduler_factory* (e.g. :func:`forze_dst.scheduler.pct_reorderer_factory`) supplies a per-seed
     interleaving scheduler — PCT in place of the default uniform shuffle, to hunt deep interleavings
     with a better per-run probability.
     """
@@ -383,7 +383,7 @@ def explore_dpor(
 
     The complete, deterministic complement to :func:`explore_hypothesis` and PCT: it fixes one act
     workload (generated from *seed*), then walks the tree of per-tick scheduling choices depth-first
-    via :class:`~forze_dst.scheduler.SystematicScheduler` — guaranteed to find a violation reachable
+    via :class:`~forze_dst.scheduler.SystematicReorderer` — guaranteed to find a violation reachable
     by *reordering* that workload, within *max_runs*. A partial-order reduction prunes the search:
     an interleaving whose observable effect order matches one already seen is not expanded
     (equivalent continuations), so only orderings that change effects are explored.
@@ -420,7 +420,7 @@ def explore_dpor(
 
         visited.add(choices)
 
-        scheduler = SystematicScheduler(choices)
+        scheduler = SystematicReorderer(choices)
         history, _ = run_scenario(
             sim,
             scenario,

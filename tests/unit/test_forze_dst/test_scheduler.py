@@ -19,11 +19,11 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 
-from forze_dst import ModelState, Pct, Rule, Scenario, Simulation, SimulationConfig, Strategy
+from forze_dst import ModelState, PCTScheduler, Rule, Scenario, Simulation, SimulationConfig, Strategy
 from forze_dst.markers import record_event
 from forze_dst.invariants import expect, no_duplicate_effect
 from forze_dst.runtime import run_simulation
-from forze_dst.scheduler import PCTScheduler, RandomScheduler, SystematicScheduler
+from forze_dst.scheduler import PCTReorderer, RandomReorderer, SystematicReorderer
 from forze_mock import MockDepsModule
 
 # ----------------------- #
@@ -44,7 +44,7 @@ def _run_with_pct(seed: int) -> list[int]:
     run_simulation(
         lambda: _interleave_log(log),
         seed=0,
-        scheduler=PCTScheduler(random.Random(seed), depth=3, steps=8),
+        scheduler=PCTReorderer(random.Random(seed), depth=3, steps=8),
     )
     return log
 
@@ -52,16 +52,16 @@ def _run_with_pct(seed: int) -> list[int]:
 # ....................... #
 
 
-class TestRandomScheduler:
+class TestRandomReorderer:
     def test_shuffles_deterministically(self) -> None:
         items = list(range(10))
-        a = RandomScheduler(random.Random(1)).reorder(list(items), step=1)
-        b = RandomScheduler(random.Random(1)).reorder(list(items), step=99)
+        a = RandomReorderer(random.Random(1)).reorder(list(items), step=1)
+        b = RandomReorderer(random.Random(1)).reorder(list(items), step=99)
         assert a == b  # step is ignored; same seed → same order
         assert sorted(a) == items  # a permutation, nothing lost
 
 
-class TestPCTScheduler:
+class TestPCTReorderer:
     def test_reproducible_for_a_fixed_seed(self) -> None:
         assert _run_with_pct(7) == _run_with_pct(
             7
@@ -73,7 +73,7 @@ class TestPCTScheduler:
 
     def test_reorders_ready_by_priority_with_change_point(self) -> None:
         # A hand-built scheduler with a change point at step 1 demotes the first-seen task.
-        scheduler = PCTScheduler(random.Random(0), depth=2, steps=1)
+        scheduler = PCTReorderer(random.Random(0), depth=2, steps=1)
 
         @attrs.define
         class _FakeHandle:
@@ -168,7 +168,7 @@ class TestPCTDrivesHarness:
         report = _payments_simulation().run(
             SimulationConfig(
                 strategy=Strategy.SCENARIO,
-                scheduler=Pct(depth=3, steps=12),
+                scheduler=PCTScheduler(depth=3, steps=12),
                 act_count=6,
                 concurrency=6,
                 seeds=range(5),
@@ -183,15 +183,15 @@ class TestPCTDrivesHarness:
 # ....................... #
 
 
-class TestSystematicSchedulerUnit:
+class TestSystematicReordererUnit:
     def test_choice_rotates_chosen_handle_to_front(self) -> None:
-        scheduler = SystematicScheduler([2])
+        scheduler = SystematicReorderer([2])
         out = scheduler.reorder(["a", "b", "c", "d"], step=1)
         assert out == ["c", "a", "b", "d"]  # index 2 to front, rest order kept
         assert scheduler.branching == [4]  # branching factor recorded
 
     def test_default_is_fifo_beyond_the_prefix(self) -> None:
-        scheduler = SystematicScheduler([])  # empty prefix → choice 0 everywhere
+        scheduler = SystematicReorderer([])  # empty prefix → choice 0 everywhere
         assert scheduler.reorder(["a", "b", "c"], step=1) == ["a", "b", "c"]
 
     def test_distinct_choices_yield_distinct_orders(self) -> None:
@@ -204,7 +204,7 @@ class TestSystematicSchedulerUnit:
 
                 await asyncio.gather(*(worker(i) for i in range(3)))
 
-            run_simulation(scenario, seed=0, scheduler=SystematicScheduler(choices))
+            run_simulation(scenario, seed=0, scheduler=SystematicReorderer(choices))
             return log
 
         assert run([0]) != run([2]) or run([1]) != run([0])  # control changes order

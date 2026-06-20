@@ -6,25 +6,52 @@ summary: How DST searches the interleaving space — the schedulers that order c
 
 A bug lives in a specific interleaving, fault timing, and input. The space of all three is astronomically large, so `run`'s job is not to enumerate it but to *search* it well — bias toward the rare orderings that break things, know when to stop, and spend the next run where the last one found something new. This page is the dial behind `run`: the scheduler that orders concurrent work, the sweep that knows when coverage has saturated, and the fuzzer that steers toward unexplored behaviour.
 
+## Presets — dial intensity in one call
+
+`SimulationConfig` has many knobs, but most of the time you want one of a few intensity tiers, not a hand-tuned config. The presets name them:
+
+```python
+from forze_dst import SimulationConfig
+
+simulation.run(SimulationConfig.quick())       # a few seeds, default shuffle — seconds, while iterating
+simulation.run(SimulationConfig.thorough())    # broad seed range under PCT — the run before you ship
+simulation.run(SimulationConfig.reproduce(7))  # sweep exactly seed 7 — re-drive one timeline from a report
+```
+
+| Preset | Scales to | Reach for it |
+| --- | --- | --- |
+| `quick()` | ~16 seeds, default shuffle, small workloads | the inner loop — fast feedback while you write |
+| `thorough()` | ~256 seeds, `PCTScheduler(depth=3)`, higher concurrency | before merging — a serious search |
+| `nightly()` | thousands of seeds, deeper PCT, sized for `parallel_sweep` | an overnight CI sweep |
+| `reproduce(seed)` | exactly that one seed | debugging a single counterexample |
+
+Each preset scales the *search* — seeds, scheduler, concurrency, workload size — and leaves the *environment* (faults, latency, crashes) explicit, since the right policy is app-specific. Every field stays overridable, so a preset is a starting point, not a cage:
+
+```python
+SimulationConfig.thorough(seeds=range(1000), concurrency=16)   # thorough, but bigger
+```
+
+The rest of this page is what those presets are made of — reach for the raw knobs when a preset doesn't fit.
+
 ## Schedulers — how concurrent work is ordered
 
 At each tick the loop has a batch of ready continuations; the **scheduler** decides their order, and that order is where order-dependent races live. The interleaving strategy is a config variant — each carries only its own parameters, so an invalid combination is unrepresentable:
 
 ```python
-from forze_dst import SimulationConfig, Fifo, Random, Pct
+from forze_dst import SimulationConfig, FIFOScheduler, RandomScheduler, PCTScheduler
 
-SimulationConfig(scheduler=Random())            # the default
-SimulationConfig(scheduler=Pct(depth=3))        # targets depth-3 bugs
-SimulationConfig(scheduler=Fifo())              # one fixed order, no perturbation
+SimulationConfig(scheduler=RandomScheduler())            # the default
+SimulationConfig(scheduler=PCTScheduler(depth=3))        # targets depth-3 bugs
+SimulationConfig(scheduler=FIFOScheduler())              # one fixed order, no perturbation
 ```
 
 | Variant | Strategy | Use it for |
 | --- | --- | --- |
-| `Fifo()` | One deterministic order, no perturbation | A reproducible baseline; confirming a bug is order-*dependent* (it vanishes under FIFO) |
-| `Random()` | Seeded shuffle each tick | The default — a broad, cheap walk over interleavings |
-| `Pct(depth, steps)` | Probabilistic Concurrency Testing | Deep, specific races — provably finds a depth-`d` bug with a useful per-run probability |
+| `FIFOScheduler()` | One deterministic order, no perturbation | A reproducible baseline; confirming a bug is order-*dependent* (it vanishes under FIFO) |
+| `RandomScheduler()` | Seeded shuffle each tick | The default — a broad, cheap walk over interleavings |
+| `PCTScheduler(depth, steps)` | Probabilistic Concurrency Testing | Deep, specific races — provably finds a depth-`d` bug with a useful per-run probability |
 
-`Random()` is a uniform walk: broad, but with no bias toward the rare orderings deep bugs need. `Pct` ([Probabilistic Concurrency Testing](https://www.microsoft.com/en-us/research/publication/a-randomized-scheduler-with-probabilistic-guarantees-of-finding-bugs/ "Burckhardt et al., ASPLOS 2010")) gives each task a random priority and inserts `depth-1` priority-change points, so a depth-`d` interleaving becomes reachable with a real probability instead of by luck. Every variant is seeded — the same seed replays the same order.
+`RandomScheduler()` is a uniform walk: broad, but with no bias toward the rare orderings deep bugs need. `PCTScheduler` ([Probabilistic Concurrency Testing](https://www.microsoft.com/en-us/research/publication/a-randomized-scheduler-with-probabilistic-guarantees-of-finding-bugs/ "Burckhardt et al., ASPLOS 2010")) gives each task a random priority and inserts `depth-1` priority-change points, so a depth-`d` interleaving becomes reachable with a real probability instead of by luck. Every variant is seeded — the same seed replays the same order.
 
 ## Coverage — sweep until behaviour saturates
 

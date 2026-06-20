@@ -15,14 +15,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Sequence
+from typing import Any, Sequence
 
 import attrs
 
 from forze.base.exceptions import exc
 from forze_dst.faults import CrashPolicy, FaultPolicy
 from forze_dst.latency import LatencyProfile
-from forze_dst.scheduler import Random, SchedulerSpec
+from forze_dst.scheduler import PCTScheduler, RandomScheduler, SchedulerSpec
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
@@ -157,10 +157,10 @@ class SimulationConfig:
     strategy: Strategy = Strategy.SCENARIO
     """Workload generation + exploration strategy."""
 
-    scheduler: SchedulerSpec = attrs.field(factory=Random)
+    scheduler: SchedulerSpec = attrs.field(factory=RandomScheduler)
     """Interleaving strategy — a :class:`~forze_dst.scheduler.SchedulerSpec` variant
-    (``Fifo()`` / ``Random()`` / ``Pct(depth, steps)``); each carries only its own params.
-    Ignored by DPOR (it drives its own systematic scheduler)."""
+    (``FIFOScheduler()`` / ``RandomScheduler()`` / ``PCTScheduler(depth, steps)``); each carries
+    only its own params. Ignored by DPOR (it drives its own systematic reorderer)."""
 
     concurrency: int = 4
     """Max concurrent act operations."""
@@ -251,3 +251,50 @@ class SimulationConfig:
         """Whether interleavings are perturbed (any scheduler other than deterministic FIFO)."""
 
         return self.scheduler.perturb
+
+    # ....................... #
+    # Presets — intent-named intensity tiers over the ~20 knobs. Each scales the *search*
+    # (seeds, scheduler, concurrency, workload size); environment (faults/latency/crash) stays
+    # explicit since the right policy is app-specific. Every field is still overridable —
+    # ``SimulationConfig.thorough(seeds=range(1000), concurrency=16)``.
+
+    @classmethod
+    def quick(cls, **overrides: Any) -> "SimulationConfig":
+        """A fast inner-loop sweep — a handful of seeds under the default shuffle, small
+        workloads. Runs in seconds; the config to reach for while iterating."""
+
+        overrides.setdefault("seeds", range(16))
+        overrides.setdefault("act_count", 8)
+        overrides.setdefault("count", 16)
+        return cls(**overrides)
+
+    @classmethod
+    def thorough(cls, **overrides: Any) -> "SimulationConfig":
+        """A pre-merge sweep — a broad seed range under PCT (biased toward deep interleavings),
+        higher concurrency, and longer workloads. The 'before I ship' run."""
+
+        overrides.setdefault("seeds", range(256))
+        overrides.setdefault("scheduler", PCTScheduler(depth=3))
+        overrides.setdefault("concurrency", 8)
+        overrides.setdefault("act_count", 24)
+        return cls(**overrides)
+
+    @classmethod
+    def nightly(cls, **overrides: Any) -> "SimulationConfig":
+        """A heavy overnight sweep — thousands of seeds under deeper PCT, sized for
+        :func:`~forze_dst.artifacts.parallel_sweep`. Add a fault / latency policy for a
+        hostile-environment run."""
+
+        overrides.setdefault("seeds", range(2048))
+        overrides.setdefault("scheduler", PCTScheduler(depth=4))
+        overrides.setdefault("concurrency", 12)
+        overrides.setdefault("act_count", 32)
+        return cls(**overrides)
+
+    @classmethod
+    def reproduce(cls, seed: int, **overrides: Any) -> "SimulationConfig":
+        """A single-seed debug run — sweep exactly *seed*. Reach for it with a seed from a
+        :class:`~forze_dst.ViolationReport` to re-drive just that timeline."""
+
+        overrides.setdefault("seeds", (seed,))
+        return cls(**overrides)

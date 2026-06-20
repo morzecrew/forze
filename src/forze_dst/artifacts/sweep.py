@@ -28,7 +28,7 @@ from forze_dst.config import SimulationConfig
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
 from forze_dst.oracle.coverage import Behavior
-from forze_dst.scheduler import Fifo, Pct, Random
+from forze_dst.scheduler import FIFOScheduler, PCTScheduler, RandomScheduler
 
 # ----------------------- #
 
@@ -246,7 +246,7 @@ class SimulationSeedRunner:
     # ....................... #
 
     def _config(self, seed: int) -> SimulationConfig:
-        scheduler = Pct() if self.pct else Random() if self.perturb else Fifo()
+        scheduler = PCTScheduler() if self.pct else RandomScheduler() if self.perturb else FIFOScheduler()
         faults = (
             FaultPolicy(rules=(FaultRule(error=self.fault_error),))
             if self.fault_error > 0.0

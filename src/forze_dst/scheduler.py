@@ -1,15 +1,21 @@
-"""Pluggable ready-queue schedulers for the simulation loop.
+"""Interleaving control for the simulation loop — what you select, and what actually reorders.
 
-The loop processes a *tick* at a time: a batch of ready callbacks (the continuations
-concurrent tasks scheduled after their last ``await``). A scheduler decides the order they
-run in — the interleaving. The order is where order-dependent races live, so exploring it
-well is how DST finds concurrency bugs.
+Two layers, deliberately distinct:
 
-Two strategies ship:
+* **Schedulers** (:class:`FIFOScheduler` / :class:`RandomScheduler` / :class:`PCTScheduler`) are
+  the declarative *selection* you put on :class:`~forze_dst.SimulationConfig` — immutable value
+  objects carrying only their own parameters. This is the public surface.
+* **Reorderers** (:class:`RandomReorderer` / :class:`PCTReorderer` / :class:`SystematicReorderer`,
+  behind the :class:`Reorderer` protocol) are the low-level mechanism a scheduler builds per run:
+  given a *tick* — a batch of ready callbacks (the continuations concurrent tasks scheduled after
+  their last ``await``) — a reorderer decides the order they run in. The order is where
+  order-dependent races live, so exploring it well is how DST finds concurrency bugs.
 
-* :class:`RandomScheduler` — shuffle each tick (the original perturbation). Cheap, but a
+Two reordering mechanisms ship:
+
+* :class:`RandomReorderer` — shuffle each tick (the original perturbation). Cheap, but a
   uniform-random walk over interleavings has no bias toward the rare orderings bugs need.
-* :class:`PCTScheduler` — *Probabilistic Concurrency Testing* (Burckhardt, Kothari, Musuvathi,
+* :class:`PCTReorderer` — *Probabilistic Concurrency Testing* (Burckhardt, Kothari, Musuvathi,
   Nagarakatte, ASPLOS 2010): give each task a random priority and run ready tasks
   highest-first; insert ``d-1`` random *priority-change points* over an estimated step
   budget, each demoting the running task below the rest. This provably finds any depth-``d``
@@ -33,7 +39,7 @@ import attrs
 
 
 @runtime_checkable
-class Scheduler(Protocol):
+class Reorderer(Protocol):
     """Reorders a tick's ready callbacks; *step* is the running count of scheduled ticks."""
 
     def reorder(self, ready: list[Any], step: int) -> list[Any]: ...
@@ -44,7 +50,7 @@ class Scheduler(Protocol):
 
 @final
 @attrs.define
-class RandomScheduler(Scheduler):
+class RandomReorderer(Reorderer):
     """Uniformly shuffle each tick's ready callbacks."""
 
     rng: random.Random
@@ -75,8 +81,8 @@ def _task_of(handle: Any) -> asyncio.Task[Any] | None:
 
 @final
 @attrs.define
-class PCTScheduler(Scheduler):
-    """A PCT scheduler: priority-ordered tasks with ``d-1`` random priority-change points.
+class PCTReorderer(Reorderer):
+    """A PCT reorderer: priority-ordered tasks with ``d-1`` random priority-change points.
 
     *depth* is the bug depth the run targets (``d``); *steps* is an estimate of the number
     of scheduling ticks (the ``k`` the change points are spread over — an underestimate just
@@ -144,7 +150,7 @@ class PCTScheduler(Scheduler):
 
 @final
 @attrs.define
-class SystematicScheduler(Scheduler):
+class SystematicReorderer(Reorderer):
     """Deterministically pick which ready callback runs first each tick, per a choice vector.
 
     At tick *i* the callback at index ``choices[i] % n`` (of the ``n`` ready) is moved to the
@@ -177,11 +183,11 @@ class SystematicScheduler(Scheduler):
 # ....................... #
 
 
-def pct_scheduler_factory(*, depth: int = 3, steps: int = 50) -> Any:
-    """A per-seed :class:`PCTScheduler` factory for the harness ``scheduler_factory`` knob."""
+def pct_reorderer_factory(*, depth: int = 3, steps: int = 50) -> Any:
+    """A per-seed :class:`PCTReorderer` factory for the harness ``scheduler_factory`` knob."""
 
-    def build(seed: int) -> PCTScheduler:
-        return PCTScheduler(
+    def build(seed: int) -> PCTReorderer:
+        return PCTReorderer(
             random.Random(seed),  # nosec B311 - deterministic sim schedule, not crypto
             depth=depth,
             steps=steps,
@@ -194,7 +200,7 @@ def pct_scheduler_factory(*, depth: int = 3, steps: int = 50) -> Any:
 
 
 @attrs.define(frozen=True, slots=True)
-class Fifo:
+class FIFOScheduler:
     """Deterministic ready-queue order — one interleaving, no perturbation.
 
     The reproducible baseline: every run sees the same FIFO ordering. Useful to confirm a bug
@@ -206,7 +212,7 @@ class Fifo:
     # ....................... #
 
     def factory(self) -> None:
-        """No custom scheduler — with :attr:`perturb` ``False`` the loop keeps FIFO order."""
+        """No reorderer — with :attr:`perturb` ``False`` the loop keeps FIFO order."""
 
         return None
 
@@ -215,11 +221,12 @@ class Fifo:
 
 
 @attrs.define(frozen=True, slots=True)
-class Random:
+class RandomScheduler:
     """Seeded ready-queue shuffle each tick — a uniform-random walk over interleavings.
 
     The default. Cheap and broad, but with no bias toward the rare orderings deep bugs need;
-    the loop builds the shuffle from the run's derived schedule seed (no custom scheduler).
+    the loop builds the shuffle (a :class:`RandomReorderer`) from the run's derived schedule
+    seed, so no reorderer instance is configured here.
     """
 
     perturb = True
@@ -227,7 +234,7 @@ class Random:
     # ....................... #
 
     def factory(self) -> None:
-        """No custom scheduler — the loop's own seeded shuffle drives the perturbation."""
+        """No reorderer — the loop's own seeded shuffle drives the perturbation."""
 
         return None
 
@@ -236,11 +243,11 @@ class Random:
 
 
 @attrs.define(frozen=True, slots=True)
-class Pct:
+class PCTScheduler:
     """Probabilistic Concurrency Testing — priority + change points, depth-``d`` guarantees.
 
     *depth* is the bug depth the search targets; *steps* estimates the scheduling ticks the
-    ``depth-1`` change points are spread over. A :class:`PCTScheduler` is built fresh per run
+    ``depth-1`` change points are spread over. A :class:`PCTReorderer` is built fresh per run
     (it is stateful) from the run's derived schedule seed — DST owns that RNG, so reproducibility
     flows from the one master seed.
     """
@@ -252,34 +259,35 @@ class Pct:
 
     # ....................... #
 
-    def factory(self) -> Callable[[int], "PCTScheduler"]:
-        """A per-seed :class:`PCTScheduler` builder carrying this spec's *depth* / *steps*."""
+    def factory(self) -> Callable[[int], "PCTReorderer"]:
+        """A per-seed :class:`PCTReorderer` builder carrying this spec's *depth* / *steps*."""
 
-        return pct_scheduler_factory(depth=self.depth, steps=self.steps)
+        return pct_reorderer_factory(depth=self.depth, steps=self.steps)
 
 
 # ....................... #
 
-SchedulerSpec = Fifo | Random | Pct
+SchedulerSpec = FIFOScheduler | RandomScheduler | PCTScheduler
 """Tagged union selecting the interleaving strategy on :class:`~forze_dst.SimulationConfig`.
 
-Each variant carries only the parameters that apply to it (``Pct(depth, steps)`` — the others
-take none), so an invalid combination (PCT knobs on a non-PCT scheduler) is unrepresentable.
-A variant knows its own ``perturb`` flag and builds its own scheduler ``factory()``."""
+Each variant carries only the parameters that apply to it (``PCTScheduler(depth, steps)`` — the
+others take none), so an invalid combination (PCT knobs on a non-PCT scheduler) is
+unrepresentable. A variant knows its own ``perturb`` flag and builds its own reorderer
+``factory()``."""
 
 
 # ....................... #
 
-# The interleaving strategy is selected by a :class:`SchedulerSpec` variant (``Fifo`` / ``Random``
-# / ``Pct``) on ``SimulationConfig``; each builds its scheduler internally from the run's derived
-# schedule seed — DST owns that RNG, so the rng-taking ``Scheduler`` classes are not exposed
-# (passing your own RNG would defeat reproducibility-from-the-master-seed). The ``Scheduler``
-# protocol stays public as the extension contract for a custom strategy on the low-level
-# ``run_simulation`` path; the concrete schedulers remain importable here for that path and tests.
+# The public surface is the :class:`SchedulerSpec` variants (``FIFOScheduler`` / ``RandomScheduler``
+# / ``PCTScheduler``) you put on ``SimulationConfig`` — each builds its low-level reorderer
+# internally from the run's derived schedule seed, so DST owns that RNG (reproducibility flows from
+# the one master seed). The :class:`Reorderer` protocol is the extension contract for a custom
+# per-tick strategy on the low-level ``run_simulation`` path; the concrete reorderers remain
+# importable here for that path and their own tests.
 __all__ = [
-    "Scheduler",
-    "Fifo",
-    "Random",
-    "Pct",
+    "Reorderer",
+    "FIFOScheduler",
+    "RandomScheduler",
+    "PCTScheduler",
     "SchedulerSpec",
 ]

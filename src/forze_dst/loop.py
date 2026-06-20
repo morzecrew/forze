@@ -121,7 +121,7 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
     continuations concurrent tasks scheduled via ``call_soon`` after awaiting — to explore
     orderings FIFO would never reach (where order-dependent races hide). Pass either
     *schedule_rng* (uniform shuffle each tick) or a *scheduler* object (duck-typed
-    ``reorder(ready, step) -> list``; e.g. a :class:`~forze_dst.scheduler.PCTScheduler`) —
+    ``reorder(ready, step) -> list``; e.g. a :class:`~forze_dst.scheduler.PCTReorderer`) —
     *scheduler* takes precedence. Both are deliberately separate from the application entropy
     seam, so a schedule can be varied without changing application values, and vice versa.
     Same seed → same interleaving, so any bug surfaced reproduces.

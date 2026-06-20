@@ -25,7 +25,7 @@ from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.invariants import expect
 from forze_dst.latency import Constant, Exponential, LatencyProfile, LatencyRule, LogNormal, Pareto, Uniform
 from forze_dst.config import CrashPolicy
-from forze_dst.scheduler import Pct
+from forze_dst.scheduler import PCTScheduler
 from forze_mock import MockDepsModule
 
 # ----------------------- #
@@ -37,7 +37,7 @@ def _rich_config() -> SimulationConfig:
     return SimulationConfig(
         strategy=Strategy.SCENARIO,
         seeds=[0, 1, 2, 3],  # a list (a range would round-trip to a list and break ==)
-        scheduler=Pct(depth=4),
+        scheduler=PCTScheduler(depth=4),
         concurrency=3,
         act_count=7,
         coverage_plateau=0,

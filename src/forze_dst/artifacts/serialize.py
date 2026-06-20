@@ -32,16 +32,16 @@ from forze_dst.latency import (
     Pareto,
     Uniform,
 )
-from forze_dst.scheduler import Fifo, Pct, Random, SchedulerSpec
+from forze_dst.scheduler import FIFOScheduler, PCTScheduler, RandomScheduler, SchedulerSpec
 
 # ----------------------- #
 
 
 def _scheduler_to_dict(spec: SchedulerSpec) -> dict[str, Any]:
-    if isinstance(spec, Pct):
+    if isinstance(spec, PCTScheduler):
         return {"kind": "pct", "depth": spec.depth, "steps": spec.steps}
 
-    return {"kind": "random" if isinstance(spec, Random) else "fifo"}
+    return {"kind": "random" if isinstance(spec, RandomScheduler) else "fifo"}
 
 
 # ....................... #
@@ -51,13 +51,13 @@ def _scheduler_from_dict(data: dict[str, Any] | str) -> SchedulerSpec:
     # Tolerate the pre-tagged-union format: a bare ``"pct"`` string carried ``pct_depth`` /
     # ``pct_steps`` as sibling keys (handled by the caller, which passes the whole config dict).
     if isinstance(data, str):
-        return Fifo() if data == "fifo" else Random()
+        return FIFOScheduler() if data == "fifo" else RandomScheduler()
 
     kind = data["kind"]
     if kind == "pct":
-        return Pct(depth=data.get("depth", 3), steps=data.get("steps", 50))
+        return PCTScheduler(depth=data.get("depth", 3), steps=data.get("steps", 50))
 
-    return Fifo() if kind == "fifo" else Random()
+    return FIFOScheduler() if kind == "fifo" else RandomScheduler()
 
 
 # ....................... #
@@ -301,7 +301,7 @@ def config_from_dict(data: dict[str, Any]) -> SimulationConfig:
     # Legacy bundles stored ``scheduler`` as a bare ``"pct"`` string with sibling pct_depth/steps.
     raw_scheduler = data["scheduler"]
     if isinstance(raw_scheduler, str) and raw_scheduler == "pct":
-        scheduler: SchedulerSpec = Pct(
+        scheduler: SchedulerSpec = PCTScheduler(
             depth=data.get("pct_depth", 3), steps=data.get("pct_steps", 50)
         )
     else:
