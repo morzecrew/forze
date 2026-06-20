@@ -22,8 +22,8 @@ from typing import Any, AsyncIterator, Protocol, Sequence, final, runtime_checka
 import attrs
 
 from forze.base.primitives import monotonic
-from forze_dst.invariants import Invariant, Violation
-from forze_dst.recorder import History, record_event
+from forze_dst.oracle.invariants import Invariant, Violation
+from forze_dst.oracle.recorder import History, record_event
 
 # ----------------------- #
 

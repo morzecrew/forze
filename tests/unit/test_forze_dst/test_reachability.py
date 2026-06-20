@@ -24,7 +24,7 @@ from forze_dst import (
     reached_labels,
     sometimes,
 )
-from forze_dst.recorder import Recorder, bind_recorder
+from forze_dst.oracle.recorder import Recorder, bind_recorder
 from forze_mock import MockDepsModule
 
 # ----------------------- #

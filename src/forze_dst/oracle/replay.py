@@ -14,8 +14,8 @@ from typing import Awaitable, Callable, Iterable, Sequence, TypeVar, final
 
 import attrs
 
-from forze_dst.invariants import Invariant, Violation, check
-from forze_dst.recorder import History, Recorder, bind_recorder
+from forze_dst.oracle.invariants import Invariant, Violation, check
+from forze_dst.oracle.recorder import History, Recorder, bind_recorder
 from forze_dst.runtime import run_simulation
 from forze_dst.time_source import DEFAULT_EPOCH
 
@@ -97,9 +97,9 @@ class ViolationReport:
     # ....................... #
 
     def format(self) -> str:
-        """Render this counterexample as a readable causal report (see ``forze_dst.report``)."""
+        """Render this counterexample as a readable causal report (see ``forze_dst.oracle.report``)."""
 
-        from forze_dst.report import format_report
+        from forze_dst.oracle.report import format_report
 
         return format_report(self)
 

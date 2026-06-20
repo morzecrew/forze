@@ -10,7 +10,7 @@ modeled at the seam as the gated surfaces becoming *unreachable* — a retryable
 correct retry/outbox flow survives and heals while a naive one loses work).
 
 Distributed invariants — mutual exclusion (no split brain), exactly-once-effect, no lost
-update, linearizability — are the ordinary :mod:`forze_dst.invariants`, asserted over the
+update, linearizability — are the ordinary :mod:`forze_dst.oracle.invariants`, asserted over the
 folded multi-node history. On a violation the cluster minimizes by **dropping nodes** (the
 classic "it already breaks with two") and returns a reproducible :class:`ViolationReport`.
 """
@@ -45,11 +45,11 @@ from forze_dst.config import (
     SimulationConfig,
 )
 from forze_dst.faults import SimulatedCrash, compile_fault_policy
-from forze_dst.projection import fold_runtime_trace
-from forze_dst.invariants import Invariant, check
+from forze_dst.engines.projection import fold_runtime_trace
+from forze_dst.oracle.invariants import Invariant, check
 from forze_dst.latency import compile_latency
 from forze_dst.oracle import ViolationReport, minimize
-from forze_dst.recorder import History, Recorder, bind_recorder, record_event
+from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scheduler import pct_scheduler_factory
 
@@ -183,7 +183,7 @@ class Cluster:
         :meth:`run` stops at the first violating seed — right for finding a bug, wrong for a
         cross-sweep *reachability* check, which can only conclude a state was never reached after
         the whole sweep. Feed the result to
-        :func:`~forze_dst.reachability.assess_reachability` to prove the dangerous interleavings
+        :func:`~forze_dst.oracle.reachability.assess_reachability` to prove the dangerous interleavings
         (partition isolated a contender, crash mid-flush, …) actually fired across the sweep.
         """
 

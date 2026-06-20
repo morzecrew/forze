@@ -1,7 +1,7 @@
 """Trace projection — fold the engine's runtime trace into history, then derive operation events.
 
 The bridge between the execution engine's :class:`~forze.application.execution.tracing` trace and
-the oracle's :class:`~forze_dst.recorder.History`. After a run, :func:`fold_runtime_trace` copies
+the oracle's :class:`~forze_dst.oracle.recorder.History`. After a run, :func:`fold_runtime_trace` copies
 every engine trace event into the recorded history (keeping its virtual-time stamp), then
 :func:`project_operation_events` derives one convenience ``operation`` event per invoke→terminal
 boundary — pairing each terminal to the *exact* invoke it belongs to by the correlation id the
@@ -11,11 +11,10 @@ a run to its observable effect order, the equivalence key the DPOR engine prunes
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
 from typing import Any, Sequence
 
 from forze.application.execution import ExecutionContext
-from forze_dst.recorder import History, current_recorder, record_event
+from forze_dst.oracle.recorder import History, current_recorder, record_event
 
 # ----------------------- #
 
@@ -96,9 +95,7 @@ def project_operation_events(trace_events: Sequence[Any]) -> None:
     is immediately followed by its invoke with no await), while *cascade* invokes (a saga /
     event-handler sub-operation, flagged ``nested`` on the trace) consume no anchor and are
     attributed ``call_id=-1``. The verdicts of ``completes_within`` / ``single_key_per_operation``
-    and the report's ``call_id`` are therefore precise, not best-effort. (A terminal without a
-    correlation id — none today; ``run_operation`` is the sole emitter and always stamps one —
-    falls back to per-op FIFO.)"""
+    and the report's ``call_id`` are therefore precise, not best-effort."""
 
     recorder = current_recorder()
 
@@ -110,30 +107,23 @@ def project_operation_events(trace_events: Sequence[Any]) -> None:
         e for e in trace_events if e.domain == "operation" and e.phase == "invoke"
     ]
 
-    # Terminals indexed by correlation id (the invoke seq they carry back), with a per-op FIFO
-    # fallback for any terminal that predates correlation ids.
-    by_corr: dict[int, Any] = {}
-    fifo: dict[str, deque[Any]] = defaultdict(deque)
-    for event in trace_events:
-        if event.domain == "operation" and event.phase in ("complete", "error"):
-            if event.corr is not None:
-                by_corr[event.corr] = event
-            else:
-                fifo[event.op].append(event)
+    # Terminals indexed by the correlation id (their invoke's seq) ``run_operation`` stamps.
+    by_corr: dict[int, Any] = {
+        event.corr: event
+        for event in trace_events
+        if event.domain == "operation" and event.phase in ("complete", "error")
+    }
 
     top_level = 0
     for invoke in invokes:
         call_id: Any = -1  # a cascade has no top-level driver / op_start anchor
-        if not getattr(invoke, "nested", False):
+        if not invoke.nested:
             anchor = op_starts[top_level] if top_level < len(op_starts) else None
             if anchor is not None:
                 call_id = anchor.fields.get("call_id")
             top_level += 1
 
-        terminal = by_corr.pop(invoke.seq, None)
-        if terminal is None:
-            queue = fifo.get(invoke.op)
-            terminal = queue.popleft() if queue else None
+        terminal = by_corr.get(invoke.seq)
 
         if terminal is None:
             outcome, error = "incomplete", None

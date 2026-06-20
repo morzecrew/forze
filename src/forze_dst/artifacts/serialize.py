@@ -3,7 +3,7 @@
 A found bug reproduces only if the *whole* configuration that produced it travels with the seed —
 fault policy, latency profile, partition schedule, crash policy, scheduler, counts. This module
 turns a :class:`SimulationConfig` into plain JSON-able dicts and back, faithfully, so a
-:class:`~forze_dst.bundle.FailureBundle` is self-contained and a replay re-runs the exact
+:class:`~forze_dst.artifacts.bundle.FailureBundle` is self-contained and a replay re-runs the exact
 configuration rather than re-deriving an approximation from CLI flags. Edge cases handled: the
 distribution union (tagged by ``kind``), ``timedelta`` (seconds), ``frozenset`` (sorted list), the
 ``datetime`` epoch (ISO-8601), and the ``StrEnum`` knobs.

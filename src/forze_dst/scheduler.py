@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Any, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, Sequence, final, runtime_checkable
+
+import attrs
 
 # ----------------------- #
 
@@ -40,11 +42,12 @@ class Scheduler(Protocol):
 # ....................... #
 
 
-class RandomScheduler:
+@final
+@attrs.define
+class RandomScheduler(Scheduler):
     """Uniformly shuffle each tick's ready callbacks."""
 
-    def __init__(self, rng: random.Random) -> None:
-        self._rng = rng
+    _rng: random.Random
 
     def reorder(self, ready: list[Any], step: int) -> list[Any]:
         del step
@@ -66,7 +69,9 @@ def _task_of(handle: Any) -> asyncio.Task[Any] | None:
 # ....................... #
 
 
-class PCTScheduler:
+@final
+@attrs.define
+class PCTScheduler(Scheduler):
     """A PCT scheduler: priority-ordered tasks with ``d-1`` random priority-change points.
 
     *depth* is the bug depth the run targets (``d``); *steps* is an estimate of the number
@@ -78,19 +83,23 @@ class PCTScheduler:
     makes deep interleavings reachable with a useful probability.
     """
 
-    def __init__(self, rng: random.Random, *, depth: int = 3, steps: int = 50) -> None:
-        self._rng = rng
-        self._depth = max(1, depth)
-        self._priorities: dict[asyncio.Task[Any], float] = {}
+    _rng: random.Random
+    _depth: int = 3
+    _steps: int = 50
+    _priorities: dict[asyncio.Task[Any], float] = attrs.field(factory=dict, init=False)
+    _change_points: dict[int, float] = attrs.field(factory=dict, init=False)
+
+    def __attrs_post_init__(self) -> None:
+        self._depth = max(1, self._depth)
 
         # d-1 change points at random ticks, sorted ascending; each demotes to a distinct
         # value below the high band, earlier change points staying above later ones.
         points = sorted(
-            self._rng.randint(1, max(1, steps)) for _ in range(self._depth - 1)
+            self._rng.randint(1, max(1, self._steps)) for _ in range(self._depth - 1)
         )
-        self._change_points: dict[int, float] = {
-            point: -(index + 1) for index, point in enumerate(points)
-        }
+        self._change_points.update(
+            {point: -(index + 1) for index, point in enumerate(points)}
+        )
 
     # ....................... #
 
@@ -124,7 +133,9 @@ class PCTScheduler:
 # ....................... #
 
 
-class SystematicScheduler:
+@final
+@attrs.define
+class SystematicScheduler(Scheduler):
     """Deterministically pick which ready callback runs first each tick, per a choice vector.
 
     At tick *i* the callback at index ``choices[i] % n`` (of the ``n`` ready) is moved to the
@@ -133,10 +144,9 @@ class SystematicScheduler:
     enumerate the alternatives at each branch — the basis for systematic interleaving search.
     """
 
-    def __init__(self, choices: Sequence[int]) -> None:
-        self._choices = list(choices)
-        self._index = 0
-        self.branching: list[int] = []
+    _choices: Sequence[int]
+    _index: int = attrs.field(default=0, init=False)
+    branching: list[int] = attrs.field(factory=list, init=False)
 
     def reorder(self, ready: list[Any], step: int) -> list[Any]:
         del step

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Sequence
 
-from forze_dst.cases import OperationCase
+from forze_dst.engines.cases import OperationCase
 from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
 from forze_dst.engines import (
     coverage_sweep,

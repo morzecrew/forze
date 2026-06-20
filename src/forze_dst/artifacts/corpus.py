@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
-from forze_dst.coverage import behavioral_fingerprint
+from forze_dst.oracle.coverage import behavioral_fingerprint
 
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport
-    from forze_dst.recorder import History
+    from forze_dst.oracle.recorder import History
 
 # ----------------------- #
 
@@ -51,7 +51,7 @@ class RegressionEntry:
     so a regression found under one configuration is not silently reported clean under another."""
 
     behavioral_fingerprint: str | None = None
-    """Opt-in handler-logic signature (:func:`~forze_dst.coverage.behavioral_fingerprint`) of the
+    """Opt-in handler-logic signature (:func:`~forze_dst.oracle.coverage.behavioral_fingerprint`) of the
     run that found the seed — an ordered, PII-free digest of its execution-trace shape. ``None``
     (default) keeps the structural-only posture. When set, a replay whose behavior digest differs
     has *drifted* (the code's logic moved on even if its contracts didn't); see
@@ -125,7 +125,7 @@ def entry_from_report(
 
     *explore* is the exploration-knob snapshot needed to reproduce (so ``replay`` does not
     depend on the current CLI flags matching the find). With *strict_behavior* the entry also
-    records the run's :func:`~forze_dst.coverage.behavioral_fingerprint`, so a later replay can
+    records the run's :func:`~forze_dst.oracle.coverage.behavioral_fingerprint`, so a later replay can
     warn when the handler logic has drifted (see :meth:`RegressionEntry.behavior_drifted`).
     """
 

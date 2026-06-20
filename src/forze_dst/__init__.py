@@ -26,9 +26,9 @@ from .latency import (
     Pareto,
     Uniform,
 )
-from .cases import OperationCase
+from .engines.cases import OperationCase
 from .harness import Simulation
-from .invariants import (
+from .oracle.invariants import (
     Invariant,
     Violation,
     check,
@@ -41,7 +41,7 @@ from .invariants import (
     operation_succeeds,
     single_key_per_operation,
 )
-from .linearizability import (
+from .oracle.linearizability import (
     RegisterSpec,
     SequentialSpec,
     is_linearizable,
@@ -53,7 +53,7 @@ from .loop import (
     SimulationDeadlock,
     SimulationEventLoop,
 )
-from .corpus import (
+from .artifacts.corpus import (
     RegressionEntry,
     append_regression,
     entry_from_report,
@@ -61,8 +61,8 @@ from .corpus import (
 )
 from .oracle import ViolationReport, explore, minimize, run_recorded
 from .reactive import ReactiveMap
-from .report import CausalGraph, OperationSpan, TraceStep, format_report
-from .recorder import (
+from .oracle.report import CausalGraph, OperationSpan, TraceStep, format_report
+from .oracle.recorder import (
     Event,
     History,
     Recorder,
@@ -82,27 +82,27 @@ from .config import (
     Strategy,
 )
 from .cluster import Cluster
-from .coverage import CoverageStats, behavioral_coverage, behavioral_fingerprint
+from .oracle.coverage import CoverageStats, behavioral_coverage, behavioral_fingerprint
 from .explore_guided import (
     Genome,
     GuidedStats,
     coverage_guided_search,
     mutate,
 )
-from .sweep import (
+from .artifacts.sweep import (
     SeedOutcome,
     SimulationSeedRunner,
     SweepResult,
     parallel_sweep,
     sweep,
 )
-from .serialize import config_from_dict, config_to_dict
-from .bundle import (
+from .artifacts.serialize import config_from_dict, config_to_dict
+from .artifacts.bundle import (
     FailureBundle,
     bundle_from_report,
     replay_bundle,
 )
-from .reachability import (
+from .oracle.reachability import (
     ReachabilityReport,
     assess_reachability,
     reached,

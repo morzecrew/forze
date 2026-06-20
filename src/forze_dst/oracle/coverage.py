@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING, final
 
 import attrs
 
-from forze_dst.recorder import History
+from forze_dst.oracle.recorder import History
 
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport
-    from forze_dst.reachability import ReachabilityReport
+    from forze_dst.oracle.reachability import ReachabilityReport
 
 # ----------------------- #
 
@@ -141,7 +141,7 @@ class CoverageStats:
     reachability: "ReachabilityReport | None" = None
     """Cross-sweep reachability outcome, when ``config.reachability_targets`` was declared: which
     "sometimes" states actually fired across the swept seeds (``None`` when none were declared).
-    A non-empty :attr:`~forze_dst.reachability.ReachabilityReport.unreached` is false confidence —
+    A non-empty :attr:`~forze_dst.oracle.reachability.ReachabilityReport.unreached` is false confidence —
     a target the sweep never drove."""
 
     # ....................... #

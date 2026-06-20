@@ -25,10 +25,10 @@ from forze.application.execution import (
 from forze.application.execution.interception import LatencyModel, PortInterceptor
 from forze.application.execution.operations import run_operation
 from forze.base.primitives import derive_seed
-from forze_dst.cases import OperationCase, Call
+from forze_dst.engines.cases import OperationCase, Call
 from forze_dst.faults import compile_fault_policy
 from forze_dst.latency import compile_latency
-from forze_dst.recorder import record_event
+from forze_dst.oracle.recorder import record_event
 
 if TYPE_CHECKING:
     from forze_dst.harness import Simulation
@@ -213,7 +213,7 @@ async def run_call(
     **outcome** is the engine trace's to record (``run_operation`` emits an invoke→complete/error
     boundary, classified ``ok``/``failed``/``error``), and the harness projects per-op ``operation``
     events from that single source when folding the trace (see
-    :func:`~forze_dst.projection.fold_runtime_trace`). A domain failure or a bug is swallowed here
+    :func:`~forze_dst.engines.projection.fold_runtime_trace`). A domain failure or a bug is swallowed here
     so one call's failure never aborts the concurrent batch; a
     :class:`~forze_dst.faults.SimulatedCrash` (a ``BaseException``) is *not* caught — it propagates
     to model the process dying.

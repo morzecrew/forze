@@ -13,14 +13,14 @@ import random
 from typing import TYPE_CHECKING, Sequence
 
 from forze.base.primitives import derive_seed
-from forze_dst import context
-from forze_dst.cases import Call, OperationCase
+from forze_dst.engines import context
+from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.config import SchedulerKind, SimulationConfig
 from forze_dst.engines import op_case
 from forze_dst.explore_guided import Genome, GuidedStats, coverage_guided_search
-from forze_dst.invariants import check
+from forze_dst.oracle.invariants import check
 from forze_dst.oracle import ViolationReport, minimize
-from forze_dst.recorder import History
+from forze_dst.oracle.recorder import History
 from forze_dst.scheduler import pct_scheduler_factory
 
 if TYPE_CHECKING:

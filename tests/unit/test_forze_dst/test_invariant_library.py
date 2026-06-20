@@ -35,7 +35,7 @@ from forze_dst import (
     operation_succeeds,
     single_key_per_operation,
 )
-from forze_dst.recorder import Event, History
+from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule
 
 # ----------------------- #

@@ -3,7 +3,7 @@
 The oracle's substrate. Code under simulation calls :func:`record_event` to log domain
 facts (an effect applied, a lock acquired, an id minted); the recorder stamps each with
 the virtual monotonic clock and a sequence number. Invariants (see
-:mod:`forze_dst.invariants`) then assert over the resulting :class:`History` — *DST only
+:mod:`forze_dst.oracle.invariants`) then assert over the resulting :class:`History` — *DST only
 finds the bugs you assert*. The recorder is ambient (a ContextVar, like the time/entropy
 seams), so deep handler code can record without threading a history object through.
 """

@@ -5,7 +5,7 @@ act calls and run them concurrently under perturbation. Three search frontends s
 (:func:`run_scenario`): :func:`explore` (per-seed sweep + greedy act minimization), :func:`explore_hypothesis`
 (Hypothesis generates + shrinks the ``(seed, act-plan)`` space), and :func:`explore_dpor` (systematic
 interleaving search over one fixed workload, pruned by observable-effect equivalence). Logic only —
-the run substrate lives in :mod:`forze_dst.context`.
+the run substrate lives in :mod:`forze_dst.engines.context`.
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import derive_seed
-from forze_dst import context, projection
+from forze_dst.engines import context, projection
 from forze_dst.faults import SimulatedCrash
-from forze_dst.invariants import check
+from forze_dst.oracle.invariants import check
 from forze_dst.oracle import ViolationReport, minimize
-from forze_dst.recorder import History, Recorder, bind_recorder, record_event
+from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
 from forze_dst.scheduler import SystematicScheduler

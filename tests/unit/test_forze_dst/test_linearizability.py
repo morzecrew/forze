@@ -19,8 +19,8 @@ from forze_dst import (
     record_operation,
     run_recorded,
 )
-from forze_dst.linearizability import _Op, is_linearizable
-from forze_dst.recorder import Event, History
+from forze_dst.oracle.linearizability import _Op, is_linearizable
+from forze_dst.oracle.recorder import Event, History
 
 # ----------------------- #
 

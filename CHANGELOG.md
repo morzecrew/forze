@@ -81,7 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_mock` internal restructure** — misplaced root modules moved under `adapters/` (outbox, embeddings, resilience, all re-exported from `forze_mock.adapters`) and the per-spec configurable factories moved to `forze_mock.execution.factories`. Top-level imports are unchanged; only direct deep-submodule imports of those modules need updating.
 
-- **`forze_dst` internal restructure** — the ~1700-line harness split into a thin `Simulation` facade (~240 lines) over a `forze_dst.engines` package (one module per strategy: op_case, scenario+hypothesis+dpor, crash_restart, guided, coverage_sweep), a shared run substrate (`forze_dst.context`), and trace folding (`forze_dst.projection`). Public API unchanged; the engines are now a documented plugin seam.
+- **`forze_dst` internal restructure** — the ~1700-line harness split into a thin `Simulation` facade (~240 lines) over cohesive subpackages: `engines/` (one module per strategy — op_case, scenario+hypothesis+dpor, crash_restart, guided — plus the shared run substrate and trace folding), `oracle/` (recorder, invariants, linearizability, reachability, report, coverage, replay), and `artifacts/` (corpus, bundle, serialize, sweep). Top-level modules dropped from 29 to 15. Public API unchanged; the engines are a documented plugin seam, and the schedulers now explicitly implement the `Scheduler` protocol.
 
 ### Fixed
 

@@ -31,8 +31,8 @@ from forze_dst import (
     mutate,
     record_event,
 )
-from forze_dst.coverage import behavioral_coverage
-from forze_dst.recorder import Event, History
+from forze_dst.oracle.coverage import behavioral_coverage
+from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule
 
 # ----------------------- #

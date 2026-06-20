@@ -21,7 +21,7 @@ from forze_dst import (
     linearizable,
     record_operation,
 )
-from forze_dst.recorder import record_event
+from forze_dst.oracle.recorder import record_event
 
 # ----------------------- #
 

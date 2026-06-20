@@ -11,7 +11,7 @@ entries, so exploration drifts toward the frontier instead of sampling blindly.
 Determinism holds end to end: every choice — which corpus entry, which mutation, the re-roll
 sub-seed — is drawn from one RNG seeded off the master seed, so the whole guided run (corpus and
 all) reproduces from that single seed. The engine is substrate-free: it is handed a ``run`` that
-turns a :class:`Genome` into a :class:`~forze_dst.recorder.History`, so it can be unit-tested on a
+turns a :class:`Genome` into a :class:`~forze_dst.oracle.recorder.History`, so it can be unit-tested on a
 synthetic oracle and reused over any harness.
 """
 
@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Callable, final
 import attrs
 
 from forze.base.primitives import derive_seed
-from forze_dst.coverage import Behavior, behavioral_coverage
-from forze_dst.recorder import History
+from forze_dst.oracle.coverage import Behavior, behavioral_coverage
+from forze_dst.oracle.recorder import History
 
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport

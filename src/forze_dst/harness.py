@@ -6,7 +6,7 @@ hold. ``run`` / ``coverage`` / ``coverage_guided`` are the entrypoints; each bin
 run-scoped :attr:`active_config` (so the run substrate can compile its seeded faults/latency) and
 delegates to an engine under :mod:`forze_dst.engines` — one module per strategy (op-case, scenario +
 Hypothesis + DPOR, crash/restart, coverage-guided mutation). The substrate they share lives in
-:mod:`forze_dst.context`; trace folding in :mod:`forze_dst.projection`.
+:mod:`forze_dst.engines.context`; trace folding in :mod:`forze_dst.engines.projection`.
 
 ``deps`` is a *factory* (called fresh per run) so each run starts from clean state, and so this
 package stays free of any adapter dependency — the app supplies the mock module.
@@ -24,12 +24,12 @@ from forze.application.execution.interception import LatencyModel, PortIntercept
 from forze.application.execution.lifecycle import FrozenLifecyclePlan
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze_dst import engines
-from forze_dst.cases import OperationCase
+from forze_dst.engines.cases import OperationCase
 from forze_dst.config import SimulationConfig
-from forze_dst.coverage import CoverageStats
+from forze_dst.oracle.coverage import CoverageStats
 from forze_dst.derive import DEFAULT_CREATE_VERBS
 from forze_dst.explore_guided import GuidedStats
-from forze_dst.invariants import Invariant
+from forze_dst.oracle.invariants import Invariant
 from forze_dst.oracle import ViolationReport
 from forze_dst.reactive import ReactiveMap
 from forze_dst.scenario import Scenario
@@ -150,7 +150,7 @@ class Simulation:
         operation outcomes, port edges, injected faults — accumulates, with reachability folded in.
         The sweep stops early after ``config.coverage_plateau`` consecutive seeds add nothing new,
         or at the first violating seed (whose minimized report rides on
-        :attr:`~forze_dst.coverage.CoverageStats.violation`). Faults / latency apply as in
+        :attr:`~forze_dst.oracle.coverage.CoverageStats.violation`). Faults / latency apply as in
         :meth:`run`; the streams are still seeded, so the whole sweep reproduces.
         """
 

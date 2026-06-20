@@ -47,7 +47,7 @@ _ALLOWLIST: frozenset[str] = frozenset(
         # The coverage-guided fuzzer builds its mutation-lineage RNG from the master seed.
         "forze_dst/explore_guided.py",
         # The run substrate + engines build their seeded fault/input/crash RNGs from sub-seeds.
-        "forze_dst/context.py",
+        "forze_dst/engines/context.py",
         "forze_dst/engines/scenario.py",
         "forze_dst/engines/crash_restart.py",
         "forze_dst/engines/guided.py",

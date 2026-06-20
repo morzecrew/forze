@@ -204,10 +204,10 @@ class SimulationConfig:
 
     # Reachability ("sometimes") assertions (``Simulation.coverage`` / ``Cluster``).
     reachability_targets: frozenset[str] = frozenset()
-    """States the sweep must reach at least once (``forze_dst.reachability.reached`` labels). A
+    """States the sweep must reach at least once (``forze_dst.oracle.reachability.reached`` labels). A
     target no seed ever hits is a *reachability failure* — false confidence, the dangerous
     interleaving never fired. ``coverage()`` folds these across the sweep into
-    :attr:`~forze_dst.coverage.CoverageStats.reachability`. Empty disables the check."""
+    :attr:`~forze_dst.oracle.coverage.CoverageStats.reachability`. Empty disables the check."""
 
     # Nondeterminism streams (compiled per-run from sub-seeds derived from the master seed).
     faults: FaultPolicy | None = None

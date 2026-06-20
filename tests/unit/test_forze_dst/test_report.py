@@ -32,7 +32,7 @@ from forze_dst import (
     record_event,
 )
 from forze_dst.oracle import ViolationReport
-from forze_dst.recorder import Event, History
+from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule
 
 # ----------------------- #

@@ -25,7 +25,7 @@ from typing import Callable, Sequence, final
 import attrs
 
 from forze_dst.config import SchedulerKind, SimulationConfig
-from forze_dst.coverage import Behavior
+from forze_dst.oracle.coverage import Behavior
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
 

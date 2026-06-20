@@ -26,7 +26,7 @@ from forze.domain.models import (
     ReadDocument,
 )
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
-from forze_dst.recorder import History
+from forze_dst.oracle.recorder import History
 from forze_mock import MockDepsModule
 
 # ----------------------- #

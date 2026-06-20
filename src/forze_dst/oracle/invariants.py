@@ -13,7 +13,7 @@ from typing import Any, Callable, Sequence, final
 
 import attrs
 
-from forze_dst.recorder import Event, History
+from forze_dst.oracle.recorder import Event, History
 
 # ----------------------- #
 

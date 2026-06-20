@@ -3,7 +3,7 @@
 The simplest strategy: each seed draws its own workload of independent operation calls (picked by
 weight, inputs auto-built) and runs them under controlled concurrency + scheduler perturbation. On
 the first violating seed the workload is greedily minimized to a 1-minimal set that still fails and
-returned as a reproducible report. Logic only — the run substrate lives in :mod:`forze_dst.context`.
+returned as a reproducible report. Logic only — the run substrate lives in :mod:`forze_dst.engines.context`.
 """
 
 from __future__ import annotations
@@ -13,11 +13,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Sequence
 
 from forze.base.primitives import derive_seed
-from forze_dst import context, projection
-from forze_dst.cases import OperationCase, Call
-from forze_dst.invariants import check
+from forze_dst.engines import context, projection
+from forze_dst.engines.cases import OperationCase, Call
+from forze_dst.oracle.invariants import check
 from forze_dst.oracle import ViolationReport, minimize
-from forze_dst.recorder import History, Recorder, bind_recorder
+from forze_dst.oracle.recorder import History, Recorder, bind_recorder
 from forze_dst.runtime import run_simulation
 from forze_dst.time_source import DEFAULT_EPOCH
 

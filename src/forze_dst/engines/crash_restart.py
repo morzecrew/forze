@@ -16,12 +16,12 @@ from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.base.primitives import derive_seed
-from forze_dst import context, projection
+from forze_dst.engines import context, projection
 from forze_dst.engines import scenario as scenario_engine
 from forze_dst.faults import SimulatedCrash, compile_crash
-from forze_dst.invariants import check
+from forze_dst.oracle.invariants import check
 from forze_dst.oracle import ViolationReport, minimize
-from forze_dst.recorder import History, Recorder, bind_recorder, record_event
+from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
 

@@ -16,7 +16,7 @@ from forze.application.contracts.dlock import DistributedLockSpec
 from forze.base.primitives import monotonic
 
 from forze_dst import expect, explore, mutual_exclusion
-from forze_dst.recorder import record_event
+from forze_dst.oracle.recorder import record_event
 from forze_mock.adapters import MockDistributedLockAdapter, MockState
 
 # ----------------------- #

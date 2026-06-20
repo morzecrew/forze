@@ -18,7 +18,7 @@ The two semantics this module gives you:
   never fired, so a flagship scenario can assert ``report.satisfied``.
 
 :func:`reached` marks a state from inside code under simulation — ambient and a no-op
-outside a recorded run, exactly like :func:`~forze_dst.recorder.record_event`, so it is
+outside a recorded run, exactly like :func:`~forze_dst.oracle.recorder.record_event`, so it is
 cheap and safe to leave in scenario/handler code.
 """
 
@@ -29,7 +29,7 @@ from typing import Any, Callable, Iterable, Mapping, final
 
 import attrs
 
-from forze_dst.recorder import History, record_event
+from forze_dst.oracle.recorder import History, record_event
 
 # ----------------------- #
 
@@ -40,7 +40,7 @@ REACHED_KIND = "reachability"
 def reached(label: str, **fields: Any) -> None:
     """Mark that the current run reached the notable state *label*.
 
-    A no-op outside a recorded simulation (like :func:`~forze_dst.recorder.record_event`),
+    A no-op outside a recorded simulation (like :func:`~forze_dst.oracle.recorder.record_event`),
     so it is safe to leave in scenario or handler code. *label* is the reachability target a
     sweep asserts was hit at least once; *fields* are optional context for the report.
     """

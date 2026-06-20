@@ -1,7 +1,7 @@
 """Observed causal graph + counterexample renderer.
 
 The other half of "make the simulation make sense": once the engine trace is folded into
-the recorded :class:`~forze_dst.recorder.History` (operation boundaries, port calls,
+the recorded :class:`~forze_dst.oracle.recorder.History` (operation boundaries, port calls,
 transaction enter/exit, domain-event dispatch — each virtual-time stamped), a run is no
 longer a flat event log but a *causal structure*. :class:`CausalGraph` reconstructs it —
 operation **spans** (each call's invoke→return interval) with the trace **steps** that ran
@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, final
 
 import attrs
 
-from forze_dst.recorder import Event, History
+from forze_dst.oracle.recorder import Event, History
 
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport

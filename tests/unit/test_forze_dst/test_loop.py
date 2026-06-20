@@ -34,9 +34,9 @@ from forze_dst import (
     load_regressions,
     operation_succeeds,
 )
-from forze_dst.invariants import Violation
+from forze_dst.oracle.invariants import Violation
 from forze_dst.oracle import ViolationReport
-from forze_dst.recorder import Event, History, Recorder
+from forze_dst.oracle.recorder import Event, History, Recorder
 
 
 def test_recorded_event_fields_are_immutable() -> None:
@@ -50,7 +50,7 @@ def test_recorded_event_fields_are_immutable() -> None:
 
     with pytest.raises(TypeError):
         event.fields["final"] = 2  # type: ignore[index]
-from forze_dst.report import CausalGraph
+from forze_dst.oracle.report import CausalGraph
 from forze_mock import MockDepsModule
 
 # ----------------------- #

@@ -3,7 +3,7 @@
 The end of the loop, made portable. A :class:`~forze_dst.oracle.ViolationReport` reproduces only
 in the process that found it (it carries live objects); a :class:`FailureBundle` is the durable
 form — the seed, the *full* :class:`SimulationConfig` that produced it (faults, latency,
-partitions, crash, scheduler — via :mod:`forze_dst.serialize`), the minimized workload for the eye,
+partitions, crash, scheduler — via :mod:`forze_dst.artifacts.serialize`), the minimized workload for the eye,
 the registry fingerprint, and the ``module:attr`` of the app under test — as plain JSON. Hand the
 file to anyone (or a CI artifact store) and :func:`replay_bundle` re-runs the exact configuration at
 that seed, so the bug reproduces on another machine, another day, from one command.
@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING, Any, Callable, cast, final
 
 import attrs
 
-from forze_dst.serialize import config_from_dict, config_to_dict
-from forze_dst.sweep import _load_simulation  # pyright: ignore[reportPrivateUsage]
+from forze_dst.artifacts.serialize import config_from_dict, config_to_dict
+from forze_dst.artifacts.sweep import _load_simulation  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from forze_dst.config import SimulationConfig
@@ -37,7 +37,7 @@ class FailureBundle:
     target: str | None
     """The ``module:attr`` import string of the Simulation the bug was found against."""
     config: dict[str, Any]
-    """The full run configuration (:func:`~forze_dst.serialize.config_to_dict`)."""
+    """The full run configuration (:func:`~forze_dst.artifacts.serialize.config_to_dict`)."""
     workload: tuple[tuple[str, str], ...] = ()
     """The minimized workload as ``(op, repr(arg))`` pairs — for reading; reproduction comes from
     the seed + config, not from re-injecting these."""

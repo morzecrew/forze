@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING
 
 from forze.base.primitives import derive_seed
 from forze_dst.config import SchedulerKind, SimulationConfig
-from forze_dst.coverage import Behavior, CoverageStats, behavioral_coverage
+from forze_dst.oracle.coverage import Behavior, CoverageStats, behavioral_coverage
 from forze_dst.engines import scenario as scenario_engine
-from forze_dst.invariants import check
+from forze_dst.oracle.invariants import check
 from forze_dst.oracle import ViolationReport
-from forze_dst.reachability import ReachabilityReport, reached_labels
+from forze_dst.oracle.reachability import ReachabilityReport, reached_labels
 from forze_dst.scenario import Scenario
 from forze_dst.scheduler import pct_scheduler_factory
 
