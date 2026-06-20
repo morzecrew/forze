@@ -196,6 +196,12 @@ class SimulationConfig:
     coverage (the exploration has saturated). ``0`` disables early-stop (sweep every seed).
     Lets a sweep right-size itself instead of guessing a fixed seed count."""
 
+    # Coverage-guided mutation (``Simulation.coverage_guided``).
+    guided_budget: int = 256
+    """Total runs a coverage-guided mutation sweep may spend before stopping (it also stops early
+    on the first invariant violation). The guided run is one seed-derived lineage rooted at the
+    first value of :attr:`seeds`; ``count`` sizes the initial workload and bounds growth."""
+
     # Reachability ("sometimes") assertions (``Simulation.coverage`` / ``Cluster``).
     reachability_targets: frozenset[str] = frozenset()
     """States the sweep must reach at least once (``forze_dst.reachability.reached`` labels). A

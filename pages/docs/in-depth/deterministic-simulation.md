@@ -164,6 +164,21 @@ On a violation the cluster minimises by **dropping nodes** — the smallest clus
 
 A window's `loss` turns a clean cut into a **flaky link**: `Partition(start=0.5, end=1.5, isolated=frozenset({1}), loss=0.3)` drops 30 % of node 1's gated calls (seeded) instead of all of them, and overlapping windows on different node groups give an **asymmetric** split. `loss=1.0` (the default) is the hard partition above.
 
+## Guided exploration — fuzz toward new behaviour
+
+A uniform seed sweep knows when to *stop* (coverage plateaus) but not *where to look* — every seed is independent, so behaviour gated behind a rare combination of operations is found only by luck. `Simulation.coverage_guided(config, cases=…)` is **feedback-directed** instead: it keeps a corpus of inputs that each unlocked new behavioural coverage and *mutates* the productive ones (tweak an op, grow or shrink the workload, re-roll the schedule + faults), under an AFL-style power schedule that pushes the newest coverage frontier.
+
+```python
+stats = simulation.coverage_guided(
+    SimulationConfig(seeds=range(1), count=8, concurrency=4, guided_budget=512),
+    cases=[OperationCase(op="deposit"), OperationCase(op="withdraw")],
+)
+print(stats.format())          # behaviours covered, corpus size, any violation
+report = stats.violation       # minimized + reproducible, if a run tripped an invariant
+```
+
+The whole run is one seed-derived lineage — corpus, mutations, and all — rooted at the first seed and bounded by `guided_budget`, so it reproduces exactly. It reaches behaviour a uniform sweep misses at equal budget, and stops on the first violation with the same minimized report the other strategies produce.
+
 ## The loop — find, reproduce, minimise, regress
 
 ![A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever](../_diagrams/light/dst-loop.svg#only-light){ data-src="../_diagrams/light/dst-loop.svg#only-light" }

@@ -44,6 +44,8 @@ _ALLOWLIST: frozenset[str] = frozenset(
         "forze_dst/harness.py",
         "forze_dst/cluster.py",
         "forze_dst/scheduler.py",
+        # The coverage-guided fuzzer builds its mutation-lineage RNG from the master seed.
+        "forze_dst/explore_guided.py",
     }
 )
 

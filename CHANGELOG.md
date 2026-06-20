@@ -67,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Strict behavioral-fingerprint regressions (opt-in)** — `behavioral_fingerprint(history)` is an ordered, PII-free digest of a run's execution-trace shape (its handler-logic signature); `entry_from_report(…, strict_behavior=True)` stores it on the corpus entry and `RegressionEntry.behavior_drifted(history)` flags a replay whose logic has drifted even when the structural operation-catalog fingerprint is unchanged. Default stays structural-only.
 
+- **Coverage-guided mutation** — `Simulation.coverage_guided(config, cases=…)` replaces the uniform seed sweep with feedback-directed fuzzing: it keeps a corpus of inputs that each unlocked new behavioral coverage and mutates the productive ones (tweak an op, grow/shrink the workload, re-roll the schedule + faults) under an AFL-style power schedule that pushes the newest coverage frontier, so behavior gated behind a rare op combination is reached far sooner than by independent seeds. Adds the reusable engine `forze_dst.coverage_guided_search` over a `Genome`/`mutate`, returning `GuidedStats` with the minimized counterexample. The whole run is one seed-derived lineage (`config.guided_budget` runs), so it reproduces from the master seed.
+
 ### Changed
 
 - **Lazy transaction acquisition, default for Postgres, Mongo, and Firestore** *(behavior change)* — a transaction scope defers connection checkout until the first operation, so pre-query CPU or external work no longer parks a connection idle-in-transaction. A connect failure now surfaces at the first operation rather than scope entry; opt out with `lazy_transaction=False`.

@@ -38,6 +38,11 @@ from forze.application.execution.operations.registry import FrozenOperationRegis
 from forze.base.primitives import derive_seed
 from forze_dst.config import SchedulerKind, SimulationConfig, Strategy
 from forze_dst.coverage import Behavior, CoverageStats, behavioral_coverage
+from forze_dst.explore_guided import (
+    Genome,
+    GuidedStats,
+    coverage_guided_search,
+)
 from forze_dst.derive import DEFAULT_CREATE_VERBS
 from forze_dst.derive import derive_scenario as _derive_from_catalog
 from forze_dst.faults import SimulatedCrash, compile_crash, compile_fault_policy
@@ -524,6 +529,129 @@ class Simulation:
                 plateaued=plateaued,
                 violation=violation,
                 reachability=reachability,
+            )
+
+        finally:
+            self._active_config = None
+
+    # ....................... #
+
+    def coverage_guided(
+        self,
+        config: SimulationConfig,
+        *,
+        cases: Sequence[OperationCase],
+    ) -> GuidedStats:
+        """Coverage-guided **mutation** sweep over *cases* — feedback-directed, not uniform.
+
+        Where :meth:`coverage` samples independent seeds until coverage plateaus, this keeps a
+        corpus of inputs that each unlocked new behavior and *mutates* the productive ones (tweak
+        an op, grow/shrink the workload, re-roll the schedule + faults), so exploration drifts
+        toward the frontier — finding behavior gated behind a rare op combination that a uniform
+        sweep reaches only by luck. The whole guided run is one seed-derived lineage rooted at the
+        first value of ``config.seeds`` and bounded by ``config.guided_budget``; it stops early on
+        the first invariant violation and rides the minimized counterexample on
+        :attr:`~forze_dst.explore_guided.GuidedStats.violation`. Every choice derives from the
+        master seed, so the run — corpus and all — reproduces.
+        """
+
+        self._active_config = config
+        try:
+            catalog = list(cases)
+            if not catalog:
+                raise ValueError("coverage_guided requires cases=")
+
+            master = next(iter(config.seeds), 0)
+            max_ops = max(config.count * 2, config.count + 8)
+
+            factory = (
+                pct_scheduler_factory(depth=config.pct_depth, steps=config.pct_steps)
+                if config.scheduler is SchedulerKind.PCT
+                else None
+            )
+
+            def make_scheduler(seed: int) -> object | None:
+                # Fresh per run (a PCT scheduler is stateful), seeded from the genome's seed.
+                return (
+                    None if factory is None else factory(derive_seed(seed, "schedule"))
+                )
+
+            def workload_of(genome: Genome) -> list[_Call]:
+                rng = random.Random(  # nosec B311 - seeded input generation, not crypto
+                    derive_seed(genome.seed, "input")
+                )
+                return [
+                    _Call(
+                        op=catalog[index].op,
+                        arg=self._input_for(catalog[index].op, rng, catalog[index]),
+                    )
+                    for index in genome.ops
+                ]
+
+            def run_items(items: Sequence[_Call], seed: int) -> History:
+                return self._run(
+                    items,
+                    concurrency=config.concurrency,
+                    seed=seed,
+                    schedule_seed=(
+                        derive_seed(seed, "schedule") if config.perturb else None
+                    ),
+                    epoch=config.epoch,
+                    scheduler=make_scheduler(seed),
+                )
+
+            def run_genome(genome: Genome) -> History:
+                return run_items(workload_of(genome), genome.seed)
+
+            def on_violation(genome: Genome) -> ViolationReport | None:
+                workload = workload_of(genome)
+
+                def fails(subset: Sequence[_Call]) -> bool:
+                    return bool(check(run_items(subset, genome.seed), self.invariants))
+
+                if not fails(workload):
+                    return (
+                        None  # a heisenbug that did not survive re-run; report nothing
+                    )
+
+                minimal = minimize(workload, fails)
+                final_history = run_items(minimal, genome.seed)
+
+                return ViolationReport(
+                    seed=genome.seed,
+                    schedule_seed=(
+                        derive_seed(genome.seed, "schedule") if config.perturb else None
+                    ),
+                    violations=tuple(check(final_history, self.invariants)),
+                    workload=tuple((call.op, call.arg) for call in minimal),
+                    history=final_history,
+                    registry_fingerprint=self.fingerprint(),
+                )
+
+            # The initial workload mirrors a normal op-case run at the master seed.
+            gen_rng = random.Random(  # nosec B311 - seeded workload generation, not crypto
+                derive_seed(master, "input")
+            )
+            seed_genome = Genome(
+                ops=tuple(
+                    gen_rng.choices(
+                        range(len(catalog)),
+                        weights=[case.weight for case in catalog],
+                        k=config.count,
+                    )
+                ),
+                seed=master,
+            )
+
+            return coverage_guided_search(
+                seed_genome=seed_genome,
+                run=run_genome,
+                is_violation=lambda history: bool(check(history, self.invariants)),
+                on_violation=on_violation,
+                master_seed=master,
+                budget=config.guided_budget,
+                catalog_size=len(catalog),
+                max_ops=max_ops,
             )
 
         finally:

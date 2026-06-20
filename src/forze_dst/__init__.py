@@ -80,6 +80,12 @@ from .config import (
 )
 from .cluster import Cluster
 from .coverage import CoverageStats, behavioral_coverage, behavioral_fingerprint
+from .explore_guided import (
+    Genome,
+    GuidedStats,
+    coverage_guided_search,
+    mutate,
+)
 from .reachability import (
     ReachabilityReport,
     assess_reachability,
@@ -177,6 +183,10 @@ __all__ = [
     "CoverageStats",
     "behavioral_coverage",
     "behavioral_fingerprint",
+    "Genome",
+    "GuidedStats",
+    "coverage_guided_search",
+    "mutate",
     "reached",
     "reached_labels",
     "sometimes",
