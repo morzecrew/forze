@@ -63,7 +63,7 @@ from forze.application.execution import DeploymentProfile
 runtime = build_runtime(..., deployment=DeploymentProfile.FLEET)
 ```
 
-Under `FLEET`, assembly fails for any lifecycle step marked
+Under `FLEET`, building the runtime fails for any lifecycle step marked
 `mutates_shared_state=True` that is not also `singleton_guarded`. The markers
 are declared by the step author — mutation can't be detected structurally, so
 the validation is honest-by-declaration: mark the steps that touch shared

@@ -9,32 +9,6 @@ operation (or a single call) with rate limits, retries, timeouts, and circuit
 breakers — declaratively, by name — so fault tolerance lives in the wiring, not
 scattered through handlers.
 
-## A policy is composed strategies
-
-A `ResiliencePolicy` is an ordered stack of strategy objects (outer → inner:
-rate limit → bulkhead → circuit breaker → retry → timeout), plus optional
-fallback and hedge:
-
-| Strategy | What it does |
-|----------|--------------|
-| **Rate limit** | token bucket — sustained `permits/per`, capacity `burst or permits`; an empty bucket **rejects immediately** with `throttled` |
-| **Retry** | re-run on a [retryable](errors.md) failure — `max_attempts`, `backoff` (base, max, multiplier, jitter) |
-| **Timeout** | a per-attempt timeout |
-| **Circuit breaker** | stop calling a failing dependency once a failure ratio trips, for a cool-off window |
-| **Adaptive throttle** | [shed proportionally](#shedding-for-a-degraded-downstream) when the downstream stops accepting — the breaker's sibling for degraded-but-alive dependencies |
-| **Bulkhead** | cap concurrent calls — fixed, or [adaptive / delay-based](#bulkheads) — with an optional managed queue |
-| **Fallback / Hedge** | a fallback value on failure; or race staggered attempts |
-
-Retry only fires on kinds that declare themselves **retryable** —
-`concurrency`, `infrastructure`, and `throttled` (see
-[Errors & failures](errors.md)). You can't retry a `validation` or `domain`
-failure, by design.
-
-When the invocation carries a [deadline](deadlines.md), it gates the whole
-strategy chain from the outside — and a retry abandons a backoff sleep that
-would outlive the budget, surfacing the real error instead of a pointless
-wait.
-
 ## Built-in policies
 
 Two ship ready to use, no `ResilienceSpec` required:
@@ -65,6 +39,32 @@ result = await ctx.resilience().run(
     Each attempt opens a **fresh transaction**, so a failed attempt's writes roll
     back before the next one — retries never leave half-applied state. It also
     means retried work must be safe to repeat.
+
+## A policy is composed strategies
+
+When the built-ins aren't enough, compose your own. A `ResiliencePolicy` is an
+ordered stack of strategy objects (outer → inner: rate limit → bulkhead →
+circuit breaker → retry → timeout), plus optional fallback and hedge:
+
+| Strategy | What it does |
+|----------|--------------|
+| **Rate limit** | token bucket — sustained `permits/per`, capacity `burst or permits`; an empty bucket **rejects immediately** with `throttled` |
+| **Retry** | re-run on a [retryable](errors.md) failure — `max_attempts`, `backoff` (base, max, multiplier, jitter) |
+| **Timeout** | a per-attempt timeout |
+| **Circuit breaker** | stop calling a failing dependency once a failure ratio trips, for a cool-off window |
+| **Adaptive throttle** | [shed proportionally](#shedding-for-a-degraded-downstream) when the downstream stops accepting — the breaker's sibling for degraded-but-alive dependencies |
+| **Bulkhead** | cap concurrent calls — fixed, or [adaptive / delay-based](#bulkheads) — with an optional managed queue |
+| **Fallback / Hedge** | a fallback value on failure; or race staggered attempts |
+
+Retry only fires on kinds that declare themselves **retryable** —
+`concurrency`, `infrastructure`, and `throttled` (see
+[Errors & failures](errors.md)). You can't retry a `validation` or `domain`
+failure, by design.
+
+When the invocation carries a [deadline](deadlines.md), it gates the whole
+strategy chain from the outside — and a retry abandons a backoff sleep that
+would outlive the budget, surfacing the real error instead of a pointless
+wait.
 
 ## Rate limiting
 

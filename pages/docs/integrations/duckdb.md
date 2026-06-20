@@ -8,9 +8,8 @@ summary: In-process analytics over a data lake — query Parquet, Iceberg and De
 DuckDB engine. Where [ClickHouse](clickhouse.md) and [BigQuery](bigquery.md) are
 standing warehouses, DuckDB is *compute without a server*: point it at Parquet,
 CSV, Iceberg or Delta files on S3/GCS (or local disk) and it runs the scan
-in-process. It's the cheap path for "hard analytics" that don't need
-ultra-low-latency serving — and, being Docker-free, an excellent analytics
-double in tests.
+in-process. It suits heavy analytics that don't need ultra-low-latency
+serving — and, being Docker-free, it doubles as an analytics backend in tests.
 
 It is **query-only** (no ingest, no table management): named, parameterized
 queries returning typed rows, exactly like the other analytics adapters.
