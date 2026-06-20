@@ -1,12 +1,12 @@
 """Tracing wrapper for configurable dependency ports."""
 
-import inspect
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, Mapping, cast
 from uuid import UUID
 
 import attrs
 
+from ..port_proxy_base import PortProxy
 from .emit import record
 
 if TYPE_CHECKING:
@@ -23,10 +23,9 @@ def _default_tx_depth() -> int:
 
 
 @attrs.define(slots=True)
-class TracingPortProxy:
+class TracingPortProxy(PortProxy):
     """Wrap a port and record sync and async method calls."""
 
-    inner: Any
     deps: "FrozenDeps"
     domain: str
     surface: str
@@ -162,33 +161,30 @@ class TracingPortProxy:
 
     # ....................... #
 
-    def __getattr__(self, name: str) -> Any:
-        attr = getattr(self.inner, name)
+    def _wrap_async_gen(self, name: str, attr: Any) -> Any:
+        @wraps(attr)
+        async def traced_async_gen(*args: Any, **kwargs: Any) -> Any:
+            self._record_call(name, args, kwargs)
+            async for item in attr(*args, **kwargs):
+                yield item
 
-        if not callable(attr):
-            return attr
+        return traced_async_gen
 
-        if inspect.isasyncgenfunction(attr):
+    # ....................... #
 
-            @wraps(attr)
-            async def traced_async_gen(*args: Any, **kwargs: Any) -> Any:
-                self._record_call(name, args, kwargs)
-                async for item in attr(*args, **kwargs):
-                    yield item
+    def _wrap_async(self, name: str, attr: Any) -> Any:
+        @wraps(attr)
+        async def traced_async(*args: Any, **kwargs: Any) -> Any:
+            self._record_call(name, args, kwargs)
+            result = await attr(*args, **kwargs)
+            self._record_return(name, args, result)
+            return result
 
-            return traced_async_gen
+        return traced_async
 
-        if inspect.iscoroutinefunction(attr):
+    # ....................... #
 
-            @wraps(attr)
-            async def traced_async(*args: Any, **kwargs: Any) -> Any:
-                self._record_call(name, args, kwargs)
-                result = await attr(*args, **kwargs)
-                self._record_return(name, args, result)
-                return result
-
-            return traced_async
-
+    def _wrap_sync(self, name: str, attr: Any) -> Any:
         @wraps(attr)
         def traced_sync(*args: Any, **kwargs: Any) -> Any:
             self._record_call(name, args, kwargs)
