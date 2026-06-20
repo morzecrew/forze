@@ -210,6 +210,33 @@ forze dst topology  app:simulation
 
 The registry fingerprint catches a *structural* change (a contract or plan fact moved). For a stricter guard, `entry_from_report(…, strict_behavior=True)` also records a `behavioral_fingerprint` — an ordered, PII-free digest of the run's execution-trace shape — so `RegressionEntry.behavior_drifted(history)` flags a replay whose handler *logic* drifted even when its contracts didn't. Opt-in; the default stays structural.
 
+## Scale and portable replay
+
+Because each seed is fully deterministic **in its own process**, inter-seed parallelism is free. `parallel_sweep` fans disjoint seeds across a process pool and folds every worker's result into one picture — violating seeds, the union of behaviours covered, and a throughput metric — so a nightly fuzz explores thousands of timelines per wall-hour:
+
+```python
+from forze_dst import parallel_sweep, SimulationSeedRunner
+
+result = parallel_sweep(
+    SimulationSeedRunner(target="app:simulation", fault_error=0.1),
+    seeds=range(10_000),
+    workers=16,
+)
+print(result.format())          # seeds/s, behaviours, first violating seed
+```
+
+The runner holds only a `module:attr` string and primitives, so it pickles across processes where a live `Simulation` could not — each worker re-imports the app and runs one seed.
+
+And a found bug travels: `FailureBundle` serialises the seed *and the full config that produced it* (faults, latency, partitions, crash, scheduler) to one JSON file, and `replay_bundle` re-runs it anywhere.
+
+```python
+from forze_dst import bundle_from_report, replay_bundle, FailureBundle
+
+bundle_from_report(report, config, target="app:simulation").save("bug.json")
+# … on another machine, another day …
+report = replay_bundle(FailureBundle.load("bug.json"))   # reproduces, from one command
+```
+
 !!! warning "DST is only as honest as the mock"
 
     DST trusts that the in-memory transaction manager rolls back faithfully. The default

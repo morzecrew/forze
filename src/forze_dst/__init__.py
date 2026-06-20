@@ -86,6 +86,19 @@ from .explore_guided import (
     coverage_guided_search,
     mutate,
 )
+from .sweep import (
+    SeedOutcome,
+    SimulationSeedRunner,
+    SweepResult,
+    parallel_sweep,
+    sweep,
+)
+from .serialize import config_from_dict, config_to_dict
+from .bundle import (
+    FailureBundle,
+    bundle_from_report,
+    replay_bundle,
+)
 from .reachability import (
     ReachabilityReport,
     assess_reachability,
@@ -187,6 +200,16 @@ __all__ = [
     "GuidedStats",
     "coverage_guided_search",
     "mutate",
+    "SeedOutcome",
+    "SweepResult",
+    "sweep",
+    "parallel_sweep",
+    "SimulationSeedRunner",
+    "config_to_dict",
+    "config_from_dict",
+    "FailureBundle",
+    "bundle_from_report",
+    "replay_bundle",
     "reached",
     "reached_labels",
     "sometimes",
