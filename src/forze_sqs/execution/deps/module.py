@@ -11,8 +11,8 @@ from forze.application.contracts.tenancy import (
     validate_module_tenancy,
     warn_integration_routes,
 )
-from forze.application.execution import Deps, DepsModule
-from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
+from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.client import RoutedSQSClient, SQSClientPort

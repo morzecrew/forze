@@ -7,7 +7,7 @@ import attrs
 
 from forze.base.exceptions import exc
 
-from .frame import ResolutionFrame, format_cycle_error
+from forze.application.contracts.deps import ResolutionFrame, format_cycle_error
 from .tracer import ResolutionTracer
 
 # ----------------------- #

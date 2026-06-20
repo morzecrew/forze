@@ -11,9 +11,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.outbox import IntegrationEvent
 from forze.application.execution.context.invocation import InvocationContext
-from forze.base.primitives import utcnow, uuid7
-
-from .clock import outbox_clock
+from forze.base.primitives import HybridLogicalClock, utcnow, uuid7
 
 # ----------------------- #
 
@@ -25,6 +23,9 @@ class InvocationOutboxEnricher:
 
     inv: InvocationContext
     """Active invocation context for the request."""
+
+    clock: HybridLogicalClock
+    """The runtime's node-local outbox HLC (``ExecutionContext.outbox_clock``)."""
 
     # ....................... #
 
@@ -51,5 +52,5 @@ class InvocationOutboxEnricher:
             correlation_id=metadata.correlation_id if metadata is not None else None,
             causation_id=metadata.causation_id if metadata is not None else None,
             ordering_key=ordering_key,
-            hlc=outbox_clock().now(),
+            hlc=self.clock.now(),
         )

@@ -9,9 +9,8 @@ import pytest
 
 from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_HLC
 from forze.application.contracts.inbox import InboxSpec
-from forze.application.execution.outbox.clock import outbox_clock, set_outbox_clock
 from forze.base.exceptions import CoreException
-from forze.base.primitives import HlcTimestamp, HybridLogicalClock, uuid7
+from forze.base.primitives import HlcTimestamp, uuid7
 from tests.support.execution_context import context_from_modules
 
 from forze_kits.integrations.inbox import process_with_inbox
@@ -52,31 +51,24 @@ async def test_first_message_processed_then_duplicate_skipped() -> None:
 
 async def test_duplicate_does_not_advance_the_hlc_clock() -> None:
     # The causal merge runs only after the dedup mark succeeds, so a replayed
-    # message cannot advance (or be used to skew) the process-global clock.
-    saved = outbox_clock()
-    set_outbox_clock(HybridLogicalClock())
+    # message cannot advance (or be used to skew) the node's clock.
+    ctx = context_from_modules(MockDepsModule())
 
-    try:
-        ctx = context_from_modules(MockDepsModule())
+    async def handler(_msg: _Msg) -> None: ...
 
-        async def handler(_msg: _Msg) -> None: ...
+    ahead = HlcTimestamp(ctx.outbox_clock.now().physical_ms + 1, 0)
+    msg = _Msg(key="evt-hlc", headers={HEADER_HLC: ahead.encode()})
 
-        ahead = HlcTimestamp(outbox_clock().now().physical_ms + 1, 0)
-        msg = _Msg(key="evt-hlc", headers={HEADER_HLC: ahead.encode()})
+    await process_with_inbox(
+        ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
+    )
+    after_first = ctx.outbox_clock.last
 
-        await process_with_inbox(
-            ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
-        )
-        after_first = outbox_clock().last
+    await process_with_inbox(  # duplicate
+        ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
+    )
 
-        await process_with_inbox(  # duplicate
-            ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
-        )
-
-        assert outbox_clock().last == after_first  # duplicate did not advance it
-
-    finally:
-        set_outbox_clock(saved)
+    assert ctx.outbox_clock.last == after_first  # duplicate did not advance it
 
 
 async def test_prefers_key_over_id() -> None:

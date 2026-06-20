@@ -21,7 +21,7 @@ from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
 from forze.application.contracts.tenancy import TenancyDeps
 from forze.application.contracts.transaction import TransactionDeps
-from forze.base.primitives import StrKey
+from forze.base.primitives import HybridLogicalClock, StrKey
 
 from ..deps import FrozenDeps
 from ..tracing import (
@@ -36,6 +36,15 @@ from .outbox_staging import OutboxStagingContext
 from .transaction import TransactionContext
 
 # ----------------------- #
+
+
+def _new_outbox_clock() -> HybridLogicalClock:
+    # Lazy import: ``outbox/__init__`` pulls enrichment → context, so importing
+    # ``outbox.clock`` at module load would cycle. The factory runs only when a
+    # context is built, by which point every module is loaded.
+    from ..outbox.clock import new_outbox_clock
+
+    return new_outbox_clock()
 
 
 @final
@@ -54,6 +63,12 @@ class ExecutionContext:
     """Whether resolved dependencies are memoized for this scope — both configurable
     ports and simple deps (see
     :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_ports`)."""
+
+    outbox_clock: HybridLogicalClock = attrs.field(factory=_new_outbox_clock)
+    """This runtime's node-local HLC for causal outbox ordering. One per context, so a
+    multi-runtime simulation gives each node an independent clock; a single-process app
+    has the one process clock as before. See
+    :mod:`forze.application.execution.outbox.clock`."""
 
     # ....................... #
 

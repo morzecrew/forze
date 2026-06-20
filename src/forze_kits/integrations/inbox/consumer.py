@@ -16,15 +16,16 @@ from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.context.invocation import InvocationMetadata
-from forze.application.execution.outbox.clock import outbox_clock
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import HlcTimestamp, StrKey, uuid7
+from forze.base.primitives import HlcTimestamp, HybridLogicalClock, StrKey, uuid7
 
 # ----------------------- #
 
 
-def _merge_inbound_hlc(headers: Mapping[str, object]) -> None:
-    """Advance the process clock past a consumed event's HLC (best-effort).
+def _merge_inbound_hlc(
+    headers: Mapping[str, object], clock: HybridLogicalClock
+) -> None:
+    """Advance this node's clock past a consumed event's HLC (best-effort).
 
     So an event produced *in reaction* to this one causally follows it. A
     malformed or absent header is ignored — ordering is best-effort.
@@ -36,7 +37,7 @@ def _merge_inbound_hlc(headers: Mapping[str, object]) -> None:
         return
 
     try:
-        outbox_clock().update(HlcTimestamp.parse(raw))
+        clock.update(HlcTimestamp.parse(raw))
 
     except CoreException:
         return
@@ -177,10 +178,10 @@ async def process_with_inbox[M](
             if not await port.mark_if_unseen(str(inbox_spec.name), dedup_id):
                 return False
 
-            # Only a genuinely new message advances the process clock — a
+            # Only a genuinely new message advances this node's clock — a
             # replayed/duplicate one must not (it would let forged or repeated
             # headers skew causality).
-            _merge_inbound_hlc(headers)
+            _merge_inbound_hlc(headers, ctx.outbox_clock)
 
             await handler(message)
             return True

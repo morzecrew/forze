@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Sequence, TypeVar
 
-from forze.application.contracts.deps import DepKey
+from .keys import DepKey
 from forze.base.primitives import StrKey, StrKeyMapping
 
 from .container import Deps

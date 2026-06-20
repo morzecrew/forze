@@ -32,7 +32,7 @@ def _coord(
     return OutboxStaging(
         staging=ctx.outbox_staging,
         spec=spec,
-        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
         flush_rows=_flush,
     )
 
@@ -53,7 +53,7 @@ def test_construction_without_cipher_for_encrypting_spec_fails_closed() -> None:
         OutboxStaging(
             staging=ctx.outbox_staging,
             spec=spec,
-            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
             flush_rows=_flush,
         )
 
@@ -77,7 +77,7 @@ async def test_flush_delegates_buffered_rows() -> None:
     coord = OutboxStaging(
         staging=ctx.outbox_staging,
         spec=spec,
-        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
         flush_rows=_flush,
     )
 
@@ -122,7 +122,7 @@ async def test_cannot_stage_after_flush() -> None:
     coord = OutboxStaging(
         staging=ctx.outbox_staging,
         spec=spec,
-        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
         flush_rows=_flush,
     )
     await coord.flush()
@@ -147,7 +147,7 @@ async def test_stage_in_new_task_after_flush_does_not_raise() -> None:
     coord = OutboxStaging(
         staging=ctx.outbox_staging,
         spec=spec,
-        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
         flush_rows=_flush,
     )
 
@@ -181,7 +181,7 @@ async def test_concurrent_tasks_do_not_share_flushed_state() -> None:
     coord = OutboxStaging(
         staging=ctx.outbox_staging,
         spec=spec,
-        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
         flush_rows=_flush,
     )
 

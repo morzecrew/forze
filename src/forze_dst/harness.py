@@ -19,7 +19,8 @@ from typing import Awaitable, Callable, Sequence
 
 import attrs
 
-from forze.application.execution import DepsModule, ExecutionContext
+from forze.application.contracts.deps import DepsModule
+from forze.application.execution import ExecutionContext
 from forze.application.execution.interception import LatencyModel, PortInterceptor
 from forze.application.execution.lifecycle import FrozenLifecyclePlan
 from forze.application.execution.operations.registry import FrozenOperationRegistry

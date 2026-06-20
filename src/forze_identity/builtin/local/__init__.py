@@ -1,6 +1,6 @@
 """File/env-backed local identity configuration for demos and MVPs (not for production)."""
 
-from forze.application.execution import Deps
+from forze.application.contracts.deps import Deps
 
 from .api_key_verifier import LocalApiKeyVerifier
 from .config import LocalApiKeyEntry, LocalIdentityConfig

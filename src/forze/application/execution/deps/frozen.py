@@ -31,7 +31,7 @@ from .resolution import (
     ResolutionTracer,
     frame_for,
 )
-from .store import PlainDepsMap, ProviderStore, RoutedDeps
+from forze.application.contracts.deps import PlainDepsMap, ProviderStore, RoutedDeps
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext

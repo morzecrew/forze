@@ -4,7 +4,7 @@ import pytest
 
 from forze.application.contracts.deps import DepKey
 from forze.application.execution.deps.resolution import frame_for
-from forze.application.execution.deps.store import ProviderStore
+from forze.application.contracts.deps import ProviderStore
 from forze.base.exceptions import CoreException
 
 _A = DepKey[str]("a")

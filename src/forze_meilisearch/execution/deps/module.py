@@ -16,8 +16,8 @@ from forze.application.contracts.tenancy import (
     warn_dynamic_relation_with_tenant_aware,
     warn_integration_routes,
 )
-from forze.application.execution import Deps, DepsModule
-from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
+from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,

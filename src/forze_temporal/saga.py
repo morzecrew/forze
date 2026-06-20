@@ -20,7 +20,7 @@ from forze.application.contracts.saga import SagaProgress, SagaStepKind
 
 
 @final
-@attrs.define(slots=True)
+@attrs.define(slots=True, kw_only=True)
 class TemporalSaga:
     """Drives :class:`SagaProgress` from inside a Temporal workflow.
 
@@ -34,7 +34,9 @@ class TemporalSaga:
     and runs no compensation.
     """
 
-    name: str = attrs.field(kw_only=True)
+    name: str
+
+    # ....................... #
 
     _progress: SagaProgress = attrs.field(
         init=False,

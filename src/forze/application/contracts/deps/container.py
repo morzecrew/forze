@@ -7,12 +7,12 @@ from typing import Any, final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.deps import DepKey
+from .keys import DepKey
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from .resolution import ResolutionFrame
+from .frame import ResolutionFrame
 from .store import PlainDepsMap, ProviderStore, RoutedDeps
 
 # ----------------------- #

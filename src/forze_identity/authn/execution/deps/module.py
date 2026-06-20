@@ -25,7 +25,7 @@ from forze.application.contracts.authn import (
     TokenVerifierDepKey,
     TokenVerifierDepPort,
 )
-from forze.application.execution import Deps, DepsModule
+from forze.application.contracts.deps import Deps, DepsModule
 from forze.application.integrations.authn import LOCKOUT_COUNTER_ROUTE, LockoutConfig
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping

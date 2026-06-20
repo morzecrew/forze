@@ -14,7 +14,7 @@ from forze.application.contracts.tenancy import (
     TenantIsolationMode,
     validate_module_tenancy,
 )
-from forze.application.execution import Deps, DepsModule
+from forze.application.contracts.deps import Deps, DepsModule
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...adapters import InngestStepAdapter

@@ -10,7 +10,7 @@ from forze.application.contracts.tenancy import (
     TenantResolverDepKey,
     TenantResolverDepPort,
 )
-from forze.application.execution import Deps, DepsModule
+from forze.application.contracts.deps import Deps, DepsModule
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
 

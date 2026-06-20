@@ -1,12 +1,9 @@
 """The saga's pivot/compensation decision logic — shared by every driver.
 
 A pure, ctx-free state machine over *structural* saga info (step kinds + names, no
-callables), so an in-process executor and a Temporal workflow can drive identical
+callables), so an in-process executor and a external executor can drive identical
 semantics. The driver performs the I/O (run an action / activity, run compensations); the
 coordinator decides *compensate-in-reverse vs forward-incomplete* and builds the errors.
-
-Kept lean (only ``base.exceptions`` + same-package ``SagaStepKind``) to hold the
-``contracts.saga`` boundary and stay safe to import inside the Temporal workflow sandbox.
 """
 
 from typing import Sequence, final
@@ -26,8 +23,7 @@ class SagaProgress:
     """Tracks registered + completed steps and the pivot boundary, builds saga failures.
 
     Steps are registered incrementally via :meth:`register`, so a driver that declares
-    steps one at a time (the Temporal workflow helper) and one that has them all up front
-    (the in-process executor) share the exact same decision logic.
+    steps one at a time and one that has them all up front share the exact same decision logic.
     """
 
     saga_name: str

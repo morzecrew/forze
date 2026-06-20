@@ -7,7 +7,7 @@ runtime *port-event* tracing, which lives in ``execution.tracing``.
 """
 
 from .context import ResolutionContext
-from .frame import ResolutionFrame, format_cycle_error, frame_for
+from forze.application.contracts.deps import ResolutionFrame, format_cycle_error, frame_for
 from .graph import DepsResolutionTrace
 from .tracer import (
     NOOP_RESOLUTION_TRACER,

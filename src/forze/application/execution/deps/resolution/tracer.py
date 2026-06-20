@@ -6,7 +6,7 @@ import attrs
 
 from forze.base.primitives import ContextVarTrace
 
-from .frame import ResolutionFrame
+from forze.application.contracts.deps import ResolutionFrame
 from .graph import DepsResolutionTrace
 
 # ----------------------- #

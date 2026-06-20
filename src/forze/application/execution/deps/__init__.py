@@ -1,6 +1,6 @@
-from .container import Deps
+from forze.application.contracts.deps import Deps
 from .frozen import FrozenDeps, FrozenDepsRegistry
-from .module import DepsModule
+from forze.application.contracts.deps import DepsModule
 from .registry import DepsRegistry
 from .resolution import (
     NOOP_RESOLUTION_TRACER,
@@ -12,7 +12,7 @@ from .resolution import (
     ResolutionTracer,
     resolution_tracer_from_flag,
 )
-from .store import PlainDepsMap, RoutedDeps
+from forze.application.contracts.deps import PlainDepsMap, RoutedDeps
 
 # ----------------------- #
 

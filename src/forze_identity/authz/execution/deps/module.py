@@ -13,7 +13,7 @@ from forze.application.contracts.authz import (
     PrincipalRegistryDepKey,
     RoleAssignmentDepKey,
 )
-from forze.application.execution import Deps, DepsModule
+from forze.application.contracts.deps import Deps, DepsModule
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze_identity._routes import normalize_route_set as _normalize_route_set

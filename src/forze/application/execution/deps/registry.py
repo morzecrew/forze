@@ -10,14 +10,14 @@ from forze.application._logger import logger
 
 from ..interception import PortInterceptor, PortInterceptorChain
 from ..tracing import RuntimeTracer, runtime_tracer_from_flag
-from .container import Deps
+from forze.application.contracts.deps import Deps
 from .frozen import FrozenDepsRegistry
-from .module import DepsModule
+from forze.application.contracts.deps import DepsModule
 from .resolution import (
     ResolutionTracer,
     resolution_tracer_from_flag,
 )
-from .store import ProviderStore
+from forze.application.contracts.deps import ProviderStore
 
 # ----------------------- #
 
