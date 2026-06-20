@@ -147,8 +147,31 @@
   color: var(--md-default-bg-color);
 }
 
+/* ---- fz cards ---- */
+
+.md-typeset .grid.cards.fz-cards > ul > li {
+  position: relative;
+}
+
+.md-typeset .grid.cards.fz-cards > ul > li > p:first-child > strong > a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.md-typeset .grid.cards.fz-cards > ul > li > p:first-child > strong > a {
+  position: static;
+  color: inherit;
+  text-decoration: none;
+}
+
+.md-typeset .grid.cards.fz-cards > ul > li > p:first-child > strong > a:hover {
+  text-decoration: none;
+}
+
 /* ---- Card hover lift ---- */
-.md-typeset .grid.cards > ul > li {
+/* .md-typeset .grid.cards > ul > li {
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
@@ -156,7 +179,7 @@
   border-color: var(--md-accent-fg-color);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
   transform: translateY(-2px);
-}
+} */
 
 /* ---- Version warning banner (dev / older release) ---- */
 /* The visible bar is an inner `<aside class="md-banner md-banner--warning">`
