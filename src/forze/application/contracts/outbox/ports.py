@@ -7,9 +7,21 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from .specs import OutboxSpec
-from .value_objects import IntegrationEvent, OutboxClaim
+from .value_objects import IntegrationEvent, OutboxClaim, StagedOutboxEntry
 
 # ----------------------- #
+
+
+@runtime_checkable
+class OutboxRowPersistPort(Protocol):
+    """Narrow store surface used when wiring flush into staging."""
+
+    def persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> Awaitable[int]:
+        """Insert staged rows; return count of new rows."""
+        ...
+
+
+# ....................... #
 
 
 @runtime_checkable

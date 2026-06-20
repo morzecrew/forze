@@ -22,7 +22,8 @@ from forze.application.execution import (
     ExecutionRuntime,
     FrozenDepsRegistry,
 )
-from forze.application.execution.interception import LatencyModel, PortInterceptor
+from forze.application.contracts.interception import PortInterceptor
+from forze.application.execution.interception import LatencyModel
 from forze.application.execution.operations import run_operation
 from forze.base.primitives import derive_seed
 from forze_dst.engines.cases import OperationCase, Call

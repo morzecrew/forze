@@ -30,12 +30,12 @@ from forze.application.execution import (
     ExecutionContext,
     ExecutionRuntime,
 )
-from forze.application.execution.interception import (
-    LatencyModel,
+from forze.application.contracts.interception import (
     PortCall,
     PortInterceptor,
     PortNext,
 )
+from forze.application.execution.interception import LatencyModel
 from forze.base.exceptions import exc
 from forze.base.primitives import derive_seed, monotonic
 from forze_dst.config import (

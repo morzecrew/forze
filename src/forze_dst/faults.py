@@ -28,7 +28,7 @@ from typing import final
 
 import attrs
 
-from forze.application.execution.interception import PortCall, PortNext
+from forze.application.contracts.interception import PortCall, PortNext
 from forze.base.exceptions import exc
 from forze.base.primitives import monotonic
 from forze_dst.oracle.recorder import record_event

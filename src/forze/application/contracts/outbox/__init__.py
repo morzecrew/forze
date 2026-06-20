@@ -7,7 +7,7 @@ from .deps import (
     OutboxQueryDepKey,
     OutboxQueryDepPort,
 )
-from .ports import OutboxCommandPort, OutboxQueryPort
+from .ports import OutboxCommandPort, OutboxQueryPort, OutboxRowPersistPort
 from .specs import (
     OutboxDestination,
     OutboxDestinationKind,
@@ -39,6 +39,7 @@ __all__ = [
     "OutboxQueryDepPort",
     "OutboxQueryPort",
     "OutboxRelayResult",
+    "OutboxRowPersistPort",
     "OutboxSpec",
     "OutboxStagingContext",
     "OutboxStatus",

@@ -1,4 +1,23 @@
-"""Run operations under runtime tracing for mock dry-runs and tests."""
+"""Run operations under runtime tracing for mock dry-runs and tests.
+
+:func:`run_traced_operation` is the canonical dry-run entry point: pair it with
+``MockDepsModule`` and ``DepsRegistry.with_tracing(runtime=True)``, then assert with
+integration validators. Runtime tracing records **port/coordinator** calls, not gateway
+internals — validators express handler intent; adapter-only reads after writes are
+invisible unless integration tests cover the adapter layer.
+
+Other dry-run strategies:
+
+* **Static replay** — commit a golden ``Sequence[TracingEvent]`` per operation and check
+  it with :func:`~forze.application.execution.tracing.validate.validate_runtime_trace`
+  or :func:`~forze.application.execution.tracing.match.assert_trace_contains`.
+* **Factory hot-patch** — override routed factories on a merged ``Deps`` to return
+  scripted ports backed by ``forze_mock.adapters.MockState``.
+
+The validator contract integrations implement is
+:class:`~forze.application.execution.tracing.validate.RuntimeTraceValidator` (for example
+``forze_firestore.execution.trace_validation``).
+"""
 
 from typing import TYPE_CHECKING, Any, Sequence, final
 
