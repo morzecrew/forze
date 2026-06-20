@@ -45,7 +45,7 @@ from forze_dst.config import (
     SimulationConfig,
 )
 from forze_dst.faults import SimulatedCrash, compile_fault_policy
-from forze_dst.harness import _fold_runtime_trace  # pyright: ignore[reportPrivateUsage]
+from forze_dst.projection import fold_runtime_trace
 from forze_dst.invariants import Invariant, check
 from forze_dst.latency import compile_latency
 from forze_dst.oracle import ViolationReport, minimize
@@ -258,14 +258,14 @@ class Cluster:
                             "node_error", node=node_id, error=type(error).__name__
                         )
                     finally:
-                        _fold_runtime_trace(ctx)
+                        fold_runtime_trace(ctx)
 
             await asyncio.gather(*(run_node(node_id) for node_id in node_ids))
 
             if self.observe is not None:
                 async with self._context(state, -2, seed, config, clean=True) as ctx:
                     await self.observe(ctx)
-                    _fold_runtime_trace(ctx)
+                    fold_runtime_trace(ctx)
 
         scheduler, schedule_seed = self._interleaving(seed, config)
 

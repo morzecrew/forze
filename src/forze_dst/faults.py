@@ -128,7 +128,9 @@ class PortFaultInterceptor:
             and self.probability > 0.0
             and self.rng.random() < self.probability
         ):
-            await asyncio.sleep(0)  # yield so the failure interleaves at the port boundary
+            await asyncio.sleep(
+                0
+            )  # yield so the failure interleaves at the port boundary
             _record_fault("error", call)
             raise exc.infrastructure(
                 f"injected transient fault at {call.surface}[{call.route}].{call.op}",
@@ -171,7 +173,9 @@ class CrashInterceptor:
             and self.probability > 0.0
             and self.rng.random() < self.probability
         ):
-            await asyncio.sleep(0)  # yield so the crash interleaves at the port boundary
+            await asyncio.sleep(
+                0
+            )  # yield so the crash interleaves at the port boundary
             _record_fault("crash", call)
             raise SimulatedCrash(
                 f"simulated crash at {call.surface}[{call.route}].{call.op}"
@@ -205,9 +209,7 @@ class CrashPolicy:
 
     def __attrs_post_init__(self) -> None:
         if not 0.0 <= self.probability <= 1.0:
-            raise ValueError(
-                f"probability must be in [0, 1], got {self.probability}"
-            )
+            raise ValueError(f"probability must be in [0, 1], got {self.probability}")
 
 
 # ....................... #

@@ -81,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_mock` internal restructure** — misplaced root modules moved under `adapters/` (outbox, embeddings, resilience, all re-exported from `forze_mock.adapters`) and the per-spec configurable factories moved to `forze_mock.execution.factories`. Top-level imports are unchanged; only direct deep-submodule imports of those modules need updating.
 
+- **`forze_dst` internal restructure** — the ~1700-line harness split into a thin `Simulation` facade (~240 lines) over a `forze_dst.engines` package (one module per strategy: op_case, scenario+hypothesis+dpor, crash_restart, guided, coverage_sweep), a shared run substrate (`forze_dst.context`), and trace folding (`forze_dst.projection`). Public API unchanged; the engines are now a documented plugin seam.
+
 ### Fixed
 
 - **Keyring fill-lock stripe is now cross-process stable** — the per-`key_id` crypto fill-lock stripe used Python's `hash()`, which is PYTHONHASHSEED-randomized, so the same key mapped to a different stripe each process and broke deterministic-simulation *replay*. It now uses a stable hash (`zlib.crc32`, like the L1 cache); the determinism guard additionally bans the `hash(x) % n` bucketing anti-pattern so it can't regress.

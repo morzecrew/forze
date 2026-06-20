@@ -177,16 +177,16 @@ def _racy_sim() -> Simulation:
 class TestCoverageGuidedSweep:
     def test_honors_pct_scheduler(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         # coverage() with scheduler=PCT must build a PCT scheduler, not silently shuffle.
-        from forze_dst import harness
+        from forze_dst.engines import coverage_sweep
 
         calls: list[object] = []
-        real = harness.pct_scheduler_factory
+        real = coverage_sweep.pct_scheduler_factory
 
         def spy(**kwargs: object) -> object:
             calls.append(kwargs)
             return real(**kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(harness, "pct_scheduler_factory", spy)
+        monkeypatch.setattr(coverage_sweep, "pct_scheduler_factory", spy)
 
         _clean_sim().coverage(
             SimulationConfig(

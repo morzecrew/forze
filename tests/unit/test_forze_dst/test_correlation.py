@@ -10,9 +10,7 @@ whose terminals complete out of invoke order (the verdict-flipping bug for `comp
 from __future__ import annotations
 
 from forze.application.execution.tracing.events import TracingEvent
-from forze_dst.harness import (  # pyright: ignore[reportPrivateUsage]
-    _project_operation_events,
-)
+from forze_dst.projection import project_operation_events
 from forze_dst.recorder import Recorder, bind_recorder
 
 # ----------------------- #
@@ -39,7 +37,7 @@ def _project(trace_events: list[TracingEvent], *, op_starts: list[int]) -> list[
     with bind_recorder(recorder):
         for call_id in op_starts:
             recorder.record("op_start", call_id=call_id, op="pay")
-        _project_operation_events(trace_events)
+        project_operation_events(trace_events)
 
     return [
         dict(event.fields)

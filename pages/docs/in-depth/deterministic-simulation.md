@@ -256,6 +256,32 @@ DST is judged by the bugs it finds in *real* systems — so Forze runs its own d
 
 Each scenario also keeps a *broken* twin — drop the lock, ignore the remote stamp — that the oracle catches, minimises, and reproduces, so the test proves it can still fail. The unguarded lock races to a lost update; the naive clock breaks causality. That is the bar: the framework's own concurrency code is continuously simulation-tested, and app authors inherit the same harness for free.
 
+## Extending it
+
+DST is built from small, documented seams, so you extend it without forking. Everything plugs in as a plain callable or protocol:
+
+<div class="grid cards" markdown>
+
+-   :lucide-shield-check: **Invariants**
+
+    An `Invariant` is any `Callable[[History], list[Violation]]` — write a function, pass it in `invariants=`. The built-ins are just factories returning one.
+
+-   :lucide-shuffle: **Schedulers**
+
+    `Scheduler` is a `Protocol`; supply a `scheduler_factory` (like `pct_scheduler_factory`) to drive interleavings your own way — the engines call it per run.
+
+-   :lucide-bug: **Environment**
+
+    Faults and latency are declarative data (`FaultPolicy`, `LatencyProfile`); for anything custom, the `interceptors` factory adds a seeded `PortInterceptor` chain at the port seam.
+
+-   :lucide-boxes: **Engines**
+
+    Each strategy is a free function under `forze_dst.engines` (op_case, scenario, crash_restart, guided) taking the `Simulation` as its context — call one directly, or compose your own search over the `forze_dst.context` substrate.
+
+</div>
+
+The `Simulation` class is a thin facade: `run` / `coverage` / `coverage_guided` bind the config and delegate to an engine. The trace seam is deliberately layered — the engine `RuntimeTrace` is the production tracer (id-only, PII-free), and the DST `History` is the oracle's richer view that folds it in *and* adds DST-only events (op_start anchors, `reached` markers, observe facts, crash/partition markers). They stay separate by design: keeping DST concerns out of the production trace is what lets the same tracer run in production untouched.
+
 ## See also
 
 - [Testing](testing.md) — unit and integration testing with mocks

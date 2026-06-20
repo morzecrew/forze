@@ -214,16 +214,16 @@ def test_op_case_requires_cases() -> None:
 def test_op_case_honors_pct_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
     # OP_CASE with scheduler=PCT must build a PCT scheduler, not silently fall back to the
     # random schedule-seed shuffle.
-    from forze_dst import OperationCase, harness
+    from forze_dst import OperationCase, engines
 
     calls: list[object] = []
-    real = harness.pct_scheduler_factory
+    real = engines.pct_scheduler_factory
 
     def spy(**kwargs: object) -> object:
         calls.append(kwargs)
         return real(**kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(harness, "pct_scheduler_factory", spy)
+    monkeypatch.setattr(engines, "pct_scheduler_factory", spy)
 
     _sim().run(
         SimulationConfig(
@@ -241,16 +241,16 @@ def test_op_case_honors_pct_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_hypothesis_honors_pct_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
     # HYPOTHESIS with scheduler=PCT must build a PCT scheduler (only DPOR ignores the scheduler).
-    from forze_dst import harness
+    from forze_dst import engines
 
     calls: list[object] = []
-    real = harness.pct_scheduler_factory
+    real = engines.pct_scheduler_factory
 
     def spy(**kwargs: object) -> object:
         calls.append(kwargs)
         return real(**kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(harness, "pct_scheduler_factory", spy)
+    monkeypatch.setattr(engines, "pct_scheduler_factory", spy)
 
     _sim().run(
         SimulationConfig(

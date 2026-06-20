@@ -243,7 +243,9 @@ def completes_within(op: str, seconds: float) -> Invariant:
     return _check
 
 
-def single_key_per_operation(op: str, *, surface: str = "document_command") -> Invariant:
+def single_key_per_operation(
+    op: str, *, surface: str = "document_command"
+) -> Invariant:
     """Each ``op`` execution must touch at most one entity **key** on *surface*.
 
     Reads the entity key the engine trace records for every keyed port call and attributes each
@@ -271,7 +273,10 @@ def single_key_per_operation(op: str, *, surface: str = "document_command") -> I
         keys_by_span: dict[int, set[Any]] = defaultdict(set)
 
         for event in history.of_kind("trace"):
-            if event.fields.get("surface") != surface or event.fields.get("key") is None:
+            if (
+                event.fields.get("surface") != surface
+                or event.fields.get("key") is None
+            ):
                 continue
 
             seq = int(event.fields.get("trace_seq", -1))

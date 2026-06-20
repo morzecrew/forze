@@ -26,7 +26,8 @@ from .latency import (
     Pareto,
     Uniform,
 )
-from .harness import OperationCase, Simulation
+from .cases import OperationCase
+from .harness import Simulation
 from .invariants import (
     Invariant,
     Violation,
