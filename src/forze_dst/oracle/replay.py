@@ -28,6 +28,8 @@ from forze_dst.runtime import run_simulation
 from forze_dst.time_source import DEFAULT_EPOCH
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from forze_dst.oracle.report import TimelineEntry
 
 # ----------------------- #
@@ -128,6 +130,27 @@ class ViolationReport:
         from forze_dst.oracle.report import build_timeline
 
         return build_timeline(self.history)
+
+    # ....................... #
+
+    def to_html(self, path: "str | Path | None" = None) -> str:
+        """Render a self-contained HTML time-travel viewer — a scrubber over the timeline.
+
+        Returns the HTML string; when *path* is given, also writes it there. Open the file in any
+        browser to step through the run by virtual time, or attach it to a CI artifact so a failed
+        sweep ships its own debugger.
+        """
+
+        from pathlib import Path
+
+        from forze_dst.oracle.viewer import render_html
+
+        html = render_html(self)
+
+        if path is not None:
+            Path(path).write_text(html, encoding="utf-8")
+
+        return html
 
 
 # ....................... #

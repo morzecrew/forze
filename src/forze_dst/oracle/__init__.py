@@ -72,6 +72,7 @@ from forze_dst.oracle.report import (
     format_report,
     render_timeline,
 )
+from forze_dst.oracle.viewer import render_html
 
 __all__ = [
     # recorder substrate
@@ -122,6 +123,7 @@ __all__ = [
     "format_report",
     "build_timeline",
     "render_timeline",
+    "render_html",
     "CausalGraph",
     "OperationSpan",
     "TimelineEntry",

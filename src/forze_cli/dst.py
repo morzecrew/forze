@@ -229,6 +229,11 @@ def run(
         help="On a clean scenario run, report what was exercised (never-raced ops, "
         "unfired faults) so green means something.",
     ),
+    html: str = typer.Option(
+        "",
+        metavar="FILE",
+        help="On a violation, write a self-contained HTML time-travel viewer to FILE.",
+    ),
 ) -> None:
     """Explore an auto-derived scenario; print the counterexample (exit 1 if one is found)."""
 
@@ -275,6 +280,10 @@ def run(
         return
 
     typer.echo(report.format())
+
+    if html:
+        report.to_html(html)
+        typer.echo(f"\n↳ wrote time-travel viewer to {html}")
 
     if save_regression:
         append_regression(

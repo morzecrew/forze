@@ -22,6 +22,16 @@ DST timeline (by virtual time):
   @t=0.100000  ↳ document_command[accounts].get key=42 read {'balance': 5}   ← stale read
 ```
 
+For an *interactive* scrub, `report.to_html("bug.html")` writes a self-contained viewer over that same timeline — open it in a browser and step through the run by virtual time, each step's structured detail beside it, the way a debugger walks a trace. It is one HTML file with no external assets, so it attaches to a CI artifact and a failed sweep ships its own debugger. From the command line, `forze dst run … --html bug.html` writes it on a violation.
+
+And every `report.format()` ends with a copy-pasteable repro — the seed already filled in — so going from a CI failure to a local reproduction is a paste, not a hunt:
+
+```text
+  reproduce:
+    simulation.run(SimulationConfig.reproduce(42))
+    # as a test:  assert_no_violation(simulation, SimulationConfig.reproduce(42))
+```
+
 ## Run it in your test suite
 
 The loop belongs where your other tests live. `assert_no_violation` points a normal test at a `Simulation`: it sweeps, shrinks on failure, and fails the test with the minimized counterexample as the assertion message — so a DST failure reads like any other pytest failure, seed included.

@@ -80,17 +80,34 @@ class TraceStep:
 
     seq: int
     """The engine trace's own sequence number — true execution-interleaving order."""
+
     at: float
+    """The virtual time of the call."""
+
     domain: str
+    """The domain of the call."""
+
     op: str
+    """The operation of the call."""
+
     surface: str | None
+    """The surface of the call."""
+
     route: str | None
+    """The route of the call."""
+
     phase: str | None
+    """The phase of the call."""
+
     tx_depth: int
+    """The transaction depth of the call."""
+
     key: str | None = None
     """Entity key the call targeted (e.g. a document primary key), when available."""
+
     payload: Mapping[str, Any] | None = None
     """The redaction-applied value written (under ``capture_values``), else ``None``."""
+
     result: Mapping[str, Any] | None = None
     """The redaction-applied value read back (under ``capture_values``), else ``None``."""
 
@@ -99,15 +116,19 @@ class TraceStep:
     @property
     def label(self) -> str:
         target = self.surface or self.domain
+
         if self.route:  # spec / transaction route, e.g. document_command[orders]
             target = f"{target}[{self.route}]"
+
         base = f"{target}.{self.op}" if self.op else target
+
         if self.key:
             base = f"{base} key={self.key}"
 
         # Value flow, when captured: what the call wrote / read back.
         if self.payload is not None:
             base += f" wrote {_short(dict(self.payload))}"
+
         if self.result is not None:
             base += f" read {_short(dict(self.result))}"
 
@@ -149,9 +170,12 @@ class CausalGraph:
     """Operation spans (with their nested trace steps) plus any other recorded facts."""
 
     spans: tuple[OperationSpan, ...]
+    """The operation spans."""
+
     facts: tuple[Event, ...]
     """Recorded events that are neither operations nor engine trace (e.g. ``observe``
     facts such as a final balance, or app ``record_event`` calls)."""
+
     timeline: tuple[Event, ...] = ()
     """The environment the simulator *injected*, in virtual-time order — seeded faults
     (error / timeout / crash / drop / duplicate / delay) and latency. Reproducible from the
@@ -212,9 +236,10 @@ class CausalGraph:
             )
             end_seq = int(event.fields.get("end_seq", event.seq))
             outcome = str(event.fields.get("outcome", "ok"))
+
             detail = (
                 f"error={event.fields.get('error')}"
-                if outcome in ("error", "failed")
+                if outcome in {"error", "failed"}
                 else outcome
             )
 
@@ -512,10 +537,11 @@ def render_timeline(history: History) -> str:
     }
 
     lines = ["DST timeline (by virtual time):"]
-    for entry in build_timeline(history):
-        lines.append(
-            f"  @t={entry.at:.6f}  {glyphs.get(entry.kind, '·')} {entry.label}"
-        )
+
+    lines.extend(
+        f"  @t={entry.at:.6f}  {glyphs.get(entry.kind, '·')} {entry.label}"
+        for entry in build_timeline(history)
+    )
 
     return "\n".join(lines)
 
@@ -614,5 +640,15 @@ def format_report(report: ViolationReport) -> str:
         for event in violation.events:
             payload = ", ".join(f"{k}={_short(v)}" for k, v in event.fields.items())
             lines.append(f"        @t={event.at:.6f} {event.kind}: {payload}")
+
+    # A copy-pasteable minimal repro — drop straight into a shell or a test.
+    lines.extend(
+        (
+            "",
+            "  reproduce:",
+            f"    simulation.run(SimulationConfig.reproduce({report.seed}))",
+            f"    # as a test:  assert_no_violation(simulation, SimulationConfig.reproduce({report.seed}))",
+        )
+    )
 
     return "\n".join(lines)
