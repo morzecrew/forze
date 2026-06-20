@@ -34,10 +34,11 @@ from forze_dst.oracle.linearizability import (
 from forze_dst.oracle.reachability import (
     ReachabilityReport,
     assess_reachability,
-    reached,
     reached_labels,
     sometimes,
 )
+
+# ....................... #
 
 __all__ = [
     # types
@@ -64,7 +65,6 @@ __all__ = [
     "record_operation",
     # reachability / liveness
     "sometimes",
-    "reached",
     "reached_labels",
     "assess_reachability",
     "ReachabilityReport",

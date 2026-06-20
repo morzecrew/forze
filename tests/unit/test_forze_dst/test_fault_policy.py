@@ -22,7 +22,8 @@ from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import monotonic
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy, record_event
+from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
+from forze_dst.markers import record_event
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.invariants import expect
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule

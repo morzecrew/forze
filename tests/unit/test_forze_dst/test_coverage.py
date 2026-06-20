@@ -19,7 +19,8 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from forze_dst import ModelState, Rule, Scenario, SchedulerKind, Simulation, SimulationConfig, Strategy, record_event
+from forze_dst import ModelState, Rule, Scenario, SchedulerKind, Simulation, SimulationConfig, Strategy
+from forze_dst.markers import record_event
 from forze_dst.invariants import expect, operation_succeeds
 from forze_dst.oracle import behavioral_coverage
 from forze_dst.oracle.recorder import Event, History

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from typing import Sequence
 
-from forze_dst import record_event
+from forze_dst.markers import record_event
 from forze_dst.invariants import check, expect, monotonic_per, no_duplicate_effect
 from forze_dst.oracle import Event, History, explore, minimize, run_recorded
 

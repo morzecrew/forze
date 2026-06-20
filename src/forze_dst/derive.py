@@ -31,11 +31,6 @@ from forze.application.execution.operations.registry import FrozenOperationRegis
 from forze_dst.reactive import ReactiveMap
 from forze_dst.scenario import ModelState, Rule, Scenario
 
-# ``derive`` is the scenario-derivation namespace: heuristic catalog → draft Scenario, plus the
-# recovered reactive cascade topology (``ReactiveMap``). Both are also available as
-# ``Simulation.derive_scenario()`` / ``Simulation.reactive_map()`` methods.
-__all__ = ["derive_scenario", "ReactiveMap", "DEFAULT_CREATE_VERBS"]
-
 # ----------------------- #
 
 DEFAULT_CREATE_VERBS = frozenset(
@@ -57,6 +52,8 @@ DEFAULT_CREATE_VERBS = frozenset(
 
 _ID_SUFFIXES = ("_id", "_uuid", "_key")
 
+# ....................... #
+
 
 def _entity_produced_by(op: str, verbs: frozenset[str]) -> str | None:
     """The entity ``op`` produces by its name, e.g. ``create_order`` → ``order``."""
@@ -64,6 +61,9 @@ def _entity_produced_by(op: str, verbs: frozenset[str]) -> str | None:
     parts = op.replace("-", "_").split("_")
 
     return "_".join(parts[1:]) if len(parts) >= 2 and parts[0] in verbs else None
+
+
+# ....................... #
 
 
 def _entity_for_field(field: str, entities: frozenset[str]) -> str | None:
@@ -79,6 +79,9 @@ def _entity_for_field(field: str, entities: frozenset[str]) -> str | None:
                 return stem
 
     return None
+
+
+# ....................... #
 
 
 def _arg_builder(
@@ -170,3 +173,11 @@ def derive_scenario(
         )
 
     return Scenario(state=ModelState, arrange=arrange, act=tuple(act))
+
+# ....................... #
+
+# ``derive`` is the scenario-derivation namespace: heuristic catalog → draft Scenario, plus the
+# recovered reactive cascade topology (``ReactiveMap``). Both are also available as
+# ``Simulation.derive_scenario()`` / ``Simulation.reactive_map()`` methods.
+
+__all__ = ["derive_scenario", "ReactiveMap", "DEFAULT_CREATE_VERBS"]

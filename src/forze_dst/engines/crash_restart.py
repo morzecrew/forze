@@ -16,11 +16,10 @@ from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.base.primitives import derive_seed
-from forze_dst.engines import context, projection
+from forze_dst.engines import base, context, projection
 from forze_dst.engines import scenario as scenario_engine
 from forze_dst.faults import SimulatedCrash, compile_crash
-from forze_dst.oracle.invariants import check
-from forze_dst.oracle import ViolationReport, minimize
+from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
@@ -96,6 +95,7 @@ def run_crash_restart(
 
             if act_workload is not None:
                 generated = list(act_workload)
+
             else:
                 generated = scenario.generate_act(state, act_count, rng)
 
@@ -156,14 +156,9 @@ def attempt(
 
     schedule_seed = derive_seed(seed, "schedule") if perturb else None
 
-    # Fresh per run (a PCT scheduler is stateful) so the initial run, every minimization
-    # predicate, and the final replay all explore the same interleaving.
-    def make_scheduler() -> object | None:
-        if scheduler_factory is None:
-            return None
-        return scheduler_factory(derive_seed(seed, "schedule"))
-
     def run(act: Sequence[tuple[str, Any]] | None) -> History:
+        # Fresh scheduler per run (PCT is stateful) so the initial run, every minimization
+        # predicate, and the final replay all explore the same interleaving.
         history, _ = run_crash_restart(
             sim,
             scenario,
@@ -173,38 +168,33 @@ def attempt(
             seed=seed,
             schedule_seed=schedule_seed,
             epoch=epoch,
-            scheduler=make_scheduler(),
+            scheduler=base.scheduler_for(seed, scheduler_factory),
         )
         return history
 
-    history, act_workload = run_crash_restart(
+    def run_initial() -> tuple[History, Sequence[tuple[str, Any]]]:
+        # The initial run drives arrange + act and returns the act workload; minimization reduces
+        # the act phase (the seeded crash re-fires on whatever matched call survives).
+        history, act_workload = run_crash_restart(
+            sim,
+            scenario,
+            act_workload=None,
+            act_count=act_count,
+            concurrency=concurrency,
+            seed=seed,
+            schedule_seed=schedule_seed,
+            epoch=epoch,
+            scheduler=base.scheduler_for(seed, scheduler_factory),
+        )
+        return history, act_workload
+
+    return base.attempt_and_minimize(
         sim,
-        scenario,
-        act_workload=None,
-        act_count=act_count,
-        concurrency=concurrency,
         seed=seed,
         schedule_seed=schedule_seed,
-        epoch=epoch,
-        scheduler=make_scheduler(),
-    )
-
-    if not check(history, sim.invariants):
-        return None
-
-    # Minimize the act phase; the seeded crash re-fires on whatever matched call survives.
-    minimal = minimize(
-        act_workload, lambda subset: bool(check(run(subset), sim.invariants))
-    )
-    final_history = run(minimal)
-
-    return ViolationReport(
-        seed=seed,
-        schedule_seed=schedule_seed,
-        violations=tuple(check(final_history, sim.invariants)),
-        workload=tuple(minimal),
-        history=final_history,
-        registry_fingerprint=sim.fingerprint(),
+        run_initial=run_initial,
+        run_subset=run,
+        format_workload=tuple,
     )
 
 
@@ -230,8 +220,9 @@ def explore(
     write) is minimized and reported, reproducible from that one seed.
     """
 
-    for seed in seeds:
-        report = attempt(
+    return base.explore_seeds(
+        seeds,
+        lambda seed: attempt(
             sim,
             scenario,
             act_count=act_count,
@@ -240,8 +231,5 @@ def explore(
             perturb=perturb,
             epoch=epoch,
             scheduler_factory=scheduler_factory,
-        )
-        if report is not None:
-            return report
-
-    return None
+        ),
+    )

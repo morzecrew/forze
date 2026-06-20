@@ -21,7 +21,8 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
-from forze_dst import OperationCase, Simulation, SimulationConfig, record_event
+from forze_dst import OperationCase, Simulation, SimulationConfig
+from forze_dst.markers import record_event
 from forze_dst.explore_guided import Genome, coverage_guided_search, mutate
 from forze_dst.invariants import expect
 from forze_dst.oracle.coverage import behavioral_coverage

@@ -35,16 +35,24 @@ class RegressionEntry:
     """One saved counterexample: the seed (+ schedule seed) and the context to trust a replay."""
 
     seed: int
+    """The seed that produced the failure."""
+
     schedule_seed: int | None = None
+    """The seed that produced the schedule."""
+
     target: str | None = None
     """The ``module:attr`` import string the seed was found against (for ``replay``)."""
+
     registry_fingerprint: str | None = None
     """The operation-catalog fingerprint at find time; a replay against a different fingerprint
     cannot be trusted to reproduce (the code under test changed)."""
+
     invariants: tuple[str, ...] = ()
     """Names of the invariants that were violated."""
+
     found_at: str | None = None
     """When the seed was saved (ISO-8601), stamped by the caller (real wall time)."""
+
     explore: dict[str, Any] | None = None
     """Snapshot of the exploration knobs the seed was found under (strategy / scheduler /
     act_count / faults / …). ``replay`` reproduces with these rather than the current CLI flags,

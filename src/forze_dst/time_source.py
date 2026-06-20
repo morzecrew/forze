@@ -11,6 +11,8 @@ from uuid import UUID
 
 import attrs
 
+from forze.base.primitives.time_source import TimeSource
+
 from .loop import SimulationEventLoop
 
 # ----------------------- #
@@ -23,7 +25,7 @@ DEFAULT_EPOCH = datetime(2020, 1, 1, tzinfo=UTC)
 
 @final
 @attrs.define(slots=True)
-class SimulationTimeSource:
+class SimulationTimeSource(TimeSource):
     """Wall + monotonic + ids derived from a :class:`SimulationEventLoop`'s virtual time.
 
     ``monotonic()`` is the loop clock directly; ``now()`` is ``epoch + loop.time()``;

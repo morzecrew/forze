@@ -28,7 +28,8 @@ from forze.application.execution.interception import PortCall
 from forze.base.exceptions import CoreException
 from forze.base.primitives import monotonic
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from forze_dst import Cluster, SimulationConfig, record_event
+from forze_dst import Cluster, SimulationConfig
+from forze_dst.markers import record_event
 from forze_dst.cluster import ClusterConfig, Partition, PartitionSchedule
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.invariants import expect, mutual_exclusion

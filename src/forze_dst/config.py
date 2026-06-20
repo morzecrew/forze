@@ -85,9 +85,14 @@ class Partition:
     below ``1`` is a *lossy link*: each call drops with this probability (seeded per node), so
     some calls slip through and a flaky link is modeled, not just a hard split."""
 
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         if not 0.0 < self.loss <= 1.0:
             raise exc.configuration("Partition.loss must be in (0, 1]")
+
+
+# ....................... #
 
 
 @attrs.define(frozen=True, kw_only=True)
@@ -99,6 +104,8 @@ class PartitionSchedule:
     """Port surfaces a partition makes unreachable (e.g. ``queue_command``, ``dlock``,
     ``document_command``). Empty ⇒ every surface is cut (a total split)."""
 
+    # ....................... #
+
     def isolated_at(self, node_id: int, at: float) -> bool:
         """Whether *node_id* is cut off from the cluster at virtual time *at*."""
 
@@ -106,6 +113,8 @@ class PartitionSchedule:
             window.start <= at < window.end and node_id in window.isolated
             for window in self.windows
         )
+
+    # ....................... #
 
     def loss_at(self, node_id: int, at: float) -> float:
         """The drop probability for *node_id*'s gated calls at virtual time *at*.
@@ -124,10 +133,15 @@ class PartitionSchedule:
             default=0.0,
         )
 
+    # ....................... #
+
     def gates(self, surface: str | None) -> bool:
         """Whether a partition cuts the given *surface* (all surfaces when none are named)."""
 
         return not self.surfaces or surface in self.surfaces
+
+
+# ....................... #
 
 
 @attrs.define(frozen=True, kw_only=True)

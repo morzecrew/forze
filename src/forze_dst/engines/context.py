@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import random
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Sequence, cast
 
+from forze.application.contracts.interception import PortInterceptor
 from forze.application.execution import (
     DepsModule,
     DepsRegistry,
@@ -22,11 +23,10 @@ from forze.application.execution import (
     ExecutionRuntime,
     FrozenDepsRegistry,
 )
-from forze.application.contracts.interception import PortInterceptor
 from forze.application.execution.interception import LatencyModel
 from forze.application.execution.operations import run_operation
 from forze.base.primitives import derive_seed
-from forze_dst.engines.cases import OperationCase, Call
+from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.faults import compile_fault_policy
 from forze_dst.latency import compile_latency
 from forze_dst.oracle.recorder import record_event
@@ -68,9 +68,7 @@ def registry_from_modules(
     seam the crash/restart restart relies on.
     """
 
-    capture_values = (
-        sim.active_config is not None and sim.active_config.capture_values
-    )
+    capture_values = sim.active_config is not None and sim.active_config.capture_values
     registry = DepsRegistry.from_modules(*modules).with_tracing(
         runtime=True, capture_values=capture_values
     )
@@ -108,7 +106,8 @@ def frozen_registry(sim: "Simulation", seed: int) -> FrozenDepsRegistry:
 
 @asynccontextmanager
 async def execution_context(
-    sim: "Simulation", fault_seed: int
+    sim: "Simulation",
+    fault_seed: int,
 ) -> AsyncGenerator[ExecutionContext]:
     """Yield the run's :class:`ExecutionContext` — bare by default, runtime-scoped on opt-in.
 
@@ -123,8 +122,10 @@ async def execution_context(
 
     if sim.active_config is not None and sim.active_config.runtime:
         runtime = ExecutionRuntime(deps=registry, lifecycle=sim.lifecycle)
+
         async with runtime.scope():
             yield runtime.get_context()
+
     else:
         yield ExecutionContext(deps=registry.resolve())
 
@@ -134,7 +135,8 @@ async def execution_context(
 
 def latency_for(sim: "Simulation", seed: int) -> LatencyModel | None:
     """The run's latency model: the config profile (compiled from the latency sub-seed) if set,
-    else the manual ``Simulation.latency`` callable escape hatch. *seed* is the master."""
+    else the manual ``Simulation.latency`` callable escape hatch. *seed* is the master.
+    """
 
     if sim.active_config is not None and sim.active_config.latency is not None:
         return compile_latency(
@@ -151,7 +153,10 @@ def latency_for(sim: "Simulation", seed: int) -> LatencyModel | None:
 
 
 def input_for(
-    sim: "Simulation", op: str, rng: random.Random, case: OperationCase
+    sim: "Simulation",
+    op: str,
+    rng: random.Random,
+    case: OperationCase,
 ) -> Any:
     """Build an op's input: the case factory if given, else auto-generated from its input type."""
 
@@ -228,10 +233,8 @@ async def run_call(
     async with semaphore:
         record_event("op_start", call_id=call_id, op=op)
 
-        try:
+        with suppress(Exception):
             await run_operation(sim.operations, op, arg, ctx)
-        except Exception:  # nosec B110 # noqa: BLE001 — outcome captured by the engine trace; one call's failure must never abort the batch
-            pass
 
 
 # ....................... #

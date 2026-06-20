@@ -25,9 +25,9 @@ from typing import Callable, Sequence, final
 import attrs
 
 from forze_dst.config import SchedulerKind, SimulationConfig
-from forze_dst.oracle.coverage import Behavior
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
+from forze_dst.oracle.coverage import Behavior
 
 # ----------------------- #
 
@@ -38,10 +38,14 @@ class SeedOutcome:
     """One seed's result — picklable, so it crosses back from a worker process intact."""
 
     seed: int
+    """The seed that produced the failure."""
+
     violated: bool
     """Whether this seed tripped an invariant (re-run it for the full minimized report)."""
+
     behaviors: frozenset[Behavior]
     """The PII-free behaviours this run exercised (see :func:`~forze_dst.behavioral_coverage`)."""
+
     sim_seconds: float = 0.0
     """Virtual time the run spanned, when the runner can supply it — fuels the time-dilation
     metric. ``0.0`` when not available (the sweep then reports throughput as runs/second)."""
@@ -56,12 +60,17 @@ class SweepResult:
     """Every worker's outcomes folded into one picture: coverage, violations, throughput."""
 
     runs: int
+    """The number of seeds that were run."""
+
     violations: tuple[int, ...]
     """Seeds that tripped an invariant, ascending."""
+
     behaviors: frozenset[Behavior]
     """Union of behaviours covered across the whole sweep."""
+
     simulated_seconds: float
     """Total virtual time simulated across all seeds (``0.0`` when no runner supplied it)."""
+
     wall_seconds: float
     """Wall-clock time the sweep took (measured, not simulated)."""
 
@@ -140,6 +149,9 @@ def _aggregate(outcomes: Sequence[SeedOutcome], *, wall_seconds: float) -> Sweep
     )
 
 
+# ....................... #
+
+
 def sweep(
     run: Callable[[int], SeedOutcome],
     seeds: Sequence[int],
@@ -153,6 +165,9 @@ def sweep(
     start = time.perf_counter()
     outcomes = [run(seed) for seed in seeds]
     return _aggregate(outcomes, wall_seconds=time.perf_counter() - start)
+
+
+# ....................... #
 
 
 def parallel_sweep(
@@ -192,6 +207,9 @@ def _load_simulation(target: str) -> object:
     return getattr(module, attr)
 
 
+# ....................... #
+
+
 @final
 @attrs.define(frozen=True, kw_only=True)
 class SimulationSeedRunner:
@@ -207,11 +225,22 @@ class SimulationSeedRunner:
     """Import string ``module:attr`` of the :class:`~forze_dst.harness.Simulation`."""
 
     concurrency: int = 4
+    """The maximum number of concurrent act operations."""
+
     act_count: int = 20
+    """The maximum number of act operations per run."""
+
     perturb: bool = True
+    """Whether interleavings are perturbed (any scheduler other than deterministic FIFO)."""
+
     pct: bool = False
+    """Whether to use the PCT scheduler."""
+
     fault_error: float = 0.0
+    """The probability of a transient error per port."""
+
     latency: float = 0.0
+    """The constant per-port latency (seconds of virtual time)."""
 
     # ....................... #
 
@@ -219,9 +248,7 @@ class SimulationSeedRunner:
         scheduler = (
             SchedulerKind.PCT
             if self.pct
-            else SchedulerKind.RANDOM
-            if self.perturb
-            else SchedulerKind.FIFO
+            else SchedulerKind.RANDOM if self.perturb else SchedulerKind.FIFO
         )
         faults = (
             FaultPolicy(rules=(FaultRule(error=self.fault_error),))

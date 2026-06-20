@@ -13,13 +13,13 @@ import random
 from typing import TYPE_CHECKING, Sequence
 
 from forze.base.primitives import derive_seed
-from forze_dst.engines import context
+from forze_dst.engines import base, context
 from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.config import SchedulerKind, SimulationConfig
 from forze_dst.engines import op_case
 from forze_dst.explore_guided import Genome, GuidedStats, coverage_guided_search
+from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.invariants import check
-from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.oracle.recorder import History
 from forze_dst.scheduler import pct_scheduler_factory
 
@@ -81,26 +81,21 @@ def run_guided(
         return run_items(workload_of(genome), genome.seed)
 
     def on_violation(genome: Genome) -> ViolationReport | None:
+        # The skeleton's initial check doubles as the heisenbug guard: a genome that fails during
+        # search but not on a clean re-run yields no violation → reports nothing.
         workload = workload_of(genome)
 
-        def fails(subset: Sequence[Call]) -> bool:
-            return bool(check(run_items(subset, genome.seed), sim.invariants))
-
-        if not fails(workload):
-            return None  # a heisenbug that did not survive re-run; report nothing
-
-        minimal = minimize(workload, fails)
-        final_history = run_items(minimal, genome.seed)
-
-        return ViolationReport(
+        return base.attempt_and_minimize(
+            sim,
             seed=genome.seed,
             schedule_seed=(
                 derive_seed(genome.seed, "schedule") if config.perturb else None
             ),
-            violations=tuple(check(final_history, sim.invariants)),
-            workload=tuple((call.op, call.arg) for call in minimal),
-            history=final_history,
-            registry_fingerprint=sim.fingerprint(),
+            run_initial=lambda: (run_items(workload, genome.seed), workload),
+            run_subset=lambda subset: run_items(subset, genome.seed),
+            format_workload=lambda minimal: tuple(
+                (call.op, call.arg) for call in minimal
+            ),
         )
 
     # The initial workload mirrors a normal op-case run at the master seed.

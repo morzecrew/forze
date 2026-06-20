@@ -18,7 +18,9 @@ from typing import TYPE_CHECKING, Any, Callable, cast, final
 import attrs
 
 from forze_dst.artifacts.serialize import config_from_dict, config_to_dict
-from forze_dst.artifacts.sweep import _load_simulation  # pyright: ignore[reportPrivateUsage]
+from forze_dst.artifacts.sweep import (
+    _load_simulation,  # pyright: ignore[reportPrivateUsage]
+)
 
 if TYPE_CHECKING:
     from forze_dst.config import SimulationConfig
@@ -33,15 +35,24 @@ class FailureBundle:
     """A reproducible counterexample as portable JSON — seed + full config + context."""
 
     seed: int
+    """The seed that produced the failure."""
+
     schedule_seed: int | None
+    """The seed that produced the schedule."""
+
     target: str | None
     """The ``module:attr`` import string of the Simulation the bug was found against."""
+
     config: dict[str, Any]
     """The full run configuration (:func:`~forze_dst.artifacts.serialize.config_to_dict`)."""
+
     workload: tuple[tuple[str, str], ...] = ()
     """The minimized workload as ``(op, repr(arg))`` pairs — for reading; reproduction comes from
     the seed + config, not from re-injecting these."""
+
     registry_fingerprint: str | None = None
+    """The fingerprint of the registry that produced the failure."""
+
     invariants: tuple[str, ...] = ()
     """Names of the invariants the seed violated."""
 
@@ -128,6 +139,9 @@ def bundle_from_report(
     )
 
 
+# ....................... #
+
+
 def replay_bundle(
     bundle: FailureBundle,
     *,
@@ -147,8 +161,10 @@ def replay_bundle(
         raise ValueError("bundle has no target; pass load=... that ignores it")
 
     sim = load(bundle.target)
+
     if not isinstance(sim, Simulation):
         raise TypeError(f"{bundle.target!r} did not load a forze_dst.Simulation")
 
     config = attrs.evolve(config_from_dict(bundle.config), seeds=[bundle.seed])
+
     return sim.run(config)

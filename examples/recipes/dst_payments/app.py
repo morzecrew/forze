@@ -46,7 +46,8 @@ from forze.domain.models import (
     DomainEvent,
     ReadDocument,
 )
-from forze_dst import Simulation, record_event
+from forze_dst import Simulation
+from forze_dst.markers import record_event
 from forze_dst.invariants import expect
 from forze_mock import MockDepsModule
 

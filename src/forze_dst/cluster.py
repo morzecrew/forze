@@ -24,16 +24,16 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Sequence, cast, fin
 
 import attrs
 
+from forze.application.contracts.interception import (
+    PortCall,
+    PortInterceptor,
+    PortNext,
+)
 from forze.application.execution import (
     DepsModule,
     DepsRegistry,
     ExecutionContext,
     ExecutionRuntime,
-)
-from forze.application.contracts.interception import (
-    PortCall,
-    PortInterceptor,
-    PortNext,
 )
 from forze.application.execution.interception import LatencyModel
 from forze.base.exceptions import exc
@@ -45,15 +45,11 @@ from forze_dst.config import (
     SchedulerKind,
     SimulationConfig,
 )
-
-# ``cluster`` is the distributed-DST namespace: the N-runtime driver plus its config types
-# (which live in ``config`` but belong to this concern).
-__all__ = ["Cluster", "ClusterConfig", "Partition", "PartitionSchedule"]
-from forze_dst.faults import SimulatedCrash, compile_fault_policy
 from forze_dst.engines.projection import fold_runtime_trace
-from forze_dst.oracle.invariants import Invariant, check
+from forze_dst.faults import SimulatedCrash, compile_fault_policy
 from forze_dst.latency import compile_latency
 from forze_dst.oracle import ViolationReport, minimize
+from forze_dst.oracle.invariants import Invariant, check
 from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scheduler import pct_scheduler_factory
@@ -75,7 +71,7 @@ Hook = Callable[[ExecutionContext], Awaitable[None]]
 
 
 @final
-@attrs.define(kw_only=True)
+@attrs.define(frozen=True, kw_only=True)
 class _PartitionInterceptor:
     """Cut a node off from the gated surfaces while it is on the wrong side of a split.
 
@@ -255,7 +251,9 @@ class Cluster:
                             "crash", node=node_id
                         )  # the node died; cluster proceeds
 
-                    except Exception as error:  # noqa: BLE001 — one node's failure must not abort the cluster
+                    except (
+                        Exception
+                    ) as error:  # noqa: BLE001 — one node's failure must not abort the cluster
                         # Record it so an invariant can catch a node that stopped on an
                         # unexpected error (e.g. a bug in a port call outside the op trace),
                         # rather than leaving the cluster history looking clean.
@@ -328,7 +326,9 @@ class Cluster:
                     _PartitionInterceptor(
                         node_id=node_id,
                         schedule=cluster.partitions,
-                        rng=random.Random(part_seed),  # nosec B311 - seeded sim partition loss
+                        rng=random.Random(
+                            part_seed
+                        ),  # nosec B311 - seeded sim partition loss
                     )
                 )
 
@@ -377,5 +377,15 @@ class Cluster:
 
         return compile_latency(
             config.latency,
-            random.Random(derive_seed(seed, "latency")),  # nosec B311 - seeded sim latency
+            random.Random(
+                derive_seed(seed, "latency")
+            ),  # nosec B311 - seeded sim latency
         )
+
+
+# ....................... #
+
+# ``cluster`` is the distributed-DST namespace: the N-runtime driver plus its config types
+# (which live in ``config`` but belong to this concern).
+
+__all__ = ["Cluster", "ClusterConfig", "Partition", "PartitionSchedule"]

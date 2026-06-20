@@ -56,10 +56,14 @@ class SystemTimeSource:
     def now(self) -> datetime:  # noqa: PYL-R0201
         return datetime.now(UTC)
 
+    # ....................... #
+
     def uuid(self) -> UUID:  # noqa: PYL-R0201
         from .uuid import uuid7  # lazy: avoids the uuid <-> time_source import cycle
 
         return uuid7(timestamp_ns=time.time_ns())
+
+    # ....................... #
 
     def monotonic(self) -> float:  # noqa: PYL-R0201
         return time.monotonic()
@@ -74,10 +78,17 @@ class FrozenTimeSource:
     """A fixed clock for tests: a constant ``now`` and deterministic, ordered ids."""
 
     instant: datetime
+
+    # ....................... #
+
     _counter: int = attrs.field(default=0, init=False)
+
+    # ....................... #
 
     def now(self) -> datetime:
         return self.instant
+
+    # ....................... #
 
     def uuid(self) -> UUID:
         from .uuid import uuid7
@@ -87,6 +98,8 @@ class FrozenTimeSource:
         self._counter += 1
 
         return result
+
+    # ....................... #
 
     def monotonic(self) -> float:  # noqa: PYL-R0201
         # Only the *wall* clock is frozen (deterministic timestamps/ids); relative

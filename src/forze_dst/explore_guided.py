@@ -31,14 +31,6 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-__all__ = [
-    "Genome",
-    "GuidedStats",
-    "coverage_guided_search",
-    "mutate",
-]
-
-
 
 @final
 @attrs.define(frozen=True, kw_only=True)
@@ -205,7 +197,9 @@ def coverage_guided_search(
     *max_ops* bound the mutation space.
     """
 
-    rng = random.Random(derive_seed(master_seed, "guided"))  # nosec B311 - seeded fuzz lineage
+    rng = random.Random(
+        derive_seed(master_seed, "guided")
+    )  # nosec B311 - seeded fuzz lineage
     behaviors: set[Behavior] = set()
     new_by_run: list[int] = []
     corpus: list[_Entry] = []
@@ -260,3 +254,13 @@ def coverage_guided_search(
         new_by_run=tuple(new_by_run),
         violation=None,
     )
+
+
+# ....................... #
+
+__all__ = [
+    "Genome",
+    "GuidedStats",
+    "coverage_guided_search",
+    "mutate",
+]

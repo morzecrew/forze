@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import derive_seed
-from forze_dst.engines import context, projection
+from forze_dst.engines import base, context, projection
 from forze_dst.faults import SimulatedCrash
+from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.invariants import check
-from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
@@ -172,16 +172,10 @@ def attempt(
 
     schedule_seed = derive_seed(seed, "schedule") if perturb else None
 
-    # A PCT scheduler is stateful (it consumes priorities/change points as it runs), so a fresh
-    # instance is built per run — the initial run, every minimization predicate, and the final
-    # replay must all explore the SAME schedule, or a counterexample minimized against a mutated
-    # interleaving fails to reproduce from the reported seed.
-    def make_scheduler() -> object | None:
-        if scheduler_factory is None:
-            return None
-        return scheduler_factory(derive_seed(seed, "schedule"))
-
     def run(act: Sequence[tuple[str, Any]] | None) -> History:
+        # Fresh scheduler per run (PCT is stateful): the initial run, every minimization
+        # predicate, and the final replay must all explore the SAME schedule, or a counterexample
+        # minimized against a mutated interleaving fails to reproduce from the reported seed.
         history, _ = run_scenario(
             sim,
             scenario,
@@ -191,39 +185,33 @@ def attempt(
             seed=seed,
             schedule_seed=schedule_seed,
             epoch=epoch,
-            scheduler=make_scheduler(),
+            scheduler=base.scheduler_for(seed, scheduler_factory),
         )
         return history
 
-    history, act_workload = run_scenario(
+    def run_initial() -> tuple[History, Sequence[tuple[str, Any]]]:
+        # The initial run samples + returns the act workload; minimization reduces the act phase
+        # only (arrange is replayed identically, so captured act calls keep valid handles).
+        history, act_workload = run_scenario(
+            sim,
+            scenario,
+            act_workload=None,
+            act_count=act_count,
+            concurrency=concurrency,
+            seed=seed,
+            schedule_seed=schedule_seed,
+            epoch=epoch,
+            scheduler=base.scheduler_for(seed, scheduler_factory),
+        )
+        return history, act_workload
+
+    return base.attempt_and_minimize(
         sim,
-        scenario,
-        act_workload=None,
-        act_count=act_count,
-        concurrency=concurrency,
         seed=seed,
         schedule_seed=schedule_seed,
-        epoch=epoch,
-        scheduler=make_scheduler(),
-    )
-
-    if not check(history, sim.invariants):
-        return None
-
-    # Minimize the act phase only; arrange is replayed identically (seeded), so the captured act
-    # calls still reference valid arranged handles.
-    minimal = minimize(
-        act_workload, lambda subset: bool(check(run(subset), sim.invariants))
-    )
-    final_history = run(minimal)
-
-    return ViolationReport(
-        seed=seed,
-        schedule_seed=schedule_seed,
-        violations=tuple(check(final_history, sim.invariants)),
-        workload=tuple(minimal),
-        history=final_history,
-        registry_fingerprint=sim.fingerprint(),
+        run_initial=run_initial,
+        run_subset=run,
+        format_workload=tuple,
     )
 
 
@@ -253,8 +241,9 @@ def explore(
     with a better per-run probability.
     """
 
-    for seed in seeds:
-        report = attempt(
+    return base.explore_seeds(
+        seeds,
+        lambda seed: attempt(
             sim,
             scenario,
             act_count=act_count,
@@ -263,11 +252,8 @@ def explore(
             perturb=perturb,
             epoch=epoch,
             scheduler_factory=scheduler_factory,
-        )
-        if report is not None:
-            return report
-
-    return None
+        ),
+    )
 
 
 # ....................... #
@@ -315,6 +301,7 @@ def explore_hypothesis(
     def make_scheduler(seed: int) -> object | None:
         if scheduler_factory is None:
             return None
+
         return scheduler_factory(derive_seed(seed, "schedule"))
 
     plans = strategies.tuples(
@@ -334,7 +321,9 @@ def explore_hypothesis(
             act_plan=plan,
             concurrency=concurrency,
             seed=seed,
-            schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
+            schedule_seed=schedule_seed_of(
+                seed
+            ),  # pyright: ignore[reportUnknownArgumentType]
             epoch=epoch,
             scheduler=make_scheduler(seed),
         )
@@ -358,14 +347,18 @@ def explore_hypothesis(
         act_plan=plan,
         concurrency=concurrency,
         seed=seed,
-        schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
+        schedule_seed=schedule_seed_of(
+            seed
+        ),  # pyright: ignore[reportUnknownArgumentType]
         epoch=epoch,
         scheduler=make_scheduler(seed),
     )
 
     return ViolationReport(
         seed=seed,
-        schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
+        schedule_seed=schedule_seed_of(
+            seed
+        ),  # pyright: ignore[reportUnknownArgumentType]
         violations=tuple(check(history, sim.invariants)),
         workload=tuple(generated),
         history=history,
@@ -424,6 +417,7 @@ def explore_dpor(
 
         if choices in visited:
             continue
+
         visited.add(choices)
 
         scheduler = SystematicScheduler(choices)
@@ -451,13 +445,16 @@ def explore_dpor(
             )
 
         signature = projection.outcome_signature(history)
+
         if signature in seen_signatures:
             continue  # observationally equivalent → its subtree is redundant
+
         seen_signatures.add(signature)
 
         # Expand: at each tick that branched, try every alternative first-choice.
         for tick, size in enumerate(scheduler.branching):
-            for alternative in range(1, size):
-                frontier.append((*choices[:tick], alternative))
+            frontier.extend(
+                (*choices[:tick], alternative) for alternative in range(1, size)
+            )
 
     return None

@@ -21,14 +21,6 @@ from .time_source import DEFAULT_EPOCH
 
 # ----------------------- #
 
-__all__ = [
-    "OpSpec",
-    "generate_workload",
-    "run_workload",
-    "simulate_workload",
-]
-
-
 
 @final
 @attrs.define(frozen=True, kw_only=True)
@@ -62,7 +54,9 @@ def generate_workload(
     if count < 0:
         raise ValueError("count must be non-negative")
 
-    rng = random.Random(seed)  # nosec B311 - deterministic workload generation, not crypto
+    rng = random.Random(
+        seed
+    )  # nosec B311 - deterministic workload generation, not crypto
     weights = [op.weight for op in catalog]
 
     if any(weight < 0.0 for weight in weights):
@@ -134,3 +128,13 @@ def simulate_workload(
         epoch=epoch,
         schedule_seed=seed if perturb else None,
     )
+
+
+# ....................... #
+
+__all__ = [
+    "OpSpec",
+    "generate_workload",
+    "run_workload",
+    "simulate_workload",
+]

@@ -31,6 +31,7 @@ from forze.application.contracts.interception import (
     PortInterceptor,
     PortInterceptorChain,
     PortNext,
+    PortSelector,
 )
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     "PortInterceptor",
     "PortInterceptorChain",
     "PortNext",
+    "PortSelector",
     "bind_interceptors",
     "current_interceptors",
 ]

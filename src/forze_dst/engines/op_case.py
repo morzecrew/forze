@@ -13,10 +13,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Sequence
 
 from forze.base.primitives import derive_seed
-from forze_dst.engines import context, projection
+from forze_dst.engines import base, context, projection
 from forze_dst.engines.cases import OperationCase, Call
-from forze_dst.oracle.invariants import check
-from forze_dst.oracle import ViolationReport, minimize
+from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.recorder import History, Recorder, bind_recorder
 from forze_dst.runtime import run_simulation
 from forze_dst.time_source import DEFAULT_EPOCH
@@ -93,14 +92,9 @@ def attempt(
     schedule_seed = derive_seed(seed, "schedule") if perturb else None
     workload = context.generate(sim, cases, count, seed)
 
-    # Fresh per run (a PCT scheduler is stateful) so the initial run, every minimization
-    # predicate, and the final replay explore the same interleaving.
-    def make_scheduler() -> object | None:
-        if scheduler_factory is None:
-            return None
-        return scheduler_factory(derive_seed(seed, "schedule"))
-
     def run(items: Sequence[Call]) -> History:
+        # A fresh scheduler per run (PCT is stateful) keeps the initial run, every minimization
+        # predicate, and the final replay on the same interleaving.
         return run_workload(
             sim,
             items,
@@ -108,24 +102,18 @@ def attempt(
             seed=seed,
             schedule_seed=schedule_seed,
             epoch=epoch,
-            scheduler=make_scheduler(),
+            scheduler=base.scheduler_for(seed, scheduler_factory),
         )
 
-    if not check(run(workload), sim.invariants):
-        return None
-
-    minimal = minimize(
-        workload, lambda subset: bool(check(run(subset), sim.invariants))
-    )
-    final_history = run(minimal)
-
-    return ViolationReport(
+    return base.attempt_and_minimize(
+        sim,
         seed=seed,
         schedule_seed=schedule_seed,
-        violations=tuple(check(final_history, sim.invariants)),
-        workload=tuple((call.op, call.arg) for call in minimal),
-        history=final_history,
-        registry_fingerprint=sim.fingerprint(),
+        run_initial=lambda: (run(workload), workload),
+        run_subset=run,
+        format_workload=lambda minimal: tuple(
+            (call.op, call.arg) for call in minimal
+        ),
     )
 
 
@@ -151,8 +139,9 @@ def explore(
     history, and the registry fingerprint.
     """
 
-    for seed in seeds:
-        report = attempt(
+    return base.explore_seeds(
+        seeds,
+        lambda seed: attempt(
             sim,
             cases=cases,
             count=count,
@@ -161,8 +150,5 @@ def explore(
             perturb=perturb,
             epoch=epoch,
             scheduler_factory=scheduler_factory,
-        )
-        if report is not None:
-            return report
-
-    return None
+        ),
+    )

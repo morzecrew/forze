@@ -16,22 +16,12 @@ from typing import final
 
 import attrs
 
+from forze.application.contracts.interception import PortSelector
 from forze.application.execution.interception import LatencyModel
 from forze.base.primitives import monotonic
 from forze_dst.oracle.recorder import record_event
 
 # ----------------------- #
-
-__all__ = [
-    "LatencyProfile",
-    "LatencyRule",
-    "Constant",
-    "Uniform",
-    "Exponential",
-    "LogNormal",
-    "Pareto",
-]
-
 
 
 @final
@@ -41,8 +31,13 @@ class Constant:
 
     seconds: float
 
+    # ....................... #
+
     def sample(self, _rng: random.Random) -> float:
         return self.seconds
+
+
+# ....................... #
 
 
 @final
@@ -53,8 +48,13 @@ class Uniform:
     low: float
     high: float
 
+    # ....................... #
+
     def sample(self, rng: random.Random) -> float:
         return rng.uniform(self.low, self.high)
+
+
+# ....................... #
 
 
 @final
@@ -64,11 +64,13 @@ class Exponential:
 
     mean: float
 
-    def sample(self, rng: random.Random) -> float:
-        if self.mean <= 0.0:
-            return 0.0
+    # ....................... #
 
-        return rng.expovariate(1.0 / self.mean)
+    def sample(self, rng: random.Random) -> float:
+        return 0.0 if self.mean <= 0.0 else rng.expovariate(1.0 / self.mean)
+
+
+# ....................... #
 
 
 @final
@@ -84,11 +86,16 @@ class LogNormal:
     median: float
     sigma: float = 1.0
 
+    # ....................... #
+
     def sample(self, rng: random.Random) -> float:
         if self.median <= 0.0:
             return 0.0
 
         return rng.lognormvariate(math.log(self.median), self.sigma)
+
+
+# ....................... #
 
 
 @final
@@ -104,12 +111,16 @@ class Pareto:
     scale: float
     alpha: float = 1.5
 
+    # ....................... #
+
     def sample(self, rng: random.Random) -> float:
         if self.scale <= 0.0 or self.alpha <= 0.0:
             return 0.0
 
         return self.scale * rng.paretovariate(self.alpha)
 
+
+# ....................... #
 
 Distribution = Constant | Uniform | Exponential | LogNormal | Pareto
 """A latency distribution sampled per matched call from the seeded latency RNG. ``LogNormal`` and
@@ -121,13 +132,14 @@ Distribution = Constant | Uniform | Exponential | LogNormal | Pareto
 
 @final
 @attrs.define(frozen=True, kw_only=True)
-class LatencyRule:
-    """A latency distribution applied to calls matching ``surface`` / ``route`` / ``op``."""
+class LatencyRule(PortSelector):
+    """A latency distribution applied to calls matching ``surface`` / ``route`` / ``op``.
+
+    The selector fields are inherited from
+    :class:`~forze.application.contracts.interception.PortSelector`.
+    """
 
     dist: Distribution
-    surface: str | None = None
-    route: str | None = None
-    op: str | None = None
 
 
 # ....................... #
@@ -153,11 +165,7 @@ def compile_latency(profile: LatencyProfile, rng: random.Random) -> LatencyModel
 
     def model(surface: str | None, route: str | None, op: str) -> float:
         for rule in profile.rules:
-            if (
-                (rule.surface is None or surface == rule.surface)
-                and (rule.route is None or route == rule.route)
-                and (rule.op is None or op == rule.op)
-            ):
+            if rule.matches_parts(surface, route, op):
                 seconds = rule.dist.sample(rng)
 
                 if seconds > 0.0:
@@ -177,3 +185,16 @@ def compile_latency(profile: LatencyProfile, rng: random.Random) -> LatencyModel
         return 0.0
 
     return model
+
+
+# ....................... #
+
+__all__ = [
+    "LatencyProfile",
+    "LatencyRule",
+    "Constant",
+    "Uniform",
+    "Exponential",
+    "LogNormal",
+    "Pareto",
+]

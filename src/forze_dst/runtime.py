@@ -27,17 +27,6 @@ from .time_source import DEFAULT_EPOCH, SimulationTimeSource
 
 # ----------------------- #
 
-# ``runtime`` is the low-level deterministic-runtime namespace: the one-call entry plus the
-# loop, its leak/deadlock guards, and the virtual-time clock seam, re-exported together.
-__all__ = [
-    "run_simulation",
-    "SimulationEventLoop",
-    "RealIOForbidden",
-    "SimulationDeadlock",
-    "SimulationTimeSource",
-    "DEFAULT_EPOCH",
-]
-
 
 def run_simulation[T](
     scenario: Callable[[], Awaitable[T]],
@@ -75,7 +64,11 @@ def run_simulation[T](
         raise ValueError("epoch must be timezone-aware (e.g. tzinfo=UTC)")
 
     schedule_rng = (
-        None if schedule_seed is None else random.Random(schedule_seed)  # nosec B311 - deterministic sim schedule, not crypto
+        None
+        if schedule_seed is None
+        else random.Random(
+            schedule_seed
+        )  # nosec B311 - deterministic sim schedule, not crypto
     )
     loop = SimulationEventLoop(schedule_rng=schedule_rng, scheduler=scheduler)
     time_source = SimulationTimeSource(loop=loop, epoch=epoch)
@@ -95,3 +88,17 @@ def run_simulation[T](
 
     finally:
         loop.close()
+
+
+# ....................... #
+
+# ``runtime`` is the low-level deterministic-runtime namespace: the one-call entry plus the
+# loop, its leak/deadlock guards, and the virtual-time clock seam, re-exported together.
+__all__ = [
+    "run_simulation",
+    "SimulationEventLoop",
+    "RealIOForbidden",
+    "SimulationDeadlock",
+    "SimulationTimeSource",
+    "DEFAULT_EPOCH",
+]

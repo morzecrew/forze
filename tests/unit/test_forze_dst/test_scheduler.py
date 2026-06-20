@@ -19,7 +19,8 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 
-from forze_dst import ModelState, Rule, Scenario, SchedulerKind, Simulation, SimulationConfig, Strategy, record_event
+from forze_dst import ModelState, Rule, Scenario, SchedulerKind, Simulation, SimulationConfig, Strategy
+from forze_dst.markers import record_event
 from forze_dst.invariants import expect, no_duplicate_effect
 from forze_dst.runtime import run_simulation
 from forze_dst.scheduler import PCTScheduler, RandomScheduler, SystematicScheduler

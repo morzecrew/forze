@@ -41,6 +41,48 @@ class PortCall:
 # ....................... #
 
 
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class PortSelector:
+    """Matches port calls by ``surface`` / ``route`` / ``op`` — any field ``None`` matches anything.
+
+    The shared selection value object: rules and interceptors that target a subset of port calls
+    (fault, latency, …) carry these three fields and ask :meth:`matches`, rather than each
+    re-declaring the triple and its matching logic.
+    """
+
+    surface: str | None = None
+    """The port surface to match (``None`` = any)."""
+
+    route: str | None = None
+    """The port route to match (``None`` = any)."""
+
+    op: str | None = None
+    """The port operation to match (``None`` = any)."""
+
+    # ....................... #
+
+    def matches_parts(
+        self, surface: str | None, route: str | None, op: str
+    ) -> bool:
+        """Whether a call described by *(surface, route, op)* matches this selector."""
+
+        return (
+            (self.surface is None or surface == self.surface)
+            and (self.route is None or route == self.route)
+            and (self.op is None or op == self.op)
+        )
+
+    # ....................... #
+
+    def matches(self, call: "PortCall") -> bool:
+        """Whether *call* matches this selector."""
+
+        return self.matches_parts(call.surface, call.route, call.op)
+
+
+# ....................... #
+
+
 PortNext = Callable[["PortCall"], Awaitable[Any]]
 """Continuation that invokes the rest of the chain (ultimately the real port method)."""
 

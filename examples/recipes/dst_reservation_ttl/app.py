@@ -34,7 +34,8 @@ from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import utcnow
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
-from forze_dst import Simulation, record_event
+from forze_dst import Simulation
+from forze_dst.markers import record_event
 from forze_dst.invariants import expect
 from forze_mock import MockDepsModule
 

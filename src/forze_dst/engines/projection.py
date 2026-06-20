@@ -117,8 +117,10 @@ def project_operation_events(trace_events: Sequence[Any]) -> None:
     }
 
     top_level = 0
+
     for invoke in invokes:
         call_id: Any = -1  # a cascade has no top-level driver / op_start anchor
+
         if not invoke.nested:
             anchor = op_starts[top_level] if top_level < len(op_starts) else None
             if anchor is not None:
@@ -130,6 +132,7 @@ def project_operation_events(trace_events: Sequence[Any]) -> None:
         if terminal is None:
             outcome, error = "incomplete", None
             returned_at, end_seq = invoke.at, invoke.seq
+
         else:
             outcome = terminal.outcome or "ok"
             error = terminal.error

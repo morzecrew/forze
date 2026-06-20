@@ -11,7 +11,8 @@ The facade is a thin core plus namespaces — reach into a namespace for depth::
 
     sim = Simulation(operations, deps, invariants=[inv.no_duplicate_effect("paid", by="order")])
 
-Namespaces: ``invariants`` (the assertion toolkit), ``faults`` / ``latency`` (injection),
+Namespaces: ``invariants`` (the assertion toolkit), ``markers`` (``record_event`` / ``reached``
+— the no-op-in-production annotations you add to app code), ``faults`` / ``latency`` (injection),
 ``scheduler`` (interleaving), ``cluster`` (distributed), ``artifacts`` (bundles / sweeps /
 corpus), ``runtime`` (the low-level virtual-time loop), ``oracle`` (recording / report /
 coverage internals), and ``workload`` / ``explore_guided`` / ``derive`` (input generation).
@@ -24,7 +25,7 @@ from .cluster import Cluster
 from .config import SchedulerKind, SimulationConfig, Strategy
 from .engines.cases import OperationCase
 from .harness import Simulation
-from .oracle import ViolationReport, record_event
+from .oracle import ViolationReport
 from .scenario import ModelState, Rule, Scenario
 
 # Namespaces — depth on demand (``forze_dst.<namespace>``).
@@ -36,6 +37,7 @@ from . import (  # noqa: F401  (re-exported namespaces)
     faults,
     invariants,
     latency,
+    markers,
     oracle,
     runtime,
     scheduler,
@@ -56,9 +58,9 @@ __all__ = [
     "ModelState",
     "Cluster",
     "ViolationReport",
-    "record_event",
     # Namespaces
     "invariants",
+    "markers",
     "faults",
     "latency",
     "scheduler",

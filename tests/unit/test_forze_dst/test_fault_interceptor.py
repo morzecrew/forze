@@ -31,7 +31,8 @@ from forze.domain.models import (
     Document,
     ReadDocument,
 )
-from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy, record_event
+from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
+from forze_dst.markers import record_event
 from forze_dst.faults import PortFaultInterceptor
 from forze_dst.invariants import expect
 from forze_mock import MockDepsModule

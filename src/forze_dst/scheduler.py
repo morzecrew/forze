@@ -31,15 +31,6 @@ import attrs
 
 # ----------------------- #
 
-__all__ = [
-    "Scheduler",
-    "RandomScheduler",
-    "PCTScheduler",
-    "SystematicScheduler",
-    "pct_scheduler_factory",
-]
-
-
 
 @runtime_checkable
 class Scheduler(Protocol):
@@ -56,13 +47,13 @@ class Scheduler(Protocol):
 class RandomScheduler(Scheduler):
     """Uniformly shuffle each tick's ready callbacks."""
 
-    _rng: random.Random
+    rng: random.Random
 
     # ....................... #
 
     def reorder(self, ready: list[Any], step: int) -> list[Any]:
         del step
-        self._rng.shuffle(ready)
+        self.rng.shuffle(ready)
         return ready
 
 
@@ -74,7 +65,9 @@ def _task_of(handle: Any) -> asyncio.Task[Any] | None:
 
     owner = getattr(getattr(handle, "_callback", None), "__self__", None)
 
-    return owner if isinstance(owner, asyncio.Task) else None  # pyright: ignore[reportUnknownVariableType]
+    return (
+        owner if isinstance(owner, asyncio.Task) else None
+    )  # pyright: ignore[reportUnknownVariableType]
 
 
 # ....................... #
@@ -94,9 +87,12 @@ class PCTScheduler(Scheduler):
     makes deep interleavings reachable with a useful probability.
     """
 
-    _rng: random.Random
+    rng: random.Random
     depth: int = 3
     steps: int = 50
+
+    # ....................... #
+
     _priorities: dict[asyncio.Task[Any], float] = attrs.field(factory=dict, init=False)
     _change_points: dict[int, float] = attrs.field(factory=dict, init=False)
 
@@ -108,7 +104,7 @@ class PCTScheduler(Scheduler):
         # d-1 change points at random ticks, sorted ascending; each demotes to a distinct
         # value below the high band, earlier change points staying above later ones.
         points = sorted(
-            self._rng.randint(1, max(1, self.steps)) for _ in range(self.depth - 1)
+            self.rng.randint(1, max(1, self.steps)) for _ in range(self.depth - 1)
         )
         self._change_points.update(
             {point: -(index + 1) for index, point in enumerate(points)}
@@ -118,7 +114,7 @@ class PCTScheduler(Scheduler):
 
     def _priority(self, task: asyncio.Task[Any]) -> float:
         if task not in self._priorities:  # high band [depth, depth+1), distinct w.h.p.
-            self._priorities[task] = self.depth + self._rng.random()
+            self._priorities[task] = self.depth + self.rng.random()
 
         return self._priorities[task]
 
@@ -157,7 +153,10 @@ class SystematicScheduler(Scheduler):
     enumerate the alternatives at each branch — the basis for systematic interleaving search.
     """
 
-    _choices: Sequence[int]
+    choices: Sequence[int]
+
+    # ....................... #
+
     _index: int = attrs.field(default=0, init=False)
     branching: list[int] = attrs.field(factory=list, init=False)
 
@@ -168,7 +167,7 @@ class SystematicScheduler(Scheduler):
         size = len(ready)
         self.branching.append(size)
 
-        choice = self._choices[self._index] if self._index < len(self._choices) else 0
+        choice = self.choices[self._index] if self._index < len(self.choices) else 0
         self._index += 1
         pick = choice % size if size else 0
 
@@ -189,3 +188,16 @@ def pct_scheduler_factory(*, depth: int = 3, steps: int = 50) -> Any:
         )
 
     return build
+
+
+# ....................... #
+
+# Only the ``Scheduler`` protocol is public — the extension contract for a custom interleaving
+# strategy on the low-level ``run_simulation`` path. The built-in schedulers are selected by
+# ``SchedulerKind`` (+ params) on ``SimulationConfig`` and constructed internally with the run's
+# derived schedule seed — DST owns that RNG, so the rng-taking classes are not exposed (passing
+# your own RNG would defeat reproducibility-from-the-master-seed). They remain importable from
+# this module for the low-level path and their own tests.
+__all__ = [
+    "Scheduler",
+]
