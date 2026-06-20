@@ -44,12 +44,13 @@ from forze_dst.config import (
     PartitionSchedule,
     SimulationConfig,
 )
+from forze_dst.engines.context import run_recording
 from forze_dst.engines.projection import fold_runtime_trace
 from forze_dst.faults import SimulatedCrash, compile_fault_policy
 from forze_dst.latency import compile_latency
 from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.oracle.invariants import Invariant, check
-from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
+from forze_dst.oracle.recorder import History, Recorder, record_event
 from forze_dst.runtime import run_simulation
 
 # ----------------------- #
@@ -270,15 +271,17 @@ class Cluster:
 
         scheduler, schedule_seed = self._interleaving(seed, config)
 
-        with bind_recorder(recorder):
-            run_simulation(
+        run_recording(
+            recorder,
+            lambda: run_simulation(
                 driver,
                 seed=derive_seed(seed, "entropy"),
                 schedule_seed=schedule_seed,
                 scheduler=scheduler,
                 epoch=config.epoch,
                 latency=self._latency(seed, config),
-            )
+            ),
+        )
 
         return recorder.history
 

@@ -32,10 +32,37 @@ Invariant = Callable[[History], list[Violation]]
 """A check from a history to the violations it found (empty == satisfied)."""
 
 
-def check(history: History, invariants: Sequence[Invariant]) -> list[Violation]:
-    """Run every invariant over *history* and collect all violations."""
+_DEADLOCK_KIND = "deadlock"
 
-    violations: list[Violation] = []
+
+def _deadlock_violations(history: History) -> list[Violation]:
+    """A recorded ``deadlock`` event is always a violation — the workload could not make progress.
+
+    The loop records one when it goes quiescent (no ready callbacks, no pending timer) instead of
+    hanging; the run substrate folds that into the history so it lands here rather than aborting
+    the sweep, and a normal find → minimize → report follows.
+    """
+
+    return [
+        Violation(
+            invariant="no_deadlock",
+            message="the workload deadlocked — "
+            + str(event.fields.get("detail", "no ready work and no pending timer")),
+            events=(event,),
+        )
+        for event in history.of_kind(_DEADLOCK_KIND)
+    ]
+
+
+def check(history: History, invariants: Sequence[Invariant]) -> list[Violation]:
+    """Run every invariant over *history* and collect all violations.
+
+    A recorded deadlock is reported regardless of the declared invariants — a workload that
+    cannot make progress is a bug on any app — so it surfaces here even uninstrumented, the way a
+    sweep catches an unexpected crash.
+    """
+
+    violations: list[Violation] = _deadlock_violations(history)
 
     for invariant in invariants:
         violations.extend(invariant(history))

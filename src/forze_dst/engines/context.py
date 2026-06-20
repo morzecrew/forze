@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import random
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Sequence, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Sequence, cast
 
 from forze.application.contracts.interception import PortInterceptor
 from forze.application.execution import (
@@ -29,12 +29,35 @@ from forze.base.primitives import derive_seed
 from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.faults import compile_fault_policy
 from forze_dst.latency import compile_latency
-from forze_dst.oracle.recorder import record_event
+from forze_dst.loop import SimulationDeadlock
+from forze_dst.oracle.recorder import Recorder, bind_recorder, record_event
 
 if TYPE_CHECKING:
     from forze_dst.harness import Simulation
 
 # ----------------------- #
+
+
+def run_recording(recorder: Recorder, run: Callable[[], None]) -> None:
+    """Run *run* under *recorder*, turning a deadlock into a recorded ``deadlock`` event.
+
+    A :class:`~forze_dst.loop.SimulationDeadlock` — the loop gone quiescent with no ready work and
+    no pending timer — is a genuine bug: a workload that cannot make progress. Recording it as an
+    event (instead of letting it abort the sweep) lets the oracle report **and minimize** it like
+    any other counterexample. ``check`` treats a ``deadlock`` event as a violation, so the whole
+    find → shrink → report pipeline works with no further changes.
+    """
+
+    with bind_recorder(recorder):
+        try:
+            run()
+        except SimulationDeadlock as deadlock:
+            events = recorder.history.events
+            record_event(
+                "deadlock",
+                at=events[-1].at if events else 0.0,
+                detail=str(deadlock),
+            )
 
 
 def build_modules(sim: "Simulation") -> tuple[DepsModule, ...]:

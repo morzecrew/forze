@@ -54,6 +54,8 @@ simulation = Simulation(
 
 For the strongest single-object guarantee, `linearizable(spec)` checks a recorded operation history against a sequential specification (Wing-Gong, per key) — every concurrent execution must be equivalent to *some* legal serial order.
 
+One failure needs no invariant at all: a **deadlock**. If an interleaving drives the workload to a standstill — every task blocked, with no ready work and no timer to advance — that is always a bug, so DST reports it on its own. It minimises to the smallest workload that still stalls and comes back as a `no_deadlock` violation, exactly like an asserted one, instead of aborting the sweep. You catch it for free, even with no invariants declared.
+
 !!! note "Value-level invariants need `capture_values`"
 
     By default the trace is **id-only** — it records *which* key and outcome, never the value (no

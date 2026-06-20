@@ -20,7 +20,7 @@ from forze_dst.engines import base, context, projection
 from forze_dst.engines import scenario as scenario_engine
 from forze_dst.faults import SimulatedCrash, compile_crash
 from forze_dst.oracle import ViolationReport
-from forze_dst.oracle.recorder import History, Recorder, bind_recorder, record_event
+from forze_dst.oracle.recorder import History, Recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
 
@@ -125,15 +125,17 @@ def run_crash_restart(
 
             projection.fold_runtime_trace(rctx)  # the post-restart trace
 
-    with bind_recorder(recorder):
-        run_simulation(
+    context.run_recording(
+        recorder,
+        lambda: run_simulation(
             driver,
             seed=derive_seed(seed, "entropy"),
             schedule_seed=schedule_seed,
             scheduler=scheduler,
             epoch=epoch,
             latency=context.latency_for(sim, seed),
-        )
+        ),
+    )
 
     return recorder.history, generated
 

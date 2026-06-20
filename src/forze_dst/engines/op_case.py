@@ -16,7 +16,7 @@ from forze.base.primitives import derive_seed
 from forze_dst.engines import base, context, projection
 from forze_dst.engines.cases import OperationCase, Call
 from forze_dst.oracle import ViolationReport
-from forze_dst.oracle.recorder import History, Recorder, bind_recorder
+from forze_dst.oracle.recorder import History, Recorder
 from forze_dst.runtime import run_simulation
 from forze_dst.time_source import DEFAULT_EPOCH
 
@@ -60,15 +60,17 @@ def run_workload(
 
             projection.fold_runtime_trace(ctx)
 
-    with bind_recorder(recorder):
-        run_simulation(
+    context.run_recording(
+        recorder,
+        lambda: run_simulation(
             scenario,
             seed=derive_seed(seed, "entropy"),
             schedule_seed=schedule_seed,
             scheduler=scheduler,
             epoch=epoch,
             latency=context.latency_for(sim, seed),
-        )
+        ),
+    )
 
     return recorder.history
 
