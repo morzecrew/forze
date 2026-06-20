@@ -1,8 +1,8 @@
-"""Runtime tracing event and violation records."""
+"""Runtime tracing data model: events, violations, and the per-task trace buffer."""
 
 from __future__ import annotations
 
-from typing import Any, Mapping, final
+from typing import Any, ClassVar, Mapping, final
 
 import attrs
 
@@ -97,3 +97,129 @@ class TracingViolation:
 
     at_seq: int
     """Sequence number of the offending event."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True)
+class RuntimeTrace:
+    """Append-only sequence of observed runtime events for one async task."""
+
+    MAX_EVENTS: ClassVar[int] = 10_000
+    """Maximum stored events before truncation."""
+
+    events: list[TracingEvent] = attrs.field(factory=list)
+    """Recorded events in execution order."""
+
+    _next_seq: int = attrs.field(default=0, init=False)
+    _truncated: bool = attrs.field(default=False, init=False)
+
+    # ....................... #
+
+    def record(self, event: TracingEvent) -> None:
+        """Append an event (caller supplies ``seq`` via :meth:`next_event`)."""
+
+        if self._truncated:
+            return
+
+        if len(self.events) >= self.MAX_EVENTS:
+            self._truncated = True
+            self.events.append(
+                TracingEvent(
+                    seq=self._next_seq,
+                    domain="tracing",
+                    op="truncated",
+                    surface=None,
+                    route=None,
+                    phase=None,
+                    tx_depth=0,
+                    tx_route=None,
+                )
+            )
+            self._next_seq += 1
+            return
+
+        self.events.append(event)
+
+    # ....................... #
+
+    def next_event(
+        self,
+        *,
+        domain: str,
+        op: str,
+        surface: str | None = None,
+        route: str | None = None,
+        phase: str | None = None,
+        tx_depth: int = 0,
+        tx_route: str | None = None,
+        at: float = 0.0,
+        key: str | None = None,
+        outcome: str | None = None,
+        error: str | None = None,
+        corr: int | None = None,
+        nested: bool = False,
+        payload: Mapping[str, Any] | None = None,
+        result: Mapping[str, Any] | None = None,
+    ) -> TracingEvent:
+        """Build and record an event with the next sequence number."""
+
+        event = TracingEvent(
+            seq=self._next_seq,
+            at=at,
+            domain=domain,
+            op=op,
+            surface=surface,
+            route=route,
+            phase=phase,
+            tx_depth=tx_depth,
+            tx_route=tx_route,
+            key=key,
+            outcome=outcome,
+            error=error,
+            corr=corr,
+            nested=nested,
+            payload=payload,
+            result=result,
+        )
+        self._next_seq += 1
+        self.record(event)
+        return event
+
+    # ....................... #
+
+    def format_lines(self) -> str:
+        """Return human-readable lines for logging."""
+
+        lines: list[str] = []
+
+        for event in self.events:
+            parts = [f"{event.seq:04d}", event.domain, event.op]
+
+            if event.surface is not None:
+                parts.append(f"surface={event.surface}")
+
+            if event.route is not None:
+                parts.append(f"route={event.route}")
+
+            if event.phase is not None:
+                parts.append(f"phase={event.phase}")
+
+            if event.tx_route is not None:
+                parts.append(f"tx={event.tx_route}")
+
+            if event.key is not None:
+                parts.append(f"key={event.key}")
+
+            if event.outcome is not None:
+                parts.append(f"outcome={event.outcome}")
+
+            if event.error is not None:
+                parts.append(f"error={event.error}")
+
+            parts.append(f"depth={event.tx_depth}")
+            lines.append(" ".join(parts))
+
+        return "\n".join(lines)

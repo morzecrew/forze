@@ -1,4 +1,9 @@
-"""Optional recorder for runtime port and transaction events."""
+"""Optional recorders for runtime port and transaction events.
+
+``RuntimeTracer`` records port/coordinator calls into the per-task ``RuntimeTrace``;
+``TxTracer`` records transaction scope boundaries and delegates to a ``RuntimeTracer``.
+Both ship a noop (production default, zero cost) and a recording implementation.
+"""
 
 from typing import Any, Mapping, Protocol, final, runtime_checkable
 
@@ -6,7 +11,7 @@ import attrs
 
 from forze.base.primitives import ContextVarTrace, monotonic
 
-from .buffer import RuntimeTrace
+from .trace import RuntimeTrace
 
 # ----------------------- #
 
@@ -198,3 +203,103 @@ def runtime_tracer_from_flag(
         return RecordingRuntimeTracer(capture_values=capture_values)
 
     return NOOP_RUNTIME_TRACER
+
+
+# ....................... #
+
+
+@runtime_checkable
+class TxTracer(Protocol):
+    """Records transaction scope boundaries for development diagnostics."""
+
+    @property
+    def enabled(self) -> bool:
+        """Whether event recording is active."""
+        ...
+
+    def on_scope_enter(self, *, route: str, depth: int) -> None:
+        """Record root transaction scope entry."""
+        ...
+
+    def on_scope_exit(self, *, route: str, depth: int) -> None:
+        """Record root transaction scope exit."""
+        ...
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True)
+class NoopTxTracer:
+    """Transaction tracer that records nothing."""
+
+    @property
+    def enabled(self) -> bool:
+        return False
+
+    def on_scope_enter(self, *, route: str, depth: int) -> None:
+        del route, depth
+        return
+
+    def on_scope_exit(self, *, route: str, depth: int) -> None:
+        del route, depth
+        return
+
+
+# ....................... #
+
+NOOP_TX_TRACER = NoopTxTracer()
+"""Shared noop transaction tracer instance."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True)
+class RuntimeBackedTxTracer:
+    """Delegates transaction events to a :class:`RuntimeTracer`."""
+
+    runtime: RuntimeTracer
+    """Underlying runtime event recorder."""
+
+    # ....................... #
+
+    @property
+    def enabled(self) -> bool:
+        return self.runtime.enabled
+
+    # ....................... #
+
+    def on_scope_enter(self, *, route: str, depth: int) -> None:
+        self.runtime.record(
+            domain="tx",
+            op="enter",
+            route=route,
+            tx_route=route,
+            tx_depth=depth,
+        )
+
+    # ....................... #
+
+    def on_scope_exit(self, *, route: str, depth: int) -> None:
+        self.runtime.record(
+            domain="tx",
+            op="exit",
+            route=route,
+            tx_route=route,
+            tx_depth=depth,
+        )
+
+
+# ....................... #
+
+
+def tx_tracer_from_runtime(runtime: RuntimeTracer) -> TxTracer:
+    """Return a noop or runtime-backed transaction tracer."""
+
+    if not runtime.enabled:
+        return NOOP_TX_TRACER
+
+    return RuntimeBackedTxTracer(runtime=runtime)

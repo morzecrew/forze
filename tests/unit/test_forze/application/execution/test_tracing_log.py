@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from forze.application.execution import DepsRegistry
 from forze.application.execution.tracing.emit import init_runtime_tracing, record
-from forze.application.execution.tracing.log import log_runtime_trace
+from forze.application.execution.tracing.harness import log_runtime_trace
 from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
@@ -39,7 +39,7 @@ class TestLogRuntimeTrace:
         record(deps=deps, domain="document", op="query")
 
         with patch.dict(os.environ, {"FORZE_RUNTIME_TRACE_LOG": "true"}):
-            with patch("forze.application.execution.tracing.log.logger") as log_mock:
+            with patch("forze.application.execution.tracing.harness.logger") as log_mock:
                 log_runtime_trace(deps)
 
         log_mock.debug.assert_called_once()
@@ -54,7 +54,7 @@ class TestLogRuntimeTrace:
         )
 
         with patch.dict(os.environ, {"FORZE_RUNTIME_TRACE_LOG": "1"}):
-            with patch("forze.application.execution.tracing.log.logger") as log_mock:
+            with patch("forze.application.execution.tracing.harness.logger") as log_mock:
                 log_runtime_trace(deps)
 
         log_mock.debug.assert_not_called()

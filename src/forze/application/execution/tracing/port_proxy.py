@@ -1,4 +1,4 @@
-"""Tracing wrapper for configurable dependency ports."""
+"""Tracing wrapper for configurable dependency ports, with port-metadata inference."""
 
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, Mapping, cast
@@ -6,11 +6,42 @@ from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.deps import DepKey
+from forze.base.primitives import StrKey
+
 from ..port_proxy_base import PortProxy
 from .emit import record
 
 if TYPE_CHECKING:
     from ..deps.frozen import FrozenDeps
+
+
+# ....................... #
+
+
+def infer_port_metadata(
+    key: DepKey[object],
+    spec: object,
+    *,
+    route: StrKey | None,
+) -> tuple[str, str, str | None, str | None]:
+    """Return ``(domain, surface, route, phase)`` for a configurable port resolution."""
+
+    surface = key.name
+    phase: str | None = None
+
+    if surface.endswith("_query"):
+        phase = "query"
+    elif surface.endswith("_command"):
+        phase = "command"
+
+    domain = surface.split("_", 1)[0] if "_" in surface else surface
+    route_name = getattr(spec, "name", None)
+
+    if route_name is None and route is not None:
+        route_name = str(getattr(route, "value", route))
+
+    return domain, surface, route_name, phase
 
 # ----------------------- #
 

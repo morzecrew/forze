@@ -41,7 +41,7 @@ def maybe_wrap_interceptors(
     if not deps.interceptors and not current_interceptors():
         return result
 
-    from ..tracing.metadata import infer_port_metadata
+    from ..tracing.port_proxy import infer_port_metadata
 
     _domain, surface, route_name, _phase = infer_port_metadata(key, spec, route=route)
 
@@ -69,7 +69,7 @@ def maybe_wrap_configurable(
     if not deps.runtime_tracer.enabled:
         return result
 
-    from ..tracing.metadata import infer_port_metadata
+    from ..tracing.port_proxy import infer_port_metadata
     from ..tracing.port_proxy import wrap_port
 
     domain, surface, route_name, phase = infer_port_metadata(
@@ -163,7 +163,7 @@ def record_simple_resolve(
     if not deps.runtime_tracer.enabled:
         return
 
-    from ..tracing.metadata import infer_port_metadata
+    from ..tracing.port_proxy import infer_port_metadata
 
     domain, surface, route_name, phase = infer_port_metadata(
         key,
