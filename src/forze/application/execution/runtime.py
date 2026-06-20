@@ -45,6 +45,9 @@ class DeploymentProfile(StrEnum):
     SERVERLESS = "serverless"
 
 
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ExecutionRuntime:
@@ -61,7 +64,7 @@ class ExecutionRuntime:
     lifecycle: FrozenLifecyclePlan = attrs.field(factory=FrozenLifecyclePlan)
     """Plan for startup and shutdown hooks."""
 
-    cache_resolved_operations: bool = attrs.field(default=True)
+    cache_resolved_operations: bool = True
     """Memoize resolved operations per scope (build once per op, then reuse).
 
     Safe by default: the scope's :class:`ExecutionContext` is created once and is
@@ -71,16 +74,14 @@ class ExecutionRuntime:
     handler or hook factory that must rebuild on every invocation.
     """
 
-    deployment: DeploymentProfile = attrs.field(
-        default=DeploymentProfile.SINGLE_PROCESS
-    )
+    deployment: DeploymentProfile = DeploymentProfile.SINGLE_PROCESS
     """Declared deployment posture (see :class:`DeploymentProfile`).
 
     ``FLEET`` enables assembly-time validation: a lifecycle step declared
     ``mutates_shared_state`` must be ``singleton_guarded`` or construction fails.
     """
 
-    drain_timeout: timedelta = attrs.field(default=timedelta(seconds=10))
+    drain_timeout: timedelta = timedelta(seconds=10)
     """Bounded wait for in-flight operations during :meth:`shutdown`.
 
     Shutdown first flips the scope's drain gate — new top-level invocations
@@ -91,7 +92,7 @@ class ExecutionRuntime:
     never blocks shutdown indefinitely. No in-flight work exits immediately.
     """
 
-    cache_resolved_ports: bool = attrs.field(default=True)
+    cache_resolved_ports: bool = True
     """Memoize resolved configurable ports (document/search/cache/storage/... adapters)
     per scope, so each ``ctx.<x>.query(spec)`` reuses one gateway/adapter (and its codecs,
     filter renderers, key codecs) instead of rebuilding it on every call.
@@ -106,7 +107,8 @@ class ExecutionRuntime:
     *stateful* port factory that must rebuild per call.
     """
 
-    # Non initable fields
+    # ....................... #
+
     __ctx: RuntimeVar[ExecutionContext] = attrs.field(
         factory=lambda: RuntimeVar("execution_context"),
         repr=False,
@@ -118,13 +120,11 @@ class ExecutionRuntime:
 
     def __attrs_post_init__(self) -> None:
         if self.deployment is DeploymentProfile.FLEET:
-            offending = sorted(
+            if offending := sorted(
                 str(step.id)
                 for step in self.lifecycle.graph.steps.values()
                 if step.mutates_shared_state and not step.singleton_guarded
-            )
-
-            if offending:
+            ):
                 raise exc.configuration(
                     "FLEET deployment forbids unguarded shared-state-mutating "
                     "lifecycle steps (N replicas would stampede them at startup): "
@@ -134,13 +134,11 @@ class ExecutionRuntime:
                 )
 
         elif self.deployment is DeploymentProfile.SERVERLESS:
-            offending = sorted(
+            if offending := sorted(
                 str(step.id)
                 for step in self.lifecycle.graph.steps.values()
                 if step.requires_long_running
-            )
-
-            if offending:
+            ):
                 raise exc.configuration(
                     "SERVERLESS deployment forbids lifecycle steps that require a "
                     "long-running host (background pollers/relays/schedulers cannot "

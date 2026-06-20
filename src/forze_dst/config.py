@@ -202,6 +202,14 @@ class SimulationConfig:
     on the first invariant violation). The guided run is one seed-derived lineage rooted at the
     first value of :attr:`seeds`; ``count`` sizes the initial workload and bounds growth."""
 
+    # Value-level trace capture (``read_your_writes`` / value invariants).
+    capture_values: bool = False
+    """Capture redaction-applied call **values** (write payloads + read results) onto the trace,
+    so value-level invariants can assert on *what* was written/read, not just which key. Off by
+    default — the trace stays id-only (matching production). Sim data is synthetic, and fields a
+    spec declares sensitive (``encryption.encrypted``/``.searchable``) are masked to
+    ``"<redacted>"`` even when captured."""
+
     # Reachability ("sometimes") assertions (``Simulation.coverage`` / ``Cluster``).
     reachability_targets: frozenset[str] = frozenset()
     """States the sweep must reach at least once (``forze_dst.oracle.reachability.reached`` labels). A

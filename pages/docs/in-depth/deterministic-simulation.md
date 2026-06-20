@@ -70,9 +70,22 @@ An invariant reads the recorded history and returns the violations it found. The
 
     Named ops must reach `ok`; an op must finish within a virtual-time budget; an op must touch one entity key (the *wrong-entity* guard) — all from the trace alone.
 
+-   :lucide-eye: **`read_your_writes(surface, value_field=…)` · `expect_value(surface, predicate)`**
+
+    Value-level (opt into `capture_values`): a keyed read must observe the last value written to it (stale-read guard); every captured write/read value must satisfy a predicate (the *wrong-value* guard).
+
 </div>
 
 `linearizable(spec)` checks a recorded operation history against a sequential specification (Wing-Gong, per key) for the strongest single-object consistency guarantee.
+
+!!! note "Value-level invariants need `capture_values`"
+
+    By default the trace is **id-only** — it records *which* key and outcome, never the value (no
+    PII, no cost; the production posture). Set `SimulationConfig(capture_values=True)` and the trace
+    additionally carries a redaction-applied view of each write payload and read result, so
+    `read_your_writes` / `expect_value` can assert on the actual values. Capture is sim-only (the
+    data is synthetic), and any field a spec marks sensitive (`encryption.encrypted`/`.searchable`)
+    is masked to `<redacted>` even when captured.
 
 ## Sometimes — prove the dangerous case fired
 

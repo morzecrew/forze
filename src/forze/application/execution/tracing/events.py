@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import final
+from typing import Any, Mapping, final
 
 import attrs
 
@@ -67,6 +67,18 @@ class TracingEvent:
     """Whether this operation ``invoke`` ran *inside* another operation (a cascade — a saga or
     event handler invoking a sub-operation), so it has no top-level driver. ``False`` on
     non-operation events and on top-level invocations."""
+
+    payload: Mapping[str, Any] | None = None
+    """A redaction-applied structured view of the call's value argument (the write payload),
+    captured **only** when value capture is enabled (off in production → always ``None``, so the
+    trace stays id-only and PII-free). Fields the spec declares sensitive are masked to
+    ``"<redacted>"``. Lets value-level invariants (wrong-value, lost-update-by-value) assert on
+    what was written, not just which key."""
+
+    result: Mapping[str, Any] | None = None
+    """A redaction-applied structured view of a read's returned value, captured on the call's
+    *return* event under value capture (``None`` otherwise). Lets ``read_your_writes`` assert on
+    what a read actually observed."""
 
 
 # ....................... #

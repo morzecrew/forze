@@ -75,6 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Heavy-tailed latency distributions** — `LogNormal` and `Pareto` join `Constant`/`Uniform`/`Exponential` in a `LatencyProfile`. Their long right tail models realistic p99 blowups (a small fraction of calls dramatically slower), surfacing timeout and deadline bugs a fixed or uniform delay never reaches. Sampled through the seeded latency RNG like the others, so runs stay reproducible.
 
+- **Value-level DST invariants** — `SimulationConfig(capture_values=True)` makes the trace carry a redaction-applied view of each write payload and read result (off by default — the trace stays id-only, so production tracing is unchanged and PII-free; sim data is synthetic, and spec-declared sensitive fields are masked to `<redacted>`). New `read_your_writes(surface, value_field=…)` (a keyed read must observe the last value written — stale-read guard) and `expect_value(surface, predicate)` (the value-level `expect` — wrong-value guard) assert on *what* was written/read, not just which key.
+
 ### Changed
 
 - **Lazy transaction acquisition, default for Postgres, Mongo, and Firestore** *(behavior change)* — a transaction scope defers connection checkout until the first operation, so pre-query CPU or external work no longer parks a connection idle-in-transaction. A connect failure now surfaces at the first operation rather than scope entry; opt out with `lazy_transaction=False`.

@@ -49,6 +49,8 @@ class RandomScheduler(Scheduler):
 
     _rng: random.Random
 
+    # ....................... #
+
     def reorder(self, ready: list[Any], step: int) -> list[Any]:
         del step
         self._rng.shuffle(ready)
@@ -84,18 +86,20 @@ class PCTScheduler(Scheduler):
     """
 
     _rng: random.Random
-    _depth: int = 3
-    _steps: int = 50
+    depth: int = 3
+    steps: int = 50
     _priorities: dict[asyncio.Task[Any], float] = attrs.field(factory=dict, init=False)
     _change_points: dict[int, float] = attrs.field(factory=dict, init=False)
 
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
-        self._depth = max(1, self._depth)
+        self.depth = max(1, self.depth)
 
         # d-1 change points at random ticks, sorted ascending; each demotes to a distinct
         # value below the high band, earlier change points staying above later ones.
         points = sorted(
-            self._rng.randint(1, max(1, self._steps)) for _ in range(self._depth - 1)
+            self._rng.randint(1, max(1, self.steps)) for _ in range(self.depth - 1)
         )
         self._change_points.update(
             {point: -(index + 1) for index, point in enumerate(points)}
@@ -105,7 +109,7 @@ class PCTScheduler(Scheduler):
 
     def _priority(self, task: asyncio.Task[Any]) -> float:
         if task not in self._priorities:  # high band [depth, depth+1), distinct w.h.p.
-            self._priorities[task] = self._depth + self._rng.random()
+            self._priorities[task] = self.depth + self._rng.random()
 
         return self._priorities[task]
 
@@ -148,6 +152,8 @@ class SystematicScheduler(Scheduler):
     _index: int = attrs.field(default=0, init=False)
     branching: list[int] = attrs.field(factory=list, init=False)
 
+    # ....................... #
+
     def reorder(self, ready: list[Any], step: int) -> list[Any]:
         del step
         size = len(ready)
@@ -157,10 +163,7 @@ class SystematicScheduler(Scheduler):
         self._index += 1
         pick = choice % size if size else 0
 
-        if pick == 0:
-            return ready
-
-        return [ready[pick], *ready[:pick], *ready[pick + 1 :]]
+        return ready if pick == 0 else [ready[pick], *ready[:pick], *ready[pick + 1 :]]
 
 
 # ....................... #

@@ -34,11 +34,13 @@ from .oracle.invariants import (
     check,
     completes_within,
     expect,
+    expect_value,
     monotonic_per,
     mutual_exclusion,
     no_duplicate_effect,
     no_unexpected_error,
     operation_succeeds,
+    read_your_writes,
     single_key_per_operation,
 )
 from .oracle.linearizability import (
@@ -167,6 +169,8 @@ __all__ = [
     "operation_succeeds",
     "completes_within",
     "single_key_per_operation",
+    "read_your_writes",
+    "expect_value",
     "expect",
     "run_recorded",
     "minimize",

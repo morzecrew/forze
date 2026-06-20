@@ -71,6 +71,8 @@ def fold_runtime_trace(ctx: ExecutionContext) -> None:
             key=event.key,
             outcome=event.outcome,
             error=event.error,
+            payload=event.payload,
+            result=event.result,
         )
 
     project_operation_events(trace.events)

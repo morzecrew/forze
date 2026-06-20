@@ -1,6 +1,6 @@
 """Record runtime tracing events on the active dependency container."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping
 
 from .session import active_runtime_tracer
 
@@ -35,6 +35,8 @@ def record(
     error: str | None = None,
     corr: int | None = None,
     nested: bool = False,
+    payload: "Mapping[str, Any] | None" = None,
+    result: "Mapping[str, Any] | None" = None,
     deps: "FrozenDeps | None" = None,
 ) -> int | None:
     """Append a runtime event when tracing is enabled; return its ``seq`` (``None`` if disabled).
@@ -67,4 +69,6 @@ def record(
         error=error,
         corr=corr,
         nested=nested,
+        payload=payload,
+        result=result,
     )

@@ -9,7 +9,7 @@ and collects every violation.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Callable, Sequence, final
+from typing import Any, Callable, Mapping, Sequence, final
 
 import attrs
 
@@ -318,5 +318,101 @@ def expect(
             for event in history.of_kind(kind)
             if not predicate(event)
         ]
+
+    return _check
+
+
+# ....................... #
+# Value-level invariants — read the redaction-applied call values captured under
+# ``SimulationConfig.capture_values`` (off by default; see E3.2). They assert on *what* was
+# written / read, not just which key — the class of correctness bugs (stale reads, wrong values)
+# that an id-only trace cannot see.
+
+
+def read_your_writes(
+    surface: str,
+    *,
+    value_field: str,
+) -> Invariant:
+    """On *surface*, a keyed read must observe the most recently written value for its key.
+
+    Walks the captured trace in order, per entity key tracking the last value written
+    (``payload[value_field]``) and checking every read's observed value (``result[value_field]``)
+    against it. A read that returns a *stale* value — an earlier write, or none of the writes —
+    is the read-your-writes violation: a cache that wasn't invalidated, a replica that lagged, a
+    read off the wrong snapshot. Requires ``capture_values`` (else there are no payloads to read,
+    and it holds vacuously). Writes with no key (creates that mint their own id) seed nothing —
+    the check covers keyed write→read flows (updates).
+    """
+
+    def _check(history: History) -> list[Violation]:
+        last_written: dict[Any, Any] = {}
+        violations: list[Violation] = []
+
+        for event in history.of_kind("trace"):
+            fields = event.fields
+            if fields.get("surface") != surface:
+                continue
+
+            key = fields.get("key")
+            if key is None:
+                continue
+
+            payload = fields.get("payload")
+            if payload is not None and value_field in payload:
+                last_written[key] = payload[value_field]
+
+            result = fields.get("result")
+            if result is not None and value_field in result and key in last_written:
+                observed = result[value_field]
+                if observed != last_written[key]:
+                    violations.append(
+                        Violation(
+                            invariant="read_your_writes",
+                            message=(
+                                f"read on {surface!r} key={key!r} observed "
+                                f"{value_field}={observed!r}, but the last write was "
+                                f"{last_written[key]!r}"
+                            ),
+                            events=(event,),
+                        )
+                    )
+
+        return violations
+
+    return _check
+
+
+def expect_value(
+    surface: str,
+    predicate: Callable[[Mapping[str, Any]], bool],
+    *,
+    on: str = "payload",
+    message: str,
+) -> Invariant:
+    """Every captured value on *surface* must satisfy *predicate* — the value-level :func:`expect`.
+
+    Reads the ``payload`` (a write, the default) or ``result`` (a read, ``on="result"``) value map
+    each call captured under ``capture_values`` and asserts *predicate* over it — the wrong-value
+    guard (a write whose value isn't what the contract requires) and any other value constraint.
+    Vacuous without ``capture_values`` (no values to check).
+    """
+
+    def _check(history: History) -> list[Violation]:
+        violations: list[Violation] = []
+
+        for event in history.of_kind("trace"):
+            if event.fields.get("surface") != surface:
+                continue
+
+            value = event.fields.get(on)
+            if value is not None and not predicate(value):
+                violations.append(
+                    Violation(
+                        invariant="expect_value", message=message, events=(event,)
+                    )
+                )
+
+        return violations
 
     return _check

@@ -77,6 +77,7 @@ def maybe_wrap_configurable(
         spec,
         route=route,
     )
+    capture = deps.runtime_tracer.capture_values
     return wrap_port(
         result,
         deps=deps,
@@ -85,7 +86,28 @@ def maybe_wrap_configurable(
         route=route_name,
         phase=phase,
         tx_depth_getter=ctx.tx_ctx.depth,
+        capture=capture,
+        redact=_sensitive_fields(spec) if capture else frozenset(),
     )
+
+
+# ....................... #
+
+
+def _sensitive_fields(spec: BaseSpec) -> frozenset[str]:
+    """The spec's declared-sensitive field names — what value capture redacts.
+
+    Reuses the encryption signal (``spec.encryption.encrypted`` ∪ ``.searchable``); a spec with no
+    declared encryption contributes nothing (captured values stay unmasked — safe, sim data only).
+    """
+
+    encryption = getattr(spec, "encryption", None)
+    if encryption is None:
+        return frozenset()
+
+    encrypted = getattr(encryption, "encrypted", ()) or ()
+    searchable = getattr(encryption, "searchable", ()) or ()
+    return frozenset(encrypted) | frozenset(searchable)
 
 
 # ....................... #

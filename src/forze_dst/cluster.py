@@ -307,7 +307,9 @@ class Cluster:
             else (cast("DepsModule", produced),)
         )
 
-        registry = DepsRegistry.from_modules(*modules).with_tracing(runtime=True)
+        registry = DepsRegistry.from_modules(*modules).with_tracing(
+            runtime=True, capture_values=config.capture_values
+        )
 
         if not clean:
             interceptors: list[PortInterceptor] = []

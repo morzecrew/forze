@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, final
+from typing import Any, ClassVar, Mapping, final
 
 import attrs
 
@@ -70,6 +70,8 @@ class RuntimeTrace:
         error: str | None = None,
         corr: int | None = None,
         nested: bool = False,
+        payload: "Mapping[str, Any] | None" = None,
+        result: "Mapping[str, Any] | None" = None,
     ) -> TracingEvent:
         """Build and record an event with the next sequence number."""
 
@@ -88,6 +90,8 @@ class RuntimeTrace:
             error=error,
             corr=corr,
             nested=nested,
+            payload=payload,
+            result=result,
         )
         self._next_seq += 1
         self.record(event)

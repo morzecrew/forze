@@ -67,7 +67,12 @@ def registry_from_modules(
     seam the crash/restart restart relies on.
     """
 
-    registry = DepsRegistry.from_modules(*modules).with_tracing(runtime=True)
+    capture_values = (
+        sim.active_config is not None and sim.active_config.capture_values
+    )
+    registry = DepsRegistry.from_modules(*modules).with_tracing(
+        runtime=True, capture_values=capture_values
+    )
 
     interceptors: list[PortInterceptor] = list(extra)
 

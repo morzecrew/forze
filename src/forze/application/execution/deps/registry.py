@@ -149,8 +149,13 @@ class DepsRegistry:
         *,
         resolution: bool | ResolutionTracer | None = None,
         runtime: bool | RuntimeTracer | None = None,
+        capture_values: bool = False,
     ) -> Self:
-        """Return a registry that attaches tracers when :meth:`freeze` runs."""
+        """Return a registry that attaches tracers when :meth:`freeze` runs.
+
+        *capture_values* (DST-only) makes the runtime tracer capture redaction-applied call values
+        onto the trace for value-level invariants; off by default so production stays id-only.
+        """
 
         updates: dict[str, ResolutionTracer | RuntimeTracer] = {}
 
@@ -165,7 +170,7 @@ class DepsRegistry:
             updates["runtime_tracer"] = (
                 runtime
                 if isinstance(runtime, RuntimeTracer)
-                else runtime_tracer_from_flag(runtime)
+                else runtime_tracer_from_flag(runtime, capture_values=capture_values)
             )
 
         return attrs.evolve(self, **updates)  # type: ignore[arg-type]
