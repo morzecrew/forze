@@ -26,6 +26,8 @@ from forze_dst import (
     FaultRule,
     LatencyProfile,
     LatencyRule,
+    LogNormal,
+    Pareto,
     Partition,
     PartitionSchedule,
     Simulation,
@@ -96,7 +98,14 @@ class TestConfigRoundTrip:
         assert config_from_dict(config_to_dict(config)) == config
 
     def test_each_distribution_kind_round_trips(self) -> None:
-        for dist in (Constant(0.1), Uniform(0.0, 1.0), Exponential(0.5)):
+        dists = (
+            Constant(0.1),
+            Uniform(0.0, 1.0),
+            Exponential(0.5),
+            LogNormal(median=0.05, sigma=1.2),
+            Pareto(scale=0.01, alpha=1.3),
+        )
+        for dist in dists:
             config = SimulationConfig(
                 seeds=[0], latency=LatencyProfile(rules=(LatencyRule(dist=dist),))
             )

@@ -29,6 +29,8 @@ from forze_dst.latency import (
     Exponential,
     LatencyProfile,
     LatencyRule,
+    LogNormal,
+    Pareto,
     Uniform,
 )
 
@@ -42,8 +44,14 @@ def _dist_to_dict(dist: Distribution) -> dict[str, Any]:
     if isinstance(dist, Uniform):
         return {"kind": "uniform", "low": dist.low, "high": dist.high}
 
-    if isinstance(dist, Exponential):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if isinstance(dist, Exponential):
         return {"kind": "exponential", "mean": dist.mean}
+
+    if isinstance(dist, LogNormal):
+        return {"kind": "lognormal", "median": dist.median, "sigma": dist.sigma}
+
+    if isinstance(dist, Pareto):  # pyright: ignore[reportUnnecessaryIsInstance]
+        return {"kind": "pareto", "scale": dist.scale, "alpha": dist.alpha}
 
     raise TypeError(f"unknown latency distribution: {type(dist).__name__}")
 
@@ -62,6 +70,12 @@ def _dist_from_dict(data: dict[str, Any]) -> Distribution:
 
     if kind == "exponential":
         return Exponential(data["mean"])
+
+    if kind == "lognormal":
+        return LogNormal(median=data["median"], sigma=data.get("sigma", 1.0))
+
+    if kind == "pareto":
+        return Pareto(scale=data["scale"], alpha=data.get("alpha", 1.5))
 
     raise ValueError(f"unknown latency distribution kind: {kind!r}")
 

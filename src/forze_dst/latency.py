@@ -10,6 +10,7 @@ are part of the reproducible, single-seed run — no artificial ``sleep`` in app
 
 from __future__ import annotations
 
+import math
 import random
 from typing import final
 
@@ -59,8 +60,49 @@ class Exponential:
         return rng.expovariate(1.0 / self.mean)
 
 
-Distribution = Constant | Uniform | Exponential
-"""A latency distribution sampled per matched call from the seeded latency RNG."""
+@final
+@attrs.define(frozen=True)
+class LogNormal:
+    """A heavy-tailed latency: log-normal with the given *median* (seconds) and log-space *sigma*.
+
+    The canonical service-time model — a long right tail, so the p99 sits well above the median.
+    *sigma* sets the tail heaviness (larger ⇒ fatter); the median anchors the typical case. This
+    is what surfaces deadline / timeout bugs that a fixed or uniform latency never reaches.
+    """
+
+    median: float
+    sigma: float = 1.0
+
+    def sample(self, rng: random.Random) -> float:
+        if self.median <= 0.0:
+            return 0.0
+
+        return rng.lognormvariate(math.log(self.median), self.sigma)
+
+
+@final
+@attrs.define(frozen=True)
+class Pareto:
+    """A power-law (Pareto) latency: minimum *scale* seconds, tail index *alpha*.
+
+    The extreme-tail model — a small fraction of calls are dramatically slower. *alpha* governs the
+    tail (smaller ⇒ heavier; ``alpha <= 1`` has an *infinite* mean, modelling pathological tails).
+    Use it to stress retry/deadline logic against rare, very slow downstreams.
+    """
+
+    scale: float
+    alpha: float = 1.5
+
+    def sample(self, rng: random.Random) -> float:
+        if self.scale <= 0.0 or self.alpha <= 0.0:
+            return 0.0
+
+        return self.scale * rng.paretovariate(self.alpha)
+
+
+Distribution = Constant | Uniform | Exponential | LogNormal | Pareto
+"""A latency distribution sampled per matched call from the seeded latency RNG. ``LogNormal`` and
+``Pareto`` are heavy-tailed — realistic p99 blowups that expose timeout / deadline bugs."""
 
 
 # ....................... #

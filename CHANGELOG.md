@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Failure artifact bundle** — `FailureBundle` captures a found counterexample as one portable JSON file: the seed plus the *full* `SimulationConfig` that produced it (faults, latency, partitions, crash, scheduler — via `config_to_dict`/`config_from_dict`), the minimized workload, the registry fingerprint, and the app import string. `replay_bundle(bundle)` re-imports the app, rebuilds the exact config, and re-runs the seed, so a bug reproduces on another machine from one command.
 
+- **Heavy-tailed latency distributions** — `LogNormal` and `Pareto` join `Constant`/`Uniform`/`Exponential` in a `LatencyProfile`. Their long right tail models realistic p99 blowups (a small fraction of calls dramatically slower), surfacing timeout and deadline bugs a fixed or uniform delay never reaches. Sampled through the seeded latency RNG like the others, so runs stay reproducible.
+
 ### Changed
 
 - **Lazy transaction acquisition, default for Postgres, Mongo, and Firestore** *(behavior change)* — a transaction scope defers connection checkout until the first operation, so pre-query CPU or external work no longer parks a connection idle-in-transaction. A connect failure now surfaces at the first operation rather than scope entry; opt out with `lazy_transaction=False`.

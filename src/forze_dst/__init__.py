@@ -22,6 +22,8 @@ from .latency import (
     Exponential,
     LatencyProfile,
     LatencyRule,
+    LogNormal,
+    Pareto,
     Uniform,
 )
 from .harness import OperationCase, Simulation
@@ -146,6 +148,8 @@ __all__ = [
     "Constant",
     "Uniform",
     "Exponential",
+    "LogNormal",
+    "Pareto",
     "Event",
     "History",
     "Recorder",

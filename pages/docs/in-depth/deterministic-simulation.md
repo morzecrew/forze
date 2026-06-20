@@ -114,7 +114,7 @@ report = simulation.run(SimulationConfig(
 ))
 ```
 
-A `FaultRule` matches `(surface, route, op)` and rolls, per matched call: `error` (a retryable failure), `timeout`, `crash`, and the transport behaviours `drop` (silent loss), `duplicate` (redelivery), and `delay` (advance virtual time before the call). A `LatencyProfile` samples a per-route distribution — `Constant`, `Uniform`, or `Exponential`. Both are **seeded by construction** — you never pass an RNG, so the run stays reproducible.
+A `FaultRule` matches `(surface, route, op)` and rolls, per matched call: `error` (a retryable failure), `timeout`, `crash`, and the transport behaviours `drop` (silent loss), `duplicate` (redelivery), and `delay` (advance virtual time before the call). A `LatencyProfile` samples a per-route distribution — `Constant`, `Uniform`, `Exponential`, or the **heavy-tailed** `LogNormal` and `Pareto`, whose long right tail produces the p99 blowups that expose timeout and deadline bugs a fixed delay never reaches. Both fault and latency are **seeded by construction** — you never pass an RNG, so the run stays reproducible.
 
 !!! note "Virtual time is free"
 
