@@ -113,6 +113,7 @@ class _CreateReservation(Handler[None, UUID]):
         return reservation.id
 
 
+# --8<-- [start:handler]
 @attrs.define(slots=True, kw_only=True)
 class _Confirm(Handler[ConfirmCmd, None]):
     ctx: ExecutionContext
@@ -138,6 +139,7 @@ class _Confirm(Handler[ConfirmCmd, None]):
         await self.ctx.document.command(RESERVATION_SPEC).update(
             args.reservation_id, reservation.rev, ReservationUpdate(confirmed_at=utcnow())
         )
+# --8<-- [end:handler]
 
 
 registry = OperationRegistry(
@@ -161,6 +163,7 @@ registry = OperationRegistry(
 # hook reading final state, and the time-dependent invariant.
 
 
+# --8<-- [start:simulation]
 def _latency(surface: str | None, route: str | None, op: str) -> float:
     # The payment downstream is slow; everything else is instant.
     del surface, op
@@ -190,3 +193,4 @@ simulation = Simulation(
         )
     ],
 )
+# --8<-- [end:simulation]

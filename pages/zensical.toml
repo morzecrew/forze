@@ -68,7 +68,14 @@ nav = [
             "in-depth/shutdown-and-fleets.md",
             "in-depth/observability.md",
             "in-depth/testing.md",
+        ] },
+        { "Deterministic simulation" = [
             "in-depth/deterministic-simulation.md",
+            "in-depth/dst-invariants.md",
+            "in-depth/dst-environment.md",
+            "in-depth/dst-crashes-and-clusters.md",
+            "in-depth/dst-exploration.md",
+            "in-depth/dst-the-loop.md",
         ] },
     ] },
     { "Integrations" = [
