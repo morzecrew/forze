@@ -123,3 +123,7 @@ deferred after-commit work (idempotency records, event dispatch) is a
 cancellation-protected critical section. It runs to completion even while
 cancellation is pending, and the cancellation re-raises afterwards — so a
 committed transaction is never left half-announced.
+
+A deadline is one of several controls over how an operation behaves under
+stress; the full set — retries, bulkheads, breakers, hedging — composes in
+[Resilience](resilience.md).

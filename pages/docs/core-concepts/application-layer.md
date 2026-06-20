@@ -99,3 +99,6 @@ handler. Hooks run around the handler without replacing its result.
 This is how an `orders.update` operation can require an unshipped order, wrap
 itself in a transaction, and emit an event — all without the handler knowing any
 of it happened.
+
+A handler reaches storage, messaging, and the rest through capabilities it never
+names by vendor. Those capabilities are [contracts](contracts.md).

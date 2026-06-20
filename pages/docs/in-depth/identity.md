@@ -147,3 +147,6 @@ For getting started, `forze_identity.builtin` ships presets — file/env API key
 conveniences, not production defaults: adopt one only once you accept its trust
 model (e.g. VK publishes no JWKS, so its preset verifies `id_token`s by
 server-side introspection against VK rather than a local signature check).
+
+Identity settles *who* the caller is; scoping *which data* they may reach is
+[Multi-tenancy](multi-tenancy.md).

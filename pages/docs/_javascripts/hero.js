@@ -1,12 +1,3 @@
-/* =========================================================================
-   Forze — custom homepage interactions
-   Drop into:  docs/javascripts/forze-home.js
-   Register in mkdocs.yml:
-     extra_javascript:
-       - javascripts/forze-home.js
-   Self-contained, no dependencies. Safe to load on every page — it no-ops
-   when the hero markup isn't present.
-   ========================================================================= */
 (function () {
     "use strict";
 
@@ -98,26 +89,73 @@
         var dpr = Math.min(window.devicePixelRatio || 1, 2);
 
         var R = 30; // hexagon radius
-        var cells = []; // {cx, cy, lit, life}
+        var cells = []; // {cx, cy, lit, target, hot}
         var W = 0,
             H = 0;
         var sparkClock = 0;
 
-        // Embers drifting up from the lower-left "heat source" (the forge).
-        // Reuses this canvas + RAF loop, so there's no extra GPU cost.
-        var embers = [];
-        var MAX_EMBERS = 40;
-        function spawnEmber() {
-            embers.push({
-                x: W * (Math.random() * 0.3), // hug the left edge
-                y: H * (0.82 + Math.random() * 0.22), // start low
-                vx: 0.06 + Math.random() * 0.22, // drift right
-                vy: -(0.18 + Math.random() * 0.4), // rise
-                r: 0.6 + Math.random() * 1.4,
-                life: 0,
-                ttl: 80 + Math.random() * 160,
-            });
+        // Steel base every cell rests at when unlit (matches the old default).
+        var STEEL = [126, 155, 196];
+
+        // Per-cell "hot" colour is sampled from the page's hero gradient
+        // (linear-gradient(114deg, #859dc1, #8e7276, --fz-orange, --fz-orange-2)).
+        // Resolve each stop to RGB once via a hidden probe so theme/accent vars
+        // (and var() nesting) are honoured.
+        function resolveColor(expr) {
+            var probe = document.createElement("span");
+            probe.style.cssText = "display:none;color:" + expr;
+            root.appendChild(probe);
+            var c = getComputedStyle(probe).color; // "rgb(r, g, b)"
+            probe.remove();
+            var m = c.match(/\d+(\.\d+)?/g) || [126, 155, 196];
+            return [+m[0], +m[1], +m[2]];
         }
+
+        var GRAD = [
+            [0.0, resolveColor("#859dc1")],
+            [0.49, resolveColor("#8e7276")],
+            [0.79, resolveColor("var(--fz-orange)")],
+            [1.0, resolveColor("var(--fz-orange-2)")],
+        ];
+
+        // Sample the gradient at t in [0,1] -> [r,g,b].
+        function sampleGradient(t) {
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            for (var i = 1; i < GRAD.length; i++) {
+                if (t <= GRAD[i][0]) {
+                    var a = GRAD[i - 1],
+                        b = GRAD[i];
+                    var f = (t - a[0]) / (b[0] - a[0] || 1);
+                    return [
+                        a[1][0] + (b[1][0] - a[1][0]) * f,
+                        a[1][1] + (b[1][1] - a[1][1]) * f,
+                        a[1][2] + (b[1][2] - a[1][2]) * f,
+                    ];
+                }
+            }
+            return GRAD[GRAD.length - 1][1].slice();
+        }
+
+        // Vertical palette controls:
+        //   WARM_FLOOR   - bottom fraction of the grid kept steel (0..1).
+        //   WARM_SKEW    - <1 skews the palette toward orange, so orange
+        //                  dominates quickly once above the floor (1 = linear).
+        //   WARM_SCATTER - per-cell random spread, so it reads as a
+        //                  probability distribution rather than a hard line.
+        var WARM_FLOOR = 0.2;
+        var WARM_SKEW = 0.3;
+        var WARM_SCATTER = 0.25;
+
+        // Blink controls — how cells spark and fade:
+        //   SPARK_INTERVAL - frames between sparks (lower = blinks more often).
+        //   SPARK_MIN/MAX  - inclusive range of cells lit per spark.
+        //   BLINK_SPEED    - ease rate toward lit/unlit (higher = snappier).
+        //   BLINK_PEAK     - brightness at which a cell starts fading back out.
+        var SPARK_INTERVAL = 40;
+        var SPARK_MIN = 1;
+        var SPARK_MAX = 2;
+        var BLINK_SPEED = 0.03;
+        var BLINK_PEAK = 0.82;
 
         function buildGrid() {
             var rect = canvas.getBoundingClientRect();
@@ -134,7 +172,35 @@
             for (var x = -R; x < W + R; x += hStep) {
                 var offset = col % 2 ? vStep / 2 : 0;
                 for (var y = -R; y < H + R; y += vStep) {
-                    cells.push({ cx: x, cy: y + offset, lit: 0, target: 0 });
+                    var cy = y + offset;
+                    // 0 at the bottom edge, 1 at the top of the grid block.
+                    var fromBottom = H ? (H - cy) / H : 0;
+                    // Stay steel through the bottom WARM_FLOOR band, then skew
+                    // hard toward orange so it dominates above the floor.
+                    var bias = Math.max(
+                        0,
+                        Math.min(
+                            1,
+                            (fromBottom - WARM_FLOOR) / (1 - WARM_FLOOR),
+                        ),
+                    );
+                    bias = Math.pow(bias, WARM_SKEW);
+                    // Per-cell scatter -> a probability distribution, not a line:
+                    // low cells mostly steel, higher cells mostly orange.
+                    var t = Math.max(
+                        0,
+                        Math.min(
+                            1,
+                            bias + (Math.random() * 2 - 1) * WARM_SCATTER,
+                        ),
+                    );
+                    cells.push({
+                        cx: x,
+                        cy: cy,
+                        lit: 0,
+                        target: 0,
+                        hot: sampleGradient(t),
+                    });
                 }
                 col++;
             }
@@ -157,9 +223,11 @@
 
             // occasionally light a random cell
             sparkClock++;
-            if (sparkClock > 8 && cells.length) {
+            if (sparkClock > SPARK_INTERVAL && cells.length) {
                 sparkClock = 0;
-                var n = 1 + Math.floor(Math.random() * 2);
+                var n =
+                    SPARK_MIN +
+                    Math.floor(Math.random() * (SPARK_MAX - SPARK_MIN + 1));
                 for (var k = 0; k < n; k++) {
                     var c = cells[(Math.random() * cells.length) | 0];
                     c.target = 1;
@@ -169,14 +237,17 @@
             for (var i = 0; i < cells.length; i++) {
                 var cell = cells[i];
                 // ease toward target, then decay
-                cell.lit += (cell.target - cell.lit) * 0.08;
-                if (cell.target === 1 && cell.lit > 0.92) cell.target = 0;
+                cell.lit += (cell.target - cell.lit) * BLINK_SPEED;
+                if (cell.target === 1 && cell.lit > BLINK_PEAK) cell.target = 0;
 
-                // Cool steel by default; heats toward red-hot orange as a cell lights.
+                // Cool steel by default; heats toward this cell's gradient
+                // colour as it lights — lower cells barely warm (their hot
+                // colour is near steel), higher cells flare orange.
                 var lit = cell.lit;
-                var r = Math.round(126 + (255 - 126) * lit);
-                var g = Math.round(155 + (110 - 155) * lit);
-                var b = Math.round(196 + (40 - 196) * lit);
+                var hot = cell.hot;
+                var r = Math.round(STEEL[0] + (hot[0] - STEEL[0]) * lit);
+                var g = Math.round(STEEL[1] + (hot[1] - STEEL[1]) * lit);
+                var b = Math.round(STEEL[2] + (hot[2] - STEEL[2]) * lit);
                 var a = 0.06 + lit * 0.82;
                 hexPath(cell.cx, cell.cy, R - 1);
                 ctx.strokeStyle =
@@ -198,36 +269,6 @@
                         ")";
                     ctx.fill();
                 }
-            }
-
-            // embers / sparks rising from the lower-left forge glow
-            if (embers.length < MAX_EMBERS && Math.random() < 0.25)
-                spawnEmber();
-            for (var e = embers.length - 1; e >= 0; e--) {
-                var p = embers[e];
-                p.life++;
-                p.x += p.vx;
-                p.y += p.vy;
-                p.vy -= 0.0008; // gentle updraft acceleration
-                p.vx += (Math.random() - 0.5) * 0.01; // slight flicker drift
-                var k = p.life / p.ttl;
-                if (k >= 1) {
-                    embers.splice(e, 1);
-                    continue;
-                }
-                var fade = Math.sin(Math.min(k, 1) * Math.PI); // fade in then out
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-                ctx.fillStyle =
-                    "rgba(255," +
-                    (120 + (((1 - k) * 60) | 0)) +
-                    ",50," +
-                    fade * 0.7 +
-                    ")";
-                ctx.shadowColor = "rgba(255,110,40,0.8)";
-                ctx.shadowBlur = 6;
-                ctx.fill();
-                ctx.shadowBlur = 0;
             }
 
             raf = requestAnimationFrame(frame);

@@ -206,3 +206,6 @@ Two other modes are opt-in when wiring `MockDepsModule`:
 
     Rollback reverts the mock stores, not arbitrary in-process side effects — a
     handler that mutates a Python object it captured cannot be rolled back.
+
+A transaction rolls back when an operation raises; what those failures are, and
+how a raised error becomes a response, is [Errors](errors.md).

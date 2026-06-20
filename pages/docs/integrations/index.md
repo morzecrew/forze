@@ -1,5 +1,6 @@
 ---
 title: Overview
+icon: lucide/plug
 summary: One optional package per backend, each behind a stable contract
 ---
 

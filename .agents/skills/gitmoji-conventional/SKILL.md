@@ -91,6 +91,8 @@ Use when context is helpful: 2+ meaningful changes, subject needs context, or bu
 - Short paragraph (optional)
 - Bullet list using "-" only
 - Keep bullets concise and action-oriented
+- At most 4 bullets; if there are more changes, group or summarize them
+- Each bullet is at most 80 characters
 
 Example:
 

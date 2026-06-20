@@ -4,6 +4,9 @@ icon: lucide/book-open
 summary: Quick reference for Forze terminology
 ---
 
+Plain-language definitions for the terms used across the docs, grouped by area.
+Skim it, or search for a single word.
+
 ## Core concepts
 
 **Aggregate**

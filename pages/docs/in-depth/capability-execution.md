@@ -132,3 +132,7 @@ resolve — no missing or duplicate providers, no cycles — dispatch targets mu
 exist, and any transactional stage must declare a route. A misconfigured pipeline
 fails when you **build** the registry, at startup, rather than on a user's first
 request.
+
+That freeze-time check covers the transactional stages too — when those stages
+open a transaction, and what happens when one rolls back, is the subject of
+[Transactions](transactions.md).

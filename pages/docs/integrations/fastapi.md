@@ -328,3 +328,31 @@ open. Use `exclude={"orders.deactivate", ...}` to leave a flagged operation open
 
 This **documents** auth; it doesn't enforce it — enforcement stays in the engine
 (the `AuthnRequired`/authz hooks) and identity extraction in the middleware.
+
+## What it provides
+
+Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
+runs them. The surface, at a glance:
+
+| Piece | What it does |
+|-------|--------------|
+| `runtime_lifespan` | run the runtime's lifecycle from the app lifespan |
+| `InvocationMetadataMiddleware` / `SecurityContextMiddleware` | bind per-request context, identity, and tenant |
+| `register_exception_handlers` | map a `CoreException` to an HTTP response by kind |
+| `attach_readiness_route` | a drain-aware `GET /readyz` probe |
+| `attach_document_routes` / `attach_search_routes` / `attach_storage_routes` / `attach_authn_routes` | project a frozen registry's operations onto a router |
+| `apply_openapi_security` | declare the auth scheme in the generated OpenAPI |
+
+## Notes
+
+- **No external service** — FastAPI runs in-process; the runtime's lifecycle owns
+  the backing clients.
+- **You write or generate routes.** Handlers resolve the context and run
+  operations; the `attach_*_routes` helpers project a frozen registry, but you
+  still mount the router.
+- **Identity is extracted, not enforced.** Middleware binds the principal;
+  enforcement lives in the engine's authn/authz hooks, and `apply_openapi_security`
+  only documents it.
+- **Guard write-granting routes.** `deactivate`, presigned-upload, and
+  multipart-session endpoints ship unguarded or grant write — bind authn/authz
+  before exposing them.

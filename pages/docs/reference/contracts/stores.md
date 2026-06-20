@@ -4,6 +4,10 @@ icon: lucide/database
 summary: Methods on the cache, counter, and object-storage contracts
 ---
 
+Method-level reference for the cache, counter, and object-storage contracts. See
+[Contracts](../../core-concepts/contracts.md) for the ports-and-adapters model
+behind them.
+
 ## Cache
 
 `ctx.cache(spec)` returns a combined read/write `CachePort`. Keys are strings

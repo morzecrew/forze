@@ -1,7 +1,12 @@
 ---
 title: Installation
 icon: lucide/download
+summary: Install the Forze core, verify it, and add the integrations you need
 ---
+
+This page gets Forze installed and verified, then shows how to pull in the
+optional integrations your service needs. The core is small — everything
+backend-specific ships as an opt-in extra you add when you reach for it.
 
 ## Requirements
 
@@ -59,3 +64,21 @@ Most functionality is provided through optional integrations packed as sibling p
     ```bash
     uv add 'forze[fastapi,postgres,redis]'
     ```
+
+## Next steps
+
+<div class="grid cards" markdown>
+
+-   :lucide-zap: **[Quickstart](quickstart.md)**
+
+    ---
+
+    Build a working in-memory service in about ten minutes — no Docker.
+
+-   :lucide-folder-tree: **[Project structure](project-structure.md)**
+
+    ---
+
+    See the directory layout that maps to Forze's layers.
+
+</div>

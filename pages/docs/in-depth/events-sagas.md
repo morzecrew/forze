@@ -108,3 +108,7 @@ The same flow handles the cases that make event-driven systems hard:
 | **Happy path** | Order confirmed, event relayed, exactly one shipment |
 | **Redelivery** | Duplicate message skipped by the inbox — still one shipment |
 | **Pivot fails** (payment declined) | Inventory released, order stays `pending`, nothing staged, relayed, or shipped |
+
+The exactly-once behavior the inbox relies on is covered in
+[Idempotency](idempotency.md), and you can watch this whole flow run in the
+[end-to-end saga recipe](../recipes/end-to-end-saga-outbox-inbox.md).
