@@ -77,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Value-level DST invariants** — `SimulationConfig(capture_values=True)` makes the trace carry a redaction-applied view of each write payload and read result (off by default — the trace stays id-only, so production tracing is unchanged and PII-free; sim data is synthetic, and spec-declared sensitive fields are masked to `<redacted>`). New `read_your_writes(surface, value_field=…)` (a keyed read must observe the last value written — stale-read guard) and `expect_value(surface, predicate)` (the value-level `expect` — wrong-value guard) assert on *what* was written/read, not just which key.
 
+- **Time-travel timeline** — `ViolationReport.timeline()` / `build_timeline(history)` flatten a counterexample into a virtual-time-ordered stream of `TimelineEntry` steps (operations, port calls with their captured value flow, injected environment, recorded facts); `render_timeline` prints it and each entry's `to_dict()` is JSON, so the stream is a portable artifact a CLI or viewer steps through by virtual time. The causal trace in `format_report` now also shows the values each call wrote and read back.
+
 ### Changed
 
 - **Lazy transaction acquisition, default for Postgres, Mongo, and Firestore** *(behavior change)* — a transaction scope defers connection checkout until the first operation, so pre-query CPU or external work no longer parks a connection idle-in-transaction. A connect failure now surfaces at the first operation rather than scope entry; opt out with `lazy_transaction=False`.

@@ -197,7 +197,16 @@ The whole run is one seed-derived lineage — corpus, mutations, and all — roo
 ![A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever](../_diagrams/light/dst-loop.svg#only-light){ data-src="../_diagrams/light/dst-loop.svg#only-light" }
 ![A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever](../_diagrams/dark/dst-loop.svg#only-dark){ data-src="../_diagrams/dark/dst-loop.svg#only-dark" }
 
-A `ViolationReport.format()` renders the whole counterexample: the minimised workload, the concurrency that triggered it, the causal trace (each operation and the port calls it caused), an **injected-environment timeline** (the faults, latency, and partitions the simulator applied, in virtual-time order), and the violated invariant. Everything needed to understand *and* reproduce the failure.
+A `ViolationReport.format()` renders the whole counterexample: the minimised workload, the concurrency that triggered it, the causal trace (each operation and the port calls it caused — with the values they wrote and read back when `capture_values` is on), an **injected-environment timeline** (the faults, latency, and partitions the simulator applied, in virtual-time order), and the violated invariant. Everything needed to understand *and* reproduce the failure.
+
+For a **time-travel** view, `report.timeline()` flattens the run into a virtual-time-ordered stream of steps — operations, port calls (with their value flow), injected environment, recorded facts — that you scroll through like a debugger. `render_timeline(history)` prints it; each `TimelineEntry.to_dict()` is JSON, so `[e.to_dict() for e in report.timeline()]` is a portable artifact a CLI or viewer steps through by virtual time:
+
+```text
+DST timeline (by virtual time):
+  @t=0.000000  ▸ update → ok
+  @t=0.000000  ↳ document_command[accounts].update key=42 wrote {'balance': 6}
+  @t=0.100000  ↳ document_command[accounts].get key=42 read {'balance': 5}   ← stale read
+```
 
 The command line wires the loop end to end against an import string pointing at your `Simulation`:
 

@@ -25,7 +25,7 @@ shares one timestamp this concentrates onto a single span (a documented best-eff
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Any, Mapping, final
 
 import attrs
 
@@ -89,6 +89,10 @@ class TraceStep:
     tx_depth: int
     key: str | None = None
     """Entity key the call targeted (e.g. a document primary key), when available."""
+    payload: Mapping[str, Any] | None = None
+    """The redaction-applied value written (under ``capture_values``), else ``None``."""
+    result: Mapping[str, Any] | None = None
+    """The redaction-applied value read back (under ``capture_values``), else ``None``."""
 
     # ....................... #
 
@@ -98,7 +102,16 @@ class TraceStep:
         if self.route:  # spec / transaction route, e.g. document_command[orders]
             target = f"{target}[{self.route}]"
         base = f"{target}.{self.op}" if self.op else target
-        return f"{base} key={self.key}" if self.key else base
+        if self.key:
+            base = f"{base} key={self.key}"
+
+        # Value flow, when captured: what the call wrote / read back.
+        if self.payload is not None:
+            base += f" wrote {_short(dict(self.payload))}"
+        if self.result is not None:
+            base += f" read {_short(dict(self.result))}"
+
+        return base
 
 
 # ....................... #
@@ -171,6 +184,8 @@ class CausalGraph:
                     phase=event.fields.get("phase"),
                     tx_depth=int(event.fields.get("tx_depth", 0)),
                     key=event.fields.get("key"),
+                    payload=event.fields.get("payload"),
+                    result=event.fields.get("result"),
                 )
                 for event in history.events
                 if event.kind == _TRACE
@@ -289,6 +304,220 @@ class CausalGraph:
             groups.setdefault(find(span.call_id), []).append(span)
 
         return [tuple(members) for members in groups.values() if len(members) > 1]
+
+
+# ....................... #
+
+
+@final
+@attrs.define(frozen=True, kw_only=True)
+class TimelineEntry:
+    """One step in a counterexample's virtual-time-ordered timeline — the time-travel unit.
+
+    Flattens the run into a single stream the way a debugger steps through it: each operation, port
+    call (with the value it wrote / read back, when captured), injected fault/latency/partition, and
+    recorded fact, in virtual-time order. :meth:`to_dict` is JSON-able, so the stream is a portable
+    artifact a CLI or viewer can step through.
+    """
+
+    at: float
+    """Virtual time the step happened."""
+
+    seq: int
+    """Recorder sequence — the stable tie-break for steps sharing a virtual instant."""
+
+    kind: str
+    """``op`` | ``call`` | ``fault`` | ``latency`` | ``partition`` | ``fact``."""
+
+    label: str
+    """A human one-line description (includes value flow for ``call`` steps)."""
+
+    detail: Mapping[str, Any] = attrs.field(factory=dict[str, Any])
+    """The structured fields (op / surface / key / payload / result / outcome / …) for a viewer."""
+
+    # ....................... #
+
+    def to_dict(self) -> dict[str, Any]:
+        """A plain, JSON-able dict of the entry."""
+
+        return {
+            "at": self.at,
+            "seq": self.seq,
+            "kind": self.kind,
+            "label": self.label,
+            "detail": dict(self.detail),
+        }
+
+
+# ....................... #
+
+
+def _plain(value: Any) -> dict[str, Any] | None:
+    """A plain ``dict`` copy of a captured value map (drop the read-only view), or ``None``."""
+
+    return dict(value) if value is not None else None
+
+
+# ....................... #
+
+
+def _call_label(fields: Mapping[str, Any]) -> str:
+    """A ``surface[route].op key=… wrote … read …`` label for a port-call timeline step."""
+
+    target = fields.get("surface") or fields.get("trace_domain") or "?"
+
+    if fields.get("route"):
+        target = f"{target}[{fields['route']}]"
+
+    base = f"{target}.{fields.get('op')}" if fields.get("op") else str(target)
+
+    if fields.get("key"):
+        base += f" key={fields['key']}"
+
+    if fields.get("payload") is not None:
+        base += f" wrote {_short(dict(fields['payload']))}"
+
+    if fields.get("result") is not None:
+        base += f" read {_short(dict(fields['result']))}"
+
+    return base
+
+
+# ....................... #
+
+
+def _env_label(event: Event) -> str:
+    """A label for an injected-environment (fault/latency/partition) timeline step."""
+
+    fields = event.fields
+    where = _injection_target(event)
+
+    if event.kind == "fault":
+        detail = str(fields.get("fault"))
+        seconds = fields.get("seconds")
+        if seconds is not None:
+            detail += f" {float(seconds):.3f}s"
+        return f"{detail} → {where}"
+
+    if event.kind == "partition":
+        loss = fields.get("loss")
+        how = (
+            "cut off"
+            if loss is None or float(loss) >= 1.0
+            else f"lossy p={float(loss):.2f}"
+        )
+        return f"partition (node {fields.get('node')} {how}) → {where}"
+
+    return f"latency {float(fields.get('seconds', 0.0)):.3f}s → {where}"
+
+
+# ....................... #
+
+
+def build_timeline(history: History) -> tuple[TimelineEntry, ...]:
+    """Flatten *history* into a virtual-time-ordered timeline of steps — the time-travel stream.
+
+    Operations, port calls (with captured value flow), injected environment, and recorded facts,
+    in ``(virtual time, seq)`` order — deterministic, so the same seed yields the same timeline.
+    The ``op_start`` anchors and the operation-domain trace boundaries are folded into their ``op``
+    / ``call`` steps rather than listed separately.
+    """
+
+    entries: list[TimelineEntry] = []
+
+    for event in history.events:
+        fields = event.fields
+
+        if event.kind == _OP_START:
+            continue
+
+        if event.kind == _OPERATION:
+            entries.append(
+                TimelineEntry(
+                    at=float(fields.get("invoked_at", event.at)),
+                    seq=event.seq,
+                    kind="op",
+                    label=f"{fields.get('op')} → {fields.get('outcome')}",
+                    detail={
+                        "op": fields.get("op"),
+                        "outcome": fields.get("outcome"),
+                        "call_id": fields.get("call_id"),
+                        "error": fields.get("error"),
+                    },
+                )
+            )
+
+        elif event.kind == _TRACE:
+            if fields.get("trace_domain") == "operation":
+                continue  # the invoke/complete boundary — already its ``op`` step
+
+            entries.append(
+                TimelineEntry(
+                    at=event.at,
+                    seq=event.seq,
+                    kind="call",
+                    label=_call_label(fields),
+                    detail={
+                        "surface": fields.get("surface"),
+                        "route": fields.get("route"),
+                        "op": fields.get("op"),
+                        "key": fields.get("key"),
+                        "phase": fields.get("phase"),
+                        "outcome": fields.get("outcome"),
+                        "payload": _plain(fields.get("payload")),
+                        "result": _plain(fields.get("result")),
+                    },
+                )
+            )
+
+        elif event.kind in _ENVIRONMENT:
+            entries.append(
+                TimelineEntry(
+                    at=event.at,
+                    seq=event.seq,
+                    kind=event.kind,
+                    label=_env_label(event),
+                    detail=dict(fields),
+                )
+            )
+
+        else:  # recorded facts (observe, reached, app record_event, …)
+            entries.append(
+                TimelineEntry(
+                    at=event.at,
+                    seq=event.seq,
+                    kind="fact",
+                    label=event.kind,
+                    detail=dict(fields),
+                )
+            )
+
+    entries.sort(key=lambda entry: (entry.at, entry.seq))
+    return tuple(entries)
+
+
+# ....................... #
+
+
+def render_timeline(history: History) -> str:
+    """Render :func:`build_timeline` as a readable virtual-time scroll (the text time-travel view)."""
+
+    glyphs = {
+        "op": "▸",
+        "call": "↳",
+        "fault": "⚡",
+        "latency": "⏱",
+        "partition": "✂",
+        "fact": "•",
+    }
+
+    lines = ["DST timeline (by virtual time):"]
+    for entry in build_timeline(history):
+        lines.append(
+            f"  @t={entry.at:.6f}  {glyphs.get(entry.kind, '·')} {entry.label}"
+        )
+
+    return "\n".join(lines)
 
 
 # ....................... #

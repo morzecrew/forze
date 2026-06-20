@@ -10,7 +10,15 @@ the deterministic loop, the report reproduces exactly.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Awaitable, Callable, Iterable, Sequence, TypeVar, final
+from typing import (
+    TYPE_CHECKING,
+    Awaitable,
+    Callable,
+    Iterable,
+    Sequence,
+    TypeVar,
+    final,
+)
 
 import attrs
 
@@ -18,6 +26,9 @@ from forze_dst.oracle.invariants import Invariant, Violation, check
 from forze_dst.oracle.recorder import History, Recorder, bind_recorder
 from forze_dst.runtime import run_simulation
 from forze_dst.time_source import DEFAULT_EPOCH
+
+if TYPE_CHECKING:
+    from forze_dst.oracle.report import TimelineEntry
 
 # ----------------------- #
 
@@ -102,6 +113,21 @@ class ViolationReport:
         from forze_dst.oracle.report import format_report
 
         return format_report(self)
+
+    # ....................... #
+
+    def timeline(self) -> tuple["TimelineEntry", ...]:
+        """The counterexample as a virtual-time-ordered timeline — the time-travel stream.
+
+        A flat, JSON-able sequence of steps (operations, port calls with their captured value flow,
+        injected environment, recorded facts) the way a debugger steps through them. ``[e.to_dict()
+        for e in report.timeline()]`` is the portable artifact a CLI / viewer steps by virtual time;
+        :func:`~forze_dst.oracle.report.render_timeline` renders it as text.
+        """
+
+        from forze_dst.oracle.report import build_timeline
+
+        return build_timeline(self.history)
 
 
 # ....................... #

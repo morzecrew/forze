@@ -63,7 +63,15 @@ from .artifacts.corpus import (
 )
 from .oracle import ViolationReport, explore, minimize, run_recorded
 from .reactive import ReactiveMap
-from .oracle.report import CausalGraph, OperationSpan, TraceStep, format_report
+from .oracle.report import (
+    CausalGraph,
+    OperationSpan,
+    TimelineEntry,
+    TraceStep,
+    build_timeline,
+    format_report,
+    render_timeline,
+)
 from .oracle.recorder import (
     Event,
     History,
@@ -184,6 +192,9 @@ __all__ = [
     "OperationSpan",
     "TraceStep",
     "format_report",
+    "TimelineEntry",
+    "build_timeline",
+    "render_timeline",
     "SequentialSpec",
     "RegisterSpec",
     "record_operation",

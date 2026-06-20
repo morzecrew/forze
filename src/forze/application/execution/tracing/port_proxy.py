@@ -67,7 +67,12 @@ class TracingPortProxy:
         dump = getattr(value, "model_dump", None)
 
         if callable(dump):
-            data = dump()
+            # ``mode="json"`` keeps the captured value JSON-native (UUID → str, datetime →
+            # ISO-8601), so the trace / timeline / bundle stay portable and deterministic.
+            try:
+                data = dump(mode="json")
+            except TypeError:  # a model_dump without the mode kwarg
+                data = dump()
 
         elif attrs.has(type(value)):  # pyright: ignore[reportUnknownArgumentType]
             data = attrs.asdict(value)
