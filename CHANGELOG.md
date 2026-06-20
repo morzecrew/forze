@@ -59,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Multi-runtime distributed DST** — `forze_dst.Cluster` and `Partition`/`PartitionSchedule` run N real `ExecutionRuntime` nodes over one shared `MockState` from a single seed, under group-based network partitions and per-node faults, checked by ordinary distributed invariants. A violation minimizes by dropping nodes into a reproducible report.
 
+- **Reachability ("sometimes") assertions** — `reached(label)` marks a hard state from inside code under simulation; `assess_reachability(histories, targets)` (and `SimulationConfig.reachability_targets`, folded into `CoverageStats`) fails a sweep when a declared state was *never* reached, so a green invariant means the dangerous interleaving actually fired rather than never bit. Adds `Cluster.histories()` (full sweep, no short-circuit) and `sometimes(...)`. Forze's own distributed primitives — the distributed lock under partition and the hybrid logical clock across replicas — now ship as flagship DST scenarios that pair a safety invariant with a reachability target and keep a caught-and-minimized broken twin.
+
 ### Changed
 
 - **Lazy transaction acquisition, default for Postgres, Mongo, and Firestore** *(behavior change)* — a transaction scope defers connection checkout until the first operation, so pre-query CPU or external work no longer parks a connection idle-in-transaction. A connect failure now surfaces at the first operation rather than scope entry; opt out with `lazy_transaction=False`.

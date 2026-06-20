@@ -22,6 +22,7 @@ from forze_dst.recorder import History
 
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport
+    from forze_dst.reachability import ReachabilityReport
 
 # ----------------------- #
 
@@ -96,6 +97,12 @@ class CoverageStats:
     violation: "ViolationReport | None" = None
     """The first violating seed's minimized report, if the sweep hit one (it stops there)."""
 
+    reachability: "ReachabilityReport | None" = None
+    """Cross-sweep reachability outcome, when ``config.reachability_targets`` was declared: which
+    "sometimes" states actually fired across the swept seeds (``None`` when none were declared).
+    A non-empty :attr:`~forze_dst.reachability.ReachabilityReport.unreached` is false confidence —
+    a target the sweep never drove."""
+
     # ....................... #
 
     @property
@@ -124,6 +131,17 @@ class CoverageStats:
             + ("  (saturated)" if self.plateaued else ""),
             f"  productive seeds:  {list(self.productive_seeds)}",
         ]
+
+        if self.reachability is not None:
+            reached = len(self.reachability.targets) - len(self.reachability.unreached)
+            lines.append(
+                f"  reachability:      {reached}/{len(self.reachability.targets)} targets"
+                + (
+                    f"  (never reached: {sorted(self.reachability.unreached)})"
+                    if self.reachability.unreached
+                    else ""
+                )
+            )
 
         if self.violation is not None:
             names = ", ".join(sorted({v.invariant for v in self.violation.violations}))

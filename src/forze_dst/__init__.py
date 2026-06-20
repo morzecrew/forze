@@ -80,6 +80,13 @@ from .config import (
 )
 from .cluster import Cluster
 from .coverage import CoverageStats, behavioral_coverage
+from .reachability import (
+    ReachabilityReport,
+    assess_reachability,
+    reached,
+    reached_labels,
+    sometimes,
+)
 from .scenario import ModelState, Rule, Scenario
 from .scheduler import (
     PCTScheduler,
@@ -169,6 +176,11 @@ __all__ = [
     "PartitionSchedule",
     "CoverageStats",
     "behavioral_coverage",
+    "reached",
+    "reached_labels",
+    "sometimes",
+    "assess_reachability",
+    "ReachabilityReport",
     "derive_scenario",
     "DEFAULT_CREATE_VERBS",
     "ReactiveMap",

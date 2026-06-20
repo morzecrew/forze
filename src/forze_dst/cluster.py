@@ -167,6 +167,23 @@ class Cluster:
 
     # ....................... #
 
+    def histories(self, config: SimulationConfig) -> list[History]:
+        """Run *every* seed (no short-circuit on violation) and return all folded histories.
+
+        :meth:`run` stops at the first violating seed — right for finding a bug, wrong for a
+        cross-sweep *reachability* check, which can only conclude a state was never reached after
+        the whole sweep. Feed the result to
+        :func:`~forze_dst.reachability.assess_reachability` to prove the dangerous interleavings
+        (partition isolated a contender, crash mid-flush, …) actually fired across the sweep.
+        """
+
+        cluster = config.cluster or ClusterConfig()
+        node_ids = list(range(cluster.nodes))
+
+        return [self._run(node_ids, seed=seed, config=config) for seed in config.seeds]
+
+    # ....................... #
+
     def _attempt(
         self,
         node_ids: Sequence[int],
@@ -223,9 +240,7 @@ class Cluster:
                             "crash", node=node_id
                         )  # the node died; cluster proceeds
 
-                    except (
-                        Exception
-                    ) as error:  # noqa: BLE001 — one node's failure must not abort the cluster
+                    except Exception as error:  # noqa: BLE001 — one node's failure must not abort the cluster
                         # Record it so an invariant can catch a node that stopped on an
                         # unexpected error (e.g. a bug in a port call outside the op trace),
                         # rather than leaving the cluster history looking clean.
@@ -338,7 +353,5 @@ class Cluster:
 
         return compile_latency(
             config.latency,
-            random.Random(
-                derive_seed(seed, "latency")
-            ),  # nosec B311 - seeded sim latency
+            random.Random(derive_seed(seed, "latency")),  # nosec B311 - seeded sim latency
         )

@@ -74,6 +74,28 @@ An invariant reads the recorded history and returns the violations it found. The
 
 `linearizable(spec)` checks a recorded operation history against a sequential specification (Wing-Gong, per key) for the strongest single-object consistency guarantee.
 
+## Sometimes — prove the dangerous case fired
+
+An invariant says a property must **always** hold. Its dual — a *reachability* target — says a state must **sometimes** be reached. You need both: a sweep that runs 10 000 seeds and never drives the dangerous interleaving proves nothing, and a green invariant over a fault that never bit is *false confidence*.
+
+Mark a notable state with `reached(label)` from inside code under simulation (ambient and a no-op outside a recorded run, like `record_event`), then assert across the sweep that every declared target actually fired:
+
+```python
+from forze_dst import reached, assess_reachability
+
+# in the scenario, where the hard state happens:
+reached("lock-contended")    # a peer held the lock — genuine contention occurred
+reached("write-partitioned")  # the partition struck during the guarded write
+
+# after the sweep — Cluster.histories() runs every seed (no short-circuit):
+report = assess_reachability(cluster.histories(config), targets={
+    "lock-contended", "write-partitioned",
+})
+assert report.satisfied, report.format()   # a target no seed reached is a failure
+```
+
+A declared target that *no* seed ever reaches is a reachability failure — the safety result was never tested against that case. `SimulationConfig(reachability_targets=...)` folds the same check into a `coverage()` sweep (the outcome rides on `CoverageStats.reachability`), and `sometimes(histories, predicate)` is the general per-sweep form over an arbitrary predicate.
+
 ## Inject the environment
 
 A real system errors, times out, and is slow. Declare that environment on the config and DST applies it at the port boundary — over **any** resolved port, seeded from the master seed, with the app untouched.
@@ -175,6 +197,18 @@ forze dst topology  app:simulation
     (`MockDepsModule(transactions="journal")`) is atomic without serialising, so a found
     race is real. The legacy no-op manager would report *false* double-charges — see
     [Transactions](transactions.md).
+
+## Forze passes its own simulation
+
+DST is judged by the bugs it finds in *real* systems — so Forze runs its own distributed machinery through it. Each scenario pairs a safety invariant (must always hold) with a reachability target (must sometimes fire), so a green result means the property was tested against the hard case, not a quiet run:
+
+| Primitive | Invariant (always) | Reachability (sometimes) |
+| --- | --- | --- |
+| **Distributed lock** | `mutual_exclusion` + no lost update across N runtimes | a contender spun on the held lock *while* a partition isolated a node mid-write |
+| **Hybrid logical clock** | per-replica `monotonic_per` + every merge's HLC exceeds its cause | a replica merged a remote stamp that was ahead of its own |
+| **Outbox / crash-restart** | `no_duplicate_effect` (exactly-once) survives a crash mid-flush | the crash landed between the flush and the relay |
+
+Each scenario also keeps a *broken* twin — drop the lock, ignore the remote stamp — that the oracle catches, minimises, and reproduces, so the test proves it can still fail. The unguarded lock races to a lost update; the naive clock breaks causality. That is the bar: the framework's own concurrency code is continuously simulation-tested, and app authors inherit the same harness for free.
 
 ## See also
 

@@ -19,6 +19,7 @@ import random
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any, AsyncGenerator, Awaitable, Callable, Sequence, cast, final
 
 import attrs
@@ -43,6 +44,7 @@ from forze_dst.faults import SimulatedCrash, compile_crash, compile_fault_policy
 from forze_dst.invariants import Invariant, check
 from forze_dst.latency import compile_latency
 from forze_dst.oracle import ViolationReport, minimize
+from forze_dst.reachability import ReachabilityReport, reached_labels
 from forze_dst.reactive import ReactiveMap
 from forze_dst.recorder import (
     History,
@@ -437,6 +439,7 @@ class Simulation:
             plateau = 0
             plateaued = False
             violation: ViolationReport | None = None
+            reach_hits: dict[str, int] = {t: 0 for t in config.reachability_targets}
 
             for seed in config.seeds:
                 schedule_seed = (
@@ -463,6 +466,9 @@ class Simulation:
                 new_by_seed.append((seed, len(fresh)))
                 behaviors |= covered
 
+                for label in reached_labels(history):
+                    reach_hits[label] = reach_hits.get(label, 0) + 1
+
                 if check(history, self.invariants):
                     # A bug beats coverage: stop and hand back the minimized counterexample
                     # (``_attempt_scenario`` rebuilds a fresh scheduler per minimization run).
@@ -486,12 +492,23 @@ class Simulation:
                         plateaued = True
                         break
 
+            reachability = (
+                ReachabilityReport(
+                    targets=frozenset(config.reachability_targets),
+                    hits=MappingProxyType(reach_hits),
+                    runs=seeds_run,
+                )
+                if config.reachability_targets
+                else None
+            )
+
             return CoverageStats(
                 behaviors=frozenset(behaviors),
                 seeds_run=seeds_run,
                 new_by_seed=tuple(new_by_seed),
                 plateaued=plateaued,
                 violation=violation,
+                reachability=reachability,
             )
 
         finally:
@@ -800,9 +817,7 @@ class Simulation:
 
             try:
                 await run_operation(self.operations, op, arg, ctx)
-            except (
-                Exception
-            ):  # nosec B110 # noqa: BLE001 — outcome captured by the engine trace; one call's failure must never abort the batch
+            except Exception:  # nosec B110 # noqa: BLE001 — outcome captured by the engine trace; one call's failure must never abort the batch
                 pass
 
     # ....................... #
@@ -1044,9 +1059,7 @@ class Simulation:
         """
 
         config = self._active_config
-        assert (
-            config is not None and config.crash is not None
-        )  # nosec B101 - run() guard
+        assert config is not None and config.crash is not None  # nosec B101 - run() guard
         crash_policy = config.crash
 
         recorder = Recorder(seed=seed)
@@ -1060,9 +1073,7 @@ class Simulation:
             # --- Phase 1: workload under the seeded crash, on a bare (kill-able) context.
             crash = compile_crash(
                 crash_policy,
-                random.Random(
-                    derive_seed(seed, "crash")
-                ),  # nosec B311 - seeded sim crash
+                random.Random(derive_seed(seed, "crash")),  # nosec B311 - seeded sim crash
             )
             registry = self._registry_from_modules(modules, fault_seed, extra=(crash,))
             ctx = ExecutionContext(deps=registry.resolve())
@@ -1329,9 +1340,7 @@ class Simulation:
                 act_plan=plan,
                 concurrency=concurrency,
                 seed=seed,
-                schedule_seed=schedule_seed_of(
-                    seed
-                ),  # pyright: ignore[reportUnknownArgumentType]
+                schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
                 epoch=epoch,
                 scheduler=make_scheduler(seed),
             )
@@ -1354,18 +1363,14 @@ class Simulation:
             act_plan=plan,
             concurrency=concurrency,
             seed=seed,
-            schedule_seed=schedule_seed_of(
-                seed
-            ),  # pyright: ignore[reportUnknownArgumentType]
+            schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
             epoch=epoch,
             scheduler=make_scheduler(seed),
         )
 
         return ViolationReport(
             seed=seed,
-            schedule_seed=schedule_seed_of(
-                seed
-            ),  # pyright: ignore[reportUnknownArgumentType]
+            schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
             violations=tuple(check(history, self.invariants)),
             workload=tuple(generated),
             history=history,
