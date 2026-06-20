@@ -40,10 +40,15 @@ from forze.base.exceptions import exc
 from forze.base.primitives import derive_seed, monotonic
 from forze_dst.config import (
     ClusterConfig,
+    Partition,
     PartitionSchedule,
     SchedulerKind,
     SimulationConfig,
 )
+
+# ``cluster`` is the distributed-DST namespace: the N-runtime driver plus its config types
+# (which live in ``config`` but belong to this concern).
+__all__ = ["Cluster", "ClusterConfig", "Partition", "PartitionSchedule"]
 from forze_dst.faults import SimulatedCrash, compile_fault_policy
 from forze_dst.engines.projection import fold_runtime_trace
 from forze_dst.oracle.invariants import Invariant, check

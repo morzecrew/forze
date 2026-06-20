@@ -11,14 +11,8 @@ from __future__ import annotations
 import asyncio
 from typing import Sequence
 
-from forze_dst import (
-    RegisterSpec,
-    check,
-    explore,
-    linearizable,
-    record_operation,
-    run_recorded,
-)
+from forze_dst.invariants import RegisterSpec, check, linearizable, record_operation
+from forze_dst.oracle import explore, run_recorded
 from forze_dst.oracle.linearizability import _Op, is_linearizable
 from forze_dst.oracle.recorder import Event, History
 

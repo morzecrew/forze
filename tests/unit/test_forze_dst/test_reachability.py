@@ -14,16 +14,8 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
-from forze_dst import (
-    ReachabilityReport,
-    Simulation,
-    SimulationConfig,
-    assess_reachability,
-    no_unexpected_error,
-    reached,
-    reached_labels,
-    sometimes,
-)
+from forze_dst import Simulation, SimulationConfig
+from forze_dst.invariants import ReachabilityReport, assess_reachability, no_unexpected_error, reached, reached_labels, sometimes
 from forze_dst.oracle.recorder import Recorder, bind_recorder
 from forze_mock import MockDepsModule
 

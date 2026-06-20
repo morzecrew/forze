@@ -28,7 +28,13 @@ from typing import Any, Callable
 from pydantic import BaseModel
 
 from forze.application.execution.operations.registry import FrozenOperationRegistry
+from forze_dst.reactive import ReactiveMap
 from forze_dst.scenario import ModelState, Rule, Scenario
+
+# ``derive`` is the scenario-derivation namespace: heuristic catalog → draft Scenario, plus the
+# recovered reactive cascade topology (``ReactiveMap``). Both are also available as
+# ``Simulation.derive_scenario()`` / ``Simulation.reactive_map()`` methods.
+__all__ = ["derive_scenario", "ReactiveMap", "DEFAULT_CREATE_VERBS"]
 
 # ----------------------- #
 

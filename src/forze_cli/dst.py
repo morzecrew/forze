@@ -14,20 +14,10 @@ import typer
 from forze.base.primitives import utcnow
 from forze_cli._compat import require_dst
 from forze_cli.loader import load_simulation
-from forze_dst import (
-    Constant,
-    FaultPolicy,
-    FaultRule,
-    LatencyProfile,
-    LatencyRule,
-    RegressionEntry,
-    SchedulerKind,
-    SimulationConfig,
-    Strategy,
-    append_regression,
-    entry_from_report,
-    load_regressions,
-)
+from forze_dst import SchedulerKind, SimulationConfig, Strategy
+from forze_dst.artifacts import RegressionEntry, append_regression, entry_from_report, load_regressions
+from forze_dst.faults import FaultPolicy, FaultRule
+from forze_dst.latency import Constant, LatencyProfile, LatencyRule
 
 # ----------------------- #
 

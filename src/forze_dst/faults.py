@@ -35,6 +35,16 @@ from forze_dst.oracle.recorder import record_event
 
 # ----------------------- #
 
+__all__ = [
+    "FaultPolicy",
+    "FaultRule",
+    "CrashPolicy",
+    "SimulatedCrash",
+    "PortFaultInterceptor",
+    "CrashInterceptor",
+]
+
+
 _TRANSPORT_OPS = frozenset(
     {"enqueue", "enqueue_many", "publish", "publish_many", "produce", "send"}
 )

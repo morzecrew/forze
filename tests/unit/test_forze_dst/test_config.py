@@ -20,17 +20,8 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_dst import (
-    ModelState,
-    Rule,
-    Scenario,
-    SchedulerKind,
-    Simulation,
-    SimulationConfig,
-    Strategy,
-    expect,
-    record_event,
-)
+from forze_dst import ModelState, Rule, Scenario, SchedulerKind, Simulation, SimulationConfig, Strategy, record_event
+from forze_dst.invariants import expect
 from forze_mock import MockDepsModule
 
 # ----------------------- #

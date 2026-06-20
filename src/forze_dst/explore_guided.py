@@ -31,6 +31,14 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
+__all__ = [
+    "Genome",
+    "GuidedStats",
+    "coverage_guided_search",
+    "mutate",
+]
+
+
 
 @final
 @attrs.define(frozen=True, kw_only=True)

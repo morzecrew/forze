@@ -45,7 +45,7 @@ def _coerce(obj: Any) -> Simulation | None:
         return obj
 
     if isinstance(obj, FrozenOperationRegistry):
-        from forze_dst import no_unexpected_error
+        from forze_dst.invariants import no_unexpected_error
         from forze_mock import MockDepsModule
 
         # Auto-mock every port + a zero-instrumentation safety net: a bare registry still

@@ -1,246 +1,72 @@
-"""Deterministic simulation runtime: a native virtual-time event loop + clock seams.
+"""Deterministic Simulation Testing (DST) for Forze — the public facade.
 
-The substrate for deterministic simulation testing (DST) — run an async scenario in
-virtual time, seed-replayable, with no real I/O. Framework-owned (no external loop
-dependency); the simulation clock drives the ambient ``TimeSource`` so application
-time reads track it.
+Point a :class:`Simulation` at a real app and one master seed reproduces the whole run
+(schedule, faults, latency, inputs, crashes, partitions), single-process or N-node, over real
+registries and runtimes, with no app changes. A found violation minimizes to a replayable
+:class:`ViolationReport`.
+
+The facade is a thin core plus namespaces — reach into a namespace for depth::
+
+    from forze_dst import Simulation, OperationCase, invariants as inv
+
+    sim = Simulation(operations, deps, invariants=[inv.no_duplicate_effect("paid", by="order")])
+
+Namespaces: ``invariants`` (the assertion toolkit), ``faults`` / ``latency`` (injection),
+``scheduler`` (interleaving), ``cluster`` (distributed), ``artifacts`` (bundles / sweeps /
+corpus), ``runtime`` (the low-level virtual-time loop), ``oracle`` (recording / report /
+coverage internals), and ``workload`` / ``explore_guided`` / ``derive`` (input generation).
 """
 
 from __future__ import annotations
 
-from .derive import DEFAULT_CREATE_VERBS, derive_scenario
-from .faults import (
-    CrashInterceptor,
-    CrashPolicy,
-    FaultPolicy,
-    FaultRule,
-    PortFaultInterceptor,
-    SimulatedCrash,
-)
-from .latency import (
-    Constant,
-    Exponential,
-    LatencyProfile,
-    LatencyRule,
-    LogNormal,
-    Pareto,
-    Uniform,
-)
+# Core — the happy path: build a Simulation, feed inputs, run, read the report.
+from .cluster import Cluster
+from .config import SchedulerKind, SimulationConfig, Strategy
 from .engines.cases import OperationCase
 from .harness import Simulation
-from .oracle.invariants import (
-    Invariant,
-    Violation,
-    check,
-    completes_within,
-    expect,
-    expect_value,
-    monotonic_per,
-    mutual_exclusion,
-    no_duplicate_effect,
-    no_unexpected_error,
-    operation_succeeds,
-    read_your_writes,
-    single_key_per_operation,
-)
-from .oracle.linearizability import (
-    RegisterSpec,
-    SequentialSpec,
-    is_linearizable,
-    linearizable,
-    record_operation,
-)
-from .loop import (
-    RealIOForbidden,
-    SimulationDeadlock,
-    SimulationEventLoop,
-)
-from .artifacts.corpus import (
-    RegressionEntry,
-    append_regression,
-    entry_from_report,
-    load_regressions,
-)
-from .oracle import ViolationReport, explore, minimize, run_recorded
-from .reactive import ReactiveMap
-from .oracle.report import (
-    CausalGraph,
-    OperationSpan,
-    TimelineEntry,
-    TraceStep,
-    build_timeline,
-    format_report,
-    render_timeline,
-)
-from .oracle.recorder import (
-    Event,
-    History,
-    Recorder,
-    bind_recorder,
-    current_recorder,
-    record_event,
-)
-from forze.application.execution.interception import LatencyModel
-
-from .runtime import run_simulation
-from .config import (
-    ClusterConfig,
-    Partition,
-    PartitionSchedule,
-    SchedulerKind,
-    SimulationConfig,
-    Strategy,
-)
-from .cluster import Cluster
-from .oracle.coverage import CoverageStats, behavioral_coverage, behavioral_fingerprint
-from .explore_guided import (
-    Genome,
-    GuidedStats,
-    coverage_guided_search,
-    mutate,
-)
-from .artifacts.sweep import (
-    SeedOutcome,
-    SimulationSeedRunner,
-    SweepResult,
-    parallel_sweep,
-    sweep,
-)
-from .artifacts.serialize import config_from_dict, config_to_dict
-from .artifacts.bundle import (
-    FailureBundle,
-    bundle_from_report,
-    replay_bundle,
-)
-from .oracle.reachability import (
-    ReachabilityReport,
-    assess_reachability,
-    reached,
-    reached_labels,
-    sometimes,
-)
+from .oracle import ViolationReport, record_event
 from .scenario import ModelState, Rule, Scenario
-from .scheduler import (
-    PCTScheduler,
-    RandomScheduler,
-    Scheduler,
-    SystematicScheduler,
-    pct_scheduler_factory,
-)
-from .time_source import DEFAULT_EPOCH, SimulationTimeSource
-from .workload import (
-    OpSpec,
-    generate_workload,
-    run_workload,
-    simulate_workload,
+
+# Namespaces — depth on demand (``forze_dst.<namespace>``).
+from . import (  # noqa: F401  (re-exported namespaces)
+    artifacts,
+    cluster,
+    derive,
+    explore_guided,
+    faults,
+    invariants,
+    latency,
+    oracle,
+    runtime,
+    scheduler,
+    workload,
 )
 
 # ----------------------- #
 
 __all__ = [
-    "SimulationEventLoop",
-    "SimulationTimeSource",
-    "run_simulation",
-    "RealIOForbidden",
-    "SimulationDeadlock",
-    "DEFAULT_EPOCH",
-    "OpSpec",
-    "generate_workload",
-    "run_workload",
-    "simulate_workload",
-    "PortFaultInterceptor",
-    "CrashInterceptor",
-    "CrashPolicy",
-    "SimulatedCrash",
-    "FaultPolicy",
-    "FaultRule",
-    "LatencyProfile",
-    "LatencyRule",
-    "Constant",
-    "Uniform",
-    "Exponential",
-    "LogNormal",
-    "Pareto",
-    "Event",
-    "History",
-    "Recorder",
-    "record_event",
-    "bind_recorder",
-    "current_recorder",
-    "Invariant",
-    "Violation",
-    "check",
-    "no_duplicate_effect",
-    "monotonic_per",
-    "mutual_exclusion",
-    "no_unexpected_error",
-    "operation_succeeds",
-    "completes_within",
-    "single_key_per_operation",
-    "read_your_writes",
-    "expect_value",
-    "expect",
-    "run_recorded",
-    "minimize",
-    "explore",
-    "ViolationReport",
-    "RegressionEntry",
-    "append_regression",
-    "entry_from_report",
-    "load_regressions",
-    "CausalGraph",
-    "OperationSpan",
-    "TraceStep",
-    "format_report",
-    "TimelineEntry",
-    "build_timeline",
-    "render_timeline",
-    "SequentialSpec",
-    "RegisterSpec",
-    "record_operation",
-    "is_linearizable",
-    "linearizable",
+    # Core
     "Simulation",
-    "OperationCase",
-    "LatencyModel",
-    "Scenario",
-    "Rule",
-    "ModelState",
     "SimulationConfig",
     "Strategy",
     "SchedulerKind",
+    "OperationCase",
+    "Scenario",
+    "Rule",
+    "ModelState",
     "Cluster",
-    "ClusterConfig",
-    "Partition",
-    "PartitionSchedule",
-    "CoverageStats",
-    "behavioral_coverage",
-    "behavioral_fingerprint",
-    "Genome",
-    "GuidedStats",
-    "coverage_guided_search",
-    "mutate",
-    "SeedOutcome",
-    "SweepResult",
-    "sweep",
-    "parallel_sweep",
-    "SimulationSeedRunner",
-    "config_to_dict",
-    "config_from_dict",
-    "FailureBundle",
-    "bundle_from_report",
-    "replay_bundle",
-    "reached",
-    "reached_labels",
-    "sometimes",
-    "assess_reachability",
-    "ReachabilityReport",
-    "derive_scenario",
-    "DEFAULT_CREATE_VERBS",
-    "ReactiveMap",
-    "Scheduler",
-    "RandomScheduler",
-    "PCTScheduler",
-    "SystematicScheduler",
-    "pct_scheduler_factory",
+    "ViolationReport",
+    "record_event",
+    # Namespaces
+    "invariants",
+    "faults",
+    "latency",
+    "scheduler",
+    "cluster",
+    "artifacts",
+    "runtime",
+    "oracle",
+    "workload",
+    "explore_guided",
+    "derive",
 ]

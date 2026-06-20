@@ -20,14 +20,8 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.tracing.port_proxy import TracingPortProxy
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from forze_dst import (
-    OperationCase,
-    Simulation,
-    SimulationConfig,
-    Strategy,
-    expect_value,
-    read_your_writes,
-)
+from forze_dst import OperationCase, Simulation, SimulationConfig, Strategy
+from forze_dst.invariants import expect_value, read_your_writes
 from forze_dst.oracle.recorder import Event, History
 from forze_dst.oracle.invariants import Violation
 from forze_mock import MockDepsModule

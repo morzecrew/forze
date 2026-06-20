@@ -22,10 +22,21 @@ from forze.base.primitives import (
     bind_time_source,
 )
 
-from .loop import SimulationEventLoop
+from .loop import RealIOForbidden, SimulationDeadlock, SimulationEventLoop
 from .time_source import DEFAULT_EPOCH, SimulationTimeSource
 
 # ----------------------- #
+
+# ``runtime`` is the low-level deterministic-runtime namespace: the one-call entry plus the
+# loop, its leak/deadlock guards, and the virtual-time clock seam, re-exported together.
+__all__ = [
+    "run_simulation",
+    "SimulationEventLoop",
+    "RealIOForbidden",
+    "SimulationDeadlock",
+    "SimulationTimeSource",
+    "DEFAULT_EPOCH",
+]
 
 
 def run_simulation[T](

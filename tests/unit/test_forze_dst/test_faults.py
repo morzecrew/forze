@@ -29,7 +29,8 @@ from forze.application.execution.interception import wrap_intercepted
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
 
-from forze_dst import FaultPolicy, FaultRule, run_simulation
+from forze_dst.faults import FaultPolicy, FaultRule
+from forze_dst.runtime import run_simulation
 from forze_dst.faults import compile_fault_policy
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockQueueAdapter, MockState

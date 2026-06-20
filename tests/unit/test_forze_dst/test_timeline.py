@@ -10,14 +10,9 @@ from __future__ import annotations
 
 import json
 
-from forze_dst import (
-    Simulation,
-    SimulationConfig,
-    Strategy,
-    build_timeline,
-    expect_value,
-    render_timeline,
-)
+from forze_dst import Simulation, SimulationConfig, Strategy
+from forze_dst.invariants import expect_value
+from forze_dst.oracle import build_timeline, render_timeline
 from forze_dst.oracle.recorder import Event, History
 
 # ----------------------- #

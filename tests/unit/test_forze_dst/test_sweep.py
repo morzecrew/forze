@@ -12,12 +12,7 @@ toy runner here is a module-level function (a closure would not pickle).
 
 from __future__ import annotations
 
-from forze_dst import (
-    SeedOutcome,
-    SimulationSeedRunner,
-    parallel_sweep,
-    sweep,
-)
+from forze_dst.artifacts import SeedOutcome, SimulationSeedRunner, parallel_sweep, sweep
 
 # ----------------------- #
 
