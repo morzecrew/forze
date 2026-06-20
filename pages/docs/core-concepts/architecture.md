@@ -106,7 +106,7 @@ What actually changes when you make a common change, and what stays put:
 
 ## Where to go next
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-box: **[Domain](domain-layer.md)**
 

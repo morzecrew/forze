@@ -64,7 +64,7 @@ report = replay_bundle(FailureBundle.load("bug.json"))   # reproduces, from one 
 
 DST is built from small, documented seams, so you extend it without forking. Everything plugs in as a plain callable or protocol:
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-shield-check: **Invariants**
 

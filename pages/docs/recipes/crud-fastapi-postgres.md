@@ -78,7 +78,7 @@ Then open [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ## Where next
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-zap: **[Cache reads with Redis](cache-reads-with-redis.md)**
 

@@ -142,7 +142,7 @@ routes don't change — that's the whole point. The
 
 ## Where to go next
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-compass: **[Core concepts](../core-concepts/overview.md)**
 

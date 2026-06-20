@@ -63,7 +63,7 @@ DST finds the race, shrinks it to **two** contending payments, and reports the s
 
 The harness is one small facade — `run`, `coverage`, `coverage_guided` — over a layered engine. Each page below takes one capability from "I pointed it at my app" to "I understand and can operate it":
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-shield-check: **[Invariants & reachability](dst-invariants.md)**
 

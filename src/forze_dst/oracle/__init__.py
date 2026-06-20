@@ -10,6 +10,7 @@ subset from here.
 
 from __future__ import annotations
 
+from forze_dst.oracle.confidence import ConfidenceReport, assess_confidence
 from forze_dst.oracle.coverage import (
     CoverageStats,
     behavioral_coverage,
@@ -106,6 +107,9 @@ __all__ = [
     "behavioral_coverage",
     "behavioral_fingerprint",
     "CoverageStats",
+    # confidence
+    "ConfidenceReport",
+    "assess_confidence",
     # report + timeline
     "format_report",
     "build_timeline",

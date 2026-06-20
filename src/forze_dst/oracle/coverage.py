@@ -23,6 +23,7 @@ from forze_dst.oracle.recorder import History
 
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport
+    from forze_dst.oracle.confidence import ConfidenceReport
     from forze_dst.oracle.reachability import ReachabilityReport
 
 # ----------------------- #
@@ -144,6 +145,11 @@ class CoverageStats:
     A non-empty :attr:`~forze_dst.oracle.reachability.ReachabilityReport.unreached` is false confidence —
     a target the sweep never drove."""
 
+    confidence: "ConfidenceReport | None" = None
+    """What the sweep actually exercised — operations that never raced, declared faults that never
+    fired. Makes a green result honest: a clean sweep that left gaps here passed only what it
+    tested. ``None`` when not computed (a bare ``coverage`` call still fills it)."""
+
     # ....................... #
 
     @property
@@ -183,6 +189,10 @@ class CoverageStats:
                     else ""
                 )
             )
+
+        if self.confidence is not None and self.confidence.warnings:
+            lines.append("  ⚠ confidence gaps (a clean sweep still left these untested):")
+            lines.extend(f"      • {warning}" for warning in self.confidence.warnings)
 
         if self.violation is not None:
             names = ", ".join(sorted({v.invariant for v in self.violation.violations}))

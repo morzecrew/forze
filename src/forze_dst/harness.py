@@ -164,6 +164,27 @@ class Simulation:
 
     # ....................... #
 
+    def audit(
+        self,
+        config: SimulationConfig,
+        *,
+        scenario: Scenario | None = None,
+    ) -> CoverageStats:
+        """Sweep the whole seed range and report **what it exercised** — so a green run means
+        something, not "probably fine".
+
+        Like :meth:`coverage` but with the plateau early-stop disabled, so every configured seed
+        runs (a complete check, the CI-gate semantics) and the
+        :attr:`~forze_dst.oracle.coverage.CoverageStats.confidence` it returns is honest. The
+        confidence report names the gaps a clean sweep still left — operations that ran but never
+        raced another, declared faults that never fired. A violation, if any, still rides on
+        :attr:`~forze_dst.oracle.coverage.CoverageStats.violation` (minimized and reproducible).
+        """
+
+        return self.coverage(attrs.evolve(config, coverage_plateau=0), scenario=scenario)
+
+    # ....................... #
+
     def coverage_guided(
         self,
         config: SimulationConfig,

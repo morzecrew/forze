@@ -67,7 +67,7 @@ Most functionality is provided through optional integrations packed as sibling p
 
 ## Next steps
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-zap: **[Quickstart](quickstart.md)**
 

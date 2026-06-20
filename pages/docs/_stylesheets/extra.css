@@ -151,6 +151,8 @@
 
 .md-typeset .grid.cards.fz-cards > ul > li {
   position: relative;
+  overflow: hidden;
+  transition: transform .25s ease, background .25s ease;
 }
 
 .md-typeset .grid.cards.fz-cards > ul > li > p:first-child > strong > a::after {
@@ -160,14 +162,18 @@
   z-index: 1;
 }
 
+.md-typeset .grid.cards.fz-cards > ul > li:hover > p:first-child svg {
+  color: var(--md-accent-fg-color);
+}
+
 .md-typeset .grid.cards.fz-cards > ul > li > p:first-child > strong > a {
   position: static;
-  color: inherit;
   text-decoration: none;
 }
 
 .md-typeset .grid.cards.fz-cards > ul > li > p:first-child > strong > a:hover {
   text-decoration: none;
+  color: var(--md-accent-fg-color);
 }
 
 /* ---- Card hover lift ---- */

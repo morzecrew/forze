@@ -89,7 +89,7 @@ That's the whole shape of Forze: **aggregates** at the center, **operations** ov
 them, **ports** out to infrastructure, and a **runtime** to tie it together. Time
 to build something with it.
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-zap: **[Quickstart](../get-started/quickstart.md)**
 

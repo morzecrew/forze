@@ -12,7 +12,7 @@ Two shapes of claim matter, and you need both. An **invariant** says a property 
 
 The generic `expect(kind, predicate, message=...)` covers most domain rules: it reads the facts your `observe` hook recorded and asserts a predicate over each. The built-ins go further — they read the engine trace *directly*, so they need no handler instrumentation at all:
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-shield-alert: **`no_unexpected_error()`**
 

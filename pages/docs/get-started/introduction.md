@@ -78,7 +78,7 @@ required.
 
 ## Next steps
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-download: **[Installation](installation.md)**
 

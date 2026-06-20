@@ -223,6 +223,12 @@ def run(
     regression_file: str = typer.Option(
         _DEFAULT_CORPUS, help="Regression corpus path (JSON Lines)."
     ),
+    confidence: bool = typer.Option(
+        True,
+        "--confidence/--no-confidence",
+        help="On a clean scenario run, report what was exercised (never-raced ops, "
+        "unfired faults) so green means something.",
+    ),
 ) -> None:
     """Explore an auto-derived scenario; print the counterexample (exit 1 if one is found)."""
 
@@ -239,25 +245,33 @@ def run(
 
     scenario = sim.derive_scenario()
     seed_list = _parse_seeds(seeds)
-
-    report = sim.run(
-        _config(
-            strategy=strategy,
-            seed_list=seed_list,
-            act_count=act_count,
-            concurrency=concurrency,
-            max_examples=max_examples,
-            max_runs=max_runs,
-            pct=pct,
-            depth=depth,
-            fault_error=fault_error,
-            latency=latency,
-        ),
-        scenario=scenario,
+    cfg = _config(
+        strategy=strategy,
+        seed_list=seed_list,
+        act_count=act_count,
+        concurrency=concurrency,
+        max_examples=max_examples,
+        max_runs=max_runs,
+        pct=pct,
+        depth=depth,
+        fault_error=fault_error,
+        latency=latency,
     )
+
+    # The scenario strategy can sweep + report confidence in one pass (audit); other strategies
+    # (dpor / hypothesis) take the plain run path.
+    stats = (
+        sim.audit(cfg, scenario=scenario)
+        if confidence and strategy is Strategy.SCENARIO
+        else None
+    )
+    report = stats.violation if stats is not None else sim.run(cfg, scenario=scenario)
 
     if report is None:
         typer.echo("✓ no violation found")
+        if stats is not None and stats.confidence is not None:
+            typer.echo("")
+            typer.echo(stats.confidence.format())
         return
 
     typer.echo(report.format())
