@@ -1,7 +1,6 @@
 """Authoring dependency registry (compose, freeze, resolve)."""
 
 import os
-import warnings
 from typing import Self, final
 
 import attrs
@@ -241,25 +240,4 @@ class DepsRegistry:
             resolution_tracer=resolution_tracer,
             runtime_tracer=runtime_tracer,
             interceptors=self.interceptors,
-        )
-
-    # ....................... #
-
-    def build(
-        self,
-        *,
-        trace_resolution: bool | None = None,
-        trace_runtime: bool | None = None,
-    ) -> FrozenDepsRegistry:
-        """Freeze the registry (deprecated alias for :meth:`freeze`)."""
-
-        warnings.warn(
-            "DepsRegistry.build() is deprecated; use freeze() instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        return self.freeze(
-            trace_resolution=trace_resolution,
-            trace_runtime=trace_runtime,
         )

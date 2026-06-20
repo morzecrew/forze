@@ -34,12 +34,6 @@ class TestDepsRegistryAuthoring:
         assert resolved.provide(_A) == 1
         assert resolved.provide(_B) == 2
 
-    def test_build_is_alias_for_freeze(self) -> None:
-        with pytest.warns(DeprecationWarning, match="freeze"):
-            frozen = DepsRegistry.from_deps(Deps.plain({_A: 1})).build()
-
-        assert isinstance(frozen, FrozenDepsRegistry)
-
     def test_freeze_enables_trace_from_env(
         self,
         monkeypatch: pytest.MonkeyPatch,

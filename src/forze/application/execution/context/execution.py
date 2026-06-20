@@ -32,7 +32,7 @@ from ..tracing import (
 from .active_operation import warn_if_constructed_in_operation
 from .drain import OperationDrainGate
 from .invocation import InvocationContext
-from .outbox_staging import OutboxStagingContext
+from forze.application.contracts.outbox import OutboxStagingContext
 from .transaction import TransactionContext
 
 # ----------------------- #
