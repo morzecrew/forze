@@ -31,7 +31,9 @@ from forze_dst.oracle.linearizability import (
     SequentialSpec,
     is_linearizable,
     linearizable,
+    monotonic_reads,
     record_operation,
+    sequential,
 )
 from forze_dst.oracle.reachability import (
     ReachabilityReport,
@@ -61,9 +63,11 @@ __all__ = [
     "expect",
     "expect_value",
     "read_your_writes",
-    # linearizability
+    # linearizability + weaker consistency models
     "linearizable",
     "is_linearizable",
+    "sequential",
+    "monotonic_reads",
     "RegisterSpec",
     "SequentialSpec",
     "record_operation",

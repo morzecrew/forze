@@ -56,7 +56,15 @@ simulation = Simulation(
 )
 ```
 
-For the strongest single-object guarantee, `linearizable(spec)` checks a recorded operation history against a sequential specification (Wing-Gong, per key) — every concurrent execution must be equivalent to *some* legal serial order.
+### Consistency models
+
+Record an object's operations with `record_operation(key, op, args, session=…)` and DST can check the history against a **model**, not just a hand-written rule — the same recorded history, read against a stronger or weaker guarantee:
+
+- **`linearizable(spec)`** — the strongest single-object guarantee: every concurrent execution must be equivalent to some legal serial order *consistent with real time* (Wing & Gong, per key). A read may never see a value an earlier-completed write superseded.
+- **`sequential(spec)`** — drops the real-time constraint and keeps only per-session program order. A replica that serves a slightly stale but program-order-respecting read is *sequentially* consistent though not linearizable — `sequential` accepts it, `linearizable` flags it.
+- **`monotonic_reads()`** — a session guarantee: within one session, successive reads of a key never go backward in version (the lagging-replica bug). Sound and incomplete — it flags only a *definitive* regression, so it never cries wolf on concurrent writes.
+
+This is the spectrum from strongest to weakest, and it lines up with what an operation *declares*: a handler that runs at `IsolationLevel.SERIALIZABLE` should pass `linearizable`; a weaker level admits the weaker models. (Full snapshot-isolation and serializability checking — across a transaction's read and write *sets* — needs transaction-level recording, a step beyond the per-object history these read.)
 
 One failure needs no invariant at all: a **deadlock**. If an interleaving drives the workload to a standstill — every task blocked, with no ready work and no timer to advance — that is always a bug, so DST reports it on its own. It minimises to the smallest workload that still stalls and comes back as a `no_deadlock` violation, exactly like an asserted one, instead of aborting the sweep. You catch it for free, even with no invariants declared.
 
