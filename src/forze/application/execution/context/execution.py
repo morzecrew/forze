@@ -2,27 +2,26 @@ from typing import Any, Callable, final
 
 import attrs
 
-from forze.base.primitives import StrKey
-
 from forze.application.contracts.analytics import AnalyticsDeps
 from forze.application.contracts.authn import AuthnDeps
 from forze.application.contracts.authz import AuthzDeps
 from forze.application.contracts.cache import CacheDeps
 from forze.application.contracts.counter import CounterDeps
-from forze.application.contracts.domain import DomainDeps
 from forze.application.contracts.dlock import DistributedLockDeps
 from forze.application.contracts.document import DocumentDeps
+from forze.application.contracts.domain import DomainDeps
 from forze.application.contracts.embeddings import EmbeddingsDeps
 from forze.application.contracts.graph import GraphDeps
 from forze.application.contracts.http import HttpServiceDeps
 from forze.application.contracts.idempotency import IdempotencyDeps
 from forze.application.contracts.inbox import InboxDeps
+from forze.application.contracts.outbox import OutboxDeps
 from forze.application.contracts.resilience import ResilienceDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
 from forze.application.contracts.tenancy import TenancyDeps
-from forze.application.contracts.outbox import OutboxDeps
 from forze.application.contracts.transaction import TransactionDeps
+from forze.base.primitives import StrKey
 
 from ..deps import FrozenDeps
 from ..deps.tx_tracer import tx_tracer_from_runtime
@@ -44,11 +43,11 @@ class ExecutionContext:
     deps: FrozenDeps
     """Dependencies container."""
 
-    cache_operations: bool = attrs.field(default=True)
+    cache_operations: bool = True
     """Whether resolved operations are memoized for this scope (see
     :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_operations`)."""
 
-    cache_ports: bool = attrs.field(default=True)
+    cache_ports: bool = True
     """Whether resolved dependencies are memoized for this scope — both configurable
     ports and simple deps (see
     :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_ports`)."""

@@ -21,6 +21,8 @@ class ResolutionContext:
     tracer: ResolutionTracer
     """Optional recorder for observed resolution edges."""
 
+    # ....................... #
+
     _stack: ContextVar[tuple[ResolutionFrame, ...]] = attrs.field(
         factory=lambda: ContextVar("deps_resolution_stack", default=()),
         init=False,
@@ -65,7 +67,5 @@ class ResolutionContext:
     def record_provide_edge(self, child: ResolutionFrame) -> None:
         """Record an edge from the active frame to *child* without pushing."""
 
-        stack = self.stack()
-
-        if stack:
+        if stack := self.stack():
             self.tracer.record_edge(stack[-1], child)

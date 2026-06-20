@@ -6,12 +6,12 @@ from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.resilience import RateLimitStrategy
-from forze.application.execution.resilience import (
-    InMemoryRateLimitStore,
+from forze.application.contracts.resilience import (
     RateLimitKey,
     RateLimitStore,
+    RateLimitStrategy,
 )
+from forze.application.execution.resilience import InMemoryRateLimitStore
 from forze.application.execution.tracing import record as trace_record
 
 from ..kernel.client import RedisClientPort

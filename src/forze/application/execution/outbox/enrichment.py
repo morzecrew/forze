@@ -26,6 +26,8 @@ class InvocationOutboxEnricher:
     inv: InvocationContext
     """Active invocation context for the request."""
 
+    # ....................... #
+
     def enrich[M: BaseModel](
         self,
         event_type: str,

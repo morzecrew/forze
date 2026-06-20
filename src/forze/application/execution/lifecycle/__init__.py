@@ -1,7 +1,6 @@
-# re-export step
-from forze.application.contracts.execution import LifecycleStep
+# re-export contract seam + step
+from forze.application.contracts.execution import LifecycleModule, LifecycleStep
 
-from .module import LifecycleModule
 from .plans import FrozenLifecyclePlan, LifecyclePlan
 
 # ----------------------- #

@@ -27,10 +27,7 @@ class ResolutionFrame:
     def label(self) -> str:
         """Human-readable frame label for error messages."""
 
-        if self.route is None:
-            return self.key_name
-
-        return f"{self.key_name}@{self.route}"
+        return self.key_name if self.route is None else f"{self.key_name}@{self.route}"
 
 
 # ....................... #

@@ -65,7 +65,6 @@ class NoopResolutionTracer:
 NOOP_RESOLUTION_TRACER = NoopResolutionTracer()
 """Shared noop resolution tracer instance."""
 
-
 # ....................... #
 
 
@@ -112,7 +111,4 @@ class RecordingResolutionTracer:
 def resolution_tracer_from_flag(enabled: bool) -> ResolutionTracer:
     """Return a recording or noop resolution tracer."""
 
-    if enabled:
-        return RecordingResolutionTracer()
-
-    return NOOP_RESOLUTION_TRACER
+    return RecordingResolutionTracer() if enabled else NOOP_RESOLUTION_TRACER

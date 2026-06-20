@@ -39,7 +39,11 @@ class OperationDrainGate:
     _draining: bool = attrs.field(default=False, init=False)
     """Whether the gate has stopped admitting new invocations."""
 
-    _idle: asyncio.Event = attrs.field(factory=asyncio.Event, init=False, repr=False)
+    _idle: asyncio.Event = attrs.field(
+        factory=asyncio.Event,
+        init=False,
+        repr=False,
+    )
     """Set when the count reaches zero during a drain."""
 
     # ....................... #

@@ -1,6 +1,6 @@
 """Compose outbox command ports at the execution boundary."""
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -13,7 +13,6 @@ from forze.application.integrations.outbox.staging import FlushRowsFn
 from forze.base.exceptions import exc
 
 from .enrichment import InvocationOutboxEnricher
-from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -51,6 +50,9 @@ def _resolve_payload_cipher(
         )
 
     return ctx.deps.provide(KeyringDepKey)
+
+
+# ....................... #
 
 
 def build_staging_outbox_command[M: BaseModel](

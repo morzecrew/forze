@@ -7,13 +7,13 @@ from typing import Any, cast, final
 
 import attrs
 
-from forze.application.contracts.resilience import CircuitBreakerStrategy
-from forze.application.execution.resilience import (
+from forze.application.contracts.resilience import (
     BreakerKey,
     CircuitBreakerStore,
-    InMemoryCircuitBreakerStore,
+    CircuitBreakerStrategy,
     Transition,
 )
+from forze.application.execution.resilience import InMemoryCircuitBreakerStore
 from forze.application.execution.tracing import record as trace_record
 from forze.base.primitives import monotonic
 

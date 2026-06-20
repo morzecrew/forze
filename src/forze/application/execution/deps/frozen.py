@@ -40,10 +40,10 @@ class FrozenDepsRegistry:
     store: ProviderStore = attrs.field(factory=ProviderStore)
     """Merged provider store."""
 
-    resolution_tracer: ResolutionTracer = attrs.field(default=NOOP_RESOLUTION_TRACER)
+    resolution_tracer: ResolutionTracer = NOOP_RESOLUTION_TRACER
     """Resolution tracer applied when resolving."""
 
-    runtime_tracer: RuntimeTracer = attrs.field(default=NOOP_RUNTIME_TRACER)
+    runtime_tracer: RuntimeTracer = NOOP_RUNTIME_TRACER
     """Runtime tracer applied when resolving."""
 
     interceptors: PortInterceptorChain = attrs.field(factory=tuple)
@@ -73,10 +73,10 @@ class FrozenDeps:
     store: ProviderStore = attrs.field(factory=ProviderStore)
     """Merged provider store (shared across scopes)."""
 
-    resolution_tracer: ResolutionTracer = attrs.field(default=NOOP_RESOLUTION_TRACER)
+    resolution_tracer: ResolutionTracer = NOOP_RESOLUTION_TRACER
     """Optional recorder for observed resolution edges."""
 
-    runtime_tracer: RuntimeTracer = attrs.field(default=NOOP_RUNTIME_TRACER)
+    runtime_tracer: RuntimeTracer = NOOP_RUNTIME_TRACER
     """Optional recorder for runtime port and transaction events."""
 
     interceptors: PortInterceptorChain = attrs.field(factory=tuple)

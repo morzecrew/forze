@@ -30,10 +30,7 @@ def merge_deps(
 
     parts.extend(sections)
 
-    if not parts:
-        return Deps()
-
-    return Deps.merge(*parts)
+    return Deps.merge(*parts) if parts else Deps()
 
 
 # ....................... #

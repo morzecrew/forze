@@ -5,8 +5,7 @@ from typing import Sequence, final
 import attrs
 from pydantic import SecretStr
 
-from forze.application.contracts.execution import LifecycleStep
-from forze.application.execution.lifecycle import LifecycleModule
+from forze.application.contracts.execution import LifecycleModule, LifecycleStep
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 

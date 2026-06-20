@@ -10,13 +10,17 @@ from forze.application.contracts.resilience import (
     AdaptiveBulkheadStrategy,
     AdaptiveThrottleStrategy,
     BulkheadStrategy,
+    CircuitBreakerStore,
     CircuitBreakerStrategy,
     GradientBulkheadStrategy,
     HedgeStrategy,
+    LatencyDigestStore,
+    RateLimitStore,
     RateLimitStrategy,
     ResiliencePolicy,
     RetryStrategy,
     TimeoutStrategy,
+    Transition,
 )
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping, monotonic
@@ -30,15 +34,11 @@ from .state import (
     AdaptiveThrottleState,
     BudgetState,
     HedgeDelayState,
-    Transition,
 )
 from .store import (
-    CircuitBreakerStore,
     InMemoryCircuitBreakerStore,
     InMemoryLatencyDigestStore,
     InMemoryRateLimitStore,
-    LatencyDigestStore,
-    RateLimitStore,
 )
 
 # ----------------------- #
@@ -72,28 +72,24 @@ class InProcessResilienceExecutor:
     )
     """Named policies, keyed by policy name."""
 
-    clock: Callable[[], float] = attrs.field(default=monotonic)
+    clock: Callable[[], float] = monotonic
     """Time source for the executor."""
 
     rng: random.Random = attrs.field(factory=random.Random)
     """Random number generator for the executor."""
 
-    sleep: Callable[[float], Awaitable[None]] = attrs.field(default=asyncio.sleep)
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     """Sleep function for the executor."""
 
-    breaker_store: CircuitBreakerStore = attrs.field(
-        default=attrs.Factory(
-            lambda self: InMemoryCircuitBreakerStore(clock=self.clock),
-            takes_self=True,
-        ),
+    breaker_store: CircuitBreakerStore = attrs.Factory(
+        lambda self: InMemoryCircuitBreakerStore(clock=self.clock),
+        takes_self=True,
     )
     """Circuit breaker store for the executor."""
 
-    rate_limit_store: RateLimitStore = attrs.field(
-        default=attrs.Factory(
-            lambda self: InMemoryRateLimitStore(clock=self.clock),
-            takes_self=True,
-        ),
+    rate_limit_store: RateLimitStore = attrs.Factory(
+        lambda self: InMemoryRateLimitStore(clock=self.clock),
+        takes_self=True,
     )
     """Rate-limit token-bucket store (process-local by default, or a distributed
     store so ``permits/per`` is the fleet's rate instead of per-replica)."""
