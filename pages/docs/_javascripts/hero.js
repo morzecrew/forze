@@ -151,11 +151,11 @@
         //   SPARK_MIN/MAX  - inclusive range of cells lit per spark.
         //   BLINK_SPEED    - ease rate toward lit/unlit (higher = snappier).
         //   BLINK_PEAK     - brightness at which a cell starts fading back out.
-        var SPARK_INTERVAL = 24;
+        var SPARK_INTERVAL = 40;
         var SPARK_MIN = 1;
-        var SPARK_MAX = 1;
-        var BLINK_SPEED = 0.05;
-        var BLINK_PEAK = 0.92;
+        var SPARK_MAX = 2;
+        var BLINK_SPEED = 0.03;
+        var BLINK_PEAK = 0.82;
 
         function buildGrid() {
             var rect = canvas.getBoundingClientRect();
