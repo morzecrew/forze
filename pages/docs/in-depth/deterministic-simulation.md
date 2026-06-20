@@ -83,7 +83,7 @@ The harness is one small facade — `run`, `coverage`, `coverage_guided` — ove
 
 -   :lucide-repeat: **[Find, reproduce, regress](dst-the-loop.md)**
 
-    The day-to-day loop: read the counterexample, replay it from the command line, lock the seed into a regression corpus, and carry a bug to another machine.
+    The day-to-day loop: run it in your pytest suite, read the counterexample, lock the seed into a regression corpus, and carry a bug to another machine.
 
 </div>
 

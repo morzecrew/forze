@@ -65,6 +65,36 @@ report = stats.violation  # the minimized counterexample, if a seed tripped an i
 
 The sweep right-sizes itself instead of guessing a seed count, and a bug still beats coverage — the first violating seed stops it with the same minimized report `run` produces.
 
+## Confidence — make a green run mean something
+
+A clean sweep is the most dangerous thing DST prints, because it looks like safety. But "no violation" only proves what was *tried* — a sweep can pass every invariant while never driving the dangerous case, and then green is not safety, it is silence. This is the same trap [reachability](dst-invariants.md#what-must-sometimes-happen) guards against, turned on the sweep itself.
+
+`audit()` runs the full seed range and reports what it actually exercised:
+
+```python
+stats = simulation.audit(SimulationConfig.thorough())
+
+if stats.violation is None:
+    print(stats.confidence.format())   # what a green run did — and didn't — test
+```
+
+The `ConfidenceReport` names the gaps a clean sweep still left:
+
+- **Operations that ran but never raced** — an operation that always ran alone had its concurrency checked against nothing. Its happy path passed; its interleavings were never explored.
+- **Declared faults that never fired** — a fault rule no seed ever triggered means that failure path was never exercised, so the green result says nothing about it.
+
+```text
+DST confidence
+  seeds run:    256
+  raced:        2/3 operations overlapped another
+  faults fired: 0/1 declared rules
+  ⚠ confidence gaps:
+      • ran but never raced: refund — their concurrency was never tested
+      • declared fault never fired: queue_command[*].* (drop) — that failure path was never exercised
+```
+
+`audit()` is `coverage()` with the plateau disabled, so every seed runs and the picture is honest — it is the CI-gate sweep that also tells you how much to trust the green. The command line prints this automatically on a clean `forze dst run` (pass `--no-confidence` to suppress it), so confidence is the default, not an extra step.
+
 ## Guided exploration — fuzz toward new behaviour
 
 A uniform sweep knows when to *stop* but not *where to look* — every seed is independent, so behaviour gated behind a rare combination of operations is found only by chance. `coverage_guided` is **feedback-directed** instead: it keeps a corpus of inputs that each unlocked new coverage and *mutates* the productive ones (tweak an op, grow or shrink the workload, re-roll the schedule and faults), under an AFL-style power schedule that pushes the newest coverage frontier:

@@ -22,6 +22,34 @@ DST timeline (by virtual time):
   @t=0.100000  ↳ document_command[accounts].get key=42 read {'balance': 5}   ← stale read
 ```
 
+## Run it in your test suite
+
+The loop belongs where your other tests live. `assert_no_violation` points a normal test at a `Simulation`: it sweeps, shrinks on failure, and fails the test with the minimized counterexample as the assertion message — so a DST failure reads like any other pytest failure, seed included.
+
+```python
+from forze_dst.testing import assert_no_violation
+
+@pytest.mark.dst
+def test_payments_have_no_race():
+    assert_no_violation(payments_simulation)
+```
+
+No plugin is needed for that — it is a plain assertion. It defaults to a `thorough()` sweep, and a clean run passes silently like any green test.
+
+The friction a DST test usually hits is that the right seed count differs by where it runs — a handful while you iterate, thousands in CI. Enable the optional plugin and one flag scales every sweep without touching the test:
+
+```toml
+# conftest.py
+pytest_plugins = ["forze_dst.testing.plugin"]
+```
+
+```bash
+pytest -m dst --dst-seeds 16      # quick, while iterating
+pytest -m dst --dst-seeds 2000    # exhaustive, in CI — same test, no code change
+```
+
+The plugin also registers the `dst` marker, so `-m dst` runs the simulation tests on their own (the heavy ones can be a nightly job) and `-m "not dst"` skips them in a fast inner loop. The plugin is opt-in by design — importing the DST machinery costs a moment, so it stays off until a project asks for it rather than taxing every test run.
+
 ## Reproduce and regress from the command line
 
 The `forze dst` command wires the loop end to end against an import string pointing at your `Simulation`:
