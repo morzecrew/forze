@@ -57,6 +57,17 @@ class TracingEvent:
     error: str | None = None
     """Exception type name when ``outcome`` is ``failed`` or ``error``."""
 
+    corr: int | None = None
+    """Correlation id linking an operation's terminal (``complete``/``error``) back to its
+    ``invoke`` — the invoke's own ``seq``. ``None`` on the invoke itself and on non-operation
+    events. Lets a consumer pair a terminal to the exact invoke it belongs to (rather than
+    per-op FIFO), so concurrent calls of the same operation are attributed precisely."""
+
+    nested: bool = False
+    """Whether this operation ``invoke`` ran *inside* another operation (a cascade — a saga or
+    event handler invoking a sub-operation), so it has no top-level driver. ``False`` on
+    non-operation events and on top-level invocations."""
+
 
 # ....................... #
 

@@ -328,7 +328,9 @@ def format_report(report: ViolationReport) -> str:
         lines.append(f"    [{index}] {op}{suffix}")
 
     if graph.timeline:
-        lines.extend(("", "  injected environment (faults + latency, by virtual time):"))
+        lines.extend(
+            ("", "  injected environment (faults + latency, by virtual time):")
+        )
 
         for event in graph.timeline:
             where = _injection_target(event)
@@ -338,7 +340,13 @@ def format_report(report: ViolationReport) -> str:
                 if seconds is not None:
                     detail += f" {float(seconds):.3f}s"
             elif event.kind == "partition":
-                detail = f"partition (node {event.fields.get('node')} cut off)"
+                loss = event.fields.get("loss")
+                how = (
+                    "cut off"
+                    if loss is None or float(loss) >= 1.0
+                    else f"lossy link p={float(loss):.2f}"
+                )
+                detail = f"partition (node {event.fields.get('node')} {how})"
             else:  # latency
                 detail = f"latency {float(event.fields.get('seconds', 0.0)):.3f}s"
             lines.append(f"    @t={event.at:.6f}  {detail} → {where}")

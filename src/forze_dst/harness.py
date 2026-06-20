@@ -136,14 +136,16 @@ def _project_operation_events(trace_events: Sequence[Any]) -> None:
     true execution order, which never collides, unlike a shared virtual-time stamp). A boundary
     with no terminal (the process crashed mid-call) is projected ``incomplete``.
 
-    Correlation guarantee: the **multiset** of ``(op, outcome)`` is exact, so the detection
-    invariants (:func:`no_unexpected_error`, :func:`operation_succeeds`) are sound — a failed
-    operation is never missed. Per-*call* attribution (which ``call_id`` an outcome / duration /
-    span belongs to) is best-effort: concurrent calls of the *same* op whose terminals complete
-    out of invoke order — or cascade (saga / event-handler) invokes that have no ``op_start`` —
-    can pair a terminal to the wrong invoke, mislabeling the report and the per-call verdict of
-    :func:`completes_within` / :func:`single_key_per_operation`. Exact per-call attribution would
-    need a per-invocation correlation id carried on the trace (a tracer enrichment, deferred)."""
+    Correlation guarantee: per-*call* attribution is **exact**. Each terminal carries a
+    correlation id (its invoke's ``seq``), so a terminal pairs to the precise invoke it belongs
+    to — even for concurrent calls of the same op whose terminals complete out of invoke order.
+    Top-level invokes are matched to the harness's ``op_start`` anchors in order (an ``op_start``
+    is immediately followed by its invoke with no await), while *cascade* invokes (a saga /
+    event-handler sub-operation, flagged ``nested`` on the trace) consume no anchor and are
+    attributed ``call_id=-1``. The verdicts of :func:`completes_within` /
+    :func:`single_key_per_operation` and the report's ``call_id`` are therefore precise, not
+    best-effort. (A terminal without a correlation id — none today; ``run_operation`` is the sole
+    emitter and always stamps one — falls back to per-op FIFO.)"""
 
     recorder = current_recorder()
 
@@ -155,17 +157,30 @@ def _project_operation_events(trace_events: Sequence[Any]) -> None:
         e for e in trace_events if e.domain == "operation" and e.phase == "invoke"
     ]
 
-    terminals: dict[str, deque[Any]] = defaultdict(deque)
+    # Terminals indexed by correlation id (the invoke seq they carry back), with a per-op FIFO
+    # fallback for any terminal that predates correlation ids.
+    by_corr: dict[int, Any] = {}
+    fifo: dict[str, deque[Any]] = defaultdict(deque)
     for event in trace_events:
         if event.domain == "operation" and event.phase in ("complete", "error"):
-            terminals[event.op].append(event)
+            if event.corr is not None:
+                by_corr[event.corr] = event
+            else:
+                fifo[event.op].append(event)
 
-    for index, invoke in enumerate(invokes):
-        anchor = op_starts[index] if index < len(op_starts) else None
-        call_id = anchor.fields.get("call_id") if anchor is not None else -1
+    top_level = 0
+    for invoke in invokes:
+        call_id: Any = -1  # a cascade has no top-level driver / op_start anchor
+        if not getattr(invoke, "nested", False):
+            anchor = op_starts[top_level] if top_level < len(op_starts) else None
+            if anchor is not None:
+                call_id = anchor.fields.get("call_id")
+            top_level += 1
 
-        queue = terminals.get(invoke.op)
-        terminal = queue.popleft() if queue else None
+        terminal = by_corr.pop(invoke.seq, None)
+        if terminal is None:
+            queue = fifo.get(invoke.op)
+            terminal = queue.popleft() if queue else None
 
         if terminal is None:
             outcome, error = "incomplete", None

@@ -195,7 +195,15 @@ async def run_operation(
 
     resolved = registry.resolve(op, ctx)
 
-    record(domain="operation", op=str(op), phase="invoke", deps=ctx.deps)
+    # A cascade (this op invoked from inside another operation — a saga or event handler) has no
+    # top-level driver; the marker is already set by the enclosing invocation. Capturing it before
+    # ``resolved`` runs (which sets the marker for *this* op) lets a trace consumer attribute the
+    # invoke correctly. The invoke's ``seq`` becomes the correlation id its terminal carries back,
+    # so concurrent calls of the same op are paired exactly rather than per-op FIFO.
+    nested = active_operation_var.get()
+    invoke_seq = record(
+        domain="operation", op=str(op), phase="invoke", nested=nested, deps=ctx.deps
+    )
     try:
         result = await resolved(args)
     except Exception as error:
@@ -210,6 +218,7 @@ async def run_operation(
             phase="error",
             outcome="failed" if isinstance(error, CoreException) else "error",
             error=type(error).__name__,
+            corr=invoke_seq,
             deps=ctx.deps,
         )
         raise
@@ -219,6 +228,7 @@ async def run_operation(
         op=str(op),
         phase="complete",
         outcome="ok",
+        corr=invoke_seq,
         deps=ctx.deps,
     )
     return result

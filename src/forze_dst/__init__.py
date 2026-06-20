@@ -79,7 +79,7 @@ from .config import (
     Strategy,
 )
 from .cluster import Cluster
-from .coverage import CoverageStats, behavioral_coverage
+from .coverage import CoverageStats, behavioral_coverage, behavioral_fingerprint
 from .reachability import (
     ReachabilityReport,
     assess_reachability,
@@ -176,6 +176,7 @@ __all__ = [
     "PartitionSchedule",
     "CoverageStats",
     "behavioral_coverage",
+    "behavioral_fingerprint",
     "reached",
     "reached_labels",
     "sometimes",

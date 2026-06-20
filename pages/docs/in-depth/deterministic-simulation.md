@@ -162,6 +162,8 @@ report = Cluster(deps=lambda state: MockDepsModule(state=state), node=node,
 
 On a violation the cluster minimises by **dropping nodes** — the smallest cluster that still breaks, usually two.
 
+A window's `loss` turns a clean cut into a **flaky link**: `Partition(start=0.5, end=1.5, isolated=frozenset({1}), loss=0.3)` drops 30 % of node 1's gated calls (seeded) instead of all of them, and overlapping windows on different node groups give an **asymmetric** split. `loss=1.0` (the default) is the hard partition above.
+
 ## The loop — find, reproduce, minimise, regress
 
 ![A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever](../_diagrams/light/dst-loop.svg#only-light){ data-src="../_diagrams/light/dst-loop.svg#only-light" }
@@ -190,6 +192,8 @@ forze dst topology  app:simulation
 ```
 
 `--save-regression` appends the found seed (with the registry fingerprint and the exploration knobs) to a JSON-Lines corpus; `replay` reproduces each saved seed under the configuration it was found with, so a fixed bug stays fixed.
+
+The registry fingerprint catches a *structural* change (a contract or plan fact moved). For a stricter guard, `entry_from_report(…, strict_behavior=True)` also records a `behavioral_fingerprint` — an ordered, PII-free digest of the run's execution-trace shape — so `RegressionEntry.behavior_drifted(history)` flags a replay whose handler *logic* drifted even when its contracts didn't. Opt-in; the default stays structural.
 
 !!! warning "DST is only as honest as the mock"
 

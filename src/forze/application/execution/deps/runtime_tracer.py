@@ -37,8 +37,10 @@ class RuntimeTracer(Protocol):
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
-    ) -> None:
-        """Append a runtime event when enabled."""
+        corr: int | None = None,
+        nested: bool = False,
+    ) -> int | None:
+        """Append a runtime event when enabled; return its ``seq`` (``None`` when disabled)."""
         ...
 
     def snapshot(self) -> RuntimeTrace | None:
@@ -74,9 +76,12 @@ class NoopRuntimeTracer:
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
-    ) -> None:
+        corr: int | None = None,
+        nested: bool = False,
+    ) -> int | None:
         del domain, op, surface, route, phase, tx_depth, tx_route, key, outcome, error
-        return
+        del corr, nested
+        return None
 
     def snapshot(self) -> RuntimeTrace | None:
         return None
@@ -130,8 +135,10 @@ class RecordingRuntimeTracer:
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
-    ) -> None:
-        self._trace.get_or_create().next_event(
+        corr: int | None = None,
+        nested: bool = False,
+    ) -> int | None:
+        event = self._trace.get_or_create().next_event(
             domain=domain,
             op=op,
             surface=surface,
@@ -143,7 +150,10 @@ class RecordingRuntimeTracer:
             key=key,
             outcome=outcome,
             error=error,
+            corr=corr,
+            nested=nested,
         )
+        return event.seq
 
     # ....................... #
 

@@ -20,8 +20,11 @@ from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
+from forze_dst.coverage import behavioral_fingerprint
+
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport
+    from forze_dst.recorder import History
 
 # ----------------------- #
 
@@ -47,6 +50,13 @@ class RegressionEntry:
     act_count / faults / …). ``replay`` reproduces with these rather than the current CLI flags,
     so a regression found under one configuration is not silently reported clean under another."""
 
+    behavioral_fingerprint: str | None = None
+    """Opt-in handler-logic signature (:func:`~forze_dst.coverage.behavioral_fingerprint`) of the
+    run that found the seed — an ordered, PII-free digest of its execution-trace shape. ``None``
+    (default) keeps the structural-only posture. When set, a replay whose behavior digest differs
+    has *drifted* (the code's logic moved on even if its contracts didn't); see
+    :meth:`behavior_drifted`."""
+
     # ....................... #
 
     def to_json(self) -> str:
@@ -61,6 +71,7 @@ class RegressionEntry:
                 "invariants": list(self.invariants),
                 "found_at": self.found_at,
                 "explore": self.explore,
+                "behavioral_fingerprint": self.behavioral_fingerprint,
             }
         )
 
@@ -80,7 +91,23 @@ class RegressionEntry:
             invariants=tuple(data.get("invariants", ())),
             found_at=data.get("found_at"),
             explore=data.get("explore"),
+            behavioral_fingerprint=data.get("behavioral_fingerprint"),
         )
+
+    # ....................... #
+
+    def behavior_drifted(self, history: "History") -> bool:
+        """Whether a replay's *history* diverges from the stored handler-logic signature.
+
+        ``True`` only when a :attr:`behavioral_fingerprint` was recorded *and* the replay's
+        digest differs — the strict, opt-in drift check. With no stored fingerprint (the default
+        structural posture) it is always ``False``: drift can't be told, so it isn't claimed.
+        """
+
+        if self.behavioral_fingerprint is None:
+            return False
+
+        return behavioral_fingerprint(history) != self.behavioral_fingerprint
 
 
 # ....................... #
@@ -92,11 +119,14 @@ def entry_from_report(
     target: str | None = None,
     found_at: str | None = None,
     explore: dict[str, Any] | None = None,
+    strict_behavior: bool = False,
 ) -> RegressionEntry:
     """Build a :class:`RegressionEntry` from a violating report (+ the caller's context).
 
     *explore* is the exploration-knob snapshot needed to reproduce (so ``replay`` does not
-    depend on the current CLI flags matching the find).
+    depend on the current CLI flags matching the find). With *strict_behavior* the entry also
+    records the run's :func:`~forze_dst.coverage.behavioral_fingerprint`, so a later replay can
+    warn when the handler logic has drifted (see :meth:`RegressionEntry.behavior_drifted`).
     """
 
     return RegressionEntry(
@@ -107,6 +137,9 @@ def entry_from_report(
         invariants=tuple(sorted({v.invariant for v in report.violations})),
         found_at=found_at,
         explore=explore,
+        behavioral_fingerprint=(
+            behavioral_fingerprint(report.history) if strict_behavior else None
+        ),
     )
 
 

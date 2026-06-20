@@ -14,6 +14,7 @@ behavior is still appearing), and report which seeds mattered.
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, final
 
 import attrs
@@ -72,6 +73,46 @@ def behavioral_coverage(history: History) -> frozenset[Behavior]:
             )
 
     return frozenset(coverage)
+
+
+# ....................... #
+
+
+def behavioral_fingerprint(history: History) -> str:
+    """A stable digest of the run's execution-trace *shape* — its handler-logic signature.
+
+    Where :func:`behavioral_coverage` is an unordered *set* of behaviors ("did we ever see X?"),
+    this is an *ordered*, PII-free signature of the whole run: the sequence of operation outcomes
+    and port edges, with ids / keys / values / timing excluded. Two runs whose handlers drove the
+    same path get the same fingerprint; a handler-logic change — a different port call, a reordered
+    write, a changed outcome — changes it. That lets a replay flag *behavioral drift*: an old seed
+    re-run against code whose logic moved on, even when the structural operation-catalog
+    fingerprint is unchanged (same contracts, different behavior). Opt-in by design — a bytecode
+    digest would be brittle; this captures observed behavior, not source.
+    """
+
+    shape: list[tuple[object, ...]] = []
+
+    for event in history.events:
+        fields = event.fields
+
+        if event.kind == "operation":
+            shape.append(("op", fields.get("op"), fields.get("outcome")))
+
+        elif event.kind == "trace":
+            shape.append(
+                (
+                    "edge",
+                    fields.get("trace_domain"),
+                    fields.get("surface"),
+                    fields.get("route"),
+                    fields.get("op"),
+                    fields.get("phase"),
+                    fields.get("outcome"),
+                )
+            )
+
+    return hashlib.blake2b(repr(shape).encode("utf-8"), digest_size=16).hexdigest()
 
 
 # ....................... #

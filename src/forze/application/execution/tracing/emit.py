@@ -33,9 +33,15 @@ def record(
     key: str | None = None,
     outcome: str | None = None,
     error: str | None = None,
+    corr: int | None = None,
+    nested: bool = False,
     deps: "FrozenDeps | None" = None,
-) -> None:
-    """Append a runtime event when tracing is enabled on the active or given *deps*."""
+) -> int | None:
+    """Append a runtime event when tracing is enabled; return its ``seq`` (``None`` if disabled).
+
+    The returned ``seq`` lets an operation boundary correlate its terminal back to its invoke:
+    pass the invoke's ``seq`` as ``corr`` on the matching ``complete``/``error`` record.
+    """
 
     tracer: "RuntimeTracer | None"
 
@@ -46,9 +52,9 @@ def record(
         tracer = active_runtime_tracer()
 
     if tracer is None or not tracer.enabled:
-        return
+        return None
 
-    tracer.record(
+    return tracer.record(
         domain=domain,
         op=op,
         surface=surface,
@@ -59,4 +65,6 @@ def record(
         key=key,
         outcome=outcome,
         error=error,
+        corr=corr,
+        nested=nested,
     )

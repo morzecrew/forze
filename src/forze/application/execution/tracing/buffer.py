@@ -68,6 +68,8 @@ class RuntimeTrace:
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
+        corr: int | None = None,
+        nested: bool = False,
     ) -> TracingEvent:
         """Build and record an event with the next sequence number."""
 
@@ -84,6 +86,8 @@ class RuntimeTrace:
             key=key,
             outcome=outcome,
             error=error,
+            corr=corr,
+            nested=nested,
         )
         self._next_seq += 1
         self.record(event)

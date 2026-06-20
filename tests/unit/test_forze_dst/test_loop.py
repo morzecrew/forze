@@ -29,6 +29,7 @@ from forze_dst import (
     SimulationConfig,
     Strategy,
     append_regression,
+    behavioral_fingerprint,
     entry_from_report,
     load_regressions,
     operation_succeeds,
@@ -178,6 +179,81 @@ class TestRegressionCorpus:
         assert entry.seed == 5 and entry.schedule_seed == 11
         assert entry.target == "m:sim" and entry.registry_fingerprint == "fp"
         assert entry.invariants == ("expect", "no_unexpected_error")  # sorted, de-duped
+        assert entry.behavioral_fingerprint is None  # default: structural-only posture
+
+
+def _history(*ops: tuple[str, str]) -> History:
+    """A history whose operation events have the given ``(op, outcome)`` shape."""
+
+    events = tuple(
+        Event(seq=i, kind="operation", at=float(i), fields={"op": op, "outcome": outcome})
+        for i, (op, outcome) in enumerate(ops)
+    )
+    return History(seed=0, events=events)
+
+
+class TestStrictBehavioralFingerprint:
+    def test_fingerprint_is_stable_and_shape_sensitive(self) -> None:
+        a = _history(("pay", "ok"), ("ship", "ok"))
+        same = _history(("pay", "ok"), ("ship", "ok"))
+        reordered = _history(("ship", "ok"), ("pay", "ok"))
+        different_outcome = _history(("pay", "ok"), ("ship", "error"))
+
+        # Same shape → same digest; order and outcome are part of the signature.
+        assert behavioral_fingerprint(a) == behavioral_fingerprint(same)
+        assert behavioral_fingerprint(a) != behavioral_fingerprint(reordered)
+        assert behavioral_fingerprint(a) != behavioral_fingerprint(different_outcome)
+
+    def test_id_independent(self) -> None:
+        # Entity ids/keys are not part of the trace shape, so they don't move the fingerprint.
+        with_key = History(
+            seed=0,
+            events=(
+                Event(seq=0, kind="trace", at=0.0,
+                      fields={"trace_domain": "document", "surface": "document_command",
+                              "route": "orders", "op": "create", "phase": "command",
+                              "key": "abc", "outcome": None}),
+            ),
+        )
+        other_key = History(
+            seed=0,
+            events=(
+                Event(seq=0, kind="trace", at=0.0,
+                      fields={"trace_domain": "document", "surface": "document_command",
+                              "route": "orders", "op": "create", "phase": "command",
+                              "key": "zzz", "outcome": None}),
+            ),
+        )
+        assert behavioral_fingerprint(with_key) == behavioral_fingerprint(other_key)
+
+    def test_strict_entry_flags_drift_but_default_does_not(self) -> None:
+        found = _history(("pay", "ok"), ("ship", "ok"))
+        report = ViolationReport(
+            seed=5,
+            schedule_seed=None,
+            violations=(Violation(invariant="expect", message="x"),),
+            workload=(),
+            history=found,
+            registry_fingerprint="fp",
+        )
+
+        strict = entry_from_report(report, strict_behavior=True)
+        assert strict.behavioral_fingerprint == behavioral_fingerprint(found)
+
+        # Replaying the same logic → no drift; replaying drifted logic (a changed outcome) → drift.
+        assert not strict.behavior_drifted(_history(("pay", "ok"), ("ship", "ok")))
+        assert strict.behavior_drifted(_history(("pay", "ok"), ("ship", "error")))
+
+        # The default (structural) entry never claims drift — it can't tell.
+        lenient = entry_from_report(report)
+        assert lenient.behavioral_fingerprint is None
+        assert not lenient.behavior_drifted(_history(("totally", "different")))
+
+    def test_strict_fingerprint_survives_corpus_round_trip(self, tmp_path: object) -> None:
+        path = tmp_path / "corpus.jsonl"  # type: ignore[operator]
+        entry = RegressionEntry(seed=7, target="app:sim", behavioral_fingerprint="deadbeef")
+        append_regression(path, entry)
+        assert load_regressions(path) == [entry]
 
 
 # ....................... #

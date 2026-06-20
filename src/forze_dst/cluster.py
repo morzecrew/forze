@@ -78,7 +78,9 @@ class _PartitionInterceptor:
     ``exc.infrastructure`` (``code="dst.partition"``) — modeling the broker/store being
     unreachable across the split — and are recorded on the report's injected-environment
     timeline. A correct retry/outbox flow keeps the work pending and delivers it once the
-    partition heals; a fire-and-forget flow loses it.
+    partition heals; a fire-and-forget flow loses it. A window's ``loss`` below ``1.0`` makes
+    the link *lossy* rather than fully cut: each gated call drops with that seeded probability,
+    so some slip through (a flaky link the clean-cut model can't express).
     """
 
     node_id: int
@@ -87,28 +89,36 @@ class _PartitionInterceptor:
     schedule: PartitionSchedule
     """The partition schedule."""
 
+    rng: random.Random
+    """Per-node, seed-derived RNG that rolls lossy-link drops (unused for a clean ``loss=1.0``
+    cut, so a hard partition stays byte-identical to the no-RNG behavior)."""
+
     # ....................... #
 
     async def around(self, call: PortCall, nxt: PortNext) -> Any:
-        if self.schedule.gates(call.surface) and self.schedule.isolated_at(
-            self.node_id, monotonic()
-        ):
-            await asyncio.sleep(
-                0
-            )  # yield so the unreachable failure interleaves at the boundary
-            record_event(
-                "partition",
-                at=monotonic(),
-                node=self.node_id,
-                surface=call.surface,
-                route=call.route,
-                op=call.op,
-            )
+        if self.schedule.gates(call.surface):
+            loss = self.schedule.loss_at(self.node_id, monotonic())
 
-            raise exc.infrastructure(
-                f"node {self.node_id} partitioned from {call.surface}",
-                code="dst.partition",
-            )
+            # loss == 1.0 → a clean cut: always drop, never touch the RNG (replay-stable with the
+            # group-based model). 0 < loss < 1 → a lossy link: roll the seeded RNG per call.
+            if loss >= 1.0 or (loss > 0.0 and self.rng.random() < loss):
+                await asyncio.sleep(
+                    0
+                )  # yield so the unreachable failure interleaves at the boundary
+                record_event(
+                    "partition",
+                    at=monotonic(),
+                    node=self.node_id,
+                    surface=call.surface,
+                    route=call.route,
+                    op=call.op,
+                    loss=loss,
+                )
+
+                raise exc.infrastructure(
+                    f"node {self.node_id} partitioned from {call.surface}",
+                    code="dst.partition",
+                )
 
         return await nxt(call)
 
@@ -304,8 +314,15 @@ class Cluster:
             cluster = config.cluster or ClusterConfig()
 
             if cluster.partitions is not None:
+                part_seed = derive_seed(
+                    derive_seed(seed, "partition"), f"node-{node_id}"
+                )
                 interceptors.append(
-                    _PartitionInterceptor(node_id=node_id, schedule=cluster.partitions)
+                    _PartitionInterceptor(
+                        node_id=node_id,
+                        schedule=cluster.partitions,
+                        rng=random.Random(part_seed),  # nosec B311 - seeded sim partition loss
+                    )
                 )
 
             if config.faults is not None:

@@ -19,6 +19,7 @@ from typing import Sequence
 
 import attrs
 
+from forze.base.exceptions import exc
 from forze_dst.faults import CrashPolicy, FaultPolicy
 from forze_dst.latency import LatencyProfile
 from forze_dst.time_source import DEFAULT_EPOCH
@@ -65,16 +66,28 @@ class SchedulerKind(StrEnum):
 class Partition:
     """One network-partition window: nodes cut off from the shared infrastructure.
 
-    During ``[start, end)`` of virtual time, every node in :attr:`isolated` cannot reach the
+    During ``[start, end)`` of virtual time, every node in :attr:`isolated` is cut from the
     gated port surfaces (its calls raise a retryable *unreachable* error — modeling a network
     split where the broker/store lives on the other side); the rest of the cluster proceeds.
-    The window heals at ``end``. Group-based by design (decision D7): a set of nodes is split
-    off as a unit; per-link asymmetric loss is a deferred fidelity pass.
+    The window heals at ``end``. A set of nodes is split off as a unit; per-window :attr:`loss`
+    makes the cut a *lossy/flaky link* (a fraction of calls drop) rather than a clean break, and
+    different windows can give different node groups different loss in overlapping time — an
+    asymmetric split.
     """
 
     start: float
     end: float
     isolated: frozenset[int]
+
+    loss: float = 1.0
+    """Probability (``0 < loss <= 1``) that a gated call from an isolated node drops during the
+    window. ``1.0`` (default) is a clean cut — every call drops, the classic partition. A value
+    below ``1`` is a *lossy link*: each call drops with this probability (seeded per node), so
+    some calls slip through and a flaky link is modeled, not just a hard split."""
+
+    def __attrs_post_init__(self) -> None:
+        if not 0.0 < self.loss <= 1.0:
+            raise exc.configuration("Partition.loss must be in (0, 1]")
 
 
 @attrs.define(frozen=True, kw_only=True)
@@ -92,6 +105,23 @@ class PartitionSchedule:
         return any(
             window.start <= at < window.end and node_id in window.isolated
             for window in self.windows
+        )
+
+    def loss_at(self, node_id: int, at: float) -> float:
+        """The drop probability for *node_id*'s gated calls at virtual time *at*.
+
+        The strongest (max) loss across the windows isolating the node right now, or ``0.0`` when
+        the node is fully connected. A clean cut (``loss=1.0``) returns ``1.0`` → every gated call
+        drops, exactly as before; a lossy window returns its fractional probability.
+        """
+
+        return max(
+            (
+                window.loss
+                for window in self.windows
+                if window.start <= at < window.end and node_id in window.isolated
+            ),
+            default=0.0,
         )
 
     def gates(self, surface: str | None) -> bool:
