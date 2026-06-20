@@ -19,6 +19,8 @@ from forze_dst.oracle.invariants import (
     monotonic_per,
     mutual_exclusion,
     no_duplicate_effect,
+    no_resource_leak,
+    no_unclosed_transaction,
     no_unexpected_error,
     operation_succeeds,
     read_your_writes,
@@ -47,6 +49,8 @@ __all__ = [
     "check",
     # always-properties
     "no_duplicate_effect",
+    "no_resource_leak",
+    "no_unclosed_transaction",
     "monotonic_per",
     "mutual_exclusion",
     "no_unexpected_error",

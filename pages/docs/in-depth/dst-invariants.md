@@ -34,6 +34,10 @@ The generic `expect(kind, predicate, message=...)` covers most domain rules: it 
 
     Value-level (opt into `capture_values`): a keyed read must observe the last value written to it (stale-read guard); every captured write/read value must satisfy a predicate (the *wrong-value* guard).
 
+-   :lucide-unlock: **`no_unclosed_transaction()` · `no_resource_leak(open_op=, close_op=)`**
+
+    Every resource opened must close by end of run: a transaction `enter` with no matching `exit` is an abandoned scope. The general form pairs any open/close ops on the trace — the bug class nobody writes assertions for. (Don't pair with a crash policy — a crash legitimately abandons a scope.)
+
 </div>
 
 These live in the `invariants` namespace, and each is just a factory returning a plain callable:

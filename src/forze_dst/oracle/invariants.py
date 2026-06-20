@@ -74,6 +74,84 @@ def check(history: History, invariants: Sequence[Invariant]) -> list[Violation]:
 # Built-in invariants (factories returning an Invariant).
 
 
+def no_resource_leak(
+    *,
+    open_op: str,
+    close_op: str,
+    domain: str | None = None,
+    surface: str | None = None,
+    by: str | None = None,
+) -> Invariant:
+    """Every resource opened during the run must be closed by its end — pairs *open_op* against
+    *close_op* on the trace and flags any imbalance.
+
+    Match the traced calls by *domain* (the trace domain, e.g. ``"tx"``) and/or *surface* (a port
+    name), then count ``open_op``-named operations against ``close_op``-named ones, grouped by
+    ``fields[by]`` (e.g. the transaction ``route``) when given. A group left with more opens than
+    closes leaked a resource — a scope entered but never exited, a handle taken but never returned.
+    Reads only the id-only engine trace (no values), so it costs nothing extra.
+
+    This catches a bug class nobody writes assertions for. Pair it with normal and error runs, not
+    a :class:`~forze_dst.faults.CrashPolicy` — a crash *legitimately* abandons an open scope (the
+    process dies mid-flight), which would read as a leak.
+    """
+
+    def _check(history: History) -> list[Violation]:
+        opened: dict[object, int] = defaultdict(int)
+        closed: dict[object, int] = defaultdict(int)
+        first_open: dict[object, Event] = {}
+
+        for event in history.of_kind("trace"):
+            fields = event.fields
+
+            if domain is not None and fields.get("trace_domain") != domain:
+                continue
+            if surface is not None and fields.get("surface") != surface:
+                continue
+
+            group = fields.get(by) if by is not None else None
+            op = fields.get("op")
+
+            if op == open_op:
+                opened[group] += 1
+                first_open.setdefault(group, event)
+            elif op == close_op:
+                closed[group] += 1
+
+        violations: list[Violation] = []
+
+        for group, count in opened.items():
+            leaked = count - closed.get(group, 0)
+
+            if leaked > 0:
+                where = f" for {by}={group!r}" if by is not None else ""
+                violations.append(
+                    Violation(
+                        invariant="no_resource_leak",
+                        message=f"{leaked} {open_op!r} not matched by {close_op!r}{where} "
+                        "— a resource was left open at end of run",
+                        events=(first_open[group],),
+                    )
+                )
+
+        return violations
+
+    return _check
+
+
+def no_unclosed_transaction() -> Invariant:
+    """Every transaction scope entered must exit by end of run.
+
+    A tx ``enter`` with no matching ``exit`` is an unclosed transaction — a scope abandoned
+    without commit or rollback (a bug in an error/cleanup path that skipped the scope teardown).
+    Reads the ``tx`` boundaries the engine traces, grouped by route. Like
+    :func:`no_resource_leak`, do not pair this with a crash policy — a crash legitimately abandons
+    a transaction.
+    """
+
+    return no_resource_leak(domain="tx", open_op="enter", close_op="exit", by="route")
+
+
 def no_duplicate_effect(kind: str, *, by: str) -> Invariant:
     """Each ``kind`` event must be unique on ``fields[by]`` — exactly-once effect.
 
