@@ -23,9 +23,7 @@ from .deps import (
     FrozenDepsRegistry,
     ResolutionContext,
     ResolutionTracer,
-    RuntimeTracer,
     resolution_tracer_from_flag,
-    runtime_tracer_from_flag,
 )
 from .lifecycle import (
     LifecycleModule,
@@ -78,6 +76,7 @@ from .tracing import (
     RuntimeTrace,
     RuntimeTraceValidationError,
     RuntimeTraceValidator,
+    RuntimeTracer,
     TracedOperationResult,
     TraceExpectation,
     TracingEvent,
@@ -87,6 +86,7 @@ from .tracing import (
     assert_trace_contains,
     assert_trace_equals,
     run_traced_operation,
+    runtime_tracer_from_flag,
     validate_runtime_trace,
 )
 

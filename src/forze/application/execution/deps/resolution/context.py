@@ -7,8 +7,8 @@ import attrs
 
 from forze.base.exceptions import exc
 
-from .resolution import ResolutionFrame, format_cycle_error
-from .resolution_tracer import ResolutionTracer
+from .frame import ResolutionFrame, format_cycle_error
+from .tracer import ResolutionTracer
 
 # ----------------------- #
 

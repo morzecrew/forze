@@ -6,12 +6,10 @@ import attrs
 import pytest
 
 from forze.application.execution.context.transaction import TransactionContext
-from forze.application.execution.deps.runtime_tracer import (
+from forze.application.execution.tracing import (
+    NOOP_TX_TRACER,
     RecordingRuntimeTracer,
     runtime_tracer_from_flag,
-)
-from forze.application.execution.deps.tx_tracer import (
-    NOOP_TX_TRACER,
     tx_tracer_from_runtime,
 )
 from forze_mock.adapters import MockTxManagerAdapter

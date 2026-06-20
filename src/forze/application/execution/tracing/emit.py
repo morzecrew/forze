@@ -6,7 +6,8 @@ from .session import active_runtime_tracer
 
 if TYPE_CHECKING:
     from ..deps.frozen import FrozenDeps
-    from ..deps.runtime_tracer import RuntimeTracer
+
+    from .runtime_tracer import RuntimeTracer
 
 # ----------------------- #
 

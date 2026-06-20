@@ -6,7 +6,7 @@ import attrs
 
 from forze.base.primitives import DirectedAcyclicGraph
 
-from .resolution import ResolutionFrame
+from .frame import ResolutionFrame
 
 # ----------------------- #
 
@@ -16,7 +16,7 @@ from .resolution import ResolutionFrame
 class DepsResolutionTrace:
     """Mutable accumulator of observed resolution edges for one container and task.
 
-    Built during resolution when a recording :class:`~forze.application.execution.deps.resolution_tracer.ResolutionTracer`
+    Built during resolution when a recording :class:`~forze.application.execution.deps.resolution.tracer.ResolutionTracer`
     is enabled on :class:`~forze.application.execution.deps.container.Deps`.
     Export via :meth:`to_dag` or :meth:`to_key_dag` for topological inspection.
     """

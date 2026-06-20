@@ -24,8 +24,11 @@ from forze.application.contracts.transaction import TransactionDeps
 from forze.base.primitives import StrKey
 
 from ..deps import FrozenDeps
-from ..deps.tx_tracer import tx_tracer_from_runtime
-from ..tracing import bind_active_deps, init_runtime_tracing
+from ..tracing import (
+    bind_active_deps,
+    init_runtime_tracing,
+    tx_tracer_from_runtime,
+)
 from .active_operation import warn_if_constructed_in_operation
 from .drain import OperationDrainGate
 from .invocation import InvocationContext

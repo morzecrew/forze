@@ -1,4 +1,4 @@
-"""Tests for :mod:`forze.application.execution.deps.trace`."""
+"""Tests for :mod:`forze.application.execution.deps.resolution.graph`."""
 
 from forze.application.execution.deps import DepsResolutionTrace
 from forze.application.execution.deps.resolution import ResolutionFrame, frame_for

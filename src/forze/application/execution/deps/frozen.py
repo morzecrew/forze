@@ -9,7 +9,11 @@ import attrs
 
 from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.deps import DepKey
-from forze.application.execution.tracing import RuntimeTrace
+from forze.application.execution.tracing import (
+    NOOP_RUNTIME_TRACER,
+    RuntimeTrace,
+    RuntimeTracer,
+)
 from forze.base.primitives import StrKey
 
 from ..interception import PortInterceptorChain
@@ -19,12 +23,15 @@ from .port_instrumentation import (
     maybe_wrap_port_policy,
     record_simple_resolve,
 )
-from .resolution import ResolutionFrame, frame_for
-from .resolution_context import ResolutionContext
-from .resolution_tracer import NOOP_RESOLUTION_TRACER, ResolutionTracer
-from .runtime_tracer import NOOP_RUNTIME_TRACER, RuntimeTracer
+from .resolution import (
+    NOOP_RESOLUTION_TRACER,
+    DepsResolutionTrace,
+    ResolutionContext,
+    ResolutionFrame,
+    ResolutionTracer,
+    frame_for,
+)
 from .store import PlainDepsMap, ProviderStore, RoutedDeps
-from .trace import DepsResolutionTrace
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext

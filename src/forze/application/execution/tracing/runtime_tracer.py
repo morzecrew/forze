@@ -6,7 +6,7 @@ import attrs
 
 from forze.base.primitives import ContextVarTrace, monotonic
 
-from ..tracing import RuntimeTrace
+from .buffer import RuntimeTrace
 
 # ----------------------- #
 

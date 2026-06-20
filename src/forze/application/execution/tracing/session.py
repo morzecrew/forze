@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..deps.frozen import FrozenDeps
-    from ..deps.runtime_tracer import RuntimeTracer
+
+    from .runtime_tracer import RuntimeTracer
 
 # ----------------------- #
 
