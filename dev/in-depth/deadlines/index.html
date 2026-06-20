@@ -1862,6 +1862,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4421,7 +4423,7 @@ one ContextVar read, with no timeout machinery.</p>
 plan-derived fact: <code>OperationCatalogEntry.deadline</code>, an <code>x-deadline-seconds</code>
 vendor extension plus a "Time budget" line on
 <a href="../../integrations/fastapi/#generated-routes">generated FastAPI routes</a>, and a
-sentence in each <a href="../../integrations/mcp/">MCP tool description</a> — so clients
+sentence in each <a href="../../integrations/mcp/"><abbr title="Model Context Protocol">MCP</abbr> tool description</a> — so clients
 and agents can set their own timeouts instead of retrying a call that died of
 budget exhaustion.</p>
 <h2 id="budgets-cross-service-boundaries">Budgets cross service boundaries<a class="headerlink" href="#budgets-cross-service-boundaries" title="Permanent link">&para;</a></h2>
@@ -4449,6 +4451,9 @@ deferred after-commit work (idempotency records, event dispatch) is a
 cancellation-protected critical section. It runs to completion even while
 cancellation is pending, and the cancellation re-raises afterwards — so a
 committed transaction is never left half-announced.</p>
+<p>A deadline is one of several controls over how an operation behaves under
+stress; the full set — retries, bulkheads, breakers, hedging — composes in
+<a href="../resilience/">Resilience</a>.</p>
 
 
 
@@ -4555,7 +4560,7 @@ committed transaction is never left half-announced.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

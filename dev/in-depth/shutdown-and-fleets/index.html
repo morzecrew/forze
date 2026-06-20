@@ -1851,6 +1851,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4376,7 +4378,7 @@ the posture makes that a composition-time error instead of a 3 a.m. incident:</p
 
 <span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">deployment</span><span class="o">=</span><span class="n">DeploymentProfile</span><span class="o">.</span><span class="n">FLEET</span><span class="p">)</span>
 </code></pre></div>
-<p>Under <code>FLEET</code>, assembly fails for any lifecycle step marked
+<p>Under <code>FLEET</code>, building the runtime fails for any lifecycle step marked
 <code>mutates_shared_state=True</code> that is not also <code>singleton_guarded</code>. The markers
 are declared by the step author — mutation can't be detected structurally, so
 the validation is honest-by-declaration: mark the steps that touch shared
@@ -4444,6 +4446,8 @@ page</a>. The framework's periodic loops — the
 outbox relay tick, consumer crash-restart backoff — are jittered out of the
 box, so N replicas don't synchronize into a thundering herd against the same
 claim query.</p>
+<p>Knowing a fleet drains cleanly — or spots one thundering against a claim query —
+is something you confirm by watching it; that's <a href="../observability/">Observability</a>.</p>
 
 
 
@@ -4550,7 +4554,7 @@ claim query.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

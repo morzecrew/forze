@@ -2720,6 +2720,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -6080,13 +6082,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Monotonic time seam</strong> — <code>TimeSource.monotonic()</code> and a free <code>monotonic()</code>; deadlines, resilience clocks, caches, and the mock queue read it (default <code>time.monotonic()</code>). A determinism guard wired into the quality gate fails the build if raw time or entropy primitives are used outside the seams.</p>
 </li>
 <li>
-<p><strong>Port interception seam</strong> — a composable <code>PortInterceptor</code> chain around resolved ports via <code>DepsRegistry.with_interceptors(...)</code>, running innermost (inside tracing and resilience) and zero-cost when unused. DST plugs cooperative yielding, latency, faults, crashes, and partitions in through it without touching handlers.</p>
+<p><strong>Port interception seam</strong> — a composable <code>PortInterceptor</code> chain around resolved ports via <code>DepsRegistry.with_interceptors(...)</code>, running innermost (inside tracing and resilience) and zero-cost when unused. <abbr title="Deterministic Simulation Testing">DST</abbr> plugs cooperative yielding, latency, faults, crashes, and partitions in through it without touching handlers.</p>
 </li>
 <li>
 <p><strong>Operation-catalog fingerprint</strong> — <code>FrozenOperationRegistry.fingerprint()</code> and <code>operation_fingerprint(op)</code> give a stable structural hash of the operation catalog (kind, schemas, idempotency, authn, deadline facts) that ties a seed to the code that produced it.</p>
 </li>
 <li>
-<p><strong>In-memory outbound HTTP</strong> — <code>MockHttpServicePort</code> with <code>MockHttpServiceAdapter</code>/<code>MockHttpRegistry</code> via <code>MockDepsModule(http=…)</code>, so an app runs under DST with no external services.</p>
+<p><strong>In-memory outbound HTTP</strong> — <code>MockHttpServicePort</code> with <code>MockHttpServiceAdapter</code>/<code>MockHttpRegistry</code> via <code>MockDepsModule(http=…)</code>, so an app runs under <abbr title="Deterministic Simulation Testing">DST</abbr> with no external services.</p>
 </li>
 <li>
 <p><strong>Mock transactions default to a journal</strong> <em>(behavior change)</em> — <code>MockDepsModule(transactions="journal")</code> is now the default: a per-write undo journal across every participating store lets concurrent transactions interleave while an aborted operation leaves no partial writes. The <code>none</code> and <code>strict</code> modes remain opt-in.</p>
@@ -6134,7 +6136,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze</code> CLI</strong> (<code>forze[cli]</code> extra) — <code>forze dst run module:sim</code> (exit 1 on a violation, CI-friendly) plus <code>replay</code>, <code>coverage</code>, <code>topology</code>, and <code>derive</code>. Import strings are forgiving and a bare registry gets an auto-mock with a safety-net invariant. Test-backed recipes ship for concurrency and virtual-time TTL.</p>
 </li>
 <li>
-<p><strong>Multi-runtime distributed DST</strong> — <code>forze_dst.Cluster</code> and <code>Partition</code>/<code>PartitionSchedule</code> run N real <code>ExecutionRuntime</code> nodes over one shared <code>MockState</code> from a single seed, under group-based network partitions and per-node faults, checked by ordinary distributed invariants. A violation minimizes by dropping nodes into a reproducible report.</p>
+<p><strong>Multi-runtime distributed <abbr title="Deterministic Simulation Testing">DST</abbr></strong> — <code>forze_dst.Cluster</code> and <code>Partition</code>/<code>PartitionSchedule</code> run N real <code>ExecutionRuntime</code> nodes over one shared <code>MockState</code> from a single seed, under group-based network partitions and per-node faults, checked by ordinary distributed invariants. A violation minimizes by dropping nodes into a reproducible report.</p>
 </li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
@@ -6234,7 +6236,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
-<p><strong>Envelope-encryption core</strong> — <code>forze.base.crypto</code> adds <code>EncryptedEnvelope</code>, a <code>KeyManagementPort</code> BYOK seam (the KEK stays backend), a <code>FieldEncryption</code> policy, and a fail-closed <code>required_encryption</code> floor (none &lt; field &lt; envelope). Adds <code>cryptography</code> to core dependencies. Opt-in, off by default.</p>
+<p><strong>Envelope-encryption core</strong> — <code>forze.base.crypto</code> adds <code>EncryptedEnvelope</code>, a <code>KeyManagementPort</code> <abbr title="Bring Your Own Key">BYOK</abbr> seam (the KEK stays backend), a <code>FieldEncryption</code> policy, and a fail-closed <code>required_encryption</code> floor (none &lt; field &lt; envelope). Adds <code>cryptography</code> to core dependencies. Opt-in, off by default.</p>
 </li>
 <li>
 <p><strong>Per-tenant keyring and wiring</strong> — <code>KeyDirectoryPort</code> resolves tenant to KEK, <code>CryptoDepsModule</code> composes the stack, and <code>forze_mock</code> ships a dev-only <code>MockKeyManagement</code>.</p>
@@ -6246,10 +6248,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Object-storage encryption</strong> — <code>S3StorageConfig</code>/<code>GCSStorageConfig</code> <code>encrypt=True</code>; presigned URLs are refused on encrypting routes.</p>
 </li>
 <li>
-<p><strong>Document-field encryption</strong> — <code>DocumentSpec(encryption=FieldEncryption(...))</code>; <code>binds_record_id=True</code> binds the record id into AAD (bulk-update of a bound field is refused), and <code>reencrypt_documents</code> upgrades legacy ciphertext.</p>
+<p><strong>Document-field encryption</strong> — <code>DocumentSpec(encryption=FieldEncryption(...))</code>; <code>binds_record_id=True</code> binds the record id into <abbr title="Additional Authenticated Data">AAD</abbr> (bulk-update of a bound field is refused), and <code>reencrypt_documents</code> upgrades legacy ciphertext.</p>
 </li>
 <li>
-<p><strong>Searchable deterministic-field encryption</strong> — <code>FieldEncryption(searchable={…})</code> (AES-SIV, no KMS) so equality and membership filters rewrite to ciphertext; root rotation is supported via a previous-root match plus re-encrypt. Trade-off: leaks equality and frequency within a tenant.</p>
+<p><strong>Searchable deterministic-field encryption</strong> — <code>FieldEncryption(searchable={…})</code> (AES-SIV, no <abbr title="Key Management Service">KMS</abbr>) so equality and membership filters rewrite to ciphertext; root rotation is supported via a previous-root match plus re-encrypt. Trade-off: leaks equality and frequency within a tenant.</p>
 </li>
 <li>
 <p><strong>Encrypted search reads</strong> — <code>SearchSpec.encryption</code> (the same policy object as the document spec) decrypts out of results across every read path.</p>
@@ -6258,19 +6260,19 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Analytics and graph encryption</strong> — <code>AnalyticsSpec</code>/<code>GraphNodeSpec</code>/<code>GraphEdgeSpec</code> <code>encryption</code>; sealed on write and decrypted out of every read and traversal. Encrypted columns are not analyzable or matchable; analytics rejects record-id binding and graph binds the kind's key field.</p>
 </li>
 <li>
-<p><strong>Outbox and direct-messaging encryption</strong> — <code>OutboxSpec.encryption</code> (none/at_rest/end_to_end) and queue, stream, and pubsub spec <code>encryption</code> (none/end_to_end); AAD binds tenant and event id. <code>QueueCommandPort.enqueue_many</code> gains <code>message_headers</code>.</p>
+<p><strong>Outbox and direct-messaging encryption</strong> — <code>OutboxSpec.encryption</code> (none/at_rest/end_to_end) and queue, stream, and pubsub spec <code>encryption</code> (none/end_to_end); <abbr title="Additional Authenticated Data">AAD</abbr> binds tenant and event id. <code>QueueCommandPort.enqueue_many</code> gains <code>message_headers</code>.</p>
 </li>
 <li>
-<p><strong>Durable-payload encryption</strong> — Temporal (<code>encrypt_payloads=True</code>) and Inngest (<code>encrypt=True</code>), per-tenant BYOK. A Temporal worker must be built from the same encrypting client to decode.</p>
+<p><strong>Durable-payload encryption</strong> — Temporal (<code>encrypt_payloads=True</code>) and Inngest (<code>encrypt=True</code>), per-tenant <abbr title="Bring Your Own Key">BYOK</abbr>. A Temporal worker must be built from the same encrypting client to decode.</p>
 </li>
 <li>
 <p><strong>Cache, search-snapshot, and idempotency encryption</strong> — sealed via <code>IdempotencySpec(encrypt_result=True)</code> and similar when the underlying route encrypts. The in-process L1 stays plaintext in memory.</p>
 </li>
 <li>
-<p><strong>Vault Transit KMS (<code>forze_vault</code>)</strong> — <code>VaultTransitKeyManagement</code> implements <code>KeyManagementPort</code> on Transit, and <code>VaultTransitTenantProvisioner</code> idempotently creates a tenant's Transit key.</p>
+<p><strong>Vault Transit <abbr title="Key Management Service">KMS</abbr> (<code>forze_vault</code>)</strong> — <code>VaultTransitKeyManagement</code> implements <code>KeyManagementPort</code> on Transit, and <code>VaultTransitTenantProvisioner</code> idempotently creates a tenant's Transit key.</p>
 </li>
 <li>
-<p><strong>BYOK access-token signing and JWKS</strong> — pluggable <code>SignerPort</code> (<code>Hs256Signer</code> default, plus local-asymmetric and Vault Transit signers); <code>attach_jwks_route</code> publishes JWKS. Breaking: <code>AccessTokenService</code> now takes a <code>signer=</code>, <code>issue_token</code>/<code>verify_token</code> are awaitable, and <code>AccessTokenConfig.algorithm</code> is removed.</p>
+<p><strong><abbr title="Bring Your Own Key">BYOK</abbr> access-token signing and <abbr title="JSON Web Key Set">JWKS</abbr></strong> — pluggable <code>SignerPort</code> (<code>Hs256Signer</code> default, plus local-asymmetric and Vault Transit signers); <code>attach_jwks_route</code> publishes <abbr title="JSON Web Key Set">JWKS</abbr>. Breaking: <code>AccessTokenService</code> now takes a <code>signer=</code>, <code>issue_token</code>/<code>verify_token</code> are awaitable, and <code>AccessTokenConfig.algorithm</code> is removed.</p>
 </li>
 <li>
 <p><strong>Crypto and signing observability</strong> — <code>instrument_crypto(...)</code> and <code>instrument_signing(...)</code>, always-on.</p>
@@ -6306,7 +6308,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Mixed-direction keyset pagination with per-key null ordering</strong> — coherent null ordering across backends; old cursor tokens stay valid, and Mongo opts in via <code>computed_null_ordering</code>.</p>
 </li>
 <li>
-<p><strong>Query discovery metadata</strong> — <code>build_query_discovery</code> projects a read model's filterable, sortable, and aggregatable surface as an OpenAPI extension plus an MCP line.</p>
+<p><strong>Query discovery metadata</strong> — <code>build_query_discovery</code> projects a read model's filterable, sortable, and aggregatable surface as an OpenAPI extension plus an <abbr title="Model Context Protocol">MCP</abbr> line.</p>
 </li>
 <li>
 <p><strong>Tenant selector self-service</strong> — <code>GET /tenants</code>, an activate endpoint that re-mints a tenant-scoped token pair, and a leave endpoint, via the new <code>attach_tenancy_routes</code>.</p>
@@ -6321,7 +6323,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Delegation-aware API keys (user to agent)</strong> — <code>issue_api_key(actor_principal_id=…)</code> binds a delegation actor (an RFC 8693 <code>act</code> claim). Breaking for <code>ApiKeyLifecyclePort</code>; the account table gains an actor-principal column.</p>
 </li>
 <li>
-<p><strong>MCP boundary API-key auth</strong> — <code>ForzeApiKeyVerifier</code> plus <code>AccessTokenIdentityResolver</code> protect a FastMCP server with the forze_identity brain (no OAuth flow), reads-only by default.</p>
+<p><strong><abbr title="Model Context Protocol">MCP</abbr> boundary API-key auth</strong> — <code>ForzeApiKeyVerifier</code> plus <code>AccessTokenIdentityResolver</code> protect a FastMCP server with the forze_identity brain (no OAuth flow), reads-only by default.</p>
 </li>
 <li>
 <p><strong>OpenAPI security from configured authn</strong> — <code>apply_openapi_security</code> derives security schemes from the authn requirement, and principal-requiring ops are flagged.</p>
@@ -6360,19 +6362,19 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Stream pending-entry recovery</strong> — <code>StreamGroupQueryPort.claim</code> (XAUTOCLAIM) and <code>pending</code> (XPENDING). Breaking for port implementers.</p>
 </li>
 <li>
-<p><strong>Presigned object-storage URLs</strong> — <code>presign_download</code> and <code>presign_upload</code> (S3 SigV4, GCS V4, mock). Breaking for port implementers, since minting an upload URL is a CQRS write.</p>
+<p><strong>Presigned object-storage URLs</strong> — <code>presign_download</code> and <code>presign_upload</code> (S3 SigV4, GCS V4, mock). Breaking for port implementers, since minting an upload URL is a <abbr title="Command Query Responsibility Segregation">CQRS</abbr> write.</p>
 </li>
 <li>
 <p><strong>Object-storage metadata and access ops</strong> — <code>head</code>, ranged download (206), conditional download (304), copy/move, and object tags; generated routes honour <code>Range</code> and <code>If-None-Match</code>. Breaking for the storage and client ports.</p>
 </li>
 <li>
-<p><strong>Resumable multipart uploads</strong> — <code>StorageUploadSessionPort</code> (begin, presign-part, complete, abort), CQRS-write-guarded. Refused on object-encrypting routes.</p>
+<p><strong>Resumable multipart uploads</strong> — <code>StorageUploadSessionPort</code> (begin, presign-part, complete, abort), <abbr title="Command Query Responsibility Segregation">CQRS</abbr>-write-guarded. Refused on object-encrypting routes.</p>
 </li>
 <li>
 <p><strong>Storage HTTP edge</strong> — kit ops and generated FastAPI routes for presigned download and upload and the full multipart session. Minting an upload URL is a command op, so bind authn and authz.</p>
 </li>
 <li>
-<p><strong>Server-side encryption at rest (SSE/CMEK)</strong> — <code>S3StorageConfig.sse</code> and <code>GCSStorageConfig.kms_key_name</code>. A separate axis from client-side <code>encrypt</code> (it does not satisfy a client-side encryption floor). Off by default.</p>
+<p><strong>Server-side encryption at rest (<abbr title="Server-Side Encryption">SSE</abbr>/<abbr title="Customer-Managed Encryption Keys">CMEK</abbr>)</strong> — <code>S3StorageConfig.sse</code> and <code>GCSStorageConfig.kms_key_name</code>. A separate axis from client-side <code>encrypt</code> (it does not satisfy a client-side encryption floor). Off by default.</p>
 </li>
 <li>
 <p><strong>Catalog and registry ergonomics</strong> — <code>OperationCatalogEntry</code> gains idempotency-key and required-permissions facts, duplicate merge keys raise (with an override hatch), and <code>registry.register(…)</code> is one step.</p>
@@ -6399,7 +6401,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Performance (measured)</strong> — engine hot path roughly halved (hookless op 2.5 to 1.2 µs, query −56%, memoized resolve); <code>Document.update()</code> copies only changed subtrees; Postgres and Mongo write paths cut round-trips (Mongo outbox claim −90%); lazy error-context and opt-in tracing cut overhead.</p>
 </li>
 <li>
-<p><strong>FastAPI <code>style="rpc"</code> uses REST verbs and query params</strong> — e.g. <code>GET /notes.get?id=</code>, <code>PATCH /notes.update?id=&amp;rev=</code>. Breaking: RPC clients must switch from <code>POST /&lt;op&gt;</code>; REST and MCP are unchanged.</p>
+<p><strong>FastAPI <code>style="rpc"</code> uses REST verbs and query params</strong> — e.g. <code>GET /notes.get?id=</code>, <code>PATCH /notes.update?id=&amp;rev=</code>. Breaking: RPC clients must switch from <code>POST /&lt;op&gt;</code>; REST and <abbr title="Model Context Protocol">MCP</abbr> are unchanged.</p>
 </li>
 <li>
 <p><strong><code>singleton_lifecycle_step</code> takes a <code>DistributedLockSpec</code>, not a live port</strong> — breaking: pass <code>spec=DistributedLockSpec(name=...)</code>.</p>
@@ -6427,7 +6429,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Generated FastAPI routes</strong> (<code>attach_document_routes</code>, <code>attach_search_routes</code>, <code>attach_storage_routes</code>) — project a frozen registry's operations onto a user's <code>APIRouter</code> with a required <code>style</code> (rest or rpc), dispatching through <code>run_operation</code>. Idempotency is now engine-level.</p>
 </li>
 <li>
-<p><strong><code>forze_mcp</code></strong> (<code>forze[mcp]</code>) — expose operations as MCP tools (read-only MVP): <code>register_tools(...)</code> adds a frozen registry's operations as FastMCP tools, read-only by default (commands need <code>include_writes=True</code>).</p>
+<p><strong><code>forze_mcp</code></strong> (<code>forze[mcp]</code>) — expose operations as <abbr title="Model Context Protocol">MCP</abbr> tools (read-only MVP): <code>register_tools(...)</code> adds a frozen registry's operations as FastMCP tools, read-only by default (commands need <code>include_writes=True</code>).</p>
 </li>
 <li>
 <p><strong><code>forze_duckdb</code></strong> (<code>forze[duckdb]</code>) — in-process DuckDB analytics over object storage (query-only): <code>AnalyticsQueryPort</code> over a Parquet/CSV/Iceberg/Delta lake on S3, GCS, or local, with no standing warehouse. Wire with <code>DuckDbDepsModule</code>.</p>
@@ -6436,16 +6438,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Delegated identity (on-behalf-of, RFC 8693)</strong> — <code>AuthnIdentity.actor</code> carries the acting principal, and <code>AuthzBeforeAuthorize</code> enforces a least-privilege intersection. Explicit authority via <code>DelegationPort.may_act</code>.</p>
 </li>
 <li>
-<p><strong>Operation-level CQRS</strong> (<code>OperationKind</code> QUERY/COMMAND) — <code>as_query()</code> runs read-only: command ports are unacquirable and the tx opens <code>READ ONLY</code> (DB-enforced). Untagged defaults to COMMAND.</p>
+<p><strong>Operation-level <abbr title="Command Query Responsibility Segregation">CQRS</abbr></strong> (<code>OperationKind</code> QUERY/COMMAND) — <code>as_query()</code> runs read-only: command ports are unacquirable and the tx opens <code>READ ONLY</code> (DB-enforced). Untagged defaults to COMMAND.</p>
 </li>
 <li>
-<p><strong>Operation catalog descriptors</strong> — <code>OperationDescriptor</code> plus <code>FrozenOperationRegistry.catalog()</code>: interface-agnostic request/response-schema metadata for projecting operations onto MCP or HTTP, joined with operation kind.</p>
+<p><strong>Operation catalog descriptors</strong> — <code>OperationDescriptor</code> plus <code>FrozenOperationRegistry.catalog()</code>: interface-agnostic request/response-schema metadata for projecting operations onto <abbr title="Model Context Protocol">MCP</abbr> or HTTP, joined with operation kind.</p>
 </li>
 <li>
-<p><strong>Queryable-field policy</strong> (<code>QueryFieldPolicy</code> on <code>DocumentSpec</code>) — per-aggregate filterable, sortable, and aggregatable allow-sets, powering MCP schema discovery and boundary enforcement. Direct port calls are unrestricted.</p>
+<p><strong>Queryable-field policy</strong> (<code>QueryFieldPolicy</code> on <code>DocumentSpec</code>) — per-aggregate filterable, sortable, and aggregatable allow-sets, powering <abbr title="Model Context Protocol">MCP</abbr> schema discovery and boundary enforcement. Direct port calls are unrestricted.</p>
 </li>
 <li>
-<p><strong>OpenTelemetry traces and metrics</strong> (<code>instrument_operations</code>) — wraps every operation in an OTel span plus an operations counter and duration histogram. Opt-in, additive.</p>
+<p><strong>OpenTelemetry traces and metrics</strong> (<code>instrument_operations</code>) — wraps every operation in an <abbr title="OpenTelemetry">OTel</abbr> span plus an operations counter and duration histogram. Opt-in, additive.</p>
 </li>
 <li>
 <p><strong><code>@invariant</code> — declarative domain invariants</strong> — an always-true rule enforced on both create and update, closing the merge-patch bypass of <code>@model_validator</code>s.</p>
@@ -6454,7 +6456,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Saga / process orchestration</strong> — <code>SagaDefinition</code> plus an in-process executor for declarative multi-step processes across aggregates, with typed steps and reverse compensation before the pivot. <code>run_saga(...)</code> must run outside an enclosing transaction.</p>
 </li>
 <li>
-<p><strong>DDD domain events and aggregate roots to outbox</strong> — <code>DomainEvent</code>/<code>AggregateRoot</code> buffer events; persisting an aggregate drains and dispatches them in the operation's transaction. Wired via <code>DomainEventsDepsModule</code>.</p>
+<p><strong><abbr title="Domain-Driven Design">DDD</abbr> domain events and aggregate roots to outbox</strong> — <code>DomainEvent</code>/<code>AggregateRoot</code> buffer events; persisting an aggregate drains and dispatches them in the operation's transaction. Wired via <code>DomainEventsDepsModule</code>.</p>
 </li>
 <li>
 <p><strong>End-to-end worked example</strong> (<code>examples/recipes/order_fulfillment/</code>) — the first runnable, test-backed example: checkout saga to outbox to relay to inbox to downstream, plus compensation, on <code>forze_mock</code>.</p>
@@ -6478,7 +6480,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze_http</code></strong> (<code>forze[http]</code>) — outbound HTTP: <code>HttpServiceSpec</code>/<code>HttpServicePort</code>, <code>HttpClient</code>/<code>RoutedHttpClient</code>, and <code>HttpDepsModule</code>; <code>ctx.http</code> resolves services by name. httpx-backed.</p>
 </li>
 <li>
-<p><strong><code>forze_meilisearch</code></strong> (<code>forze[meilisearch]</code>) — async Meilisearch: offset <code>SearchQueryPort</code>, <code>SearchCommandPort</code>, and federated search (native or weighted RRF).</p>
+<p><strong><code>forze_meilisearch</code></strong> (<code>forze[meilisearch]</code>) — async Meilisearch: offset <code>SearchQueryPort</code>, <code>SearchCommandPort</code>, and federated search (native or weighted <abbr title="Reciprocal Rank Fusion">RRF</abbr>).</p>
 </li>
 <li>
 <p><strong>Transactional outbox, notify, and search-command</strong> — <code>forze.application.contracts.outbox</code> (<code>OutboxSpec</code>, <code>IntegrationEvent</code>) with Postgres, Mongo, and mock stores plus relay helpers; a notify kit; and a core <code>SearchCommandPort</code> for external-index maintenance.</p>
@@ -6487,7 +6489,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Tenant routing</strong> — declarative per-request backend targets across all integrations, with per-tenant <code>Routed*Client</code> variants, routed lifecycle steps, LRU pool dedup, and <code>TenantClientRegistry</code>.</p>
 </li>
 <li>
-<p><strong>Identity — IdP presets</strong> (<code>forze_identity.builtin.idp</code>) — OIDC presets for Google, VK ID, and Telegram Login; <code>oidc_bootstrap_identity_deps</code>; PKCE helpers. Authn adds API-key rotation and single-use password invites.</p>
+<p><strong>Identity — IdP presets</strong> (<code>forze_identity.builtin.idp</code>) — <abbr title="OpenID Connect">OIDC</abbr> presets for Google, VK ID, and Telegram Login; <code>oidc_bootstrap_identity_deps</code>; <abbr title="Proof Key for Code Exchange">PKCE</abbr> helpers. Authn adds API-key rotation and single-use password invites.</p>
 </li>
 <li>
 <p><strong>Execution — freeze/resolve pipeline</strong> — an authoring <code>DepsRegistry</code> (freeze to a frozen registry, resolve to <code>FrozenDeps</code>) separates registration from per-scope resolution, with a matching <code>LifecyclePlan</code>. Per-scope caches default on.</p>
@@ -6544,7 +6546,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Breaking: document write identity is an explicit argument</strong> — <code>CreateDocumentCmd</code> no longer carries <code>id</code>/<code>created_at</code>; the write surface becomes <code>create(payload, *, id=None)</code>, <code>ensure(id, payload)</code>, and <code>upsert(...)</code> with <code>KeyedCreate</code>/<code>UpsertItem</code> value objects.</p>
 </li>
 <li>
-<p><strong>Breaking: storage CQRS split</strong> — <code>StoragePort</code>/<code>StorageDepKey</code> split into query (<code>download</code>, <code>list</code>) and command (<code>upload</code>, <code>delete</code>) ports, resolved via <code>ctx.storage.query(spec)</code> / <code>.command(spec)</code>. S3 and GCS factories are renamed.</p>
+<p><strong>Breaking: storage <abbr title="Command Query Responsibility Segregation">CQRS</abbr> split</strong> — <code>StoragePort</code>/<code>StorageDepKey</code> split into query (<code>download</code>, <code>list</code>) and command (<code>upload</code>, <code>delete</code>) ports, resolved via <code>ctx.storage.query(spec)</code> / <code>.command(spec)</code>. S3 and GCS factories are renamed.</p>
 </li>
 <li>
 <p><strong>Breaking: coordinators to adapters</strong> — <code>DocumentCoordinator</code> to <code>DocumentAdapter</code>, the cache and outbox coordinators likewise, and <code>DistributedLockCoordinator</code> to <code>DistributedLockScope</code>; <code>forze.application.coordinators</code> is removed.</p>
@@ -6568,10 +6570,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Idempotency reshaped to engine-level result idempotency</strong> — <code>IdempotencySnapshot</code> is replaced by an interface-agnostic <code>IdempotencyRecord(result: bytes)</code>, and a new <code>IdempotencyWrap</code> hook returns the stored typed result early. FastAPI middleware reads <code>Idempotency-Key</code>.</p>
 </li>
 <li>
-<p><strong>OCC retry routed through the resilience pipeline</strong> — Postgres, Mongo, and Firestore write gateways drop their own retry library for the shared <code>occ_retry</code> policy. Attempt counts are unchanged.</p>
+<p><strong><abbr title="Optimistic Concurrency Control">OCC</abbr> retry routed through the resilience pipeline</strong> — Postgres, Mongo, and Firestore write gateways drop their own retry library for the shared <code>occ_retry</code> policy. Attempt counts are unchanged.</p>
 </li>
 <li>
-<p><strong>Write gateways — unified OCC/history validation</strong> — Postgres and Mongo share one history-OCC mixin, and a missing history snapshot now raises a retryable precondition error on both.</p>
+<p><strong>Write gateways — unified <abbr title="Optimistic Concurrency Control">OCC</abbr>/history validation</strong> — Postgres and Mongo share one history-<abbr title="Optimistic Concurrency Control">OCC</abbr> mixin, and a missing history snapshot now raises a retryable precondition error on both.</p>
 </li>
 <li>
 <p><strong>Async contract protocols standardized on <code>Awaitable[X]</code> returns</strong> — remaining <code>async def</code> Protocol ports converted (type-only; call sites unaffected). Async-generator methods are unchanged.</p>
@@ -6623,7 +6625,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze_identity.local</code> (breaking)</strong> — use <code>forze_identity.builtin.local</code>; local verifiers and factories are no longer exported from authn or tenancy.</p>
 </li>
 <li>
-<p><strong><code>forze_identity.builtin.telegram</code></strong> — the Telegram Mini App <code>initData</code> HMAC preset, superseded by Telegram Login OIDC under <code>forze_identity.builtin.idp.telegram</code>.</p>
+<p><strong><code>forze_identity.builtin.telegram</code></strong> — the Telegram Mini App <code>initData</code> HMAC preset, superseded by Telegram Login <abbr title="OpenID Connect">OIDC</abbr> under <code>forze_identity.builtin.idp.telegram</code>.</p>
 </li>
 <li>
 <p><strong>Execution</strong> — <code>forze.application.coordinators</code>; the registry, planning, facade, and running modules; <code>OperationRunner</code>; and <code>lifecycle_graph_from_sequence</code> (use <code>steps_graph_from_sequence</code>).</p>
@@ -6641,7 +6643,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed_3">Fixed<a class="headerlink" href="#fixed_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
-<p><strong>Package error mappers were dead code in 12 integrations</strong> — <code>ChainExceptionMapper</code> now flattens nested chains, so Postgres serialization and deadlock errors (plus Mongo and Neo4j conflicts) map to concurrency and OCC retry fires on real serialization conflicts.</p>
+<p><strong>Package error mappers were dead code in 12 integrations</strong> — <code>ChainExceptionMapper</code> now flattens nested chains, so Postgres serialization and deadlock errors (plus Mongo and Neo4j conflicts) map to concurrency and <abbr title="Optimistic Concurrency Control">OCC</abbr> retry fires on real serialization conflicts.</p>
 </li>
 <li>
 <p><strong>Firestore transactions</strong> — aborts map to concurrency, rollback happens on <code>BaseException</code>, <code>count_documents</code> joins the ambient tx, and a mismatched database raises configuration.</p>
@@ -6674,7 +6676,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>finally</code> hooks observe before-hook denials</strong> — before hooks run inside the try/finally, while <code>on_failure</code> stays handler-only.</p>
 </li>
 <li>
-<p><strong>OCC history validation hardened</strong> — records are re-keyed by id and revision, and comparisons run in canonical space so no-op resends do not falsely conflict.</p>
+<p><strong><abbr title="Optimistic Concurrency Control">OCC</abbr> history validation hardened</strong> — records are re-keyed by id and revision, and comparisons run in canonical space so no-op resends do not falsely conflict.</p>
 </li>
 <li>
 <p><strong><code>Document.update()</code> re-validates the patched state</strong> — it merges into a python-mode dump and re-validates, so semantic no-ops yield an empty diff, partial nested dicts and ISO datetimes are no longer raw, computed-field keys are excluded, and validators run on update.</p>
@@ -6695,7 +6697,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Postgres transaction options no longer leak across pooled connections</strong> — read-only and isolation are emitted as <code>SET TRANSACTION …</code> inside the root tx.</p>
 </li>
 <li>
-<p><strong>Mongo write conflicts retry under OCC</strong> — write-conflict and transient-transaction errors map to concurrency.</p>
+<p><strong>Mongo write conflicts retry under <abbr title="Optimistic Concurrency Control">OCC</abbr></strong> — write-conflict and transient-transaction errors map to concurrency.</p>
 </li>
 <li>
 <p><strong><code>forze_fastapi</code> middleware errors return proper status codes</strong> — core exceptions in forze middlewares render the standard JSON error instead of a 500.</p>
@@ -6728,7 +6730,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Password change revokes existing sessions (breaking by default)</strong> — <code>change_password</code> revokes all sessions (refresh families plus session-bound access JWTs); opt out explicitly, and missing session ports fail at startup.</p>
 </li>
 <li>
-<p><strong>Rehash-on-login (opt-in)</strong> — the Argon2 verifier persists parameter-upgraded hashes after login, OCC- and fire-safe.</p>
+<p><strong>Rehash-on-login (opt-in)</strong> — the Argon2 verifier persists parameter-upgraded hashes after login, <abbr title="Optimistic Concurrency Control">OCC</abbr>- and fire-safe.</p>
 </li>
 <li>
 <p><strong><code>sensitive=True</code> spec marker keeps credentials off generated surfaces</strong> — route, tool, and resource generators refuse sensitive specs at attach time, and shipped authn specs are marked.</p>
@@ -6740,7 +6742,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>tenancy_mode="global"</code> warns over tenant-partitioned stores</strong> — grants are shared across tenants; set <code>require_invocation_tenant</code> for isolation.</p>
 </li>
 <li>
-<p><strong>OIDC nonce value binding</strong> — <code>verify_id_token_nonce</code> (constant-time) plus <code>generate_nonce()</code>/<code>generate_state()</code>; the VK and Telegram exchanges accept an expected nonce.</p>
+<p><strong><abbr title="OpenID Connect">OIDC</abbr> nonce value binding</strong> — <code>verify_id_token_nonce</code> (constant-time) plus <code>generate_nonce()</code>/<code>generate_state()</code>; the VK and Telegram exchanges accept an expected nonce.</p>
 </li>
 <li>
 <p><strong>Secret values masked in reprs framework-wide</strong> — credential value objects become non-repr, and several ClickHouse and Inngest fields become secret. Direct readers must call the secret accessor.</p>
@@ -6797,7 +6799,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze_identity.authz</code> fail-closed tenant isolation</strong> — grant-resolution adapters refuse to construct when a tenant-scoped route has a non-tenant-aware binding or catalog port.</p>
 </li>
 <li>
-<p><strong><code>forze_identity.oidc</code></strong> — resolves JWKS signing keys in a worker thread, so a cache miss does not block the event loop.</p>
+<p><strong><code>forze_identity.oidc</code></strong> — resolves <abbr title="JSON Web Key Set">JWKS</abbr> signing keys in a worker thread, so a cache miss does not block the event loop.</p>
 </li>
 <li>
 <p><strong>Secret-field redaction</strong> — JWT signing keys and HMAC peppers become non-repr, and several Vault, S3, GCS, and HTTP routing credentials become secret or redacted.</p>
@@ -6846,7 +6848,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Queue delayed delivery</strong> — <code>enqueue</code>/<code>enqueue_many</code> accept a delay or a not-before time.</p>
 </li>
 <li>
-<p><strong><code>forze_identity</code></strong> (plus <code>oidc</code> extra) — consolidated authn, authz, tenancy, and OIDC with <code>AuthnOrchestrator</code> and <code>AuthzPolicyService</code>.</p>
+<p><strong><code>forze_identity</code></strong> (plus <code>oidc</code> extra) — consolidated authn, authz, tenancy, and <abbr title="OpenID Connect">OIDC</abbr> with <code>AuthnOrchestrator</code> and <code>AuthzPolicyService</code>.</p>
 </li>
 <li>
 <p><strong>Analytics</strong> — <code>AnalyticsSpec</code>/<code>AnalyticsQueryPort</code> with Postgres, ClickHouse, and BigQuery adapters.</p>
@@ -7576,7 +7578,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="011-2026-02-23"><a href="https://github.com/morzecrew/forze/releases/tag/v0.1.1">0.1.1</a> - 2026-02-23<a class="headerlink" href="#011-2026-02-23" title="Permanent link">&para;</a></h2>
 <h3 id="added_17">Added<a class="headerlink" href="#added_17" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Initial DDD/Hex contracts — ports, results, errors.</li>
+<li>Initial <abbr title="Domain-Driven Design">DDD</abbr>/Hex contracts — ports, results, errors.</li>
 </ul>
 <h3 id="fixed_13">Fixed<a class="headerlink" href="#fixed_13" title="Permanent link">&para;</a></h3>
 <ul>
@@ -7688,7 +7690,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

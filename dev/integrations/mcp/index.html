@@ -1732,6 +1732,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4326,7 +4328,7 @@
 
 <p><code>forze[mcp]</code> is an inbound transport — like <a href="../fastapi/">FastAPI</a> or
 <a href="../socketio/">Socket.IO</a>, but for AI agents. It projects a <strong>frozen operation
-registry</strong> onto an MCP server: each operation becomes a tool that runs through
+registry</strong> onto an <abbr title="Model Context Protocol">MCP</abbr> server: each operation becomes a tool that runs through
 the normal Forze pipeline (DTO validation → operation → result).</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[mcp]&#39;</span>
@@ -4361,7 +4363,7 @@ that died of budget exhaustion. For a custom FastMCP server, use
 <tbody>
 <tr>
 <td><code>register_tools</code> / <code>build_mcp_server</code></td>
-<td>operations → MCP tools (reads only unless <code>include_writes=True</code>)</td>
+<td>operations → <abbr title="Model Context Protocol">MCP</abbr> tools (reads only unless <code>include_writes=True</code>)</td>
 </tr>
 <tr>
 <td><code>register_resource_templates</code></td>
@@ -4369,7 +4371,7 @@ that died of budget exhaustion. For a custom FastMCP server, use
 </tr>
 <tr>
 <td><code>register_schema_resources</code></td>
-<td>per-aggregate field schemas as MCP resources</td>
+<td>per-aggregate field schemas as <abbr title="Model Context Protocol">MCP</abbr> resources</td>
 </tr>
 <tr>
 <td><code>register_dsl_query_prompts</code></td>
@@ -4378,7 +4380,7 @@ that died of budget exhaustion. For a custom FastMCP server, use
 </tbody>
 </table>
 <h2 id="protect-it-with-api-key-auth">Protect it with API-key auth<a class="headerlink" href="#protect-it-with-api-key-auth" title="Permanent link">&para;</a></h2>
-<p>The MCP server is a <strong>Resource Server</strong>: it validates an inbound bearer and binds
+<p>The <abbr title="Model Context Protocol">MCP</abbr> server is a <strong>Resource Server</strong>: it validates an inbound bearer and binds
 the principal — no OAuth flow. The bearer is a forze_identity <strong>API key</strong> the caller
 already holds (a controlled agent's secret, or a key the user minted in your web UI
 and pasted into the agent host), verified by the <strong>same</strong> authn brain as your HTTP
@@ -4431,7 +4433,7 @@ forze stays the Resource Server and never runs an authorization server.</p>
   tools as destructive.</li>
 <li>For production, bring your own <code>FastMCP</code> (auth, transport); <code>build_mcp_server</code>
   is a convenience. See the
-  <a href="../../recipes/expose-an-aggregate-over-mcp/">expose-an-aggregate-over-MCP recipe</a>
+  <a href="../../recipes/expose-an-aggregate-over-mcp/">expose-an-aggregate-over-<abbr title="Model Context Protocol">MCP</abbr> recipe</a>
   for a runnable walkthrough.</li>
 </ul>
 
@@ -4540,7 +4542,7 @@ forze stays the Resource Server and never runs an authorization server.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

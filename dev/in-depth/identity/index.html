@@ -1862,6 +1862,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4364,18 +4366,18 @@ jobs. They meet at a single value object — and that's the whole design.</p>
 <a class="glightbox" data-gallery="dark" data-title="Verification emits a VerifiedAssertion; resolution turns it into an AuthnIdentity" data-type="image" href="../../_diagrams/dark/authn-verify-resolve.svg#only-dark"><img alt="Verification emits a VerifiedAssertion; resolution turns it into an AuthnIdentity" src="../../_diagrams/dark/authn-verify-resolve.svg#only-dark" /></a></p>
 <ul>
 <li><strong>Verify</strong> — a verifier proves the credential against its issuer (a JWT
-  signature, an API-key hash, OIDC JWKS) and emits a <strong><code>VerifiedAssertion</code></strong>:
+  signature, an API-key hash, <abbr title="OpenID Connect">OIDC</abbr> <abbr title="JSON Web Key Set">JWKS</abbr>) and emits a <strong><code>VerifiedAssertion</code></strong>:
   vendor-flavoured proof carrying the issuer, subject, and claims.</li>
 <li><strong>Resolve</strong> — a <code>PrincipalResolverPort</code> maps that assertion to a canonical
   <strong><code>AuthnIdentity</code></strong> with a <code>UUID</code> <code>principal_id</code>.</li>
 </ul>
 <p>The verifier never invents a principal; the resolver never re-checks a
 signature. The <code>VerifiedAssertion</code> is the entire seam between them — which is
-why several verifiers (first-party JWT, OIDC, API keys) can sit behind one
+why several verifiers (first-party JWT, <abbr title="OpenID Connect">OIDC</abbr>, API keys) can sit behind one
 orchestrator and feed the same resolver.</p>
 <p>This is what keeps the rest of Forze provider-agnostic: your domain, tenancy,
 and authorization code only ever see a <code>UUID</code> principal. Switching from Google
-OIDC to internal SSO is a new verifier/resolver pair — not a change to a single
+<abbr title="OpenID Connect">OIDC</abbr> to internal SSO is a new verifier/resolver pair — not a change to a single
 handler.</p>
 <h2 id="resolving-to-a-principal">Resolving to a principal<a class="headerlink" href="#resolving-to-a-principal" title="Permanent link">&para;</a></h2>
 <p>Three first-party resolvers cover the common shapes — the choice is about
@@ -4503,10 +4505,12 @@ locks exactly like a real one, preserving the no-enumeration posture.</p>
 <code>tenancy</code>, <code>oidc</code>, and <code>oauth</code> subpackages, wired per route via the same deps
 modules as any other integration.</p>
 <p>For getting started, <code>forze_identity.builtin</code> ships presets — file/env API keys
-(<code>local</code>) and Google / VK / Telegram Login over OIDC (<code>idp</code>). They're shipped-in
+(<code>local</code>) and Google / VK / Telegram Login over <abbr title="OpenID Connect">OIDC</abbr> (<code>idp</code>). They're shipped-in
 conveniences, not production defaults: adopt one only once you accept its trust
-model (e.g. VK publishes no JWKS, so its preset verifies <code>id_token</code>s by
+model (e.g. VK publishes no <abbr title="JSON Web Key Set">JWKS</abbr>, so its preset verifies <code>id_token</code>s by
 server-side introspection against VK rather than a local signature check).</p>
+<p>Identity settles <em>who</em> the caller is; scoping <em>which data</em> they may reach is
+<a href="../multi-tenancy/">Multi-tenancy</a>.</p>
 
 
 
@@ -4613,7 +4617,7 @@ server-side introspection against VK rather than a local signature check).</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

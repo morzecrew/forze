@@ -1729,6 +1729,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4313,7 +4315,7 @@
 <code>bootstrap</code> auth route that verifies that provider's <code>id_token</code>; from there it's
 the same <a href="../external-bootstrap-forze-jwt/">bootstrap → Forze JWT</a> flow. They
 differ only in their config and in how you obtain the <code>id_token</code>.</p>
-<p>Install the OIDC extra: <code>uv add 'forze[oidc]'</code>.</p>
+<p>Install the <abbr title="OpenID Connect">OIDC</abbr> extra: <code>uv add 'forze[oidc]'</code>.</p>
 <h2 id="the-three-presets">The three presets<a class="headerlink" href="#the-three-presets" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -4346,8 +4348,8 @@ differ only in their config and in how you obtain the <code>id_token</code>.</p>
 <tr>
 <td><code>id_token</code> from</td>
 <td>client SDK (direct)</td>
-<td>PKCE <strong>code exchange</strong></td>
-<td>PKCE <strong>code exchange</strong></td>
+<td><abbr title="Proof Key for Code Exchange">PKCE</abbr> <strong>code exchange</strong></td>
+<td><abbr title="Proof Key for Code Exchange">PKCE</abbr> <strong>code exchange</strong></td>
 </tr>
 <tr>
 <td>Credentials</td>
@@ -4375,7 +4377,7 @@ the auth code for an <code>id_token</code> first, then run the
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<p>VK uses an authorization-code + PKCE exchange; pass through the <code>device_id</code>
+<p>VK uses an authorization-code + <abbr title="Proof Key for Code Exchange">PKCE</abbr> exchange; pass through the <code>device_id</code>
 VK returns on the callback:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.oauth</span><span class="w"> </span><span class="kn">import</span> <span class="n">generate_pkce</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.builtin.idp.vk</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
@@ -4419,7 +4421,7 @@ from BotFather and no <code>device_id</code>:</p>
 <p>Once you have the <code>id_token</code>, the <a href="../external-bootstrap-forze-jwt/#the-login-handler">login handler</a>
 verifies it and mints first-party tokens — identical across all three providers.</p>
 <h2 id="callback-hardening-checklist">Callback hardening checklist<a class="headerlink" href="#callback-hardening-checklist" title="Permanent link">&para;</a></h2>
-<p>PKCE bound to the session already blocks most login-CSRF and code injection;
+<p><abbr title="Proof Key for Code Exchange">PKCE</abbr> bound to the session already blocks most login-CSRF and code injection;
 <code>state</code> and nonce-value binding close the rest. Before the authorize redirect:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.oauth</span><span class="w"> </span><span class="kn">import</span> <span class="n">generate_nonce</span><span class="p">,</span> <span class="n">generate_pkce</span><span class="p">,</span> <span class="n">generate_state</span>
 
@@ -4433,7 +4435,7 @@ verifies it and mints first-party tokens — identical across all three provider
 <ol>
 <li>Verify <code>state</code> equality against the session value with <code>hmac.compare_digest</code>
    — reject before doing anything else.</li>
-<li>Exchange the code with the session's <code>code_verifier</code> (PKCE).</li>
+<li>Exchange the code with the session's <code>code_verifier</code> (<abbr title="Proof Key for Code Exchange">PKCE</abbr>).</li>
 <li>Bind the <code>id_token</code> to this login attempt: pass <code>expected_nonce=nonce</code> to
    <code>exchange_authorization_code</code> (VK, Telegram), or call
    <code>forze_identity.oidc.verify_id_token_nonce(id_token, nonce)</code> yourself
@@ -4451,9 +4453,9 @@ callback, where the session is.</p>
   authorize URL).</li>
 <li>Only the <code>id_token</code> is a JWT the verifier accepts — the providers' opaque
   <code>access_token</code> / <code>refresh_token</code> are not bearer credentials for your API.</li>
-<li>Issuer, JWKS, and audience defaults are baked into each preset; override them on
+<li>Issuer, <abbr title="JSON Web Key Set">JWKS</abbr>, and audience defaults are baked into each preset; override them on
   the config only for non-standard deployments.</li>
-<li>VK is the exception on verification: VK ID publishes no JWKS, so the VK preset
+<li>VK is the exception on verification: VK ID publishes no <abbr title="JSON Web Key Set">JWKS</abbr>, so the VK preset
   validates the <code>id_token</code> by server-side introspection at VK's <code>public_info</code>
   endpoint (trust comes from TLS to <code>id.vk.ru</code>) instead of a local signature check.</li>
 </ul>
@@ -4563,7 +4565,7 @@ callback, where the session is.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

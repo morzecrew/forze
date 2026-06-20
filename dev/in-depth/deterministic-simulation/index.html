@@ -1873,6 +1873,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4375,7 +4377,7 @@
 
   <h1 id="__skip">Deterministic simulation</h1>
 
-<p><a href="../testing/">Testing</a> swaps real adapters for in-memory ones so a handler runs without Docker. Deterministic Simulation Testing (DST) goes further: it takes your <strong>real operations</strong>, runs them concurrently on a virtual-time event loop, and explores the interleavings, faults, and delays a production system would hit — then, when an invariant breaks, hands back the <strong>smallest workload that still breaks it</strong>, reproducible from a single seed.</p>
+<p><a href="../testing/">Testing</a> swaps real adapters for in-memory ones so a handler runs without Docker. Deterministic Simulation Testing (<abbr title="Deterministic Simulation Testing">DST</abbr>) goes further: it takes your <strong>real operations</strong>, runs them concurrently on a virtual-time event loop, and explores the interleavings, faults, and delays a production system would hit — then, when an invariant breaks, hands back the <strong>smallest workload that still breaks it</strong>, reproducible from a single seed.</p>
 <p>Nothing in your app changes. Handlers talk to ports exactly as they do in production; the simulation lives entirely on the test side.</p>
 <div class="admonition tip">
 <p class="admonition-title">The one promise</p>
@@ -4441,14 +4443,14 @@ exact same run, byte for byte. That is what makes a found bug reproducible inste
         <span class="c1"># Emitting a domain event triggers the registered handler (a saga-style cascade).</span>
         <span class="k">await</span> <span class="n">DomainDeps</span><span class="p">(</span><span class="n">ctx</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">ctx</span><span class="p">)()</span><span class="o">.</span><span class="n">dispatch</span><span class="p">([</span><span class="n">OrderPaid</span><span class="p">(</span><span class="n">order_id</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">order_id</span><span class="p">)])</span>
 </code></pre></div>
-<p>DST finds the race, shrinks it to <strong>two</strong> contending payments, and reports the seed that reproduces it.</p>
+<p><abbr title="Deterministic Simulation Testing">DST</abbr> finds the race, shrinks it to <strong>two</strong> contending payments, and reports the seed that reproduces it.</p>
 <h2 id="invariants-what-must-hold">Invariants — what must hold<a class="headerlink" href="#invariants-what-must-hold" title="Permanent link">&para;</a></h2>
 <p>An invariant reads the recorded history and returns the violations it found. The generic <code>expect(kind, predicate, message=...)</code> (above) covers most domain rules. The built-ins read the engine trace directly, so they need no handler instrumentation:</p>
 <div class="grid cards">
 <ul>
 <li>
 <p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-shield-alert" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1zM12 8v4M12 16h.01"/></svg></span> <strong><code>no_unexpected_error()</code></strong></p>
-<p>The zero-instrumentation safety net: any operation that raised a non-domain exception (a bug — <code>KeyError</code>, <code>TypeError</code>) is a violation; declared <code>CoreException</code> domain failures pass. Point DST at <em>any</em> app and immediately catch crashes under concurrency.</p>
+<p>The zero-instrumentation safety net: any operation that raised a non-domain exception (a bug — <code>KeyError</code>, <code>TypeError</code>) is a violation; declared <code>CoreException</code> domain failures pass. Point <abbr title="Deterministic Simulation Testing">DST</abbr> at <em>any</em> app and immediately catch crashes under concurrency.</p>
 </li>
 <li>
 <p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></span> <strong><code>no_duplicate_effect(kind, by=...)</code></strong></p>
@@ -4466,7 +4468,7 @@ exact same run, byte for byte. That is what makes a found bug reproducible inste
 </div>
 <p><code>linearizable(spec)</code> checks a recorded operation history against a sequential specification (Wing-Gong, per key) for the strongest single-object consistency guarantee.</p>
 <h2 id="inject-the-environment">Inject the environment<a class="headerlink" href="#inject-the-environment" title="Permanent link">&para;</a></h2>
-<p>A real system errors, times out, and is slow. Declare that environment on the config and DST applies it at the port boundary — over <strong>any</strong> resolved port, seeded from the master seed, with the app untouched.</p>
+<p>A real system errors, times out, and is slow. Declare that environment on the config and <abbr title="Deterministic Simulation Testing">DST</abbr> applies it at the port boundary — over <strong>any</strong> resolved port, seeded from the master seed, with the app untouched.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">FaultPolicy</span><span class="p">,</span> <span class="n">FaultRule</span><span class="p">,</span> <span class="n">LatencyProfile</span><span class="p">,</span> <span class="n">LatencyRule</span><span class="p">,</span> <span class="n">Exponential</span>
 
 <span class="n">report</span> <span class="o">=</span> <span class="n">simulation</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">SimulationConfig</span><span class="p">(</span>
@@ -4539,8 +4541,8 @@ forze<span class="w"> </span>dst<span class="w"> </span>topology<span class="w">
 </code></pre></div>
 <p><code>--save-regression</code> appends the found seed (with the registry fingerprint and the exploration knobs) to a JSON-Lines corpus; <code>replay</code> reproduces each saved seed under the configuration it was found with, so a fixed bug stays fixed.</p>
 <div class="admonition warning">
-<p class="admonition-title">DST is only as honest as the mock</p>
-<p>DST trusts that the in-memory transaction manager rolls back faithfully. The default
+<p class="admonition-title"><abbr title="Deterministic Simulation Testing">DST</abbr> is only as honest as the mock</p>
+<p><abbr title="Deterministic Simulation Testing">DST</abbr> trusts that the in-memory transaction manager rolls back faithfully. The default
 (<code>MockDepsModule(transactions="journal")</code>) is atomic without serialising, so a found
 race is real. The legacy no-op manager would report <em>false</em> double-charges — see
 <a href="../transactions/">Transactions</a>.</p>
@@ -4548,8 +4550,8 @@ race is real. The legacy no-op manager would report <em>false</em> double-charge
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../testing/">Testing</a> — unit and integration testing with mocks</li>
-<li><a href="../concurrency-conflicts/">Concurrency &amp; conflicts</a> — the optimistic-concurrency model DST exercises</li>
-<li><a href="../transactions/">Transactions</a> — why faithful rollback keeps DST findings trustworthy</li>
+<li><a href="../concurrency-conflicts/">Concurrency &amp; conflicts</a> — the optimistic-concurrency model <abbr title="Deterministic Simulation Testing">DST</abbr> exercises</li>
+<li><a href="../transactions/">Transactions</a> — why faithful rollback keeps <abbr title="Deterministic Simulation Testing">DST</abbr> findings trustworthy</li>
 </ul>
 
 
@@ -4657,7 +4659,7 @@ race is real. The legacy no-op manager would report <em>false</em> double-charge
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

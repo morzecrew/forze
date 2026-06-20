@@ -1840,6 +1840,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4331,7 +4333,7 @@ these docs we call it a <em>specification</em>.</p>
 <p>When a read model carries credential or secret material (password hashes, token
 digests), mark the spec with <code>sensitive=True</code> (available on <code>DocumentSpec</code> and
 <code>SearchSpec</code>). Generated external surfaces — the FastAPI route generators and
-the MCP tool/resource registrations — refuse to project a sensitive spec and
+the <abbr title="Model Context Protocol">MCP</abbr> tool/resource registrations — refuse to project a sensitive spec and
 fail with a configuration error at attach/registration time, so a
 credential-bearing read model can never leak through a generated endpoint. The
 shipped authn specs (password accounts, API-key accounts, sessions, invites)
@@ -4449,6 +4451,8 @@ handler. Hooks run around the handler without replacing its result.</p>
 <p>This is how an <code>orders.update</code> operation can require an unshipped order, wrap
 itself in a transaction, and emit an event — all without the handler knowing any
 of it happened.</p>
+<p>A handler reaches storage, messaging, and the rest through capabilities it never
+names by vendor. Those capabilities are <a href="../contracts/">contracts</a>.</p>
 
 
 
@@ -4555,7 +4559,7 @@ of it happened.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

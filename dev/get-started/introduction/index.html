@@ -582,10 +582,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#who-should-use-forze" class="md-nav__link">
+  <a href="#what-it-changes-for-you" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Who should use Forze?
+        What it changes for you
       </span>
     </span>
   </a>
@@ -593,32 +593,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#when-forze-helps" class="md-nav__link">
+  <a href="#is-forze-for-you" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        When Forze helps
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#from-prototype-to-production" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        From prototype to production
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#when-you-might-not-need-forze" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        When you might not need Forze
+        Is Forze for you?
       </span>
     </span>
   </a>
@@ -1864,6 +1842,8 @@
       <a href="../../integrations/" class="md-nav__link">
         
   
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
   
   <span class="md-ellipsis">
     
@@ -4196,10 +4176,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#who-should-use-forze" class="md-nav__link">
+  <a href="#what-it-changes-for-you" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Who should use Forze?
+        What it changes for you
       </span>
     </span>
   </a>
@@ -4207,32 +4187,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#when-forze-helps" class="md-nav__link">
+  <a href="#is-forze-for-you" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        When Forze helps
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#from-prototype-to-production" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        From prototype to production
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#when-you-might-not-need-forze" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        When you might not need Forze
+        Is Forze for you?
       </span>
     </span>
   </a>
@@ -4345,75 +4303,91 @@
 
   <h1 id="__skip">Introduction</h1>
 
+<p>You know the failure mode: a database call buried three layers deep in a
+business rule, a unit test that won't run without a live Redis, a "quick
+prototype" you throw away because the infrastructure grew into the logic. The
+part that's actually yours — the business rules — ends up welded to the
+machinery that serves them, and every infrastructure choice you made early
+hardens into one you can't walk back.</p>
 <h2 id="what-is-forze">What is Forze?<a class="headerlink" href="#what-is-forze" title="Permanent link">&para;</a></h2>
-<p>Forze is a Python toolkit for building backend services with clear boundaries between business logic and infrastructure. It implements Domain-Driven Design (DDD) and Hexagonal Architecture patterns, letting you swap databases, caches, or queues without touching your business code.</p>
-<h2 id="who-should-use-forze">Who should use Forze?<a class="headerlink" href="#who-should-use-forze" title="Permanent link">&para;</a></h2>
-<p>Forze fits backend developers who:</p>
-<ul>
-<li>Build services where business rules are central, not secondary</li>
-<li>Want infrastructure decisions to stay reversible</li>
-<li>Need consistent patterns across teams</li>
-<li>Value testability without complex mocking</li>
-</ul>
-<h2 id="when-forze-helps">When Forze helps<a class="headerlink" href="#when-forze-helps" title="Permanent link">&para;</a></h2>
+<p>Forze is a Python toolkit that keeps those two apart. Your code asks for a
+<strong>capability</strong> — <em>store this document</em>, <em>publish this event</em> — never a vendor,
+and the runtime supplies the adapter behind it. Start against in-memory adapters
+with no database and no Docker; when the idea sticks, point the same handlers at
+Postgres, Redis, or S3 by changing wiring, not code. Infrastructure decisions
+stay reversible, and the code that matters never learns which datastore it's
+talking to.</p>
+<p>Underneath are two well-worn ideas: <a href="https://martinfowler.com/bliki/DomainDrivenDesign.html" title="Martin Fowler — Domain-Driven Design">Domain-Driven Design</a>
+— model the business, not the database — and <a href="https://alistair.cockburn.us/hexagonal-architecture/" title="Alistair Cockburn — the original ports-and-adapters write-up">Hexagonal Architecture</a>,
+where the domain reaches the outside world only through contracts. You write
+aggregates, operations, and the contracts they depend on; Forze resolves those
+contracts to real adapters at runtime — Postgres, Mongo, Redis, S3, Temporal,
+and <a href="../../integrations/">more integrations</a>, batteries included.</p>
+<p>You don't need to be fluent in either pattern. If you've met Clean or Hexagonal
+Architecture before, this is those ideas made concrete for Python backends; if
+you haven't, <a href="../../core-concepts/overview/">Core Concepts</a> introduces each term
+as you meet it.</p>
+<h2 id="what-it-changes-for-you">What it changes for you<a class="headerlink" href="#what-it-changes-for-you" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Situation</th>
-<th>Why Forze fits</th>
+<th>Instead of</th>
+<th>With Forze</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Rapid prototyping</td>
-<td>In-memory mock adapters run with no Docker and no wiring, so you build the real operation flow in minutes and add infrastructure later</td>
+<td>Mocking infrastructure to test a rule</td>
+<td>Run the real operation flow on in-memory adapters — no Docker</td>
 </tr>
 <tr>
-<td>Domain-rich applications</td>
-<td>Aggregates, events, and sagas keep complex business logic organized</td>
+<td>Rewriting handlers to swap a datastore</td>
+<td>Change one wiring module; the handlers don't move</td>
 </tr>
 <tr>
-<td>Evolving infrastructure</td>
-<td>Swap Postgres for Mongo, Redis for Memcached, without rewriting handlers</td>
+<td>Prototypes that become throwaway</td>
+<td>The spike <em>is</em> the architecture — promote it by adding adapters</td>
 </tr>
 <tr>
-<td>Growing teams</td>
-<td>Shared contracts and layers reduce guesswork about where code belongs</td>
-</tr>
-<tr>
-<td>Test-first workflows</td>
-<td>Mock adapters run in-memory; domain logic tests without containers</td>
+<td>"Where does this code go?" debates</td>
+<td>Layers and contracts answer it for you</td>
 </tr>
 </tbody>
 </table>
-<h2 id="from-prototype-to-production">From prototype to production<a class="headerlink" href="#from-prototype-to-production" title="Permanent link">&para;</a></h2>
-<p>Forze isn't only for "large" projects. Because every capability is a pluggable port, it scales <em>down</em> as readily as up. Start a spike against in-memory mock adapters — no database, no Docker, no config — and you already have the real operation flow. When the idea sticks, point the same handlers at Postgres, Redis, or S3 by changing wiring, not business code. You don't pay for infrastructure you haven't added yet, so composability is what makes the fast start possible <em>and</em> keeps it from becoming throwaway.</p>
-<h2 id="when-you-might-not-need-forze">When you might not need Forze<a class="headerlink" href="#when-you-might-not-need-forze" title="Permanent link">&para;</a></h2>
-<p>Forze adds a thin layer of structure. For a throwaway single-file script, or a one-endpoint passthrough with no logic beyond validation, plain FastAPI or Flask is the shorter path. Reach for Forze the moment you have operations worth keeping clean — which, with mock adapters, can be on day one.</p>
+<h2 id="is-forze-for-you">Is Forze for you?<a class="headerlink" href="#is-forze-for-you" title="Permanent link">&para;</a></h2>
+<p>It fits backend developers building services where the business rules are the
+point — where you want infrastructure choices to stay reversible, consistent
+patterns across a team, and tests that don't fight a container.</p>
+<p>It's overkill for a throwaway script or a single-endpoint passthrough with no
+logic beyond validation; plain FastAPI is the shorter path there. Reach for
+Forze the moment you have operations worth keeping clean — which, with in-memory
+adapters, can be day one.</p>
 <h2 id="core-ideas-in-one-minute">Core ideas in one minute<a class="headerlink" href="#core-ideas-in-one-minute" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
-<p><strong>Layers</strong> — Domain (business rules), Application (operations), Infrastructure (adapters), Interface (routes). Dependencies point inward: domain never imports infrastructure.</p>
+<p><strong>Layers</strong> — Domain (business rules), Application (operations),
+   Infrastructure (adapters), Interface (routes). Dependencies point inward; the
+   domain imports no infrastructure.</p>
 </li>
 <li>
-<p><strong>Ports and adapters</strong> — Your handlers ask for capabilities ("document storage"), not implementations ("Postgres"). The runtime injects the wired adapter.</p>
+<p><strong>Ports and adapters</strong> — your handlers ask for a capability ("document
+   storage"), not an implementation ("Postgres"). The runtime injects the wired
+   adapter.</p>
 </li>
 <li>
-<p><strong>Specifications</strong> — A logical name (<code>"users"</code>) ties a model to its operations and adapters. Change the adapter, not the spec.</p>
+<p><strong>Specifications</strong> — a logical name (<code>"users"</code>) ties a model to its operations
+   and adapters. Change the adapter, keep the spec.</p>
 </li>
 <li>
-<p><strong>Execution context</strong> — The seam where ports resolve to adapters. Every handler receives it; none learn which database they use.</p>
+<p><strong>Execution context</strong> — the seam where contracts resolve to adapters. Every
+   handler receives it; none learn which datastore they use.</p>
 </li>
 </ol>
-<p>These ideas come from established patterns. If you've seen Hexagonal Architecture or Clean Architecture elsewhere, Forze applies them to Python backends.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
-<p>Before diving in, you should be comfortable with:</p>
-<ul>
-<li><strong>Python 3.13+</strong> and async/await</li>
-<li><strong>Pydantic</strong> models and validation</li>
-<li><strong>FastAPI</strong> basics (or another async framework)</li>
-</ul>
-<p>Familiarity with DDD terminology (aggregates, domain events, bounded contexts) helps but isn't required. The <a href="../../core-concepts/overview/">Core Concepts</a> section explains each term as you encounter it.</p>
+<p>You'll be at home here if you know <strong>Python 3.13+</strong> and async/await, <strong>Pydantic</strong>
+models, and the basics of an async web framework like <strong>FastAPI</strong>. <abbr title="Domain-Driven Design">DDD</abbr>
+vocabulary — aggregates, domain events, bounded contexts — helps but isn't
+required.</p>
 <h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <div class="grid cards">
 <ul>
@@ -4425,7 +4399,7 @@
 <li>
 <p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg></span> <strong><a href="../quickstart/">Quickstart</a></strong></p>
 <hr />
-<p>Build a working service in ten minutes.</p>
+<p>Build a working service in about ten minutes — no Docker.</p>
 </li>
 </ul>
 </div>
@@ -4535,7 +4509,7 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

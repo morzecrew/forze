@@ -1729,6 +1729,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4312,13 +4314,13 @@
 <p>The <a href="../../integrations/mcp/">Model Context Protocol</a> lets AI clients call your
 application as tools. With Forze that's almost free: every operation on an
 aggregate is already a named, validated, governed unit — <code>forze_mcp</code> exposes each
-one as an MCP tool, so a model lists notes, fetches one, or creates one by calling
+one as an <abbr title="Model Context Protocol">MCP</abbr> tool, so a model lists notes, fetches one, or creates one by calling
 the <em>same</em> pipeline your HTTP routes would.</p>
 <p>The runnable server lives at <code>examples/recipes/mcp_server/</code> and runs fully
 in-process on the mock — point the
-<a href="https://github.com/modelcontextprotocol/inspector">MCP Inspector</a> at it and poke.</p>
+<a href="https://github.com/modelcontextprotocol/inspector"><abbr title="Model Context Protocol">MCP</abbr> Inspector</a> at it and poke.</p>
 <h2 id="the-aggregate">The aggregate<a class="headerlink" href="#the-aggregate" title="Permanent link">&para;</a></h2>
-<p>A minimal <code>Notes</code> document aggregate — nothing MCP-specific about it. The create
+<p>A minimal <code>Notes</code> document aggregate — nothing <abbr title="Model Context Protocol">MCP</abbr>-specific about it. The create
 payload carries only the domain fields a caller supplies; identity and timestamps
 are assigned by the server, so they never appear in the tool schema:</p>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Note</span><span class="p">(</span><span class="n">Document</span><span class="p">):</span>
@@ -4354,7 +4356,7 @@ are assigned by the server, so they never appear in the tool schema:</p>
 <span class="n">NS</span> <span class="o">=</span> <span class="n">SPEC</span><span class="o">.</span><span class="n">default_namespace</span>
 </code></pre></div>
 <h2 id="expose-its-operations-as-tools">Expose its operations as tools<a class="headerlink" href="#expose-its-operations-as-tools" title="Permanent link">&para;</a></h2>
-<p><code>build_mcp_server</code> walks the operation registry and registers one MCP tool per
+<p><code>build_mcp_server</code> walks the operation registry and registers one <abbr title="Model Context Protocol">MCP</abbr> tool per
 operation. Reads are exposed by default; <code>include_writes=True</code> opts the mutations
 in too, tagged destructive:</p>
 <div class="highlight"><pre><span></span><code>    <span class="n">server</span> <span class="o">=</span> <span class="n">build_mcp_server</span><span class="p">(</span>
@@ -4381,7 +4383,7 @@ npx<span class="w"> </span>-y<span class="w"> </span>@modelcontextprotocol/inspe
   filterable/sortable before building a <code>notes.list</code> query.</li>
 <li><strong>Bring your own <code>FastMCP</code> in production</strong> for auth and transport;
   <code>build_mcp_server</code> is the convenience wrapper. The wiring surface is in the
-  <a href="../../integrations/mcp/">MCP integration page</a>.</li>
+  <a href="../../integrations/mcp/"><abbr title="Model Context Protocol">MCP</abbr> integration page</a>.</li>
 </ul>
 
 
@@ -4489,7 +4491,7 @@ npx<span class="w"> </span>-y<span class="w"> </span>@modelcontextprotocol/inspe
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

@@ -1732,6 +1732,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -2585,6 +2587,28 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Document auth in OpenAPI
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-provides" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What it provides
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes
       </span>
     </span>
   </a>
@@ -4329,6 +4353,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#what-it-provides" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What it provides
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4499,7 +4545,7 @@ untouched:</p>
 (built with <code>build_document_registry</code>) onto a router you own. Request and
 response schemas come from the operation descriptors, and each route's
 <code>operationId</code> is the registry operation key verbatim (<code>notes.get</code>) — the HTTP
-surface, MCP tool names, and the operation catalog share one identity:</p>
+surface, <abbr title="Model Context Protocol">MCP</abbr> tool names, and the operation catalog share one identity:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_document_routes</span>
 
@@ -4530,7 +4576,7 @@ default to <code>spec.default_namespace</code>); <code>ns=</code> and <code>reso
 exclusive, so provide exactly one. To move a single operation off its default
 path, pass <code>path_overrides={DocumentKernelOp.GET: "/by-id/{id}"}</code> (keyed like
 <code>include=</code>). Only the path changes — the <code>operationId</code> stays the verbatim
-catalog key, so the HTTP/MCP/catalog identity is preserved; an override that
+catalog key, so the HTTP/<abbr title="Model Context Protocol">MCP</abbr>/catalog identity is preserved; an override that
 drops a placeholder the default path binds (e.g. <code>{id}</code>) is a configuration
 error rather than a silent demotion to a query parameter. Both knobs are
 available on every <code>attach_*_routes</code> helper.</p>
@@ -4640,7 +4686,7 @@ path/status/duration, never the response body) — prefer short <code>expires_in
 windows.</p>
 <p>A presign/multipart op on a <strong>client-side-encrypting</strong> route is refused by the
 adapter (the app never sees the bytes, so it cannot encrypt them) and the
-error propagates to a normal error status. <strong>Server-side</strong> (SSE/CMEK)
+error propagates to a normal error status. <strong>Server-side</strong> (<abbr title="Server-Side Encryption">SSE</abbr>/<abbr title="Customer-Managed Encryption Keys">CMEK</abbr>)
 encryption is transparent and does not refuse.</p>
 </div>
 <p><code>attach_authn_routes</code> projects an authn registry (<code>build_authn_registry</code>) the
@@ -4663,7 +4709,7 @@ secret is in the response <strong>once</strong>, optionally a user→agent deleg
 (<code>actor_principal_id</code>) with a human <code>label</code> — <code>GET /api-keys</code> lists the caller's
 keys as non-secret descriptors (a <code>hint</code> like <code>ab12…wxyz</code>, never the secret), and
 <code>DELETE /api-keys/{id}</code> revokes one. This is the minting surface for the
-<a href="../mcp/#protect-it-with-api-key-auth">MCP API-key flow</a>: the user issues a key
+<a href="../mcp/#protect-it-with-api-key-auth"><abbr title="Model Context Protocol">MCP</abbr> API-key flow</a>: the user issues a key
 here and pastes it into the agent host.</p>
 <p>Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers above — generated routes only validate the input DTO and run
@@ -4701,6 +4747,57 @@ routes advertise the scheme while token-minting routes (<code>/login</code>, <co
 open. Use <code>exclude={"orders.deactivate", ...}</code> to leave a flagged operation open.</p>
 <p>This <strong>documents</strong> auth; it doesn't enforce it — enforcement stays in the engine
 (the <code>AuthnRequired</code>/authz hooks) and identity extraction in the middleware.</p>
+<h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
+<p>Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
+runs them. The surface, at a glance:</p>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>runtime_lifespan</code></td>
+<td>run the runtime's lifecycle from the app lifespan</td>
+</tr>
+<tr>
+<td><code>InvocationMetadataMiddleware</code> / <code>SecurityContextMiddleware</code></td>
+<td>bind per-request context, identity, and tenant</td>
+</tr>
+<tr>
+<td><code>register_exception_handlers</code></td>
+<td>map a <code>CoreException</code> to an HTTP response by kind</td>
+</tr>
+<tr>
+<td><code>attach_readiness_route</code></td>
+<td>a drain-aware <code>GET /readyz</code> probe</td>
+</tr>
+<tr>
+<td><code>attach_document_routes</code> / <code>attach_search_routes</code> / <code>attach_storage_routes</code> / <code>attach_authn_routes</code></td>
+<td>project a frozen registry's operations onto a router</td>
+</tr>
+<tr>
+<td><code>apply_openapi_security</code></td>
+<td>declare the auth scheme in the generated OpenAPI</td>
+</tr>
+</tbody>
+</table>
+<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No external service</strong> — FastAPI runs in-process; the runtime's lifecycle owns
+  the backing clients.</li>
+<li><strong>You write or generate routes.</strong> Handlers resolve the context and run
+  operations; the <code>attach_*_routes</code> helpers project a frozen registry, but you
+  still mount the router.</li>
+<li><strong>Identity is extracted, not enforced.</strong> Middleware binds the principal;
+  enforcement lives in the engine's authn/authz hooks, and <code>apply_openapi_security</code>
+  only documents it.</li>
+<li><strong>Guard write-granting routes.</strong> <code>deactivate</code>, presigned-upload, and
+  multipart-session endpoints ship unguarded or grant write — bind authn/authz
+  before exposing them.</li>
+</ul>
 
 
 
@@ -4807,7 +4904,7 @@ open. Use <code>exclude={"orders.deactivate", ...}</code> to leave a flagged ope
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

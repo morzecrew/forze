@@ -1729,6 +1729,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4310,13 +4312,13 @@
   <h1 id="__skip">Accept external OIDC tokens</h1>
 
 <p>Sometimes you want to accept an IdP's tokens <em>directly</em> — every request carries a
-third-party OIDC access token, and your API verifies it against the IdP's JWKS
+third-party <abbr title="OpenID Connect">OIDC</abbr> access token, and your API verifies it against the IdP's <abbr title="JSON Web Key Set">JWKS</abbr>
 and resolves it to a principal. No first-party tokens are minted (that's the
 <a href="../external-bootstrap-forze-jwt/">bootstrap</a> pattern); the verification is the
 seam.</p>
-<p>The conceptual model is in <a href="../../integrations/oidc/">OIDC</a>; this is the wiring.</p>
+<p>The conceptual model is in <a href="../../integrations/oidc/"><abbr title="OpenID Connect">OIDC</abbr></a>; this is the wiring.</p>
 <h2 id="build-a-verifier">Build a verifier<a class="headerlink" href="#build-a-verifier" title="Permanent link">&para;</a></h2>
-<p>An <code>OidcTokenVerifier</code> validates the JWT signature against a JWKS, plus issuer,
+<p>An <code>OidcTokenVerifier</code> validates the JWT signature against a <abbr title="JSON Web Key Set">JWKS</abbr>, plus issuer,
 audience, and expiry. All arguments are keyword-only, and <code>cache_ttl</code> / <code>timeout</code>
 are <code>timedelta</code>s:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
@@ -4387,7 +4389,7 @@ the route's <code>AuthnSpec</code> (see <a href="../authn-authz-tenancy-fastapi/
 <ul>
 <li>The shipped <code>ConfigurableOidcIdpVerifier</code> + <code>OidcIdpPreset</code> cover the common
   provider cases — use them instead of hand-building a verifier when one fits.</li>
-<li>Verifying on every request means every request depends on the IdP's JWKS being
+<li>Verifying on every request means every request depends on the IdP's <abbr title="JSON Web Key Set">JWKS</abbr> being
   reachable (the provider caches it for <code>cache_ttl</code>). If that coupling is a
   problem, mint first-party tokens with the <a href="../external-bootstrap-forze-jwt/">bootstrap</a>
   pattern instead.</li>
@@ -4500,7 +4502,7 @@ the route's <code>AuthnSpec</code> (see <a href="../authn-authz-tenancy-fastapi/
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

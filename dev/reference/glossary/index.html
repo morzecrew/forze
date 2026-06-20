@@ -1727,6 +1727,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4326,6 +4328,8 @@
 
   <h1 id="__skip">Glossary</h1>
 
+<p>Plain-language definitions for the terms used across the docs, grouped by area.
+Skim it, or search for a single word.</p>
 <h2 id="core-concepts">Core concepts<a class="headerlink" href="#core-concepts" title="Permanent link">&para;</a></h2>
 <p><strong>Aggregate</strong>
 :   A business entity with identity, versioning, and invariants. Subclass <code>Document</code> to create one; add the <code>AggregateRoot</code> mixin when you need domain events.</p>
@@ -4395,9 +4399,9 @@
 :   The isolation level for a tenant: <code>tagged</code> (marker column), <code>namespace</code> (schema/prefix), or <code>dedicated</code> (separate instance).</p>
 <hr />
 <h2 id="patterns">Patterns<a class="headerlink" href="#patterns" title="Permanent link">&para;</a></h2>
-<p><strong>CQRS</strong>
+<p><strong><abbr title="Command Query Responsibility Segregation">CQRS</abbr></strong>
 :   Command Query Responsibility Segregation. Forze's query/command port split follows this pattern — writes go through command ports, reads through query ports.</p>
-<p><strong>OCC</strong>
+<p><strong><abbr title="Optimistic Concurrency Control">OCC</abbr></strong>
 :   Optimistic Concurrency Control. Forze uses revision numbers to detect concurrent modifications.</p>
 <p><strong>Outbox</strong>
 :   A transactional pattern where events are written to a local table in the same transaction as state changes, then relayed to external systems.</p>
@@ -4518,7 +4522,7 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

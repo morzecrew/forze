@@ -1923,6 +1923,8 @@
         
   
   
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
+  
   <span class="md-ellipsis">
     
   
@@ -4476,10 +4478,10 @@
   <h1 id="__skip">Encryption</h1>
 
 <p>Forze encrypts data with <strong>envelope encryption</strong>: a key backend you control (a
-KMS) holds the key-encryption key (the <em>KEK</em>), and the framework only ever asks
+<abbr title="Key Management Service">KMS</abbr>) holds the key-encryption key (the <em>KEK</em>), and the framework only ever asks
 it to wrap and unwrap short-lived data keys (<em>DEKs</em>). The KEK never leaves the
 backend, so the same model covers managed keys and full <em>bring-your-own-key</em>
-(BYOK) — the difference is only which backend, and whose tenant, the key belongs
+(<abbr title="Bring Your Own Key">BYOK</abbr>) — the difference is only which backend, and whose tenant, the key belongs
 to.</p>
 <p>The result is the same shape you already know from
 <a href="../multi-tenancy/">multi-tenancy</a>: a cross-cutting concern declared on the spec,
@@ -4493,9 +4495,9 @@ plaintext rather than degrading silently.</p>
 DEK, the AEAD ciphertext, and the algorithm metadata travel together, so a
 reader needs only the key backend to open it, never an out-of-band scheme. The
 <code>Keyring</code> generates a DEK, has the backend wrap it, and <strong>caches and reuses</strong> it
-across a scope up to <code>max_dek_messages</code> before rotating — one KMS round-trip
+across a scope up to <code>max_dek_messages</code> before rotating — one <abbr title="Key Management Service">KMS</abbr> round-trip
 amortized over many values.</p>
-<p>Every ciphertext is bound to <strong>associated data</strong> (AAD): at minimum the tenant
+<p>Every ciphertext is bound to <strong>associated data</strong> (<abbr title="Additional Authenticated Data">AAD</abbr>): at minimum the tenant
 and the field name, so an envelope lifted from one tenant or column cannot be
 replayed into another. The cipher is AEAD (AES-256-GCM by default, ChaCha20-
 Poly1305 optional) — tampering fails the open, it doesn't return garbage.</p>
@@ -4519,7 +4521,7 @@ directory (see <a href="#per-tenant-keys-byok">Per-tenant keys</a> below).</p>
 <p class="admonition-title"><code>MockKeyManagement</code> is dev/test only</p>
 <p>The in-memory <code>MockKeyManagement</code> from <code>forze_mock</code> derives keys locally —
 it is for tests and local runs, never production. It exists so the encryption
-paths exercise end-to-end without a real KMS; it protects nothing.</p>
+paths exercise end-to-end without a real <abbr title="Key Management Service">KMS</abbr>; it protects nothing.</p>
 </div>
 <h2 id="where-data-gets-encrypted">Where data gets encrypted<a class="headerlink" href="#where-data-gets-encrypted" title="Permanent link">&para;</a></h2>
 <p>Three surfaces opt in independently, each declaring its own coverage tier. You
@@ -4541,7 +4543,7 @@ encrypt only what needs it.</p>
 over the same table shares the <em>same</em> object — so the two can't drift.
 <code>encrypted</code> fields are randomized AEAD ciphertext; <code>searchable</code> fields use a
 deterministic cipher so equality queries still match. Setting <code>binds_record_id=True</code>
-folds the record's <code>id</code> into the AAD of every randomized field, so a ciphertext
+folds the record's <code>id</code> into the <abbr title="Additional Authenticated Data">AAD</abbr> of every randomized field, so a ciphertext
 can't be copied between rows — it applies only to randomized fields, never
 searchable ones (whose ciphertext must stay record-independent to compare).</p>
 <div class="admonition warning">
@@ -4606,7 +4608,7 @@ envelope, decrypted transparently on read:</p>
 <p>At <code>at_rest</code> the payload is ciphertext in your database and plaintext on the
 wire; at <code>end_to_end</code> it stays sealed through the broker and is opened only by
 the consumer after dedup — the message broker never sees plaintext. The payload
-AAD is reconstructable from the envelope headers (tenant and event id), so any
+<abbr title="Additional Authenticated Data">AAD</abbr> is reconstructable from the envelope headers (tenant and event id), so any
 transport carries it: queue, stream, or pub/sub, across every messaging
 backend. Legacy plaintext rows written before a tier was raised still relay.</p>
 <h3 id="idempotency-result-cache">Idempotency result cache<a class="headerlink" href="#idempotency-result-cache" title="Permanent link">&para;</a></h3>
@@ -4650,7 +4652,7 @@ never per request:</p>
 <p>A spec that forgot to mark a field, or a storage route left in the clear, fails
 to wire instead of quietly persisting plaintext. Leave it unset (the default)
 and nothing is enforced — coverage stays opt-in per spec.</p>
-<h2 id="per-tenant-keys-byok">Per-tenant keys (BYOK)<a class="headerlink" href="#per-tenant-keys-byok" title="Permanent link">&para;</a></h2>
+<h2 id="per-tenant-keys-byok">Per-tenant keys (<abbr title="Bring Your Own Key">BYOK</abbr>)<a class="headerlink" href="#per-tenant-keys-byok" title="Permanent link">&para;</a></h2>
 <p>Stronger isolation gives each tenant its own KEK, so one tenant's data is
 unreadable with another's key — and a tenant can supply or revoke their own.
 Swap the static directory for a per-tenant one:</p>
@@ -4794,7 +4796,7 @@ unwrap calls, cache hits, and cold misses, the signal for whether
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

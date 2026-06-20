@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#a-policy-is-composed-strategies" class="md-skip">
+        <a href="#built-in-policies" class="md-skip">
           Skip to content
         </a>
       
@@ -1596,17 +1596,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#a-policy-is-composed-strategies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        A policy is composed strategies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#built-in-policies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1622,6 +1611,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Applying a policy
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-policy-is-composed-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A policy is composed strategies
       </span>
     </span>
   </a>
@@ -1911,6 +1911,8 @@
       <a href="../../integrations/" class="md-nav__link">
         
   
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg>
   
   <span class="md-ellipsis">
     
@@ -4232,17 +4234,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#a-policy-is-composed-strategies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        A policy is composed strategies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#built-in-policies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4258,6 +4249,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Applying a policy
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-policy-is-composed-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A policy is composed strategies
       </span>
     </span>
   </a>
@@ -4457,10 +4459,33 @@
 operation (or a single call) with rate limits, retries, timeouts, and circuit
 breakers — declaratively, by name — so fault tolerance lives in the wiring, not
 scattered through handlers.</p>
+<h2 id="built-in-policies">Built-in policies<a class="headerlink" href="#built-in-policies" title="Permanent link">&para;</a></h2>
+<p>Two ship ready to use, no <code>ResilienceSpec</code> required:</p>
+<ul>
+<li><strong><code>occ</code></strong> — retry on <code>concurrency</code> (optimistic-concurrency contention).</li>
+<li><strong><code>transient</code></strong> — retry on <code>infrastructure</code>, with a 30 s per-attempt timeout.</li>
+</ul>
+<h2 id="applying-a-policy">Applying a policy<a class="headerlink" href="#applying-a-policy" title="Permanent link">&para;</a></h2>
+<p>Declaratively, wrap an operation on its registry with a named policy:</p>
+<div class="highlight"><pre><span></span><code><span class="n">ResilienceWrap</span><span class="p">(</span><span class="n">policy</span><span class="o">=</span><span class="s2">&quot;transient&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">()</span>
+</code></pre></div>
+<p>Or imperatively, around a specific call:</p>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">resilience</span><span class="p">()</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+    <span class="k">lambda</span><span class="p">:</span> <span class="n">charge_card</span><span class="p">(</span><span class="n">payment</span><span class="p">),</span>
+    <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;transient&quot;</span><span class="p">,</span>
+    <span class="n">route</span><span class="o">=</span><span class="s2">&quot;payments&quot;</span><span class="p">,</span>   <span class="c1"># keys breaker/bulkhead state per dependency</span>
+<span class="p">)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">A retry re-runs the whole operation</p>
+<p>Each attempt opens a <strong>fresh transaction</strong>, so a failed attempt's writes roll
+back before the next one — retries never leave half-applied state. It also
+means retried work must be safe to repeat.</p>
+</div>
 <h2 id="a-policy-is-composed-strategies">A policy is composed strategies<a class="headerlink" href="#a-policy-is-composed-strategies" title="Permanent link">&para;</a></h2>
-<p>A <code>ResiliencePolicy</code> is an ordered stack of strategy objects (outer → inner:
-rate limit → bulkhead → circuit breaker → retry → timeout), plus optional
-fallback and hedge:</p>
+<p>When the built-ins aren't enough, compose your own. A <code>ResiliencePolicy</code> is an
+ordered stack of strategy objects (outer → inner: rate limit → bulkhead →
+circuit breaker → retry → timeout), plus optional fallback and hedge:</p>
 <table>
 <thead>
 <tr>
@@ -4507,29 +4532,6 @@ failure, by design.</p>
 strategy chain from the outside — and a retry abandons a backoff sleep that
 would outlive the budget, surfacing the real error instead of a pointless
 wait.</p>
-<h2 id="built-in-policies">Built-in policies<a class="headerlink" href="#built-in-policies" title="Permanent link">&para;</a></h2>
-<p>Two ship ready to use, no <code>ResilienceSpec</code> required:</p>
-<ul>
-<li><strong><code>occ</code></strong> — retry on <code>concurrency</code> (optimistic-concurrency contention).</li>
-<li><strong><code>transient</code></strong> — retry on <code>infrastructure</code>, with a 30 s per-attempt timeout.</li>
-</ul>
-<h2 id="applying-a-policy">Applying a policy<a class="headerlink" href="#applying-a-policy" title="Permanent link">&para;</a></h2>
-<p>Declaratively, wrap an operation on its registry with a named policy:</p>
-<div class="highlight"><pre><span></span><code><span class="n">ResilienceWrap</span><span class="p">(</span><span class="n">policy</span><span class="o">=</span><span class="s2">&quot;transient&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">()</span>
-</code></pre></div>
-<p>Or imperatively, around a specific call:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">resilience</span><span class="p">()</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-    <span class="k">lambda</span><span class="p">:</span> <span class="n">charge_card</span><span class="p">(</span><span class="n">payment</span><span class="p">),</span>
-    <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;transient&quot;</span><span class="p">,</span>
-    <span class="n">route</span><span class="o">=</span><span class="s2">&quot;payments&quot;</span><span class="p">,</span>   <span class="c1"># keys breaker/bulkhead state per dependency</span>
-<span class="p">)</span>
-</code></pre></div>
-<div class="admonition warning">
-<p class="admonition-title">A retry re-runs the whole operation</p>
-<p>Each attempt opens a <strong>fresh transaction</strong>, so a failed attempt's writes roll
-back before the next one — retries never leave half-applied state. It also
-means retried work must be safe to repeat.</p>
-</div>
 <h2 id="rate-limiting">Rate limiting<a class="headerlink" href="#rate-limiting" title="Permanent link">&para;</a></h2>
 <p><code>RateLimitStrategy(permits=10, per=timedelta(seconds=1))</code> is a token bucket:
 <code>permits/per</code> is the sustained rate, <code>burst or permits</code> the capacity, refilled
@@ -4854,7 +4856,7 @@ singleton startup steps — is in <a href="../shutdown-and-fleets/">Shutdown &am
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>

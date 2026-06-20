@@ -324,3 +324,9 @@
   margin-right: auto;
   max-width: 72rem;
 }
+
+* {
+  /* --md-accent-fg-color: #aa6e42; */
+  --md-accent-fg-color--alternative: #f0461a;
+  --md-accent-fg-color--transparent: rgb(from var(--md-accent-fg-color) r g b / 0.1);
+}
