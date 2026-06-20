@@ -19,6 +19,7 @@ cache is a pure latency optimization: a cold value simply pays one KMS call inli
 """
 
 import asyncio
+import zlib
 from collections import OrderedDict
 from typing import Any, Iterable, final
 
@@ -168,9 +169,11 @@ class Keyring:
     # ....................... #
 
     def _lock_for(self, key_id: str) -> asyncio.Lock:
-        # Deterministic key_id → stripe mapping: the lock object is stable for a given
-        # key_id within the process, so mutual exclusion per key holds.
-        return self._locks[hash(key_id) % len(self._locks)]
+        # Deterministic key_id → stripe mapping via a stable hash (CRC32, like the
+        # L1 cache), NOT Python's ``hash()`` which is PYTHONHASHSEED-randomized —
+        # so the same key_id picks the same stripe across processes/runs, keeping
+        # both per-key mutual exclusion and cross-process simulation replay stable.
+        return self._locks[zlib.crc32(key_id.encode("utf-8")) % len(self._locks)]
 
     # ....................... #
 

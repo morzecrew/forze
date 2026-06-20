@@ -12,7 +12,10 @@ seam's own definition:
 * entropy — ``os.urandom``, ``secrets.token_*``/``randbits``/…, ``random.<fn>``,
   stdlib ``uuid.uuid4``/``uuid1``;
 * clocks — ``time.monotonic``/``time``/``time_ns``/``process_time*`` and
-  ``datetime.now``/``datetime.utcnow`` (use ``utcnow()`` / ``monotonic()`` instead).
+  ``datetime.now``/``datetime.utcnow`` (use ``utcnow()`` / ``monotonic()`` instead);
+* stable bucketing — ``hash(x) % n`` / ``hash(x) & mask``: Python's builtin ``hash``
+  is PYTHONHASHSEED-randomized, so it picks a different bucket every process and breaks
+  cross-process replay. Use a stable hash (``zlib.crc32`` / ``derive_seed``).
 
 Type annotations and bare references (e.g. ``rng: random.Random``,
 ``clock=time.monotonic`` as a *type*) are not flagged — only calls. ``time.perf_counter``
@@ -64,7 +67,14 @@ _BANNED_ATTRS: dict[str, frozenset[str] | None] = {
     # Clocks: route through utcnow()/monotonic(). perf_counter* is NOT banned
     # (observability-only elapsed measurement).
     "time": frozenset(
-        {"monotonic", "monotonic_ns", "time", "time_ns", "process_time", "process_time_ns"}
+        {
+            "monotonic",
+            "monotonic_ns",
+            "time",
+            "time_ns",
+            "process_time",
+            "process_time_ns",
+        }
     ),
     "datetime": frozenset({"now", "utcnow"}),
 }
@@ -75,12 +85,30 @@ _BANNED_FROM_IMPORT: dict[str, frozenset[str]] = {
     "os": frozenset({"urandom"}),
     "secrets": _BANNED_ATTRS["secrets"],  # type: ignore[dict-item]
     "random": frozenset(
-        {"random", "uniform", "randint", "randrange", "choice", "shuffle",
-         "getrandbits", "Random", "SystemRandom", "sample", "betavariate"}
+        {
+            "random",
+            "uniform",
+            "randint",
+            "randrange",
+            "choice",
+            "shuffle",
+            "getrandbits",
+            "Random",
+            "SystemRandom",
+            "sample",
+            "betavariate",
+        }
     ),
     "uuid": frozenset({"uuid4", "uuid1"}),
     "time": frozenset(
-        {"monotonic", "monotonic_ns", "time", "time_ns", "process_time", "process_time_ns"}
+        {
+            "monotonic",
+            "monotonic_ns",
+            "time",
+            "time_ns",
+            "process_time",
+            "process_time_ns",
+        }
     ),
 }
 
@@ -89,15 +117,14 @@ _BANNED_FROM_IMPORT: dict[str, frozenset[str]] = {
 
 
 def _iter_source_files() -> list[Path]:
-    return sorted(
-        p
-        for p in _SRC.rglob("*.py")
-        if "__pycache__" not in p.parts
-    )
+    return sorted(p for p in _SRC.rglob("*.py") if "__pycache__" not in p.parts)
 
 
 def _rel(path: Path) -> str:
-    return path.relative_to(_SRC).as_posix()
+    try:
+        return path.relative_to(_SRC).as_posix()
+    except ValueError:
+        return path.name  # a file outside src/ (e.g. a guard self-test fixture)
 
 
 def _violations_in(path: Path) -> list[str]:
@@ -114,6 +141,19 @@ def _violations_in(path: Path) -> list[str]:
 
     found: list[str] = []
     for node in ast.walk(tree):
+        # ``hash(x) % n`` / ``hash(x) & mask`` — PYTHONHASHSEED-randomized bucketing.
+        if (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, (ast.Mod, ast.BitAnd))
+            and isinstance(node.left, ast.Call)
+            and isinstance(node.left.func, ast.Name)
+            and node.left.func.id == "hash"
+        ):
+            found.append(
+                f"{_rel(path)}:{node.lineno}: hash(...) % / & "
+                "(use zlib.crc32 / derive_seed for cross-process-stable bucketing)"
+            )
+
         if not isinstance(node, ast.Call):
             continue
 
@@ -144,7 +184,26 @@ def test_no_raw_entropy_outside_seam() -> None:
         violations.extend(_violations_in(path))
 
     assert not violations, (
-        "Raw entropy primitives must route through the EntropySource seam "
-        "(forze.base.primitives.current_entropy_source / token_urlsafe / uuid4). "
-        "Offending call sites:\n  " + "\n  ".join(violations)
+        "Non-deterministic primitives must route through the seams: entropy via "
+        "forze.base.primitives.current_entropy_source / token_urlsafe / uuid4, time via "
+        "utcnow() / monotonic(), and stable bucketing via zlib.crc32 / derive_seed (not "
+        "Python's hash()). Offending sites:\n  " + "\n  ".join(violations)
     )
+
+
+def test_guard_flags_hash_modulo_bucketing(tmp_path: Path) -> None:
+    # The guard's hash()-bucketing check must actually fire (not merely pass because
+    # src happens to be clean): a synthetic offender is detected, a stable hash isn't.
+    offender = tmp_path / "offender.py"
+    offender.write_text(
+        "def stripe(k, locks):\n    return locks[hash(k) % len(locks)]\n"
+    )
+    assert _violations_in(offender), "hash(x) % n must be flagged"
+
+    clean = tmp_path / "clean.py"
+    clean.write_text(
+        "import zlib\n"
+        "def stripe(k, locks):\n"
+        "    return locks[zlib.crc32(k.encode()) % len(locks)]\n"
+    )
+    assert not _violations_in(clean), "a stable-hash bucket must not be flagged"

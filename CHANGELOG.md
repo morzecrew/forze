@@ -67,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Keyring fill-lock stripe is now cross-process stable** — the per-`key_id` crypto fill-lock stripe used Python's `hash()`, which is PYTHONHASHSEED-randomized, so the same key mapped to a different stripe each process and broke deterministic-simulation *replay*. It now uses a stable hash (`zlib.crc32`, like the L1 cache); the determinism guard additionally bans the `hash(x) % n` bucketing anti-pattern so it can't regress.
+
 - **Runtime sorts and filters on unknown fields fail loud across backends** — a query-time sort or filter on a field absent from the read model now raises `exc.configuration` on Mongo, Firestore, and the mock (matching Postgres). This notably covers computed fields, which are never serialized, so sorting or filtering on one is now rejected rather than silently mishandled.
 
 - **FastAPI API-key `prefix:key` parsing fixed** — the `X-API-Key` resolver now splits on the first colon so `prefix:secret` yields the bare secret, matching `forze_mcp`; previously it split on whitespace and passed the whole value as the secret, failing verification. Bare keys still authenticate, and the prefix now rejects an embedded colon.
