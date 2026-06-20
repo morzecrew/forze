@@ -1,14 +1,17 @@
-"""The assertion helper — run DST inside a normal pytest test, fail with the counterexample."""
+"""The assertion helpers — run DST inside a normal pytest test, fail with the counterexample."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Sequence
 
 import attrs
 
+from forze_dst.artifacts import FailureBundle, bundle_from_report, config_from_dict
 from forze_dst.config import SimulationConfig
 from forze_dst.engines.cases import OperationCase
 from forze_dst.harness import Simulation
+from forze_dst.oracle import ViolationReport
 from forze_dst.scenario import Scenario
 from forze_dst.testing._options import DstOptions, active
 
@@ -54,8 +57,85 @@ def assert_no_violation(
     ``OP_CASE`` strategy; ``scenario`` for the scenario strategies, auto-derived if omitted).
     """
 
-    cfg = _resolve_config(config, active())
+    options = active()
+    cfg = _resolve_config(config, options)
     report = sim.run(cfg, scenario=scenario, cases=cases)
 
     if report is not None:
+        if options is not None and options.save_bundle is not None:
+            _save_bundle(report, cfg, options.save_bundle)
+
         raise AssertionError("DST found a violation:\n" + report.format())
+
+
+# ....................... #
+
+
+def _save_bundle(report: ViolationReport, config: SimulationConfig, directory: str) -> None:
+    """Drop a portable :class:`~forze_dst.artifacts.FailureBundle` for *report* into *directory*."""
+
+    out = Path(directory)
+    out.mkdir(parents=True, exist_ok=True)
+    bundle_from_report(report, config).save(out / f"dst-seed-{report.seed}.json")
+
+
+# ....................... #
+
+
+def assert_no_regressions(sim: Simulation, *, bundles: str | Path) -> None:
+    """Replay saved :class:`~forze_dst.artifacts.FailureBundle` s against *sim* — fail if any still
+    violates.
+
+    *bundles* is a directory of ``.json`` bundles (as ``--dst-save-bundle`` writes) or a single
+    bundle file. Each is replayed at its seed under its own saved config (the bundle is
+    self-contained, so the exact environment that found the bug is reproduced — not the current
+    defaults). Lock a bundle into your repo and this turns it into a permanent regression test:
+    the day the bug comes back, the seed reproduces it.
+
+    A bundle whose registry fingerprint no longer matches *sim* is reported as a drift warning
+    (the catalog moved, so the seed may not exercise the original path) rather than a pass.
+    """
+
+    paths = _bundle_paths(bundles)
+
+    if not paths:
+        return
+
+    failures: list[str] = []
+
+    for path in paths:
+        bundle = FailureBundle.load(path)
+        drifted = (
+            bundle.registry_fingerprint is not None
+            and bundle.registry_fingerprint != sim.fingerprint()
+        )
+        replay = attrs.evolve(config_from_dict(bundle.config), seeds=[bundle.seed])
+        report = sim.run(replay)
+
+        if report is not None:
+            failures.append(f"seed {bundle.seed} ({path.name}) still violates:\n{report.format()}")
+        elif drifted:
+            failures.append(
+                f"seed {bundle.seed} ({path.name}) no longer reproduces, but the registry "
+                "fingerprint drifted — the catalog changed, so this is not a trustworthy pass."
+            )
+
+    if failures:
+        raise AssertionError(
+            f"{len(failures)} of {len(paths)} regression bundle(s) failed:\n\n"
+            + "\n\n".join(failures)
+        )
+
+
+# ....................... #
+
+
+def _bundle_paths(bundles: str | Path) -> list[Path]:
+    """Resolve *bundles* to a sorted list of bundle files (a directory's ``*.json``, or one file)."""
+
+    path = Path(bundles)
+
+    if path.is_dir():
+        return sorted(path.glob("*.json"))
+
+    return [path] if path.is_file() else []

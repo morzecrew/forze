@@ -19,7 +19,7 @@ from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig
 from forze_dst.invariants import expect, operation_succeeds
 from forze_dst.markers import record_event
-from forze_dst.testing import assert_no_violation
+from forze_dst.testing import assert_no_regressions, assert_no_violation
 from forze_dst.testing._options import DstOptions, active, set_active
 from forze_dst.testing.assertions import _resolve_config
 from forze_dst.testing import plugin
@@ -92,6 +92,45 @@ def _racy_sim() -> Simulation:
     ledger = {"balance": 0, "expected": 0}
     registry = OperationRegistry(
         handlers={"deposit": lambda _c: _Deposit(ledger=ledger)},
+        descriptors={
+            "deposit": OperationDescriptor(
+                input_type=DepositDTO, output_type=None, description="x"
+            )
+        },
+    ).freeze()
+
+    async def reset(_ctx: ExecutionContext) -> None:
+        ledger["balance"] = ledger["expected"] = 0
+
+    async def observe(_ctx: ExecutionContext) -> None:
+        record_event("balance", final=ledger["balance"], expected=ledger["expected"])
+
+    return Simulation(
+        operations=registry,
+        deps=lambda: MockDepsModule(),
+        setup=reset,
+        observe=observe,
+        invariants=[
+            expect("balance", lambda e: e.fields["final"] == e.fields["expected"],
+                   message="lost deposit")
+        ],
+    )
+
+
+@attrs.define(slots=True, kw_only=True)
+class _AtomicDeposit(Handler[DepositDTO, None]):
+    ledger: dict[str, int]
+
+    async def __call__(self, args: DepositDTO) -> None:
+        # No await between read and write → no lost update (the fixed version).
+        self.ledger["expected"] += args.amount
+        self.ledger["balance"] += args.amount
+
+
+def _fixed_sim() -> Simulation:
+    ledger = {"balance": 0, "expected": 0}
+    registry = OperationRegistry(
+        handlers={"deposit": lambda _c: _AtomicDeposit(ledger=ledger)},
         descriptors={
             "deposit": OperationDescriptor(
                 input_type=DepositDTO, output_type=None, description="x"
@@ -220,12 +259,85 @@ class TestPluginHooks:
             def getoption(self, _name: str) -> None:
                 return None
 
-            def getini(self, _name: str) -> str:
-                return "12"
+            def getini(self, name: str) -> str | None:
+                return "12" if name == "dst_seeds" else None
 
         try:
             plugin.pytest_configure(_Config())
             opts = active()
             assert opts is not None and opts.seeds == 12
+        finally:
+            set_active(None)
+
+
+# ....................... #
+
+
+class TestBundles:
+    def test_save_bundle_writes_a_file_on_violation(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        set_active(DstOptions(save_bundle=str(tmp_path)))
+        try:
+            with pytest.raises(AssertionError):
+                assert_no_violation(
+                    _racy_sim(),
+                    SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
+                    scenario=_DEPOSIT_SCENARIO,
+                )
+        finally:
+            set_active(None)
+
+        bundles = list(tmp_path.glob("*.json"))
+        assert bundles, "a failing sweep saved no bundle"
+
+    def test_round_trip_replay_refinds_the_bug(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Save a bundle from the buggy sim, then replay it against the (still buggy) sim.
+        set_active(DstOptions(save_bundle=str(tmp_path)))
+        try:
+            with pytest.raises(AssertionError):
+                assert_no_violation(
+                    _racy_sim(),
+                    SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
+                    scenario=_DEPOSIT_SCENARIO,
+                )
+        finally:
+            set_active(None)
+
+        with pytest.raises(AssertionError, match="still violates"):
+            assert_no_regressions(_racy_sim(), bundles=tmp_path)
+
+    def test_replay_passes_against_the_fixed_sim(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # The bundle was found against the racy sim; the fixed sim reproduces it clean.
+        set_active(DstOptions(save_bundle=str(tmp_path)))
+        try:
+            with pytest.raises(AssertionError):
+                assert_no_violation(
+                    _racy_sim(),
+                    SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
+                    scenario=_DEPOSIT_SCENARIO,
+                )
+        finally:
+            set_active(None)
+
+        # No raise → the regression is fixed.
+        assert_no_regressions(_fixed_sim(), bundles=tmp_path)
+
+    def test_empty_dir_is_a_no_op(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        assert_no_regressions(_fixed_sim(), bundles=tmp_path)  # nothing to replay → passes
+
+    def test_plugin_registers_save_bundle_option(self) -> None:
+        class _Config:
+            def addinivalue_line(self, _kind: str, _line: str) -> None:
+                pass
+
+            def getoption(self, name: str) -> str | None:
+                return "/tmp/bundles" if name == "--dst-save-bundle" else None
+
+            def getini(self, _name: str) -> None:
+                return None
+
+        try:
+            plugin.pytest_configure(_Config())
+            opts = active()
+            assert opts is not None and opts.save_bundle == "/tmp/bundles"
         finally:
             set_active(None)

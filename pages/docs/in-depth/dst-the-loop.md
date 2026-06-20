@@ -50,6 +50,24 @@ pytest -m dst --dst-seeds 2000    # exhaustive, in CI — same test, no code cha
 
 The plugin also registers the `dst` marker, so `-m dst` runs the simulation tests on their own (the heavy ones can be a nightly job) and `-m "not dst"` skips them in a fast inner loop. The plugin is opt-in by design — importing the DST machinery costs a moment, so it stays off until a project asks for it rather than taxing every test run.
 
+When a sweep fails in CI, the seed that found it is the thing worth keeping. `--dst-save-bundle=DIR` drops a portable [bundle](#carry-a-bug-anywhere) — the seed and the full config that produced it — for every failing sweep:
+
+```bash
+pytest -m dst --dst-save-bundle ./dst-regressions
+```
+
+Commit those bundles, and `assert_no_regressions` turns them into a permanent guard: it replays each one at its seed under its own saved config, so the exact environment that found the bug is reproduced, not the current defaults. The day the bug comes back, the test fails again — with the original counterexample.
+
+```python
+from forze_dst.testing import assert_no_regressions
+
+@pytest.mark.dst
+def test_known_bugs_stay_fixed():
+    assert_no_regressions(payments_simulation, bundles="./dst-regressions")
+```
+
+A bundle whose registry fingerprint no longer matches the simulation is flagged rather than passed silently — the catalog moved, so a clean replay can no longer be trusted to exercise the original path.
+
 ## Reproduce and regress from the command line
 
 The `forze dst` command wires the loop end to end against an import string pointing at your `Simulation`:

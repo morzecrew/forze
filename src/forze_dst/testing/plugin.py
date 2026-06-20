@@ -36,9 +36,22 @@ def pytest_addoption(parser: Any) -> None:
         help="Override every assert_no_violation sweep to this many seeds "
         "(scale one test quick locally / exhaustive in CI).",
     )
+    group.addoption(
+        "--dst-save-bundle",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="On a failure, drop a portable FailureBundle (seed + full config) into DIR "
+        "for CI to keep and replay.",
+    )
     parser.addini(
         "dst_seeds",
         "Default seed count for DST sweeps (overridden by --dst-seeds).",
+        default=None,
+    )
+    parser.addini(
+        "dst_save_bundle",
+        "Directory for FailureBundles on failure (overridden by --dst-save-bundle).",
         default=None,
     )
 
@@ -59,7 +72,9 @@ def pytest_configure(config: Any) -> None:
         ini = config.getini("dst_seeds")
         seeds = int(ini) if ini else None
 
-    set_active(DstOptions(seeds=seeds))
+    save_bundle = config.getoption("--dst-save-bundle") or config.getini("dst_save_bundle")
+
+    set_active(DstOptions(seeds=seeds, save_bundle=save_bundle or None))
 
 
 # ....................... #

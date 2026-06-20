@@ -20,6 +20,11 @@ class DstOptions:
     test runs quick locally and exhaustive in CI without a code change. ``None`` leaves each
     config's own seed range untouched."""
 
+    save_bundle: str | None = None
+    """``--dst-save-bundle`` / ini ``dst_save_bundle`` — directory to drop a portable
+    :class:`~forze_dst.artifacts.FailureBundle` into whenever a sweep fails, so CI keeps the
+    seed + full config to reproduce it. ``None`` saves nothing."""
+
 
 # ....................... #
 
