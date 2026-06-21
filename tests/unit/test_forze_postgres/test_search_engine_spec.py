@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("psycopg")
+
 from forze.base.exceptions import CoreException
 from forze_postgres.execution.deps.configs import (
     FtsEngine,
@@ -17,8 +19,6 @@ from forze_postgres.execution.deps.configs import (
     PostgresSearchConfig,
     VectorEngine,
 )
-
-pytest.importorskip("psycopg")
 
 # ----------------------- #
 

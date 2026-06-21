@@ -17,6 +17,7 @@ from .cpu import (
 from .datetime import monotonic, utcnow
 from .deadline import (
     bind_deadline,
+    clear_deadline,
     current_deadline,
     remaining_time,
     reset_deadline,
@@ -76,6 +77,7 @@ __all__ = [
     "remaining_time",
     "set_deadline",
     "reset_deadline",
+    "clear_deadline",
     "bind_deadline",
     "CpuExecutor",
     "ThreadPoolCpuExecutor",

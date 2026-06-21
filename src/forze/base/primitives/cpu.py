@@ -30,13 +30,14 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
+from itertools import batched
 from typing import Callable, Generator, Iterable, Protocol, final, runtime_checkable
 
 import attrs
 
 from forze.base.exceptions import exc
 
-from .deadline import remaining_time
+from .deadline import clear_deadline, remaining_time
 
 # ----------------------- #
 
@@ -229,9 +230,10 @@ async def run_cpu[T](
     Set *deadline* to ``False`` for best-effort plumbing that must not be killed by the
     invocation deadline (e.g. decoding a cache hit, where a deadline-driven failure would
     only force a redundant fallback fetch). The bounded pool, context propagation, and
-    outer-cancellation token still apply — only deadline enforcement is skipped.
-    (``deadline`` is a reserved keyword of this function; pass any same-named argument to
-    *fn* via :func:`functools.partial`.)
+    outer-cancellation token still apply — only deadline enforcement is skipped, and the
+    deadline is also cleared in the worker context so a :func:`checkpoint` inside the
+    offloaded code does not re-impose it. (``deadline`` is a reserved keyword of this
+    function; pass any same-named argument to *fn* via :func:`functools.partial`.)
     """
 
     bound = functools.partial(fn, *args, **kwargs)
@@ -246,6 +248,12 @@ async def run_cpu[T](
 
     ctx = copy_context()
     ctx.run(_CANCEL.set, token)  # the token lives only in the worker's context copy
+
+    if not deadline:
+        # Best-effort: drop the deadline in the worker context too, so a checkpoint()
+        # inside the offloaded code doesn't re-impose the budget the caller opted out of.
+        ctx.run(clear_deadline)
+
     thunk = functools.partial(ctx.run, bound)
 
     remaining = remaining_time() if deadline else None
@@ -292,20 +300,21 @@ async def run_cpu_map[I, R](
     deadline and is a cancellation point, so a long mapping aborts promptly without
     the caller writing :func:`checkpoint` calls. ``chunk_size`` is the cancellation
     granularity (and the interleaving / virtual-time point under simulation).
+
+    *items* is consumed lazily one chunk at a time, so an unbounded or very large
+    iterable neither materializes up front nor blocks the loop before chunking starts.
     """
 
     if chunk_size < 1:
         raise exc.precondition("run_cpu_map chunk_size must be at least 1.")
 
-    batch = list(items)
     out: list[R] = []
 
-    for start in range(0, len(batch), chunk_size):
-        chunk = batch[start : start + chunk_size]
+    for chunk in batched(items, chunk_size):
         out.extend(await run_cpu(_map_chunk, fn, chunk))
 
     return out
 
 
-def _map_chunk[I, R](fn: Callable[[I], R], chunk: list[I]) -> list[R]:
+def _map_chunk[I, R](fn: Callable[[I], R], chunk: tuple[I, ...]) -> list[R]:
     return [fn(item) for item in chunk]

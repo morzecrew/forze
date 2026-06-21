@@ -117,6 +117,16 @@ class TestDeadline:
         with bind_deadline(0.0):
             assert await run_cpu(_double, 9, deadline=False) == 18
 
+    async def test_deadline_false_neutralizes_checkpoint(self) -> None:
+        # deadline=False must also clear the deadline in the worker, so a checkpoint()
+        # inside the offloaded code doesn't re-impose the budget the caller opted out of.
+        def work() -> str:
+            checkpoint()
+            return "ok"
+
+        with bind_deadline(0.0), bind_cpu_executor(InlineCpuExecutor()):
+            assert await run_cpu(work, deadline=False) == "ok"
+
 
 class TestCheckpoint:
     async def test_noop_outside_offload(self) -> None:
@@ -171,6 +181,24 @@ class TestRunCpuMap:
             await run_cpu_map([1], _double, chunk_size=0)
 
         assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    async def test_consumes_lazily_and_stops_on_deadline(self) -> None:
+        # An unbounded source must not be materialized up front: with a passed deadline,
+        # only the first chunk is pulled before the per-chunk check aborts.
+        pulled: list[int] = []
+
+        def unbounded():  # type: ignore[no-untyped-def]
+            i = 0
+            while True:
+                pulled.append(i)
+                yield i
+                i += 1
+
+        with bind_deadline(0.0):
+            with pytest.raises(CoreException):
+                await run_cpu_map(unbounded(), _double, chunk_size=4)
+
+        assert len(pulled) <= 4
 
 
 class TestCooperativeCancellation:

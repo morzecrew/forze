@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("psycopg")
+
 from forze.application.contracts.search import Rrf
 from forze.base.exceptions import CoreException
 from forze_postgres.execution.deps.configs import (
@@ -11,8 +13,6 @@ from forze_postgres.execution.deps.configs import (
     PostgresFederatedSearchLegSearch,
     PostgresSearchConfig,
 )
-
-pytest.importorskip("psycopg")
 
 # ----------------------- #
 

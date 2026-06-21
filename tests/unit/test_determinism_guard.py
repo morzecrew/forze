@@ -226,10 +226,16 @@ _OFFLOAD_ALLOWLIST: frozenset[str] = frozenset({"forze/base/primitives/cpu.py"})
 def _offload_violations_in(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
+    # ``import asyncio [as X]`` aliases (so ``aio.to_thread`` is caught too), and
     # ``from asyncio import to_thread`` → a banned bare ``to_thread(...)`` call.
+    asyncio_names: set[str] = {"asyncio"}
     bare_offload: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "asyncio":
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "asyncio":
+                    asyncio_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module == "asyncio":
             for alias in node.names:
                 if alias.name == "to_thread":
                     bare_offload.add(alias.asname or alias.name)
@@ -246,7 +252,7 @@ def _offload_violations_in(path: Path) -> list[str]:
             elif (
                 func.attr == "to_thread"
                 and isinstance(func.value, ast.Name)
-                and func.value.id == "asyncio"
+                and func.value.id in asyncio_names
             ):
                 found.append(f"{_rel(path)}:{node.lineno}: asyncio.to_thread(...)")
         elif isinstance(func, ast.Name) and func.id in bare_offload:
@@ -278,11 +284,13 @@ def test_offload_guard_flags_raw_to_thread(tmp_path: Path) -> None:
     offender = tmp_path / "offender.py"
     offender.write_text(
         "import asyncio\n"
+        "import asyncio as aio\n"
         "async def f(loop, fn):\n"
         "    await asyncio.to_thread(fn)\n"
+        "    await aio.to_thread(fn)\n"  # aliased import must still be caught
         "    await loop.run_in_executor(None, fn)\n"
     )
-    assert len(_offload_violations_in(offender)) == 2
+    assert len(_offload_violations_in(offender)) == 3
 
     clean = tmp_path / "clean.py"
     clean.write_text(

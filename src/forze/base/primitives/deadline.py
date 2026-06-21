@@ -85,6 +85,19 @@ def reset_deadline(token: Token[float | None]) -> None:
 # ....................... #
 
 
+def clear_deadline() -> Token[float | None]:
+    """Drop any bound deadline for the current context; reset with :func:`reset_deadline`.
+
+    For best-effort work that must not be aborted by the invocation deadline: after this,
+    :func:`remaining_time` returns ``None`` (no budget) until the token is reset.
+    """
+
+    return _deadline_var.set(None)
+
+
+# ....................... #
+
+
 @contextmanager
 def bind_deadline(timeout: float | None) -> Generator[None]:
     """Bind an invocation deadline of *timeout* seconds from now.
