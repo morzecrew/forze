@@ -1268,6 +1268,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/caching/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Caching reads
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/events-sagas/" class="md-nav__link">
         
   
@@ -3562,6 +3591,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/tenant-selector-and-admin/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-building-2" viewBox="0 0 24 24"><path d="M10 12h4M10 8h4M14 21v-3a2 2 0 0 0-4 0v3"/><path d="M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2"/><path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Tenant selector & administration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/local-identity/" class="md-nav__link">
         
   
@@ -4410,6 +4468,64 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/fastapi-routes/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  FastAPI route generators
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/outbox-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Outbox table schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/errors/" class="md-nav__link">
         
   
@@ -4615,6 +4731,8 @@
   <h1 id="__skip">Faults, latency & time</h1>
 
 <p>A handler that passes every happy-path test still meets a hostile world in production: downstreams error, calls time out, the slow tail of a latency distribution lands mid-transaction. <abbr title="Deterministic Simulation Testing">DST</abbr> lets you declare that environment as data on the config, and applies it at the <strong>port boundary</strong> — over any resolved port, seeded from the master seed, with the app untouched. The handler makes its ordinary <code>await</code> port calls; the simulator decides what happens at each one.</p>
+<p><a class="glightbox" data-gallery="light" data-title="The handler makes an ordinary port call; the simulator, seeded, either injects a fault or delays virtual time before passing through to the real port over the mock store" data-type="image" href="../../_diagrams/light/dst-port-boundary.svg#only-light"><img alt="The handler makes an ordinary port call; the simulator, seeded, either injects a fault or delays virtual time before passing through to the real port over the mock store" src="../../_diagrams/light/dst-port-boundary.svg#only-light" /></a>
+<a class="glightbox" data-gallery="dark" data-title="The handler makes an ordinary port call; the simulator, seeded, either injects a fault or delays virtual time before passing through to the real port over the mock store" data-type="image" href="../../_diagrams/dark/dst-port-boundary.svg#only-dark"><img alt="The handler makes an ordinary port call; the simulator, seeded, either injects a fault or delays virtual time before passing through to the real port over the mock store" src="../../_diagrams/dark/dst-port-boundary.svg#only-dark" /></a></p>
 <h2 id="faults">Faults<a class="headerlink" href="#faults" title="Permanent link">&para;</a></h2>
 <p>A <code>FaultPolicy</code> is a set of rules, each matching <code>(surface, route, op)</code> and rolling — per matched call — one of the failure behaviours. Declare it on the config and every matching port call becomes a place a fault can strike:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">SimulationConfig</span>

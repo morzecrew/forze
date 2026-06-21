@@ -58,6 +58,9 @@
         <loc>https://morzecrew.github.io/forze/dev/data-events/reading-data/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/caching/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/data-events/events-sagas/</loc>
       </url>
       <url>
@@ -196,6 +199,9 @@
         <loc>https://morzecrew.github.io/forze/dev/recipes/authn-authz-tenancy-fastapi/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/tenant-selector-and-admin/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/local-identity/</loc>
       </url>
       <url>
@@ -251,6 +257,12 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/mapping/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/fastapi-routes/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/outbox-schema/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/errors/</loc>

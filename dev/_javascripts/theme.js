@@ -394,3 +394,64 @@
     document.addEventListener("DOMContentLoaded", setupAll);
   }
 })();
+
+// Image lightbox (diagrams & figures) ----------------------------------------
+// The theme bundle constructs a single GLightbox once and, on instant
+// navigation, only calls setElements() — which refreshes the gallery array but
+// does NOT rebind click listeners to the freshly swapped DOM nodes. So after a
+// navigation the first click on a diagram falls through to the raw .svg. We own
+// the interaction instead: a capture-phase delegated click handler intercepts
+// every `.glightbox` anchor (queried at click time, so always current and never
+// per-page-bound), suppresses the bundle's stale element listener with
+// stopImmediatePropagation, and opens a fresh lightbox built from the clicked
+// element's gallery. The `#only-light` / `#only-dark` fragment is dropped — the
+// visible (clickable) anchor already encodes the right theme. If the library
+// failed to load, the click falls through to opening the file directly.
+(function () {
+  var SELECTOR = "a.glightbox";
+  var lb = null;
+
+  function galleryFor(anchor) {
+    var g = anchor.getAttribute("data-gallery");
+    var sel = g ? SELECTOR + '[data-gallery="' + g + '"]' : SELECTOR;
+    return Array.prototype.slice.call(document.querySelectorAll(sel));
+  }
+
+  document.addEventListener(
+    "click",
+    function (e) {
+      var anchor = e.target.closest && e.target.closest(SELECTOR);
+      if (!anchor) return;
+      // Leave modified clicks (open-in-new-tab etc.) and the no-library case
+      // to their default behaviour.
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+        return;
+      if (typeof GLightbox === "undefined") return;
+
+      e.preventDefault();
+      e.stopImmediatePropagation(); // beat the bundle's stale element listener
+
+      var items = galleryFor(anchor);
+      var elements = items.map(function (el) {
+        return {
+          href: (el.getAttribute("href") || "").split("#")[0],
+          type: "image",
+          title: el.getAttribute("data-title") || "",
+        };
+      });
+
+      if (lb) lb.destroy();
+      lb = GLightbox({
+        elements: elements,
+        touchNavigation: true,
+        loop: false,
+        zoomable: true,
+        draggable: true,
+        openEffect: "zoom",
+        closeEffect: "zoom",
+      });
+      lb.openAt(Math.max(0, items.indexOf(anchor)));
+    },
+    true, // capture phase — runs before the anchor's own (bundle) listener
+  );
+})();
