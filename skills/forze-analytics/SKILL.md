@@ -79,7 +79,7 @@ lifecycle = LifecyclePlan.from_steps(
 )
 ```
 
-Keyset cursors use `cursor_column` plus `{forze_after:Type}` in the SQL; `dry_run` skips execution.
+Cursor reads go through `run_cursor` with an opaque cursor token (`CursorPaginationExpression`) — there is no `cursor_column` SQL convention, and a backend that can't do keyset cursors raises unsupported. `dry_run` skips execution.
 
 ## Consuming analytics
 

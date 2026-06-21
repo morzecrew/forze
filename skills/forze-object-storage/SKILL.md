@@ -77,9 +77,11 @@ For local `fake-gcs-server`, set `STORAGE_EMULATOR_HOST=http://localhost:4443` b
 
 Storage spreads across three ports:
 
-- **`StorageQueryPort`** — `ctx.storage.query(spec)` — `download`, `list`, `presign_download`.
-- **`StorageCommandPort`** — `ctx.storage.command(spec)` — `upload`, `delete`, `presign_upload`.
+- **`StorageQueryPort`** — `ctx.storage.query(spec)` — `download`, `download_range` (ranged), `download_if_changed` (conditional), `head` (metadata, no body), `list`, `presign_download`.
+- **`StorageCommandPort`** — `ctx.storage.command(spec)` — `upload`, `delete`, `copy`, `move`, `put_object_tags`, `presign_upload`.
 - **`StorageUploadSessionPort`** — `ctx.storage.uploads(spec)` — the multipart session ops `begin_upload`, `presign_part`, `list_parts`, `complete_upload`, `abort_upload`.
+
+After a presigned/direct upload (where the app never sees the bytes), use `head` to confirm the object actually landed before recording it.
 
 **Standalone object operations (driving code)** — drive a frozen storage registry through a **`StorageFacade`**, or project it onto FastAPI with `attach_storage_routes` (see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md)):
 
@@ -96,18 +98,24 @@ files = StorageFacade(ctx=ctx, registry=storage_registry, namespace=attachments_
 **Inside a custom handler** — when an upload is one step of a domain operation, resolve the port directly in the factory:
 
 ```python
+from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.storage import StorageCommandPort, StoredObject, UploadedObject
 
 
 class UploadAttachment(Handler[UploadAttachmentCmd, StoredObject]):
+    doc: DocumentQueryPort[ProjectRead]
     storage: StorageCommandPort
 
     async def __call__(self, cmd: UploadAttachmentCmd) -> StoredObject:
+        # confirm the parent exists (raises not_found) — and gate authz on it — before
+        # writing object storage, or an invalid id leaves an orphaned project-scoped blob
+        await self.doc.get(cmd.project_id)
         return await self.storage.upload(
             UploadedObject(filename=cmd.filename, data=cmd.data, prefix=f"projects/{cmd.project_id}"),
         )
-# factory: lambda ctx: UploadAttachment(storage=ctx.storage.command(attachments_spec))
+# factory: lambda ctx: UploadAttachment(
+#     doc=ctx.document.query(project_spec), storage=ctx.storage.command(attachments_spec))
 ```
 
 The adapter generates collision-resistant object keys and detects content type.

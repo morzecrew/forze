@@ -129,7 +129,7 @@ Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFA
 - Mismatch between `spec.name` and infra dict keys is a frequent wiring bug — check the spec enum and deps-module map when debugging “dependency not registered”.
 - Do not mix plain strings and enum members casually in new code. Equality works by value, but shared enums make missing routes easier to catch in review.
 - Enable `history_enabled` on the **spec** when you want history semantics; the **relation** still comes from infra (`history` on Postgres/Mongo config).
-- `S3DepsModule(client=...)`, `SQSDepsModule(client=...)`, and `TemporalDepsModule(client=...)` register only client keys unless their routed maps are populated.
+- `S3DepsModule(client=...)` / `GCSDepsModule(client=...)`, `SQSDepsModule(client=...)`, and `TemporalDepsModule(client=...)` register only client keys unless their routed maps are populated — for object storage the `storages={...}` map is required for **both** S3 and GCS.
 
 ## Reference
 

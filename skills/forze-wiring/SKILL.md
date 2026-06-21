@@ -141,11 +141,11 @@ write_ops = [
     for op in (
         DocumentKernelOp.CREATE,
         DocumentKernelOp.UPDATE,
-        DocumentKernelOp.DELETE,
         DocumentKernelOp.KILL,
-        DocumentKernelOp.RESTORE,
     )
 ]
+# soft delete/restore are a separate registry — bind SoftDeletionKernelOp ops
+# from build_soft_deletion_registry the same way
 
 registry = (
     build_document_registry(project_spec, project_dtos)
