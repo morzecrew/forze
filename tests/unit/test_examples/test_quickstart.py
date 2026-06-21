@@ -24,7 +24,10 @@ def test_quickstart_crud() -> None:
 
         listed = client.get("/users")
         assert listed.status_code == 200
-        assert len(listed.json()) == 1
+        page = listed.json()
+        assert page["count"] == 1
+        assert len(page["hits"]) == 1
+        assert page["hits"][0]["name"] == "Ada"
 
         deleted = client.delete(f"/users/{user_id}")
         assert deleted.status_code == 204

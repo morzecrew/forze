@@ -40,6 +40,9 @@ Postgres stores the documents; Redis answers the repeat reads.
 
 ## What happens on read and write
 
+The scenario builds the same typed `DocumentFacade` used by the CRUD examples;
+only the dependency wiring adds caching:
+
 ```python
 --8<-- "recipes/cache_reads/app.py:read-through"
 ```

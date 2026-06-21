@@ -92,10 +92,10 @@ calls an operation — the handlers never touch HTTP:
 
 !!! note "How context resolution works"
 
-    When you call `ctx.document.query(user_spec)`, the execution context looks up
-    which adapter was wired for the `"users"` specification. The route never learns
-    whether that's Postgres, Mongo, or an in-memory fake — it just gets a document
-    port. The [Wiring](../writing-operation/wiring.md) page explains the full resolution flow.
+    When a facade operation runs, its registered handler asks the execution context
+    for the port wired to the `"users"` specification. The route never learns whether
+    that port comes from Postgres, Mongo, or an in-memory fake. The
+    [Wiring](../writing-operation/wiring.md) page explains the full resolution flow.
 
 `register_exception_handlers` maps a `CoreException` to a response, so a missing
 user comes back as a `404`. (Routes are hand-wired here to show the moving

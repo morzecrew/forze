@@ -38,23 +38,19 @@ tables or bookkeeping, and no transaction route is needed:
 
 ## Query routes
 
-Resolve `ctx.document.query(spec)` and call its read methods:
+Build the document registry with only the read DTO, then call the typed facade:
 
 ```python
 --8<-- "recipes/read_only/app.py:routes"
 ```
 
-The query port gives you the full read surface — pick by how you want misses
-handled:
+The facade gives driving code a typed operation surface without exposing the
+query port:
 
 | Method | Returns | On miss |
 |--------|---------|---------|
-| `get(id)` | the document | raises `not_found` → 404 |
-| `get_many(ids)` | a list | raises `not_found` if any is missing |
-| `find(filters)` | the document or `None` | returns `None` |
-| `find_many(filters, pagination, sorts)` | a `CountlessPage` (`.hits`) | empty page |
-| `find_page(...)` | a `Page` (adds `.count`) | empty page |
-| `count(filters)` | an `int` | `0` |
+| `get(DocumentIdDTO(...))` | the document | raises `not_found` → 404 |
+| `list(ListRequestDTO(...))` | a `Paginated` result | empty page |
 
-Filters and sorts use the [query DSL](../reference/query-syntax.md); pagination
-is `{"limit": …, "offset": …}`.
+`ListRequestDTO` carries page, size, filters, and sorts. Filters and sorts use
+the [query DSL](../reference/query-syntax.md).

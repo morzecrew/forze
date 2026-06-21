@@ -4,6 +4,11 @@ Runnable, **test-backed** examples. Each is a normal module you can run, and is 
 test under `tests/` so it stays correct as the framework evolves (an example that doesn't run
 is worse than no example). Most run fully in-process on `forze_mock` — no Docker.
 
+The set is kit-first: driving code uses `forze_kits` facades and integrations.
+`quickstart` and `crud_fastapi` keep the same document facade while swapping
+`MockDepsModule` for `PostgresDepsModule`; raw ports stay inside handlers,
+orchestration steps, and recipes where the port itself is the subject.
+
 Layout:
 
 - **`quickstart/`** — the Get Started app (in-memory User CRUD on FastAPI).

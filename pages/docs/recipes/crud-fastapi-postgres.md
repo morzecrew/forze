@@ -5,8 +5,8 @@ summary: A full HTTP CRUD service for an aggregate, backed by Postgres — handl
 ---
 
 A `DocumentSpec` plus a `PostgresDepsModule` is the entire persistence story.
-The FastAPI routes resolve the document ports from the context and return read
-models — no SQL, no ORM, and optimistic concurrency for free.
+The FastAPI routes call a `DocumentFacade` and return read models — no persistence
+ports, no SQL, no ORM, and optimistic concurrency for free.
 
 The runnable version lives at `examples/recipes/crud_fastapi/` — `just run`
 brings up ephemeral Postgres, serves the API, and tears it down.
@@ -48,14 +48,14 @@ the connection pool:
 
 ## The routes
 
-The runtime opens inside the app's lifespan; each route resolves the document
-**command** or **query** port from the context and calls it:
+The registry turns the spec and boundary DTOs into typed operations. The runtime
+opens inside the app's lifespan; each route calls the resulting facade:
 
 ```python
 --8<-- "recipes/crud_fastapi/app.py:routes"
 ```
 
-- **Create / get / list / delete** map straight onto the document ports.
+- **Create / get / list / delete** map straight onto facade operations.
 - **Update** carries the document's `rev` — a stale `rev` raises a `conflict`,
   which `register_exception_handlers` turns into a `409`. That's
   [optimistic concurrency](../writing-operation/concurrency-conflicts.md) with no extra
