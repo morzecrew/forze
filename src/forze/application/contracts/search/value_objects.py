@@ -2,7 +2,37 @@ from typing import final
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class Rrf:
+    """Reciprocal Rank Fusion settings for merging ranked result legs.
+
+    Shared across the federated search integrations (Postgres, Meilisearch) so the
+    fusion knobs are expressed the same way everywhere.
+    """
+
+    k: int = 60
+    """RRF smoothing constant."""
+
+    per_leg_limit: int = 5000
+    """Max hits fetched per member leg before merging."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.k < 1:
+            raise exc.configuration("RRF k must be at least 1.")
+
+        if self.per_leg_limit < 1:
+            raise exc.configuration("RRF per_leg_limit must be at least 1.")
+
+
+# ....................... #
 
 
 @final

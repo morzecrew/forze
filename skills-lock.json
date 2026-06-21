@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "altitude-docs": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/altitude-docs/SKILL.md",
+      "computedHash": "ccfb9caa59fd774c9be0782e17b0e49e0dbfa953758c4bf0a3d6318c205456e7"
+    },
     "async-python-patterns": {
       "source": "wshobson/agents",
       "sourceType": "github",

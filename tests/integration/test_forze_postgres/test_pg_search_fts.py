@@ -11,7 +11,7 @@ from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.adapters.search import PostgresFTSSearchAdapter
 from forze_postgres.execution.deps import ConfigurablePostgresSearch
-from forze_postgres.execution.deps.configs import PostgresSearchConfig
+from forze_postgres.execution.deps.configs import FtsEngine, PostgresSearchConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -42,11 +42,12 @@ def _fts_context(
                     config=PostgresSearchConfig(
                         index=("public", index_name),
                         read=("public", table),
-                        engine="fts",
-                        fts_groups={
-                            "A": ("title",),
-                            "B": ("content",),
-                        },
+                        engine=FtsEngine(
+                            groups={
+                                "A": ("title",),
+                                "B": ("content",),
+                            }
+                        ),
                     )
                 ),
             }
@@ -265,11 +266,12 @@ async def test_fts_v2_projection_view_and_heap_split(pg_client: PostgresClient) 
                         index=("public", index_name),
                         read=("public", view),
                         heap=("public", table),
-                        engine="fts",
-                        fts_groups={
-                            "A": ("title",),
-                            "B": ("content",),
-                        },
+                        engine=FtsEngine(
+                            groups={
+                                "A": ("title",),
+                                "B": ("content",),
+                            }
+                        ),
                     )
                 ),
             }
@@ -769,9 +771,8 @@ async def test_fts_exact_total_exceeds_candidate_cap(
                     config=PostgresSearchConfig(
                         index=("public", index_name),
                         read=("public", table),
-                        engine="fts",
-                        fts_groups={"A": ("title",), "B": ("content",)},
-                        pgroonga_candidate_limit=4,
+                        engine=FtsEngine(groups={"A": ("title",), "B": ("content",)}),
+                        candidate_limit=4,
                     )
                 ),
             }

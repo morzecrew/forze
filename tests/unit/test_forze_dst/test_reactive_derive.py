@@ -220,3 +220,22 @@ class TestReactiveMapFormat:
         rendered = rmap.format()
         assert "(no cascades)" in rendered
         assert "entry points: a, b" in rendered
+
+    def test_mutual_cascade_has_no_entry_points(self) -> None:
+        # Each op triggers the other, so both are reactive and nothing is an entry
+        # point — the empty-entry-points '(none)' branch of format().
+        rmap = ReactiveMap(
+            cascades={"a": frozenset({"b"}), "b": frozenset({"a"})},
+            events={"a": frozenset(), "b": frozenset()},
+        )
+        assert rmap.reactive_ops == frozenset({"a", "b"})
+        assert rmap.entry_points() == frozenset()
+
+        rendered = rmap.format()
+        assert "a → b" in rendered
+        assert "entry points: (none)" in rendered
+
+    def test_triggers_defaults_to_empty_for_unknown_op(self) -> None:
+        # An op absent from the cascade map triggers nothing (the .get default).
+        rmap = ReactiveMap(cascades={"a": frozenset()}, events={})
+        assert rmap.triggers("absent") == frozenset()

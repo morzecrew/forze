@@ -280,6 +280,12 @@ exclude_lines = [
     "@overload",
     "@(typing\\.)?overload",
     "^\\s*\\.\\.\\.$",
+    # Inline ellipsis stub bodies (``def f(...) -> T: ...``, including the closing
+    # line of a multi-line signature) are the same type-checker-only stubs as the
+    # own-line ``...`` above. The formatter collapses Protocol/overload bodies to
+    # this inline form, so match the terminating ``: ...`` to keep branch coverage
+    # honest for inline-stub Protocols (e.g. forze.base.serialization.model_codec).
+    ": \\.\\.\\.\\s*$",
 ]
 
 # ....................... #

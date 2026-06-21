@@ -23,8 +23,13 @@ from forze_dst import ModelState, PCTScheduler, Rule, Scenario, Simulation, Simu
 from forze_dst.markers import record_event
 from forze_dst.invariants import expect, operation_succeeds
 from forze_dst.oracle import behavioral_coverage
+from forze_dst.oracle.coverage import CoverageStats, behavioral_fingerprint
+from forze_dst.oracle.confidence import ConfidenceReport
+from forze_dst.oracle.reachability import ReachabilityReport
 from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule
+
+from types import MappingProxyType
 
 # ----------------------- #
 
@@ -241,3 +246,162 @@ class TestCoverageGuidedSweep:
         assert "lost deposit" in stats.violation.format()
         # The report renders the coverage summary too.
         assert "coverage report" in stats.format()
+
+
+# ....................... #
+
+
+class TestBehavioralFingerprint:
+    """The ordered, PII-free signature of a run's path (vs. the unordered coverage set)."""
+
+    def test_folds_operations_and_edges_excluding_other_kinds(self) -> None:
+        history = History(
+            seed=0,
+            events=(
+                _ev(0, "op_start", call_id=0, op="pay"),  # structural — not in the shape
+                _ev(1, "operation", op="pay", outcome="ok"),
+                _ev(2, "trace", trace_domain="document", surface="document_command",
+                    route="orders", op="create", phase="command", outcome=None),
+                _ev(3, "fault", fault="error", surface="document_command", op="update"),
+            ),
+        )
+
+        fp = behavioral_fingerprint(history)
+
+        # A stable 16-byte blake2b digest → 32 hex chars.
+        assert isinstance(fp, str)
+        assert len(fp) == 32
+        # Deterministic: same input → same digest.
+        assert fp == behavioral_fingerprint(history)
+
+    def test_is_id_independent_like_coverage(self) -> None:
+        # Different entity keys, same op/edge shape → identical fingerprint.
+        def history(key: str) -> History:
+            return History(
+                seed=0,
+                events=(
+                    _ev(0, "operation", op="pay", outcome="ok"),
+                    _ev(1, "trace", trace_domain="document", surface="document_command",
+                        route="orders", op="update", phase="command", key=key, outcome=None),
+                ),
+            )
+
+        assert behavioral_fingerprint(history("a")) == behavioral_fingerprint(history("b"))
+
+    def test_order_sensitive_unlike_coverage(self) -> None:
+        # The same two outcomes in a different order are the same *set* but a different *shape*.
+        def history(*outcomes: str) -> History:
+            return History(
+                seed=0,
+                events=tuple(
+                    _ev(i, "operation", op="pay", outcome=o) for i, o in enumerate(outcomes)
+                ),
+            )
+
+        forward = history("ok", "error")
+        backward = history("error", "ok")
+
+        # Coverage (a set) is order-insensitive…
+        assert behavioral_coverage(forward) == behavioral_coverage(backward)
+        # …the fingerprint (an ordered shape) is not.
+        assert behavioral_fingerprint(forward) != behavioral_fingerprint(backward)
+
+    def test_outcome_change_changes_fingerprint(self) -> None:
+        ok = History(seed=0, events=(_ev(0, "operation", op="pay", outcome="ok"),))
+        err = History(seed=0, events=(_ev(0, "operation", op="pay", outcome="error"),))
+
+        assert behavioral_fingerprint(ok) != behavioral_fingerprint(err)
+
+    def test_empty_history_has_a_stable_fingerprint(self) -> None:
+        empty = behavioral_fingerprint(History(seed=0, events=()))
+
+        assert len(empty) == 32
+        assert empty == behavioral_fingerprint(History(seed=1, events=()))
+
+
+# ....................... #
+
+
+def _stats(**overrides: object) -> CoverageStats:
+    base: dict[str, object] = {
+        "behaviors": frozenset({("op", "make", "ok"), ("op", "make", "error")}),
+        "seeds_run": 3,
+        "new_by_seed": ((0, 2), (1, 0), (2, 1)),
+        "plateaued": False,
+    }
+    base.update(overrides)
+    return CoverageStats(**base)  # type: ignore[arg-type]
+
+
+class TestCoverageStatsValueObject:
+    """The frozen VO directly — size, productive_seeds, and the format() branches."""
+
+    def test_size_counts_distinct_behaviors(self) -> None:
+        assert _stats().size == 2
+        assert _stats(behaviors=frozenset()).size == 0
+
+    def test_productive_seeds_are_those_that_added_behavior(self) -> None:
+        # seed 0 added 2, seed 1 added 0, seed 2 added 1 → only 0 and 2 are productive.
+        assert _stats().productive_seeds == (0, 2)
+
+    def test_no_productive_seeds_when_nothing_added(self) -> None:
+        assert _stats(new_by_seed=((0, 0), (1, 0))).productive_seeds == ()
+
+    def test_format_minimal_report(self) -> None:
+        out = _stats().format()
+
+        assert "DST coverage report" in out
+        assert "behaviors covered: 2" in out
+        assert "seeds run:         3" in out
+        assert "productive seeds:  [0, 2]" in out
+        # No reachability / no confidence gaps / no violation → none of those lines.
+        assert "(saturated)" not in out
+        assert "reachability:" not in out
+        assert "confidence gaps" not in out
+        assert "✗ violation" not in out
+
+    def test_format_marks_saturation(self) -> None:
+        assert "(saturated)" in _stats(plateaued=True).format()
+
+    def test_format_reachability_all_reached(self) -> None:
+        reach = ReachabilityReport(
+            targets=frozenset({"breaker_open", "partition_isolated"}),
+            hits=MappingProxyType({"breaker_open": 2, "partition_isolated": 1}),
+            runs=3,
+        )
+
+        out = _stats(reachability=reach).format()
+
+        assert "reachability:      2/2 targets" in out
+        # Every target reached → no "never reached" suffix.
+        assert "never reached" not in out
+
+    def test_format_reachability_with_unreached(self) -> None:
+        reach = ReachabilityReport(
+            targets=frozenset({"breaker_open", "never_hit"}),
+            hits=MappingProxyType({"breaker_open": 2}),
+            runs=3,
+        )
+
+        out = _stats(reachability=reach).format()
+
+        assert "reachability:      1/2 targets" in out
+        assert "never reached: ['never_hit']" in out
+
+    def test_format_renders_confidence_gaps(self) -> None:
+        conf = ConfidenceReport(
+            seeds_run=3, ran_ops=("make",), raced_ops=()
+        )
+
+        out = _stats(confidence=conf).format()
+
+        assert "⚠ confidence gaps" in out
+        assert "never raced" in out
+
+    def test_format_omits_clean_confidence(self) -> None:
+        conf = ConfidenceReport(seeds_run=3, ran_ops=("make",), raced_ops=("make",))
+
+        out = _stats(confidence=conf).format()
+
+        # A clean confidence report has no warnings → no gap section in the coverage report.
+        assert "confidence gaps" not in out

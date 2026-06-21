@@ -120,6 +120,7 @@ async def test_analytics_adapter_resolves_dynamic_ingest_relation() -> None:
     from forze.application.contracts.analytics import (
         AnalyticsQueryDefinition,
         AnalyticsSpec,
+        IngestSpec,
     )
     from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
     from forze_postgres.execution.deps.configs import (
@@ -143,7 +144,7 @@ async def test_analytics_adapter_resolves_dynamic_ingest_relation() -> None:
         queries={
             "counts": PostgresQueryConfig(sql="SELECT 1"),
         },
-        ingest_relation=lambda t: (f"t_{t}", "raw") if t else ("public", "raw"),
+        ingest=IngestSpec(lambda t: (f"t_{t}", "raw") if t else ("public", "raw")),
     )
     adapter = PostgresAnalyticsAdapter(
         client=MagicMock(),

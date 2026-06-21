@@ -5,10 +5,6 @@ from typing import cast
 from pydantic import BaseModel, Field
 
 from forze.application.contracts.base import Page, SearchSnapshotHandle
-from forze.application.contracts.querying import (
-    QueryFilterExpression,
-    QuerySortExpression,
-)
 from forze.application.contracts.search import (
     SearchOptions,
     SearchResultSnapshotOptions,
@@ -22,6 +18,10 @@ from forze_kits.dto.paginated import (
     ProjectedPaginated,
     offset_page_fields,
 )
+from forze_kits.dto.querying import (
+    OptionalFilterExpression,
+    OptionalSortExpression,
+)
 
 # ----------------------- #
 
@@ -32,11 +32,11 @@ class BaseSearchRequestDTO(BaseDTO):
     query: str | list[str] = ""
     """Full-text query string, or list of phrases (combined per ``phrase_combine``)."""
 
-    filters: QueryFilterExpression | None = None  # type: ignore[valid-type]
-    """Optional filter expression (predicates, conjunctions, disjunctions)."""
+    filters: OptionalFilterExpression = None
+    """Optional filter expression (predicates, conjunctions, disjunctions); a bare `{}` is treated as no filter."""
 
-    sorts: QuerySortExpression | None = None
-    """Optional sort expression (field name to `"asc"` or `"desc"`)."""
+    sorts: OptionalSortExpression = None
+    """Optional sort expression (field name to `"asc"` or `"desc"`); a bare `{}` is treated as no sort."""
 
     options: SearchOptions | None = None
     """Optional search options."""

@@ -18,12 +18,14 @@ from .specs import (
     validate_analytics_spec,
 )
 from .types import AnalyticsRunOptions
-from .value_objects import AnalyticsAppendResult
+from .value_objects import AnalyticsAppendResult, IngestSpec, coerce_optional_ingest
 
 # ----------------------- #
 
 __all__ = [
     "AnalyticsAppendResult",
+    "IngestSpec",
+    "coerce_optional_ingest",
     "AnalyticsDeps",
     "AnalyticsIngestDepKey",
     "AnalyticsIngestDepPort",

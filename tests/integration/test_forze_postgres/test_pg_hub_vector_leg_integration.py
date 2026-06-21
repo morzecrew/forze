@@ -14,6 +14,7 @@ from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.execution.deps.configs import (
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
+    VectorEngine,
 )
 from forze_postgres.execution.deps import ConfigurablePostgresHubSearch
 from forze_postgres.execution.deps.keys import (
@@ -106,10 +107,11 @@ async def test_hub_vector_leg_knn_single_and_multi_query(
                 index=("public", idx),
                 read=("public", items),
                 hub_fk="item_id",
-                engine="vector",
-                vector_column="emb",
-                embedding_dimensions=3,
-                embeddings_name="hub_vec_emb",
+                engine=VectorEngine(
+                    column="emb",
+                    dimensions=3,
+                    embeddings_name="hub_vec_emb",
+                ),
             ),
         },
     )

@@ -14,6 +14,7 @@ pytest.importorskip("gcloud.aio.bigquery")
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.base import CountlessPage
@@ -148,7 +149,7 @@ async def test_routed_bigquery_analytics_deps_module(
         config = BigQueryAnalyticsConfig(
             dataset=dataset_id,
             queries={"all": BigQueryQueryConfig(sql=sql, skip_total=True)},
-            ingest_table=table_id,
+            ingest=IngestSpec((dataset_id, table_id)),
         )
         ctx = context_from_deps(
             BigQueryDepsModule(client=routed, analytics={"events": config})(),

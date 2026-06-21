@@ -14,8 +14,8 @@ structured error ack of the shape::
     }
 
 Kinds that would map to an HTTP status ``>= 500`` (internal, infrastructure,
-configuration, concurrency, unknown) are logged server-side and acked with a
-generic detail so internal diagnostics never leak to clients. ``context`` is
+configuration, unknown) are logged server-side and acked with a generic detail
+so internal diagnostics never leak to clients. ``context`` is
 included only for client-safe kinds whose egress policy exposes details, after
 scrubbing via :func:`forze.base.scrubbing.sanitize` with the ``egress`` context.
 """
@@ -32,6 +32,7 @@ from forze.base.exceptions import (
     CoreException,
     ExceptionKind,
     exception_egress_policy,
+    http_status_for_kind,
 )
 from forze.base.logging import Logger
 from forze.base.primitives import JsonDict
@@ -56,26 +57,14 @@ error_logger = Logger(ForzeSocketIOLogger.ERRORS)
 def is_server_error_kind(kind: ExceptionKind) -> bool:
     """Return whether *kind* is a server-side error.
 
-    Mirrors the HTTP status mapping used by :mod:`forze_fastapi.exceptions`:
-    kinds that would map to a status ``>= 500`` (and unknown kinds) are
-    server-side and must never expose their summary or details to clients.
+    Shares the canonical status mapping with :mod:`forze_fastapi.exceptions`
+    via :func:`http_status_for_kind`: kinds that map to a status ``>= 500`` (and
+    unknown kinds, which fall back to ``500``) are server-side and must never
+    expose their summary or details to clients. Deriving from the single source
+    of truth keeps both transports in lock-step as kinds are added or remapped.
     """
 
-    match kind:
-        case (
-            ExceptionKind.NOT_FOUND
-            | ExceptionKind.CONFLICT
-            | ExceptionKind.VALIDATION
-            | ExceptionKind.DOMAIN
-            | ExceptionKind.PRECONDITION
-            | ExceptionKind.AUTHENTICATION
-            | ExceptionKind.AUTHORIZATION
-            | ExceptionKind.THROTTLED
-        ):
-            return False
-
-        case _:
-            return True
+    return http_status_for_kind(kind) >= 500
 
 
 # ....................... #

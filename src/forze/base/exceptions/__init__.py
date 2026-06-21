@@ -1,4 +1,4 @@
-from .egress import exception_egress_policy
+from .egress import exception_egress_policy, http_status_for_kind
 from .fallback import fallback_exception_mapper
 from .http_mapper import make_http_exception_mapper, response_status
 from .interceptor import ExceptionInterceptor
@@ -20,6 +20,7 @@ __all__ = [
     "ChainExceptionMapper",
     "ExceptionMapper",
     "exception_egress_policy",
+    "http_status_for_kind",
     "ExceptionInterceptor",
     "fallback_exception_mapper",
     "make_http_exception_mapper",

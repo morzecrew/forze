@@ -15,6 +15,7 @@ from forze.base.exceptions import (
     default_chain_exc_mapper,
     exc,
     exception_egress_policy,
+    http_status_for_kind,
     map_pydantic,
 )
 
@@ -324,3 +325,29 @@ class TestExceptionEgressPolicy:
             ExceptionKind.INFRASTRUCTURE,
             ExceptionKind.THROTTLED,
         }
+
+
+class TestHttpStatusForKind:
+    def test_client_facing_kinds_map_to_their_status(self) -> None:
+        assert http_status_for_kind(ExceptionKind.NOT_FOUND) == 404
+        assert http_status_for_kind(ExceptionKind.CONFLICT) == 409
+        assert http_status_for_kind(ExceptionKind.CONCURRENCY) == 409
+        assert http_status_for_kind(ExceptionKind.VALIDATION) == 422
+        assert http_status_for_kind(ExceptionKind.DOMAIN) == 400
+        assert http_status_for_kind(ExceptionKind.PRECONDITION) == 400
+        assert http_status_for_kind(ExceptionKind.AUTHENTICATION) == 401
+        assert http_status_for_kind(ExceptionKind.AUTHORIZATION) == 403
+        assert http_status_for_kind(ExceptionKind.THROTTLED) == 429
+        assert http_status_for_kind(ExceptionKind.TIMEOUT) == 504
+
+    def test_internal_kinds_fall_back_to_500(self) -> None:
+        for kind in (
+            ExceptionKind.INTERNAL,
+            ExceptionKind.INFRASTRUCTURE,
+            ExceptionKind.CONFIGURATION,
+        ):
+            assert http_status_for_kind(kind) == 500
+
+    def test_every_kind_maps_to_a_valid_http_status(self) -> None:
+        for kind in ExceptionKind:
+            assert 400 <= http_status_for_kind(kind) <= 599

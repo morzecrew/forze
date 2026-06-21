@@ -90,3 +90,33 @@ def exception_egress_policy(kind: ExceptionKind) -> ExceptionKindEgress:
     """Get the egress policy for a given exception kind."""
 
     return _EXC_KIND_POLICY.get(kind, _EXC_KIND_POLICY[ExceptionKind.INTERNAL])
+
+
+# ....................... #
+
+_EXC_KIND_HTTP_STATUS: Mapping[ExceptionKind, int] = {
+    ExceptionKind.NOT_FOUND: 404,
+    ExceptionKind.CONFLICT: 409,
+    ExceptionKind.CONCURRENCY: 409,
+    ExceptionKind.VALIDATION: 422,
+    ExceptionKind.DOMAIN: 400,
+    ExceptionKind.PRECONDITION: 400,
+    ExceptionKind.AUTHENTICATION: 401,
+    ExceptionKind.AUTHORIZATION: 403,
+    ExceptionKind.THROTTLED: 429,
+    ExceptionKind.TIMEOUT: 504,
+}
+
+# ....................... #
+
+
+def http_status_for_kind(kind: ExceptionKind) -> int:
+    """Map an :class:`ExceptionKind` to its conventional HTTP status code.
+
+    Kinds with no client-facing status of their own — internal, infrastructure,
+    configuration — map to ``500``. Transport-agnostic: any HTTP-serving layer
+    (FastAPI, MCP, …) can reuse it to turn a :class:`CoreException` kind into a
+    status code.
+    """
+
+    return _EXC_KIND_HTTP_STATUS.get(kind, 500)

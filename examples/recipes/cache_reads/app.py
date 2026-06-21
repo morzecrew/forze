@@ -28,7 +28,6 @@ from forze.application.execution import (
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres import (
     PostgresClient,
-    PostgresConfig,
     PostgresDepsModule,
     PostgresDocumentConfig,
     PostgresLifecycleModule,
@@ -112,7 +111,9 @@ def build_runtime(
 ) -> ExecutionRuntime:
     deps = DepsRegistry.from_modules(
         PostgresDepsModule(
-            client=pg, rw_documents={"products": PRODUCT_PG}, tx={"products"}
+            client=pg,
+            rw_documents={"products": PRODUCT_PG},
+            tx={"products"},
         ),
         # caches keyed by CacheSpec.name — this is the whole "cache reads" step
         RedisDepsModule(
@@ -121,7 +122,7 @@ def build_runtime(
         ),
     )
     lifecycle = LifecyclePlan.from_modules(
-        PostgresLifecycleModule(client=pg, dsn=pg_dsn, config=PostgresConfig()),
+        PostgresLifecycleModule(client=pg, dsn=pg_dsn),
     ).with_steps(redis_lifecycle_step(dsn=redis_dsn))
 
     return ExecutionRuntime(deps=deps.freeze(), lifecycle=lifecycle.freeze())

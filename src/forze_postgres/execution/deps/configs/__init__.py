@@ -12,9 +12,15 @@ from .hub import PostgresHubSearchConfig, PostgresHubSearchMemberConfig
 from .inbox import PostgresInboxConfig
 from .outbox import PostgresOutboxConfig
 from .search import (
+    FtsEngine,
+    PgroongaAuto,
+    PgroongaEngine,
+    PgroongaPlan,
     PgroongaScoreVersion,
     PostgresSearchConfig,
     SearchEngine,
+    SearchEngineSpec,
+    VectorEngine,
     VectorEngineDistance,
     validate_fts_groups_for_search_spec,
 )
@@ -22,6 +28,10 @@ from .search import (
 # ----------------------- #
 
 __all__ = [
+    "FtsEngine",
+    "PgroongaAuto",
+    "PgroongaEngine",
+    "PgroongaPlan",
     "PgroongaScoreVersion",
     "PostgresAnalyticsConfig",
     "PostgresDocumentConfig",
@@ -37,6 +47,8 @@ __all__ = [
     "PostgresReadOnlyDocumentConfig",
     "PostgresSearchConfig",
     "SearchEngine",
+    "SearchEngineSpec",
+    "VectorEngine",
     "VectorEngineDistance",
     "validate_fts_groups_for_search_spec",
 ]

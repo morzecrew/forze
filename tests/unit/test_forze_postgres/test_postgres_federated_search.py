@@ -22,6 +22,7 @@ from forze_postgres.adapters.search.federated import (
     PostgresFederatedSearchAdapter,
 )
 from forze_postgres.execution.deps.configs import (
+    FtsEngine,
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
     PostgresFederatedSearchLegSearch,
@@ -540,14 +541,14 @@ def test_configurable_federated_search_fts_requires_groups() -> None:
                     search=PostgresSearchConfig(
                         index=("public", "i_a"),
                         read=("public", "r_a"),
-                        engine="fts",
+                        engine=FtsEngine(groups={}),
                     ),
                 ),
                 "b": PostgresFederatedSearchLegSearch(
                     search=PostgresSearchConfig(
                         index=("public", "i_b"),
                         read=("public", "r_b"),
-                        engine="fts",
+                        engine=FtsEngine(groups={}),
                     ),
                 ),
             },

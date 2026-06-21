@@ -6,6 +6,10 @@ from ..kernel.catalog.validation.validate_schema import (
 )
 from .deps import (
     ConfigurablePostgresAnalytics,
+    FtsEngine,
+    PgroongaAuto,
+    PgroongaEngine,
+    PgroongaPlan,
     PgroongaScoreVersion,
     PostgresAnalyticsConfig,
     PostgresClientDepKey,
@@ -20,6 +24,8 @@ from .deps import (
     PostgresHubSearchMemberConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
+    SearchEngineSpec,
+    VectorEngine,
 )
 from .lifecycle import (
     POSTGRES_CLIENT_CAPABILITY,
@@ -60,4 +66,10 @@ __all__ = [
     "PostgresFederatedSearchLegSearch",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
+    "FtsEngine",
+    "PgroongaAuto",
+    "PgroongaEngine",
+    "PgroongaPlan",
+    "SearchEngineSpec",
+    "VectorEngine",
 ]

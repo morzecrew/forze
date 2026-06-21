@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import ExecutionContext
@@ -40,7 +41,7 @@ def test_validate_missing_query_key() -> None:
     spec = _spec()
     config = PostgresAnalyticsConfig(
         queries={},
-        ingest_table="t",
+        ingest=IngestSpec(("public", "t")),
     )
     with pytest.raises(CoreException, match="missing query keys"):
         config.validate_against_spec(spec)
@@ -53,7 +54,7 @@ def test_deps_module_registers_analytics_keys() -> None:
         analytics={
             "events": PostgresAnalyticsConfig(
                 queries={"counts": PostgresQueryConfig(sql="SELECT 1 AS value")},
-                ingest_table="events",
+                ingest=IngestSpec(("public", "events")),
             ),
         },
     )
@@ -100,3 +101,10 @@ def test_outbox_route_is_validated_against_isolation_floor() -> None:
                 ),
             },
         )
+
+
+def test_ingest_coerces_raw_relation_tuple() -> None:
+    # The natural migration from the old ingest_relation=(...) must not crash:
+    # a raw relation spec is coerced into an IngestSpec.
+    config = PostgresAnalyticsConfig(queries={}, ingest=("public", "events"))
+    assert config.resolved_ingest_relation() == ("public", "events")

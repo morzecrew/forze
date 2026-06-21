@@ -9,6 +9,7 @@ from forze.application.contracts.resolution import (
     coerce_named_resource_spec,
     is_static_named_resource,
 )
+from forze.application.contracts.search import Rrf
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
@@ -19,6 +20,34 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 MeilisearchFederatedMerge = Literal["federation", "rrf"]
+"""Merge discriminator string (the resolved kind of :attr:`MeilisearchFederatedSearchConfig.merge`)."""
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MeilisearchFederation:
+    """Native Meilisearch multi-search federation (no coordinator-side fusion)."""
+
+
+MeilisearchMerge = MeilisearchFederation | Rrf
+"""Merge strategy: native ``federation`` or coordinator-side :class:`Rrf`."""
+
+
+def _coerce_merge(value: "MeilisearchMerge | MeilisearchFederatedMerge") -> MeilisearchMerge:
+    """Normalize the ``merge=`` argument; bare strings are accepted as a shorthand."""
+
+    if isinstance(value, (MeilisearchFederation, Rrf)):
+        return value
+
+    if value == "federation":
+        return MeilisearchFederation()
+
+    if value == "rrf":
+        return Rrf()
+
+    raise exc.configuration(
+        f"Meilisearch federated merge {value!r} must be 'federation' or 'rrf'.",
+    )
+
 
 # ....................... #
 
@@ -70,14 +99,30 @@ class MeilisearchFederatedSearchConfig(TenantAwareIntegrationConfig):
     )
     """Per-member index configuration (keys are :class:`SearchSpec` names)."""
 
-    merge: MeilisearchFederatedMerge = "federation"
-    """``federation`` uses Meilisearch multi-search; ``rrf`` uses coordinator RRF."""
+    merge_spec: MeilisearchMerge = attrs.field(
+        alias="merge",
+        factory=MeilisearchFederation,
+        converter=_coerce_merge,  # type: ignore[misc]
+    )
+    """Merge strategy: :class:`MeilisearchFederation` (native multi-search, the default) or
+    :class:`Rrf` (coordinator-side fusion). ``"federation"`` / ``"rrf"`` are accepted as
+    shorthands. Read :attr:`merge` for the resolved discriminator string."""
 
-    rrf_k: int = 60
-    """RRF smoothing constant when ``merge`` is ``rrf``."""
+    # ....................... #
 
-    rrf_per_leg_limit: int = 5000
-    """Max hits per leg when ``merge`` is ``rrf``."""
+    @property
+    def merge(self) -> MeilisearchFederatedMerge:
+        """Resolved merge discriminator string (``federation`` / ``rrf``)."""
+
+        return "rrf" if isinstance(self.merge_spec, Rrf) else "federation"
+
+    @property
+    def rrf_k(self) -> int:
+        return self.merge_spec.k if isinstance(self.merge_spec, Rrf) else 60
+
+    @property
+    def rrf_per_leg_limit(self) -> int:
+        return self.merge_spec.per_leg_limit if isinstance(self.merge_spec, Rrf) else 5000
 
     # ....................... #
 
@@ -85,11 +130,6 @@ class MeilisearchFederatedSearchConfig(TenantAwareIntegrationConfig):
         if len(self.members) < 2:
             raise exc.configuration(
                 "Federated Meilisearch search requires at least two member configurations.",
-            )
-
-        if self.merge not in ("federation", "rrf"):
-            raise exc.configuration(
-                f"Meilisearch federated merge {self.merge!r} must be 'federation' or 'rrf'.",
             )
 
     # ....................... #

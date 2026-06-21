@@ -40,6 +40,9 @@ class TestServerErrorKindMapping:
             ExceptionKind.AUTHORIZATION,
             # Mirrors the FastAPI 429 mapping: throttled is a client error.
             ExceptionKind.THROTTLED,
+            # Mirrors the FastAPI 409 mapping: a retryable concurrency conflict
+            # is client-facing, not a leaked server error.
+            ExceptionKind.CONCURRENCY,
         ):
             assert is_server_error_kind(kind) is False
 
@@ -48,7 +51,6 @@ class TestServerErrorKindMapping:
             ExceptionKind.INTERNAL,
             ExceptionKind.INFRASTRUCTURE,
             ExceptionKind.CONFIGURATION,
-            ExceptionKind.CONCURRENCY,
         ):
             assert is_server_error_kind(kind) is True
 

@@ -24,6 +24,7 @@ cheap and safe to leave in scenario/handler code.
 
 from __future__ import annotations
 
+from functools import cached_property
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, final
 
@@ -91,7 +92,7 @@ class ReachabilityReport:
 
     # ....................... #
 
-    @property
+    @cached_property
     def reached(self) -> frozenset[str]:
         """Every label any run reached (whether or not it was a declared target)."""
 
@@ -99,7 +100,7 @@ class ReachabilityReport:
 
     # ....................... #
 
-    @property
+    @cached_property
     def unreached(self) -> frozenset[str]:
         """Declared targets no run reached — the reachability *failures* (the false-confidence states)."""
 

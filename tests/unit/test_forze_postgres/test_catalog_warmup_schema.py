@@ -16,12 +16,14 @@ from forze_postgres.execution.lifecycle import (
     warm_postgres_catalog,
 )
 from forze_postgres.execution.deps.configs import (
+    FtsEngine,
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
     PostgresFederatedSearchLegSearch,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
     PostgresSearchConfig,
+    VectorEngine,
 )
 from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
@@ -56,10 +58,9 @@ async def test_warm_postgres_catalog_single_search() -> None:
         ctx,
         searches={
             "s": PostgresSearchConfig(
-                engine="fts",
+                engine=FtsEngine(groups={"A": ("title",)}),
                 index=("public", "ix"),
                 read=("public", "v"),
-                fts_groups={"A": ("title",)},
             ),
         },
     )
@@ -80,13 +81,10 @@ async def test_warm_postgres_catalog_vector_skips_index_info() -> None:
         ctx,
         searches={
             "s": PostgresSearchConfig(
-                engine="vector",
+                engine=VectorEngine(column="emb", dimensions=3, embeddings_name="e"),
                 index=("public", "ix"),
                 read=("public", "v"),
                 heap=("public", "h"),
-                vector_column="emb",
-                embedding_dimensions=3,
-                embeddings_name="e",
             ),
         },
     )
@@ -147,10 +145,9 @@ async def test_warm_postgres_catalog_hub_members() -> None:
                 hub=("public", "hub_v"),
                 members={
                     "m": PostgresHubSearchMemberConfig(
-                        engine="fts",
+                        engine=FtsEngine(groups={"A": ("title",)}),
                         index=("public", "ix"),
                         read=("public", "v"),
-                        fts_groups={"A": ("title",)},
                         hub_fk="hub_id",
                     ),
                 },
@@ -192,10 +189,9 @@ async def test_warm_postgres_catalog_federated_embedded_hub() -> None:
                             hub=("public", "hub_v"),
                             members={
                                 "m": PostgresHubSearchMemberConfig(
-                                    engine="fts",
+                                    engine=FtsEngine(groups={"A": ("title",)}),
                                     index=("public", "ix"),
                                     read=("public", "v"),
-                                    fts_groups={"A": ("title",)},
                                     hub_fk="hub_id",
                                 ),
                             },
@@ -237,10 +233,9 @@ async def test_catalog_warmup_lifecycle_step_runs_hook() -> None:
     step = postgres_catalog_warmup_lifecycle_step(
         searches={
             "s": PostgresSearchConfig(
-                engine="fts",
+                engine=FtsEngine(groups={"A": ("title",)}),
                 index=("public", "ix"),
                 read=("public", "v"),
-                fts_groups={"A": ("title",)},
             ),
         },
     )
