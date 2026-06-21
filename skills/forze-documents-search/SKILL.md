@@ -64,7 +64,7 @@ await projects(ctx).kill(DocumentIdDTO(id=project_id))
 
 `update` carries the document's **`rev`** — a stale revision raises `exc.conflict`, the optimistic-concurrency guarantee. Other methods: `raw_list` / `raw_list_cursor` (projected dict rows), `list_cursor` (keyset pagination), `agg_list` (group-by / metrics).
 
-A read-only spec (`write=None`) builds a read-only registry — pass `DocumentDTOs(read=...)` alone and only `get` / `list` are attached.
+A read-only spec (`write=None`) builds a read-only registry — pass `DocumentDTOs(read=...)` alone and the full **read** surface (`get`, `list`, `raw_list`, `list_cursor`, `raw_list_cursor`, `agg_list`) is attached; only the write operations (`create` / `update` / `kill`) are gated out.
 
 ## Query DSL
 

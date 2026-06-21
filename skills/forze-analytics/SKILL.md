@@ -43,6 +43,7 @@ module = BigQueryDepsModule(
         },
     },
 )
+# lifecycle: bigquery_lifecycle_step(project_id="my-gcp-project")  # initializes BigQueryClient
 ```
 
 Local emulator: set `BIGQUERY_EMULATOR_HOST=http://localhost:9050` before startup ([goccy/bigquery-emulator](https://github.com/goccy/bigquery-emulator)); the lifecycle step does not take an emulator URL.

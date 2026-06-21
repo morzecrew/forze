@@ -75,7 +75,11 @@ For local `fake-gcs-server`, set `STORAGE_EMULATOR_HOST=http://localhost:4443` b
 
 ## Consuming storage
 
-Storage is CQRS-split: `upload` / `delete` (and the presign/multipart ops) are on `StorageCommandPort`; `download` / `list` are on `StorageQueryPort`.
+Storage spreads across three ports:
+
+- **`StorageQueryPort`** — `ctx.storage.query(spec)` — `download`, `list`, `presign_download`.
+- **`StorageCommandPort`** — `ctx.storage.command(spec)` — `upload`, `delete`, `presign_upload`.
+- **`StorageUploadSessionPort`** — `ctx.storage.uploads(spec)` — the multipart session ops `begin_upload`, `presign_part`, `list_parts`, `complete_upload`, `abort_upload`.
 
 **Standalone object operations (driving code)** — drive a frozen storage registry through a **`StorageFacade`**, or project it onto FastAPI with `attach_storage_routes` (see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md)):
 
@@ -85,7 +89,8 @@ from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 storage_registry = build_storage_registry(attachments_spec).freeze()
 files = StorageFacade(ctx=ctx, registry=storage_registry, namespace=attachments_spec.default_namespace)
 # files.upload(...) / files.download(...) / files.list(...) / files.delete(...)
-# plus presign_download / presign_upload / begin_upload / presign_part / complete_upload (direct & resumable uploads)
+# direct & resumable uploads: presign_download / presign_upload / begin_upload /
+#   presign_part / list_parts (resume) / complete_upload / abort_upload (cleanup)
 ```
 
 **Inside a custom handler** — when an upload is one step of a domain operation, resolve the port directly in the factory:
