@@ -39,7 +39,7 @@ module = BigQueryDepsModule(
     analytics={
         "events": {
             "dataset": "analytics",
-            "queries": {"daily": {"sql": "SELECT day, count(*) AS n FROM events WHERE day = @day"}},
+            "queries": {"daily": {"sql": "SELECT day, count(*) AS n FROM events WHERE day = @day GROUP BY day"}},
             "ingest_table": "events_raw",
         },
     },
@@ -67,7 +67,7 @@ module = ClickHouseDepsModule(
     analytics={
         "events": {
             "database": "analytics",
-            "queries": {"daily": {"sql": "SELECT day, count(*) AS n FROM events WHERE day = {day:Date}"}},
+            "queries": {"daily": {"sql": "SELECT day, count(*) AS n FROM events WHERE day = {day:Date} GROUP BY day"}},
             "ingest_table": "events_raw",
         },
     },
