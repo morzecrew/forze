@@ -64,9 +64,9 @@ def build_runtime(
     :param deployment: Passed through to :attr:`ExecutionRuntime.deployment`
         (``FLEET`` validates that shared-state-mutating lifecycle steps are
         singleton-guarded; ``SERVERLESS`` forbids ``requires_long_running`` steps).
-    :param cpu_executor: Optional CPU-offload executor scope-bound and closed on
-        exit (see :attr:`ExecutionRuntime.cpu_executor`); ``None`` uses the
-        process-wide default pool.
+    :param cpu_executor: Optional CPU-offload executor bound for the scope (see
+        :attr:`ExecutionRuntime.cpu_executor`); the caller owns its lifecycle — the
+        runtime does not close it. ``None`` uses the process-wide default pool.
     :returns: Runtime ready for :meth:`ExecutionRuntime.scope`.
     """
 

@@ -97,6 +97,7 @@ def exception_egress_policy(kind: ExceptionKind) -> ExceptionKindEgress:
 _EXC_KIND_HTTP_STATUS: Mapping[ExceptionKind, int] = {
     ExceptionKind.NOT_FOUND: 404,
     ExceptionKind.CONFLICT: 409,
+    ExceptionKind.CONCURRENCY: 409,
     ExceptionKind.VALIDATION: 422,
     ExceptionKind.DOMAIN: 400,
     ExceptionKind.PRECONDITION: 400,
@@ -113,8 +114,8 @@ def http_status_for_kind(kind: ExceptionKind) -> int:
     """Map an :class:`ExceptionKind` to its conventional HTTP status code.
 
     Kinds with no client-facing status of their own — internal, infrastructure,
-    configuration, concurrency — map to ``500``. Transport-agnostic: any HTTP-serving
-    layer (FastAPI, MCP, …) can reuse it to turn a :class:`CoreException` kind into a
+    configuration — map to ``500``. Transport-agnostic: any HTTP-serving layer
+    (FastAPI, MCP, …) can reuse it to turn a :class:`CoreException` kind into a
     status code.
     """
 

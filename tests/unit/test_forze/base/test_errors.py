@@ -331,6 +331,7 @@ class TestHttpStatusForKind:
     def test_client_facing_kinds_map_to_their_status(self) -> None:
         assert http_status_for_kind(ExceptionKind.NOT_FOUND) == 404
         assert http_status_for_kind(ExceptionKind.CONFLICT) == 409
+        assert http_status_for_kind(ExceptionKind.CONCURRENCY) == 409
         assert http_status_for_kind(ExceptionKind.VALIDATION) == 422
         assert http_status_for_kind(ExceptionKind.DOMAIN) == 400
         assert http_status_for_kind(ExceptionKind.PRECONDITION) == 400
@@ -344,7 +345,6 @@ class TestHttpStatusForKind:
             ExceptionKind.INTERNAL,
             ExceptionKind.INFRASTRUCTURE,
             ExceptionKind.CONFIGURATION,
-            ExceptionKind.CONCURRENCY,
         ):
             assert http_status_for_kind(kind) == 500
 
