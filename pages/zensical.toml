@@ -127,6 +127,7 @@ nav = [
             "recipes/cache-reads-with-redis.md",
             "recipes/add-idempotency.md",
             "recipes/two-phase-handler.md",
+            "recipes/offload-cpu-work.md",
         ] },
         { "Identity" = [
             "recipes/authn-authz-tenancy-fastapi.md",
