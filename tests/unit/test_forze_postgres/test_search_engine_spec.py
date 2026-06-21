@@ -130,6 +130,10 @@ class TestPerVariantValidation:
         with pytest.raises(CoreException, match="duplicate"):
             FtsEngine(groups={"A": ("x",), "B": ("x",)})
 
+    def test_fts_rejects_unknown_group_letter(self) -> None:
+        with pytest.raises(CoreException, match="A, B, C, D"):
+            FtsEngine(groups={"Z": ("title",)})
+
     def test_vector_missing_column_rejected(self) -> None:
         with pytest.raises(CoreException, match="vector_column"):
             VectorEngine(column="", dimensions=3, embeddings_name="e")

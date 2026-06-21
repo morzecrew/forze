@@ -1,7 +1,7 @@
 """Postgres single-index search execution configs and validation."""
 
 from functools import reduce
-from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence, get_args
 
 import attrs
 
@@ -125,6 +125,14 @@ class FtsEngine:
     def __attrs_post_init__(self) -> None:
         if not self.groups:
             raise exc.configuration("FTS groups are required for FTS engine.")
+
+        invalid = set(self.groups) - set(get_args(FtsGroupLetter))
+
+        if invalid:
+            raise exc.configuration(
+                f"FTS group letters must be one of A, B, C, D; got {sorted(invalid)!r}. "
+                "Other letters are silently dropped by the rank weights.",
+            )
 
         all_fields = reduce(lambda a, g: a + g, map(list, self.groups.values()))
 
