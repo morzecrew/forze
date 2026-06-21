@@ -15,7 +15,7 @@ Use when querying pre-provisioned warehouse tables/views or appending typed batc
 
 ## Spec and deps route
 
-`AnalyticsSpec.name` is the logical route. Register the same key in the backend module's `analytics` map with the dataset/database, the named `queries`, and an optional `ingest_table`. SQL lives in the deps config (never in handlers); each query is referenced by key.
+`AnalyticsSpec.name` is the logical route. Register the same key in the backend module's `analytics` map with the dataset/database, the named `queries`, and an optional `ingest` relation (`(namespace, table)`). SQL lives in the deps config (never in handlers); each query is referenced by key.
 
 ```python
 from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
@@ -40,7 +40,7 @@ module = BigQueryDepsModule(
         "events": {
             "dataset": "analytics",
             "queries": {"daily": {"sql": "SELECT day, count(*) AS n FROM events WHERE day = @day GROUP BY day"}},
-            "ingest_table": "events_raw",
+            "ingest": ("analytics", "events_raw"),
         },
     },
 )
@@ -68,7 +68,7 @@ module = ClickHouseDepsModule(
         "events": {
             "database": "analytics",
             "queries": {"daily": {"sql": "SELECT day, count(*) AS n FROM events WHERE day = {day:Date} GROUP BY day"}},
-            "ingest_table": "events_raw",
+            "ingest": ("analytics", "events_raw"),
         },
     },
 )

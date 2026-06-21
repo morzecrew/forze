@@ -106,6 +106,7 @@ Stampede protection, an opt-in in-process L1 (`CacheSpec(l1=L1Spec(...))`, a cro
 Drive search through a **`SearchFacade`** built from a `SearchSpec`, the same way:
 
 ```python
+from forze.application.contracts.search import SearchSpec
 from forze_kits.aggregates.search import (
     SearchFacade,
     SearchRequestDTO,
