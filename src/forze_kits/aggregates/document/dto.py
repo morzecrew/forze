@@ -4,10 +4,12 @@ from pydantic import BaseModel, Field
 
 from forze.application.contracts.querying import (
     AggregatesExpression,
-    QueryFilterExpression,
-    QuerySortExpression,
 )
 from forze_kits.dto.paginated import CursorPagination, Pagination
+from forze_kits.dto.querying import (
+    OptionalFilterExpression,
+    OptionalSortExpression,
+)
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
 
@@ -70,11 +72,11 @@ class DocumentUpdateRes[Out: BaseModel](BaseDTO):
 class ListRequestDTO(Pagination):
     """List request payload for typed document list."""
 
-    filters: QueryFilterExpression | None = None  # type: ignore[valid-type]
-    """Optional filter expression (predicates, conjunctions, disjunctions)."""
+    filters: OptionalFilterExpression = None
+    """Optional filter expression (predicates, conjunctions, disjunctions); a bare `{}` is treated as no filter."""
 
-    sorts: QuerySortExpression | None = None
-    """Optional sort expression (field name to `"asc"` or `"desc"`)."""
+    sorts: OptionalSortExpression = None
+    """Optional sort expression (field name to `"asc"` or `"desc"`); a bare `{}` is treated as no sort."""
 
 
 # ....................... #
@@ -101,11 +103,11 @@ class AggregatedListRequestDTO(Pagination):
     aggregates: AggregatesExpression  # type: ignore[valid-type]
     """Aggregates expression."""
 
-    filters: QueryFilterExpression | None = None  # type: ignore[valid-type]
-    """Optional filter expression (predicates, conjunctions, disjunctions)."""
+    filters: OptionalFilterExpression = None
+    """Optional filter expression (predicates, conjunctions, disjunctions); a bare `{}` is treated as no filter."""
 
-    sorts: QuerySortExpression | None = None
-    """Optional sort expression (field name to `"asc"` or `"desc"`)."""
+    sorts: OptionalSortExpression = None
+    """Optional sort expression (field name to `"asc"` or `"desc"`); a bare `{}` is treated as no sort."""
 
 
 # ....................... #
@@ -114,11 +116,11 @@ class AggregatedListRequestDTO(Pagination):
 class CursorListRequestDTO(CursorPagination):
     """List request for cursor (keyset) pagination."""
 
-    filters: QueryFilterExpression | None = None  # type: ignore[valid-type]
-    """Optional filter expression (predicates, conjunctions, disjunctions)."""
+    filters: OptionalFilterExpression = None
+    """Optional filter expression (predicates, conjunctions, disjunctions); a bare `{}` is treated as no filter."""
 
-    sorts: QuerySortExpression | None = None
-    """Optional sort expression (field name to `"asc"` or `"desc"`)."""
+    sorts: OptionalSortExpression = None
+    """Optional sort expression (field name to `"asc"` or `"desc"`); a bare `{}` is treated as no sort."""
 
 
 # ....................... #
