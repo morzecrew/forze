@@ -40,15 +40,6 @@ description, so an agent can set its client timeout instead of retrying a call
 that died of budget exhaustion. For a custom FastMCP server, use
 `register_tools(...)` instead of `build_mcp_server`.
 
-## What it provides
-
-| Surface | What it does |
-|---------|--------------|
-| `register_tools` / `build_mcp_server` | operations → MCP tools (reads only unless `include_writes=True`) |
-| `register_resource_templates` | get-by-id operations → resource templates (`scheme://{id}`) |
-| `register_schema_resources` | per-aggregate field schemas as MCP resources |
-| `register_dsl_query_prompts` | prompts teaching the [Query DSL](../reference/query-syntax.md) |
-
 ## Protect it with API-key auth
 
 The MCP server is a **Resource Server**: it validates an inbound bearer and binds
@@ -85,19 +76,27 @@ key returns `None` → a clean `401`, while a misconfiguration fails loud.
 attaching the delegation **actor**. The engine then enforces the least-privilege
 intersection of the user's and the agent's grants.
 
-The agent can come from the key itself. Mint a **delegation key** bound to a
-user→agent pair — `issue_api_key(identity, actor_principal_id=agent)` — and the agent
-travels on the credential: the resolver attaches *that* agent, so a user's ChatGPT
-connection and Claude connection (each its own key, same `AGENT_PRINCIPAL` type or a
-distinct one) attribute and revoke independently. The `agent=AGENT_PRINCIPAL` on
-`AccessTokenIdentityResolver` is the **fallback** for plain keys that carry none —
-pass it to give them a fixed agent, or omit it to bind the bare user.
+The agent can also ride the key itself: a **delegation key** minted for a
+user→agent pair (`issue_api_key(identity, actor_principal_id=agent)`) carries that
+agent, so a user's ChatGPT and Claude connections attribute and revoke
+independently. The `agent=AGENT_PRINCIPAL` on `AccessTokenIdentityResolver` is the
+**fallback** for plain keys that carry none — pass it for a fixed agent, omit it to
+bind the bare user.
 
 Pass **both** `auth` and `identity` — `auth` rejects bad credentials, `identity`
 binds the good one. Read-only stays the default (`include_writes=False`); a
 write-capable agent needs `include_writes=True` **and** write grants on the agent
 principal. OAuth-based hosts (that can't paste a key) are a later, external concern —
 forze stays the Resource Server and never runs an authorization server.
+
+## What it provides
+
+| Surface | What it does |
+|---------|--------------|
+| `register_tools` / `build_mcp_server` | operations → MCP tools (reads only unless `include_writes=True`) |
+| `register_resource_templates` | get-by-id operations → resource templates (`scheme://{id}`) |
+| `register_schema_resources` | per-aggregate field schemas as MCP resources |
+| `register_dsl_query_prompts` | prompts teaching the [Query DSL](../reference/query-syntax.md) |
 
 ## Notes
 
