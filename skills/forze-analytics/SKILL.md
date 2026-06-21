@@ -93,7 +93,7 @@ async with runtime.scope():
     page = await q.run_page("daily", DailyParams(day="2026-01-01"))        # Page: .hits + total count (unless skip_total)
     countless = await q.run("daily", DailyParams(day="2026-01-01"))        # CountlessPage: .hits only — prefer for large scans
     rows = countless.hits
-    # run_cursor / run_chunked also available for keyset and streamed reads
+    # run_cursor → one keyset CursorPage; run_chunked → async batches, for streamed large exports
 
     result = await ctx.analytics.ingest(spec).append([EventRow(event="signup")])
     # result.accepted, result.rejected, result.errors (partial streaming-insert failures)
