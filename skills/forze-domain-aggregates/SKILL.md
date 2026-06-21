@@ -9,7 +9,7 @@ description: >-
 
 # Forze Domain Aggregates
 
-Use when defining domain models, document aggregates, and **logical** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/).
+Use when defining domain models, document aggregates, and **logical** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [Specs and wiring](https://morzecrew.github.io/forze/writing-operation/wiring/).
 
 Pair with [`forze-framework-usage`](../forze-framework-usage/SKILL.md) for ports and [`forze-wiring`](../forze-wiring/SKILL.md) for composition and HTTP.
 
@@ -189,4 +189,4 @@ project_dtos = DocumentDTOs(
 ## Reference
 
 - [Aggregate specification](https://morzecrew.github.io/forze/core-concepts/application-layer/)
-- [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/)
+- [Specs and wiring](https://morzecrew.github.io/forze/writing-operation/wiring/)

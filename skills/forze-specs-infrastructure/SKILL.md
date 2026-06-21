@@ -133,7 +133,7 @@ Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFA
 
 ## Reference
 
-- [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/)
+- [Specs and wiring](https://morzecrew.github.io/forze/writing-operation/wiring/)
 - [Postgres integration](https://morzecrew.github.io/forze/integrations/postgres/)
 - [Mongo integration](https://morzecrew.github.io/forze/integrations/mongo/)
 - [Redis integration](https://morzecrew.github.io/forze/integrations/redis/)

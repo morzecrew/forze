@@ -106,25 +106,31 @@ app.include_router(router)
 
 ## Hand-written routes
 
-Define plain FastAPI routes that resolve a context with `ctx_dep`, dispatch through your operation registry / facade (see [`forze-wiring`](../forze-wiring/SKILL.md) and [`forze-documents-search`](../forze-documents-search/SKILL.md)), and return the result. For simple reads you can call the ports directly:
+When you need a route the generators don't cover, define a plain FastAPI route that resolves a context with `ctx_dep` and dispatches through a **facade** built from your frozen registry (see [`forze-documents-search`](../forze-documents-search/SKILL.md)) — not the raw ports:
 
 ```python
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
+from forze_kits.aggregates.document import DocumentFacade, DocumentIdDTO
+
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+def projects(ctx) -> DocumentFacade[ProjectRead, CreateProject, UpdateProject]:
+    return DocumentFacade(ctx=ctx, registry=registry, namespace=project_spec.default_namespace)
 
 
 @router.get("/{project_id}")
 async def get_project(project_id: UUID, ctx=Depends(ctx_dep)):
-    return await ctx.document.query(project_spec).get(project_id)
+    return await projects(ctx).get(DocumentIdDTO(id=project_id))
 
 
 app.include_router(router)
 ```
 
-For writes, run them inside a transaction scope (`ctx.tx_ctx.scope(route)`) or dispatch through the frozen `OperationRegistry` / facade built with `forze_kits.aggregates.*`.
+The facade runs each operation through the pipeline (mapping, hooks, transaction). Reach a raw `ctx.<port>` only inside a custom handler that a facade operation can't express.
 
 ## Middleware, errors, and docs
 

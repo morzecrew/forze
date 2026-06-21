@@ -111,7 +111,7 @@ Fleet-wide resilience state (`forze[redis]`): `ResilienceDepsModule(breaker_stor
 
 ## Reference
 
-- [Resilience](https://morzecrew.github.io/forze/in-depth/resilience/)
-- [Deadlines](https://morzecrew.github.io/forze/in-depth/deadlines/)
-- [Shutdown & fleets](https://morzecrew.github.io/forze/in-depth/shutdown-and-fleets/)
-- [Observability](https://morzecrew.github.io/forze/in-depth/observability/)
+- [Resilience](https://morzecrew.github.io/forze/running-in-prod/resilience/)
+- [Deadlines](https://morzecrew.github.io/forze/running-in-prod/deadlines/)
+- [Shutdown & fleets](https://morzecrew.github.io/forze/running-in-prod/shutdown-and-fleets/)
+- [Observability](https://morzecrew.github.io/forze/running-in-prod/observability/)

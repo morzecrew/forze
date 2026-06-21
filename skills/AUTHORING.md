@@ -53,6 +53,13 @@ Optional **Gotchas** section for migration notes and debugging.
 
 Do not publish `forze-deps-modules` (retired name).
 
+## Retired (merged) skill names
+
+Do not re-create these — they were merged and removed (breaking change):
+
+- `forze-storage-s3`, `forze-storage-gcs` → **`forze-object-storage`** (S3 + GCS in one skill).
+- `forze-analytics-bigquery`, `forze-analytics-clickhouse` → **`forze-analytics`** (BigQuery + ClickHouse in one skill).
+
 ## Adding or changing a skill
 
 1. Add `skills/<name>/SKILL.md` with app-scoped `description`.

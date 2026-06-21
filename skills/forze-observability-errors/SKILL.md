@@ -117,5 +117,5 @@ register_exception_handlers(app)
 ## Reference
 
 - [Base layer (errors and logging)](https://morzecrew.github.io/forze/reference/errors/)
-- [Observability](https://morzecrew.github.io/forze/in-depth/observability/)
+- [Observability](https://morzecrew.github.io/forze/running-in-prod/observability/)
 - [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)

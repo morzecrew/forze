@@ -1,41 +1,74 @@
 ---
 name: forze-documents-search
 description: >-
-  Implements Forze document and search access: DocumentQueryPort,
-  DocumentCommandPort, SearchQueryPort, query DSL, pagination, cache-aware
-  DocumentSpec / SearchSpec usage, Postgres/Mongo/Firestore document adapters,
-  Postgres/Mongo/Meilisearch search adapters, and Postgres simple/hub/federated
-  search. Use when building data access features.
+  Implements Forze document and search access the kit-first way: DocumentFacade
+  and SearchFacade over build_document_registry / build_search_registry, kit
+  DTOs (DocumentIdDTO, ListRequestDTO, DocumentUpdateDTO), the query DSL,
+  pagination, cache-aware DocumentSpec / SearchSpec, and the Postgres / Mongo /
+  Firestore / Meilisearch backends behind them. Use when building data access
+  features.
 ---
 
 # Forze documents and search
 
 Use when implementing document persistence, filtered listings, cursor pagination, text search, hub search, or federated search. Pair with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for aggregate models and [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) for mapping `spec.name` to tables and indexes in deps modules.
 
-## Document ports (`DocumentQueryPort` / `DocumentCommandPort`)
+## Document access with `DocumentFacade`
 
-Logical **`DocumentSpec`** carries model types and `name` only; **`PostgresDepsModule`** / **`MongoDepsModule`** (and related maps) supply tables, history relations, and bookkeeping. At runtime, `ctx.document.query(spec)` resolves the factory registered under **`DocumentQueryDepKey`** for route `spec.name` and returns **`DocumentQueryPort[read]`**; `ctx.document.command(spec)` does the same for **`DocumentCommandDepKey`** → **`DocumentCommandPort`**.
+In ordinary application code (routes, services, scripts) drive documents through a **typed `DocumentFacade`**, not raw ports. Build a frozen registry from the spec and your boundary DTOs once, then construct a facade per execution context:
 
 ```python
-doc_q = self.ctx.document.query(project_spec)
-doc_c = self.ctx.document.command(project_spec)
-
-project = await doc_q.get(project_id)
-page = await doc_q.find_page(
-    filters={"$values": {"status": "active"}},
-    pagination={"limit": 20, "offset": 0},
-    sorts={"created_at": "desc", "id": "asc"},
+from forze_kits.aggregates.document import (
+    DocumentDTOs,
+    DocumentFacade,
+    DocumentIdDTO,
+    DocumentUpdateDTO,
+    ListRequestDTO,
+    build_document_registry,
 )
-rows, total = page.hits, page.count
 
-updated = await doc_c.update(project_id, project.rev, UpdateProjectCmd(title="Done"))
+registry = build_document_registry(
+    project_spec,
+    DocumentDTOs(read=ProjectRead, create=CreateProject, update=UpdateProject),
+).freeze()
+
+
+def projects(ctx) -> DocumentFacade[ProjectRead, CreateProject, UpdateProject]:
+    return DocumentFacade(ctx=ctx, registry=registry, namespace=project_spec.default_namespace)
 ```
 
-Revision-bearing writes enforce optimistic concurrency. Use **`DocumentQueryPort`** methods such as ``project`` / ``project_many`` for partial reads; use `return_new=False` on command updates when the updated model is not needed.
+The facade exposes the document operations as typed methods — each runs through the normal operation pipeline (mapping, hooks, transaction):
+
+```python
+project = await projects(ctx).get(DocumentIdDTO(id=project_id))
+
+page = await projects(ctx).list(
+    ListRequestDTO(
+        page=1,
+        size=20,
+        filters={"$values": {"status": "active"}},
+        sorts={"created_at": "desc", "id": "asc"},
+    )
+)
+rows, total = page.hits, page.count  # `list` returns a Paginated[ProjectRead]
+
+created = await projects(ctx).create(CreateProject(title="Roadmap"))
+
+result = await projects(ctx).update(
+    DocumentUpdateDTO(id=project_id, rev=project.rev, dto=UpdateProject(title="Done"))
+)
+updated, diff = result.data, result.diff   # carries the old→new field diff
+
+await projects(ctx).kill(DocumentIdDTO(id=project_id))
+```
+
+`update` carries the document's **`rev`** — a stale revision raises `exc.conflict`, the optimistic-concurrency guarantee. Other methods: `raw_list` / `raw_list_cursor` (projected dict rows), `list_cursor` (keyset pagination), `agg_list` (group-by / metrics).
+
+A read-only spec (`write=None`) builds a read-only registry — pass `DocumentDTOs(read=...)` alone and only `get` / `list` are attached.
 
 ## Query DSL
 
-Use the shared JSON DSL, not adapter-specific SQL/Mongo syntax, in application code.
+`filters` and `sorts` on `ListRequestDTO` (and on search requests) use the shared JSON DSL — never adapter-specific SQL/Mongo syntax in application code:
 
 ```python
 filters = {
@@ -50,68 +83,82 @@ Common operators: `$eq`, `$neq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$
 
 ## Cache-aware documents
 
-Attach `CacheSpec` to `DocumentSpec.cache` and register a matching cache route, usually in `RedisDepsModule.caches`. Document deps factories resolve `ctx.cache(spec.cache)` while building query/command ports.
+Attach `CacheSpec` to `DocumentSpec.cache` and register a matching cache route, usually in `RedisDepsModule.caches`. Reads then serve from the cache on a hit and populate it on a miss; writes invalidate. The facade code is unchanged — caching is pure wiring.
 
 ```python
 project_spec = DocumentSpec(
     name=ResourceName.PROJECTS,
     read=ProjectRead,
-    write={...},
+    write=DocumentWriteTypes(domain=Project, create_cmd=CreateProject, update_cmd=UpdateProject),
     cache=CacheSpec(name=ResourceName.PROJECTS, ttl=timedelta(minutes=5)),
 )
 ```
 
-When `AfterCommitPort` is wired, document cache warm/invalidation happens after a successful commit.
+Stampede protection, an opt-in in-process L1 (`CacheSpec(l1=L1Spec(...))`, a cross-replica staleness budget), early refresh, and adaptive lifetimes are all spec-level opt-ins — see [Caching reads](https://morzecrew.github.io/forze/data-events/caching/) for the full set and their consistency trade-offs.
 
-Stampede protection is built in (concurrent misses collapse per process; opt-in probabilistic early refresh via `CacheSpec(early_refresh_beta=1.0)`). For hot documents, `CacheSpec(l1=L1Spec(ttl=timedelta(seconds=2)))` adds an opt-in in-process L1 — reads skip the backend round-trip and the decode. **The L1 TTL is a cross-replica staleness budget** (writes invalidate only the writing replica's L1; must be below the cache TTL) — enable it only on read models that tolerate reads that stale.
+## Search with `SearchFacade`
 
-Adaptive lifetimes (both freshness-safe — in-band writes invalidate regardless): `CacheSpec(age_ttl=AgeBasedTtl(...))` gives each entry a lifetime proportional to the document's age since `last_update_at` (stable docs cache long, churning docs revalidate fast); `CacheSpec(sliding_ttl=timedelta(seconds=60))` extends an entry's life on each hit (hot entries never expire mid-heat; `ttl` stays the absolute cap; needs Redis 7+). Every `CachePort` setter also takes a per-entry `ttl=` for custom policies.
-
-## Search (`SearchQueryPort`)
-
-Use **`SearchSpec`** for logical searchable models. `ctx.search.query(spec)` resolves **`SearchQueryDepKey`** for route `spec.name` and returns **`SearchQueryPort`**; physical FTS/PGroonga layout belongs in **`PostgresDepsModule.searches`** (or hub/federated maps), not on the spec.
+Drive search through a **`SearchFacade`** built from a `SearchSpec`, the same way:
 
 ```python
+from forze_kits.aggregates.search import (
+    SearchFacade,
+    SearchRequestDTO,
+    build_search_registry,
+)
+
 project_search = SearchSpec(
     name=ResourceName.PROJECTS,
     model_type=ProjectRead,
     fields=("title", "description"),
     default_weights={"title": 0.7, "description": 0.3},
 )
+search_registry = build_search_registry(project_search).freeze()
 
-hits, total = await self.ctx.search.query(project_search).search(
-    query="roadmap",
-    filters={"$values": {"status": "active"}},
-    limit=20,
+
+def project_search_facade(ctx) -> SearchFacade[ProjectRead]:
+    return SearchFacade(ctx=ctx, registry=search_registry, namespace=project_search.default_namespace)
+
+
+page = await project_search_facade(ctx).search(
+    SearchRequestDTO(query="roadmap", page=1, size=20, filters={"$values": {"status": "active"}})
 )
+hits, total = page.hits, page.count
 ```
+
+Methods: `search` (typed, offset), `cursor_search` (typed, keyset), `projected_search` / `projected_cursor_search` (raw dict rows). The physical FTS/PGroonga/vector layout belongs in **`PostgresDepsModule.searches`** (or hub/federated maps), never on the spec.
 
 ## Hub and federated search
 
-Use `HubSearchSpec` when one hub entity searches through weighted member legs. Use `FederatedSearchSpec` when merging independent search specs. Resolve with `ctx.search.hub(spec)` or `ctx.search.federated(spec)`.
+Use `HubSearchSpec` with `build_hub_search_registry` when one hub entity searches through weighted member legs; use `FederatedSearchSpec` with `build_federated_search_registry` to merge independent specs. Both yield the same `SearchFacade` surface. Keep snapshot storage and cursor/keyset behaviour in infrastructure config.
 
-Keep snapshot storage and cursor/keyset behavior in infrastructure config; use the application search options helpers rather than duplicating merge or cursor logic.
+## Custom operations and raw ports
+
+The facade covers the standard document/search surface. When you need behaviour the facade doesn't model — a multi-step domain operation, a saga step, a one-off projection — write a handler (or reach the port directly) via the namespaced context: `ctx.document.query(spec)` → `DocumentQueryPort[read]`, `ctx.document.command(spec)` → `DocumentCommandPort`, `ctx.search.query(spec)` → `SearchQueryPort`. This is the escape hatch, not the default for CRUD.
 
 ## Adapter boundaries
 
-- Postgres, Mongo, and Firestore implement document query/command gateways (and history where configured). Firestore wires `DocumentQueryDepKey` / `DocumentCommandDepKey` via `FirestoreDepsModule(ro_documents=..., rw_documents=...)` with `FirestoreReadOnlyDocumentConfig` / `FirestoreDocumentConfig`.
-- Postgres implements `SearchQueryPort` (FTS/PGroonga/vector); Mongo implements it when `MongoDepsModule.searches` is wired (`text`, `atlas`, `vector` engines); Meilisearch implements it via `MeilisearchDepsModule(searches={...})` with `MeilisearchSearchConfig` (plus `MeilisearchFederatedSearchConfig` for federated). All resolve through the same `ctx.search.query(spec)` port.
-- Mock implements document/search behavior for unit tests.
-- Use adapters in integration tests or deps modules, not handlers.
+- Postgres, Mongo, and Firestore implement the document gateways (and history where configured). Firestore wires them via `FirestoreDepsModule(ro_documents=..., rw_documents=...)` with `FirestoreReadOnlyDocumentConfig` / `FirestoreDocumentConfig`.
+- Postgres implements search (FTS/PGroonga/vector); Mongo when `MongoDepsModule.searches` is wired (`text`, `atlas`, `vector`); Meilisearch via `MeilisearchDepsModule(searches={...})` with `MeilisearchSearchConfig` (plus `MeilisearchFederatedSearchConfig`). All resolve through the same facade/port surface.
+- Mock implements document/search behaviour for unit tests.
+- Use adapters in deps modules and integration tests, never in handlers.
 
 ## Anti-patterns
 
-1. **Putting table/collection/index names in `DocumentSpec` or `SearchSpec`** — use deps-module configs.
-2. **Importing Postgres/Mongo adapters in handlers** — use ports.
-3. **Using removed flat accessors (`ctx.search_query`, `ctx.doc_read`, `ctx.doc_write`)** — use the namespaced `ctx.document.query` / `ctx.document.command` / `ctx.search.query`.
-4. **Sorting cursor pages without stable key fields** — include deterministic sort keys, usually `id`.
-5. **Bypassing revision fields on writes** — preserve optimistic concurrency semantics.
+1. **Reaching raw `ctx.document.query/command` for standard CRUD** — use a `DocumentFacade` (likewise `SearchFacade` for search); raw ports are for custom handlers and orchestration only.
+2. **Putting table/collection/index names in `DocumentSpec` or `SearchSpec`** — use deps-module configs.
+3. **Importing Postgres/Mongo adapters in handlers** — go through the facade/ports.
+4. **Using removed flat accessors (`ctx.search_query`, `ctx.doc_read`, `ctx.doc_write`)** — use the namespaced `ctx.document.query` / `ctx.document.command` / `ctx.search.query`.
+5. **Sorting cursor pages without stable key fields** — include a deterministic sort key, usually `id`.
+6. **Bypassing the revision on updates** — always pass the read `rev` through `DocumentUpdateDTO` to preserve optimistic concurrency.
 
 ## Reference
 
-- [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/)
+- [Reading data](https://morzecrew.github.io/forze/data-events/reading-data/)
+- [Caching reads](https://morzecrew.github.io/forze/data-events/caching/)
+- [Specs and wiring](https://morzecrew.github.io/forze/writing-operation/wiring/)
 - [Document contracts](https://morzecrew.github.io/forze/reference/contracts/document/)
 - [Query syntax](https://morzecrew.github.io/forze/reference/query-syntax/)
-- [Contracts overview](https://morzecrew.github.io/forze/reference/contracts/)
 - [Postgres integration](https://morzecrew.github.io/forze/integrations/postgres/)
 - [Mongo integration](https://morzecrew.github.io/forze/integrations/mongo/)
+- Sibling skills: [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md), [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md)
