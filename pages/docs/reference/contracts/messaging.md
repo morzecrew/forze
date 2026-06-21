@@ -5,7 +5,7 @@ summary: Methods on the queue, outbox, and inbox contracts
 ---
 
 Method-level reference for the three messaging contracts — queue, outbox, and
-inbox. See [Events & sagas](../../in-depth/events-sagas.md) for how they work
+inbox. See [Events & sagas](../../data-events/events-sagas.md) for how they work
 together.
 
 ## Queue
@@ -82,4 +82,4 @@ exactly-once primitive:
 
 Call it inside the handler's transaction so the dedup mark and the handler's
 writes commit together. In practice use the `process_with_inbox` kit, which does
-exactly that — see [Events & sagas](../../in-depth/events-sagas.md).
+exactly that — see [Events & sagas](../../data-events/events-sagas.md).

@@ -10,14 +10,16 @@ are part of the reproducible, single-seed run — no artificial ``sleep`` in app
 
 from __future__ import annotations
 
+import math
 import random
 from typing import final
 
 import attrs
 
+from forze.application.contracts.interception import PortSelector
 from forze.application.execution.interception import LatencyModel
 from forze.base.primitives import monotonic
-from forze_dst.recorder import record_event
+from forze_dst.oracle.recorder import record_event
 
 # ----------------------- #
 
@@ -29,8 +31,13 @@ class Constant:
 
     seconds: float
 
+    # ....................... #
+
     def sample(self, _rng: random.Random) -> float:
         return self.seconds
+
+
+# ....................... #
 
 
 @final
@@ -41,8 +48,13 @@ class Uniform:
     low: float
     high: float
 
+    # ....................... #
+
     def sample(self, rng: random.Random) -> float:
         return rng.uniform(self.low, self.high)
+
+
+# ....................... #
 
 
 @final
@@ -52,15 +64,67 @@ class Exponential:
 
     mean: float
 
+    # ....................... #
+
     def sample(self, rng: random.Random) -> float:
-        if self.mean <= 0.0:
+        return 0.0 if self.mean <= 0.0 else rng.expovariate(1.0 / self.mean)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(frozen=True)
+class LogNormal:
+    """A heavy-tailed latency: log-normal with the given *median* (seconds) and log-space *sigma*.
+
+    The canonical service-time model — a long right tail, so the p99 sits well above the median.
+    *sigma* sets the tail heaviness (larger ⇒ fatter); the median anchors the typical case. This
+    is what surfaces deadline / timeout bugs that a fixed or uniform latency never reaches.
+    """
+
+    median: float
+    sigma: float = 1.0
+
+    # ....................... #
+
+    def sample(self, rng: random.Random) -> float:
+        if self.median <= 0.0:
             return 0.0
 
-        return rng.expovariate(1.0 / self.mean)
+        return rng.lognormvariate(math.log(self.median), self.sigma)
 
 
-Distribution = Constant | Uniform | Exponential
-"""A latency distribution sampled per matched call from the seeded latency RNG."""
+# ....................... #
+
+
+@final
+@attrs.define(frozen=True)
+class Pareto:
+    """A power-law (Pareto) latency: minimum *scale* seconds, tail index *alpha*.
+
+    The extreme-tail model — a small fraction of calls are dramatically slower. *alpha* governs the
+    tail (smaller ⇒ heavier; ``alpha <= 1`` has an *infinite* mean, modelling pathological tails).
+    Use it to stress retry/deadline logic against rare, very slow downstreams.
+    """
+
+    scale: float
+    alpha: float = 1.5
+
+    # ....................... #
+
+    def sample(self, rng: random.Random) -> float:
+        if self.scale <= 0.0 or self.alpha <= 0.0:
+            return 0.0
+
+        return self.scale * rng.paretovariate(self.alpha)
+
+
+# ....................... #
+
+Distribution = Constant | Uniform | Exponential | LogNormal | Pareto
+"""A latency distribution sampled per matched call from the seeded latency RNG. ``LogNormal`` and
+``Pareto`` are heavy-tailed — realistic p99 blowups that expose timeout / deadline bugs."""
 
 
 # ....................... #
@@ -68,13 +132,14 @@ Distribution = Constant | Uniform | Exponential
 
 @final
 @attrs.define(frozen=True, kw_only=True)
-class LatencyRule:
-    """A latency distribution applied to calls matching ``surface`` / ``route`` / ``op``."""
+class LatencyRule(PortSelector):
+    """A latency distribution applied to calls matching ``surface`` / ``route`` / ``op``.
+
+    The selector fields are inherited from
+    :class:`~forze.application.contracts.interception.PortSelector`.
+    """
 
     dist: Distribution
-    surface: str | None = None
-    route: str | None = None
-    op: str | None = None
 
 
 # ....................... #
@@ -100,11 +165,7 @@ def compile_latency(profile: LatencyProfile, rng: random.Random) -> LatencyModel
 
     def model(surface: str | None, route: str | None, op: str) -> float:
         for rule in profile.rules:
-            if (
-                (rule.surface is None or surface == rule.surface)
-                and (rule.route is None or route == rule.route)
-                and (rule.op is None or op == rule.op)
-            ):
+            if rule.matches_parts(surface, route, op):
                 seconds = rule.dist.sample(rng)
 
                 if seconds > 0.0:
@@ -124,3 +185,16 @@ def compile_latency(profile: LatencyProfile, rng: random.Random) -> LatencyModel
         return 0.0
 
     return model
+
+
+# ....................... #
+
+__all__ = [
+    "LatencyProfile",
+    "LatencyRule",
+    "Constant",
+    "Uniform",
+    "Exponential",
+    "LogNormal",
+    "Pareto",
+]

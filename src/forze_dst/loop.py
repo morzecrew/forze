@@ -121,7 +121,7 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
     continuations concurrent tasks scheduled via ``call_soon`` after awaiting — to explore
     orderings FIFO would never reach (where order-dependent races hide). Pass either
     *schedule_rng* (uniform shuffle each tick) or a *scheduler* object (duck-typed
-    ``reorder(ready, step) -> list``; e.g. a :class:`~forze_dst.scheduler.PCTScheduler`) —
+    ``reorder(ready, step) -> list``; e.g. a :class:`~forze_dst.scheduler.PCTReorderer`) —
     *scheduler* takes precedence. Both are deliberately separate from the application entropy
     seam, so a schedule can be varied without changing application values, and vice versa.
     Same seed → same interleaving, so any bug surfaced reproduces.
@@ -188,7 +188,9 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         # wakeup can only come from a real foreign thread — which would inject callbacks whose
         # timing depends on wall-clock thread scheduling, breaking determinism. Refuse it (the
         # in-loop path uses ``call_soon``); make such work inline for simulation.
-        raise _forbidden("scheduling a callback from another thread (call_soon_threadsafe)")
+        raise _forbidden(
+            "scheduling a callback from another thread (call_soon_threadsafe)"
+        )
 
     def close(self) -> None:
         self._selector.close()

@@ -3,10 +3,10 @@
 import pytest
 
 from forze.application.contracts.deps import DepKey
-from forze.application.execution.deps.resolution import frame_for
-from forze.application.execution.deps.resolution_context import ResolutionContext
-from forze.application.execution.deps.resolution_tracer import (
+from forze.application.execution.deps.resolution import (
     RecordingResolutionTracer,
+    ResolutionContext,
+    frame_for,
     resolution_tracer_from_flag,
 )
 from forze.base.exceptions import CoreException

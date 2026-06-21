@@ -12,13 +12,8 @@ import asyncio
 
 import pytest
 
-from forze_dst import (
-    OpSpec,
-    generate_workload,
-    run_simulation,
-    run_workload,
-    simulate_workload,
-)
+from forze_dst.runtime import run_simulation
+from forze_dst.workload import OpSpec, generate_workload, run_workload, simulate_workload
 
 # ----------------------- #
 

@@ -16,7 +16,7 @@ from forze.application.contracts.tenancy import (
     validate_module_tenancy,
     warn_dynamic_relation_with_tenant_aware,
 )
-from forze.application.execution import Deps, DepsModule
+from forze.application.contracts.deps import Deps, DepsModule
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel._logger import logger

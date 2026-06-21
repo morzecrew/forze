@@ -10,7 +10,6 @@ call records no phantom port event; the executor emits its own
 ``domain="resilience"`` events for rejections.
 """
 
-import inspect
 from functools import wraps
 from typing import TYPE_CHECKING, Any, cast
 
@@ -19,6 +18,8 @@ import attrs
 from forze.application.contracts.resilience import PortPolicy
 from forze.base.primitives import StrKey
 
+from ..port_proxy_base import PortProxy
+
 if TYPE_CHECKING:
     from ..context import ExecutionContext
 
@@ -26,18 +27,17 @@ if TYPE_CHECKING:
 
 
 @attrs.define(slots=True)
-class ResiliencePortProxy:
+class ResiliencePortProxy(PortProxy):
     """Wrap a port so its public coroutine methods run under a named policy.
 
     Method calls go through ``ctx.resilience().run(fn, policy=..., route=...)``
     lazily at call time, so the proxy never resolves the executor during
     dependency resolution. Skipped (returned unwrapped): non-callables,
     private/dunder attributes, methods outside an explicit ``methods`` tuple,
-    async-generator methods (a stream cannot run inside one ``run()`` call),
-    and plain sync methods.
+    async-generator methods (a stream cannot run inside one ``run()`` call —
+    the base default), and plain sync methods (the base default).
     """
 
-    inner: Any
     ctx: "ExecutionContext"
     policy: StrKey
     route: StrKey | None
@@ -45,17 +45,17 @@ class ResiliencePortProxy:
 
     # ....................... #
 
-    def __getattr__(self, name: str) -> Any:
-        attr = getattr(self.inner, name)
+    def _should_wrap(self, name: str, attr: Any) -> bool:
+        # Public methods only, narrowed to ``methods`` when the policy declares them.
+        if name.startswith("_"):
+            return False
 
-        if name.startswith("_") or not callable(attr):
-            return attr
+        return self.methods is None or name in self.methods
 
-        if self.methods is not None and name not in self.methods:
-            return attr
+    # ....................... #
 
-        if inspect.isasyncgenfunction(attr) or not inspect.iscoroutinefunction(attr):
-            return attr
+    def _wrap_async(self, name: str, attr: Any) -> Any:
+        del name
 
         @wraps(attr)
         async def guarded(*args: Any, **kwargs: Any) -> Any:

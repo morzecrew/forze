@@ -23,8 +23,8 @@ from forze.application.contracts.search import (
     SearchQueryDepKey,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
-from forze.application.execution import Deps, DepsModule
-from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
+from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 

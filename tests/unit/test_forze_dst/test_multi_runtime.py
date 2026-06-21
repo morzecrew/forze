@@ -31,7 +31,7 @@ from forze.domain.models import (
     Document,
     ReadDocument,
 )
-from forze_dst import run_simulation
+from forze_dst.runtime import run_simulation
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
 

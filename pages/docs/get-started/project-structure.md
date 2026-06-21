@@ -52,7 +52,7 @@ consistent and everything wires up. Get it wrong and a port won't resolve.
 
 ## Next steps
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-compass: **[Core concepts](../core-concepts/overview.md)**
 

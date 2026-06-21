@@ -6,7 +6,10 @@ import attrs
 
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.resilience import (
+    CircuitBreakerStore,
+    LatencyDigestStore,
     PortPolicy,
+    RateLimitStore,
     ResilienceExecutorDepKey,
     ResiliencePortPoliciesDepKey,
     ResilienceSpec,
@@ -16,7 +19,6 @@ from forze.base.exceptions import exc
 from ..deps import Deps
 from .executor import InProcessResilienceExecutor
 from .policies import builtin_default_policies
-from .store import CircuitBreakerStore, LatencyDigestStore, RateLimitStore
 
 # ----------------------- #
 

@@ -56,7 +56,7 @@ async with runtime.scope():
 3. **Serve** — the application handles requests.
 4. **Drain** — stop admitting new invocations; give in-flight operations a
    bounded window to finish (see
-   [Shutdown & fleets](../in-depth/shutdown-and-fleets.md)).
+   [Shutdown & fleets](../running-in-prod/shutdown-and-fleets.md)).
 5. **Shutdown** — run shutdown steps in reverse.
 6. **Reset** — clear the context.
 
@@ -89,7 +89,7 @@ That's the whole shape of Forze: **aggregates** at the center, **operations** ov
 them, **ports** out to infrastructure, and a **runtime** to tie it together. Time
 to build something with it.
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-zap: **[Quickstart](../get-started/quickstart.md)**
 

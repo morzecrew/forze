@@ -1,6 +1,6 @@
 """Convenience wiring for local identity on a single authn/tenancy route."""
 
-from forze.application.execution import Deps
+from forze.application.contracts.deps import Deps
 
 from forze_identity.authn.execution import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.tenancy.execution.deps import TenancyDepsModule

@@ -22,7 +22,7 @@ from forze.base.primitives import (
     bind_time_source,
 )
 
-from .loop import SimulationEventLoop
+from .loop import RealIOForbidden, SimulationDeadlock, SimulationEventLoop
 from .time_source import DEFAULT_EPOCH, SimulationTimeSource
 
 # ----------------------- #
@@ -46,7 +46,7 @@ def run_simulation[T](
 
     Interleaving control (opt-in): pass *schedule_seed* to shuffle the ready-callback queue
     each tick from a separate seeded RNG, or *scheduler* for a custom strategy (e.g. a
-    :class:`~forze_dst.scheduler.PCTScheduler`) — *scheduler* takes precedence. ``None`` for
+    :class:`~forze_dst.scheduler.PCTReorderer`) — *scheduler* takes precedence. ``None`` for
     both keeps deterministic FIFO order. Either way the run is reproducible.
 
     *latency* models simulated I/O delay: a ``(surface, route, op) -> seconds`` function called
@@ -64,7 +64,11 @@ def run_simulation[T](
         raise ValueError("epoch must be timezone-aware (e.g. tzinfo=UTC)")
 
     schedule_rng = (
-        None if schedule_seed is None else random.Random(schedule_seed)  # nosec B311 - deterministic sim schedule, not crypto
+        None
+        if schedule_seed is None
+        else random.Random(
+            schedule_seed
+        )  # nosec B311 - deterministic sim schedule, not crypto
     )
     loop = SimulationEventLoop(schedule_rng=schedule_rng, scheduler=scheduler)
     time_source = SimulationTimeSource(loop=loop, epoch=epoch)
@@ -84,3 +88,17 @@ def run_simulation[T](
 
     finally:
         loop.close()
+
+
+# ....................... #
+
+# ``runtime`` is the low-level deterministic-runtime namespace: the one-call entry plus the
+# loop, its leak/deadlock guards, and the virtual-time clock seam, re-exported together.
+__all__ = [
+    "run_simulation",
+    "SimulationEventLoop",
+    "RealIOForbidden",
+    "SimulationDeadlock",
+    "SimulationTimeSource",
+    "DEFAULT_EPOCH",
+]

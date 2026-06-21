@@ -9,7 +9,7 @@ order. Doing both in one handler holds the database transaction open across the
 network call. A **two-phase handler** splits the work: `prepare` runs the call
 *outside* the transaction and `apply` writes *inside* it, so the connection is
 held only for the write. The concept is covered in
-[Transactions → Two-phase handlers](../in-depth/transactions.md#two-phase-handlers-work-before-the-write);
+[Transactions → Two-phase handlers](../writing-operation/transactions.md#two-phase-handlers-work-before-the-write);
 this is the wiring.
 
 The runnable version lives at `examples/recipes/two_phase_pricing/` and runs on
@@ -60,4 +60,4 @@ the row commits:
   optimistic-concurrency `rev` check — rather than assuming the read still holds.
 - **One transaction.** Two-phase wraps a single transaction around `apply`. For
   multiple transactions with compensation between external steps, reach for a
-  [saga](../in-depth/events-sagas.md), not more phases.
+  [saga](../data-events/events-sagas.md), not more phases.

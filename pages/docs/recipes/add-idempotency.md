@@ -7,7 +7,7 @@ summary: Make a retried mutation a no-op that returns the first result, keyed by
 A client retries a `POST` it isn't sure landed; an at-least-once queue delivers
 the same command twice. **Idempotency** makes the duplicate a no-op that returns
 the *first* result — the handler and its writes run exactly once. The concept is
-covered in [Idempotency](../in-depth/idempotency.md); this is the wiring.
+covered in [Idempotency](../writing-operation/idempotency.md); this is the wiring.
 
 The runnable version lives at `examples/recipes/idempotency/` and runs on the
 in-memory mock store — no infrastructure needed.
@@ -65,5 +65,5 @@ spec, not the config.
 - **Not transactional with the write.** The wrap records the result *after* the
   business transaction commits — a crash in the gap leaves the operation
   un-recorded, so it re-runs rather than replays. Idempotency dedupes the common
-  case; it isn't a substitute for the [outbox](../in-depth/events-sagas.md) when
+  case; it isn't a substitute for the [outbox](../data-events/events-sagas.md) when
   you need exactly-once *effects*.

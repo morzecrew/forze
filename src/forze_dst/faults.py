@@ -28,10 +28,10 @@ from typing import final
 
 import attrs
 
-from forze.application.execution.interception import PortCall, PortNext
+from forze.application.contracts.interception import PortCall, PortNext, PortSelector
 from forze.base.exceptions import exc
 from forze.base.primitives import monotonic
-from forze_dst.recorder import record_event
+from forze_dst.oracle.recorder import record_event
 
 # ----------------------- #
 
@@ -42,13 +42,16 @@ _TRANSPORT_OPS = frozenset(
 behaviour, so they only apply to these — duplicating a document/outbox/idempotency write would
 fabricate states that model no real redelivery."""
 
+# ....................... #
+
 
 def _record_fault(fault: str, call: PortCall, **extra: object) -> None:
     """Record an injected fault as a virtual-time-stamped ``fault`` event for the report.
 
     A no-op outside a recorded simulation (the recorder is unbound), so the fault interceptors
     stay usable standalone. The event feeds the report's injected-environment timeline, so a
-    counterexample shows exactly which faults the seed produced and when (in virtual time)."""
+    counterexample shows exactly which faults the seed produced and when (in virtual time).
+    """
 
     record_event(
         "fault",
@@ -59,6 +62,9 @@ def _record_fault(fault: str, call: PortCall, **extra: object) -> None:
         op=call.op,
         **extra,
     )
+
+
+# ....................... #
 
 
 class SimulatedCrash(BaseException):
@@ -76,25 +82,9 @@ class SimulatedCrash(BaseException):
 # ....................... #
 
 
-def _call_matches(
-    call: PortCall,
-    *,
-    surface: str | None,
-    route: str | None,
-    op: str | None,
-) -> bool:
-    """Whether *call* matches the (surface, route, op) selector (``None`` matches anything)."""
-
-    return (
-        (surface is None or call.surface == surface)
-        and (route is None or call.route == route)
-        and (op is None or call.op == op)
-    )
-
-
 @final
-@attrs.define(kw_only=True)
-class PortFaultInterceptor:
+@attrs.define(frozen=True, kw_only=True)
+class PortFaultInterceptor(PortSelector):
     """Inject a transient downstream failure at a port boundary — over **any** port.
 
     A :class:`~forze.application.execution.interception.PortInterceptor` that, from a
@@ -114,21 +104,25 @@ class PortFaultInterceptor:
     """
 
     rng: random.Random
+    """The dedicated fault RNG."""
+
     probability: float = 1.0
-    surface: str | None = None
-    route: str | None = None
-    op: str | None = None
+    """The per-eligible-call chance of a fault."""
+
     code: str = "dst.injected_port_fault"
+    """The error code to raise."""
 
     # ....................... #
 
     async def around(self, call: PortCall, nxt: PortNext) -> object:
         if (
-            _call_matches(call, surface=self.surface, route=self.route, op=self.op)
+            self.matches(call)
             and self.probability > 0.0
             and self.rng.random() < self.probability
         ):
-            await asyncio.sleep(0)  # yield so the failure interleaves at the port boundary
+            await asyncio.sleep(
+                0
+            )  # yield so the failure interleaves at the port boundary
             _record_fault("error", call)
             raise exc.infrastructure(
                 f"injected transient fault at {call.surface}[{call.route}].{call.op}",
@@ -143,8 +137,8 @@ class PortFaultInterceptor:
 
 
 @final
-@attrs.define(kw_only=True)
-class CrashInterceptor:
+@attrs.define(frozen=True, kw_only=True)
+class CrashInterceptor(PortSelector):
     """Raise a :class:`SimulatedCrash` at a matched port boundary — the process dies mid-I/O.
 
     The seam-level crash primitive (WS4): unlike :class:`PortFaultInterceptor` (a retryable
@@ -158,20 +152,22 @@ class CrashInterceptor:
     """
 
     rng: random.Random
+    """The dedicated fault RNG."""
+
     probability: float = 1.0
-    surface: str | None = None
-    route: str | None = None
-    op: str | None = None
+    """The per-eligible-call crash chance."""
 
     # ....................... #
 
     async def around(self, call: PortCall, nxt: PortNext) -> object:
         if (
-            _call_matches(call, surface=self.surface, route=self.route, op=self.op)
+            self.matches(call)
             and self.probability > 0.0
             and self.rng.random() < self.probability
         ):
-            await asyncio.sleep(0)  # yield so the crash interleaves at the port boundary
+            await asyncio.sleep(
+                0
+            )  # yield so the crash interleaves at the port boundary
             _record_fault("crash", call)
             raise SimulatedCrash(
                 f"simulated crash at {call.surface}[{call.route}].{call.op}"
@@ -185,7 +181,7 @@ class CrashInterceptor:
 
 @final
 @attrs.define(frozen=True, kw_only=True)
-class CrashPolicy:
+class CrashPolicy(PortSelector):
     """Declarative crash injection for the crash/restart scenario — seeded by construction.
 
     Selects the port boundary at which the process *dies* (a :class:`SimulatedCrash`); the
@@ -194,20 +190,19 @@ class CrashPolicy:
     reproduces from one seed. Set on :class:`~forze_dst.SimulationConfig.crash` to turn a run
     into a crash → restart → recovery scenario.
 
-    *surface* / *route* / *op* (any ``None`` matches anything) select the eligible calls;
+    *surface* / *route* / *op* (any ``None`` matches anything, inherited from
+    :class:`~forze.application.contracts.interception.PortSelector`) select the eligible calls;
     *probability* is the per-eligible-call crash chance.
     """
 
-    surface: str | None = None
-    route: str | None = None
-    op: str | None = None
     probability: float = 1.0
+    """The per-eligible-call crash chance."""
+
+    # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if not 0.0 <= self.probability <= 1.0:
-            raise ValueError(
-                f"probability must be in [0, 1], got {self.probability}"
-            )
+            raise ValueError(f"probability must be in [0, 1], got {self.probability}")
 
 
 # ....................... #
@@ -230,34 +225,40 @@ def compile_crash(policy: CrashPolicy, rng: random.Random) -> CrashInterceptor:
 
 @final
 @attrs.define(frozen=True, kw_only=True)
-class FaultRule:
+class FaultRule(PortSelector):
     """One fault rule: which calls it matches, and the per-eligible-call fault probabilities.
 
-    *surface* / *route* / *op* (any ``None`` matches anything) select eligible calls. Each
+    *surface* / *route* / *op* (any ``None`` matches anything, inherited from
+    :class:`~forze.application.contracts.interception.PortSelector`) select eligible calls. Each
     non-zero rate is rolled independently on a matched call; the first kind that fires wins
     (crash > error > timeout). All rolls draw from the policy's seeded fault RNG, so they are
     part of the reproducible fault stream.
     """
 
-    surface: str | None = None
-    route: str | None = None
-    op: str | None = None
     error: float = 0.0
     """P(raise a retryable ``exc.infrastructure`` — a transient downstream failure)."""
+
     timeout: float = 0.0
     """P(raise ``exc.timeout`` — the call exceeded its budget)."""
+
     crash: float = 0.0
     """P(raise ``SimulatedCrash`` — the process dies; only a restart recovers)."""
+
     drop: float = 0.0
     """P(silently drop — the real call is skipped and a synthetic result returned; models
     broker loss. Target a fire-and-forget op, e.g. queue ``enqueue``)."""
+
     duplicate: float = 0.0
     """P(the call runs twice — a redelivered duplicate; exercises inbox idempotency)."""
+
     delay: float = 0.0
     """P(advance virtual time before the call by ``uniform(0, max_delay]`` — a slow/reordered
     delivery; the call's own arguments are never modified)."""
+
     max_delay: timedelta = timedelta(seconds=5)
     """Upper bound for an injected :attr:`delay` (drawn uniformly in ``(0, max_delay]``)."""
+
+    # ....................... #
 
     def __attrs_post_init__(self) -> None:
         for name in ("error", "timeout", "crash", "drop", "duplicate", "delay"):
@@ -282,13 +283,14 @@ class FaultPolicy:
     """
 
     rules: tuple[FaultRule, ...] = ()
+    """The ordered set of fault rules."""
 
 
 # ....................... #
 
 
 @final
-@attrs.define(kw_only=True)
+@attrs.define(frozen=True, kw_only=True)
 class _FaultPolicyInterceptor:
     """The compiled :class:`FaultPolicy` — rolls the first matching rule's faults per call."""
 
@@ -298,11 +300,10 @@ class _FaultPolicyInterceptor:
     # ....................... #
 
     def _match(self, call: PortCall) -> FaultRule | None:
-        for rule in self.rules:
-            if _call_matches(call, surface=rule.surface, route=rule.route, op=rule.op):
-                return rule
-
-        return None
+        return next(
+            (rule for rule in self.rules if rule.matches(call)),
+            None,
+        )
 
     # ....................... #
 
@@ -318,10 +319,7 @@ class _FaultPolicyInterceptor:
             payloads = call.args[1] if len(call.args) > 1 else ()
             return [token for _ in payloads]
 
-        if call.op == "enqueue":
-            return token
-
-        return None
+        return token if call.op == "enqueue" else None
 
     # ....................... #
 
@@ -388,3 +386,15 @@ def compile_fault_policy(
     """Compile *policy* into a seam interceptor that shares one seeded fault RNG."""
 
     return _FaultPolicyInterceptor(rules=policy.rules, rng=rng)
+
+
+# ....................... #
+
+__all__ = [
+    "FaultPolicy",
+    "FaultRule",
+    "CrashPolicy",
+    "SimulatedCrash",
+    "PortFaultInterceptor",
+    "CrashInterceptor",
+]

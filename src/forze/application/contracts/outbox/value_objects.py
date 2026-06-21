@@ -68,11 +68,11 @@ class IntegrationEvent[M]:
     """
 
     hlc: HlcTimestamp | None = None
-    """Hybrid Logical Clock stamp (causal order). Stamped from the process-global
-    :func:`~forze.application.execution.outbox.clock.outbox_clock` at staging; a
-    causal successor always sorts after its cause across replicas. Persisted and
-    used for claim ordering only on outbox backends with HLC ordering enabled;
-    otherwise carried for downstream consumers that order on ``HEADER_HLC``."""
+    """Hybrid Logical Clock stamp (causal order). Stamped from the runtime's
+    node-local ``ExecutionContext.outbox_clock`` at staging; a causal successor
+    always sorts after its cause across replicas. Persisted and used for claim
+    ordering only on outbox backends with HLC ordering enabled; otherwise carried
+    for downstream consumers that order on ``HEADER_HLC``."""
 
 
 # ....................... #

@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, runtime_ch
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
-    from .value_objects import Outcome
+    from .value_objects import LifecycleStep, Outcome
 
 # ----------------------- #
 
@@ -256,3 +256,18 @@ type OperationHandlerFactory = HandlerFactory | TwoPhaseHandlerFactory
 
 type OperationHandler = Handler[Any, Any] | TwoPhaseHandler[Any, Any, Any]
 """A resolved operation handler: a plain or two-phase handler."""
+
+
+# ....................... #
+
+
+class LifecycleModule(Protocol):  # pragma: no cover
+    """Protocol for a module that returns lifecycle steps.
+
+    Callables are invoked when building a ``LifecyclePlan``; multiple modules are
+    merged and topologically ordered via ``LifecyclePlan.build``.
+    """
+
+    def __call__(self) -> tuple["LifecycleStep", ...]:
+        """Return lifecycle steps contributed by this module."""
+        ...

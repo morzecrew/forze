@@ -1,6 +1,6 @@
 """Convenience wiring for Telegram Login OIDC bootstrap auth."""
 
-from forze.application.execution import Deps
+from forze.application.contracts.deps import Deps
 
 from .._oidc import oidc_bootstrap_identity_deps
 from .config import TelegramLoginOidcConfig

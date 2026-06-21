@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from forze.application.contracts.deps import DepKey
 from forze.application.execution import Deps
-from forze.application.execution.deps.builders import (
+from forze.application.contracts.deps import (
     merge_deps,
     routed_constant,
     routed_from_mapping,

@@ -268,6 +268,7 @@ Verified to render in this setup:
 
 - Content tabs: `=== "Label"`.
 - Grid cards: `<div class="grid cards" markdown>` … `</div>`.
+- Grid cards with hyperlinks: `<div class="grid cards fz-cards" markdown>` … `</div>`.
 - Admonitions: `!!! note` and collapsible `??? question`.
 - Buttons: `[Text](url){ .md-button .md-button--primary }`.
 - Lucide icons: `:lucide-zap:` inline and `icon:` in frontmatter.

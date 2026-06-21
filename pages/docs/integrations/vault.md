@@ -50,9 +50,9 @@ lifecycle = LifecyclePlan.from_steps(vault_lifecycle_step())
   already-constructed client; it doesn't initialize it.
 - This is what powers per-tenant secret routing (`secret_ref_for_tenant`) for the
   routed Postgres/Mongo/HTTP/… clients — see
-  [Multi-tenancy](../in-depth/multi-tenancy.md).
+  [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).
 - **Transit** is a separate mount from KV. `VaultTransitKeyManagement` is the KMS
-  backend for [envelope encryption](../in-depth/encryption.md) (the KEK never
+  backend for [envelope encryption](../identity-tenancy-enc/encryption.md) (the KEK never
   leaves Vault), `VaultTransitTenantProvisioner` creates a tenant's Transit key
   on onboarding, and `VaultTransitSigner` signs JWTs (RS256/ES256) without the
   private key leaving Vault.

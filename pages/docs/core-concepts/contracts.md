@@ -78,4 +78,4 @@ from forze_mock import MockDepsModule
 
 Mock transactions are faithful by default — a rollback undoes the writes, so
 transaction bugs surface in tests — see
-[Transactions under the mock](../in-depth/transactions.md#transactions-under-the-mock).
+[Transactions under the mock](../writing-operation/transactions.md#transactions-under-the-mock).

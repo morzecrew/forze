@@ -14,20 +14,10 @@ import typer
 from forze.base.primitives import utcnow
 from forze_cli._compat import require_dst
 from forze_cli.loader import load_simulation
-from forze_dst import (
-    Constant,
-    FaultPolicy,
-    FaultRule,
-    LatencyProfile,
-    LatencyRule,
-    RegressionEntry,
-    SchedulerKind,
-    SimulationConfig,
-    Strategy,
-    append_regression,
-    entry_from_report,
-    load_regressions,
-)
+from forze_dst import PCTScheduler, RandomScheduler, SimulationConfig, Strategy
+from forze_dst.artifacts import RegressionEntry, append_regression, entry_from_report, load_regressions
+from forze_dst.faults import FaultPolicy, FaultRule
+from forze_dst.latency import Constant, LatencyProfile, LatencyRule
 
 # ----------------------- #
 
@@ -155,8 +145,7 @@ def _config(
         max_examples=max_examples,
         max_runs=max_runs,
         dpor_seed=seed_list[0] if seed_list else 0,
-        scheduler=SchedulerKind.PCT if pct else SchedulerKind.RANDOM,
-        pct_depth=depth,
+        scheduler=PCTScheduler(depth=depth) if pct else RandomScheduler(),
         faults=_faults(fault_error),
         latency=_latency(latency),
     )
@@ -234,6 +223,17 @@ def run(
     regression_file: str = typer.Option(
         _DEFAULT_CORPUS, help="Regression corpus path (JSON Lines)."
     ),
+    confidence: bool = typer.Option(
+        True,
+        "--confidence/--no-confidence",
+        help="On a clean scenario run, report what was exercised (never-raced ops, "
+        "unfired faults) so green means something.",
+    ),
+    html: str = typer.Option(
+        "",
+        metavar="FILE",
+        help="On a violation, write a self-contained HTML time-travel viewer to FILE.",
+    ),
 ) -> None:
     """Explore an auto-derived scenario; print the counterexample (exit 1 if one is found)."""
 
@@ -250,28 +250,40 @@ def run(
 
     scenario = sim.derive_scenario()
     seed_list = _parse_seeds(seeds)
-
-    report = sim.run(
-        _config(
-            strategy=strategy,
-            seed_list=seed_list,
-            act_count=act_count,
-            concurrency=concurrency,
-            max_examples=max_examples,
-            max_runs=max_runs,
-            pct=pct,
-            depth=depth,
-            fault_error=fault_error,
-            latency=latency,
-        ),
-        scenario=scenario,
+    cfg = _config(
+        strategy=strategy,
+        seed_list=seed_list,
+        act_count=act_count,
+        concurrency=concurrency,
+        max_examples=max_examples,
+        max_runs=max_runs,
+        pct=pct,
+        depth=depth,
+        fault_error=fault_error,
+        latency=latency,
     )
+
+    # The scenario strategy can sweep + report confidence in one pass (audit); other strategies
+    # (dpor / hypothesis) take the plain run path.
+    stats = (
+        sim.audit(cfg, scenario=scenario)
+        if confidence and strategy is Strategy.SCENARIO
+        else None
+    )
+    report = stats.violation if stats is not None else sim.run(cfg, scenario=scenario)
 
     if report is None:
         typer.echo("✓ no violation found")
+        if stats is not None and stats.confidence is not None:
+            typer.echo("")
+            typer.echo(stats.confidence.format())
         return
 
     typer.echo(report.format())
+
+    if html:
+        report.to_html(html)
+        typer.echo(f"\n↳ wrote time-travel viewer to {html}")
 
     if save_regression:
         append_regression(

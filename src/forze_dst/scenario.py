@@ -40,35 +40,44 @@ class ModelState:
 
     _pools: dict[str, list[Any]] = attrs.field(factory=dict, init=False)
 
+    # ....................... #
+
     def add(self, kind: str, handle: Any) -> None:
         """Record a produced *handle* into the *kind* pool."""
 
         self._pools.setdefault(kind, []).append(handle)
+
+    # ....................... #
 
     def pool(self, kind: str) -> tuple[Any, ...]:
         """All handles in the *kind* pool, in production order."""
 
         return tuple(self._pools.get(kind, ()))
 
+    # ....................... #
+
     def count(self, kind: str) -> int:
         """How many handles the *kind* pool holds."""
 
         return len(self._pools.get(kind, ()))
+
+    # ....................... #
 
     def has(self, *kinds: str) -> bool:
         """Whether every named pool is non-empty (the default precondition)."""
 
         return all(self._pools.get(kind) for kind in kinds)
 
+    # ....................... #
+
     def pick(self, kind: str, rng: random.Random) -> Any:
         """Pick a handle from the *kind* pool (raises if empty — guard with :meth:`has`)."""
 
-        items = self._pools.get(kind)
+        if items := self._pools.get(kind):
+            return rng.choice(items)
 
-        if not items:
+        else:
             raise KeyError(f"model pool {kind!r} is empty")
-
-        return rng.choice(items)
 
 
 # ....................... #
@@ -100,6 +109,8 @@ class Rule:
     weight: float = 1.0
     """Selection weight when sampling act rules."""
 
+    # ....................... #
+
     def is_enabled(self, state: ModelState) -> bool:
         """Whether this rule may fire against *state*."""
 
@@ -126,13 +137,20 @@ class Scenario:
     act: tuple[Rule, ...] = ()
     """Rules sampled into the concurrent, raced, minimized phase."""
 
+    # ....................... #
+
     def enabled_act(self, state: ModelState) -> list[Rule]:
         """The act rules whose preconditions hold against *state*."""
 
         return [rule for rule in self.act if rule.is_enabled(state)]
 
+    # ....................... #
+
     def generate_act(
-        self, state: ModelState, count: int, rng: random.Random
+        self,
+        state: ModelState,
+        count: int,
+        rng: random.Random,
     ) -> list[tuple[str, Any]]:
         """Sample *count* enabled act calls — ``(op, arg)`` pairs built from the model."""
 

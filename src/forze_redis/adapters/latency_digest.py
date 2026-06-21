@@ -19,12 +19,12 @@ from typing import Callable, final
 
 import attrs
 
-from forze.application.contracts.resilience import AdaptiveBulkheadStrategy
-from forze.application.execution.resilience import (
-    InMemoryLatencyDigestStore,
+from forze.application.contracts.resilience import (
+    AdaptiveBulkheadStrategy,
     LatencyDigestKey,
     LatencyDigestStore,
 )
+from forze.application.execution.resilience import InMemoryLatencyDigestStore
 from forze.application.execution.tracing import record as trace_record
 from forze.base.primitives import DDSketch, monotonic
 

@@ -6,8 +6,8 @@ import attrs
 
 from forze.application.contracts.http import HttpServiceDepKey
 from forze.application.contracts.tenancy import warn_integration_routes
-from forze.application.execution import Deps, DepsModule
-from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
+from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_http.execution._logger import logger
 from forze_http.execution.deps._warnings import HTTP_SERVICE_WARNING

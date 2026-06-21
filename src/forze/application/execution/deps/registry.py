@@ -1,7 +1,6 @@
 """Authoring dependency registry (compose, freeze, resolve)."""
 
 import os
-import warnings
 from typing import Self, final
 
 import attrs
@@ -9,15 +8,15 @@ import attrs
 from forze.application._logger import logger
 
 from ..interception import PortInterceptor, PortInterceptorChain
-from .container import Deps
+from ..tracing import RuntimeTracer, runtime_tracer_from_flag
+from forze.application.contracts.deps import Deps
 from .frozen import FrozenDepsRegistry
-from .module import DepsModule
-from .resolution_tracer import (
+from forze.application.contracts.deps import DepsModule
+from .resolution import (
     ResolutionTracer,
     resolution_tracer_from_flag,
 )
-from .runtime_tracer import RuntimeTracer, runtime_tracer_from_flag
-from .store import ProviderStore
+from forze.application.contracts.deps import ProviderStore
 
 # ----------------------- #
 
@@ -149,8 +148,13 @@ class DepsRegistry:
         *,
         resolution: bool | ResolutionTracer | None = None,
         runtime: bool | RuntimeTracer | None = None,
+        capture_values: bool = False,
     ) -> Self:
-        """Return a registry that attaches tracers when :meth:`freeze` runs."""
+        """Return a registry that attaches tracers when :meth:`freeze` runs.
+
+        *capture_values* (DST-only) makes the runtime tracer capture redaction-applied call values
+        onto the trace for value-level invariants; off by default so production stays id-only.
+        """
 
         updates: dict[str, ResolutionTracer | RuntimeTracer] = {}
 
@@ -165,7 +169,7 @@ class DepsRegistry:
             updates["runtime_tracer"] = (
                 runtime
                 if isinstance(runtime, RuntimeTracer)
-                else runtime_tracer_from_flag(runtime)
+                else runtime_tracer_from_flag(runtime, capture_values=capture_values)
             )
 
         return attrs.evolve(self, **updates)  # type: ignore[arg-type]
@@ -236,25 +240,4 @@ class DepsRegistry:
             resolution_tracer=resolution_tracer,
             runtime_tracer=runtime_tracer,
             interceptors=self.interceptors,
-        )
-
-    # ....................... #
-
-    def build(
-        self,
-        *,
-        trace_resolution: bool | None = None,
-        trace_runtime: bool | None = None,
-    ) -> FrozenDepsRegistry:
-        """Freeze the registry (deprecated alias for :meth:`freeze`)."""
-
-        warnings.warn(
-            "DepsRegistry.build() is deprecated; use freeze() instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        return self.freeze(
-            trace_resolution=trace_resolution,
-            trace_runtime=trace_runtime,
         )

@@ -21,55 +21,30 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Awaitable, Callable, Iterator, Protocol
+from typing import Iterator
 
-import attrs
+# The interception seam itself (PortCall value object + PortInterceptor protocol) is a
+# contract; this module adds the run-scoped ambient binding (execution machinery) and
+# re-exports the contract types so ``from .protocol import PortInterceptor`` holds.
+from forze.application.contracts.interception import (
+    PortCall,
+    PortInterceptor,
+    PortInterceptorChain,
+    PortNext,
+    PortSelector,
+)
+
+__all__ = [
+    "PortCall",
+    "PortInterceptor",
+    "PortInterceptorChain",
+    "PortNext",
+    "PortSelector",
+    "bind_interceptors",
+    "current_interceptors",
+]
 
 # ----------------------- #
-
-
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class PortCall:
-    """One intercepted port method call."""
-
-    surface: str | None
-    """Dependency surface name (for example ``document_command``)."""
-
-    route: str | None
-    """Spec route or transaction route name."""
-
-    op: str
-    """Method name being called (for example ``create``, ``get``)."""
-
-    args: tuple[Any, ...] = ()
-    """Positional arguments passed to the method."""
-
-    kwargs: dict[str, Any] = attrs.field(factory=dict)
-    """Keyword arguments passed to the method."""
-
-
-# ....................... #
-
-
-PortNext = Callable[["PortCall"], Awaitable[Any]]
-"""Continuation that invokes the rest of the chain (ultimately the real port method)."""
-
-
-class PortInterceptor(Protocol):
-    """A composable middleware around a port call.
-
-    ``around`` may delay, short-circuit (return a synthetic result), raise (inject a fault),
-    or call ``nxt(call)`` and post-process its result. It must await ``nxt`` at most once.
-    """
-
-    async def around(self, call: PortCall, nxt: PortNext) -> Any: ...
-
-
-PortInterceptorChain = tuple[PortInterceptor, ...]
-"""An ordered interceptor chain; the first element is the outermost."""
-
-
-# ....................... #
 
 
 _AMBIENT: ContextVar[PortInterceptorChain] = ContextVar(

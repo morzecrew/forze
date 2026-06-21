@@ -5,7 +5,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.secrets import SecretsDepKey, SecretsPort
-from forze.application.execution import Deps, DepsModule
+from forze.application.contracts.deps import Deps, DepsModule
 
 # ----------------------- #
 

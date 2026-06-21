@@ -86,7 +86,7 @@ none of them require the handler to import a database driver.
 
 Read these in order; each one builds on the last.
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-layers: **[Architecture](architecture.md)**
 

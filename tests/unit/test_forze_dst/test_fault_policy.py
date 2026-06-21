@@ -22,21 +22,11 @@ from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import monotonic
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_dst import (
-    Constant,
-    FaultPolicy,
-    FaultRule,
-    LatencyProfile,
-    LatencyRule,
-    ModelState,
-    Rule,
-    Scenario,
-    Simulation,
-    SimulationConfig,
-    Strategy,
-    expect,
-    record_event,
-)
+from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
+from forze_dst.markers import record_event
+from forze_dst.faults import FaultPolicy, FaultRule
+from forze_dst.invariants import expect
+from forze_dst.latency import Constant, LatencyProfile, LatencyRule
 from forze_mock import MockDepsModule
 
 # ----------------------- #
@@ -285,13 +275,47 @@ class TestDistributions:
     def test_constant_uniform_exponential_sample(self) -> None:
         import random
 
-        from forze_dst.latency import Constant, Exponential, Uniform, compile_latency
+        from forze_dst.latency import Constant, Exponential, Uniform
 
         rng = random.Random(0)
         assert Constant(1.5).sample(rng) == 1.5
         assert 0.0 <= Uniform(0.0, 1.0).sample(rng) <= 1.0
         assert Exponential(2.0).sample(rng) >= 0.0
         assert Exponential(0.0).sample(rng) == 0.0  # non-positive mean → no delay
+
+    def test_heavy_tailed_distributions_sample(self) -> None:
+        import random
+
+        from forze_dst.latency import LogNormal, Pareto
+
+        # Positive, seeded, and degenerate params short-circuit to no delay — same posture as
+        # Exponential. (Heavy-tailed: the occasional sample is far above the median/scale.)
+        assert LogNormal(median=0.05, sigma=1.0).sample(random.Random(0)) > 0.0
+        assert LogNormal(median=0.0).sample(random.Random(0)) == 0.0  # non-positive median
+        assert Pareto(scale=0.01, alpha=1.5).sample(random.Random(0)) >= 0.01  # >= the minimum
+        assert Pareto(scale=0.0).sample(random.Random(0)) == 0.0
+        assert Pareto(scale=0.1, alpha=0.0).sample(random.Random(0)) == 0.0  # bad tail index
+
+    def test_heavy_tailed_sampling_is_seed_deterministic(self) -> None:
+        import random
+
+        from forze_dst.latency import LogNormal, Pareto
+
+        for dist in (LogNormal(median=0.05, sigma=1.5), Pareto(scale=0.02, alpha=1.2)):
+            assert dist.sample(random.Random(7)) == dist.sample(random.Random(7))
+
+    def test_lognormal_median_anchors_the_typical_case(self) -> None:
+        import random
+        import statistics
+
+        from forze_dst.latency import LogNormal
+
+        # The empirical median of a log-normal tracks its `median` parameter (the tail pulls the
+        # *mean* up, but not the median) — a sanity check that the parameterisation is right.
+        rng = random.Random(0)
+        samples = [LogNormal(median=0.1, sigma=0.8).sample(rng) for _ in range(2000)]
+        assert 0.08 < statistics.median(samples) < 0.12
+        assert statistics.mean(samples) > statistics.median(samples)  # right-skewed tail
 
     def test_compile_latency_first_match_else_zero(self) -> None:
         import random

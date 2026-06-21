@@ -15,7 +15,7 @@ from forze.base.asyncio import run_to_completion
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from ..deps.tx_tracer import NOOP_TX_TRACER, TxTracer
+from ..tracing import NOOP_TX_TRACER, TxTracer
 
 # ----------------------- #
 

@@ -6,6 +6,7 @@ from typing import Callable, Literal
 
 import attrs
 
+from forze.application.contracts.resilience import Transition
 from forze.base.exceptions import exc
 from forze.base.primitives import WindowedP2Quantile, monotonic
 
@@ -18,8 +19,9 @@ from .limiter import Gradient2Limiter
 BreakerPhase = Literal["closed", "open", "half_open"]
 """Circuit breaker lifecycle phase."""
 
-Transition = Literal["open", "closed", "half_open"] | None
-"""Phase transition emitted by a state update, or ``None`` when unchanged."""
+# ``Transition`` (the breaker phase change a state update emits) is a contract
+# seam now, imported above and used in this module's annotations — existing
+# ``from .state import Transition`` callers keep resolving it here.
 
 _CRITICALITY_GRACE: dict[Criticality, float] = {
     Criticality.BEST_EFFORT: 0.25,

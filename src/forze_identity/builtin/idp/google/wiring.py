@@ -1,6 +1,6 @@
 """Convenience wiring for Google OIDC bootstrap auth."""
 
-from forze.application.execution import Deps
+from forze.application.contracts.deps import Deps
 
 from .._oidc import oidc_bootstrap_identity_deps
 from .config import GoogleOidcConfig

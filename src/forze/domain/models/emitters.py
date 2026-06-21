@@ -8,7 +8,6 @@ transition raises. Emitters must be declared on an
 :class:`~forze.domain.models.aggregate.AggregateRoot` subclass.
 """
 
-import inspect
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from typing import Final, TypeVar, Union, cast, overload
@@ -16,9 +15,9 @@ from typing import Final, TypeVar, Union, cast, overload
 import attrs
 from pydantic import BaseModel
 
-from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from .._callables import normalize_before_after_diff
 from .._logger import logger
 from .events import DomainEvent
 
@@ -97,50 +96,16 @@ def event_emitter(
     """
 
     def decorator(f: EventEmitterLike[M]) -> EventEmitter[M]:
-        sig = inspect.signature(f)
-        params = list(sig.parameters.values())
-
         logger.trace(
             "Registering event emitter %s",
             getattr(f, "__qualname__", getattr(f, "__name__", repr(f))),
         )
 
-        if not params:
-            raise exc.internal(
-                "Event emitter must have at least one parameter (state before update)"
-            )
-
-        extra = len(params) - 1
+        wrapper = normalize_before_after_diff(f, kind="Event emitter")
         meta = EventEmitterMetadata(fields=frozenset(fields) if fields else None)
-
-        if extra == 0:
-
-            def wrapper(before: M, after: M, diff: JsonDict) -> DomainEvent | None:
-                return cast(Callable[[M], DomainEvent | None], f)(before)
-
-        elif extra == 1:
-
-            def wrapper(before: M, after: M, diff: JsonDict) -> DomainEvent | None:
-                return cast(Callable[[M, M], DomainEvent | None], f)(before, after)
-
-        elif extra == 2:
-
-            def wrapper(before: M, after: M, diff: JsonDict) -> DomainEvent | None:
-                return cast(Callable[[M, M, JsonDict], DomainEvent | None], f)(
-                    before, after, diff
-                )
-
-        else:
-            raise exc.internal(
-                "Event emitter must have at most three parameters "
-                "(state before update, state after update, diff)"
-            )
-
         setattr(wrapper, EVENT_EMITTER_METADATA_FIELD, meta)
-        wrapper.__name__ = getattr(f, "__name__", "event_emitter")
-        wrapper.__qualname__ = getattr(f, "__qualname__", wrapper.__name__)
 
-        return wrapper
+        return cast("EventEmitter[M]", wrapper)
 
     if _func is not None:
         return decorator(_func)

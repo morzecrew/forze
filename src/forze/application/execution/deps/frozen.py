@@ -9,7 +9,11 @@ import attrs
 
 from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.deps import DepKey
-from forze.application.execution.tracing import RuntimeTrace
+from forze.application.execution.tracing import (
+    NOOP_RUNTIME_TRACER,
+    RuntimeTrace,
+    RuntimeTracer,
+)
 from forze.base.primitives import StrKey
 
 from ..interception import PortInterceptorChain
@@ -19,12 +23,15 @@ from .port_instrumentation import (
     maybe_wrap_port_policy,
     record_simple_resolve,
 )
-from .resolution import ResolutionFrame, frame_for
-from .resolution_context import ResolutionContext
-from .resolution_tracer import NOOP_RESOLUTION_TRACER, ResolutionTracer
-from .runtime_tracer import NOOP_RUNTIME_TRACER, RuntimeTracer
-from .store import PlainDepsMap, ProviderStore, RoutedDeps
-from .trace import DepsResolutionTrace
+from .resolution import (
+    NOOP_RESOLUTION_TRACER,
+    DepsResolutionTrace,
+    ResolutionContext,
+    ResolutionFrame,
+    ResolutionTracer,
+    frame_for,
+)
+from forze.application.contracts.deps import PlainDepsMap, ProviderStore, RoutedDeps
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
@@ -40,10 +47,10 @@ class FrozenDepsRegistry:
     store: ProviderStore = attrs.field(factory=ProviderStore)
     """Merged provider store."""
 
-    resolution_tracer: ResolutionTracer = attrs.field(default=NOOP_RESOLUTION_TRACER)
+    resolution_tracer: ResolutionTracer = NOOP_RESOLUTION_TRACER
     """Resolution tracer applied when resolving."""
 
-    runtime_tracer: RuntimeTracer = attrs.field(default=NOOP_RUNTIME_TRACER)
+    runtime_tracer: RuntimeTracer = NOOP_RUNTIME_TRACER
     """Runtime tracer applied when resolving."""
 
     interceptors: PortInterceptorChain = attrs.field(factory=tuple)
@@ -73,10 +80,10 @@ class FrozenDeps:
     store: ProviderStore = attrs.field(factory=ProviderStore)
     """Merged provider store (shared across scopes)."""
 
-    resolution_tracer: ResolutionTracer = attrs.field(default=NOOP_RESOLUTION_TRACER)
+    resolution_tracer: ResolutionTracer = NOOP_RESOLUTION_TRACER
     """Optional recorder for observed resolution edges."""
 
-    runtime_tracer: RuntimeTracer = attrs.field(default=NOOP_RUNTIME_TRACER)
+    runtime_tracer: RuntimeTracer = NOOP_RUNTIME_TRACER
     """Optional recorder for runtime port and transaction events."""
 
     interceptors: PortInterceptorChain = attrs.field(factory=tuple)

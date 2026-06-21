@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Sequence
+from typing import Any, Sequence
 
 import attrs
 
+from forze.base.exceptions import exc
 from forze_dst.faults import CrashPolicy, FaultPolicy
 from forze_dst.latency import LatencyProfile
+from forze_dst.scheduler import PCTScheduler, RandomScheduler, SchedulerSpec
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
@@ -45,36 +47,37 @@ class Strategy(StrEnum):
 # ....................... #
 
 
-class SchedulerKind(StrEnum):
-    """Which interleaving strategy drives the loop (orthogonal to :class:`Strategy`)."""
-
-    FIFO = "fifo"
-    """Deterministic ready-queue order — one interleaving (no perturbation)."""
-
-    RANDOM = "random"
-    """Seeded ready-queue shuffle each tick — explores random interleavings."""
-
-    PCT = "pct"
-    """Probabilistic Concurrency Testing (priority + change points) — depth-d guarantees."""
-
-
-# ....................... #
-
-
 @attrs.define(frozen=True, kw_only=True)
 class Partition:
     """One network-partition window: nodes cut off from the shared infrastructure.
 
-    During ``[start, end)`` of virtual time, every node in :attr:`isolated` cannot reach the
+    During ``[start, end)`` of virtual time, every node in :attr:`isolated` is cut from the
     gated port surfaces (its calls raise a retryable *unreachable* error — modeling a network
     split where the broker/store lives on the other side); the rest of the cluster proceeds.
-    The window heals at ``end``. Group-based by design (decision D7): a set of nodes is split
-    off as a unit; per-link asymmetric loss is a deferred fidelity pass.
+    The window heals at ``end``. A set of nodes is split off as a unit; per-window :attr:`loss`
+    makes the cut a *lossy/flaky link* (a fraction of calls drop) rather than a clean break, and
+    different windows can give different node groups different loss in overlapping time — an
+    asymmetric split.
     """
 
     start: float
     end: float
     isolated: frozenset[int]
+
+    loss: float = 1.0
+    """Probability (``0 < loss <= 1``) that a gated call from an isolated node drops during the
+    window. ``1.0`` (default) is a clean cut — every call drops, the classic partition. A value
+    below ``1`` is a *lossy link*: each call drops with this probability (seeded per node), so
+    some calls slip through and a flaky link is modeled, not just a hard split."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not 0.0 < self.loss <= 1.0:
+            raise exc.configuration("Partition.loss must be in (0, 1]")
+
+
+# ....................... #
 
 
 @attrs.define(frozen=True, kw_only=True)
@@ -86,6 +89,8 @@ class PartitionSchedule:
     """Port surfaces a partition makes unreachable (e.g. ``queue_command``, ``dlock``,
     ``document_command``). Empty ⇒ every surface is cut (a total split)."""
 
+    # ....................... #
+
     def isolated_at(self, node_id: int, at: float) -> bool:
         """Whether *node_id* is cut off from the cluster at virtual time *at*."""
 
@@ -94,10 +99,34 @@ class PartitionSchedule:
             for window in self.windows
         )
 
+    # ....................... #
+
+    def loss_at(self, node_id: int, at: float) -> float:
+        """The drop probability for *node_id*'s gated calls at virtual time *at*.
+
+        The strongest (max) loss across the windows isolating the node right now, or ``0.0`` when
+        the node is fully connected. A clean cut (``loss=1.0``) returns ``1.0`` → every gated call
+        drops, exactly as before; a lossy window returns its fractional probability.
+        """
+
+        return max(
+            (
+                window.loss
+                for window in self.windows
+                if window.start <= at < window.end and node_id in window.isolated
+            ),
+            default=0.0,
+        )
+
+    # ....................... #
+
     def gates(self, surface: str | None) -> bool:
         """Whether a partition cuts the given *surface* (all surfaces when none are named)."""
 
         return not self.surfaces or surface in self.surfaces
+
+
+# ....................... #
 
 
 @attrs.define(frozen=True, kw_only=True)
@@ -128,8 +157,10 @@ class SimulationConfig:
     strategy: Strategy = Strategy.SCENARIO
     """Workload generation + exploration strategy."""
 
-    scheduler: SchedulerKind = SchedulerKind.RANDOM
-    """Interleaving strategy (ignored by DPOR)."""
+    scheduler: SchedulerSpec = attrs.field(factory=RandomScheduler)
+    """Interleaving strategy — a :class:`~forze_dst.scheduler.SchedulerSpec` variant
+    (``FIFOScheduler()`` / ``RandomScheduler()`` / ``PCTScheduler(depth, steps)``); each carries
+    only its own params. Ignored by DPOR (it drives its own systematic reorderer)."""
 
     concurrency: int = 4
     """Max concurrent act operations."""
@@ -153,18 +184,32 @@ class SimulationConfig:
     dpor_seed: int = 0
     """DPOR: the single seed whose workload is fixed and re-interleaved."""
 
-    # Scheduler knobs (PCT).
-    pct_depth: int = 3
-    """PCT: bug depth the search targets."""
-
-    pct_steps: int = 50
-    """PCT: scheduling steps over which change points are placed."""
-
     # Coverage-guided exploration (``Simulation.coverage``).
     coverage_plateau: int = 8
     """Stop a coverage-guided sweep after this many consecutive seeds add no new behavioral
     coverage (the exploration has saturated). ``0`` disables early-stop (sweep every seed).
     Lets a sweep right-size itself instead of guessing a fixed seed count."""
+
+    # Coverage-guided mutation (``Simulation.coverage_guided``).
+    guided_budget: int = 256
+    """Total runs a coverage-guided mutation sweep may spend before stopping (it also stops early
+    on the first invariant violation). The guided run is one seed-derived lineage rooted at the
+    first value of :attr:`seeds`; ``count`` sizes the initial workload and bounds growth."""
+
+    # Value-level trace capture (``read_your_writes`` / value invariants).
+    capture_values: bool = False
+    """Capture redaction-applied call **values** (write payloads + read results) onto the trace,
+    so value-level invariants can assert on *what* was written/read, not just which key. Off by
+    default — the trace stays id-only (matching production). Sim data is synthetic, and fields a
+    spec declares sensitive (``encryption.encrypted``/``.searchable``) are masked to
+    ``"<redacted>"`` even when captured."""
+
+    # Reachability ("sometimes") assertions (``Simulation.coverage`` / ``Cluster``).
+    reachability_targets: frozenset[str] = frozenset()
+    """States the sweep must reach at least once (``forze_dst.oracle.reachability.reached`` labels). A
+    target no seed ever hits is a *reachability failure* — false confidence, the dangerous
+    interleaving never fired. ``coverage()`` folds these across the sweep into
+    :attr:`~forze_dst.oracle.coverage.CoverageStats.reachability`. Empty disables the check."""
 
     # Nondeterminism streams (compiled per-run from sub-seeds derived from the master seed).
     faults: FaultPolicy | None = None
@@ -205,4 +250,51 @@ class SimulationConfig:
     def perturb(self) -> bool:
         """Whether interleavings are perturbed (any scheduler other than deterministic FIFO)."""
 
-        return self.scheduler is not SchedulerKind.FIFO
+        return self.scheduler.perturb
+
+    # ....................... #
+    # Presets — intent-named intensity tiers over the ~20 knobs. Each scales the *search*
+    # (seeds, scheduler, concurrency, workload size); environment (faults/latency/crash) stays
+    # explicit since the right policy is app-specific. Every field is still overridable —
+    # ``SimulationConfig.thorough(seeds=range(1000), concurrency=16)``.
+
+    @classmethod
+    def quick(cls, **overrides: Any) -> "SimulationConfig":
+        """A fast inner-loop sweep — a handful of seeds under the default shuffle, small
+        workloads. Runs in seconds; the config to reach for while iterating."""
+
+        overrides.setdefault("seeds", range(16))
+        overrides.setdefault("act_count", 8)
+        overrides.setdefault("count", 16)
+        return cls(**overrides)
+
+    @classmethod
+    def thorough(cls, **overrides: Any) -> "SimulationConfig":
+        """A pre-merge sweep — a broad seed range under PCT (biased toward deep interleavings),
+        higher concurrency, and longer workloads. The 'before I ship' run."""
+
+        overrides.setdefault("seeds", range(256))
+        overrides.setdefault("scheduler", PCTScheduler(depth=3))
+        overrides.setdefault("concurrency", 8)
+        overrides.setdefault("act_count", 24)
+        return cls(**overrides)
+
+    @classmethod
+    def nightly(cls, **overrides: Any) -> "SimulationConfig":
+        """A heavy overnight sweep — thousands of seeds under deeper PCT, sized for
+        :func:`~forze_dst.artifacts.parallel_sweep`. Add a fault / latency policy for a
+        hostile-environment run."""
+
+        overrides.setdefault("seeds", range(2048))
+        overrides.setdefault("scheduler", PCTScheduler(depth=4))
+        overrides.setdefault("concurrency", 12)
+        overrides.setdefault("act_count", 32)
+        return cls(**overrides)
+
+    @classmethod
+    def reproduce(cls, seed: int, **overrides: Any) -> "SimulationConfig":
+        """A single-seed debug run — sweep exactly *seed*. Reach for it with a seed from a
+        :class:`~forze_dst.ViolationReport` to re-drive just that timeline."""
+
+        overrides.setdefault("seeds", (seed,))
+        return cls(**overrides)

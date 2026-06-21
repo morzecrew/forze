@@ -14,8 +14,8 @@ from forze.application.contracts.tenancy import (
     TenantIsolationMode,
     warn_integration_routes,
 )
-from forze.application.execution import Deps, DepsModule
-from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
+from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.application.integrations.storage import (
     validate_storage_encryption_wiring,
     validate_storage_tenancy_wiring,

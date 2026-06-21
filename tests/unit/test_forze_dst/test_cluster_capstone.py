@@ -17,8 +17,9 @@ tests pin down:
 from __future__ import annotations
 
 import asyncio
+import random
 
-import attrs
+import pytest
 
 from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -27,18 +28,11 @@ from forze.application.execution.interception import PortCall
 from forze.base.exceptions import CoreException
 from forze.base.primitives import monotonic
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from forze_dst import (
-    Cluster,
-    ClusterConfig,
-    FaultPolicy,
-    FaultRule,
-    Partition,
-    PartitionSchedule,
-    SimulationConfig,
-    expect,
-    mutual_exclusion,
-    record_event,
-)
+from forze_dst import Cluster, SimulationConfig
+from forze_dst.markers import record_event
+from forze_dst.cluster import ClusterConfig, Partition, PartitionSchedule
+from forze_dst.faults import FaultPolicy, FaultRule
+from forze_dst.invariants import expect, mutual_exclusion
 from forze_dst.cluster import _PartitionInterceptor
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
@@ -287,7 +281,9 @@ class TestPartitionInterceptor:
             windows=(Partition(start=10.0, end=20.0, isolated=frozenset({0})),),
             surfaces=frozenset({"document_command"}),
         )
-        interceptor = _PartitionInterceptor(node_id=0, schedule=schedule)
+        interceptor = _PartitionInterceptor(
+            node_id=0, schedule=schedule, rng=random.Random(0)
+        )
         call = PortCall(surface="document_command", route="things", op="create")
 
         async def nxt(_call: PortCall) -> str:
@@ -308,3 +304,95 @@ class TestPartitionInterceptor:
         assert schedule.gates("document_command") is False
         # Empty surfaces ⇒ a total split (everything gated).
         assert PartitionSchedule(surfaces=frozenset()).gates("anything") is True
+
+
+# ....................... #
+
+
+class TestLossyLink:
+    """A partition window's ``loss`` below 1.0 models a flaky/asymmetric link, not a clean cut."""
+
+    def test_loss_at_reads_the_active_window_else_zero(self) -> None:
+        schedule = PartitionSchedule(
+            windows=(Partition(start=1.0, end=2.0, isolated=frozenset({0}), loss=0.3),),
+            surfaces=frozenset({"document_command"}),
+        )
+        assert schedule.loss_at(0, 1.5) == 0.3  # isolated, inside the window
+        assert schedule.loss_at(0, 0.5) == 0.0  # before the window — fully connected
+        assert schedule.loss_at(1, 1.5) == 0.0  # a different node — not isolated
+
+    def test_overlapping_windows_take_the_strongest_loss(self) -> None:
+        # An asymmetric split: node 0 sits under two overlapping windows; the harsher one wins.
+        schedule = PartitionSchedule(
+            windows=(
+                Partition(start=0.0, end=10.0, isolated=frozenset({0}), loss=0.2),
+                Partition(start=0.0, end=10.0, isolated=frozenset({0}), loss=0.9),
+            ),
+        )
+        assert schedule.loss_at(0, 5.0) == 0.9
+
+    def test_loss_out_of_range_is_rejected(self) -> None:
+        with pytest.raises(CoreException):
+            Partition(start=0.0, end=1.0, isolated=frozenset({0}), loss=0.0)
+        with pytest.raises(CoreException):
+            Partition(start=0.0, end=1.0, isolated=frozenset({0}), loss=1.5)
+
+    def test_lossy_link_drops_some_calls_and_passes_others_seeded(self) -> None:
+        # Over many calls in a lossy window, roughly `loss` fraction drop — and it is fully
+        # determined by the seeded RNG (same seed → same drop/pass sequence). The window spans any
+        # real ``monotonic()`` (this runs outside the sim loop) so it is reliably active; window
+        # *timing* is covered separately by the ``loss_at`` tests.
+        schedule = PartitionSchedule(
+            windows=(Partition(start=0.0, end=1e18, isolated=frozenset({0}), loss=0.5),),
+            surfaces=frozenset({"document_command"}),
+        )
+        call = PortCall(surface="document_command", route="things", op="create")
+
+        async def nxt(_call: PortCall) -> str:
+            return "ok"
+
+        def run(seed: int) -> list[bool]:
+            interceptor = _PartitionInterceptor(
+                node_id=0, schedule=schedule, rng=random.Random(seed)
+            )
+
+            async def go() -> list[bool]:
+                outcomes: list[bool] = []
+                for _ in range(40):
+                    try:
+                        await interceptor.around(call, nxt)
+                        outcomes.append(True)  # slipped through
+                    except CoreException:
+                        outcomes.append(False)  # dropped
+                return outcomes
+
+            return asyncio.run(go())
+
+        outcomes = run(7)
+        assert any(outcomes) and not all(outcomes)  # a flaky link: some pass, some drop
+        assert run(7) == outcomes  # deterministic for a fixed seed
+
+    def test_clean_cut_never_consumes_the_rng(self) -> None:
+        # A loss=1.0 window always drops without touching the RNG, so the RNG is left pristine —
+        # this is what keeps a hard partition byte-identical to the pre-lossy-link behavior. The
+        # window spans any real ``monotonic()`` so it is reliably active outside the sim loop.
+        schedule = PartitionSchedule(
+            windows=(Partition(start=0.0, end=1e18, isolated=frozenset({0})),),
+            surfaces=frozenset({"document_command"}),
+        )
+        rng = random.Random(123)
+        interceptor = _PartitionInterceptor(node_id=0, schedule=schedule, rng=rng)
+        call = PortCall(surface="document_command", route="things", op="create")
+
+        async def nxt(_call: PortCall) -> str:
+            return "ok"
+
+        async def go() -> None:
+            for _ in range(5):
+                try:
+                    await interceptor.around(call, nxt)
+                except CoreException:
+                    pass
+
+        asyncio.run(go())
+        assert rng.random() == random.Random(123).random()  # untouched

@@ -2,38 +2,49 @@ from typing import Any, Callable, final
 
 import attrs
 
-from forze.base.primitives import StrKey
-
 from forze.application.contracts.analytics import AnalyticsDeps
 from forze.application.contracts.authn import AuthnDeps
 from forze.application.contracts.authz import AuthzDeps
 from forze.application.contracts.cache import CacheDeps
 from forze.application.contracts.counter import CounterDeps
-from forze.application.contracts.domain import DomainDeps
 from forze.application.contracts.dlock import DistributedLockDeps
 from forze.application.contracts.document import DocumentDeps
+from forze.application.contracts.domain import DomainDeps
 from forze.application.contracts.embeddings import EmbeddingsDeps
 from forze.application.contracts.graph import GraphDeps
 from forze.application.contracts.http import HttpServiceDeps
 from forze.application.contracts.idempotency import IdempotencyDeps
 from forze.application.contracts.inbox import InboxDeps
+from forze.application.contracts.outbox import OutboxDeps
 from forze.application.contracts.resilience import ResilienceDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
 from forze.application.contracts.tenancy import TenancyDeps
-from forze.application.contracts.outbox import OutboxDeps
 from forze.application.contracts.transaction import TransactionDeps
+from forze.base.primitives import HybridLogicalClock, StrKey
 
 from ..deps import FrozenDeps
-from ..deps.tx_tracer import tx_tracer_from_runtime
-from ..tracing import bind_active_deps, init_runtime_tracing
+from ..tracing import (
+    bind_active_deps,
+    init_runtime_tracing,
+    tx_tracer_from_runtime,
+)
 from .active_operation import warn_if_constructed_in_operation
 from .drain import OperationDrainGate
 from .invocation import InvocationContext
-from .outbox_staging import OutboxStagingContext
+from forze.application.contracts.outbox import OutboxStagingContext
 from .transaction import TransactionContext
 
 # ----------------------- #
+
+
+def _new_outbox_clock() -> HybridLogicalClock:
+    # Lazy import: ``outbox/__init__`` pulls enrichment → context, so importing
+    # ``outbox.clock`` at module load would cycle. The factory runs only when a
+    # context is built, by which point every module is loaded.
+    from ..outbox.clock import new_outbox_clock
+
+    return new_outbox_clock()
 
 
 @final
@@ -44,14 +55,20 @@ class ExecutionContext:
     deps: FrozenDeps
     """Dependencies container."""
 
-    cache_operations: bool = attrs.field(default=True)
+    cache_operations: bool = True
     """Whether resolved operations are memoized for this scope (see
     :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_operations`)."""
 
-    cache_ports: bool = attrs.field(default=True)
+    cache_ports: bool = True
     """Whether resolved dependencies are memoized for this scope — both configurable
     ports and simple deps (see
     :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_ports`)."""
+
+    outbox_clock: HybridLogicalClock = attrs.field(factory=_new_outbox_clock)
+    """This runtime's node-local HLC for causal outbox ordering. One per context, so a
+    multi-runtime simulation gives each node an independent clock; a single-process app
+    has the one process clock as before. See
+    :mod:`forze.application.execution.outbox.clock`."""
 
     # ....................... #
 

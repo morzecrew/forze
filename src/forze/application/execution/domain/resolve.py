@@ -24,9 +24,6 @@ def domain_dispatcher_provider(
     """
 
     def _provide() -> DomainEventDispatcherPort | None:
-        if ctx.deps.exists(DomainEventDispatcherDepKey):
-            return ctx.domain()
-
-        return None
+        return ctx.domain() if ctx.deps.exists(DomainEventDispatcherDepKey) else None
 
     return _provide

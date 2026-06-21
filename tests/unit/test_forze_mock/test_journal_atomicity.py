@@ -22,7 +22,7 @@ from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_dst import run_simulation
+from forze_dst.runtime import run_simulation
 from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_modules
 

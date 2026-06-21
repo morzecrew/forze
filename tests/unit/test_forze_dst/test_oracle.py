@@ -11,18 +11,9 @@ from __future__ import annotations
 import asyncio
 from typing import Sequence
 
-from forze_dst import (
-    Event,
-    History,
-    check,
-    expect,
-    explore,
-    minimize,
-    monotonic_per,
-    no_duplicate_effect,
-    record_event,
-    run_recorded,
-)
+from forze_dst.markers import record_event
+from forze_dst.invariants import check, expect, monotonic_per, no_duplicate_effect
+from forze_dst.oracle import Event, History, explore, minimize, run_recorded
 
 # ----------------------- #
 
@@ -155,7 +146,7 @@ class TestRecorderAndMinimize:
         record_event("orphan", value=1)  # no recorder bound — must not raise
 
     def test_current_recorder_reflects_binding(self) -> None:
-        from forze_dst import Recorder, bind_recorder, current_recorder
+        from forze_dst.oracle import Recorder, bind_recorder, current_recorder
 
         assert current_recorder() is None
         recorder = Recorder(seed=0)

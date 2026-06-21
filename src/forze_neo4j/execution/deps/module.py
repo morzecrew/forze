@@ -14,8 +14,8 @@ from forze.application.contracts.tenancy import (
     TenantIsolationMode,
     validate_module_tenancy,
 )
-from forze.application.execution import Deps, DepsModule
-from forze.application.execution.deps.builders import (
+from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.deps import (
     merge_deps,
     routed_shared_factories,
 )

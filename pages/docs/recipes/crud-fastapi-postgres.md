@@ -58,7 +58,7 @@ The runtime opens inside the app's lifespan; each route resolves the document
 - **Create / get / list / delete** map straight onto the document ports.
 - **Update** carries the document's `rev` — a stale `rev` raises a `conflict`,
   which `register_exception_handlers` turns into a `409`. That's
-  [optimistic concurrency](../in-depth/concurrency-conflicts.md) with no extra
+  [optimistic concurrency](../writing-operation/concurrency-conflicts.md) with no extra
   code.
 - A missing id raises `not_found` → `404`.
 
@@ -78,7 +78,7 @@ Then open [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ## Where next
 
-<div class="grid cards" markdown>
+<div class="grid cards fz-cards" markdown>
 
 -   :lucide-zap: **[Cache reads with Redis](cache-reads-with-redis.md)**
 

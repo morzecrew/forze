@@ -1,7 +1,7 @@
 """Bootstrap authn deps for external OIDC ``id_token`` routes."""
 
 from forze.application.contracts.authn import PrincipalResolverDepPort, TokenVerifierDepPort
-from forze.application.execution import Deps
+from forze.application.contracts.deps import Deps
 from forze_identity.authn.execution import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.execution.deps import ConfigurableDeterministicUuidResolver
 

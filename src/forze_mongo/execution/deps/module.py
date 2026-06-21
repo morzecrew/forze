@@ -21,8 +21,8 @@ from forze.application.contracts.tenancy import (
     warn_integration_routes,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
-from forze.application.execution import Deps, DepsModule
-from forze.application.execution.deps.builders import (
+from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.deps import (
     merge_deps,
     routed_constant,
     routed_from_mapping,

@@ -25,7 +25,9 @@ from forze_cli._compat import require_dst
 from forze_cli.app import app
 from forze_cli.dst import _parse_seeds
 from forze_cli.loader import load_object, load_simulation
-from forze_dst import Simulation, no_duplicate_effect, record_event
+from forze_dst import Simulation
+from forze_dst.markers import record_event
+from forze_dst.invariants import no_duplicate_effect
 from forze_mock import MockDepsModule
 
 # ----------------------- #
@@ -133,7 +135,7 @@ class TestLoader:
     def test_load_simulation_rejects_non_simulation(self) -> None:
         # A non-Simulation, non-callable object → the explicit TypeError.
         with pytest.raises(TypeError):
-            load_simulation("forze_dst:DEFAULT_CREATE_VERBS")  # a frozenset
+            load_simulation("forze_dst.derive:DEFAULT_CREATE_VERBS")  # a frozenset
 
 
 class TestDiscovery:
@@ -249,7 +251,7 @@ class TestRun:
 
 class TestRegressionLoop:
     def test_save_and_replay_round_trip(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
-        from forze_dst import load_regressions
+        from forze_dst.artifacts import load_regressions
 
         corpus = str(tmp_path / "regressions.jsonl")
 

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import inspect
 from functools import wraps
 from typing import Any, cast
 
 import attrs
 
+from ..port_proxy_base import PortProxy
 from .protocol import (
     PortCall,
     PortInterceptor,
@@ -47,17 +47,14 @@ async def run_chain(
 
 
 @attrs.define(slots=True)
-class InterceptingPortProxy:
+class InterceptingPortProxy(PortProxy):
     """Wrap a port so each async / async-gen method call runs through the interceptor chain.
 
-    Sync methods pass through untouched — interceptors model I/O boundaries (which are
-    async), matching the prior cooperative-yield behavior. The effective chain per call is
-    the deps-scoped interceptors fixed at wrap time plus the ambient chain read per call
-    (ambient innermost).
+    Sync methods pass through untouched (the base default) — interceptors model I/O
+    boundaries, which are async, matching the prior cooperative-yield behavior. The
+    effective chain per call is the deps-scoped interceptors fixed at wrap time plus the
+    ambient chain read per call (ambient innermost).
     """
-
-    inner: Any
-    """The port to wrap."""
 
     interceptors: PortInterceptorChain
     """The interceptor chain to use."""
@@ -77,58 +74,48 @@ class InterceptingPortProxy:
 
     # ....................... #
 
-    def __getattr__(self, name: str) -> Any:
-        attr = getattr(self.inner, name)
+    def _wrap_async_gen(self, name: str, attr: Any) -> Any:
+        @wraps(attr)
+        async def intercepted_async_gen(*args: Any, **kwargs: Any) -> Any:
+            call = PortCall(
+                surface=self.surface,
+                route=self.route,
+                op=name,
+                args=args,
+                kwargs=kwargs,
+            )
 
-        if not callable(attr):
-            return attr
+            async def terminal(c: PortCall) -> Any:
+                # Honor the (possibly interceptor-rewritten) call, not the original args.
+                return attr(*c.args, **c.kwargs)
 
-        if inspect.isasyncgenfunction(attr):
+            gen = await run_chain(self._chain(), call, terminal)
 
-            @wraps(attr)
-            async def intercepted_async_gen(*args: Any, **kwargs: Any) -> Any:
-                call = PortCall(
-                    surface=self.surface,
-                    route=self.route,
-                    op=name,
-                    args=args,
-                    kwargs=kwargs,
-                )
+            async for item in gen:
+                yield item
 
-                async def terminal(c: PortCall) -> Any:
-                    # Honor the (possibly interceptor-rewritten) call, not the original args.
-                    return attr(*c.args, **c.kwargs)
+        return intercepted_async_gen
 
-                gen = await run_chain(self._chain(), call, terminal)
+    # ....................... #
 
-                async for item in gen:
-                    yield item
+    def _wrap_async(self, name: str, attr: Any) -> Any:
+        @wraps(attr)
+        async def intercepted_async(*args: Any, **kwargs: Any) -> Any:
+            call = PortCall(
+                surface=self.surface,
+                route=self.route,
+                op=name,
+                args=args,
+                kwargs=kwargs,
+            )
 
-            return intercepted_async_gen
+            async def terminal(c: PortCall) -> Any:
+                # Honor the (possibly interceptor-rewritten) call, not the original args.
+                return await attr(*c.args, **c.kwargs)
 
-        if inspect.iscoroutinefunction(attr):
+            return await run_chain(self._chain(), call, terminal)
 
-            @wraps(attr)
-            async def intercepted_async(*args: Any, **kwargs: Any) -> Any:
-                call = PortCall(
-                    surface=self.surface,
-                    route=self.route,
-                    op=name,
-                    args=args,
-                    kwargs=kwargs,
-                )
-
-                async def terminal(c: PortCall) -> Any:
-                    # Honor the (possibly interceptor-rewritten) call, not the original args.
-                    return await attr(*c.args, **c.kwargs)
-
-                return await run_chain(self._chain(), call, terminal)
-
-            return intercepted_async
-
-        return (
-            attr  # sync method: pass through (matches prior cooperative-yield behavior)
-        )
+        return intercepted_async
 
 
 # ....................... #

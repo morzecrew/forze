@@ -32,7 +32,7 @@ from forze.domain.models import (
     Document,
     ReadDocument,
 )
-from forze_dst import CrashInterceptor, SimulatedCrash
+from forze_dst.faults import CrashInterceptor, SimulatedCrash
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
 

@@ -14,14 +14,9 @@ from typing import Sequence
 import asyncio
 import pytest
 
-from forze_dst import (
-    RegisterSpec,
-    expect,
-    explore,
-    linearizable,
-    record_operation,
-)
-from forze_dst.recorder import record_event
+from forze_dst.invariants import RegisterSpec, expect, linearizable, record_operation
+from forze_dst.oracle import explore
+from forze_dst.oracle.recorder import record_event
 
 # ----------------------- #
 

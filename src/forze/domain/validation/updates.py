@@ -1,6 +1,5 @@
 """Helpers for declaring and collecting domain update validators."""
 
-import inspect
 import warnings
 from typing import (
     Callable,
@@ -20,6 +19,7 @@ from pydantic import BaseModel
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from .._callables import normalize_before_after_diff
 from .._logger import logger
 
 # ----------------------- #
@@ -100,54 +100,16 @@ def update_validator(
     """
 
     def decorator(f: UpdateValidatorLike[M]) -> UpdateValidator[M]:
-        sig = inspect.signature(f)
-        params = list(sig.parameters.values())
-
         logger.trace(
             "Registering update validator %s",
             getattr(f, "__qualname__", getattr(f, "__name__", repr(f))),
         )
 
-        logger.trace("Validator signature: %s", sig)
-        logger.trace("Validator fields: %s", tuple(fields) if fields else None)
-
-        if not params:
-            raise exc.internal(
-                "Update validator must have at least one parameter (state before update)"
-            )
-
-        extra = len(params) - 1
-        fields_meta = frozenset(fields) if fields else None
-        meta = UpdateValidatorMetadata(fields=fields_meta)
-
-        logger.trace("Normalized validator arity: %s", extra + 1)
-
-        if extra == 0:
-
-            def wrapper(before: M, after: M, diff: JsonDict) -> None:
-                return cast(Callable[[M], None], f)(before)
-
-        elif extra == 1:
-
-            def wrapper(before: M, after: M, diff: JsonDict) -> None:
-                return cast(Callable[[M, M], None], f)(before, after)
-
-        elif extra == 2:
-
-            def wrapper(before: M, after: M, diff: JsonDict) -> None:
-                return cast(Callable[[M, M, JsonDict], None], f)(before, after, diff)
-
-        else:
-            raise exc.internal(
-                "Update validator must have at most three parameters (state before update, state after update, diff)"
-            )
-
+        wrapper = normalize_before_after_diff(f, kind="Update validator")
+        meta = UpdateValidatorMetadata(fields=frozenset(fields) if fields else None)
         setattr(wrapper, UPDATE_VALIDATOR_METADATA_FIELD, meta)
 
-        wrapper.__name__ = getattr(f, "__name__", "update_validator")
-        wrapper.__qualname__ = getattr(f, "__qualname__", wrapper.__name__)
-
-        return wrapper
+        return cast("UpdateValidator[M]", wrapper)
 
     if _func is not None:
         return decorator(_func)

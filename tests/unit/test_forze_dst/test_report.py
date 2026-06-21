@@ -20,19 +20,12 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
-from forze_dst import (
-    SimulationConfig,
-    Strategy,
-    CausalGraph,
-    OperationCase,
-    Simulation,
-    Violation,
-    expect,
-    format_report,
-    record_event,
-)
+from forze_dst import OperationCase, Simulation, SimulationConfig, Strategy
+from forze_dst.markers import record_event
+from forze_dst.invariants import Violation, expect
+from forze_dst.oracle import CausalGraph, format_report
 from forze_dst.oracle import ViolationReport
-from forze_dst.recorder import Event, History
+from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule
 
 # ----------------------- #
