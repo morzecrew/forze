@@ -3439,6 +3439,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../recipes/offload-cpu-work/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cpu" viewBox="0 0 24 24"><path d="M12 20v2M12 2v2M17 20v2M17 2v2M2 12h2M2 17h2M2 7h2M20 12h2M20 17h2M20 7h2M7 20v2M7 2v2"/><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="8" height="8" x="8" y="8" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Offload heavy CPU work
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -4664,11 +4693,17 @@ race is real. The legacy no-op manager would report <em>false</em> double-charge
 <div class="admonition warning">
 <p class="admonition-title"><abbr title="Deterministic Simulation Testing">DST</abbr> sees the ports, not the database</p>
 <p><abbr title="Deterministic Simulation Testing">DST</abbr> exercises your handlers over the <strong>ports</strong>. Logic that lives <em>below</em> a port — database
-triggers, generated columns, <code>CHECK</code> constraints, cascade deletes, <code>LISTEN</code>/<code>NOTIFY</code> flows —
-the mock doesn't have, so the simulation can't run it. Worse, an invariant a trigger
-<em>maintains</em> (a trigger-kept running total, say) will <strong>false-positive</strong> under the mock, which
-writes the rows but never fires the trigger. Keep invariant logic above the port to simulate
-it, or cover the database-level logic with an integration test against the real database.</p>
+triggers, generated columns, <code>CHECK</code> constraints, cascade deletes, <code>LISTEN</code>/<code>NOTIFY</code> flows,
+or a <strong>read view that joins or derives fields the app never writes</strong> — the mock doesn't have,
+so the simulation can't run it. The mock builds a read model by decoding the stored <em>write</em>
+data, so a read relation pointing at an enriched view reproduces only what the write model
+holds. Worse, an invariant a trigger <em>maintains</em> (a trigger-kept running total, say) will
+<strong>false-positive</strong> under the mock, which writes the rows but never fires the trigger.</p>
+<p>Keep the derivation <strong>above</strong> the port to simulate it: a <code>@computed_field</code> on the read and
+domain model (optionally <code>materialized</code> to persist it as a queryable column) is computed in
+Python, so the mock and the real adapter agree. Reserve the database for enrichment that
+genuinely must live there — a cross-aggregate join — and cover <em>that</em> with an integration
+test against the real database, not <abbr title="Deterministic Simulation Testing">DST</abbr>.</p>
 </div>
 <h2 id="what-dst-gives-you">What <abbr title="Deterministic Simulation Testing">DST</abbr> gives you<a class="headerlink" href="#what-dst-gives-you" title="Permanent link">&para;</a></h2>
 <p>The harness is one small facade — <code>run</code>, <code>coverage</code>, <code>coverage_guided</code> — over a layered engine. Each page below takes one capability from "I pointed it at my app" to "I understand and can operate it":</p>

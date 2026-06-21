@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/dst/the-loop/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/recipes/offload-cpu-work/">
       
       
-        <link rel="prev" href="../exploration/">
+        <link rel="prev" href="../two-phase-handler/">
       
       
-        <link rel="next" href="../../integrations/">
+        <link rel="next" href="../authn-authz-tenancy-fastapi/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Find, reproduce, regress - Forze</title>
+        <title>Offload heavy CPU work - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#read-the-counterexample" class="md-skip">
+        <a href="#the-synchronous-work" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Find, reproduce, regress
+              Offload heavy CPU work
             
           </span>
         </div>
@@ -268,8 +268,6 @@
   
   
   
-    
-  
   
     
       
@@ -280,15 +278,13 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
+      <li class="md-tabs__item">
         <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
@@ -329,15 +325,7 @@
   
   
   
-  
     
-      
-    
-    
-    
-      
-  
-  
   
   
     
@@ -345,8 +333,20 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../recipes/crud-fastapi-postgres/" class="md-tabs__link">
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../crud-fastapi-postgres/" class="md-tabs__link">
           
   
   Recipes
@@ -658,31 +658,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
             
   
   
@@ -699,7 +694,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -722,20 +717,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
             
   
   
@@ -957,20 +949,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
             
   
   
@@ -1192,20 +1181,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
             
   
   
@@ -1311,20 +1297,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
             
   
   
@@ -1459,20 +1442,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
             
   
   
@@ -1636,20 +1616,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
             
   
   
@@ -1746,31 +1723,26 @@
                 
   
   
-    
   
   
-  
     
     
     
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
             
   
   
@@ -1787,7 +1759,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_7">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1804,7 +1776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../overview/" class="md-nav__link">
+      <a href="../../dst/overview/" class="md-nav__link">
         
   
   
@@ -1833,7 +1805,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../invariants/" class="md-nav__link">
+      <a href="../../dst/invariants/" class="md-nav__link">
         
   
   
@@ -1862,7 +1834,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../environment/" class="md-nav__link">
+      <a href="../../dst/environment/" class="md-nav__link">
         
   
   
@@ -1891,7 +1863,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../crashes-and-clusters/" class="md-nav__link">
+      <a href="../../dst/crashes-and-clusters/" class="md-nav__link">
         
   
   
@@ -1920,7 +1892,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../exploration/" class="md-nav__link">
+      <a href="../../dst/exploration/" class="md-nav__link">
         
   
   
@@ -1946,36 +1918,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Find, reproduce, regress
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../dst/the-loop/" class="md-nav__link">
         
   
   
@@ -1992,91 +1938,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#read-the-counterexample" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Read the counterexample
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#run-it-in-your-test-suite" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Run it in your test suite
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reproduce-and-regress-from-the-command-line" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Reproduce and regress from the command line
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#carry-a-bug-anywhere" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Carry a bug anywhere
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#extending-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Extending it
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        See also
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3231,26 +3092,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
             
   
   
@@ -3267,7 +3133,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3281,26 +3147,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" >
         
           
-          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="">
             
   
   
@@ -3317,7 +3188,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5_1">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3334,7 +3205,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/crud-fastapi-postgres/" class="md-nav__link">
+      <a href="../crud-fastapi-postgres/" class="md-nav__link">
         
   
   
@@ -3363,7 +3234,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/read-only-document-api/" class="md-nav__link">
+      <a href="../read-only-document-api/" class="md-nav__link">
         
   
   
@@ -3392,7 +3263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/cache-reads-with-redis/" class="md-nav__link">
+      <a href="../cache-reads-with-redis/" class="md-nav__link">
         
   
   
@@ -3421,7 +3292,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/add-idempotency/" class="md-nav__link">
+      <a href="../add-idempotency/" class="md-nav__link">
         
   
   
@@ -3450,7 +3321,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/two-phase-handler/" class="md-nav__link">
+      <a href="../two-phase-handler/" class="md-nav__link">
         
   
   
@@ -3476,10 +3347,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../recipes/offload-cpu-work/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cpu" viewBox="0 0 24 24"><path d="M12 20v2M12 2v2M17 20v2M17 2v2M2 12h2M2 17h2M2 7h2M20 12h2M20 17h2M20 7h2M7 20v2M7 2v2"/><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="8" height="8" x="8" y="8" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Offload heavy CPU work
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -3496,6 +3393,80 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-synchronous-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The synchronous work
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#offload-it-in-prepare" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Offload it in <code>prepare</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-thread-actually-buys-you" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a thread actually buys you
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-use-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When to use it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sizing-the-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sizing the pool
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3522,17 +3493,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
         
           
-          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="">
             
   
   
@@ -3566,7 +3540,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/authn-authz-tenancy-fastapi/" class="md-nav__link">
+      <a href="../authn-authz-tenancy-fastapi/" class="md-nav__link">
         
   
   
@@ -3595,7 +3569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/local-identity/" class="md-nav__link">
+      <a href="../local-identity/" class="md-nav__link">
         
   
   
@@ -3624,7 +3598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/external-bootstrap-forze-jwt/" class="md-nav__link">
+      <a href="../external-bootstrap-forze-jwt/" class="md-nav__link">
         
   
   
@@ -3653,7 +3627,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/external-idp-oidc/" class="md-nav__link">
+      <a href="../external-idp-oidc/" class="md-nav__link">
         
   
   
@@ -3682,7 +3656,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/social-sign-in/" class="md-nav__link">
+      <a href="../social-sign-in/" class="md-nav__link">
         
   
   
@@ -3725,17 +3699,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
         
           
-          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="">
             
   
   
@@ -3769,7 +3746,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/end-to-end-saga-outbox-inbox/" class="md-nav__link">
+      <a href="../end-to-end-saga-outbox-inbox/" class="md-nav__link">
         
   
   
@@ -3798,7 +3775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/transactional-outbox/" class="md-nav__link">
+      <a href="../transactional-outbox/" class="md-nav__link">
         
   
   
@@ -3827,7 +3804,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/transactional-notifications/" class="md-nav__link">
+      <a href="../transactional-notifications/" class="md-nav__link">
         
   
   
@@ -3856,7 +3833,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/background-workflow/" class="md-nav__link">
+      <a href="../background-workflow/" class="md-nav__link">
         
   
   
@@ -3885,7 +3862,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/scheduled-queue-jobs/" class="md-nav__link">
+      <a href="../scheduled-queue-jobs/" class="md-nav__link">
         
   
   
@@ -3928,17 +3905,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
         
           
-          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="">
             
   
   
@@ -3972,7 +3952,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/analytics-over-a-data-lake/" class="md-nav__link">
+      <a href="../analytics-over-a-data-lake/" class="md-nav__link">
         
   
   
@@ -4015,17 +3995,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
         
           
-          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="">
             
   
   
@@ -4059,7 +4042,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/expose-an-aggregate-over-mcp/" class="md-nav__link">
+      <a href="../expose-an-aggregate-over-mcp/" class="md-nav__link">
         
   
   
@@ -4509,10 +4492,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#read-the-counterexample" class="md-nav__link">
+  <a href="#the-synchronous-work" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Read the counterexample
+        The synchronous work
       </span>
     </span>
   </a>
@@ -4520,10 +4503,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#run-it-in-your-test-suite" class="md-nav__link">
+  <a href="#offload-it-in-prepare" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Run it in your test suite
+        Offload it in <code>prepare</code>
       </span>
     </span>
   </a>
@@ -4531,10 +4514,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reproduce-and-regress-from-the-command-line" class="md-nav__link">
+  <a href="#what-a-thread-actually-buys-you" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Reproduce and regress from the command line
+        What a thread actually buys you
       </span>
     </span>
   </a>
@@ -4542,10 +4525,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#carry-a-bug-anywhere" class="md-nav__link">
+  <a href="#when-to-use-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Carry a bug anywhere
+        When to use it
       </span>
     </span>
   </a>
@@ -4553,21 +4536,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#extending-it" class="md-nav__link">
+  <a href="#sizing-the-pool" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Extending it
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        See also
+        Sizing the pool
       </span>
     </span>
   </a>
@@ -4629,11 +4601,11 @@
     
     
       <li class="md-path__item">
-        <a href="../../core-concepts/overview/" class="md-path__link">
+        <a href="../crud-fastapi-postgres/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Learn
+    Recipes
   </span>
 
         </a>
@@ -4654,11 +4626,11 @@
     
     
       <li class="md-path__item">
-        <a href="../overview/" class="md-path__link">
+        <a href="../crud-fastapi-postgres/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Deterministic simulation
+    Data
   </span>
 
         </a>
@@ -4678,110 +4650,73 @@
   
 
 
-  <h1 id="__skip">Find, reproduce, regress</h1>
+  <h1 id="__skip">Offload heavy CPU work</h1>
 
-<p>Finding a bug is the start of the loop, not the end. A <code>ViolationReport</code> is a <em>reproducible artifact</em>: it carries the seed, the minimized workload, the causal trace, and the violated invariant — everything needed to understand the failure <em>and</em> to replay it on demand. This page is the workflow that closes the loop: read it, reproduce it from the command line, lock it into a regression corpus so it stays fixed, and carry it to another machine.</p>
-<p><a class="glightbox" data-gallery="light" data-title="A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever" data-type="image" href="../../_diagrams/light/dst-loop.svg#only-light"><img alt="A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever" src="../../_diagrams/light/dst-loop.svg#only-light" /></a>
-<a class="glightbox" data-gallery="dark" data-title="A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever" data-type="image" href="../../_diagrams/dark/dst-loop.svg#only-dark"><img alt="A sweep finds a violation, minimizes the workload, produces a reproducible report, saves the seed to a regression corpus, and replay re-checks it forever" src="../../_diagrams/dark/dst-loop.svg#only-dark" /></a></p>
-<h2 id="read-the-counterexample">Read the counterexample<a class="headerlink" href="#read-the-counterexample" title="Permanent link">&para;</a></h2>
-<p><code>report.format()</code> renders the whole failure: the minimised workload, the concurrency that triggered it, the causal trace (each operation and the port calls it caused — with the values they wrote and read back when <code>capture_values</code> is on), an <strong>injected-environment timeline</strong> (the faults, latency, and partitions the simulator applied, in virtual-time order), and the violated invariant.</p>
-<p>For a <strong>time-travel</strong> view, <code>report.timeline()</code> flattens the run into a virtual-time-ordered stream of steps — operations, port calls with their value flow, injected environment, recorded facts — that you scroll through like a debugger. <code>render_timeline(history)</code> prints it, and each <code>TimelineEntry.to_dict()</code> is JSON, so the timeline is a portable artifact a CLI or viewer steps through by virtual time:</p>
-<div class="highlight"><pre><span></span><code>DST timeline (by virtual time):
-  @t=0.000000  ▸ update → ok
-  @t=0.000000  ↳ document_command[accounts].update key=42 wrote {&#39;balance&#39;: 6}
-  @t=0.100000  ↳ document_command[accounts].get key=42 read {&#39;balance&#39;: 5}   ← stale read
-</code></pre></div>
-<p>For an <em>interactive</em> scrub, <code>report.to_html("bug.html")</code> writes a self-contained viewer over that same timeline — open it in a browser and step through the run by virtual time, each step's structured detail beside it, the way a debugger walks a trace. It is one HTML file with no external assets, so it attaches to a CI artifact and a failed sweep ships its own debugger. From the command line, <code>forze dst run … --html bug.html</code> writes it on a violation.</p>
-<p>And every <code>report.format()</code> ends with a copy-pasteable repro — the seed already filled in — so going from a CI failure to a local reproduction is a paste, not a hunt:</p>
-<div class="highlight"><pre><span></span><code>  reproduce:
-    simulation.run(SimulationConfig.reproduce(42))
-    # as a test:  assert_no_violation(simulation, SimulationConfig.reproduce(42))
-</code></pre></div>
-<h2 id="run-it-in-your-test-suite">Run it in your test suite<a class="headerlink" href="#run-it-in-your-test-suite" title="Permanent link">&para;</a></h2>
-<p>The loop belongs where your other tests live. <code>assert_no_violation</code> points a normal test at a <code>Simulation</code>: it sweeps, shrinks on failure, and fails the test with the minimized counterexample as the assertion message — so a <abbr title="Deterministic Simulation Testing">DST</abbr> failure reads like any other pytest failure, seed included.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">assert_no_violation</span>
+<p>A bulk import parses a large blob, validates it into models, then writes it. The
+parsing and validation are <strong>synchronous</strong> and CPU-bound — and on the event loop a
+single long call blocks <em>every</em> other task for its whole duration: other invocations,
+the outbox relay, heartbeats, deadlines, all frozen until it returns.</p>
+<p><code>run_cpu</code> moves that work to a bounded worker pool. Put it in a two-phase <code>prepare</code>
+(which runs outside the transaction) and the parse can't stall the runtime and holds no
+connection; <code>apply</code> then writes the result inside the transaction.</p>
+<p>The runnable version of this recipe lives at <code>examples/recipes/cpu_offload/</code>.</p>
+<h2 id="the-synchronous-work">The synchronous work<a class="headerlink" href="#the-synchronous-work" title="Permanent link">&para;</a></h2>
+<p>The parse stands in for a large payload run through pydantic — ordinary blocking code:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse_article</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CreateArticle</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Heavy *synchronous* parse + validation — stands in for a large blob run through</span>
+<span class="sd">    pydantic. On the event loop this blocks every other task for its whole duration.&quot;&quot;&quot;</span>
 
-<span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">dst</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">test_payments_have_no_race</span><span class="p">():</span>
-    <span class="n">assert_no_violation</span><span class="p">(</span><span class="n">payments_simulation</span><span class="p">)</span>
-</code></pre></div>
-<p>No plugin is needed for that — it is a plain assertion. It defaults to a <code>thorough()</code> sweep, and a clean run passes silently like any green test.</p>
-<p>The friction a <abbr title="Deterministic Simulation Testing">DST</abbr> test usually hits is that the right seed count differs by where it runs — a handful while you iterate, thousands in CI. Enable the optional plugin and one flag scales every sweep without touching the test:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># conftest.py</span>
-<span class="n">pytest_plugins</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;forze_dst.testing.plugin&quot;</span><span class="p">]</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>-m<span class="w"> </span>dst<span class="w"> </span>--dst-seeds<span class="w"> </span><span class="m">16</span><span class="w">      </span><span class="c1"># quick, while iterating</span>
-pytest<span class="w"> </span>-m<span class="w"> </span>dst<span class="w"> </span>--dst-seeds<span class="w"> </span><span class="m">2000</span><span class="w">    </span><span class="c1"># exhaustive, in CI — same test, no code change</span>
-</code></pre></div>
-<p>The plugin also registers the <code>dst</code> marker, so <code>-m dst</code> runs the simulation tests on their own (the heavy ones can be a nightly job) and <code>-m "not dst"</code> skips them in a fast inner loop. The plugin is opt-in by design — importing the <abbr title="Deterministic Simulation Testing">DST</abbr> machinery costs a moment, so it stays off until a project asks for it rather than taxing every test run.</p>
-<p>When a sweep fails in CI, the seed that found it is the thing worth keeping. <code>--dst-save-bundle=DIR</code> drops a portable <a href="#carry-a-bug-anywhere">bundle</a> — the seed and the full config that produced it — for every failing sweep:</p>
-<div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>-m<span class="w"> </span>dst<span class="w"> </span>--dst-save-bundle<span class="w"> </span>./dst-regressions
-</code></pre></div>
-<p>Commit those bundles, and <code>assert_no_regressions</code> turns them into a permanent guard: it replays each one at its seed under its own saved config, so the exact environment that found the bug is reproduced, not the current defaults. The day the bug comes back, the test fails again — with the original counterexample.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">assert_no_regressions</span>
+    <span class="n">title</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">body</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">partition</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
 
-<span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">dst</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">test_known_bugs_stay_fixed</span><span class="p">():</span>
-    <span class="n">assert_no_regressions</span><span class="p">(</span><span class="n">payments_simulation</span><span class="p">,</span> <span class="n">bundles</span><span class="o">=</span><span class="s2">&quot;./dst-regressions&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">CreateArticle</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="n">title</span><span class="o">.</span><span class="n">strip</span><span class="p">(),</span> <span class="n">word_count</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">body</span><span class="o">.</span><span class="n">split</span><span class="p">()))</span>
 </code></pre></div>
-<p>A bundle whose registry fingerprint no longer matches the simulation is flagged rather than passed silently — the catalog moved, so a clean replay can no longer be trusted to exercise the original path.</p>
-<h2 id="reproduce-and-regress-from-the-command-line">Reproduce and regress from the command line<a class="headerlink" href="#reproduce-and-regress-from-the-command-line" title="Permanent link">&para;</a></h2>
-<p>The <code>forze dst</code> command wires the loop end to end against an import string pointing at your <code>Simulation</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># explore — prints the counterexample, exits 1 if one is found (CI-friendly)</span>
-forze<span class="w"> </span>dst<span class="w"> </span>run<span class="w"> </span>examples.recipes.dst_payments.app:simulation<span class="w"> </span>--seeds<span class="w"> </span><span class="m">0</span>-200
+<h2 id="offload-it-in-prepare">Offload it in <code>prepare</code><a class="headerlink" href="#offload-it-in-prepare" title="Permanent link">&para;</a></h2>
+<p><code>prepare</code> is the place for pre-write work; wrapping the parse in <code>run_cpu</code> takes it off
+the loop. <code>apply</code> does only the write:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@attrs</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">kw_only</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ImportArticle</span><span class="p">(</span>
+    <span class="n">TwoPhaseDocumentHandler</span><span class="p">[</span><span class="n">ImportRequest</span><span class="p">,</span> <span class="n">CreateArticle</span><span class="p">,</span> <span class="n">ReadArticle</span><span class="p">,</span> <span class="n">CreateArticle</span><span class="p">]</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse off the loop (outside the tx), then write the parsed article (inside it).&quot;&quot;&quot;</span>
 
-<span class="c1"># inject a broad environment and lock a found seed into a regression corpus</span>
-forze<span class="w"> </span>dst<span class="w"> </span>run<span class="w"> </span>app:simulation<span class="w"> </span>--fault-error<span class="w"> </span><span class="m">0</span>.2<span class="w"> </span>--latency<span class="w"> </span><span class="m">0</span>.05<span class="w"> </span>--save-regression
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">prepare</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="n">ImportRequest</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CreateArticle</span><span class="p">:</span>
+        <span class="c1"># OUTSIDE the transaction, OFF the event loop: the parse cannot stall the runtime</span>
+        <span class="c1"># and holds no connection. Inline + deterministic under simulation.</span>
+        <span class="k">return</span> <span class="k">await</span> <span class="n">run_cpu</span><span class="p">(</span><span class="n">parse_article</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">raw</span><span class="p">)</span>
 
-<span class="c1"># re-run every saved seed — the regression guard (exits 1 if any still violates)</span>
-forze<span class="w"> </span>dst<span class="w"> </span>replay
-
-<span class="c1"># explore until behaviour saturates, then report what was covered</span>
-forze<span class="w"> </span>dst<span class="w"> </span>coverage<span class="w"> </span>app:simulation
-
-<span class="c1"># inspect the auto-derived workload and the reactive cascade topology</span>
-forze<span class="w"> </span>dst<span class="w"> </span>derive<span class="w">   </span>app:simulation
-forze<span class="w"> </span>dst<span class="w"> </span>topology<span class="w"> </span>app:simulation
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">apply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="n">ImportRequest</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="n">CreateArticle</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ReadArticle</span><span class="p">:</span>
+        <span class="c1"># INSIDE the transaction — only the write is wrapped.</span>
+        <span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">writer</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
 </code></pre></div>
-<p><code>--save-regression</code> appends the found seed (with the registry fingerprint and the exploration knobs) to a JSON-Lines corpus; <code>replay</code> reproduces each saved seed under the configuration it was found with, so a fixed bug stays fixed.</p>
-<p>The registry fingerprint catches a <em>structural</em> change (a contract or plan fact moved). For a stricter guard, <code>entry_from_report(…, strict_behavior=True)</code> also records a <code>behavioral_fingerprint</code> — an ordered, PII-free digest of the run's execution-trace shape — so <code>RegressionEntry.behavior_drifted(history)</code> flags a replay whose handler <em>logic</em> drifted even when its contracts didn't. Opt-in; the default stays structural.</p>
-<h2 id="carry-a-bug-anywhere">Carry a bug anywhere<a class="headerlink" href="#carry-a-bug-anywhere" title="Permanent link">&para;</a></h2>
-<p>A found bug travels. <code>FailureBundle</code> serialises the seed <em>and the full config that produced it</em> (faults, latency, partitions, crash, scheduler) to one JSON file, and <code>replay_bundle</code> re-runs it anywhere:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.artifacts</span><span class="w"> </span><span class="kn">import</span> <span class="n">bundle_from_report</span><span class="p">,</span> <span class="n">replay_bundle</span><span class="p">,</span> <span class="n">FailureBundle</span>
-
-<span class="n">bundle_from_report</span><span class="p">(</span><span class="n">report</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="s2">&quot;app:simulation&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;bug.json&quot;</span><span class="p">)</span>
-<span class="c1"># … on another machine, another day …</span>
-<span class="n">report</span> <span class="o">=</span> <span class="n">replay_bundle</span><span class="p">(</span><span class="n">FailureBundle</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;bug.json&quot;</span><span class="p">))</span>   <span class="c1"># reproduces, from one command</span>
-</code></pre></div>
-<h2 id="extending-it">Extending it<a class="headerlink" href="#extending-it" title="Permanent link">&para;</a></h2>
-<p><abbr title="Deterministic Simulation Testing">DST</abbr> is built from small, documented seams, so you extend it without forking. Everything plugs in as a plain callable or protocol:</p>
-<div class="grid cards">
+<p>That is the whole change — <code>await run_cpu(fn, *args)</code> instead of calling <code>fn(*args)</code>
+directly. <code>run_cpu</code> honors the invocation deadline, carries the tenant and tracing
+context into the worker so logs stay correlated, and runs <strong>inline and deterministically
+under simulation</strong>, so this handler is still testable under Deterministic Simulation
+Testing. A bare <code>asyncio.to_thread</code> would raise <code>RealIOForbidden</code> under the simulator.</p>
+<p>For mapping a function over a large collection, <code>run_cpu_map(items, fn, chunk_size=…)</code>
+offloads in chunks and checkpoints cancellation at each boundary.</p>
+<h2 id="what-a-thread-actually-buys-you">What a thread actually buys you<a class="headerlink" href="#what-a-thread-actually-buys-you" title="Permanent link">&para;</a></h2>
+<p>A worker thread keeps the loop <strong>responsive</strong> — the GIL is released periodically, so the
+runtime keeps interleaving instead of freezing for the whole call. It is <em>not</em> a speedup
+for pure-Python work, which holds the GIL; you get real parallelism only for
+GIL-releasing C extensions (database drivers, <code>orjson</code>, <code>numpy</code>). Reach for <code>run_cpu</code>
+to stop one long call from monopolizing the loop — not to parse faster.</p>
+<h2 id="when-to-use-it">When to use it<a class="headerlink" href="#when-to-use-it" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span> <strong>Invariants</strong></p>
-<p>An <code>Invariant</code> is any <code>Callable[[History], list[Violation]]</code> — write a function, pass it in <code>invariants=</code>. The <a href="../invariants/">built-ins</a> are just factories returning one.</p>
-</li>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-shuffle" viewBox="0 0 24 24"><path d="m18 14 4 4-4 4M18 2l4 4-4 4"/><path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22M2 6h1.972a4 4 0 0 1 3.6 2.2M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45"/></svg></span> <strong>Schedulers</strong></p>
-<p><code>Scheduler</code> is a <code>Protocol</code>; supply a <code>scheduler_factory</code> to the low-level run path to drive interleavings your own way — the engines call it per run.</p>
-</li>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-bug" viewBox="0 0 24 24"><path d="M12 20v-9M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4zM14.12 3.88 16 2"/><path d="M21 21a4 4 0 0 0-3.81-4M21 5a4 4 0 0 1-3.55 3.97M22 13h-4M3 21a4 4 0 0 1 3.81-4M3 5a4 4 0 0 0 3.55 3.97M6 13H2M8 2l1.88 1.88M9 7.13V6a3 3 0 1 1 6 0v1.13"/></svg></span> <strong>Environment</strong></p>
-<p>Faults and latency are declarative data (<code>FaultPolicy</code>, <code>LatencyProfile</code>); for anything custom, the <code>interceptors</code> factory adds a seeded <code>PortInterceptor</code> chain at the port seam.</p>
-</li>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-boxes" viewBox="0 0 24 24"><path d="M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3zM7 16.5l-4.74-2.85M7 16.5l5-3M7 16.5v5.17M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5zM17 16.5l-5-3M17 16.5l4.74-2.85M17 16.5v5.17"/><path d="M7.97 4.42A2 2 0 0 0 7 6.13v4.37l5 3 5-3V6.13a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0zM12 8 7.26 5.15M12 8l4.74-2.85M12 13.5V8"/></svg></span> <strong>Engines</strong></p>
-<p>Each strategy is a free function under <code>forze_dst.engines</code> (op_case, scenario, crash_restart, guided) taking the <code>Simulation</code> as its context — call one directly, or compose your own search over the engine substrate.</p>
-</li>
+<li><strong>Use it</strong> for a heavy synchronous parse, validation, serialization, or crypto inside
+  a handler — anything that would otherwise hold the event loop for a noticeable time.</li>
+<li><strong>You don't need it</strong> for pure compute <em>before the first query</em> in a plain handler:
+  lazy transaction acquisition already keeps the connection unheld there. <code>run_cpu</code> is
+  about the event loop, not the connection.</li>
 </ul>
-</div>
-<p>The <code>Simulation</code> class is a thin facade: <code>run</code> / <code>coverage</code> / <code>coverage_guided</code> bind the config and delegate to an engine. The trace seam is deliberately layered — the engine <code>RuntimeTrace</code> is the production tracer (id-only, PII-free), and the <abbr title="Deterministic Simulation Testing">DST</abbr> <code>History</code> is the oracle's richer view that folds it in <em>and</em> adds <abbr title="Deterministic Simulation Testing">DST</abbr>-only events (op-start anchors, <code>reached</code> markers, observe facts, crash and partition markers). They stay separate by design: keeping <abbr title="Deterministic Simulation Testing">DST</abbr> concerns out of the production trace is what lets the same tracer run in production untouched.</p>
-<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="../../testing/overview/">Testing</a> — unit and integration testing with mocks</li>
-<li><a href="../../writing-operation/concurrency-conflicts/">Concurrency &amp; conflicts</a> — the optimistic-concurrency model <abbr title="Deterministic Simulation Testing">DST</abbr> exercises</li>
-<li><a href="../../writing-operation/transactions/">Transactions</a> — why faithful rollback keeps <abbr title="Deterministic Simulation Testing">DST</abbr> findings trustworthy</li>
-</ul>
+<h2 id="sizing-the-pool">Sizing the pool<a class="headerlink" href="#sizing-the-pool" title="Permanent link">&para;</a></h2>
+<p>By default <code>run_cpu</code> uses a process-wide bounded pool — zero configuration. To size and
+scope-manage it, pass a <code>ThreadPoolCpuExecutor</code> to the runtime; it is bound for the scope
+and drained on shutdown:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.primitives</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolCpuExecutor</span>
+
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">MyModule</span><span class="p">(),</span> <span class="n">cpu_executor</span><span class="o">=</span><span class="n">ThreadPoolCpuExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">8</span><span class="p">))</span>
+</code></pre></div>
 
 
 
@@ -4822,7 +4757,7 @@ forze<span class="w"> </span>dst<span class="w"> </span>topology<span class="w">
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../exploration/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Exploration strategies">
+          <a href="../two-phase-handler/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Call a service before the write">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4832,20 +4767,20 @@ forze<span class="w"> </span>dst<span class="w"> </span>topology<span class="w">
                 Previous
               </span>
               <div class="md-ellipsis">
-                Exploration strategies
+                Call a service before the write
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../integrations/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
+          <a href="../authn-authz-tenancy-fastapi/" class="md-footer__link md-footer__link--next" aria-label="Next: Authn, authz &amp; tenancy">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Overview
+                Authn, authz & tenancy
               </div>
             </div>
             <div class="md-footer__button md-icon">

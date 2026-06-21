@@ -190,6 +190,9 @@
         <loc>https://morzecrew.github.io/forze/dev/recipes/two-phase-handler/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/offload-cpu-work/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/authn-authz-tenancy-fastapi/</loc>
       </url>
       <url>

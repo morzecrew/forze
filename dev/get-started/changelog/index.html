@@ -4324,6 +4324,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../recipes/offload-cpu-work/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cpu" viewBox="0 0 24 24"><path d="M12 20v2M12 2v2M17 20v2M17 2v2M2 12h2M2 17h2M2 7h2M20 12h2M20 17h2M20 7h2M7 20v2M7 2v2"/><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="8" height="8" x="8" y="8" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Offload heavy CPU work
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6354,10 +6383,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
-<p><strong>Materialized derived fields</strong> — <code>DocumentSpec(materialized=…)</code> persists selected computed fields as real columns, making them filterable and sortable. Names are validated, create/update collisions rejected, and startup checks require matching columns; set-based update is rejected where per-row recomputation is unsupported.</p>
+<p><strong>CPU-offload seam</strong> — <code>run_cpu</code> / <code>run_cpu_map</code> run blocking or CPU-bound work off the event loop via a context-bound <code>CpuExecutor</code> (bounded thread pool in production; inline and deterministic under simulation, so offloading handlers stay testable), honoring the invocation deadline with a cooperative <code>checkpoint()</code>.</p>
 </li>
 <li>
-<p><strong>Two-phase prepare/apply handlers</strong> — <code>prepare(args)</code> runs outside the transaction (CPU or external work) and <code>apply(args, payload)</code> inside it, so the transaction wraps only the writes. A tx route is required; <code>prepare</code> is read-only and runs exactly once per invocation. Adds the <code>TwoPhaseHandler</code> contract and a kit base.</p>
+<p><strong>HTTP status mapping in core</strong> — <code>http_status_for_kind(kind)</code> in <code>forze.base.exceptions</code> maps an <code>ExceptionKind</code> to its conventional HTTP status (404/409/422/…, else 500), so any HTTP-serving layer can reuse it. FastAPI's response builder now uses this shared helper instead of a private one.</p>
+</li>
+<li>
+<p><strong>Materialized derived fields</strong> — <code>DocumentSpec(materialized=…)</code> persists selected computed fields as real columns, making them filterable and sortable. Names are validated, create/update collisions are rejected, and startup checks require matching columns.</p>
+</li>
+<li>
+<p><strong>Two-phase prepare/apply handlers</strong> — <code>prepare(args)</code> runs outside the transaction (CPU or external work) and <code>apply(args, payload)</code> inside it, so the transaction wraps only the writes. Adds the <code>TwoPhaseHandler</code> contract and a kit base; a tx route is required and <code>prepare</code> is read-only.</p>
 </li>
 <li>
 <p><strong>Deterministic Simulation Testing (<code>forze_dst</code>)</strong> — point it at a real Forze app and one master seed reproduces the whole run (schedule, faults, latency, inputs, crashes, network partitions) across single-process and N-node distributed runs, over real registries and runtimes, with no changes to the app under test.</p>
@@ -6366,13 +6401,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Deterministic runtime</strong> — <code>SimulationEventLoop</code>, <code>SimulationTimeSource</code>, and <code>run_simulation(...)</code> make hours of sleeps and backoff run in real-wall milliseconds and replay byte-identically for a seed. Real I/O raises <code>RealIOForbidden</code>; a quiescent loop raises <code>SimulationDeadlock</code>.</p>
 </li>
 <li>
-<p><strong>Ambient entropy seam</strong> — adds <code>EntropySource</code> and <code>bind_entropy_source</code> to <code>forze.base.primitives</code>, the entropy twin of <code>TimeSource</code>: uuid randomness, nonces, jitter, and tokens route through it, so a seeded source and frozen clock make runs byte-identical (default stays the system CSPRNG). Adds <code>derive_seed</code> for per-stream sub-seeds.</p>
+<p><strong>Ambient entropy seam</strong> — adds <code>EntropySource</code> and <code>bind_entropy_source</code> to <code>forze.base.primitives</code>, the entropy twin of <code>TimeSource</code>: uuid randomness, nonces, jitter, and tokens route through it so a seeded source and frozen clock make runs byte-identical. Default stays the system CSPRNG.</p>
 </li>
 <li>
 <p><strong>Monotonic time seam</strong> — <code>TimeSource.monotonic()</code> and a free <code>monotonic()</code>; deadlines, resilience clocks, caches, and the mock queue read it (default <code>time.monotonic()</code>). A determinism guard wired into the quality gate fails the build if raw time or entropy primitives are used outside the seams.</p>
 </li>
 <li>
-<p><strong>Port interception seam</strong> — a composable <code>PortInterceptor</code> chain around resolved ports via <code>DepsRegistry.with_interceptors(...)</code>, running innermost (inside tracing and resilience) and zero-cost when unused. <abbr title="Deterministic Simulation Testing">DST</abbr> plugs cooperative yielding, latency, faults, crashes, and partitions in through it without touching handlers.</p>
+<p><strong>Port interception seam</strong> — a composable <code>PortInterceptor</code> chain around resolved ports via <code>DepsRegistry.with_interceptors(...)</code>, running innermost (inside tracing and resilience) and zero-cost when unused. <abbr title="Deterministic Simulation Testing">DST</abbr> plugs latency, faults, crashes, and partitions through it without touching handlers.</p>
 </li>
 <li>
 <p><strong>Operation-catalog fingerprint</strong> — <code>FrozenOperationRegistry.fingerprint()</code> and <code>operation_fingerprint(op)</code> give a stable structural hash of the operation catalog (kind, schemas, idempotency, authn, deadline facts) that ties a seed to the code that produced it.</p>
@@ -6381,19 +6416,19 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>In-memory outbound HTTP</strong> — <code>MockHttpServicePort</code> with <code>MockHttpServiceAdapter</code>/<code>MockHttpRegistry</code> via <code>MockDepsModule(http=…)</code>, so an app runs under <abbr title="Deterministic Simulation Testing">DST</abbr> with no external services.</p>
 </li>
 <li>
-<p><strong>Mock transactions default to a journal</strong> <em>(behavior change)</em> — <code>MockDepsModule(transactions="journal")</code> is now the default: a per-write undo journal across every participating store lets concurrent transactions interleave while an aborted operation leaves no partial writes. The <code>none</code> and <code>strict</code> modes remain opt-in.</p>
+<p><strong>Mock transactions default to a journal</strong> <em>(behavior change)</em> — <code>MockDepsModule(transactions="journal")</code> is now the default: a per-write undo journal lets concurrent transactions interleave while an aborted operation leaves no partial writes. The <code>none</code> and <code>strict</code> modes remain opt-in.</p>
 </li>
 <li>
 <p><strong>Mock MVCC isolation</strong> — the journal manager enforces snapshot (rejects write-write) and serializable (also rejects read-write and phantoms) isolation via a buffered overlay; a conflict raises <code>exc.concurrency</code> with <code>serialization_failure</code> and no global lock.</p>
 </li>
 <li>
-<p><strong>Transaction isolation as a fail-closed contract</strong> — operations declare an isolation level and the kernel verifies it against the route's manager, raising <code>exc.configuration</code> (<code>tx_isolation_unsupported</code>) rather than silently running weaker isolation. Declaring isolation without a tx route is rejected at registry freeze.</p>
+<p><strong>Transaction isolation as a fail-closed contract</strong> — operations declare an isolation level and the kernel verifies it against the route's manager, raising <code>exc.configuration</code> rather than silently running weaker isolation. Declaring isolation without a tx route is rejected at registry freeze.</p>
 </li>
 <li>
-<p><strong>Turnkey harness and unified config</strong> — <code>forze_dst.Simulation</code> and <code>SimulationConfig</code>: given a registry, deps factory, and invariants, <code>Simulation.run(config, ...)</code> is the single exploration entrypoint (op-case/scenario/Hypothesis/DPOR; FIFO/random/PCT scheduler). One config is the sole source of nondeterminism, and a violation minimizes to a reproducible counterexample.</p>
+<p><strong>Turnkey harness and unified config</strong> — <code>forze_dst.Simulation</code> and <code>SimulationConfig</code>: given a registry, deps factory, and invariants, <code>Simulation.run(config, ...)</code> is the single exploration entrypoint. One config is the sole source of nondeterminism, and a violation minimizes to a reproducible counterexample.</p>
 </li>
 <li>
-<p><strong>Generative scenario model</strong> — <code>Scenario</code>/<code>Rule</code>/<code>ModelState</code>, auto-derivation via <code>derive_scenario</code>, and reactive topology (<code>Simulation.reactive_map</code>) build model-based arrange-then-act workloads that pass domain validation; the scenario is inferred from the catalog and refined by probing the engine trace to drop cascade-only operations.</p>
+<p><strong>Generative scenario model</strong> — <code>Scenario</code>/<code>Rule</code>/<code>ModelState</code>, auto-derivation via <code>derive_scenario</code>, and reactive topology build model-based arrange-then-act workloads that pass domain validation. The scenario is inferred from the catalog and refined by probing the engine trace to drop cascade-only operations.</p>
 </li>
 <li>
 <p><strong>Schedulers</strong> — <code>PCTScheduler</code> (depth-bounded bug guarantees), <code>SystematicScheduler</code> (DPOR exhaustive interleaving with effect-equivalence reduction), and seeded shuffle perturbation, all reproducible. Adds a generic workload fuzzer (<code>OpSpec</code>, <code>generate_workload</code>, <code>simulate_workload</code>).</p>
@@ -6405,16 +6440,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Coverage-guided exploration</strong> — <code>behavioral_coverage</code> and <code>Simulation.coverage</code>: a PII-free signal (operation outcomes, port edges, injected faults) drives a self-right-sizing sweep that stops once coverage plateaus, returning <code>CoverageStats</code> and any counterexample it hits.</p>
 </li>
 <li>
-<p><strong>Declarative seeded faults and latency</strong> — <code>FaultPolicy</code>/<code>FaultRule</code> and <code>LatencyProfile</code> set per-surface/route/op rates for error, timeout, crash, drop, duplicate, and delay plus per-route latency distributions, declared on <code>SimulationConfig</code> and seeded by construction. Replaces the removed hand-wrapping <code>FaultyQueueCommand</code>.</p>
+<p><strong>Declarative seeded faults and latency</strong> — <code>FaultPolicy</code>/<code>FaultRule</code> and <code>LatencyProfile</code> set per-surface/route/op rates for error, timeout, crash, drop, duplicate, and delay plus per-route latency distributions, declared on <code>SimulationConfig</code> and seeded by construction.</p>
 </li>
 <li>
-<p><strong>Crash, restart, and recovery</strong> — <code>SimulationConfig.crash</code> turns a run into a crash-restart-recovery scenario: the tx rolls back, a fresh runtime restarts over persisted <code>MockState</code>, and an optional recovery pass runs. <code>SimulationConfig.runtime=True</code> instead drives the workload through a real <code>ExecutionRuntime</code> with graceful drain.</p>
+<p><strong>Crash, restart, and recovery</strong> — <code>SimulationConfig.crash</code> turns a run into a crash-restart-recovery scenario: the tx rolls back, a fresh runtime restarts over persisted <code>MockState</code>, and an optional recovery pass runs. <code>SimulationConfig.runtime=True</code> instead drives the workload through a real <code>ExecutionRuntime</code>.</p>
 </li>
 <li>
-<p><strong>Simulated I/O latency and cooperative scheduling</strong> — under <code>run_simulation</code> a cooperative interceptor makes each port call a yield point so concurrency interleaves at real boundaries, and optionally advances the virtual clock by a per-port latency, surfacing both races and time-dependent bugs with no artificial sleeps in handlers.</p>
+<p><strong>Simulated I/O latency and cooperative scheduling</strong> — under <code>run_simulation</code> a cooperative interceptor makes each port call a yield point so concurrency interleaves at real boundaries, and optionally advances the virtual clock by a per-port latency, surfacing races and time-dependent bugs with no artificial sleeps.</p>
 </li>
 <li>
-<p><strong>Engine trace folded into history</strong> — <code>RuntimeTracer</code> captures the full execution surface (ports, transactions, operation boundary, domain dispatch) with virtual-time stamps and PII-free id-only keys; the harness folds it and projects operation outcomes from this one source. Adds trace-driven invariants needing no handler instrumentation.</p>
+<p><strong>Engine trace folded into history</strong> — <code>RuntimeTracer</code> captures the full execution surface (ports, transactions, operation boundary, domain dispatch) with virtual-time stamps and PII-free id-only keys; the harness folds it and projects operation outcomes from this one source. Adds trace-driven invariants.</p>
 </li>
 <li>
 <p><strong>Counterexample report</strong> — <code>forze_dst.report</code> (<code>CausalGraph</code>, <code>format_report</code>, <code>ViolationReport.format()</code>) renders the minimized workload, the concurrency that triggered it, the per-span causal trace, an injected-environment timeline of faults, latency, and partitions, recorded facts, and the violated invariant.</p>
@@ -6426,61 +6461,73 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze</code> CLI</strong> (<code>forze[cli]</code> extra) — <code>forze dst run module:sim</code> (exit 1 on a violation, CI-friendly) plus <code>replay</code>, <code>coverage</code>, <code>topology</code>, and <code>derive</code>. Import strings are forgiving and a bare registry gets an auto-mock with a safety-net invariant. Test-backed recipes ship for concurrency and virtual-time TTL.</p>
 </li>
 <li>
-<p><strong>Multi-runtime distributed <abbr title="Deterministic Simulation Testing">DST</abbr></strong> — <code>forze_dst.Cluster</code> and <code>Partition</code>/<code>PartitionSchedule</code> run N real <code>ExecutionRuntime</code> nodes over one shared <code>MockState</code> from a single seed, under group-based network partitions and per-node faults, checked by ordinary distributed invariants. A violation minimizes by dropping nodes into a reproducible report.</p>
+<p><strong>Multi-runtime distributed <abbr title="Deterministic Simulation Testing">DST</abbr></strong> — <code>forze_dst.Cluster</code> with <code>Partition</code>/<code>PartitionSchedule</code> runs N real <code>ExecutionRuntime</code> nodes over one shared <code>MockState</code> from a single seed, under group-based network partitions and per-node faults, checked by ordinary distributed invariants. Violations minimize reproducibly.</p>
 </li>
 <li>
-<p><strong>Reachability ("sometimes") assertions</strong> — <code>reached(label)</code> marks a hard state from inside code under simulation; <code>assess_reachability(histories, targets)</code> (and <code>SimulationConfig.reachability_targets</code>, folded into <code>CoverageStats</code>) fails a sweep when a declared state was <em>never</em> reached, so a green invariant means the dangerous interleaving actually fired rather than never bit. Adds <code>Cluster.histories()</code> (full sweep, no short-circuit) and <code>sometimes(...)</code>. Forze's own distributed primitives — the distributed lock under partition and the hybrid logical clock across replicas — now ship as flagship <abbr title="Deterministic Simulation Testing">DST</abbr> scenarios that pair a safety invariant with a reachability target and keep a caught-and-minimized broken twin.</p>
+<p><strong>Reachability ("sometimes") assertions</strong> — <code>reached(label)</code> marks a hard state from inside code under simulation, and <code>SimulationConfig.reachability_targets</code> fails a sweep when a declared state was never reached, so a green invariant means the dangerous interleaving actually fired. Adds <code>sometimes(...)</code>.</p>
 </li>
 <li>
-<p><strong>Exact per-call <abbr title="Deterministic Simulation Testing">DST</abbr> attribution</strong> — each operation terminal carries a correlation id (its invoke's trace <code>seq</code>) and cascade invocations are flagged <code>nested</code>, so the trace projection pairs a terminal to the precise invoke it belongs to (not per-op FIFO) and matches <code>op_start</code> anchors only to top-level calls. The per-call verdicts of <code>completes_within</code> / <code>single_key_per_operation</code> and the report's <code>call_id</code> are now exact even for concurrent same-op calls whose terminals complete out of order. The runtime tracer enrichment is opt-in by the tracer being enabled (zero change when it is not).</p>
+<p><strong>Exact per-call <abbr title="Deterministic Simulation Testing">DST</abbr> attribution</strong> — each operation terminal carries a correlation id and cascade invocations are flagged nested, so the trace projection pairs a terminal to the precise invoke it belongs to (not per-op FIFO). Per-call verdicts and the report's <code>call_id</code> are now exact even for concurrent same-op calls.</p>
 </li>
 <li>
-<p><strong>Lossy / asymmetric network partitions</strong> — <code>Partition(loss=…)</code> makes a split a <em>flaky link</em> (each gated call drops with a seeded per-node probability) rather than a clean cut; <code>loss=1.0</code> (default) stays a hard partition, byte-identical to before. Overlapping windows take the strongest loss, so different node groups can have different loss at once.</p>
+<p><strong>Lossy / asymmetric network partitions</strong> — <code>Partition(loss=…)</code> makes a split a flaky link (each gated call drops with a seeded per-node probability) rather than a clean cut; <code>loss=1.0</code> (default) stays a hard partition, byte-identical to before. Overlapping windows take the strongest loss.</p>
 </li>
 <li>
-<p><strong>Strict behavioral-fingerprint regressions (opt-in)</strong> — <code>behavioral_fingerprint(history)</code> is an ordered, PII-free digest of a run's execution-trace shape (its handler-logic signature); <code>entry_from_report(…, strict_behavior=True)</code> stores it on the corpus entry and <code>RegressionEntry.behavior_drifted(history)</code> flags a replay whose logic has drifted even when the structural operation-catalog fingerprint is unchanged. Default stays structural-only.</p>
+<p><strong>Strict behavioral-fingerprint regressions (opt-in)</strong> — <code>behavioral_fingerprint(history)</code> digests a run's trace shape; <code>entry_from_report(…, strict_behavior=True)</code> stores it and <code>RegressionEntry.behavior_drifted</code> flags a replay that drifted despite an unchanged catalog fingerprint. Default stays structural-only.</p>
 </li>
 <li>
-<p><strong>Coverage-guided mutation</strong> — <code>Simulation.coverage_guided(config, cases=…)</code> replaces the uniform seed sweep with feedback-directed fuzzing: it keeps a corpus of inputs that each unlocked new behavioral coverage and mutates the productive ones (tweak an op, grow/shrink the workload, re-roll the schedule + faults) under an AFL-style power schedule that pushes the newest coverage frontier, so behavior gated behind a rare op combination is reached far sooner than by independent seeds. Adds the reusable engine <code>forze_dst.coverage_guided_search</code> over a <code>Genome</code>/<code>mutate</code>, returning <code>GuidedStats</code> with the minimized counterexample. The whole run is one seed-derived lineage (<code>config.guided_budget</code> runs), so it reproduces from the master seed.</p>
+<p><strong>Coverage-guided mutation</strong> — <code>Simulation.coverage_guided(config, cases=…)</code> replaces the uniform seed sweep with feedback fuzzing: it keeps inputs that unlocked new coverage and mutates the productive ones under an AFL-style power schedule, reaching rare op combinations far sooner. Reproduces from the master seed.</p>
 </li>
 <li>
-<p><strong>Parallel timelines</strong> — <code>forze_dst.parallel_sweep(run, seeds, workers=…)</code> fans a seed sweep across a process pool (inter-seed parallelism is safe — each seed is fully deterministic in its own process), folding every worker's result into one <code>SweepResult</code>: violating seeds, the union of behaviors covered, and a throughput metric (seeds/second and simulated-time-per-wall-second). The picklable <code>SimulationSeedRunner</code> resolves a <code>module:attr</code> import string inside each worker, so a whole app sweeps in parallel; the sequential <code>sweep(...)</code> is the matching single-process baseline.</p>
+<p><strong>Parallel timelines</strong> — <code>forze_dst.parallel_sweep(run, seeds, workers=…)</code> fans a seed sweep across a process pool (seeds are independent), folding every worker's result into one <code>SweepResult</code>. The picklable <code>SimulationSeedRunner</code> resolves an import string per worker, so a whole app sweeps in parallel.</p>
 </li>
 <li>
-<p><strong>Failure artifact bundle</strong> — <code>FailureBundle</code> captures a found counterexample as one portable JSON file: the seed plus the <em>full</em> <code>SimulationConfig</code> that produced it (faults, latency, partitions, crash, scheduler — via <code>config_to_dict</code>/<code>config_from_dict</code>), the minimized workload, the registry fingerprint, and the app import string. <code>replay_bundle(bundle)</code> re-imports the app, rebuilds the exact config, and re-runs the seed, so a bug reproduces on another machine from one command.</p>
+<p><strong>Failure artifact bundle</strong> — <code>FailureBundle</code> captures a counterexample as one portable JSON file: the seed, the full <code>SimulationConfig</code> that produced it, the minimized workload, and the app import string. <code>replay_bundle(bundle)</code> rebuilds and re-runs it, so a bug reproduces on another machine.</p>
 </li>
 <li>
-<p><strong>Heavy-tailed latency distributions</strong> — <code>LogNormal</code> and <code>Pareto</code> join <code>Constant</code>/<code>Uniform</code>/<code>Exponential</code> in a <code>LatencyProfile</code>. Their long right tail models realistic p99 blowups (a small fraction of calls dramatically slower), surfacing timeout and deadline bugs a fixed or uniform delay never reaches. Sampled through the seeded latency RNG like the others, so runs stay reproducible.</p>
+<p><strong>Heavy-tailed latency distributions</strong> — <code>LogNormal</code> and <code>Pareto</code> join <code>Constant</code>/<code>Uniform</code>/<code>Exponential</code> in a <code>LatencyProfile</code>. Their long right tail models realistic p99 blowups, surfacing timeout bugs a fixed delay never reaches. Sampled through the seeded latency RNG, so runs stay reproducible.</p>
 </li>
 <li>
-<p><strong>Value-level <abbr title="Deterministic Simulation Testing">DST</abbr> invariants</strong> — <code>SimulationConfig(capture_values=True)</code> makes the trace carry a redaction-applied view of each write payload and read result (off by default — the trace stays id-only, so production tracing is unchanged and PII-free; sim data is synthetic, and spec-declared sensitive fields are masked to <code>&lt;redacted&gt;</code>). New <code>read_your_writes(surface, value_field=…)</code> (a keyed read must observe the last value written — stale-read guard) and <code>expect_value(surface, predicate)</code> (the value-level <code>expect</code> — wrong-value guard) assert on <em>what</em> was written/read, not just which key.</p>
+<p><strong>Value-level <abbr title="Deterministic Simulation Testing">DST</abbr> invariants</strong> — <code>SimulationConfig(capture_values=True)</code> makes the trace carry a redacted view of write payloads and read results (off by default, so production tracing stays id-only and PII-free). New <code>read_your_writes(...)</code> and <code>expect_value(...)</code> assert on what was written or read, not just the key.</p>
 </li>
 <li>
-<p><strong>Time-travel timeline</strong> — <code>ViolationReport.timeline()</code> / <code>build_timeline(history)</code> flatten a counterexample into a virtual-time-ordered stream of <code>TimelineEntry</code> steps (operations, port calls with their captured value flow, injected environment, recorded facts); <code>render_timeline</code> prints it and each entry's <code>to_dict()</code> is JSON, so the stream is a portable artifact a CLI or viewer steps through by virtual time. The causal trace in <code>format_report</code> now also shows the values each call wrote and read back.</p>
+<p><strong>Time-travel timeline</strong> — <code>ViolationReport.timeline()</code> / <code>build_timeline(history)</code> flatten a counterexample into a virtual-time-ordered stream of <code>TimelineEntry</code> steps covering operations, port calls with value flow, injected environment, and recorded facts. <code>render_timeline</code> prints it and each entry is JSON.</p>
 </li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
-<p><strong>Lazy transaction acquisition, default for Postgres, Mongo, and Firestore</strong> <em>(behavior change)</em> — a transaction scope defers connection checkout until the first operation, so pre-query CPU or external work no longer parks a connection idle-in-transaction. A connect failure now surfaces at the first operation rather than scope entry; opt out with <code>lazy_transaction=False</code>.</p>
+<p><strong>Search engine config as typed value objects</strong> <em>(breaking: <code>forze_postgres</code>, <code>forze_mongo</code>)</em> — search <code>engine</code> now takes a tagged-union value object instead of a flat string plus parallel engine kwargs, so illegal combinations are unrepresentable. Bare engine strings remain shorthands; existing reads are unchanged.</p>
 </li>
 <li>
-<p><strong><code>forze_mock</code> internal restructure</strong> — misplaced root modules moved under <code>adapters/</code> (outbox, embeddings, resilience, all re-exported from <code>forze_mock.adapters</code>) and the per-spec configurable factories moved to <code>forze_mock.execution.factories</code>. Top-level imports are unchanged; only direct deep-submodule imports of those modules need updating.</p>
+<p><strong>Shared analytics ingest target</strong> <em>(breaking: <code>forze_postgres</code>, <code>forze_bigquery</code>, <code>forze_clickhouse</code>)</em> — warehouse analytics configs take a single shared <code>IngestSpec</code> value object instead of per-backend flat <code>ingest_relation</code> and legacy <code>ingest_table</code> fields. Postgres also drops its legacy <code>schema</code> field.</p>
 </li>
 <li>
-<p><strong><code>forze_dst</code> internal restructure</strong> — the ~1700-line harness split into a thin <code>Simulation</code> facade (~240 lines) over cohesive subpackages: <code>engines/</code> (one module per strategy — op_case, scenario+hypothesis+dpor, crash_restart, guided — plus the shared run substrate and trace folding), <code>oracle/</code> (recorder, invariants, linearizability, reachability, report, coverage, replay), and <code>artifacts/</code> (corpus, bundle, serialize, sweep). Top-level modules dropped from 29 to 15. <em>(breaking: imports)</em> <code>forze_dst</code> now exports a small core — <code>Simulation</code>, <code>SimulationConfig</code>, <code>Strategy</code>, the <code>FIFOScheduler</code>/<code>RandomScheduler</code>/<code>PCTScheduler</code> config specs, <code>OperationCase</code>, <code>Scenario</code>, <code>Rule</code>, <code>ModelState</code>, <code>Cluster</code>, <code>ViolationReport</code> — plus namespaces; symbols previously re-exported at the top level move into them: <code>record_event</code>/<code>reached</code> → <code>forze_dst.markers</code>, the invariant builders (<code>no_duplicate_effect</code>, <code>check</code>, <code>expect</code>, …) → <code>forze_dst.invariants</code>, <code>FaultRule</code>/<code>FaultPolicy</code>/<code>CrashPolicy</code> → <code>forze_dst.faults</code>, the latency distributions → <code>forze_dst.latency</code>, <code>CoverageStats</code>/<code>CausalGraph</code>/<code>format_report</code>/recorder types → <code>forze_dst.oracle</code>, and corpus/bundle/sweep → <code>forze_dst.artifacts</code>. <code>SchedulerKind</code> is removed (superseded by the scheduler config union). The engines are a documented plugin seam.</p>
+<p><strong>Shared <abbr title="Reciprocal Rank Fusion">RRF</abbr> fusion settings for federated search</strong> <em>(breaking: <code>forze_postgres</code>, <code>forze_meilisearch</code>)</em> — federated merge config uses a shared <code>Rrf</code> value object instead of flat <code>rrf_k</code>/<code>rrf_per_leg_limit</code> fields, tying the fusion knobs to the rrf merge mode. The <code>federation</code>/<code>rrf</code> shorthands stay valid.</p>
+</li>
+<li>
+<p><strong>Empty filter/sort maps are no-ops on list/search requests</strong> — a bare empty mapping for <code>filters</code> or <code>sorts</code> on the kit list/search DTOs normalizes to no filter/sort instead of raising. A structured-but-empty envelope is still rejected by the strict parser as a probable bug.</p>
+</li>
+<li>
+<p><strong>Lazy transaction acquisition, default for Postgres, Mongo, and Firestore</strong> <em>(behavior change)</em> — a transaction scope defers connection checkout until the first operation, so it no longer holds a connection idle-in-transaction. A connect failure surfaces at the first operation; opt out with <code>lazy_transaction=False</code>.</p>
+</li>
+<li>
+<p><strong><code>forze_mock</code> internal restructure</strong> — misplaced root modules moved under <code>adapters/</code> (outbox, embeddings, resilience, re-exported from <code>forze_mock.adapters</code>) and the per-spec configurable factories moved to <code>forze_mock.execution.factories</code>. Top-level imports are unchanged; only deep-submodule imports need updating.</p>
+</li>
+<li>
+<p><strong><code>forze_dst</code> internal restructure</strong> <em>(breaking: imports)</em> — the harness splits into a thin <code>Simulation</code> facade over <code>engines/</code>, <code>oracle/</code>, and <code>artifacts/</code> subpackages, dropping top-level modules from 29 to 15. Top-level symbols now live in submodule namespaces, and <code>SchedulerKind</code> is removed.</p>
 </li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
-<p><strong>Keyring fill-lock stripe is now cross-process stable</strong> — the per-<code>key_id</code> crypto fill-lock stripe used Python's <code>hash()</code>, which is PYTHONHASHSEED-randomized, so the same key mapped to a different stripe each process and broke deterministic-simulation <em>replay</em>. It now uses a stable hash (<code>zlib.crc32</code>, like the L1 cache); the determinism guard additionally bans the <code>hash(x) % n</code> bucketing anti-pattern so it can't regress.</p>
+<p><strong>Keyring fill-lock stripe is now cross-process stable</strong> — the per-<code>key_id</code> crypto fill-lock stripe used Python's <code>hash()</code> (PYTHONHASHSEED-randomized), so it varied per process and broke deterministic-simulation replay. It now uses a stable hash, and the guard bans the <code>hash(x) % n</code> pattern.</p>
 </li>
 <li>
-<p><strong>Runtime sorts and filters on unknown fields fail loud across backends</strong> — a query-time sort or filter on a field absent from the read model now raises <code>exc.configuration</code> on Mongo, Firestore, and the mock (matching Postgres). This notably covers computed fields, which are never serialized, so sorting or filtering on one is now rejected rather than silently mishandled.</p>
+<p><strong>Runtime sorts and filters on unknown fields fail loud across backends</strong> — a query-time sort or filter on a field absent from the read model raises <code>exc.configuration</code> on Mongo, Firestore, and the mock (matching Postgres). This covers computed fields, which were silently mishandled before.</p>
 </li>
 <li>
-<p><strong>FastAPI API-key <code>prefix:key</code> parsing fixed</strong> — the <code>X-API-Key</code> resolver now splits on the first colon so <code>prefix:secret</code> yields the bare secret, matching <code>forze_mcp</code>; previously it split on whitespace and passed the whole value as the secret, failing verification. Bare keys still authenticate, and the prefix now rejects an embedded colon.</p>
+<p><strong>FastAPI API-key <code>prefix:key</code> parsing fixed</strong> — the <code>X-API-Key</code> resolver now splits on the first colon so <code>prefix:secret</code> yields the bare secret, matching <code>forze_mcp</code>; previously it split on whitespace and passed the whole value, failing verification. Bare keys still authenticate.</p>
 </li>
 <li>
 <p><strong>Meilisearch search terms strip embedded quotes</strong> — an embedded <code>"</code> is removed so it can no longer break phrase boundaries or split the query.</p>
@@ -6510,7 +6557,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Database error classification keys on error codes, not message text</strong> — mappers no longer match English substrings in driver messages (which break under non-English locales). Postgres keys on SQLSTATE, ClickHouse on the numeric code, Mongo on the operation-failure code, and Redis on the leading RESP error token.</p>
 </li>
 <li>
-<p><strong>Mongo query renderer rejects <code>$</code>-prefixed field names</strong> — a field path segment beginning with <code>$</code> (e.g. <code>$where</code>) is rejected with <code>exc.precondition</code> instead of being emitted as an operator, closing an injection path when untrusted field names reach a filter. Stored fields never start with <code>$</code>, so legitimate queries are unaffected.</p>
+<p><strong>Mongo query renderer rejects <code>$</code>-prefixed field names</strong> — a field path segment beginning with <code>$</code> (e.g. <code>$where</code>) is rejected with <code>exc.precondition</code> instead of being emitted as an operator, closing an injection path when untrusted field names reach a filter. Stored fields never start with <code>$</code>.</p>
 </li>
 <li>
 <p><strong>Mongo index introspection no longer crashes on special indexes</strong> — <code>listIndexes</code> direction is kept verbatim instead of being cast to int, so text, 2dsphere, 2d, hashed, and vector indexes (string directions) no longer raise during index validation.</p>
@@ -6519,13 +6566,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>BigQuery array and null query parameters are typed from field annotations</strong> — an empty list parameter emits a typed <code>ARRAY</code> from the annotation instead of an invalid one BigQuery rejects, a <code>None</code> for an optional field carries its real type rather than always string, and the array element type prefers the annotation.</p>
 </li>
 <li>
-<p><strong>Per-tenant routed clients no longer crash on multi-host DSNs</strong> — <code>connection_string_fingerprint</code> now fingerprints the full host list from the raw authority instead of a single parsed host, which raised <code>ValueError</code> on the comma-separated form used by Mongo replica sets, Redis Sentinel, and AMQP clusters. Distinct host sets now dedup distinctly.</p>
+<p><strong>Per-tenant routed clients no longer crash on multi-host DSNs</strong> — <code>connection_string_fingerprint</code> now fingerprints the full host list from the raw authority instead of a single parsed host, which raised <code>ValueError</code> on the comma-separated form used by Mongo replica sets, Redis Sentinel, and AMQP clusters.</p>
 </li>
 <li>
-<p><strong>Postgres schema validation accepts parameterized column types</strong> — a field over <code>NUMERIC(10,2)</code> or <code>TIMESTAMP(3) WITH TIME ZONE</code> is no longer rejected: type compatibility compares modifier-insensitively while still carrying the modifier so casts keep precision and scale. <code>normalize_pg_type</code> also learned the time-zone time forms.</p>
+<p><strong>Postgres schema validation accepts parameterized column types</strong> — a field over <code>NUMERIC(10,2)</code> or <code>TIMESTAMP(3) WITH TIME ZONE</code> is no longer rejected: type compatibility compares modifier-insensitively while still carrying the modifier, so casts keep precision and scale.</p>
 </li>
 <li>
-<p><strong><code>forze_postgres</code> search index-definition parsing hardened</strong> — index expressions parse via a balanced-delimiter scanner that skips quoted literals, identifiers, and dollar-quoted bodies. PGroonga resolution accepts more array and cast forms but fails closed on ones it cannot reproduce, and GIN-to-FTS detection keys on a real <code>to_tsvector(</code> call, not a bare substring.</p>
+<p><strong><code>forze_postgres</code> search index-definition parsing hardened</strong> — index expressions parse via a balanced-delimiter, quote- and dollar-quote-aware scanner. PGroonga resolution accepts more array and cast forms but fails closed on ones it cannot reproduce; GIN-to-FTS detection keys on a real <code>to_tsvector(</code> call.</p>
 </li>
 </ul>
 <h2 id="041-2026-06-17"><a href="https://github.com/morzecrew/forze/compare/v0.4.0...v0.4.1">0.4.1</a> - 2026-06-17<a class="headerlink" href="#041-2026-06-17" title="Permanent link">&para;</a></h2>

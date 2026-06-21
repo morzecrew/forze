@@ -3482,6 +3482,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../offload-cpu-work/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cpu" viewBox="0 0 24 24"><path d="M12 20v2M12 2v2M17 20v2M17 2v2M2 12h2M2 17h2M2 7h2M20 12h2M20 17h2M20 7h2M7 20v2M7 2v2"/><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="8" height="8" x="8" y="8" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Offload heavy CPU work
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -4751,7 +4780,9 @@ the <code>"products"</code> key is the same logical name on both sides:</p>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecutionRuntime</span><span class="p">:</span>
     <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
         <span class="n">PostgresDepsModule</span><span class="p">(</span>
-            <span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;products&quot;</span><span class="p">:</span> <span class="n">PRODUCT_PG</span><span class="p">},</span> <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;products&quot;</span><span class="p">}</span>
+            <span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span>
+            <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;products&quot;</span><span class="p">:</span> <span class="n">PRODUCT_PG</span><span class="p">},</span>
+            <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;products&quot;</span><span class="p">},</span>
         <span class="p">),</span>
         <span class="c1"># caches keyed by CacheSpec.name — this is the whole &quot;cache reads&quot; step</span>
         <span class="n">RedisDepsModule</span><span class="p">(</span>
@@ -4760,7 +4791,7 @@ the <code>"products"</code> key is the same logical name on both sides:</p>
         <span class="p">),</span>
     <span class="p">)</span>
     <span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-        <span class="n">PostgresLifecycleModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="n">pg_dsn</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">PostgresConfig</span><span class="p">()),</span>
+        <span class="n">PostgresLifecycleModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="n">pg_dsn</span><span class="p">),</span>
     <span class="p">)</span><span class="o">.</span><span class="n">with_steps</span><span class="p">(</span><span class="n">redis_lifecycle_step</span><span class="p">(</span><span class="n">dsn</span><span class="o">=</span><span class="n">redis_dsn</span><span class="p">))</span>
 
     <span class="k">return</span> <span class="n">ExecutionRuntime</span><span class="p">(</span><span class="n">deps</span><span class="o">=</span><span class="n">deps</span><span class="o">.</span><span class="n">freeze</span><span class="p">(),</span> <span class="n">lifecycle</span><span class="o">=</span><span class="n">lifecycle</span><span class="o">.</span><span class="n">freeze</span><span class="p">())</span>
