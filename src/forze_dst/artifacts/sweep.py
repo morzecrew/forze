@@ -204,6 +204,13 @@ def _load_simulation(target: str) -> object:
     if not module_name or not attr:
         raise ValueError(f"target must be 'module:attr', got {target!r}")
 
+    # A dotted module path and a single attribute name — reject anything else with a clear
+    # error rather than letting a typo fall through to a confusing ``ImportError``.
+    if not all(part.isidentifier() for part in module_name.split(".")) or not attr.isidentifier():
+        raise ValueError(
+            f"target must be a dotted module path and attribute name, got {target!r}"
+        )
+
     module = importlib.import_module(module_name)
     return getattr(module, attr)
 

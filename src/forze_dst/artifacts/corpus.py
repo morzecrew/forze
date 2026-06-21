@@ -16,9 +16,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, final
+from typing import IO, TYPE_CHECKING, Any, final
 
 import attrs
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX (e.g. Windows) has no fcntl
+    fcntl = None  # type: ignore[assignment]
 
 from forze_dst.oracle.coverage import behavioral_fingerprint
 
@@ -154,26 +159,41 @@ def entry_from_report(
 # ....................... #
 
 
+def _lock_exclusive(handle: IO[str]) -> None:
+    """Take an exclusive advisory lock on *handle* (a no-op where ``fcntl`` is absent).
+
+    Released automatically when the handle closes. Makes the check-and-append below a single
+    critical section across cooperating processes (POSIX); best-effort elsewhere.
+    """
+
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
 def append_regression(path: str | Path, entry: RegressionEntry) -> None:
     """Append *entry* to the corpus at *path* (creating parent dirs / the file as needed).
 
     Idempotent on ``(seed, schedule_seed, target)``: a seed already in the corpus is not
-    duplicated, so re-running the same find twice keeps the corpus tidy.
+    duplicated, so re-running the same find twice keeps the corpus tidy. The dedup check and the
+    append run under an exclusive advisory file lock, so concurrent writers (e.g. two
+    ``pytest-xdist`` workers finding the same violation) can't both pass the check and double-write
+    on POSIX; on platforms without ``fcntl`` the guarantee degrades to single-process.
     """
 
     file = Path(path)
-
-    for existing in load_regressions(file):
-        if (existing.seed, existing.schedule_seed, existing.target) == (
-            entry.seed,
-            entry.schedule_seed,
-            entry.target,
-        ):
-            return
-
     file.parent.mkdir(parents=True, exist_ok=True)
+    key = (entry.seed, entry.schedule_seed, entry.target)
 
+    # Open for append (creating the file) and hold the lock across the whole read-then-write:
+    # any other writer blocks here, so ``load_regressions`` sees a settled file and the dedup
+    # decision can't be invalidated between the check and the append.
     with file.open("a", encoding="utf-8") as handle:
+        _lock_exclusive(handle)
+
+        for existing in load_regressions(file):
+            if (existing.seed, existing.schedule_seed, existing.target) == key:
+                return
+
         handle.write(entry.to_json() + "\n")
 
 

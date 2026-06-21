@@ -275,7 +275,11 @@ async def run_arrange_call(
 
     A failed arrange op produces nothing into the model (``ok`` is ``False``). Only the
     ``op_start`` anchor is recorded; the outcome lives in the engine trace (projected at fold
-    time). The result is returned directly so arrange can capture produced handles.
+    time), so the broad ``except Exception`` here is deliberate and non-lossy — a domain failure
+    *or* a latent bug is still surfaced to the oracle (``no_unexpected_error`` reads the ``error``
+    outcome the engine trace classifies). A :class:`~forze_dst.faults.SimulatedCrash` is a
+    ``BaseException`` and is *not* caught — it propagates to model the process dying mid-arrange.
+    The result is returned directly so arrange can capture produced handles.
     """
 
     record_event("op_start", call_id=call_id, op=op)
