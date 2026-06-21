@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from forze.application.execution import ExecutionContext
 from forze_bigquery.execution.deps import (
@@ -49,7 +50,7 @@ def test_validate_missing_query_key() -> None:
     config = BigQueryAnalyticsConfig(
         dataset="ds",
         queries={},
-        ingest_table="t",
+        ingest=IngestSpec(("ds", "t")),
     )
     with pytest.raises(CoreException, match="missing query keys"):
         config.validate_against_spec(spec)
@@ -63,7 +64,7 @@ def test_deps_module_registers_analytics_keys() -> None:
             "events": BigQueryAnalyticsConfig(
                 dataset="analytics",
                 queries={"counts": BigQueryQueryConfig(sql="SELECT 1 AS value")},
-                ingest_table="events",
+                ingest=IngestSpec(("analytics", "events")),
             ),
         },
     )

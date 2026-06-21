@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from forze.application.contracts.base import CountlessPage, Page
 from forze_bigquery.adapters import BigQueryAnalyticsAdapter
@@ -49,7 +50,7 @@ def _adapter(mock: Any) -> BigQueryAnalyticsAdapter[_Row, _Ingest]:
                 sql="SELECT value FROM t WHERE day = @day",
             ),
         },
-        ingest_table="events_raw",
+        ingest=IngestSpec(("analytics", "events_raw")),
     )
     return BigQueryAnalyticsAdapter(client=mock, spec=spec, config=config)
 
@@ -152,7 +153,7 @@ async def test_run_page_skip_total_skips_count_query() -> None:
                 skip_total=True,
             ),
         },
-        ingest_table="events_raw",
+        ingest=IngestSpec(("analytics", "events_raw")),
     )
     spec = AnalyticsSpec(
         name="events",

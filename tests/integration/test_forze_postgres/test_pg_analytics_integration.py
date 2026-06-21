@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import ExecutionContext
@@ -47,13 +48,12 @@ def _spec() -> AnalyticsSpec[_Row, _Ingest]:
 
 def _config(table_id: str) -> PostgresAnalyticsConfig:
     return PostgresAnalyticsConfig(
-        schema="public",
         queries={
             "all": PostgresQueryConfig(
                 sql=f"SELECT event, value FROM public.{table_id}",
             ),
         },
-        ingest_table=table_id,
+        ingest=IngestSpec(("public", table_id)),
     )
 
 

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
@@ -36,13 +37,12 @@ def _adapter(mock: Any) -> PostgresAnalyticsAdapter[_Row, _Ingest]:
         ingest=_Ingest,
     )
     config = PostgresAnalyticsConfig(
-        schema="public",
         queries={
             "counts": PostgresQueryConfig(
                 sql="SELECT value FROM t WHERE day = %(day)s",
             ),
         },
-        ingest_table="events_raw",
+        ingest=IngestSpec(("public", "events_raw")),
     )
     return PostgresAnalyticsAdapter(client=mock, spec=spec, config=config)
 
@@ -137,14 +137,13 @@ async def test_run_cursor_keyset_uses_cursor_column() -> None:
         ingest=_Ingest,
     )
     config = PostgresAnalyticsConfig(
-        schema="public",
         queries={
             "by_value": PostgresQueryConfig(
                 sql="SELECT value FROM t WHERE value > %(forze_after)s",
                 cursor_column="value",
             ),
         },
-        ingest_table="events_raw",
+        ingest=IngestSpec(("public", "events_raw")),
     )
     mock = _MockClient()
     adapter = PostgresAnalyticsAdapter(client=mock, spec=spec, config=config)
@@ -189,7 +188,6 @@ def _tenant_adapter(
         queries={"counts": AnalyticsQueryDefinition(params=_Params)},
     )
     config = PostgresAnalyticsConfig(
-        schema="public",
         tenant_aware=True,
         queries={
             "counts": PostgresQueryConfig(
@@ -237,7 +235,6 @@ def test_tenant_aware_config_rejects_unscoped_sql() -> None:
         queries={"counts": AnalyticsQueryDefinition(params=_Params)},
     )
     config = PostgresAnalyticsConfig(
-        schema="public",
         tenant_aware=True,
         queries={"counts": PostgresQueryConfig(sql="SELECT value FROM t")},
     )
@@ -270,7 +267,6 @@ async def test_query_schema_sets_search_path_per_tenant() -> None:
         queries={"counts": AnalyticsQueryDefinition(params=_Params)},
     )
     config = PostgresAnalyticsConfig(
-        schema="public",
         query_schema=lambda t: f"tenant_{str(t).replace('-', '')}",
         queries={"counts": PostgresQueryConfig(sql="SELECT value FROM t")},
     )
@@ -306,7 +302,6 @@ async def test_tenant_aware_query_schema_fails_closed_without_tenant() -> None:
     )
     config = PostgresAnalyticsConfig(
         tenant_aware=True,
-        schema="public",
         query_schema=lambda t: f"tenant_{t.hex}",  # AttributeError if called with None
         queries={
             "counts": PostgresQueryConfig(sql="SELECT value FROM t WHERE x = %(tenant)s"),

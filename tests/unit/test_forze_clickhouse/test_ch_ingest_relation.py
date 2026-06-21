@@ -16,6 +16,7 @@ async def test_analytics_adapter_resolves_dynamic_ingest_relation() -> None:
     from forze.application.contracts.analytics import (
         AnalyticsQueryDefinition,
         AnalyticsSpec,
+        IngestSpec,
     )
     from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
     from forze_clickhouse.execution.deps.configs import (
@@ -40,7 +41,7 @@ async def test_analytics_adapter_resolves_dynamic_ingest_relation() -> None:
         queries={
             "counts": ClickHouseQueryConfig(sql="SELECT 1"),
         },
-        ingest_relation=lambda t: (f"t_{t}", "raw") if t else ("analytics", "raw"),
+        ingest=IngestSpec(lambda t: (f"t_{t}", "raw") if t else ("analytics", "raw")),
     )
     adapter = ClickHouseAnalyticsAdapter(
         client=MagicMock(),

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 import attrs
 
+from forze.application.contracts.analytics import IngestSpec
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     coerce_optional_named_resource_spec,
@@ -12,21 +13,11 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.application.integrations.analytics import assert_tenant_param_referenced
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
-from forze_postgres.kernel.relation import RelationSpec, coerce_relation_spec
+from forze_postgres.kernel.relation import RelationSpec
 
 
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
-
-# ----------------------- #
-
-
-def _optional_relation_spec(value: object) -> RelationSpec | None:
-    if value is None:
-        return None
-
-    return coerce_relation_spec(value)
-
 
 # ....................... #
 
@@ -68,14 +59,8 @@ class PostgresAnalyticsConfig(TenantAwareIntegrationConfig):
     )
     """Named queries; keys must match ``AnalyticsSpec.queries``."""
 
-    ingest_relation: RelationSpec | None = attrs.field(
-        default=None,
-        converter=_optional_relation_spec,
-    )
-    """Ingest target ``(schema, table)`` or tenant resolver (relation-level isolation)."""
-
-    schema: str = "public"
-    """Legacy schema for :attr:`ingest_table` when :attr:`ingest_relation` is omitted."""
+    ingest: IngestSpec | None = None
+    """Append-only ingest target ``(schema, table)`` or tenant resolver (relation-level isolation)."""
 
     query_schema: NamedResourceSpec | None = attrs.field(
         default=None,
@@ -89,24 +74,15 @@ class PostgresAnalyticsConfig(TenantAwareIntegrationConfig):
     leaves ``search_path`` untouched (the prior behavior).
     """
 
-    ingest_table: str | None = None
-    """Legacy table name; use :attr:`ingest_relation` ``(schema, table)`` instead."""
-
     max_append_rows: int = 10_000
     """Maximum rows per ``append`` call."""
 
     # ....................... #
 
     def resolved_ingest_relation(self) -> RelationSpec | None:
-        """Effective ingest relation from :attr:`ingest_relation` or legacy fields."""
+        """Effective ingest relation, or ``None`` when no ingest target is configured."""
 
-        if self.ingest_relation is not None:
-            return self.ingest_relation
-
-        if self.ingest_table is not None:
-            return (self.schema, self.ingest_table)
-
-        return None
+        return self.ingest.relation if self.ingest is not None else None
 
     # ....................... #
 

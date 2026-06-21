@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from forze.application.contracts.base import CountlessPage, Page
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -70,7 +71,7 @@ def _adapter(
         config=ClickHouseAnalyticsConfig(
             database=database_id,
             queries={"filtered": filtered_q, "ordered": ordered_q},
-            ingest_table=table_id,
+            ingest=IngestSpec((database_id, table_id)),
         ),
     )
 
@@ -237,7 +238,7 @@ async def test_invalid_sql_surfaces_infrastructure_error(
                     sql=f"SELECT event, value FROM {database_id}.{table_id} ORDER BY event",
                 ),
             },
-            ingest_table=table_id,
+            ingest=IngestSpec((database_id, table_id)),
         ),
     )
 

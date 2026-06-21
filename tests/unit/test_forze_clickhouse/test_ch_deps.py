@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from forze.application.execution import ExecutionContext
 from forze_clickhouse.execution.deps import (
@@ -49,7 +50,7 @@ def test_validate_missing_query_key() -> None:
     config = ClickHouseAnalyticsConfig(
         database="analytics",
         queries={},
-        ingest_table="t",
+        ingest=IngestSpec(("analytics", "t")),
     )
     with pytest.raises(CoreException, match="missing query keys"):
         config.validate_against_spec(spec)
@@ -63,7 +64,7 @@ def test_deps_module_registers_analytics_keys() -> None:
             "events": ClickHouseAnalyticsConfig(
                 database="analytics",
                 queries={"counts": ClickHouseQueryConfig(sql="SELECT 1 AS value")},
-                ingest_table="events",
+                ingest=IngestSpec(("analytics", "events")),
             ),
         },
     )

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from forze.application.contracts.base import CountlessPage, Page
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
@@ -59,7 +60,6 @@ def _adapter(
         client=client,
         spec=_spec(),
         config=PostgresAnalyticsConfig(
-            schema="public",
             queries={
                 "filtered": PostgresQueryConfig(
                     sql=filtered_sql,
@@ -67,7 +67,7 @@ def _adapter(
                 ),
                 "ordered": PostgresQueryConfig(sql=ordered_sql),
             },
-            ingest_table=table_id,
+            ingest=IngestSpec(("public", table_id)),
         ),
     )
 

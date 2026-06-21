@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
+    IngestSpec,
 )
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
 from forze_clickhouse.execution.deps.configs import (
@@ -48,7 +49,7 @@ def _adapter(mock: Any) -> ClickHouseAnalyticsAdapter[_Row, _Ingest]:
                 sql="SELECT value FROM t WHERE day = {day:String}",
             ),
         },
-        ingest_table="events_raw",
+        ingest=IngestSpec(("analytics", "events_raw")),
     )
     return ClickHouseAnalyticsAdapter(client=mock, spec=spec, config=config)
 
