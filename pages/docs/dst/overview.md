@@ -62,11 +62,18 @@ DST finds the race, shrinks it to **two** contending payments, and reports the s
 !!! warning "DST sees the ports, not the database"
 
     DST exercises your handlers over the **ports**. Logic that lives *below* a port — database
-    triggers, generated columns, `CHECK` constraints, cascade deletes, `LISTEN`/`NOTIFY` flows —
-    the mock doesn't have, so the simulation can't run it. Worse, an invariant a trigger
-    *maintains* (a trigger-kept running total, say) will **false-positive** under the mock, which
-    writes the rows but never fires the trigger. Keep invariant logic above the port to simulate
-    it, or cover the database-level logic with an integration test against the real database.
+    triggers, generated columns, `CHECK` constraints, cascade deletes, `LISTEN`/`NOTIFY` flows,
+    or a **read view that joins or derives fields the app never writes** — the mock doesn't have,
+    so the simulation can't run it. The mock builds a read model by decoding the stored *write*
+    data, so a read relation pointing at an enriched view reproduces only what the write model
+    holds. Worse, an invariant a trigger *maintains* (a trigger-kept running total, say) will
+    **false-positive** under the mock, which writes the rows but never fires the trigger.
+
+    Keep the derivation **above** the port to simulate it: a `@computed_field` on the read and
+    domain model (optionally `materialized` to persist it as a queryable column) is computed in
+    Python, so the mock and the real adapter agree. Reserve the database for enrichment that
+    genuinely must live there — a cross-aggregate join — and cover *that* with an integration
+    test against the real database, not DST.
 
 ## What DST gives you
 
