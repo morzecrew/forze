@@ -12,7 +12,7 @@ Skills target engineers building **applications** that depend on Forze (`forze`,
 | `DepsRegistry`, built-in `*DepsModule`, `forze_mock` tests | Import-linter contracts, CHANGELOG, CI, `AGENTS.md` workflow |
 | Custom `DepsModule` in **your app** (advanced skill) | Reading `src/forze_*` to implement framework adapters |
 
-Framework contributors should use [`AGENTS.md`](../AGENTS.md), [canonical docs](https://morzecrew.github.io/forze/), and `.claude/skills/`.
+Framework contributors should use [`AGENTS.md`](../AGENTS.md), [canonical docs](https://morzecrew.github.io/forze/latest/), and `.claude/skills/`.
 
 ## Vocabulary
 

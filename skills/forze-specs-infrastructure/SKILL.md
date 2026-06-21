@@ -120,6 +120,8 @@ temporal_module = TemporalDepsModule(
 )
 ```
 
+`GCSDepsModule` takes the same `storages={...}` map as `S3DepsModule` shown here — for either backend, `<Module>(client=...)` alone registers no storage route (see [`forze-object-storage`](../forze-object-storage/SKILL.md)).
+
 ## Transaction routes
 
 Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFAULT})`). Application code uses `async with ctx.tx_ctx.scope(TxRoute.DEFAULT):` and `registry.bind(...).bind_tx().set_route(TxRoute.DEFAULT).finish(deep=True).freeze()`.
