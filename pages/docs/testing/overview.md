@@ -8,26 +8,22 @@ Forze's port-based architecture makes testing straightforward: handlers see only
 
 ## Unit testing with MockDepsModule
 
-`MockDepsModule` provides in-memory adapters for every contract. Wire it instead of real integration modules:
+`MockDepsModule` provides in-memory adapters for every contract. To run a handler against it, build a context with `context_from_modules` (shipped in `forze.testing`) — no runtime, no transport, just the context your ports resolve from:
 
 ```python
+from forze.testing import context_from_modules
 from forze_mock import MockDepsModule
 
 async def test_create_user():
-    module = MockDepsModule()
-    runtime = build_runtime(registry, module)
+    ctx = context_from_modules(MockDepsModule())
 
-    async with runtime:
-        ctx = runtime.get_context()
-        facade = ctx.document.query(user_spec)
+    user = await ctx.document.command(user_spec).create(CreateUser(name="Ada"))
 
-        result = await facade.create(CreateUser(name="Ada"))
-
-        assert result.name == "Ada"
-        assert result.id is not None
+    assert user.name == "Ada"
+    assert user.id is not None
 ```
 
-Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state. Write a user in one test, query it in the same test, and the data is there.
+Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state. Write a user in one test, query it in the same test, and the data is there. (`command(...)` is the write side — `create` / `update`; `query(...)` is the read side — `get` / `find`.)
 
 ## Transaction rollback in tests
 
@@ -160,6 +156,7 @@ Keep unit tests fast and parallelizable; run integration tests in CI or before d
 
 ## See also
 
+- [Concurrency & isolation](concurrency.md) — force a deterministic interleaving; verify an adapter's isolation
+- [Deterministic simulation](../dst/overview.md) — seed-driven exploration of concurrency, faults, and crashes
 - [Contracts](../core-concepts/contracts.md) — ports and adapters overview
 - [Transactions](../writing-operation/transactions.md) — strict mode details
-- [Identity](../identity-tenancy-enc/identity.md) — testing with authn/authz context

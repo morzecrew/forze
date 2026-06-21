@@ -144,6 +144,6 @@ The `Simulation` class is a thin facade: `run` / `coverage` / `coverage_guided` 
 
 ## See also
 
-- [Testing](../running-in-prod/testing.md) — unit and integration testing with mocks
+- [Testing](../testing/overview.md) — unit and integration testing with mocks
 - [Concurrency & conflicts](../writing-operation/concurrency-conflicts.md) — the optimistic-concurrency model DST exercises
 - [Transactions](../writing-operation/transactions.md) — why faithful rollback keeps DST findings trustworthy

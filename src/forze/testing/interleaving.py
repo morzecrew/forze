@@ -1,16 +1,11 @@
-"""Test utilities for Forze apps.
+"""A forced-interleaving driver for deterministic concurrency tests.
 
-Currently: a **forced-interleaving driver** for deterministic concurrency tests. A :class:`Gate`
-is one coroutine's lock-step checkpoint; a :class:`Conductor` releases the participants one step at
-a time in a prescribed ``schedule``, so only one ever runs at a time. That turns a normally-racy
-multi-transaction scenario (a write skew, a lost update, a non-repeatable read) into a
-**deterministic** one — the determinism real-time concurrency can't give — that runs the same way
-every time, on an in-memory mock or a real database.
-
-Its first use is **adapter conformance**: drive the same isolation anomaly against every adapter
-that claims an isolation level and assert they reach the same verdict — turning "trust the mock"
-into "verify the mock". But nothing here is conformance- or DST-specific: it is a general primitive
-(``asyncio`` + ``attrs`` only) for any test that needs an exact interleaving.
+A :class:`Gate` is one coroutine's lock-step checkpoint; a :class:`Conductor` releases the
+participants one step at a time in a prescribed ``schedule``, so only one ever runs at a time. That
+turns a normally-racy multi-transaction scenario (a write skew, a lost update, a non-repeatable
+read) into a **deterministic** one — the determinism real-time concurrency can't give — that runs
+the same way every time, on an in-memory mock or a real database. A general primitive (``asyncio`` +
+``attrs`` only) for any test that needs an exact interleaving; its first use is adapter conformance.
 """
 
 from __future__ import annotations

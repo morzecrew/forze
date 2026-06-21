@@ -67,7 +67,10 @@ nav = [
             "running-in-prod/resilience.md",
             "running-in-prod/shutdown-and-fleets.md",
             "running-in-prod/observability.md",
-            "running-in-prod/testing.md",
+        ] },
+        { "Testing" = [
+            "testing/overview.md",
+            "testing/concurrency.md",
         ] },
         { "Deterministic simulation" = [
             "dst/overview.md",

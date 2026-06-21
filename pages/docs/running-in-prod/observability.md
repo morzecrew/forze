@@ -122,4 +122,4 @@ speaks. The OTel API and SDK ship with Forze, so you add only the exporter
 package and the few lines of standard OTel setup that point the providers at it.
 
 The signals you watch in production are also what you assert against before
-shipping — see [Testing](testing.md).
+shipping — see [Testing](../testing/overview.md).
