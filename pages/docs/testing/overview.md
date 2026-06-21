@@ -36,33 +36,7 @@ The default journal mode is atomic *without* serializing, so concurrent transact
 
 ## Testing with identity context
 
-For handlers that depend on `AuthnIdentity` or `TenantIdentity`, mock the identity plane:
-
-```python
-from forze_identity import AuthnIdentity
-from forze_mock import MockDepsModule
-
-module = MockDepsModule()
-
-async with runtime:
-    ctx = runtime.get_context()
-
-    # bind an identity before calling handlers that need one
-    identity = AuthnIdentity(subject="user-123", claims={"role": "admin"})
-    ctx = ctx.with_identity(identity)
-
-    # now handlers can access ctx.authn
-    result = await some_handler(ctx, ...)
-```
-
-For tenant-scoped operations:
-
-```python
-from forze_identity import TenantIdentity
-
-tenant = TenantIdentity(tenant_id="acme-corp")
-ctx = ctx.with_tenant(tenant)
-```
+A handler reads `ctx.authn` / `ctx.tenancy` from the identity plane, resolved during operation execution — not from a value you set by hand. To test such a handler, wire the mock's identity stubs and drive the authn flow (seed an account, authenticate) rather than constructing an identity directly. See [Identity](../identity-tenancy-enc/identity.md) and the [authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md) for the wiring.
 
 ## Integration testing with testcontainers
 
@@ -78,63 +52,52 @@ def postgres_url():
         yield pg.get_connection_url()
 
 async def test_postgres_integration(postgres_url):
-    module = PostgresDepsModule(dsn=postgres_url)
-    runtime = build_runtime(registry, module)
+    runtime = build_runtime(PostgresDepsModule(dsn=postgres_url))
 
-    async with runtime:
+    async with runtime.scope():          # starts the pool, runs lifecycle
         ctx = runtime.get_context()
-        # test against real Postgres
+        await ctx.document.command(user_spec).create(CreateUser(name="Ada"))
 ```
 
 Integration tests are slower and require Docker, but they catch issues that mock adapters miss — schema migrations, constraint violations, connection handling.
 
 ## Testing operations directly
 
-Test handlers without HTTP by calling operations through the facade:
+To exercise a *registered* operation — with its stage hooks and transaction plan, not just a raw port — run it with `run_operation` against a mock context. No HTTP, no transport:
 
 ```python
-async def test_user_validation():
-    module = MockDepsModule()
-    runtime = build_runtime(registry, module)
+import pytest
+from forze.application.execution.operations import run_operation
+from forze.base.exceptions import CoreException
+from forze.testing import context_from_modules
+from forze_mock import MockDepsModule
 
-    async with runtime:
-        ctx = runtime.get_context()
-        facade = ctx.document.query(user_spec)
+async def test_pay_order():
+    ctx = context_from_modules(MockDepsModule())
+    order_id = await run_operation(registry, "create_order", None, ctx)
 
-        # test validation error
-        with pytest.raises(ValidationError):
-            await facade.create(CreateUser(name=""))  # empty name
+    await run_operation(registry, "pay_order", PayCmd(order_id=order_id), ctx)
 
-        # test business rule
-        await facade.create(CreateUser(name="Ada"))
-        with pytest.raises(ConflictError):
-            await facade.create(CreateUser(name="Ada"))  # duplicate
+    order = await ctx.document.query(order_spec).get(order_id)
+    assert order.paid
+
+    # a domain failure surfaces as a CoreException (with a `.code`), the same as in production
+    with pytest.raises(CoreException):
+        await run_operation(registry, "pay_order", PayCmd(order_id=order_id), ctx)  # already paid
 ```
 
-This tests domain logic without touching FastAPI or HTTP serialization.
+This tests domain logic and the operation's hooks without touching FastAPI or HTTP serialization.
 
 ## Testing sagas and events
 
-For handlers that emit domain events or run sagas, check the outbox:
+A handler that emits a domain event stages it to the outbox inside the same transaction, and a saga reacts to it. To test that arc, wire the event handlers into the mock — `MockDepsModule(domain_events=...)` — run the operation, then inspect what was staged:
 
 ```python
-async def test_order_emits_event():
-    module = MockDepsModule()
-    runtime = build_runtime(registry, module)
-
-    async with runtime:
-        ctx = runtime.get_context()
-        facade = ctx.document.query(order_spec)
-
-        await facade.create(CreateOrder(product="widget", qty=5))
-
-        # check the outbox for the expected event
-        outbox = ctx.outbox.query(order_events_spec)
-        events = await outbox.claim_pending()
-
-        assert len(events) == 1
-        assert events[0].payload["product"] == "widget"
+events = await ctx.outbox.query(order_events_spec).claim_pending()
+assert len(events) == 1
 ```
+
+See [Events & sagas](../data-events/events-sagas.md) for the full model and the runnable order-fulfillment walkthrough that drives the whole aggregate → event → saga → outbox → relay → inbox flow in-process.
 
 ## Test organization
 
