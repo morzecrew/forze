@@ -26,7 +26,11 @@ from forze_postgres.adapters.search import (
 )
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.execution.deps import ConfigurablePostgresSearch
-from forze_postgres.execution.deps.configs import PostgresSearchConfig
+from forze_postgres.execution.deps.configs import (
+    FtsEngine,
+    PostgresSearchConfig,
+    VectorEngine,
+)
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -79,11 +83,12 @@ def _exec_fts(
                         index=("public", index_name),
                         read=("public", table),
                         heap=("public", table),
-                        engine="fts",
-                        fts_groups={
-                            "A": ("title",),
-                            "B": ("content",),
-                        },
+                        engine=FtsEngine(
+                            groups={
+                                "A": ("title",),
+                                "B": ("content",),
+                            }
+                        ),
                     )
                 ),
             }
@@ -200,11 +205,12 @@ async def test_vector_v2_result_snapshot_reread(
                         index=("public", index_name),
                         read=("public", table),
                         heap=("public", table),
-                        engine="vector",
-                        vector_column="emb",
-                        vector_distance="l2",
-                        embeddings_name="vec_rss",
-                        embedding_dimensions=3,
+                        engine=VectorEngine(
+                            column="emb",
+                            dimensions=3,
+                            embeddings_name="vec_rss",
+                            distance="l2",
+                        ),
                     )
                 ),
             }

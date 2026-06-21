@@ -13,6 +13,7 @@ from forze_postgres.execution.deps import (
     ConfigurablePostgresSearch,
 )
 from forze_postgres.execution.deps.configs import (
+    PgroongaEngine,
     PostgresSearchConfig,
 )
 from forze_postgres.execution.deps.keys import (
@@ -486,9 +487,8 @@ async def test_postgres_pgroonga_index_first_plan(
                     config=PostgresSearchConfig(
                         index=("public", "idx_idx1_docs"),
                         read=("public", "idx1_docs"),
-                        engine="pgroonga",
-                        pgroonga_plan="index_first",
-                        pgroonga_candidate_limit=10,
+                        engine=PgroongaEngine(plan="index_first"),
+                        candidate_limit=10,
                     )
                 ),
             }
@@ -548,9 +548,8 @@ async def test_pgroonga_exact_total_exceeds_candidate_cap(
                     config=PostgresSearchConfig(
                         index=("public", index_name),
                         read=("public", table),
-                        engine="pgroonga",
-                        pgroonga_plan="filter_first",
-                        pgroonga_candidate_limit=5,
+                        engine=PgroongaEngine(plan="filter_first"),
+                        candidate_limit=5,
                     )
                 ),
             }

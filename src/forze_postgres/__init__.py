@@ -7,6 +7,10 @@ require_psycopg()
 # ....................... #
 
 from .execution import (
+    FtsEngine,
+    PgroongaAuto,
+    PgroongaEngine,
+    PgroongaPlan,
     PgroongaScoreVersion,
     PostgresClientDepKey,
     PostgresDepsModule,
@@ -17,6 +21,8 @@ from .execution import (
     PostgresHubSearchMemberConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
+    SearchEngineSpec,
+    VectorEngine,
     POSTGRES_CLIENT_CAPABILITY,
     PostgresLifecycleModule,
     postgres_catalog_warmup_lifecycle_step,
@@ -67,6 +73,12 @@ __all__ = [
     "PostgresFederatedSearchConfig",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
+    "FtsEngine",
+    "PgroongaAuto",
+    "PgroongaEngine",
+    "PgroongaPlan",
+    "SearchEngineSpec",
+    "VectorEngine",
     "RelationSpec",
     "coerce_relation_spec",
     "require_static_relation",

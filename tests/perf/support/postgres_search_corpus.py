@@ -7,7 +7,10 @@ from pydantic import BaseModel
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.execution.deps import ConfigurablePostgresSearch
-from forze_postgres.execution.deps.configs import PostgresSearchConfig
+from forze_postgres.execution.deps.configs import (
+    PgroongaEngine,
+    PostgresSearchConfig,
+)
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -112,9 +115,8 @@ def search_execution_context(
                 config=PostgresSearchConfig(
                     index=("public", PERF_SEARCH_INDEX),
                     read=("public", PERF_SEARCH_TABLE),
-                    engine="pgroonga",
+                    engine=PgroongaEngine(plan=pgroonga_plan),  # type: ignore[arg-type]
                     read_validation=read_validation,  # type: ignore[arg-type]
-                    pgroonga_plan=pgroonga_plan,  # type: ignore[arg-type]
                 )
             ),
         }

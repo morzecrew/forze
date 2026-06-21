@@ -31,11 +31,14 @@ from forze_postgres.adapters import (
 )
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps.configs import (
+    FtsEngine,
+    PgroongaEngine,
     PostgresDocumentConfig,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
+    VectorEngine,
 )
 from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
@@ -108,19 +111,14 @@ class TestPostgresSearchConfigValidation:
 
     def test_fts_requires_groups(self) -> None:
         with pytest.raises(CoreException, match="FTS groups are required"):
-            PostgresSearchConfig(
-                engine="fts",
-                index=("public", "idx"),
-                read=("public", "src"),
-            )
+            FtsEngine(groups={})
 
     def test_fts_rejects_duplicate_fields_across_groups(self) -> None:
         with pytest.raises(CoreException, match="duplicate"):
             PostgresSearchConfig(
-                engine="fts",
+                engine=FtsEngine(groups={"A": ["a", "b"], "B": ["b"]}),
                 index=("public", "idx"),
                 read=("public", "src"),
-                fts_groups={"A": ["a", "b"], "B": ["b"]},
             )
 
 
@@ -186,17 +184,11 @@ class TestPostgresDepsModule:
         assert deps.exists(TransactionManagerDepKey, route="main")
 
     def test_invalid_fts_search_config_fails_at_build_time(self) -> None:
-        client = MagicMock(spec=PostgresClient)
         with pytest.raises(CoreException, match="FTS groups are required"):
-            PostgresDepsModule(
-                client=client,
-                searches={
-                    "bad": PostgresSearchConfig(
-                        engine="fts",
-                        index=("public", "i"),
-                        read=("public", "s"),
-                    ),
-                },
+            PostgresSearchConfig(
+                engine=FtsEngine(groups={}),
+                index=("public", "i"),
+                read=("public", "s"),
             )
 
     def test_routed_client_requires_introspector_partition_key(self) -> None:
@@ -337,10 +329,9 @@ class TestConfigurablePostgresSearch:
     def test_fts_branch(self) -> None:
         factory = ConfigurablePostgresSearch(
             config=PostgresSearchConfig(
-                engine="fts",
+                engine=FtsEngine(groups={"A": ["title"]}),
                 index=("public", "fi"),
                 read=("public", "fs"),
-                fts_groups={"A": ["title"]},
             )
         )
         ctx = _ctx()
@@ -351,12 +342,13 @@ class TestConfigurablePostgresSearch:
     def test_vector_branch(self) -> None:
         factory = ConfigurablePostgresSearch(
             config=PostgresSearchConfig(
-                engine="vector",
+                engine=VectorEngine(
+                    column="vector_column",
+                    dimensions=1234,
+                    embeddings_name="embeddings_name",
+                ),
                 index=("public", "vi"),
                 read=("public", "vs"),
-                vector_column="vector_column",
-                embedding_dimensions=1234,
-                embeddings_name="embeddings_name",
             )
         )
         ctx = _ctx()
@@ -368,7 +360,7 @@ class TestConfigurablePostgresSearch:
         with pytest.raises(CoreException, match="FTS groups are required"):
             ConfigurablePostgresSearch(
                 config=PostgresSearchConfig(
-                    engine="fts",
+                    engine=FtsEngine(groups={}),
                     index=("public", "fi"),
                     read=("public", "fs"),
                 )
@@ -382,10 +374,9 @@ class TestConfigurablePostgresSearch:
         spec = SearchSpec(name="s", model_type=M, fields=["title", "body"])
         factory = ConfigurablePostgresSearch(
             config=PostgresSearchConfig(
-                engine="fts",
+                engine=FtsEngine(groups={"A": ["title"]}),
                 index=("public", "fi"),
                 read=("public", "fs"),
-                fts_groups={"A": ["title"]},
             )
         )
         ctx = _ctx()
@@ -395,20 +386,14 @@ class TestConfigurablePostgresSearch:
 
     def test_pgroonga_invalid_score_version_validates(self) -> None:
         with pytest.raises(CoreException, match="pgroonga_score_version"):
-            PostgresSearchConfig(
-                engine="pgroonga",
-                index=("public", "gi"),
-                read=("public", "gs"),
-                pgroonga_score_version="bad",  # type: ignore[arg-type]
-            )
+            PgroongaEngine(score_version="bad")  # type: ignore[arg-type]
 
     def test_pgroonga_score_version_v1_builds(self) -> None:
         factory = ConfigurablePostgresSearch(
             config=PostgresSearchConfig(
-                engine="pgroonga",
+                engine=PgroongaEngine(score_version="v1"),
                 index=("public", "gi"),
                 read=("public", "gs"),
-                pgroonga_score_version="v1",
             )
         )
         ctx = _ctx()
@@ -611,7 +596,7 @@ def test_postgres_hub_search_config_fts_requires_fts_groups() -> None:
             index=("public", "i1"),
             read=("public", "t1"),
             hub_fk="a",
-            engine="fts",
+            engine=FtsEngine(groups={}),
         )
 
 
@@ -672,8 +657,7 @@ def test_postgres_hub_search_config_same_heap_as_hub_fts() -> None:
                     index=("public", "i1"),
                     read=("public", "h"),
                     hub_fk="id",
-                    engine="fts",
-                    fts_groups={"A": ("a",)},
+                    engine=FtsEngine(groups={"A": ("a",)}),
                     same_heap_as_hub=True,
                 ),
             },
@@ -705,9 +689,8 @@ def test_postgres_hub_search_config_same_heap_as_hub_pgroonga_v1() -> None:
                 "m1": PostgresHubSearchMemberConfig(
                     index=("public", "i1"),
                     read=("public", "h"),
-                    engine="pgroonga",
+                    engine=PgroongaEngine(score_version="v1"),
                     hub_fk="id",
-                    pgroonga_score_version="v1",
                     same_heap_as_hub=True,
                 ),
             },

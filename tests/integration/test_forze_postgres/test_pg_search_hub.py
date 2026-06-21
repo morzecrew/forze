@@ -25,6 +25,7 @@ from forze_postgres.execution.deps import (
     ConfigurablePostgresSearch,
 )
 from forze_postgres.execution.deps.configs import (
+    FtsEngine,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
     PostgresSearchConfig,
@@ -389,13 +390,11 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
             det_name: _hub_member(index=("public", "idx_hub_fts_details_gin"),
                 read=("public", "hub_fts_details"),
                 hub_fk="detail_id",
-                engine="fts",
-                fts_groups=fts_groups,),
+                engine=FtsEngine(groups=fts_groups),),
             spec_name: _hub_member(index=("public", "idx_hub_fts_specs_gin"),
                 read=("public", "hub_fts_specs"),
                 hub_fk="spec_id",
-                engine="fts",
-                fts_groups=fts_groups,),
+                engine=FtsEngine(groups=fts_groups),),
         }, combine_strategy="or", merge_strategy="max",
     )
 
@@ -647,8 +646,7 @@ async def test_postgres_hub_mixed_pgroonga_and_fts_legs(
             spec_name: _hub_member(index=("public", "idx_hub_mix_s_fts"),
                 read=("public", "hub_mix_spec"),
                 hub_fk="spec_id",
-                engine="fts",
-                fts_groups=fts_groups,),
+                engine=FtsEngine(groups=fts_groups),),
         }, combine_strategy="or", merge_strategy="max",
     )
 
@@ -1350,8 +1348,7 @@ async def test_postgres_hub_fts_leg_multi_query_phrase_combine(
             leg_n: _hub_member(index=("public", idx),
                 read=("public", body_t),
                 hub_fk="body_id",
-                engine="fts",
-                fts_groups=fts_groups,),
+                engine=FtsEngine(groups=fts_groups),),
         },
     )
 

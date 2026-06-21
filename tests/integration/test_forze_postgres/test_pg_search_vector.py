@@ -19,7 +19,7 @@ from forze_mock import MockHashEmbeddingsProvider
 from forze_postgres.adapters.search import PostgresVectorSearchAdapter
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.execution.deps import ConfigurablePostgresSearch
-from forze_postgres.execution.deps.configs import PostgresSearchConfig
+from forze_postgres.execution.deps.configs import PostgresSearchConfig, VectorEngine
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -67,11 +67,12 @@ def _vector_search_context(
                         index=("public", index_name),
                         read=("public", table),
                         heap=("public", table),
-                        engine="vector",
-                        vector_column="emb",
-                        vector_distance=vector_distance,  # type: ignore[arg-type]
-                        embeddings_name="vec_test",
-                        embedding_dimensions=3,
+                        engine=VectorEngine(
+                            column="emb",
+                            dimensions=3,
+                            embeddings_name="vec_test",
+                            distance=vector_distance,  # type: ignore[arg-type]
+                        ),
                     )
                 ),
                 EmbeddingsProviderDepKey: _embeddings_factory,
@@ -935,12 +936,13 @@ async def test_vector_exact_total_exceeds_candidate_cap(
                         index=("public", index_name),
                         read=("public", table),
                         heap=("public", table),
-                        engine="vector",
-                        vector_column="emb",
-                        vector_distance="l2",
-                        embeddings_name="vec_test",
-                        embedding_dimensions=3,
-                        pgroonga_candidate_limit=3,
+                        engine=VectorEngine(
+                            column="emb",
+                            dimensions=3,
+                            embeddings_name="vec_test",
+                            distance="l2",
+                        ),
+                        candidate_limit=3,
                     )
                 ),
                 EmbeddingsProviderDepKey: _embeddings_factory,

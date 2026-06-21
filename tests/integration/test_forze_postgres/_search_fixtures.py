@@ -15,7 +15,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from forze_postgres.execution.deps.configs import PostgresSearchConfig
+from forze_postgres.execution.deps.configs import FtsEngine, PostgresSearchConfig
 from tests.support.execution_context import context_from_deps
 from tests.support import IntegrationSearchHitFactory
 
@@ -147,11 +147,12 @@ def fts_search_context(
                     config=PostgresSearchConfig(
                         index=("public", index_name),
                         read=("public", table),
-                        engine="fts",
-                        fts_groups={
-                            "A": ("title",),
-                            "B": ("content",),
-                        },
+                        engine=FtsEngine(
+                            groups={
+                                "A": ("title",),
+                                "B": ("content",),
+                            }
+                        ),
                     ),
                 ),
             },

@@ -13,8 +13,10 @@ from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.search.hub.runtime import HubLegRuntime
 from forze_postgres.execution.deps.configs import (
+    FtsEngine,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
+    VectorEngine,
 )
 from forze_postgres.execution.deps.factories.hub_builder import build_hub_leg_runtimes
 
@@ -108,11 +110,8 @@ def test_build_hub_leg_runtimes_vector_resolves_embedder() -> None:
             "vleg": PostgresHubSearchMemberConfig(
                 index=("public", "idx_v"),
                 read=("public", "heap_v"),
-                engine="vector",
+                engine=VectorEngine(column="emb", dimensions=8, embeddings_name="openai"),
                 hub_fk="hub_id",
-                vector_column="emb",
-                embedding_dimensions=8,
-                embeddings_name="openai",
             ),
         },
     )
@@ -136,7 +135,7 @@ def test_build_hub_leg_runtimes_fts_requires_groups() -> None:
                 "fleg": PostgresHubSearchMemberConfig(
                     index=("public", "idx_f"),
                     read=("public", "heap_f"),
-                    engine="fts",
+                    engine=FtsEngine(groups={}),
                     hub_fk="hub_id",
                 ),
             },

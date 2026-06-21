@@ -26,9 +26,13 @@ PgroongaPlan = Literal["filter_first", "index_first", "auto"]
 """PGroonga ranked search SQL shape."""
 
 SearchEngine = Literal["pgroonga", "fts", "vector"]
+"""Engine discriminator string (the resolved kind of :attr:`PostgresSearchConfig.engine`)."""
 
 _DEFAULT_PGROONGA_CANDIDATE_LIMIT = 5000
 _DEFAULT_PGROONGA_AUTO_INDEX_FIRST_MIN_ROWS = 100_000
+_DEFAULT_PGROONGA_AUTO_FILTER_FIRST_MAX_ROWS = 50_000
+_DEFAULT_PGROONGA_INDEX_FIRST_FILTER_MARGIN = 3.0
+
 
 # ....................... #
 
@@ -40,7 +44,160 @@ def _optional_relation_spec(value: object) -> RelationSpec | None:
     return coerce_relation_spec(value)
 
 
+# ----------------------- #
+# Engine variants (the public construction surface for ``engine=``)
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PgroongaAuto:
+    """Auto-plan tuning for the PGroonga engine (used when :attr:`PgroongaEngine.plan` is ``auto``)."""
+
+    index_first_min_rows: int = _DEFAULT_PGROONGA_AUTO_INDEX_FIRST_MIN_ROWS
+    """When filters are empty, use ``index_first`` if the read relation estimate is at least this many rows."""
+
+    use_exact_count: bool = False
+    """Run ``COUNT(*)`` on the filtered projection to pick the plan (extra round trip)."""
+
+    with_filters: bool = True
+    """When filters are index-first eligible, use planner estimates to pick the plan."""
+
+    filter_first_max_rows: int = _DEFAULT_PGROONGA_AUTO_FILTER_FIRST_MAX_ROWS
+    """With :attr:`with_filters`, prefer ``filter_first`` when the filtered estimate is at most this many rows."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.index_first_min_rows < 1:
+            raise exc.internal("pgroonga auto index_first_min_rows must be at least 1.")
+
+        if self.filter_first_max_rows < 1:
+            raise exc.internal("pgroonga auto filter_first_max_rows must be at least 1.")
+
+
 # ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PgroongaEngine:
+    """PGroonga full-text search engine."""
+
+    score_version: PgroongaScoreVersion = "v2"
+    """PGroonga score overload."""
+
+    plan: PgroongaPlan = "filter_first"
+    """Ranked search plan (``filter_first``, ``index_first``, ``auto``)."""
+
+    index_first_filter_margin: float = _DEFAULT_PGROONGA_INDEX_FIRST_FILTER_MARGIN
+    """Multiply the heap top-K cap when index-first applies projection post-filters."""
+
+    auto: PgroongaAuto = attrs.field(factory=PgroongaAuto)
+    """Auto-plan tuning; only consulted when :attr:`plan` is ``auto``."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.score_version not in ("v1", "v2"):
+            raise exc.internal("pgroonga_score_version must be 'v1' or 'v2'.")
+
+        if self.plan not in ("filter_first", "index_first", "auto"):
+            raise exc.internal(
+                "pgroonga_plan must be 'filter_first', 'index_first', or 'auto'.",
+            )
+
+        if self.index_first_filter_margin < 1.0:
+            raise exc.internal("pgroonga index_first_filter_margin must be at least 1.0.")
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class FtsEngine:
+    """Postgres native FTS (``tsvector``) engine."""
+
+    groups: dict[FtsGroupLetter, Sequence[str]]
+    """FTS weight groups; every search field must appear in exactly one group."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not self.groups:
+            raise exc.internal("FTS groups are required for FTS engine.")
+
+        all_fields = reduce(lambda a, g: a + g, map(list, self.groups.values()))
+
+        if len(all_fields) != len(set(all_fields)):
+            raise exc.internal("FTS groups cannot contain duplicate fields.")
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class VectorEngine:
+    """pgvector KNN engine."""
+
+    column: str
+    """Heap ``vector`` column."""
+
+    embeddings_name: StrKey
+    """Embeddings spec name."""
+
+    dimensions: int
+    """Query embedding size."""
+
+    distance: VectorEngineDistance = "l2"
+    """pgvector distance operator family."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not self.column:
+            raise exc.internal("vector_column is required for vector engine.")
+
+        if not self.embeddings_name:
+            raise exc.internal("embeddings_name is required for vector engine.")
+
+        if self.dimensions < 1:
+            raise exc.internal("embedding_dimensions must be at least 1.")
+
+
+# ....................... #
+
+SearchEngineSpec = PgroongaEngine | FtsEngine | VectorEngine
+"""Tagged union of engine variants. Construct one and pass it as ``engine=``."""
+
+
+def _coerce_engine_spec(value: "SearchEngineSpec | SearchEngine") -> SearchEngineSpec:
+    """Normalize the ``engine=`` argument to an engine value object.
+
+    Accepts an engine value object directly, or the bare string ``"pgroonga"`` as a
+    shorthand for a default-configured :class:`PgroongaEngine`. ``"fts"`` and ``"vector"``
+    have no valid defaults (they require fields), so the bare string is rejected with a
+    pointer to the value object to use instead.
+    """
+
+    if isinstance(value, (PgroongaEngine, FtsEngine, VectorEngine)):
+        return value
+
+    if value == "pgroonga":
+        return PgroongaEngine()
+
+    if value == "fts":
+        raise exc.internal(
+            "engine='fts' requires groups; pass engine=FtsEngine(groups=...).",
+        )
+
+    if value == "vector":
+        raise exc.internal(
+            "engine='vector' requires fields; pass "
+            "engine=VectorEngine(column=..., embeddings_name=..., dimensions=...).",
+        )
+
+    raise exc.internal(f"Unknown search engine: {value!r}")
+
+
+# ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -56,8 +213,14 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
     read_validation: Literal["strict", "trusted"] = "strict"
     """Row decode mode for search hits (``trusted`` skips Pydantic validation)."""
 
-    engine: SearchEngine
-    """Search engine: PGroonga, FTS, or pgvector KNN."""
+    engine_spec: SearchEngineSpec = attrs.field(
+        alias="engine",
+        converter=_coerce_engine_spec,  # type: ignore[misc]
+    )
+    """Engine variant: :class:`PgroongaEngine`, :class:`FtsEngine`, or :class:`VectorEngine`
+    (construct with ``engine=``; ``"pgroonga"`` is accepted as a shorthand for ``PgroongaEngine()``).
+
+    Read :attr:`engine` for the resolved discriminator string."""
 
     heap: RelationSpec | None = attrs.field(
         default=None,
@@ -65,20 +228,9 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
     )
     """Heap relation; defaults to :attr:`read` when omitted."""
 
-    fts_groups: dict[FtsGroupLetter, Sequence[str]] | None = None
-    """FTS weight groups (required when :attr:`engine` is ``fts``)."""
-
-    vector_column: str | None = None
-    """Heap ``vector`` column (required for ``vector`` engine)."""
-
-    vector_distance: VectorEngineDistance = "l2"
-    """pgvector distance operator family."""
-
-    embeddings_name: StrKey | None = None
-    """Embeddings spec name (required for ``vector`` engine)."""
-
-    embedding_dimensions: int | None = None
-    """Query embedding size (required for ``vector`` engine)."""
+    candidate_limit: int | None = _DEFAULT_PGROONGA_CANDIDATE_LIMIT
+    """Max heap rows scored per query; the shared ranked-heap cap for every engine.
+    ``None`` disables the cap."""
 
     field_map: Mapping[str, str] | None = None
     """Maps spec field names to physical heap columns."""
@@ -89,30 +241,6 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
     nested_field_hints: Mapping[str, Any] | None = None
     """Per-path type hints for filters/sorts on the read projection."""
 
-    pgroonga_score_version: PgroongaScoreVersion = "v2"
-    """PGroonga score overload when :attr:`engine` is ``pgroonga``."""
-
-    pgroonga_plan: PgroongaPlan = "filter_first"
-    """PGroonga ranked search plan (``filter_first``, ``index_first``, ``auto``)."""
-
-    pgroonga_candidate_limit: int | None = _DEFAULT_PGROONGA_CANDIDATE_LIMIT
-    """Max heap rows scored per query; ``None`` disables the cap."""
-
-    pgroonga_auto_index_first_min_rows: int = _DEFAULT_PGROONGA_AUTO_INDEX_FIRST_MIN_ROWS
-    """When :attr:`pgroonga_plan` is ``auto`` and filters are empty, use ``index_first`` if the read relation estimate is at least this many rows."""
-
-    pgroonga_auto_use_exact_count: bool = False
-    """When :attr:`pgroonga_plan` is ``auto``, run ``COUNT(*)`` on the filtered projection to pick the plan (extra round trip)."""
-
-    pgroonga_auto_with_filters: bool = True
-    """When :attr:`pgroonga_plan` is ``auto`` and filters are index-first eligible, use planner estimates to pick the plan."""
-
-    pgroonga_auto_filter_first_max_rows: int = 50_000
-    """With :attr:`pgroonga_auto_with_filters`, prefer ``filter_first`` when the filtered estimate is at most this many rows."""
-
-    pgroonga_index_first_filter_margin: float = 3.0
-    """Multiply the heap top-K cap when index-first applies projection post-filters."""
-
     # ....................... #
 
     @property
@@ -120,6 +248,87 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
         """Heap qualified name used for index joins."""
 
         return self.heap if self.heap is not None else self.read
+
+    # ....................... #
+    # Flat read shims: internal factories/adapters/lifecycle read the engine knobs by
+    # their historical flat names; each dispatches into the active engine variant and
+    # returns the prior default for non-active variants (only ``candidate_limit`` is
+    # genuinely shared and read across variants).
+
+    @property
+    def engine(self) -> SearchEngine:
+        """Resolved engine discriminator string (``pgroonga`` / ``fts`` / ``vector``)."""
+
+        match self.engine_spec:
+            case PgroongaEngine():
+                return "pgroonga"
+
+            case FtsEngine():
+                return "fts"
+
+            case VectorEngine():
+                return "vector"
+
+    @property
+    def fts_groups(self) -> dict[FtsGroupLetter, Sequence[str]] | None:
+        return self.engine_spec.groups if isinstance(self.engine_spec, FtsEngine) else None
+
+    @property
+    def vector_column(self) -> str | None:
+        return self.engine_spec.column if isinstance(self.engine_spec, VectorEngine) else None
+
+    @property
+    def vector_distance(self) -> VectorEngineDistance:
+        return self.engine_spec.distance if isinstance(self.engine_spec, VectorEngine) else "l2"
+
+    @property
+    def embeddings_name(self) -> StrKey | None:
+        return self.engine_spec.embeddings_name if isinstance(self.engine_spec, VectorEngine) else None
+
+    @property
+    def embedding_dimensions(self) -> int | None:
+        return self.engine_spec.dimensions if isinstance(self.engine_spec, VectorEngine) else None
+
+    @property
+    def pgroonga_score_version(self) -> PgroongaScoreVersion:
+        return self.engine_spec.score_version if isinstance(self.engine_spec, PgroongaEngine) else "v2"
+
+    @property
+    def pgroonga_plan(self) -> PgroongaPlan:
+        return self.engine_spec.plan if isinstance(self.engine_spec, PgroongaEngine) else "filter_first"
+
+    @property
+    def pgroonga_candidate_limit(self) -> int | None:
+        return self.candidate_limit
+
+    @property
+    def pgroonga_auto_index_first_min_rows(self) -> int:
+        if isinstance(self.engine_spec, PgroongaEngine):
+            return self.engine_spec.auto.index_first_min_rows
+
+        return _DEFAULT_PGROONGA_AUTO_INDEX_FIRST_MIN_ROWS
+
+    @property
+    def pgroonga_auto_use_exact_count(self) -> bool:
+        return self.engine_spec.auto.use_exact_count if isinstance(self.engine_spec, PgroongaEngine) else False
+
+    @property
+    def pgroonga_auto_with_filters(self) -> bool:
+        return self.engine_spec.auto.with_filters if isinstance(self.engine_spec, PgroongaEngine) else True
+
+    @property
+    def pgroonga_auto_filter_first_max_rows(self) -> int:
+        if isinstance(self.engine_spec, PgroongaEngine):
+            return self.engine_spec.auto.filter_first_max_rows
+
+        return _DEFAULT_PGROONGA_AUTO_FILTER_FIRST_MAX_ROWS
+
+    @property
+    def pgroonga_index_first_filter_margin(self) -> float:
+        if isinstance(self.engine_spec, PgroongaEngine):
+            return self.engine_spec.index_first_filter_margin
+
+        return _DEFAULT_PGROONGA_INDEX_FIRST_FILTER_MARGIN
 
     # ....................... #
 
@@ -130,59 +339,8 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
                 f"got {self.read_validation!r}",
             )
 
-        match self.engine:
-            case "vector":
-                if not self.vector_column:
-                    raise exc.internal("vector_column is required for vector engine.")
-
-                if self.embedding_dimensions is None:
-                    raise exc.internal(
-                        "embedding_dimensions is required for vector engine."
-                    )
-
-                if not self.embeddings_name:
-                    raise exc.internal("embeddings_name is required for vector engine.")
-
-            case "fts":
-                if not self.fts_groups:
-                    raise exc.internal("FTS groups are required for FTS engine.")
-
-                all_fields = reduce(
-                    lambda a, g: a + g, map(list, self.fts_groups.values())
-                )
-
-                if len(all_fields) != len(set(all_fields)):
-                    raise exc.internal("FTS groups cannot contain duplicate fields.")
-
-            case "pgroonga":
-                if self.pgroonga_score_version not in ("v1", "v2"):
-                    raise exc.internal("pgroonga_score_version must be 'v1' or 'v2'.")
-
-                if self.pgroonga_plan not in ("filter_first", "index_first", "auto"):
-                    raise exc.internal(
-                        "pgroonga_plan must be 'filter_first', 'index_first', or 'auto'."
-                    )
-
-                if (
-                    self.pgroonga_candidate_limit is not None
-                    and self.pgroonga_candidate_limit < 1
-                ):
-                    raise exc.internal("pgroonga_candidate_limit must be at least 1.")
-
-                if self.pgroonga_auto_index_first_min_rows < 1:
-                    raise exc.internal(
-                        "pgroonga_auto_index_first_min_rows must be at least 1."
-                    )
-
-                if self.pgroonga_auto_filter_first_max_rows < 1:
-                    raise exc.internal(
-                        "pgroonga_auto_filter_first_max_rows must be at least 1."
-                    )
-
-                if self.pgroonga_index_first_filter_margin < 1.0:
-                    raise exc.internal(
-                        "pgroonga_index_first_filter_margin must be at least 1.0."
-                    )
+        if self.candidate_limit is not None and self.candidate_limit < 1:
+            raise exc.internal("candidate_limit must be at least 1.")
 
 
 # ....................... #

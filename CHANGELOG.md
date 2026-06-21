@@ -81,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Postgres search engine config as typed value objects** *(breaking: `forze_postgres` search config)* — `PostgresSearchConfig.engine` now takes one of `PgroongaEngine` / `FtsEngine(groups=…)` / `VectorEngine(column=…, embeddings_name=…, dimensions=…)` (with `PgroongaEngine.auto=PgroongaAuto(…)` for auto-plan tuning) instead of a flat `engine="…"` string plus parallel `fts_groups` / `vector_*` / `pgroonga_*` kwargs. Illegal engine/field combinations are now unrepresentable, and each variant validates itself. `engine="pgroonga"` still works as shorthand for `PgroongaEngine()`; `engine="fts"`/`"vector"` now require the value object. The shared ranked-heap cap `pgroonga_candidate_limit` is renamed to the top-level `candidate_limit`. Reads of the resolved discriminator (`config.engine` → `"pgroonga"`/`"fts"`/`"vector"`) and all flat knob accessors are unchanged.
+
 - **Empty filter/sort maps are no-ops on list/search requests** — a bare `{}` for `filters` or `sorts` on the kit list/search request DTOs now normalizes to `None` (no filter/sort) instead of raising. A structured-but-empty envelope (e.g. `{"$values": {}}`) is still rejected by the strict filter parser, since it is an ambiguous probable bug.
 
 - **Lazy transaction acquisition, default for Postgres, Mongo, and Firestore** *(behavior change)* — a transaction scope defers connection checkout until the first operation, so pre-query CPU or external work no longer parks a connection idle-in-transaction. A connect failure now surfaces at the first operation rather than scope entry; opt out with `lazy_transaction=False`.
