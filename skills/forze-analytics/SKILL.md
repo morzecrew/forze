@@ -79,7 +79,7 @@ lifecycle = LifecyclePlan.from_steps(
 )
 ```
 
-Cursor reads go through `run_cursor` with an opaque cursor token (`CursorPaginationExpression`) — there is no `cursor_column` SQL convention, and a backend that can't do keyset cursors raises unsupported. `dry_run` skips execution.
+ClickHouse keyset cursors need `cursor_column` on the query config plus a matching `{forze_after:Type}` placeholder in the SQL; `run_cursor` then pages by that key (you round-trip the opaque cursor token each call). Omit them and `run_cursor` falls back to offset-style cursors — unstable for large or changing result sets. `dry_run` skips execution.
 
 ## Consuming analytics
 
