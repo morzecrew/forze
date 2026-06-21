@@ -86,6 +86,11 @@ Common operators: `$eq`, `$neq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$
 Attach `CacheSpec` to `DocumentSpec.cache` and register a matching cache route, usually in `RedisDepsModule.caches`. Reads then serve from the cache on a hit and populate it on a miss; writes invalidate. The facade code is unchanged — caching is pure wiring.
 
 ```python
+from datetime import timedelta
+
+from forze.application.contracts.cache import CacheSpec
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+
 project_spec = DocumentSpec(
     name=ResourceName.PROJECTS,
     read=ProjectRead,

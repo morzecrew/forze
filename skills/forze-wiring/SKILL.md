@@ -87,7 +87,7 @@ from forze_postgres import PostgresLifecycleModule
 
 lifecycle_plan = LifecyclePlan.from_modules(
     PostgresLifecycleModule(
-        client=pg,
+        client=postgres_client,
         dsn="postgresql://app:app@localhost:5432/app",
         config=PostgresConfig(min_size=2, max_size=15),
     ),

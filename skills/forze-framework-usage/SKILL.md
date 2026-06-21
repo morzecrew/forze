@@ -66,8 +66,12 @@ See [Execution reference](https://morzecrew.github.io/forze/latest/writing-opera
 Handlers implement `Handler[Args, R]` from `forze.application.contracts.execution` and are registered on `OperationRegistry`:
 
 ```python
+import attrs
+
 from forze.application.contracts.execution import Handler
 
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class GetProject(Handler[UUID, ProjectReadModel]):
     doc: DocumentQueryPort[ProjectReadModel]
 
@@ -75,7 +79,7 @@ class GetProject(Handler[UUID, ProjectReadModel]):
         return await self.doc.get(args)
 ```
 
-Factories receive `ExecutionContext` and inject ports: `lambda ctx: GetProject(doc=ctx.document.query(project_spec))`.
+Factories receive `ExecutionContext` and inject ports: `lambda ctx: GetProject(doc=ctx.document.query(project_spec))`. The `@attrs.define(kw_only=True)` gives the handler its keyword constructor — `Handler` is a `Protocol` and provides no `__init__`.
 
 ### Transactions
 

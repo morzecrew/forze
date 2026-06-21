@@ -98,11 +98,14 @@ files = StorageFacade(ctx=ctx, registry=storage_registry, namespace=attachments_
 **Inside a custom handler** — when an upload is one step of a domain operation, resolve the port directly in the factory:
 
 ```python
+import attrs
+
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.storage import StorageCommandPort, StoredObject, UploadedObject
 
 
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class UploadAttachment(Handler[UploadAttachmentCmd, StoredObject]):
     doc: DocumentQueryPort[ProjectRead]
     storage: StorageCommandPort
