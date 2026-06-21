@@ -50,8 +50,13 @@ _DEFAULT_CHUNK_SIZE = 256
 class CpuExecutor(Protocol):
     """Runs a blocking / CPU-bound thunk off the event loop."""
 
-    async def run[T](self, fn: Callable[[], T]) -> T:
-        """Run *fn* (a zero-arg thunk) and return its result."""
+    async def run[T](self, fn: Callable[[], T], *, label: str | None = None) -> T:
+        """Run *fn* (a zero-arg thunk) and return its result.
+
+        *label* identifies the call site — the offloaded callable's qualified
+        name — so a simulation executor can model that site's cost independently.
+        Real executors ignore it.
+        """
 
         ...
 
@@ -140,7 +145,7 @@ class ThreadPoolCpuExecutor:
 
         return self._pool
 
-    async def run[T](self, fn: Callable[[], T]) -> T:
+    async def run[T](self, fn: Callable[[], T], *, label: str | None = None) -> T:
         loop = asyncio.get_running_loop()
 
         return await loop.run_in_executor(self._require_pool(), fn)
@@ -162,7 +167,7 @@ class InlineCpuExecutor:
     """Run the thunk inline (synchronously). For plain unit tests and as the base
     for the deterministic simulation executor — no threads, fully reproducible."""
 
-    async def run[T](self, fn: Callable[[], T]) -> T:
+    async def run[T](self, fn: Callable[[], T], *, label: str | None = None) -> T:
         return fn()
 
 
@@ -217,6 +222,7 @@ async def run_cpu[T](fn: Callable[..., T], /, *args: object, **kwargs: object) -
     """
 
     bound = functools.partial(fn, *args, **kwargs)
+    label = getattr(fn, "__qualname__", None)  # call-site id for simulation cost models
     token = CancelToken()
 
     ctx = copy_context()
@@ -235,10 +241,10 @@ async def run_cpu[T](fn: Callable[..., T], /, *args: object, **kwargs: object) -
 
     try:
         if remaining is None:
-            return await executor.run(thunk)
+            return await executor.run(thunk, label=label)
 
         async with asyncio.timeout(remaining):
-            return await executor.run(thunk)
+            return await executor.run(thunk, label=label)
 
     except TimeoutError as e:
         token.cancel()

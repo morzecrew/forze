@@ -18,10 +18,12 @@ from forze.application.execution.interception import (
 )
 from forze.base.primitives import (
     SeededEntropySource,
+    bind_cpu_executor,
     bind_entropy_source,
     bind_time_source,
 )
 
+from .cpu import CpuCostModel, SimulationCpuExecutor
 from .loop import RealIOForbidden, SimulationDeadlock, SimulationEventLoop
 from .time_source import DEFAULT_EPOCH, SimulationTimeSource
 
@@ -36,6 +38,7 @@ def run_simulation[T](
     schedule_seed: int | None = None,
     scheduler: object | None = None,
     latency: LatencyModel | None = None,
+    cpu_cost: CpuCostModel | None = None,
 ) -> T:
     """Run *scenario* on a deterministic virtual-time loop with seeded entropy.
 
@@ -53,9 +56,15 @@ def run_simulation[T](
     at each port boundary to advance the virtual clock (a real downstream takes time). Lets
     time-dependent bugs surface without artificial sleeps in handlers. ``None`` = instant ports.
 
+    *cpu_cost* is the analogue for off-loop CPU work: a ``(label) -> seconds`` function (the
+    label is the offloaded callable's qualname) that advances the virtual clock for a
+    ``run_cpu`` / ``run_cpu_map`` call. Under simulation that work runs **inline** (so it is
+    deterministic and never trips ``RealIOForbidden``), and each call is a yield point a
+    deadline can fire "during". ``None`` = instant offloads.
+
     Raises :class:`~forze_dst.loop.SimulationDeadlock` if the scenario
     blocks with no pending timer, or :class:`~forze_dst.loop.RealIOForbidden`
-    if it touches real I/O or a thread executor.
+    if it touches real I/O or a *raw* thread executor (use ``run_cpu`` instead).
     """
 
     if epoch.tzinfo is None:
@@ -82,6 +91,7 @@ def run_simulation[T](
         with (
             bind_time_source(time_source),
             bind_entropy_source(entropy),
+            bind_cpu_executor(SimulationCpuExecutor(cost=cpu_cost)),
             bind_interceptors(CooperativeInterceptor(latency=latency)),
         ):
             return loop.run_until_complete(scenario())
@@ -100,5 +110,7 @@ __all__ = [
     "RealIOForbidden",
     "SimulationDeadlock",
     "SimulationTimeSource",
+    "SimulationCpuExecutor",
+    "CpuCostModel",
     "DEFAULT_EPOCH",
 ]
