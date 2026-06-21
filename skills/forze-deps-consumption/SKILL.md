@@ -53,7 +53,9 @@ Built-in `DepsModule.__call__` should only register providers. Connection pools 
 
 ## Reference
 
-- [Execution reference](https://morzecrew.github.io/forze/writing-operation/wiring/)
-- [Specs and wiring](https://morzecrew.github.io/forze/writing-operation/wiring/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Execution reference](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
+- [Specs and wiring](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)
 - [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md)

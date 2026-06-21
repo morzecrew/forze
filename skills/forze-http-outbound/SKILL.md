@@ -138,6 +138,8 @@ HTTP client/adapter/execution loggers are named under `FORZE_HTTP_LOGGER_NAMES`;
 
 ## Reference
 
-- [HTTP integration](https://morzecrew.github.io/forze/integrations/http/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [HTTP integration](https://morzecrew.github.io/forze/latest/integrations/http/)
 - [`forze-framework-usage`](../forze-framework-usage/SKILL.md)
 - [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md)

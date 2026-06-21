@@ -133,11 +133,13 @@ Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFA
 
 ## Reference
 
-- [Specs and wiring](https://morzecrew.github.io/forze/writing-operation/wiring/)
-- [Postgres integration](https://morzecrew.github.io/forze/integrations/postgres/)
-- [Mongo integration](https://morzecrew.github.io/forze/integrations/mongo/)
-- [Redis integration](https://morzecrew.github.io/forze/integrations/redis/)
-- [S3 integration](https://morzecrew.github.io/forze/integrations/s3/)
-- [SQS integration](https://morzecrew.github.io/forze/integrations/sqs/)
-- [RabbitMQ integration](https://morzecrew.github.io/forze/integrations/rabbitmq/)
-- [Temporal integration](https://morzecrew.github.io/forze/integrations/temporal/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Specs and wiring](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
+- [Postgres integration](https://morzecrew.github.io/forze/latest/integrations/postgres/)
+- [Mongo integration](https://morzecrew.github.io/forze/latest/integrations/mongo/)
+- [Redis integration](https://morzecrew.github.io/forze/latest/integrations/redis/)
+- [S3 integration](https://morzecrew.github.io/forze/latest/integrations/s3/)
+- [SQS integration](https://morzecrew.github.io/forze/latest/integrations/sqs/)
+- [RabbitMQ integration](https://morzecrew.github.io/forze/latest/integrations/rabbitmq/)
+- [Temporal integration](https://morzecrew.github.io/forze/latest/integrations/temporal/)

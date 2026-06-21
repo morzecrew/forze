@@ -111,7 +111,9 @@ Fleet-wide resilience state (`forze[redis]`): `ResilienceDepsModule(breaker_stor
 
 ## Reference
 
-- [Resilience](https://morzecrew.github.io/forze/running-in-prod/resilience/)
-- [Deadlines](https://morzecrew.github.io/forze/running-in-prod/deadlines/)
-- [Shutdown & fleets](https://morzecrew.github.io/forze/running-in-prod/shutdown-and-fleets/)
-- [Observability](https://morzecrew.github.io/forze/running-in-prod/observability/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Resilience](https://morzecrew.github.io/forze/latest/running-in-prod/resilience/)
+- [Deadlines](https://morzecrew.github.io/forze/latest/running-in-prod/deadlines/)
+- [Shutdown & fleets](https://morzecrew.github.io/forze/latest/running-in-prod/shutdown-and-fleets/)
+- [Observability](https://morzecrew.github.io/forze/latest/running-in-prod/observability/)

@@ -43,4 +43,4 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 
 ## Documentation
 
-Skills link to the published docs at [morzecrew.github.io/forze](https://morzecrew.github.io/forze/). Framework contribution is documented in the Forze repository (`AGENTS.md`, `CONTRIBUTING.md`), not in these skills.
+Skills link to the published docs at [morzecrew.github.io/forze](https://morzecrew.github.io/forze/), which are **versioned**: each skill's links use the `latest` alias, and the Reference section notes how to swap `latest` for an older pinned `forze` minor. Framework contribution is documented in the Forze repository (`AGENTS.md`, `CONTRIBUTING.md`), not in these skills.

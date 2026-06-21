@@ -94,7 +94,9 @@ async with runtime.scope():
 
 ## Reference
 
-- [BigQuery integration](https://morzecrew.github.io/forze/integrations/bigquery/)
-- [ClickHouse integration](https://morzecrew.github.io/forze/integrations/clickhouse/)
-- [Analytics contracts](https://morzecrew.github.io/forze/reference/contracts/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [BigQuery integration](https://morzecrew.github.io/forze/latest/integrations/bigquery/)
+- [ClickHouse integration](https://morzecrew.github.io/forze/latest/integrations/clickhouse/)
+- [Analytics contracts](https://morzecrew.github.io/forze/latest/reference/contracts/)
 - [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

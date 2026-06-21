@@ -94,7 +94,7 @@ project_spec = DocumentSpec(
 )
 ```
 
-Stampede protection, an opt-in in-process L1 (`CacheSpec(l1=L1Spec(...))`, a cross-replica staleness budget), early refresh, and adaptive lifetimes are all spec-level opt-ins — see [Caching reads](https://morzecrew.github.io/forze/data-events/caching/) for the full set and their consistency trade-offs.
+Stampede protection, an opt-in in-process L1 (`CacheSpec(l1=L1Spec(...))`, a cross-replica staleness budget), early refresh, and adaptive lifetimes are all spec-level opt-ins — see [Caching reads](https://morzecrew.github.io/forze/latest/data-events/caching/) for the full set and their consistency trade-offs.
 
 ## Search with `SearchFacade`
 
@@ -154,11 +154,13 @@ The facade covers the standard document/search surface. When you need behaviour 
 
 ## Reference
 
-- [Reading data](https://morzecrew.github.io/forze/data-events/reading-data/)
-- [Caching reads](https://morzecrew.github.io/forze/data-events/caching/)
-- [Specs and wiring](https://morzecrew.github.io/forze/writing-operation/wiring/)
-- [Document contracts](https://morzecrew.github.io/forze/reference/contracts/document/)
-- [Query syntax](https://morzecrew.github.io/forze/reference/query-syntax/)
-- [Postgres integration](https://morzecrew.github.io/forze/integrations/postgres/)
-- [Mongo integration](https://morzecrew.github.io/forze/integrations/mongo/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Reading data](https://morzecrew.github.io/forze/latest/data-events/reading-data/)
+- [Caching reads](https://morzecrew.github.io/forze/latest/data-events/caching/)
+- [Specs and wiring](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
+- [Document contracts](https://morzecrew.github.io/forze/latest/reference/contracts/document/)
+- [Query syntax](https://morzecrew.github.io/forze/latest/reference/query-syntax/)
+- [Postgres integration](https://morzecrew.github.io/forze/latest/integrations/postgres/)
+- [Mongo integration](https://morzecrew.github.io/forze/latest/integrations/mongo/)
 - Sibling skills: [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md), [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md)

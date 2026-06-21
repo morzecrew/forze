@@ -125,8 +125,10 @@ With `tenant_aware=True`, the adapter derives the tenant from `ExecutionContext`
 
 ## Reference
 
-- [S3 integration](https://morzecrew.github.io/forze/integrations/s3/)
-- [GCS integration](https://morzecrew.github.io/forze/integrations/gcs/)
-- [Storage contracts](https://morzecrew.github.io/forze/reference/contracts/stores/)
-- [FastAPI route generators](https://morzecrew.github.io/forze/reference/fastapi-routes/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [S3 integration](https://morzecrew.github.io/forze/latest/integrations/s3/)
+- [GCS integration](https://morzecrew.github.io/forze/latest/integrations/gcs/)
+- [Storage contracts](https://morzecrew.github.io/forze/latest/reference/contracts/stores/)
+- [FastAPI route generators](https://morzecrew.github.io/forze/latest/reference/fastapi-routes/)
 - Sibling skill: [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md)

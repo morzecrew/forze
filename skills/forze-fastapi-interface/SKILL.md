@@ -169,6 +169,8 @@ register_scalar_docs(app, path="/docs")
 
 ## Reference
 
-- [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [FastAPI integration](https://morzecrew.github.io/forze/latest/integrations/fastapi/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)
 - [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md)

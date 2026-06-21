@@ -59,7 +59,7 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in
 
 For configurable keys without a convenience wrapper, use `ctx.deps.resolve_configurable(ctx, DepKey, spec, route=spec.name)`.
 
-See [Execution reference](https://morzecrew.github.io/forze/writing-operation/wiring/).
+See [Execution reference](https://morzecrew.github.io/forze/latest/writing-operation/wiring/).
 
 ### Handler pattern
 
@@ -90,7 +90,7 @@ async with ctx.tx_ctx.scope(TxRoute.DEFAULT):
 
 Use `ctx.tx_ctx.defer_after_commit()` for side effects that must run only after the root transaction commits.
 
-Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` — see [Middleware and plans](https://morzecrew.github.io/forze/writing-operation/capability-execution/).
+Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` — see [Middleware and plans](https://morzecrew.github.io/forze/latest/writing-operation/capability-execution/).
 
 ### Identity and tenancy
 
@@ -207,7 +207,9 @@ See [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) and [`f
 
 ## Reference
 
-- [Execution reference](https://morzecrew.github.io/forze/writing-operation/wiring/)
-- [Contracts and adapters](https://morzecrew.github.io/forze/core-concepts/contracts/)
-- [Query syntax](https://morzecrew.github.io/forze/reference/query-syntax/)
-- [Contracts overview](https://morzecrew.github.io/forze/reference/contracts/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Execution reference](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
+- [Contracts and adapters](https://morzecrew.github.io/forze/latest/core-concepts/contracts/)
+- [Query syntax](https://morzecrew.github.io/forze/latest/reference/query-syntax/)
+- [Contracts overview](https://morzecrew.github.io/forze/latest/reference/contracts/)

@@ -134,8 +134,10 @@ Use `StreamQueryDepKey` for `read` / `tail`, and `StreamGroupQueryDepKey` for co
 
 ## Reference
 
-- [SQS integration](https://morzecrew.github.io/forze/integrations/sqs/)
-- [RabbitMQ integration](https://morzecrew.github.io/forze/integrations/rabbitmq/)
-- [Queue contracts](https://morzecrew.github.io/forze/reference/contracts/messaging/)
-- [Pub/Sub contracts](https://morzecrew.github.io/forze/reference/contracts/)
-- [Stream contracts](https://morzecrew.github.io/forze/reference/contracts/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [SQS integration](https://morzecrew.github.io/forze/latest/integrations/sqs/)
+- [RabbitMQ integration](https://morzecrew.github.io/forze/latest/integrations/rabbitmq/)
+- [Queue contracts](https://morzecrew.github.io/forze/latest/reference/contracts/messaging/)
+- [Pub/Sub contracts](https://morzecrew.github.io/forze/latest/reference/contracts/)
+- [Stream contracts](https://morzecrew.github.io/forze/latest/reference/contracts/)
