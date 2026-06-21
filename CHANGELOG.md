@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CPU-offload seam** — `run_cpu(fn, …)` and `run_cpu_map` run blocking or CPU-bound work off the event loop via a context-bound `CpuExecutor` (bounded thread pool by default, inline in tests), copying tracing and tenant context into the worker and honoring the invocation deadline with a cooperative `checkpoint()`.
+
 - **HTTP status mapping in core** — `http_status_for_kind(kind)` in `forze.base.exceptions` maps an `ExceptionKind` to its conventional HTTP status (404/409/422/…, else 500), so any HTTP-serving layer can reuse it. FastAPI's response builder now uses this shared helper instead of a private one.
 
 - **Materialized derived fields** — `DocumentSpec(materialized=…)` persists selected computed fields as real columns, making them filterable and sortable. Names are validated, create/update collisions are rejected, and startup checks require matching columns.

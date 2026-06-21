@@ -3,7 +3,25 @@
 from .buffer import ContextualBuffer, ContextVarTrace
 from .cell import OnceCell
 from .context_scope import ContextScopedResource
+from .cpu import (
+    CancelToken,
+    CpuExecutor,
+    InlineCpuExecutor,
+    ThreadPoolCpuExecutor,
+    bind_cpu_executor,
+    checkpoint,
+    current_cpu_executor,
+    run_cpu,
+    run_cpu_map,
+)
 from .datetime import monotonic, utcnow
+from .deadline import (
+    bind_deadline,
+    current_deadline,
+    remaining_time,
+    reset_deadline,
+    set_deadline,
+)
 from .entropy_source import (
     EntropySource,
     SeededEntropySource,
@@ -54,6 +72,20 @@ from .uuid import uuid4, uuid7
 __all__ = [
     "utcnow",
     "monotonic",
+    "current_deadline",
+    "remaining_time",
+    "set_deadline",
+    "reset_deadline",
+    "bind_deadline",
+    "CpuExecutor",
+    "ThreadPoolCpuExecutor",
+    "InlineCpuExecutor",
+    "CancelToken",
+    "run_cpu",
+    "run_cpu_map",
+    "checkpoint",
+    "current_cpu_executor",
+    "bind_cpu_executor",
     "TimeSource",
     "SystemTimeSource",
     "FrozenTimeSource",
