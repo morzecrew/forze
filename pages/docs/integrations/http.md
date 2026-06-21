@@ -57,7 +57,7 @@ resolved via `ctx.http.service(spec)`.
   forbids a static `base_url` (it comes from secrets) and requires
   `secret_ref_for_tenant`.
 - `HttpAuthConfig` covers `bearer`, `api_key`, and custom-`header` auth.
-- When the caller has a [deadline](../in-depth/deadlines.md) bound, the adapter
+- When the caller has a [deadline](../running-in-prod/deadlines.md) bound, the adapter
   forwards the remaining budget as an `X-Forze-Deadline-Budget` header so a
   downstream Forze service can inherit it; opt out per service with
   `HttpServiceConfig(propagate_deadline=False)`.

@@ -116,4 +116,4 @@ pg = RoutedPostgresClient(...)
 ```
 
 How routing resolves a tenant to a connection — and the schema-per-tenant
-alternative — is the subject of [Multi-tenancy](multi-tenancy.md).
+alternative — is the subject of [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).

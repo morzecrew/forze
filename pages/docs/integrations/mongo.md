@@ -26,7 +26,7 @@ mongo = MongoClient()
 ```
 
 `RoutedMongoClient` resolves a per-tenant connection — see
-[Multi-tenancy](../in-depth/multi-tenancy.md).
+[Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).
 
 ## Wire it
 

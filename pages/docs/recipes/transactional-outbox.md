@@ -8,7 +8,7 @@ You can't atomically write to your database *and* publish to a broker — a cras
 between the two loses or duplicates the event. The **outbox** makes it one
 write: stage the event in the *same* transaction as the business change, then a
 relay moves staged rows to the broker afterwards. The concept is in
-[Events & sagas](../in-depth/events-sagas.md); this is the wiring.
+[Events & sagas](../data-events/events-sagas.md); this is the wiring.
 
 The runnable version lives at `examples/recipes/outbox/` and runs on the
 in-memory mock — no broker needed.
@@ -65,7 +65,7 @@ lifecycle = LifecyclePlan.from_steps(
 `run_consumer` is the consumer-side counterpart — it replaces the hand-rolled
 `consume → dedupe → ack/nack` loop with the decisions already made correctly.
 Per message it: **parks** handler-poison (opt-in `max_deliveries`), runs the
-handler exactly-once through the [inbox](../in-depth/events-sagas.md)
+handler exactly-once through the [inbox](../data-events/events-sagas.md)
 (`process_with_inbox`, same dedup transaction, correlation rebound from the
 envelope headers), **acks** both fresh *and* duplicate deliveries — a
 redelivered already-processed message must leave the queue — and **nacks**
@@ -172,7 +172,7 @@ on the happy path. Events staged without an `ordering_key` keep
     poison event never head-of-line blocks its aggregate. Consumers must
     dedupe on `event_id` (the `forze_event_id` header) and tolerate
     reordering as well as redelivery (dedupe with the
-    [inbox](../in-depth/events-sagas.md)).
+    [inbox](../data-events/events-sagas.md)).
 
 ## Table schema
 
@@ -266,7 +266,7 @@ db.outbox.createIndex({ outbox_route: 1, status: 1, available_at: 1, hlc: 1, cre
   transaction — `PostgresOutboxConfig(relation=("app", "outbox"))` (from
   `forze_postgres.execution.deps.configs`) or `MongoOutboxConfig`.
 - **At-least-once.** The relay can publish a row twice (claim, publish, crash
-  before marking). Consumers dedupe with the [inbox](../in-depth/events-sagas.md).
+  before marking). Consumers dedupe with the [inbox](../data-events/events-sagas.md).
 - The background lifecycle step drains the whole backlog each tick (batches
   until a short claim, capped at `max_batches_per_tick=100`), then sleeps
   `interval`.

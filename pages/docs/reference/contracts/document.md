@@ -97,4 +97,4 @@ model(s), or `None` when you don't need them back.
 - [Query DSL](../query-syntax.md) — `filters` / `sorts` / `aggregates`.
 - [Mapping & codecs](../mapping.md) — how a create command becomes the domain
   model and comes back as the read model.
-- [Reading data](../../in-depth/reading-data.md) · [Concurrency & conflicts](../../in-depth/concurrency-conflicts.md).
+- [Reading data](../../data-events/reading-data.md) · [Concurrency & conflicts](../../writing-operation/concurrency-conflicts.md).

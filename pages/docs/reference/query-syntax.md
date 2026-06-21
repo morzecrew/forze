@@ -177,7 +177,7 @@ sorts = {"created_at": "desc", "id": "asc"}
 ```
 
 The DSL has **no null-ordering control** (no `NULLS FIRST/LAST`). For
-[cursor pagination](../in-depth/reading-data.md) all keys must share one
+[cursor pagination](../data-events/reading-data.md) all keys must share one
 direction, and an `id` tie-breaker is appended automatically.
 
 ## Aggregates

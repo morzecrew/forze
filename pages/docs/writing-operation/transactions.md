@@ -50,7 +50,7 @@ matches; a port of a different kind runs outside it.
     Postgres write and a Redis write do **not**. When you need consistency
     *across* systems, you don't reach for a bigger transaction — you stage the
     cross-system effect and apply it after commit (see [below](#after-the-commit)
-    and [Events & sagas](events-sagas.md)).
+    and [Events & sagas](../data-events/events-sagas.md)).
 
 ## Two-phase handlers: work before the write
 
@@ -142,7 +142,7 @@ to carry it.
 SERIALIZABLE` — and each adapter maps it to its backend's spelling. The mock
 honors all three through an in-memory MVCC overlay (it rejects the write-write,
 write-skew, and phantom conflicts the level forbids), so an isolation-dependent
-bug is catchable in a unit test or under [simulation](deterministic-simulation.md).
+bug is catchable in a unit test or under [simulation](../dst/overview.md).
 
 ## After the commit
 
@@ -159,7 +159,7 @@ commits successfully. Outside any transaction, it runs immediately. This single
 mechanism is the foundation of the transactional outbox — covered next.
 
 Deferred work is also **cancellation-protected**: a client disconnect or a
-[deadline](deadlines.md) expiring between the commit and the deferred
+[deadline](../running-in-prod/deadlines.md) expiring between the commit and the deferred
 callbacks can't skip them — they run to completion, then the cancellation
 re-raises. A committed transaction is never left half-announced.
 
@@ -170,7 +170,7 @@ Each write records an undo, and an aborted transaction replays its journal in
 reverse — undoing *only its own* writes. So a "forgot to run it in the same
 transaction" bug fails in tests exactly as it would in production, and because
 nothing restores a global snapshot, concurrent transactions still interleave
-freely — the basis [simulation](deterministic-simulation.md) needs.
+freely — the basis [simulation](../dst/overview.md) needs.
 
 Rollback covers exactly what a database transaction would:
 

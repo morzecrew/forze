@@ -49,7 +49,7 @@ circuit breaker → retry → timeout), plus optional fallback and hedge:
 | Strategy | What it does |
 |----------|--------------|
 | **Rate limit** | token bucket — sustained `permits/per`, capacity `burst or permits`; an empty bucket **rejects immediately** with `throttled` |
-| **Retry** | re-run on a [retryable](errors.md) failure — `max_attempts`, `backoff` (base, max, multiplier, jitter) |
+| **Retry** | re-run on a [retryable](../writing-operation/errors.md) failure — `max_attempts`, `backoff` (base, max, multiplier, jitter) |
 | **Timeout** | a per-attempt timeout |
 | **Circuit breaker** | stop calling a failing dependency once a failure ratio trips, for a cool-off window |
 | **Adaptive throttle** | [shed proportionally](#shedding-for-a-degraded-downstream) when the downstream stops accepting — the breaker's sibling for degraded-but-alive dependencies |
@@ -58,7 +58,7 @@ circuit breaker → retry → timeout), plus optional fallback and hedge:
 
 Retry only fires on kinds that declare themselves **retryable** —
 `concurrency`, `infrastructure`, and `throttled` (see
-[Errors & failures](errors.md)). You can't retry a `validation` or `domain`
+[Errors & failures](../writing-operation/errors.md)). You can't retry a `validation` or `domain`
 failure, by design.
 
 When the invocation carries a [deadline](deadlines.md), it gates the whole

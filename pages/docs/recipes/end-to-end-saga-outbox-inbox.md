@@ -4,14 +4,14 @@ icon: lucide/workflow
 summary: Compose the whole stack — a saga orchestrates two aggregates, a domain event rides the outbox to a consumer, the inbox makes delivery exactly-once
 ---
 
-The individual pieces — [domain events](../in-depth/events-sagas.md),
+The individual pieces — [domain events](../data-events/events-sagas.md),
 the [outbox](transactional-outbox.md), sagas, the inbox — each solve one problem.
 This recipe puts them together in one runnable program: a checkout that reserves
 inventory, confirms an order, and ships it — reliably, across aggregates, with
 compensation if a step fails.
 
 The full program lives at `examples/recipes/order_fulfillment/` and runs in-process
-on the mock — no Docker. The [Events & sagas](../in-depth/events-sagas.md) chapter
+on the mock — no Docker. The [Events & sagas](../data-events/events-sagas.md) chapter
 explains *why* each piece works; this is the assembled flow.
 
 ## The aggregate announces a change

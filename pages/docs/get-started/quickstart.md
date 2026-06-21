@@ -95,7 +95,7 @@ calls an operation — the handlers never touch HTTP:
     When you call `ctx.document.query(user_spec)`, the execution context looks up
     which adapter was wired for the `"users"` specification. The route never learns
     whether that's Postgres, Mongo, or an in-memory fake — it just gets a document
-    port. The [Wiring](../in-depth/wiring.md) page explains the full resolution flow.
+    port. The [Wiring](../writing-operation/wiring.md) page explains the full resolution flow.
 
 `register_exception_handlers` maps a `CoreException` to a response, so a missing
 user comes back as a `404`. (Routes are hand-wired here to show the moving

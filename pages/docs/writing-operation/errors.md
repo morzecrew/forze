@@ -35,7 +35,7 @@ Every `CoreException` carries a `kind`, a human `summary`, a machine `code`
 | `configuration` | the app is wired wrong (a startup-time mistake) |
 | `infrastructure` | a backing system failed (transient) |
 | `throttled` | a rate limit rejected the call (transient — capacity refills) |
-| `timeout` | the invocation's [time budget](deadlines.md) ran out (final — the budget is spent) |
+| `timeout` | the invocation's [time budget](../running-in-prod/deadlines.md) ran out (final — the budget is spent) |
 | `internal` | an unexpected bug |
 
 ## Raising aborts the operation
@@ -60,7 +60,7 @@ Beyond its meaning, each kind has an **egress policy** with two booleans:
   `timeout` say no.)
 - **`retryable`** — is this transient? Only **`concurrency`**,
   **`infrastructure`**, and **`throttled`** are. This flag is what the
-  [resilience](resilience.md) retry policies key on — you can only retry a kind
+  [resilience](../running-in-prod/resilience.md) retry policies key on — you can only retry a kind
   that declares itself retryable. (`timeout` is deliberately *not* retryable:
   within one invocation the budget is spent; a fresh invocation carries a
   fresh deadline.)

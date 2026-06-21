@@ -14,7 +14,7 @@ Three distinct concerns, three distinct seams:
   application.
 
 Forze keeps them separate. The conceptual model is in
-[Identity & access](../in-depth/identity.md); this recipe is the wiring.
+[Identity & access](../identity-tenancy-enc/identity.md); this recipe is the wiring.
 
 ## The shape
 

@@ -27,7 +27,7 @@ pg = PostgresClient()
 ```
 
 Use `RoutedPostgresClient` when the tenant or route decides the DSN — see
-[Multi-tenancy](../in-depth/multi-tenancy.md).
+[Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).
 
 ## Wire it
 
@@ -77,4 +77,4 @@ lifecycle = LifecyclePlan.from_modules(
 - **Routed clients** require `introspector_cache_partition_key` on the deps
   module so the catalog cache partitions by tenant.
 - **Relations** can be static `(schema, table)` tuples or per-tenant resolvers —
-  see [Multi-tenancy](../in-depth/multi-tenancy.md).
+  see [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).

@@ -78,7 +78,7 @@ stay TTL-only by design.
 
 ## Fleet-wide resilience state
 
-Two builders turn the process-local [resilience](../in-depth/resilience.md)
+Two builders turn the process-local [resilience](../running-in-prod/resilience.md)
 state into shared, fleet-wide state:
 
 ```python
@@ -95,7 +95,7 @@ The breaker store makes an open circuit on one replica protect them all; the
 rate-limit store keeps the token bucket in a Redis hash mutated atomically by
 Lua on the **server clock**, so the declared `permits/per` is the fleet's rate
 (not per-replica). Both fail open to process-local state on a Redis error —
-see [Fleet-wide state](../in-depth/resilience.md#fleet-wide-state).
+see [Fleet-wide state](../running-in-prod/resilience.md#fleet-wide-state).
 
 ## Distributed locks and fencing
 

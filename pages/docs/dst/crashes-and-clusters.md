@@ -56,4 +56,4 @@ On a violation the cluster minimises by **dropping nodes** — the smallest clus
 
 A window's `loss` turns a clean cut into a **flaky link**: `Partition(start=0.5, end=1.5, isolated=frozenset({1}), loss=0.3)` drops 30 % of node 1's gated calls (seeded) instead of all of them, and overlapping windows on different node-groups give an **asymmetric** split. `loss=1.0` (the default) is the hard partition above.
 
-These scenarios generate large interleaving spaces — a crash can land at any matched boundary, a partition can strike at any point in its window. [Exploration strategies](dst-exploration.md) is how DST searches that space efficiently instead of by brute luck.
+These scenarios generate large interleaving spaces — a crash can land at any matched boundary, a partition can strike at any point in its window. [Exploration strategies](exploration.md) is how DST searches that space efficiently instead of by brute luck.

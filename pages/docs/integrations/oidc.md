@@ -47,7 +47,7 @@ Wire it onto a route via `AuthnDepsModule.token_verifiers` (the shipped
 
 - The verifier only proves the token; the **resolver** decides the principal —
   pair with `MappingTableResolver` (production SSO), `DeterministicUuidResolver`,
-  or `JwtNativeUuidResolver`. See [Identity & access](../in-depth/identity.md).
+  or `JwtNativeUuidResolver`. See [Identity & access](../identity-tenancy-enc/identity.md).
 - Forze logout does **not** revoke third-party access tokens — enforce
   eligibility instead.
 - `JwksKeyProvider`'s `cache_ttl` and `timeout` are `timedelta`s. Issuer and

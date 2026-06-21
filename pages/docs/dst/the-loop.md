@@ -120,11 +120,11 @@ report = replay_bundle(FailureBundle.load("bug.json"))   # reproduces, from one 
 
 DST is built from small, documented seams, so you extend it without forking. Everything plugs in as a plain callable or protocol:
 
-<div class="grid cards fz-cards" markdown>
+<div class="grid cards" markdown>
 
 -   :lucide-shield-check: **Invariants**
 
-    An `Invariant` is any `Callable[[History], list[Violation]]` — write a function, pass it in `invariants=`. The [built-ins](dst-invariants.md) are just factories returning one.
+    An `Invariant` is any `Callable[[History], list[Violation]]` — write a function, pass it in `invariants=`. The [built-ins](invariants.md) are just factories returning one.
 
 -   :lucide-shuffle: **Schedulers**
 
@@ -144,6 +144,6 @@ The `Simulation` class is a thin facade: `run` / `coverage` / `coverage_guided` 
 
 ## See also
 
-- [Testing](testing.md) — unit and integration testing with mocks
-- [Concurrency & conflicts](concurrency-conflicts.md) — the optimistic-concurrency model DST exercises
-- [Transactions](transactions.md) — why faithful rollback keeps DST findings trustworthy
+- [Testing](../running-in-prod/testing.md) — unit and integration testing with mocks
+- [Concurrency & conflicts](../writing-operation/concurrency-conflicts.md) — the optimistic-concurrency model DST exercises
+- [Transactions](../writing-operation/transactions.md) — why faithful rollback keeps DST findings trustworthy

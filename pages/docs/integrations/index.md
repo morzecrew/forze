@@ -8,7 +8,7 @@ Every integration is an optional package — `forze[postgres]`, `forze[redis]`,
 and so on — that implements Forze contracts for one backend. They share a common
 shape: a client and ports in `kernel/`, concrete `adapters/`, and `execution/`
 deps + lifecycle modules you wire exactly as shown in
-[Wiring](../in-depth/wiring.md). Your handlers never import them; they resolve
+[Wiring](../writing-operation/wiring.md). Your handlers never import them; they resolve
 ports from the context.
 
 Per-backend pages cover the specifics — configuration, schema expectations, and

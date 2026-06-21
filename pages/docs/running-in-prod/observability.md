@@ -70,7 +70,7 @@ never tripped reports no state at all — closed by absence.
 
 ## Tenant pool metrics
 
-[Routed clients](multi-tenancy.md) keep one connection pool per tenant in a
+[Routed clients](../identity-tenancy-enc/multi-tenancy.md) keep one connection pool per tenant in a
 bounded LRU, and evicting a pool is expensive — the next request rebuilds the
 connection from scratch. `instrument_tenant_pools` exports the churn
 counters:

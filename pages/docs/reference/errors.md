@@ -4,7 +4,7 @@ icon: lucide/triangle-alert
 summary: The exception kinds, their egress policy, and how to raise them
 ---
 
-The narrative is in [Errors & failures](../in-depth/errors.md); this is the
+The narrative is in [Errors & failures](../writing-operation/errors.md); this is the
 exhaustive surface — every `ExceptionKind`, how to raise it, and the egress
 policy each carries.
 
@@ -28,7 +28,7 @@ raise exc.conflict("Email already registered.", code="email_taken")
 
 Each kind has an **egress policy** with two flags: `expose_details` (are details
 safe to return to a caller?) and `retryable` (is the failure transient?). Only
-the retryable kinds may appear in a [resilience](../in-depth/resilience.md) retry
+the retryable kinds may appear in a [resilience](../running-in-prod/resilience.md) retry
 policy.
 
 | Kind | Meaning | Exposes details | Retryable | Default code |
@@ -44,7 +44,7 @@ policy.
 | `configuration` | the app is wired wrong | — | — | `core.configuration` |
 | `infrastructure` | a backing system failed | — | ✅ | `core.infrastructure` |
 | `throttled` | a rate limit rejected the call | — | ✅ | `core.throttled` |
-| `timeout` | the invocation's [time budget](../in-depth/deadlines.md) ran out | — | — | `core.timeout` |
+| `timeout` | the invocation's [time budget](../running-in-prod/deadlines.md) ran out | — | — | `core.timeout` |
 | `internal` | an unexpected bug | — | — | `core.internal` |
 
 ## Outcomes

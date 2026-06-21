@@ -247,4 +247,4 @@ your keyrings to `instrument_crypto` by label —
 `instrument_crypto({"default": keyring}, meter=meter)` — to see DEK generation,
 unwrap calls, cache hits, and cold misses, the signal for whether
 `max_dek_messages` is sized right for your traffic. See
-[Observability](observability.md) for the meter setup.
+[Observability](../running-in-prod/observability.md) for the meter setup.

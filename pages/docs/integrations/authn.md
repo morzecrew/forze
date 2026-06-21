@@ -6,7 +6,7 @@ summary: First-party authentication — passwords, tokens, and API keys
 
 `forze[authn]` is the built-in authentication stack — the `forze_identity.authn`
 plane. It implements the verify-then-resolve seam from [Identity &
-access](../in-depth/identity.md): password (Argon2), bearer-token (Forze JWT),
+access](../identity-tenancy-enc/identity.md): password (Argon2), bearer-token (Forze JWT),
 and API-key verifiers, paired with resolvers that map a `VerifiedAssertion` to a
 `UUID` principal.
 
@@ -36,7 +36,7 @@ deps = DepsRegistry.from_modules(
 )
 ```
 
-A route's [`AuthnSpec`](../in-depth/identity.md) selects verifiers and a resolver
+A route's [`AuthnSpec`](../identity-tenancy-enc/identity.md) selects verifiers and a resolver
 by profile name; override the defaults via `token_verifiers`, `resolvers`, etc.
 
 ## What it provides
@@ -56,5 +56,5 @@ by profile name; override the defaults via `token_verifiers`, `resolvers`, etc.
   mints first-party tokens.
 - Authorization is a sibling plane — `forze_identity.authz` (`AuthzDepsModule`).
 - The conceptual model (verify → resolve, resolver flavors) is in
-  [Identity & access](../in-depth/identity.md); this page is the wiring.
+  [Identity & access](../identity-tenancy-enc/identity.md); this page is the wiring.
 - For external IdPs, pair this with the [OIDC](oidc.md) verifier.

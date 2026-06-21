@@ -12,7 +12,7 @@ Two shapes of claim matter, and you need both. An **invariant** says a property 
 
 The generic `expect(kind, predicate, message=...)` covers most domain rules: it reads the facts your `observe` hook recorded and asserts a predicate over each. The built-ins go further — they read the engine trace *directly*, so they need no handler instrumentation at all:
 
-<div class="grid cards fz-cards" markdown>
+<div class="grid cards" markdown>
 
 -   :lucide-shield-alert: **`no_unexpected_error()`**
 
@@ -98,4 +98,4 @@ assert report.satisfied, report.format()   # a target no seed reached is a failu
 
 A declared target that *no* seed ever reaches is a reachability failure — the safety result was never tested against that case. `SimulationConfig(reachability_targets=...)` folds the same check into a `coverage()` sweep (the outcome rides on `CoverageStats.reachability`), and `sometimes(histories, predicate)` is the general per-sweep form over an arbitrary predicate.
 
-Invariants decide *whether* a run is a bug; the next step is making bugs likely — [inject the environment](dst-environment.md) a production system actually runs in.
+Invariants decide *whether* a run is a bug; the next step is making bugs likely — [inject the environment](environment.md) a production system actually runs in.

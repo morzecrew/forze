@@ -67,7 +67,7 @@ The sweep right-sizes itself instead of guessing a seed count, and a bug still b
 
 ## Confidence — make a green run mean something
 
-A clean sweep is the most dangerous thing DST prints, because it looks like safety. But "no violation" only proves what was *tried* — a sweep can pass every invariant while never driving the dangerous case, and then green is not safety, it is silence. This is the same trap [reachability](dst-invariants.md#what-must-sometimes-happen) guards against, turned on the sweep itself.
+A clean sweep is the most dangerous thing DST prints, because it looks like safety. But "no violation" only proves what was *tried* — a sweep can pass every invariant while never driving the dangerous case, and then green is not safety, it is silence. This is the same trap [reachability](invariants.md#what-must-sometimes-happen) guards against, turned on the sweep itself.
 
 `audit()` runs the full seed range and reports what it actually exercised:
 
@@ -129,4 +129,4 @@ print(result.format())   # seeds/s, behaviours, first violating seed
 
 The runner holds only a `module:attr` string and primitives, so it pickles across processes where a live `Simulation` could not — each worker re-imports the app and runs one seed.
 
-Every strategy here ends the same way: on a violation, with a minimized, reproducible report. [Find, reproduce, regress](dst-the-loop.md) is what you do with it.
+Every strategy here ends the same way: on a violation, with a minimized, reproducible report. [Find, reproduce, regress](the-loop.md) is what you do with it.

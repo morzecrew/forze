@@ -62,4 +62,4 @@ DST drives `confirm`, advances ten virtual minutes through the charge against a 
     in. The same seed replays the same errors at the same calls and the same delays at the same
     boundaries, so a found bug is a fixed input, not a probability.
 
-Faults and latency perturb a single running process. The next step removes the process entirely — [crashes and partitions](dst-crashes-and-clusters.md), where the runtime dies or the network splits.
+Faults and latency perturb a single running process. The next step removes the process entirely — [crashes and partitions](crashes-and-clusters.md), where the runtime dies or the network splits.

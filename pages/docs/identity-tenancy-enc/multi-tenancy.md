@@ -92,7 +92,7 @@ needs fixed names) skips these routes.
 
 A **routed client** resolves credentials per `TenantIdentity` and pools
 connections by fingerprint, so tenants that share an endpoint reuse pools. You
-swap it in at [wiring](wiring.md) time — `RoutedPostgresClient` for
+swap it in at [wiring](../writing-operation/wiring.md) time — `RoutedPostgresClient` for
 `PostgresClient` — and the specs and handlers don't change.
 
 !!! note "Postgres routed clients"

@@ -7,7 +7,7 @@ summary: Domain events, the transactional outbox, and sagas — turning local wr
 A confirmed order should reliably create a shipment — even though the order and
 the shipment live in different systems, even if the message is delivered twice,
 and even if a step fails partway. Forze builds that reliability from three
-pieces, all riding the after-commit deferral from [Transactions](transactions.md):
+pieces, all riding the after-commit deferral from [Transactions](../writing-operation/transactions.md):
 **domain events**, the **transactional outbox**, and **sagas**.
 
 We'll trace one worked example throughout — the
@@ -110,5 +110,5 @@ The same flow handles the cases that make event-driven systems hard:
 | **Pivot fails** (payment declined) | Inventory released, order stays `pending`, nothing staged, relayed, or shipped |
 
 The exactly-once behavior the inbox relies on is covered in
-[Idempotency](idempotency.md), and you can watch this whole flow run in the
+[Idempotency](../writing-operation/idempotency.md), and you can watch this whole flow run in the
 [end-to-end saga recipe](../recipes/end-to-end-saga-outbox-inbox.md).

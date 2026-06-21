@@ -42,7 +42,7 @@ if report is not None:
 
 `run` builds a meaningful workload from your operation catalog (an arrange→act scenario — `forze dst derive` prints it), runs it under perturbed interleavings, and checks the invariants. On the first violating seed it **minimises** the workload to a 1-minimal set that still fails and returns a `ViolationReport`; a clean sweep returns `None`. There is nothing to assert about *how* — point it at the app and go.
 
-Reach for a preset instead of hand-tuning the config — `SimulationConfig.quick()` while iterating, `.thorough()` before you ship (see [Exploration strategies](dst-exploration.md#presets-dial-intensity-in-one-call)).
+Reach for a preset instead of hand-tuning the config — `SimulationConfig.quick()` while iterating, `.thorough()` before you ship (see [Exploration strategies](exploration.md#presets-dial-intensity-in-one-call)).
 
 The app under test here is ordinary Forze code. `pay_order` charges, then flips the order to paid — but it charges *before* the optimistic-concurrency-guarded transition, so two concurrent payments both charge:
 
@@ -57,7 +57,7 @@ DST finds the race, shrinks it to **two** contending payments, and reports the s
     DST trusts that the in-memory transaction manager rolls back faithfully. The default
     (`MockDepsModule(transactions="journal")`) is atomic without serialising, so a found
     race is real. The legacy no-op manager would report *false* double-charges — see
-    [Transactions](transactions.md).
+    [Transactions](../writing-operation/transactions.md).
 
 ## What DST gives you
 
@@ -65,23 +65,23 @@ The harness is one small facade — `run`, `coverage`, `coverage_guided` — ove
 
 <div class="grid cards fz-cards" markdown>
 
--   :lucide-shield-check: **[Invariants & reachability](dst-invariants.md)**
+-   :lucide-shield-check: **[Invariants & reachability](invariants.md)**
 
     What must *always* hold (the assertion toolkit) and what must *sometimes* happen (prove the dangerous interleaving actually fired).
 
--   :lucide-bug: **[Faults, latency & time](dst-environment.md)**
+-   :lucide-bug: **[Faults, latency & time](environment.md)**
 
     Inject the environment a production system hits — transient errors, timeouts, heavy-tailed latency — and fast-forward virtual time to catch time-dependent bugs.
 
--   :lucide-power-off: **[Crashes & partitions](dst-crashes-and-clusters.md)**
+-   :lucide-power-off: **[Crashes & partitions](crashes-and-clusters.md)**
 
     The harder failure modes: kill the process mid-flush and restart over the persisted store, or split *N* real runtimes apart with a network partition.
 
--   :lucide-radar: **[Exploration strategies](dst-exploration.md)**
+-   :lucide-radar: **[Exploration strategies](exploration.md)**
 
     How `run` searches the interleaving space — the schedulers, coverage-plateau sweeps, and the feedback-directed fuzzer that hunts new behaviour.
 
--   :lucide-repeat: **[Find, reproduce, regress](dst-the-loop.md)**
+-   :lucide-repeat: **[Find, reproduce, regress](the-loop.md)**
 
     The day-to-day loop: run it in your pytest suite, read the counterexample, lock the seed into a regression corpus, and carry a bug to another machine.
 
@@ -99,4 +99,4 @@ DST is judged by the bugs it finds in *real* systems — so Forze runs its own d
 
 Each scenario also keeps a *broken* twin — drop the lock, ignore the remote stamp — that the oracle catches, minimises, and reproduces, so the test proves it can still fail. That is the bar: the framework's own concurrency code is continuously simulation-tested, and app authors inherit the same harness for free.
 
-Start with [what must hold](dst-invariants.md) — invariants are the lens through which every other capability reports a bug.
+Start with [what must hold](invariants.md) — invariants are the lens through which every other capability reports a bug.
