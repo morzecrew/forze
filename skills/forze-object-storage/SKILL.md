@@ -81,7 +81,7 @@ Storage spreads across three ports:
 - **`StorageCommandPort`** — `ctx.storage.command(spec)` — `upload`, `delete`, `copy`, `move`, `put_object_tags`, `presign_upload`.
 - **`StorageUploadSessionPort`** — `ctx.storage.uploads(spec)` — the multipart session ops `begin_upload`, `presign_part`, `list_parts`, `complete_upload`, `abort_upload`.
 
-After a presigned/direct upload (where the app never sees the bytes), use `head` to confirm the object actually landed before recording it.
+After a presigned/direct upload (where the app never sees the bytes), confirm the object landed with `ctx.storage.query(spec).head(...)` before recording it — `head` is a port call, not a facade method.
 
 **Standalone object operations (driving code)** — drive a frozen storage registry through a **`StorageFacade`**, or project it onto FastAPI with `attach_storage_routes` (see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md)):
 
@@ -94,6 +94,8 @@ files = StorageFacade(ctx=ctx, registry=storage_registry, namespace=attachments_
 # direct & resumable uploads: presign_download / presign_upload / begin_upload /
 #   presign_part / list_parts (resume) / complete_upload / abort_upload (cleanup)
 ```
+
+The facade stops there. The remaining port operations — `head`, `download_range`, `download_if_changed` (query) and `copy`, `move`, `put_object_tags` (command) — have no facade method; reach them through `ctx.storage.query(spec)` / `ctx.storage.command(spec)`.
 
 **Inside a custom handler** — when an upload is one step of a domain operation, resolve the port directly in the factory:
 
