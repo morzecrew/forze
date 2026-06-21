@@ -14,6 +14,7 @@ consequence and would be unrealistic to drive standalone.
 
 from __future__ import annotations
 
+from functools import cached_property
 from typing import Mapping, final
 
 import attrs
@@ -34,7 +35,7 @@ class ReactiveMap:
 
     # ....................... #
 
-    @property
+    @cached_property
     def reactive_ops(self) -> frozenset[str]:
         """Every operation that is triggered as a cascade of some other operation."""
 

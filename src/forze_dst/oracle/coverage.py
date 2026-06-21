@@ -15,6 +15,7 @@ behavior is still appearing), and report which seeds mattered.
 from __future__ import annotations
 
 import hashlib
+from functools import cached_property
 from typing import TYPE_CHECKING, final
 
 import attrs
@@ -160,7 +161,7 @@ class CoverageStats:
 
     # ....................... #
 
-    @property
+    @cached_property
     def productive_seeds(self) -> tuple[int, ...]:
         """The seeds that each added at least one new behavior — the ones worth keeping."""
 

@@ -15,6 +15,7 @@ for the overlap relation and the injected-environment timeline for what actually
 
 from __future__ import annotations
 
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Iterable, final
 
 import attrs
@@ -70,7 +71,7 @@ class ConfidenceReport:
 
     # ....................... #
 
-    @property
+    @cached_property
     def never_raced(self) -> tuple[str, ...]:
         """Operations that ran but never overlapped another — their concurrency was untested."""
 
@@ -79,7 +80,7 @@ class ConfidenceReport:
 
     # ....................... #
 
-    @property
+    @cached_property
     def faults_never_fired(self) -> tuple[str, ...]:
         """Declared fault rules that no seed ever triggered — that failure path was unexercised."""
 
@@ -88,7 +89,7 @@ class ConfidenceReport:
 
     # ....................... #
 
-    @property
+    @cached_property
     def warnings(self) -> tuple[str, ...]:
         """Human one-liners for each confidence gap (empty when the sweep left none)."""
 
