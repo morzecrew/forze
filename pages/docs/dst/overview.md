@@ -59,6 +59,15 @@ DST finds the race, shrinks it to **two** contending payments, and reports the s
     race is real. The legacy no-op manager would report *false* double-charges — see
     [Transactions](../writing-operation/transactions.md).
 
+!!! warning "DST sees the ports, not the database"
+
+    DST exercises your handlers over the **ports**. Logic that lives *below* a port — database
+    triggers, generated columns, `CHECK` constraints, cascade deletes, `LISTEN`/`NOTIFY` flows —
+    the mock doesn't have, so the simulation can't run it. Worse, an invariant a trigger
+    *maintains* (a trigger-kept running total, say) will **false-positive** under the mock, which
+    writes the rows but never fires the trigger. Keep invariant logic above the port to simulate
+    it, or cover the database-level logic with an integration test against the real database.
+
 ## What DST gives you
 
 The harness is one small facade — `run`, `coverage`, `coverage_guided` — over a layered engine. Each page below takes one capability from "I pointed it at my app" to "I understand and can operate it":

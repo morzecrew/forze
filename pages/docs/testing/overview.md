@@ -38,9 +38,13 @@ The default journal mode is atomic *without* serializing, so concurrent transact
 
 A handler reads `ctx.authn` / `ctx.tenancy` from the identity plane, resolved during operation execution — not from a value you set by hand. To test such a handler, wire the mock's identity stubs and drive the authn flow (seed an account, authenticate) rather than constructing an identity directly. See [Identity](../identity-tenancy-enc/identity.md) and the [authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md) for the wiring.
 
+## What the mock can't model
+
+The mock is faithful at the **port** boundary, but logic that lives *below* a port is not in it. If your app leans on database triggers, generated columns, `CHECK` constraints, cascade deletes, or `LISTEN`/`NOTIFY` — efficient, native, but invisible to the app — a mock-based test can't run it, and an invariant a trigger maintains will even *false-pass or false-fail* because the mock writes the rows but never fires the trigger. That logic belongs in an integration test against the real database (below). Keeping invariant logic above the port is what keeps it portable across adapters and testable without one.
+
 ## Integration testing with testcontainers
 
-For tests that need real infrastructure, use testcontainers to spin up ephemeral databases:
+For tests that need real infrastructure — or to exercise database-level logic the mock can't model — use testcontainers to spin up ephemeral databases:
 
 ```python
 import pytest
