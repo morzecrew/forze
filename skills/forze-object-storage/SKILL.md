@@ -90,9 +90,10 @@ from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 
 storage_registry = build_storage_registry(attachments_spec).freeze()
 files = StorageFacade(ctx=ctx, registry=storage_registry, namespace=attachments_spec.default_namespace)
-# files.upload(...) / files.download(...) / files.list(...) / files.delete(...)
-# direct & resumable uploads: presign_download / presign_upload / begin_upload /
-#   presign_part / list_parts (resume) / complete_upload / abort_upload (cleanup)
+# each method takes its request DTO from forze_kits.aggregates.storage, e.g.
+# files.upload(UploadObjectRequestDTO(...)) / files.list(ListObjectsRequestDTO(...))
+# multipart: begin_upload(BeginUploadRequestDTO) / presign_part(PresignPartRequestDTO) /
+#   list_parts + abort_upload(UploadSessionRequestDTO) / complete_upload(CompleteUploadRequestDTO)
 ```
 
 The facade stops there. The remaining port operations — `head`, `download_range`, `download_if_changed` (query) and `copy`, `move`, `put_object_tags` (command) — have no facade method; reach them through `ctx.storage.query(spec)` / `ctx.storage.command(spec)`.

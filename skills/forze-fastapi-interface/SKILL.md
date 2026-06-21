@@ -73,8 +73,9 @@ app.include_router(router)
   `PATCH /{id}?rev=`, `DELETE /{id}` 204); `style="rpc"` keeps one
   operation-named path per op and puts the id in a query parameter
   (`GET /get?id=`, `PATCH /update?id=&rev=` with the patch body,
-  `DELETE /kill?id=` 204). `create` and list operations are `POST /<op>` with
-  the input DTO as body in both styles (no id to address).
+  `DELETE /kill?id=` 204). List operations are `POST /<op>` with a filter body
+  in both styles. `create` also posts its input DTO as a body, but mounts at the
+  router root in REST (`POST ""`, 201) and at `POST /create` in RPC.
 - Only operations the registry holds are attached (a read-only spec yields a
   read-only router); narrow with `include={"get", "list"}`.
 - Merging `build_soft_deletion_registry(spec)` into the document registry adds
