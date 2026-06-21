@@ -52,7 +52,7 @@ class MongoAtlasEngine:
 
     def __attrs_post_init__(self) -> None:
         if not self.index_name:
-            raise exc.internal("index_name is required for atlas engine.")
+            raise exc.configuration("index_name is required for atlas engine.")
 
 
 # ....................... #
@@ -78,16 +78,16 @@ class MongoVectorEngine:
 
     def __attrs_post_init__(self) -> None:
         if not self.index_name:
-            raise exc.internal("index_name is required for vector engine.")
+            raise exc.configuration("index_name is required for vector engine.")
 
         if not self.vector_path:
-            raise exc.internal("vector_path is required for vector engine.")
+            raise exc.configuration("vector_path is required for vector engine.")
 
         if not self.embeddings_name:
-            raise exc.internal("embeddings_name is required for vector engine.")
+            raise exc.configuration("embeddings_name is required for vector engine.")
 
         if self.dimensions < 1:
-            raise exc.internal("embedding_dimensions must be at least 1.")
+            raise exc.configuration("embedding_dimensions must be at least 1.")
 
 
 # ....................... #
@@ -114,17 +114,17 @@ def _coerce_mongo_engine_spec(
         return MongoTextEngine()
 
     if value == "atlas":
-        raise exc.internal(
+        raise exc.configuration(
             "engine='atlas' requires an index; pass engine=MongoAtlasEngine(index_name=...).",
         )
 
     if value == "vector":
-        raise exc.internal(
+        raise exc.configuration(
             "engine='vector' requires fields; pass engine=MongoVectorEngine("
             "index_name=..., vector_path=..., embeddings_name=..., dimensions=...).",
         )
 
-    raise exc.internal(f"Unknown Mongo search engine: {value!r}")
+    raise exc.configuration(f"Unknown Mongo search engine: {value!r}")
 
 
 # ----------------------- #
@@ -201,6 +201,6 @@ class MongoSearchConfig(TenantAwareIntegrationConfig):
 
         for key in self.field_map:
             if key not in spec.fields:
-                raise exc.internal(
+                raise exc.configuration(
                     f"field_map key {key!r} is not in SearchSpec.fields for {spec.name!r}."
                 )

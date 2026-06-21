@@ -1,7 +1,6 @@
 """Aggregate expression parsing and validation."""
 
 import re
-from functools import cached_property
 from typing import Any, Literal, Mapping, cast, get_args
 
 import attrs
@@ -149,7 +148,7 @@ class ParsedAggregates:
 
     # ....................... #
 
-    @cached_property
+    @property
     def aliases(self) -> frozenset[str]:
         """All output aliases declared by the expression."""
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.application.contracts.search import Rrf
+from forze.base.exceptions import CoreException
 from forze_postgres.execution.deps.configs import (
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegSearch,
@@ -45,3 +46,9 @@ def test_custom_rrf_shims() -> None:
     )
     assert cfg.rrf_k == 10
     assert cfg.rrf_per_leg_limit == 250
+
+
+@pytest.mark.parametrize("kwargs", [{"k": 0}, {"k": -1}, {"per_leg_limit": 0}])
+def test_rrf_rejects_invalid_settings(kwargs: dict[str, int]) -> None:
+    with pytest.raises(CoreException):
+        Rrf(**kwargs)

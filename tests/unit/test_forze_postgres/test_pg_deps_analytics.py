@@ -101,3 +101,10 @@ def test_outbox_route_is_validated_against_isolation_floor() -> None:
                 ),
             },
         )
+
+
+def test_ingest_coerces_raw_relation_tuple() -> None:
+    # The natural migration from the old ingest_relation=(...) must not crash:
+    # a raw relation spec is coerced into an IngestSpec.
+    config = PostgresAnalyticsConfig(queries={}, ingest=("public", "events"))
+    assert config.resolved_ingest_relation() == ("public", "events")

@@ -162,7 +162,7 @@ class TestScopeCpuExecutor:
             assert await run_cpu(lambda: 6 * 7) == 42
 
     @pytest.mark.asyncio
-    async def test_scope_closes_executor_and_restores_default_on_exit(self) -> None:
+    async def test_scope_does_not_close_caller_owned_executor(self) -> None:
         from forze.base.primitives import ThreadPoolCpuExecutor, current_cpu_executor, run_cpu
 
         ex = ThreadPoolCpuExecutor(max_workers=2)
@@ -172,9 +172,11 @@ class TestScopeCpuExecutor:
             await run_cpu(lambda: None)  # force the pool to materialize
             assert ex._pool is not None
 
-        # Pool drained/closed and the ambient binding restored to the default.
-        assert ex._pool is None
+        # The caller owns the executor: the runtime binds it but must NOT close it;
+        # only the ambient binding is restored to the default.
+        assert ex._pool is not None
         assert current_cpu_executor() is not ex
+        ex.close()  # caller cleans up
 
     @pytest.mark.asyncio
     async def test_no_executor_leaves_ambient_default_untouched(self) -> None:

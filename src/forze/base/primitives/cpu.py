@@ -235,7 +235,13 @@ async def run_cpu[T](
     """
 
     bound = functools.partial(fn, *args, **kwargs)
-    label = getattr(fn, "__qualname__", None)  # call-site id for simulation cost models
+
+    # Call-site id for simulation cost models; unwrap partials so a partial-wrapped
+    # callable still resolves to its underlying function name.
+    target: object = fn
+    while isinstance(target, functools.partial):
+        target = target.func
+    label = getattr(target, "__qualname__", None)
     token = CancelToken()
 
     ctx = copy_context()

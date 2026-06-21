@@ -70,6 +70,25 @@ class TestRunCpu:
         assert await run_cpu(read_probe) == "tenant-A"
 
 
+class TestLabel:
+    async def test_label_unwraps_partial(self) -> None:
+        # The simulation cost-model label must survive a functools.partial wrapper.
+        import functools
+
+        captured: dict[str, str | None] = {}
+
+        class _LabelCapture:
+            async def run(self, fn, *, label=None):  # type: ignore[no-untyped-def]
+                captured["label"] = label
+                return fn()
+
+        with bind_cpu_executor(_LabelCapture()):  # type: ignore[arg-type]
+            await run_cpu(functools.partial(_double), 5)
+
+        assert captured["label"] is not None
+        assert captured["label"].endswith("_double")
+
+
 class TestBindCpuExecutor:
     async def test_binds_and_restores(self) -> None:
         before = current_cpu_executor()

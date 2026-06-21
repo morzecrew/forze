@@ -111,9 +111,11 @@ class ExecutionRuntime:
     """Optional CPU-offload executor (see :func:`~forze.base.primitives.run_cpu`).
 
     ``None`` (default) uses the process-wide default pool — zero config, cleaned up
-    at interpreter exit. Pass a ``ThreadPoolCpuExecutor(max_workers=…)`` to size and
-    scope-manage the pool: it is bound as the ambient ``run_cpu`` executor for this
-    scope's startup, body, and shutdown, then closed (drained) when the scope exits.
+    at interpreter exit. Pass a ``ThreadPoolCpuExecutor(max_workers=…)`` to size the
+    pool ``run_cpu`` uses within this scope: it is bound as the ambient executor for
+    the scope's startup, body, and shutdown. The runtime does **not** close it — the
+    caller owns its lifecycle (close it yourself, or let it clean up at process exit;
+    register a shutdown hook to drain it on teardown).
     """
 
     # ....................... #
@@ -285,29 +287,21 @@ class ExecutionRuntime:
         self.create_context()
 
         # Bind the scope's CPU-offload executor (if any) for startup, body, and
-        # shutdown, then close it after teardown so the pool drains with the scope.
+        # shutdown. The caller owns its lifecycle — the runtime never closes it.
         bind = (
             bind_cpu_executor(self.cpu_executor)
             if self.cpu_executor is not None
             else nullcontext()
         )
 
-        try:
-            with bind:
-                try:
-                    await self.startup()
+        with bind:
+            try:
+                await self.startup()
 
-                    yield
+                yield
 
-                finally:
-                    logger.info("Leaving execution runtime scope")
-                    await self.shutdown()
-
-        finally:
-            if self.cpu_executor is not None:
-                close = getattr(self.cpu_executor, "close", None)
-
-                if callable(close):
-                    close()
+            finally:
+                logger.info("Leaving execution runtime scope")
+                await self.shutdown()
 
         logger.info("Execution runtime scope exited")

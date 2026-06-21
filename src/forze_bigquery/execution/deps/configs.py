@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 import attrs
 
-from forze.application.contracts.analytics import IngestSpec
+from forze.application.contracts.analytics import IngestSpec, coerce_optional_ingest
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     coerce_optional_named_resource_spec,
@@ -73,7 +73,10 @@ class BigQueryAnalyticsConfig(TenantAwareIntegrationConfig):
     fully-qualify its tables — the prior behavior).
     """
 
-    ingest: IngestSpec | None = None
+    ingest: IngestSpec | None = attrs.field(
+        default=None,
+        converter=coerce_optional_ingest,
+    )
     """Append-only ingest target ``(dataset, table)`` or tenant resolver (relation-level isolation)."""
 
     insert_id_field: str | None = None

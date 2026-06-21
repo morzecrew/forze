@@ -26,6 +26,22 @@ class IngestSpec:
 # ....................... #
 
 
+def coerce_optional_ingest(value: object) -> "IngestSpec | None":
+    """Coerce a config ``ingest=`` value to an :class:`IngestSpec`.
+
+    Passes ``None`` and existing :class:`IngestSpec` through; wraps a raw relation spec
+    (``(namespace, table)`` tuple or resolver) so ``ingest=("public", "events")`` works.
+    """
+
+    if value is None or isinstance(value, IngestSpec):
+        return value
+
+    return IngestSpec(value)  # type: ignore[arg-type]
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AnalyticsAppendResult:
     """Result of an append-only analytics ingest batch."""

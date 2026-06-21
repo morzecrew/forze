@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 import attrs
 
-from forze.application.contracts.analytics import IngestSpec
+from forze.application.contracts.analytics import IngestSpec, coerce_optional_ingest
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     coerce_optional_named_resource_spec,
@@ -59,7 +59,10 @@ class PostgresAnalyticsConfig(TenantAwareIntegrationConfig):
     )
     """Named queries; keys must match ``AnalyticsSpec.queries``."""
 
-    ingest: IngestSpec | None = None
+    ingest: IngestSpec | None = attrs.field(
+        default=None,
+        converter=coerce_optional_ingest,
+    )
     """Append-only ingest target ``(schema, table)`` or tenant resolver (relation-level isolation)."""
 
     query_schema: NamedResourceSpec | None = attrs.field(
