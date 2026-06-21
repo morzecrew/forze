@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **HTTP status mapping in core** — `http_status_for_kind(kind)` in `forze.base.exceptions` maps an `ExceptionKind` to its conventional HTTP status (404/409/422/…, else 500), so any HTTP-serving layer can reuse it. FastAPI's response builder now uses this shared helper instead of a private one.
+
 - **Materialized derived fields** — `DocumentSpec(materialized=…)` persists selected computed fields as real columns, making them filterable and sortable. Names are validated, create/update collisions are rejected, and startup checks require matching columns.
 
 - **Two-phase prepare/apply handlers** — `prepare(args)` runs outside the transaction (CPU or external work) and `apply(args, payload)` inside it, so the transaction wraps only the writes. Adds the `TwoPhaseHandler` contract and a kit base; a tx route is required and `prepare` is read-only.

@@ -10,7 +10,11 @@ from typing import Final
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from forze.base.exceptions import CoreException, ExceptionKind, exception_egress_policy
+from forze.base.exceptions import (
+    CoreException,
+    exception_egress_policy,
+    http_status_for_kind,
+)
 from forze.base.logging import Logger
 from forze.base.scrubbing import sanitize
 from forze_fastapi._logging import ForzeFastAPILogger
@@ -25,44 +29,6 @@ GENERIC_500_DETAIL: Final[str] = "Internal server error"
 
 error_logger = Logger(ForzeFastAPILogger.ERRORS)
 """Logger for FastAPI server-side error diagnostics."""
-
-# ....................... #
-
-
-def _status_code_mapper(kind: ExceptionKind) -> int:
-    """Map a :class:`exc.internal` subclass to the appropriate HTTP status code."""
-
-    match kind:
-        case ExceptionKind.NOT_FOUND:
-            return 404
-
-        case ExceptionKind.CONFLICT:
-            return 409
-
-        case ExceptionKind.VALIDATION:
-            return 422
-
-        case ExceptionKind.DOMAIN:
-            return 400
-
-        case ExceptionKind.PRECONDITION:
-            return 400
-
-        case ExceptionKind.AUTHENTICATION:
-            return 401
-
-        case ExceptionKind.AUTHORIZATION:
-            return 403
-
-        case ExceptionKind.THROTTLED:
-            return 429
-
-        case ExceptionKind.TIMEOUT:
-            return 504
-
-        case _:
-            return 500
-
 
 # ....................... #
 
@@ -103,7 +69,7 @@ def build_core_exception_response(exc: CoreException) -> JSONResponse:
     """
 
     policy = exception_egress_policy(exc.kind)
-    status_code = _status_code_mapper(exc.kind)
+    status_code = http_status_for_kind(exc.kind)
 
     if status_code >= 500:
         _log_server_error(exc, core=exc)
