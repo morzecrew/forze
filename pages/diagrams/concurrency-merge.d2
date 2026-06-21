@@ -1,0 +1,88 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+write: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### update(id, rev, patch)
+        `rev` = the revision you read
+    |
+}
+
+cmp: {
+    shape: diamond
+    label: "expected rev\nvs stored rev"
+}
+
+match: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: |md
+        ### Match
+        apply + bump `rev`
+    |
+}
+
+merge: {
+    shape: diamond
+    label: "three-way merge\nat your revision"
+}
+
+disjoint: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: |md
+        ### Disjoint fields
+        merge through
+    |
+}
+
+conflict: {
+    shape: rectangle
+    style: {
+        stroke: "#e65100"
+        stroke-width: 2
+    }
+    label: |md
+        ### Same fields
+        `exc.conflict`
+    |
+}
+
+stale: {
+    shape: rectangle
+    style: {
+        stroke: "#e65100"
+        stroke-width: 2
+    }
+    label: |md
+        ### Future / unknown rev
+        `exc.precondition` — re-read
+    |
+}
+
+write -> cmp
+cmp -> match: equal
+cmp -> merge: differ
+cmp -> stale: ahead / missing
+merge -> disjoint: disjoint
+merge -> conflict: overlap

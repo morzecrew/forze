@@ -20,8 +20,10 @@ from forze_kits.aggregates.document import (
     DocumentDTOs,
     DocumentFacade,
     DocumentIdDTO,
+    ListRequestDTO,
     build_document_registry,
 )
+from forze_kits.dto import Paginated
 from forze_mock import MockDepsModule
 
 
@@ -97,9 +99,8 @@ async def get_user(user_id: UUID) -> ReadUser:
 
 
 @app.get("/users")
-async def list_users() -> list[ReadUser]:
-    page = await runtime.get_context().document.query(user_spec).find_many()
-    return list(page.hits)
+async def list_users(page: int = 1, size: int = 10) -> Paginated[ReadUser]:
+    return await users().list(ListRequestDTO(page=page, size=size))
 
 
 @app.delete("/users/{user_id}", status_code=204)

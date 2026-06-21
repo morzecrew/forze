@@ -6,6 +6,9 @@ summary: Declare the environment a production system runs in — transient error
 
 A handler that passes every happy-path test still meets a hostile world in production: downstreams error, calls time out, the slow tail of a latency distribution lands mid-transaction. DST lets you declare that environment as data on the config, and applies it at the **port boundary** — over any resolved port, seeded from the master seed, with the app untouched. The handler makes its ordinary `await` port calls; the simulator decides what happens at each one.
 
+![The handler makes an ordinary port call; the simulator, seeded, either injects a fault or delays virtual time before passing through to the real port over the mock store](../_diagrams/light/dst-port-boundary.svg#only-light){ data-src="../_diagrams/light/dst-port-boundary.svg#only-light" }
+![The handler makes an ordinary port call; the simulator, seeded, either injects a fault or delays virtual time before passing through to the real port over the mock store](../_diagrams/dark/dst-port-boundary.svg#only-dark){ data-src="../_diagrams/dark/dst-port-boundary.svg#only-dark" }
+
 ## Faults
 
 A `FaultPolicy` is a set of rules, each matching `(surface, route, op)` and rolling — per matched call — one of the failure behaviours. Declare it on the config and every matching port call becomes a place a fault can strike:

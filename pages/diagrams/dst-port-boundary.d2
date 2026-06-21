@@ -1,0 +1,65 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: right
+
+handler: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### Handler
+        ordinary `await` port call
+    |
+}
+
+sim: {
+    shape: diamond
+    label: "simulator rolls\n(seeded)"
+}
+
+fault: {
+    shape: rectangle
+    style: {
+        stroke: "#e65100"
+        stroke-width: 2
+    }
+    label: |md
+        ### Fault
+        error · timeout · drop · duplicate
+    |
+}
+
+latency: {
+    shape: rectangle
+    label: |md
+        ### Delay
+        advance the virtual clock
+    |
+}
+
+port: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: |md
+        ### Real port
+        over the mock store
+    |
+}
+
+handler -> sim: call
+sim -> fault: strike
+sim -> latency: pass
+latency -> port

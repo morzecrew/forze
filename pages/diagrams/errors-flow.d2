@@ -1,0 +1,72 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+raise: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### Handler raises
+        a typed `CoreException`, by kind
+    |
+}
+
+abort: {
+    shape: rectangle
+    label: |md
+        ### Operation aborts
+        tx rolls back · deferred work skipped
+    |
+}
+
+hooks: {
+    shape: rectangle
+    label: |md
+        ### Stage hooks observe
+        `finally_` / `on_failure` — can't swallow
+    |
+}
+
+edge: {
+    shape: diamond
+    label: "egress policy\nexpose_details?"
+}
+
+shown: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: |md
+        ### details → caller
+        validation, domain, conflict …
+    |
+}
+
+hidden: {
+    shape: rectangle
+    style: {
+        stroke: "#e65100"
+        stroke-width: 2
+    }
+    label: |md
+        ### logged server-side
+        internal, auth, infrastructure …
+    |
+}
+
+raise -> abort -> hooks -> edge
+edge -> shown: "yes"
+edge -> hidden: "no"

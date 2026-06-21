@@ -4,9 +4,12 @@ icon: lucide/shield-check
 summary: Declare what must always hold (the invariant toolkit) and what must sometimes happen (reachability) — DST reads them off the recorded run, no handler instrumentation
 ---
 
-An invariant is the question DST asks of every run: *did this property survive the interleaving?* It reads the recorded history and returns the violations it found — an empty list means the run held. You pass invariants when you build the `Simulation`, and every strategy in the harness checks against the same set.
+DST drives your app through thousands of hostile interleavings — concurrent writes, injected faults, reordered effects. The question that's left is the one that matters: through all of that, did your app stay correct? Invariants are how you answer it.
 
-Two shapes of claim matter, and you need both. An **invariant** says a property must *always* hold. A **reachability target** says a state must *sometimes* be reached. A sweep that runs ten thousand seeds and never drives the dangerous interleaving proves nothing — a green invariant over a fault that never bit is false confidence. This page covers both.
+Two shapes of claim matter, and you need both. An **invariant** says a property must *always* hold — *did this survive the interleaving?* A **reachability target** says a state must *sometimes* be reached, because a sweep that runs ten thousand seeds and never drives the dangerous interleaving proves nothing — a green invariant over a fault that never bit is false confidence. You pass both when you build the `Simulation`, and every strategy in the harness checks the same set, reading them off the recorded history — an empty result means the run held, with no handler instrumentation required. This page covers both.
+
+![DST checks each recorded run against invariants that must always hold and reachability targets that must sometimes fire; only when both are green is the confidence real](../_diagrams/light/dst-invariants.svg#only-light){ data-src="../_diagrams/light/dst-invariants.svg#only-light" }
+![DST checks each recorded run against invariants that must always hold and reachability targets that must sometimes fire; only when both are green is the confidence real](../_diagrams/dark/dst-invariants.svg#only-dark){ data-src="../_diagrams/dark/dst-invariants.svg#only-dark" }
 
 ## What must always hold
 

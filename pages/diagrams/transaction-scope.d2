@@ -1,0 +1,61 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+read: {
+    shape: rectangle
+    label: |md
+        ### Read / prepare
+        queries, external calls — no tx held
+    |
+}
+
+tx: {
+    label: "Transaction scope — begins at the first query"
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+
+    w1: {
+        shape: rectangle
+        label: "write document"
+    }
+    w2: {
+        shape: rectangle
+        label: "stage outbox event"
+    }
+    w1 -> w2
+}
+
+commit: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: "Commit — all or nothing"
+}
+
+after: {
+    shape: rectangle
+    style: {
+        stroke-dash: 3
+    }
+    label: |md
+        ### After commit
+        deferred work runs — publish, notify
+    |
+}
+
+read -> tx.w1: "first query opens tx"
+tx.w2 -> commit
+commit -> after: "only on success"

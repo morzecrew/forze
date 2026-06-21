@@ -9,6 +9,9 @@ raises a `CoreException`; its kind says *what* went wrong; the operation aborts
 and its transaction rolls back; and the edge turns it into a response. One model,
 end to end.
 
+![A handler raises a typed CoreException; the operation aborts and its transaction rolls back, stage hooks observe the failure without swallowing it, and the edge exposes details or logs them server-side by the kind's egress policy](../_diagrams/light/errors-flow.svg#only-light){ data-src="../_diagrams/light/errors-flow.svg#only-light" }
+![A handler raises a typed CoreException; the operation aborts and its transaction rolls back, stage hooks observe the failure without swallowing it, and the edge exposes details or logs them server-side by the kind's egress policy](../_diagrams/dark/errors-flow.svg#only-dark){ data-src="../_diagrams/dark/errors-flow.svg#only-dark" }
+
 ## The failure taxonomy
 
 Raise a failure through the `exc` factory — the kind is the method:

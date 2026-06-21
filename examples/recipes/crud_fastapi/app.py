@@ -1,7 +1,7 @@
 """Recipe: an HTTP CRUD service for a ``Product`` aggregate over Postgres.
 
 A `DocumentSpec` plus a `PostgresDepsModule` is the whole persistence story; the
-FastAPI routes resolve the document ports from the context and never touch SQL.
+FastAPI routes use a `DocumentFacade` and never touch persistence ports or SQL.
 Optimistic concurrency comes for free — updates carry the document's ``rev``.
 
 Run it against the recipe's ``compose.yaml``:
@@ -30,6 +30,14 @@ from forze.application.execution import (
 from forze.base.primitives import RuntimeVar
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.exceptions import register_exception_handlers
+from forze_kits.aggregates.document import (
+    DocumentDTOs,
+    DocumentFacade,
+    DocumentIdDTO,
+    DocumentUpdateDTO,
+    ListRequestDTO,
+    build_document_registry,
+)
 from forze_postgres import (
     PostgresClient,
     PostgresConfig,
@@ -61,7 +69,7 @@ class ProductRead(ReadDocument):
 
 
 # --8<-- [start:spec]
-PRODUCT_SPEC = DocumentSpec(
+product_spec = DocumentSpec(
     name="products",
     read=ProductRead,
     write=DocumentWriteTypes(
@@ -112,6 +120,12 @@ def ctx() -> ExecutionContext:
 
 
 # --8<-- [start:routes]
+registry = build_document_registry(
+    product_spec,
+    DocumentDTOs(read=ProductRead, create=ProductCreate, update=ProductUpdate),
+).freeze()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     pg = PostgresClient()
@@ -126,30 +140,39 @@ app = FastAPI(title="Products API", lifespan=lifespan)
 register_exception_handlers(app)  # CoreException → HTTP (not_found → 404, conflict → 409)
 
 
+def products() -> DocumentFacade[ProductRead, ProductCreate, ProductUpdate]:
+    return DocumentFacade(
+        ctx=ctx(),
+        registry=registry,
+        namespace=product_spec.default_namespace,
+    )
+
+
 @app.post("/products")
 async def create_product(cmd: ProductCreate) -> ProductRead:
-    return await ctx().document.command(PRODUCT_SPEC).create(cmd)
+    return await products().create(cmd)
 
 
 @app.get("/products/{product_id}")
 async def get_product(product_id: UUID) -> ProductRead:
-    return await ctx().document.query(PRODUCT_SPEC).get(product_id)
+    return await products().get(DocumentIdDTO(id=product_id))
 
 
 @app.get("/products")
 async def list_products() -> list[ProductRead]:
-    page = await ctx().document.query(PRODUCT_SPEC).find_many()
+    page = await products().list(ListRequestDTO())
     return list(page.hits)
 
 
 @app.put("/products/{product_id}")
 async def update_product(product_id: UUID, rev: int, patch: ProductUpdate) -> ProductRead:
-    c = ctx()
-    await c.document.command(PRODUCT_SPEC).update(product_id, rev, patch)
-    return await c.document.query(PRODUCT_SPEC).get(product_id)
+    result = await products().update(
+        DocumentUpdateDTO(id=product_id, rev=rev, dto=patch)
+    )
+    return result.data
 
 
 @app.delete("/products/{product_id}", status_code=204)
 async def delete_product(product_id: UUID) -> None:
-    await ctx().document.command(PRODUCT_SPEC).kill(product_id)
+    await products().kill(DocumentIdDTO(id=product_id))
 # --8<-- [end:routes]

@@ -26,6 +26,13 @@ from forze.application.execution import (
     LifecyclePlan,
 )
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_kits.aggregates.document import (
+    DocumentDTOs,
+    DocumentFacade,
+    DocumentIdDTO,
+    DocumentUpdateDTO,
+    build_document_registry,
+)
 from forze_postgres import (
     PostgresClient,
     PostgresDepsModule,
@@ -68,7 +75,7 @@ class ProductRead(ReadDocument):
 
 
 # --8<-- [start:spec]
-PRODUCT_SPEC = DocumentSpec(
+product_spec = DocumentSpec(
     name="products",
     read=ProductRead,
     write=DocumentWriteTypes(
@@ -136,18 +143,39 @@ def build_runtime(
 
 
 # --8<-- [start:read-through]
+registry = build_document_registry(
+    product_spec,
+    DocumentDTOs(read=ProductRead, create=ProductCreate, update=ProductUpdate),
+).freeze()
+
+
+def products(
+    ctx: ExecutionContext,
+) -> DocumentFacade[ProductRead, ProductCreate, ProductUpdate]:
+    return DocumentFacade(
+        ctx=ctx,
+        registry=registry,
+        namespace=product_spec.default_namespace,
+    )
+
+
 async def cache_scenario(ctx: ExecutionContext) -> ProductRead:
-    docs = ctx.document.command(PRODUCT_SPEC)
-    query = ctx.document.query(PRODUCT_SPEC)
-    cache = ctx.cache(PRODUCT_SPEC.cache)  # pyright: ignore[reportArgumentType]
+    facade = products(ctx)
+    cache = ctx.cache(product_spec.cache)  # pyright: ignore[reportArgumentType]
 
-    product = await docs.create(ProductCreate(name="Widget", price=10))
+    product = await facade.create(ProductCreate(name="Widget", price=10))
 
-    await query.get(product.id)  # miss → fills the cache
+    await facade.get(DocumentIdDTO(id=product.id))  # miss → fills the cache
     assert await cache.get(str(product.id)) is not None  # cached now
 
-    await docs.update(product.id, product.rev, ProductUpdate(price=12))  # invalidates
-    fresh = await query.get(product.id)  # repopulates, new value
+    await facade.update(
+        DocumentUpdateDTO(
+            id=product.id,
+            rev=product.rev,
+            dto=ProductUpdate(price=12),
+        )
+    )
+    fresh = await facade.get(DocumentIdDTO(id=product.id))  # repopulates, new value
     assert fresh.price == 12
 
     return fresh

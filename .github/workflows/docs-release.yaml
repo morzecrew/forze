@@ -36,14 +36,14 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Checkout code
+      - name: Checkout code # zizmor: ignore[artipacked] credentials are needed by `mike deploy --push` to gh-pages
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0 # full history
           fetch-tags: true # need every tag to find the newest released minor
 
       - name: Install uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0 # zizmor: ignore[cache-poisoning] docs build does not publish runtime artifacts to a release
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -71,7 +71,10 @@ jobs:
         run: just build-diagrams
 
       - name: Deploy version
+        env:
+          MINOR: ${{ steps.ver.outputs.minor }}
+          MOVE_LATEST: ${{ steps.ver.outputs.move_latest }}
         run: >-
           bash .github/scripts/deploy-docs-version.sh
-          "${{ steps.ver.outputs.minor }}"
-          "${{ steps.ver.outputs.move_latest }}"
+          "$MINOR"
+          "$MOVE_LATEST"

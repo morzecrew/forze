@@ -24,8 +24,16 @@ from forze.application.execution import (
     LifecyclePlan,
 )
 from forze.base.primitives import RuntimeVar
-from forze.domain.models import ReadDocument
+from forze.domain.models import BaseDTO, ReadDocument
 from forze_fastapi.exceptions import register_exception_handlers
+from forze_kits.aggregates.document import (
+    DocumentDTOs,
+    DocumentFacade,
+    DocumentIdDTO,
+    ListRequestDTO,
+    build_document_registry,
+)
+from forze_kits.dto import Paginated
 from forze_postgres import (
     PostgresClient,
     PostgresConfig,
@@ -40,7 +48,7 @@ class ArticleRead(ReadDocument):  # inherits id, rev, created_at, last_update_at
     body: str
 
 
-ARTICLE_SPEC = DocumentSpec(name="articles", read=ArticleRead, write=None)
+article_spec = DocumentSpec(name="articles", read=ArticleRead, write=None)
 # --8<-- [end:spec]
 
 
@@ -95,6 +103,11 @@ def ctx() -> ExecutionContext:
 
 
 # --8<-- [start:routes]
+registry = build_document_registry(
+    article_spec, DocumentDTOs(read=ArticleRead)
+).freeze()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     pg = PostgresClient()
@@ -110,16 +123,21 @@ app = FastAPI(title="Articles API (read-only)", lifespan=lifespan)
 register_exception_handlers(app)
 
 
+def articles() -> DocumentFacade[ArticleRead, BaseDTO, BaseDTO]:
+    return DocumentFacade(
+        ctx=ctx(),
+        registry=registry,
+        namespace=article_spec.default_namespace,
+    )
+
+
 @app.get("/articles/{article_id}")
 async def get_article(article_id: UUID) -> ArticleRead:
-    # `get` raises not_found (→ 404) on a miss; use `find` for the None variant.
-    return await ctx().document.query(ARTICLE_SPEC).get(article_id)
+    # `get` raises not_found (→ 404) on a miss.
+    return await articles().get(DocumentIdDTO(id=article_id))
 
 
 @app.get("/articles")
-async def list_articles(limit: int = 20, offset: int = 0) -> list[ArticleRead]:
-    page = await ctx().document.query(ARTICLE_SPEC).find_many(
-        pagination={"limit": limit, "offset": offset}
-    )
-    return list(page.hits)
+async def list_articles(page: int = 1, size: int = 20) -> Paginated[ArticleRead]:
+    return await articles().list(ListRequestDTO(page=page, size=size))
 # --8<-- [end:routes]

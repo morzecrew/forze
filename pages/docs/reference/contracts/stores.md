@@ -29,7 +29,7 @@ don't rely on key ordering or non-JSON types surviving a round trip.
 
 TTLs default from the `CacheSpec`; the per-entry `ttl=` overrides that entry's
 lifetime alone (the seam the
-[adaptive lifetimes](../../recipes/cache-reads-with-redis.md#adaptive-lifetimes)
+[adaptive lifetimes](../../data-events/caching.md#adaptive-lifetimes)
 write through). See
 [Cache reads with Redis](../../recipes/cache-reads-with-redis.md).
 

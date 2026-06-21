@@ -1,0 +1,89 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+call: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: "Invocation"
+}
+
+policy: {
+    label: "ResiliencePolicy — outer → inner"
+    style: {
+        stroke-dash: 4
+        font-size: 18
+    }
+
+    rl: {
+        shape: rectangle
+        label: |md
+            ### Rate limit
+            empty bucket → `throttled`
+        |
+    }
+    bh: {
+        shape: rectangle
+        label: |md
+            ### Bulkhead
+            cap concurrency
+        |
+    }
+    cb: {
+        shape: rectangle
+        label: |md
+            ### Circuit breaker
+            skip a failing dependency
+        |
+    }
+    rt: {
+        shape: rectangle
+        label: |md
+            ### Retry
+            re-run retryable kinds, fresh tx
+        |
+    }
+    to: {
+        shape: rectangle
+        label: |md
+            ### Timeout
+            per-attempt bound
+        |
+    }
+    rl -> bh -> cb -> rt -> to
+}
+
+dep: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: "Dependency call"
+}
+
+deadline: {
+    shape: rectangle
+    style: {
+        stroke-dash: 3
+        font-size: 18
+    }
+    label: "Invocation deadline\ngates the whole chain"
+}
+
+call -> policy.rl
+policy.to -> dep
+deadline -> policy: {
+    style.stroke-dash: 3
+}

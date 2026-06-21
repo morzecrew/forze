@@ -55,6 +55,7 @@ nav = [
         ] },
         { "Data & events" = [
             "data-events/reading-data.md",
+            "data-events/caching.md",
             "data-events/events-sagas.md",
         ] },
         { "Identity, tenancy & encryption" = [
@@ -131,6 +132,7 @@ nav = [
         ] },
         { "Identity" = [
             "recipes/authn-authz-tenancy-fastapi.md",
+            "recipes/tenant-selector-and-admin.md",
             "recipes/local-identity.md",
             "recipes/external-bootstrap-forze-jwt.md",
             "recipes/external-idp-oidc.md",
@@ -161,6 +163,8 @@ nav = [
         ] },
         "reference/query-syntax.md",
         "reference/mapping.md",
+        "reference/fastapi-routes.md",
+        "reference/outbox-schema.md",
         "reference/errors.md",
     ] },
 ]
