@@ -77,8 +77,9 @@ async with runtime.scope():
     ctx = runtime.get_context()
     q = ctx.analytics.query(spec)
 
-    page = await q.run_page("daily", DailyParams(day="2026-01-01"))   # adds a COUNT unless skip_total
-    rows = await q.run("daily", DailyParams(day="2026-01-01"))        # no count — prefer for large scans
+    page = await q.run_page("daily", DailyParams(day="2026-01-01"))        # Page: .hits + total count (unless skip_total)
+    countless = await q.run("daily", DailyParams(day="2026-01-01"))        # CountlessPage: .hits only — prefer for large scans
+    rows = countless.hits
     # run_cursor / run_chunked also available for keyset and streamed reads
 
     result = await ctx.analytics.ingest(spec).append([EventRow(event="signup")])

@@ -130,7 +130,7 @@ Methods: `search` (typed, offset), `cursor_search` (typed, keyset), `projected_s
 
 ## Hub and federated search
 
-Use `HubSearchSpec` with `build_hub_search_registry` when one hub entity searches through weighted member legs; use `FederatedSearchSpec` with `build_federated_search_registry` to merge independent specs. Both yield the same `SearchFacade` surface. Keep snapshot storage and cursor/keyset behaviour in infrastructure config.
+Use `HubSearchSpec` with `build_hub_search_registry` when one hub entity searches through weighted member legs — it yields the full `SearchFacade` surface. Use `FederatedSearchSpec` with `build_federated_search_registry` to merge independent specs; it registers only the typed `search` and `cursor_search` (no `projected_search` / `projected_cursor_search`). Keep snapshot storage and cursor/keyset behaviour in infrastructure config.
 
 ## Custom operations and raw ports
 
