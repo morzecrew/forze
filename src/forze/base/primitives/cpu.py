@@ -209,7 +209,13 @@ def bind_cpu_executor(executor: CpuExecutor) -> Generator[None]:
 # Public API
 
 
-async def run_cpu[T](fn: Callable[..., T], /, *args: object, **kwargs: object) -> T:
+async def run_cpu[T](
+    fn: Callable[..., T],
+    /,
+    *args: object,
+    deadline: bool = True,
+    **kwargs: object,
+) -> T:
     """Run a blocking / CPU-bound callable off the event loop via the active executor.
 
     Honors the current invocation deadline and copies the calling context (tenant,
@@ -219,6 +225,13 @@ async def run_cpu[T](fn: Callable[..., T], /, *args: object, **kwargs: object) -
     to abort at its next :func:`checkpoint` — a running thread cannot be force-killed,
     so a function with no checkpoints is abandoned (its result discarded), never kept
     on the critical path. Work that has not yet started is dropped outright.
+
+    Set *deadline* to ``False`` for best-effort plumbing that must not be killed by the
+    invocation deadline (e.g. decoding a cache hit, where a deadline-driven failure would
+    only force a redundant fallback fetch). The bounded pool, context propagation, and
+    outer-cancellation token still apply — only deadline enforcement is skipped.
+    (``deadline`` is a reserved keyword of this function; pass any same-named argument to
+    *fn* via :func:`functools.partial`.)
     """
 
     bound = functools.partial(fn, *args, **kwargs)
@@ -229,7 +242,7 @@ async def run_cpu[T](fn: Callable[..., T], /, *args: object, **kwargs: object) -
     ctx.run(_CANCEL.set, token)  # the token lives only in the worker's context copy
     thunk = functools.partial(ctx.run, bound)
 
-    remaining = remaining_time()
+    remaining = remaining_time() if deadline else None
 
     if remaining is not None and remaining <= 0:
         raise exc.timeout(

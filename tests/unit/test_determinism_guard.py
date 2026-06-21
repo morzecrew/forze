@@ -21,6 +21,13 @@ Type annotations and bare references (e.g. ``rng: random.Random``,
 ``clock=time.monotonic`` as a *type*) are not flagged — only calls. ``time.perf_counter``
 is intentionally allowed: pure elapsed measurement for observability, which never feeds
 program logic or output and is legitimately real even under simulation.
+
+A second, **scoped** check (``test_no_raw_thread_offload_in_application_layer``) bans raw
+``asyncio.to_thread`` / ``loop.run_in_executor`` in the layers that run under simulation
+(``forze.application``, ``forze.base``, ``forze.domain``, ``forze_kits``) — they raise
+``RealIOForbidden`` under the simulator, so the code can't be DST-tested. Offload through
+``run_cpu`` / ``run_cpu_map`` instead. Integration adapters are *not* scanned: they are
+replaced by in-memory mocks under DST, so their real executors never run in a simulation.
 """
 
 from __future__ import annotations
@@ -196,6 +203,94 @@ def test_no_raw_entropy_outside_seam() -> None:
         "utcnow() / monotonic(), and stable bucketing via zlib.crc32 / derive_seed (not "
         "Python's hash()). Offending sites:\n  " + "\n  ".join(violations)
     )
+
+
+# ----------------------- #
+# Thread-offload guard (scoped): handler/application code must offload via run_cpu,
+# not raw asyncio.to_thread / loop.run_in_executor — the latter raise RealIOForbidden
+# under simulation, so the code can't be DST-tested. Integration adapters are exempt:
+# they are replaced by in-memory mocks under DST, so their real executors never run in
+# a simulation.
+
+_OFFLOAD_GUARDED_PREFIXES: tuple[str, ...] = (
+    "forze/application/",
+    "forze/base/",
+    "forze/domain/",
+    "forze_kits/",
+)
+
+# The CPU-offload seam itself owns the one legitimate run_in_executor.
+_OFFLOAD_ALLOWLIST: frozenset[str] = frozenset({"forze/base/primitives/cpu.py"})
+
+
+def _offload_violations_in(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    # ``from asyncio import to_thread`` → a banned bare ``to_thread(...)`` call.
+    bare_offload: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "asyncio":
+            for alias in node.names:
+                if alias.name == "to_thread":
+                    bare_offload.add(alias.asname or alias.name)
+
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            if func.attr == "run_in_executor":
+                found.append(f"{_rel(path)}:{node.lineno}: .run_in_executor(...)")
+            elif (
+                func.attr == "to_thread"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "asyncio"
+            ):
+                found.append(f"{_rel(path)}:{node.lineno}: asyncio.to_thread(...)")
+        elif isinstance(func, ast.Name) and func.id in bare_offload:
+            found.append(f"{_rel(path)}:{node.lineno}: {func.id}(...)")
+
+    return found
+
+
+def test_no_raw_thread_offload_in_application_layer() -> None:
+    violations: list[str] = []
+    for path in _iter_source_files():
+        rel = _rel(path)
+        if not rel.startswith(_OFFLOAD_GUARDED_PREFIXES) or rel in _OFFLOAD_ALLOWLIST:
+            continue
+        violations.extend(_offload_violations_in(path))
+
+    assert not violations, (
+        "Handler/application code must offload CPU or blocking work through "
+        "forze.base.primitives.run_cpu / run_cpu_map, not raw asyncio.to_thread / "
+        "loop.run_in_executor — the latter raise RealIOForbidden under simulation, so the "
+        "code cannot be DST-tested. Integration adapters are exempt (mocked under DST). "
+        "Offending sites:\n  " + "\n  ".join(violations)
+    )
+
+
+def test_offload_guard_flags_raw_to_thread(tmp_path: Path) -> None:
+    # The offload check must actually fire: synthetic raw-offload sites are detected,
+    # a run_cpu call is not.
+    offender = tmp_path / "offender.py"
+    offender.write_text(
+        "import asyncio\n"
+        "async def f(loop, fn):\n"
+        "    await asyncio.to_thread(fn)\n"
+        "    await loop.run_in_executor(None, fn)\n"
+    )
+    assert len(_offload_violations_in(offender)) == 2
+
+    clean = tmp_path / "clean.py"
+    clean.write_text(
+        "from forze.base.primitives import run_cpu\n"
+        "async def f(fn):\n"
+        "    return await run_cpu(fn)\n"
+    )
+    assert not _offload_violations_in(clean)
 
 
 def test_guard_flags_hash_modulo_bucketing(tmp_path: Path) -> None:

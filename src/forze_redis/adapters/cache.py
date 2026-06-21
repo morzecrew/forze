@@ -21,6 +21,7 @@ from forze.application.contracts.cache import (
 )
 from forze.application.contracts.resolution import is_static_named_resource
 from forze.base.exceptions import exc
+from forze.base.primitives import run_cpu
 
 from ._logger import logger
 from .base import RedisBaseAdapter
@@ -154,11 +155,14 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         raw = await self.client.mget(redis_keys)
 
         if len(keys) > 64:
-            return await asyncio.to_thread(
+            # Bounded CPU pool + correlated logs; deadline-naive — a cache decode is
+            # best-effort (a deadline failure here would only force a redundant fetch).
+            return await run_cpu(
                 self._decode_batch,
                 keys,
                 raw,
                 default_text_codec.loads,
+                deadline=False,
             )
 
         return self._decode_batch(keys, raw, default_text_codec.loads)
@@ -192,11 +196,12 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         raw = await self.client.mget(redis_keys)
 
         if len(mapping) > 64:
-            return await asyncio.to_thread(
+            return await run_cpu(
                 self._decode_batch,
                 mapping.keys(),
                 raw,
                 _loads_cache_body,
+                deadline=False,
             )
 
         return self._decode_batch(mapping.keys(), raw, _loads_cache_body)
@@ -240,11 +245,12 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         raw = await self.client.mget(redis_keys)
 
         if len(keys) > 64:
-            return await asyncio.to_thread(
+            return await run_cpu(
                 self._decode_batch,
                 keys,
                 raw,
                 default_json_codec.loads,
+                deadline=False,
             )
 
         return self._decode_batch(keys, raw, default_json_codec.loads)

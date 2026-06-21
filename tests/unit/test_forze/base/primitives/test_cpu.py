@@ -93,6 +93,11 @@ class TestDeadline:
     async def test_no_deadline_runs_normally(self) -> None:
         assert await run_cpu(_double, 4) == 8
 
+    async def test_deadline_false_ignores_passed_deadline(self) -> None:
+        # Best-effort offload: a passed deadline must NOT kill it.
+        with bind_deadline(0.0):
+            assert await run_cpu(_double, 9, deadline=False) == 18
+
 
 class TestCheckpoint:
     async def test_noop_outside_offload(self) -> None:
