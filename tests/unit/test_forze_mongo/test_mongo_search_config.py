@@ -5,7 +5,11 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
 from forze.base.exceptions import CoreException
-from forze_mongo.execution.deps.configs import MongoSearchConfig
+from forze_mongo.execution.deps.configs import (
+    MongoAtlasEngine,
+    MongoSearchConfig,
+    MongoVectorEngine,
+)
 
 
 class _Read(BaseModel):
@@ -24,16 +28,17 @@ def test_validate_text_engine_minimal() -> None:
 
 
 def test_validate_atlas_requires_index_name() -> None:
-    with pytest.raises(CoreException):
-        MongoSearchConfig(read=("app", "items"), engine="atlas")
+    with pytest.raises(CoreException, match="index_name is required"):
+        MongoAtlasEngine(index_name="")
 
 
 def test_validate_vector_requires_embedding_fields() -> None:
-    with pytest.raises(CoreException):
-        MongoSearchConfig(
-            read=("app", "items"),
-            engine="vector",
-            vector_path="embedding",
+    with pytest.raises(CoreException, match="vector_path is required"):
+        MongoVectorEngine(
+            index_name="ix",
+            vector_path="",
+            embeddings_name="m",
+            dimensions=8,
         )
 
 
