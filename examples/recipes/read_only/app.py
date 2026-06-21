@@ -33,6 +33,7 @@ from forze_kits.aggregates.document import (
     ListRequestDTO,
     build_document_registry,
 )
+from forze_kits.dto import Paginated
 from forze_postgres import (
     PostgresClient,
     PostgresConfig,
@@ -137,7 +138,6 @@ async def get_article(article_id: UUID) -> ArticleRead:
 
 
 @app.get("/articles")
-async def list_articles(limit: int = 20, offset: int = 0) -> list[ArticleRead]:
-    page = await articles().list(ListRequestDTO(page=1, size=offset + limit))
-    return list(page.hits[offset : offset + limit])
+async def list_articles(page: int = 1, size: int = 20) -> Paginated[ArticleRead]:
+    return await articles().list(ListRequestDTO(page=page, size=size))
 # --8<-- [end:routes]

@@ -18,7 +18,7 @@ def test_read_only_api(postgres_container) -> None:
     with TestClient(app) as client:
         listed = client.get("/articles")
         assert listed.status_code == 200
-        titles = {a["title"] for a in listed.json()}
+        titles = {a["title"] for a in listed.json()["hits"]}
         assert "Hexagonal architecture" in titles
 
         one = client.get("/articles/00000000-0000-0000-0000-000000000001")
