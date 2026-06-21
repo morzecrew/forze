@@ -1,6 +1,6 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from datetime import timedelta
 from enum import StrEnum
 from typing import AsyncGenerator, final
@@ -9,7 +9,7 @@ import attrs
 
 from forze.application._logger import logger
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import RuntimeVar
+from forze.base.primitives import CpuExecutor, RuntimeVar, bind_cpu_executor
 
 from .context import ExecutionContext
 from .deps import FrozenDepsRegistry
@@ -105,6 +105,15 @@ class ExecutionRuntime:
     different spec on the same route rebuilds. Bypassed automatically while resolution
     tracing is enabled (to keep per-task resolution traces complete). Disable only for a
     *stateful* port factory that must rebuild per call.
+    """
+
+    cpu_executor: CpuExecutor | None = None
+    """Optional CPU-offload executor (see :func:`~forze.base.primitives.run_cpu`).
+
+    ``None`` (default) uses the process-wide default pool — zero config, cleaned up
+    at interpreter exit. Pass a ``ThreadPoolCpuExecutor(max_workers=…)`` to size and
+    scope-manage the pool: it is bound as the ambient ``run_cpu`` executor for this
+    scope's startup, body, and shutdown, then closed (drained) when the scope exits.
     """
 
     # ....................... #
@@ -275,13 +284,30 @@ class ExecutionRuntime:
         logger.info("Entering execution runtime scope")
         self.create_context()
 
-        try:
-            await self.startup()
+        # Bind the scope's CPU-offload executor (if any) for startup, body, and
+        # shutdown, then close it after teardown so the pool drains with the scope.
+        bind = (
+            bind_cpu_executor(self.cpu_executor)
+            if self.cpu_executor is not None
+            else nullcontext()
+        )
 
-            yield
+        try:
+            with bind:
+                try:
+                    await self.startup()
+
+                    yield
+
+                finally:
+                    logger.info("Leaving execution runtime scope")
+                    await self.shutdown()
 
         finally:
-            logger.info("Leaving execution runtime scope")
-            await self.shutdown()
+            if self.cpu_executor is not None:
+                close = getattr(self.cpu_executor, "close", None)
+
+                if callable(close):
+                    close()
 
         logger.info("Execution runtime scope exited")

@@ -141,3 +141,55 @@ class TestExecutionRuntime:
 
         with pytest.raises(CoreException, match="not set"):
             rt.get_context()
+
+
+class TestScopeCpuExecutor:
+    """The scope binds an optional CPU-offload executor and closes it on exit."""
+
+    @pytest.mark.asyncio
+    async def test_scope_binds_executor_and_run_cpu_uses_it(self) -> None:
+        from forze.base.primitives import (
+            ThreadPoolCpuExecutor,
+            current_cpu_executor,
+            run_cpu,
+        )
+
+        ex = ThreadPoolCpuExecutor(max_workers=2)
+        rt = ExecutionRuntime(deps=DepsRegistry().freeze(), cpu_executor=ex)
+
+        async with rt.scope():
+            assert current_cpu_executor() is ex
+            assert await run_cpu(lambda: 6 * 7) == 42
+
+    @pytest.mark.asyncio
+    async def test_scope_closes_executor_and_restores_default_on_exit(self) -> None:
+        from forze.base.primitives import ThreadPoolCpuExecutor, current_cpu_executor, run_cpu
+
+        ex = ThreadPoolCpuExecutor(max_workers=2)
+        rt = ExecutionRuntime(deps=DepsRegistry().freeze(), cpu_executor=ex)
+
+        async with rt.scope():
+            await run_cpu(lambda: None)  # force the pool to materialize
+            assert ex._pool is not None
+
+        # Pool drained/closed and the ambient binding restored to the default.
+        assert ex._pool is None
+        assert current_cpu_executor() is not ex
+
+    @pytest.mark.asyncio
+    async def test_no_executor_leaves_ambient_default_untouched(self) -> None:
+        from forze.base.primitives import current_cpu_executor
+
+        before = current_cpu_executor()
+        rt = ExecutionRuntime(deps=DepsRegistry().freeze())
+
+        async with rt.scope():
+            assert current_cpu_executor() is before
+
+    def test_build_runtime_threads_cpu_executor(self) -> None:
+        from forze.application.execution import build_runtime
+        from forze.base.primitives import InlineCpuExecutor
+
+        ex = InlineCpuExecutor()
+        rt = build_runtime(cpu_executor=ex)
+        assert rt.cpu_executor is ex

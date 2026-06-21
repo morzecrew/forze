@@ -3,6 +3,8 @@
 from typing import Iterable
 from datetime import timedelta
 
+from forze.base.primitives import CpuExecutor
+
 from .deps import Deps, DepsModule, DepsRegistry
 from .lifecycle import LifecycleModule, LifecyclePlan, LifecycleStep
 from .runtime import DeploymentProfile, ExecutionRuntime
@@ -20,6 +22,7 @@ def build_runtime(
     cache_resolved_ports: bool = True,
     drain_timeout: timedelta | None = None,
     deployment: DeploymentProfile = DeploymentProfile.SINGLE_PROCESS,
+    cpu_executor: CpuExecutor | None = None,
 ) -> ExecutionRuntime:
     """Assemble an :class:`ExecutionRuntime` in one call.
 
@@ -61,6 +64,9 @@ def build_runtime(
     :param deployment: Passed through to :attr:`ExecutionRuntime.deployment`
         (``FLEET`` validates that shared-state-mutating lifecycle steps are
         singleton-guarded; ``SERVERLESS`` forbids ``requires_long_running`` steps).
+    :param cpu_executor: Optional CPU-offload executor scope-bound and closed on
+        exit (see :attr:`ExecutionRuntime.cpu_executor`); ``None`` uses the
+        process-wide default pool.
     :returns: Runtime ready for :meth:`ExecutionRuntime.scope`.
     """
 
@@ -85,4 +91,5 @@ def build_runtime(
         cache_resolved_ports=cache_resolved_ports,
         drain_timeout=drain_timeout,
         deployment=deployment,
+        cpu_executor=cpu_executor,
     )
