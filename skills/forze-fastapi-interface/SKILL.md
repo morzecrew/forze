@@ -109,6 +109,8 @@ app.include_router(router)
 When you need a route the generators don't cover, define a plain FastAPI route that resolves a context with `ctx_dep` and dispatches through a **facade** built from your frozen registry (see [`forze-documents-search`](../forze-documents-search/SKILL.md)) — not the raw ports:
 
 ```python
+from __future__ import annotations
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends

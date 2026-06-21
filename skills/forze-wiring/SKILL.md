@@ -304,6 +304,7 @@ runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mock_module).freeze())
 
 async with runtime.scope():
     ctx = runtime.get_context()
+    # project_spec + registry as built in "Document composition" above
     facade = DocumentFacade(ctx=ctx, registry=registry, namespace=project_spec.default_namespace)
     result = await facade.get(DocumentIdDTO(id=some_uuid))
 ```

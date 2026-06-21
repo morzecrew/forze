@@ -31,7 +31,8 @@ spec = AnalyticsSpec(
 ### BigQuery (`@param` SQL)
 
 ```python
-from forze_bigquery import BigQueryClient, BigQueryDepsModule
+from forze.application.execution import LifecyclePlan
+from forze_bigquery import BigQueryClient, BigQueryDepsModule, bigquery_lifecycle_step
 
 module = BigQueryDepsModule(
     client=BigQueryClient(),
@@ -43,7 +44,9 @@ module = BigQueryDepsModule(
         },
     },
 )
-# lifecycle: bigquery_lifecycle_step(project_id="my-gcp-project")  # initializes BigQueryClient
+lifecycle = LifecyclePlan.from_steps(
+    bigquery_lifecycle_step(project_id="my-gcp-project"),  # initializes BigQueryClient
+)
 ```
 
 Local emulator: set `BIGQUERY_EMULATOR_HOST=http://localhost:9050` before startup ([goccy/bigquery-emulator](https://github.com/goccy/bigquery-emulator)); the lifecycle step does not take an emulator URL.
@@ -51,7 +54,13 @@ Local emulator: set `BIGQUERY_EMULATOR_HOST=http://localhost:9050` before startu
 ### ClickHouse (`{name:Type}` SQL)
 
 ```python
-from forze_clickhouse import ClickHouseClient, ClickHouseConfig, ClickHouseDepsModule
+from forze.application.execution import LifecyclePlan
+from forze_clickhouse import (
+    ClickHouseClient,
+    ClickHouseConfig,
+    ClickHouseDepsModule,
+    clickhouse_lifecycle_step,
+)
 
 module = ClickHouseDepsModule(
     client=ClickHouseClient(),
@@ -63,7 +72,11 @@ module = ClickHouseDepsModule(
         },
     },
 )
-# lifecycle: clickhouse_lifecycle_step(connection=ClickHouseConfig(host=..., port=8123, username=..., password=...))
+lifecycle = LifecyclePlan.from_steps(
+    clickhouse_lifecycle_step(
+        connection=ClickHouseConfig(host="localhost", port=8123, username="default", password=""),
+    ),
+)
 ```
 
 Keyset cursors use `cursor_column` plus `{forze_after:Type}` in the SQL; `dry_run` skips execution.
