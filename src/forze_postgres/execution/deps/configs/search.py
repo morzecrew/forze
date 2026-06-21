@@ -28,20 +28,18 @@ PgroongaPlan = Literal["filter_first", "index_first", "auto"]
 SearchEngine = Literal["pgroonga", "fts", "vector"]
 """Engine discriminator string (the resolved kind of :attr:`PostgresSearchConfig.engine`)."""
 
+# ....................... #
+
 _DEFAULT_PGROONGA_CANDIDATE_LIMIT = 5000
 _DEFAULT_PGROONGA_AUTO_INDEX_FIRST_MIN_ROWS = 100_000
 _DEFAULT_PGROONGA_AUTO_FILTER_FIRST_MAX_ROWS = 50_000
 _DEFAULT_PGROONGA_INDEX_FIRST_FILTER_MARGIN = 3.0
 
-
 # ....................... #
 
 
 def _optional_relation_spec(value: object) -> RelationSpec | None:
-    if value is None:
-        return None
-
-    return coerce_relation_spec(value)
+    return None if value is None else coerce_relation_spec(value)
 
 
 # ----------------------- #
@@ -71,7 +69,9 @@ class PgroongaAuto:
             raise exc.internal("pgroonga auto index_first_min_rows must be at least 1.")
 
         if self.filter_first_max_rows < 1:
-            raise exc.internal("pgroonga auto filter_first_max_rows must be at least 1.")
+            raise exc.internal(
+                "pgroonga auto filter_first_max_rows must be at least 1."
+            )
 
 
 # ....................... #
@@ -105,7 +105,9 @@ class PgroongaEngine:
             )
 
         if self.index_first_filter_margin < 1.0:
-            raise exc.internal("pgroonga index_first_filter_margin must be at least 1.0.")
+            raise exc.internal(
+                "pgroonga index_first_filter_margin must be at least 1.0."
+            )
 
 
 # ....................... #
@@ -166,6 +168,8 @@ class VectorEngine:
 
 SearchEngineSpec = PgroongaEngine | FtsEngine | VectorEngine
 """Tagged union of engine variants. Construct one and pass it as ``engine=``."""
+
+# ....................... #
 
 
 def _coerce_engine_spec(value: "SearchEngineSpec | SearchEngine") -> SearchEngineSpec:
@@ -271,31 +275,57 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
 
     @property
     def fts_groups(self) -> dict[FtsGroupLetter, Sequence[str]] | None:
-        return self.engine_spec.groups if isinstance(self.engine_spec, FtsEngine) else None
+        return (
+            self.engine_spec.groups if isinstance(self.engine_spec, FtsEngine) else None
+        )
 
     @property
     def vector_column(self) -> str | None:
-        return self.engine_spec.column if isinstance(self.engine_spec, VectorEngine) else None
+        return (
+            self.engine_spec.column
+            if isinstance(self.engine_spec, VectorEngine)
+            else None
+        )
 
     @property
     def vector_distance(self) -> VectorEngineDistance:
-        return self.engine_spec.distance if isinstance(self.engine_spec, VectorEngine) else "l2"
+        return (
+            self.engine_spec.distance
+            if isinstance(self.engine_spec, VectorEngine)
+            else "l2"
+        )
 
     @property
     def embeddings_name(self) -> StrKey | None:
-        return self.engine_spec.embeddings_name if isinstance(self.engine_spec, VectorEngine) else None
+        return (
+            self.engine_spec.embeddings_name
+            if isinstance(self.engine_spec, VectorEngine)
+            else None
+        )
 
     @property
     def embedding_dimensions(self) -> int | None:
-        return self.engine_spec.dimensions if isinstance(self.engine_spec, VectorEngine) else None
+        return (
+            self.engine_spec.dimensions
+            if isinstance(self.engine_spec, VectorEngine)
+            else None
+        )
 
     @property
     def pgroonga_score_version(self) -> PgroongaScoreVersion:
-        return self.engine_spec.score_version if isinstance(self.engine_spec, PgroongaEngine) else "v2"
+        return (
+            self.engine_spec.score_version
+            if isinstance(self.engine_spec, PgroongaEngine)
+            else "v2"
+        )
 
     @property
     def pgroonga_plan(self) -> PgroongaPlan:
-        return self.engine_spec.plan if isinstance(self.engine_spec, PgroongaEngine) else "filter_first"
+        return (
+            self.engine_spec.plan
+            if isinstance(self.engine_spec, PgroongaEngine)
+            else "filter_first"
+        )
 
     @property
     def pgroonga_candidate_limit(self) -> int | None:
@@ -310,11 +340,19 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
 
     @property
     def pgroonga_auto_use_exact_count(self) -> bool:
-        return self.engine_spec.auto.use_exact_count if isinstance(self.engine_spec, PgroongaEngine) else False
+        return (
+            self.engine_spec.auto.use_exact_count
+            if isinstance(self.engine_spec, PgroongaEngine)
+            else False
+        )
 
     @property
     def pgroonga_auto_with_filters(self) -> bool:
-        return self.engine_spec.auto.with_filters if isinstance(self.engine_spec, PgroongaEngine) else True
+        return (
+            self.engine_spec.auto.with_filters
+            if isinstance(self.engine_spec, PgroongaEngine)
+            else True
+        )
 
     @property
     def pgroonga_auto_filter_first_max_rows(self) -> int:
