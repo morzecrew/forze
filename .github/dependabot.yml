@@ -9,6 +9,12 @@ updates:
       time: "05:00"
       timezone: "Europe/Berlin"
 
+    # Wait before adopting a freshly-published version so a compromised release
+    # has time to be yanked before Dependabot opens a PR for it.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+
     labels:
       - "dependencies"
 
@@ -48,6 +54,10 @@ updates:
       time: "05:30"
       timezone: "Europe/Berlin"
 
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+
     labels:
       - "dependencies"
       - "ci"
@@ -76,3 +86,5 @@ updates:
     directory: /.devcontainer
     schedule:
       interval: daily
+    cooldown:
+      default-days: 7

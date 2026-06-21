@@ -33,7 +33,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Checkout code
+      - name: Checkout code # zizmor: ignore[artipacked] no workspace/.git is uploaded as an artifact
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
@@ -42,7 +42,7 @@ jobs:
         run: bash .github/scripts/ensure-tag-on-main.sh
 
       - name: Install uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0 # zizmor: ignore[cache-poisoning] cache feeds `uv build`; lockfile-keyed and the published wheel is built from a pinned checkout
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -103,7 +103,7 @@ jobs:
           name: python-package
           path: dist/
 
-      - name: Checkout code
+      - name: Checkout code # zizmor: ignore[artipacked] no workspace/.git is uploaded as an artifact
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
@@ -119,7 +119,7 @@ jobs:
           version: ${{ steps.ver.outputs.version }}
           path: ./CHANGELOG.md
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release # zizmor: ignore[superfluous-actions] prefer the pinned action over an inline `gh release` script
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           files: dist/*
