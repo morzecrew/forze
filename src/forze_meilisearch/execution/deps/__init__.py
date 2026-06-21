@@ -1,6 +1,10 @@
 """Meilisearch dependency keys, module, and factory functions."""
 
-from .configs import MeilisearchFederatedSearchConfig, MeilisearchSearchConfig
+from .configs import (
+    MeilisearchFederatedSearchConfig,
+    MeilisearchFederation,
+    MeilisearchSearchConfig,
+)
 from .factories import (
     ConfigurableMeilisearchFederatedSearch,
     ConfigurableMeilisearchSearch,
@@ -16,6 +20,7 @@ __all__ = [
     "MeilisearchClientDepKey",
     "MeilisearchSearchConfig",
     "MeilisearchFederatedSearchConfig",
+    "MeilisearchFederation",
     "ConfigurableMeilisearchSearch",
     "ConfigurableMeilisearchSearchCommand",
     "ConfigurableMeilisearchFederatedSearch",

@@ -2,6 +2,7 @@
 
 import attrs
 
+from forze.application.contracts.search import Rrf
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
@@ -47,11 +48,18 @@ class PostgresFederatedSearchConfig(TenantAwareIntegrationConfig):
     )
     """Federated member name to search or embedded hub config."""
 
-    rrf_k: int = 60
-    """RRF smoothing constant."""
+    rrf: Rrf = attrs.field(factory=Rrf)
+    """Reciprocal Rank Fusion settings (smoothing constant + per-leg fetch cap)."""
 
-    rrf_per_leg_limit: int = 5000
-    """Max hits fetched per member for merging."""
+    # ....................... #
+
+    @property
+    def rrf_k(self) -> int:
+        return self.rrf.k
+
+    @property
+    def rrf_per_leg_limit(self) -> int:
+        return self.rrf.per_leg_limit
 
     # ....................... #
 

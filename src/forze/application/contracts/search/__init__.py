@@ -41,11 +41,12 @@ from .utils import (
     effective_phrase_combine,
     normalize_search_queries,
 )
-from .value_objects import SearchResultSnapshotMeta
+from .value_objects import Rrf, SearchResultSnapshotMeta
 
 # ----------------------- #
 
 __all__ = [
+    "Rrf",
     "PhraseCombine",
     "PgroongaPlan",
     "ResultSnapshotMode",
