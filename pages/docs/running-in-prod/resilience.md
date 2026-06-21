@@ -9,6 +9,9 @@ operation (or a single call) with rate limits, retries, timeouts, and circuit
 breakers — declaratively, by name — so fault tolerance lives in the wiring, not
 scattered through handlers.
 
+![A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain](../_diagrams/light/resilience-stack.svg#only-light){ data-src="../_diagrams/light/resilience-stack.svg#only-light" }
+![A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain](../_diagrams/dark/resilience-stack.svg#only-dark){ data-src="../_diagrams/dark/resilience-stack.svg#only-dark" }
+
 ## Built-in policies
 
 Two ship ready to use, no `ResilienceSpec` required:

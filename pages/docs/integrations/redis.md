@@ -68,7 +68,7 @@ lifecycle = LifecyclePlan.from_steps(
 
 `RedisCacheConfig(invalidation_push=True)` enables Redis 6+ **client-side
 caching** (`CLIENT TRACKING`, RESP3 push) for caches backing the
-[document L1](../recipes/cache-reads-with-redis.md#push-invalidation-shrink-the-staleness-window-to-zero):
+[document L1](../data-events/caching.md#an-in-process-l1-for-hot-documents):
 one pinned connection per client receives an invalidation push for every
 write, expiration, or eviction under the cache's key prefix — by any replica —
 and the in-process L1 drops the entry immediately, demoting the L1 TTL to a

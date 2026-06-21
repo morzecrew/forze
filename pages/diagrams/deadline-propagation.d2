@@ -1,0 +1,72 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+sources: {
+    label: "Tightest wins (tighten-only)"
+    style: {
+        stroke-dash: 4
+        font-size: 18
+    }
+
+    plan: {
+        shape: rectangle
+        label: "plan / patch deadline"
+    }
+    caller: {
+        shape: rectangle
+        label: "caller budget — header / bind"
+    }
+}
+
+entry: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### Bound at operation entry
+        already spent → fail fast
+    |
+}
+
+inner: {
+    label: "Inherited downstream"
+    style: {
+        stroke-dash: 4
+        font-size: 18
+    }
+
+    hooks: {
+        shape: rectangle
+        label: "hooks"
+    }
+    tx: {
+        shape: rectangle
+        label: "transaction"
+    }
+    res: {
+        shape: rectangle
+        label: "resilience chain"
+    }
+    http: {
+        shape: rectangle
+        label: "outbound HTTP (header)"
+    }
+}
+
+sources.plan -> entry
+sources.caller -> entry
+entry -> inner.hooks
+entry -> inner.tx
+entry -> inner.res
+entry -> inner.http

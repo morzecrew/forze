@@ -1,0 +1,56 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+run: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### Recorded run
+        the interleaving DST drove
+    |
+}
+
+always: {
+    shape: rectangle
+    label: |md
+        ### Invariant — must *always* hold
+        no race, no lost write, no leak
+    |
+}
+
+sometimes: {
+    shape: rectangle
+    label: |md
+        ### Reachability — must *sometimes* happen
+        the dangerous interleaving actually fired
+    |
+}
+
+verdict: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: |md
+        ### Both green
+        held *and* exercised — real confidence
+    |
+}
+
+run -> always
+run -> sometimes
+always -> verdict
+sometimes -> verdict

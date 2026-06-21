@@ -1,0 +1,65 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+run: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### Run
+        in-flight work
+    |
+}
+
+crash: {
+    shape: rectangle
+    style: {
+        stroke: "#e65100"
+        stroke-width: 2
+    }
+    label: |md
+        ### Crash at a port boundary
+        in-flight tx rolls back
+    |
+}
+
+store: {
+    shape: cylinder
+    label: "Persisted store\n(committed state only)"
+}
+
+restart: {
+    shape: rectangle
+    label: |md
+        ### Restart + recover
+        fresh runtime · optional redrive
+    |
+}
+
+check: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: |md
+        ### Invariants check
+        the post-recovery world
+    |
+}
+
+run -> crash
+crash -> store: what survived
+store -> restart
+restart -> check

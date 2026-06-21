@@ -6,6 +6,9 @@ summary: The harder failure modes — kill the process mid-flush and restart ove
 
 Faults and latency perturb a process that keeps running. The failures that corrupt state are the ones that stop it: a process that *dies* mid-write, or a network that *splits* a cluster in two. DST drives both — a single-process crash-and-restart, and a multi-runtime cluster under network partitions — from the same master seed, against the same invariants.
 
+![DST crashes the process at a port boundary, rolling back in-flight work while committed state persists; a fresh runtime restarts over the store, recovers, and the invariants check the post-recovery world](../_diagrams/light/dst-crash-restart.svg#only-light){ data-src="../_diagrams/light/dst-crash-restart.svg#only-light" }
+![DST crashes the process at a port boundary, rolling back in-flight work while committed state persists; a fresh runtime restarts over the store, recovers, and the invariants check the post-recovery world](../_diagrams/dark/dst-crash-restart.svg#only-dark){ data-src="../_diagrams/dark/dst-crash-restart.svg#only-dark" }
+
 ## Crash and restart
 
 Set a `CrashPolicy` and a run becomes a crash → restart → recovery scenario. The process *dies* at a matched port boundary — the in-flight transaction rolls back, committed state persists — then a fresh runtime restarts over the **same persisted store**, an optional `recover` pass redrives interrupted work, and the invariants check the post-recovery world:

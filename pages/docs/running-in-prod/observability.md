@@ -91,7 +91,7 @@ the metric tells you when.
 
 ## Document L1 metrics
 
-The [in-process L1](../recipes/cache-reads-with-redis.md#an-in-process-l1-for-hot-documents)
+The [in-process L1](../data-events/caching.md#an-in-process-l1-for-hot-documents)
 exports its counters the same way:
 
 ```python

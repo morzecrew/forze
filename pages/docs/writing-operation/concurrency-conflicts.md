@@ -9,6 +9,9 @@ clobber each other. Forze uses **optimistic concurrency** keyed on a revision
 number, with a history-based merge that lets non-overlapping edits through and
 rejects genuine collisions.
 
+![An update compares your expected revision to the stored one: a match applies and bumps rev, a difference runs a three-way merge that merges disjoint fields or raises a conflict on overlap, and a future or unknown revision raises a precondition error](../_diagrams/light/concurrency-merge.svg#only-light){ data-src="../_diagrams/light/concurrency-merge.svg#only-light" }
+![An update compares your expected revision to the stored one: a match applies and bumps rev, a difference runs a three-way merge that merges disjoint fields or raises a conflict on overlap, and a future or unknown revision raises a precondition error](../_diagrams/dark/concurrency-merge.svg#only-dark){ data-src="../_diagrams/dark/concurrency-merge.svg#only-dark" }
+
 ## The revision
 
 Every [`Document`](../core-concepts/domain-layer.md) carries a `rev` — an integer

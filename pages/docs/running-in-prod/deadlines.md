@@ -11,6 +11,9 @@ budget is bound once at operation entry, and everything downstream — hooks,
 the transaction, dispatched operations, resilience strategies, outbound calls —
 inherits it for free.
 
+![The tightest of the plan and caller budgets is bound at operation entry, then inherited by hooks, the transaction, the resilience chain, and outbound HTTP calls](../_diagrams/light/deadline-propagation.svg#only-light){ data-src="../_diagrams/light/deadline-propagation.svg#only-light" }
+![The tightest of the plan and caller budgets is bound at operation entry, then inherited by hooks, the transaction, the resilience chain, and outbound HTTP calls](../_diagrams/dark/deadline-propagation.svg#only-dark){ data-src="../_diagrams/dark/deadline-propagation.svg#only-dark" }
+
 ## Declare the budget on the plan
 
 A deadline is a property of the **operation**, not of the route or the caller.

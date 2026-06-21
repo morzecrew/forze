@@ -8,6 +8,9 @@ When several writes must succeed or fail as a unit, wrap them in a **transaction
 scope**. Forze owns the boundary — begin on entry, commit on a clean exit, roll
 back on an exception — while the adapter does the real database work.
 
+![Read and external calls run before the scope; the transaction begins at the first query, its writes commit together, then deferred work runs only after a successful commit](../_diagrams/light/transaction-scope.svg#only-light){ data-src="../_diagrams/light/transaction-scope.svg#only-light" }
+![Read and external calls run before the scope; the transaction begins at the first query, its writes commit together, then deferred work runs only after a successful commit](../_diagrams/dark/transaction-scope.svg#only-dark){ data-src="../_diagrams/dark/transaction-scope.svg#only-dark" }
+
 ## A transaction scope
 
 Open a scope by **route**, the same logical name the deps wiring registered

@@ -4,9 +4,9 @@ icon: lucide/download
 summary: Install the Forze core, verify it, and add the integrations you need
 ---
 
-This page gets Forze installed and verified, then shows how to pull in the
-optional integrations your service needs. The core is small — everything
-backend-specific ships as an opt-in extra you add when you reach for it.
+Forze's core is small — everything backend-specific ships as an opt-in extra you
+add when you reach for it, so you install only what your service uses. Start with
+the core (it runs fully in-memory, no Docker), then add integrations as you grow.
 
 ## Requirements
 
