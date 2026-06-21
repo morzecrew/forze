@@ -169,3 +169,25 @@ class TestReport:
         assert "✓ hit" in rendered
         assert "✗ miss" in rendered
         assert "1/2" in rendered  # one of two targets reached
+
+    def test_zero_count_label_counts_as_unreached(self) -> None:
+        # A label present in `hits` but with count 0 is *not* reached and stays unreached.
+        report = ReachabilityReport(
+            targets=frozenset({"hit", "stale"}),
+            hits={"hit": 2, "stale": 0},
+            runs=2,
+        )
+        assert report.reached == frozenset({"hit"})  # zero-count 'stale' excluded
+        assert report.unreached == frozenset({"stale"})
+        assert not report.satisfied
+
+    def test_all_targets_reached_is_satisfied(self) -> None:
+        report = ReachabilityReport(
+            targets=frozenset({"hit"}),
+            hits={"hit": 1},
+            runs=1,
+        )
+        assert report.satisfied
+        assert report.unreached == frozenset()
+        # No undeclared labels → no "also reached" line.
+        assert "also reached" not in report.format()

@@ -22,9 +22,36 @@ from forze.application.contracts.querying.internal import (
     QueryValueCaster,
     elem_inner_is_scalar,
 )
+from forze.application.contracts.querying.internal.aggregate import (
+    _having_field_roots,
+)
 from forze.base.exceptions import CoreException
 
 # ----------------------- #
+
+
+class TestHavingFieldRoots:
+    """Direct tests for the ``$having`` alias-root extractor."""
+
+    def test_extracts_field_compare_and_elem_roots_dotted(self) -> None:
+        # Roots are top-level names: dotted paths collapse to their first segment.
+        expr = QueryAnd(
+            (
+                QueryField("count.total", "$gt", 1),
+                QueryCompare("a.x", "$lt", "b.y"),
+                QueryElem("tags.inner", "$any", QueryField("$", "$eq", "vip")),
+                QueryNot(QueryField("flag", "$eq", True)),
+                QueryOr((QueryField("region", "$eq", "eu"),)),
+            ),
+        )
+        assert _having_field_roots(expr) == frozenset(
+            {"count", "a", "b", "tags", "flag", "region"},
+        )
+
+    def test_unmatched_node_contributes_no_roots(self) -> None:
+        # A bare ``QueryExpr`` base instance hits the ``case _`` fall-through and
+        # adds nothing (defensive branch for unknown node kinds).
+        assert _having_field_roots(QueryExpr()) == frozenset()
 
 
 class TestAggregatesExpressionParser:
@@ -353,6 +380,143 @@ class TestAggregatesExpressionParser:
                     "$having": {"$fields": {"cnt": {"$gt": "ghost"}}},
                 },
             )
+
+    def test_having_none_when_absent(self) -> None:
+        # No ``$having`` key -> ``having`` is ``None`` (early-return branch).
+        parsed = AggregatesExpressionParser.parse(
+            {"$computed": {"n": {"$count": None}}},
+        )
+        assert parsed.having is None
+
+    def test_having_empty_filter_is_none(self) -> None:
+        # A falsy ``$having`` (empty mapping) short-circuits to ``None``.
+        parsed = AggregatesExpressionParser.parse(
+            {"$computed": {"n": {"$count": None}}, "$having": {}},
+        )
+        assert parsed.having is None
+
+    def test_having_walks_element_quantifier_alias_root(self) -> None:
+        # The root-extraction walks ``QueryElem`` nodes: a quantifier whose array
+        # path is a valid output alias passes validation.
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$groups": {"tags": "tags"},
+                "$computed": {"n": {"$count": None}},
+                "$having": {"$values": {"tags": {"$any": "vip"}}},
+            },
+        )
+        assert parsed.having is not None
+
+    def test_having_rejects_unknown_alias_via_element_quantifier(self) -> None:
+        # The ``QueryElem`` root ("ghost") is not an output alias -> rejected.
+        with pytest.raises(CoreException, match="may only reference"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"tags": "tags"},
+                    "$computed": {"n": {"$count": None}},
+                    "$having": {"$values": {"ghost": {"$any": "vip"}}},
+                },
+            )
+
+    # Per-function valid parses ................................. #
+
+    @pytest.mark.parametrize(
+        "function",
+        ["$sum", "$avg", "$min", "$max", "$median", "$count_distinct"],
+    )
+    def test_parses_value_function_scalar_shorthand(self, function: str) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {"$computed": {"metric": {function: "price"}}},
+        )
+        field = parsed.computed_fields[0]
+        assert field.alias == "metric"
+        assert field.function == function
+        assert field.field == "price"
+        assert field.p is None
+        assert field.parsed_filter is None
+
+    def test_parses_count_with_null_field(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {"$computed": {"rows": {"$count": None}}},
+        )
+        field = parsed.computed_fields[0]
+        assert field.function == "$count"
+        assert field.field is None
+
+    def test_parses_percentile_with_valid_quantile(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {"$computed": {"p95": {"$percentile": {"field": "latency", "p": 0.95}}}},
+        )
+        field = parsed.computed_fields[0]
+        assert field.function == "$percentile"
+        assert field.field == "latency"
+        assert field.p == 0.95
+
+    @pytest.mark.parametrize("p", [0, 1, 0.0, 1.0])
+    def test_parses_percentile_boundary_quantiles(self, p: float) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {"$computed": {"q": {"$percentile": {"field": "x", "p": p}}}},
+        )
+        # ``_quantile`` always returns a ``float`` (covers ``float(p)`` return).
+        assert parsed.computed_fields[0].p == float(p)
+        assert isinstance(parsed.computed_fields[0].p, float)
+
+    def test_percentile_rejects_scalar_shorthand(self) -> None:
+        # ``$percentile`` has no scalar form: a bare field string is rejected.
+        with pytest.raises(CoreException, match="requires the .* form"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"p": {"$percentile": "latency"}}},
+            )
+
+    def test_percentile_rejects_missing_quantile(self) -> None:
+        # Mapping form present but no ``p`` key -> ``_quantile(None)`` raise.
+        with pytest.raises(CoreException, match="requires a 'p' quantile"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"p": {"$percentile": {"field": "latency"}}}},
+            )
+
+    def test_non_percentile_rejects_p_key(self) -> None:
+        # ``p`` is only an allowed key for ``$percentile``; on ``$sum`` it is extra.
+        with pytest.raises(CoreException, match="Invalid aggregate function keys"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"s": {"$sum": {"field": "x", "p": 0.5}}}},
+            )
+
+    @pytest.mark.parametrize("unit", ["hour", "day", "week", "month"])
+    def test_parses_trunc_each_unit(self, unit: str) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$groups": {"bucket": {"$trunc": {"field": "ts", "unit": unit}}},
+                "$computed": {"n": {"$count": None}},
+            },
+        )
+        trunc = parsed.groups[0].expr
+        assert isinstance(trunc, GroupTrunc)
+        assert trunc.unit == unit
+        # Default timezone resolves to UTC (IANA mode) when omitted.
+        assert trunc.timezone.mode == "iana"
+        assert trunc.timezone.iana == "UTC"
+
+    def test_per_aggregate_filter_parses_into_parsed_filter(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$computed": {
+                    "books": {
+                        "$sum": {
+                            "field": "price",
+                            "filter": {"$values": {"category": "books"}},
+                        },
+                    },
+                },
+            },
+        )
+        field = parsed.computed_fields[0]
+        assert field.field == "price"
+        assert field.filter == {"$values": {"category": "books"}}
+        assert isinstance(field.parsed_filter, QueryAnd)
+        inner = field.parsed_filter.items[0]
+        assert isinstance(inner, QueryField)
+        assert inner.name == "category" and inner.value == "books"
 
 
 # ----------------------- #
