@@ -6,10 +6,15 @@ through :class:`RealtimePublisher` — ephemeral (stream, fire-and-forget) or du
 consumes the stream and bridges to live connections. Sibling of the ``notify`` kit.
 """
 
-from .lifecycle import realtime_relay_lifecycle_step
+from .lifecycle import (
+    realtime_group_ensure_lifecycle_step,
+    realtime_relay_lifecycle_step,
+)
 from .publisher import RealtimePublisher
 from .specs import (
     DEFAULT_REALTIME_CHANNEL,
+    RealtimeTransport,
+    build_realtime_transport,
     realtime_inbox_spec,
     realtime_outbox_spec,
     realtime_stream_spec,
@@ -19,9 +24,12 @@ from .specs import (
 
 __all__ = [
     "RealtimePublisher",
+    "RealtimeTransport",
+    "build_realtime_transport",
     "DEFAULT_REALTIME_CHANNEL",
     "realtime_stream_spec",
     "realtime_outbox_spec",
     "realtime_inbox_spec",
     "realtime_relay_lifecycle_step",
+    "realtime_group_ensure_lifecycle_step",
 ]

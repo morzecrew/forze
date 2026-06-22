@@ -1,12 +1,15 @@
-"""Canonical specs for the realtime stream and its durable outbox route.
+"""Canonical specs for the realtime stream, durable outbox route, and dedup inbox.
 
-The same ``(name, codec)`` pair is used by the publish surface and the transport
-gateway, so they agree on the channel and the wire format. ``RealtimeSignal`` is
-a plain pydantic model, so the standard :class:`PydanticModelCodec` serialises
-it — no custom codec.
+:func:`build_realtime_transport` is the **single source of truth**: build one
+:class:`RealtimeTransport` from a channel name and hand each spec to the matching
+component, so the publisher, relay, gateway, and dedup can never drift on channel
+or codec. ``RealtimeSignal`` is a plain pydantic model, so the standard
+:class:`PydanticModelCodec` serialises it — one shared instance, no custom codec.
 """
 
-from typing import Final
+from typing import Final, final
+
+import attrs
 
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
@@ -18,6 +21,9 @@ from forze.base.serialization import PydanticModelCodec
 
 DEFAULT_REALTIME_CHANNEL: Final[str] = "realtime"
 """Default stream name / outbox route for realtime signals."""
+
+_REALTIME_CODEC: Final = PydanticModelCodec(model_type=RealtimeSignal)
+"""Shared, stateless codec for the realtime signal — reused by every spec."""
 
 
 # ....................... #
@@ -32,7 +38,7 @@ def realtime_stream_spec(name: str = DEFAULT_REALTIME_CHANNEL) -> StreamSpec[Rea
     can consume every tenant's signals from one stream.
     """
 
-    return StreamSpec(name=name, codec=PydanticModelCodec(model_type=RealtimeSignal))
+    return StreamSpec(name=name, codec=_REALTIME_CODEC)
 
 
 # ....................... #
@@ -51,7 +57,7 @@ def realtime_outbox_spec(
 
     return OutboxSpec(
         name=name,
-        codec=PydanticModelCodec(model_type=RealtimeSignal),
+        codec=_REALTIME_CODEC,
         destination=OutboxDestination.stream(route=stream, channel=stream),
     )
 
@@ -59,7 +65,47 @@ def realtime_outbox_spec(
 # ....................... #
 
 
-def realtime_inbox_spec(name: str = "realtime-inbox") -> InboxSpec:
-    """Build the inbox route the gateway uses to dedupe durable signals (exactly-once)."""
+def realtime_inbox_spec(name: str = f"{DEFAULT_REALTIME_CHANNEL}-inbox") -> InboxSpec:
+    """Build the inbox route the gateway uses to dedupe durable signals (exactly-once).
+
+    The default derives from :data:`DEFAULT_REALTIME_CHANNEL`; for a custom channel
+    use :func:`build_realtime_transport`, which keeps the inbox name in lock-step.
+    """
 
     return InboxSpec(name=name)
+
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RealtimeTransport:
+    """The realtime specs for one channel — the single source of truth.
+
+    Build once via :func:`build_realtime_transport` and pass each spec to the
+    matching component: ``stream_spec`` → publisher + gateway source, ``outbox_spec``
+    → publisher + relay, ``inbox_spec`` → gateway dedup. They can never drift.
+    """
+
+    stream_spec: StreamSpec[RealtimeSignal]
+    """The realtime stream (publisher appends, gateway consumes)."""
+
+    outbox_spec: OutboxSpec[RealtimeSignal]
+    """The durable outbox route, relayed to the stream after commit."""
+
+    inbox_spec: InboxSpec
+    """The dedup inbox for exactly-once durable delivery at the gateway."""
+
+
+# ....................... #
+
+
+def build_realtime_transport(channel: str = DEFAULT_REALTIME_CHANNEL) -> RealtimeTransport:
+    """Build every realtime spec for *channel* from one name, so they stay in lock-step."""
+
+    return RealtimeTransport(
+        stream_spec=realtime_stream_spec(channel),
+        outbox_spec=realtime_outbox_spec(channel, stream=channel),
+        inbox_spec=realtime_inbox_spec(f"{channel}-inbox"),
+    )

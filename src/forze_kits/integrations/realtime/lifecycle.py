@@ -7,16 +7,65 @@ consumes them. A thin convenience over the generic
 """
 
 from datetime import timedelta
-from typing import Any
+from typing import Any, final
 
-from forze.application.contracts.execution import LifecycleStep
+import attrs
+
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.outbox import OutboxSpec
-from forze.application.contracts.stream import StreamSpec
+from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
+from forze.application.execution import ExecutionContext
 from forze.base.primitives import StrKey
 
 from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
 
 # ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _EnsureGroupStartup(LifecycleHook):
+    """Idempotently create the gateway's consumer group at startup."""
+
+    stream_spec: StreamSpec[Any]
+    group: str
+    start_id: str
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        port = ctx.deps.resolve_configurable(
+            ctx, StreamGroupQueryDepKey, self.stream_spec, route=self.stream_spec.name
+        )
+        await port.ensure_group(
+            self.group, str(self.stream_spec.name), start_id=self.start_id
+        )
+
+
+# ....................... #
+
+
+def realtime_group_ensure_lifecycle_step(
+    *,
+    stream_spec: StreamSpec[Any],
+    group: str = "realtime-gateway",
+    start_id: str = "$",
+    step_id: StrKey = "realtime_group",
+) -> LifecycleStep:
+    """Create the gateway's consumer group on the realtime stream at startup.
+
+    Order this **before** the relay and before serving so a fresh group's ``"$"``
+    start does not miss durable signals produced in the startup window. Idempotent
+    (a no-op if the group exists). It creates shared infrastructure, so under a
+    ``FLEET`` profile wrap it with a singleton lifecycle step.
+    """
+
+    return LifecycleStep(
+        id=step_id,
+        startup=_EnsureGroupStartup(stream_spec=stream_spec, group=group, start_id=start_id),
+        mutates_shared_state=True,
+    )
+
+
+# ....................... #
 
 
 def realtime_relay_lifecycle_step(

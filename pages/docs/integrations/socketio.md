@@ -70,13 +70,12 @@ the messaging side and never touches a socket, and any transport can host the
 gateway.
 
 ```python
-from forze_kits.integrations.realtime import (
-    RealtimePublisher, realtime_stream_spec, realtime_outbox_spec, realtime_inbox_spec,
-)
+from forze_kits.integrations.realtime import build_realtime_transport, RealtimePublisher
 from forze.application.contracts.realtime import Audience, RealtimeEvent
 
 MESSAGE_NEW = RealtimeEvent(name="message.new", payload_type=MessageView)
-rt = RealtimePublisher(stream_spec=realtime_stream_spec(), outbox_spec=realtime_outbox_spec())
+rt_transport = build_realtime_transport()          # one source of truth for all specs
+rt = RealtimePublisher(stream_spec=rt_transport.stream_spec, outbox_spec=rt_transport.outbox_spec)
 
 # from any handler/saga — addressed by a tenant-agnostic Audience:
 await rt.publish(ctx, Audience.topic("chat:42"), MESSAGE_NEW, view)   # ephemeral, at-most-once
@@ -92,14 +91,23 @@ from forze_socketio import (
     RealtimeGateway, StreamGroupSignalSource, GatewayDedup,
     realtime_gateway_lifecycle_step, attach_realtime_connection,
 )
+from forze_kits.integrations.realtime import (
+    realtime_group_ensure_lifecycle_step, realtime_relay_lifecycle_step,
+)
 
-spec = realtime_stream_spec()
 gateway = RealtimeGateway(
     sio=sio,
-    source=StreamGroupSignalSource(stream_spec=spec),
-    dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="..."),  # exactly-once for durable
+    source=StreamGroupSignalSource(stream_spec=rt_transport.stream_spec),
+    dedup=GatewayDedup(inbox_spec=rt_transport.inbox_spec, tx_route="..."),  # exactly-once for durable
 )
-lifecycle = [realtime_gateway_lifecycle_step(gateway)]
+lifecycle = [
+    # order matters: create the consumer group before the relay/serving starts
+    realtime_group_ensure_lifecycle_step(stream_spec=rt_transport.stream_spec),
+    realtime_relay_lifecycle_step(
+        outbox_spec=rt_transport.outbox_spec, stream_spec=rt_transport.stream_spec,
+    ),
+    realtime_gateway_lifecycle_step(gateway),
+]
 
 # auto-join each connection to its principal room on connect:
 attach_realtime_connection(sio, resolve=resolve_connection, presence=presence)
@@ -130,10 +138,11 @@ tenant-global.
 - **Emit worker** — at scale, run the gateway (and relay) as a dedicated
   `redis_write_only` process holding no client sockets; the Redis manager fans
   emits to the nodes that do.
-- **Consumer group** — on real Redis the group must be **created at startup**
-  (`XGROUP CREATE … MKSTREAM`); the gateway reads but does not create it. The
-  gateway reclaims stranded pending entries (`reclaim_idle`) so a durable signal
-  whose consumer died before ack is recovered (and deduped) rather than lost.
+- **Consumer group** — `realtime_group_ensure_lifecycle_step` creates it idempotently
+  at startup (the gateway reads but does not create it); order it before the relay so
+  a fresh group's `"$"` start misses nothing. The gateway also reclaims stranded
+  pending entries (`reclaim_idle`) so a durable signal whose consumer died before ack
+  is recovered (and deduped) rather than lost.
 - **Hardening** — presence wants a TTL-backed store across nodes (the in-memory
   tracker is single-node); re-validate a connection's token periodically (a
   long-lived socket outlives a short-lived token); the gateway lifecycle step

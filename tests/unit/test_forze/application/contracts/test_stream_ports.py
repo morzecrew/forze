@@ -110,6 +110,9 @@ class _StubStreamGroupQuery:
             )
         ]
 
+    async def ensure_group(self, group: str, stream: str, *, start_id: str = "$") -> None:
+        return None
+
 
 class _StubStreamCommand:
     async def append(

@@ -309,6 +309,31 @@ class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
 
     # ....................... #
 
+    async def ensure_group(self, group: str, stream: str, *, start_id: str = "$") -> None:
+        with self.state.lock:
+            store = cast(dict[str, Any], self.stream._stream_store())  # type: ignore[reportPrivateUsage]
+            groups = cast(
+                dict[tuple[str, str], _MockGroupState],
+                store.setdefault(_GROUPS_KEY, [{}])[0],
+            )
+
+            if (group, stream) in groups:
+                return  # idempotent — already created
+
+            gs = _MockGroupState()
+
+            if start_id not in ("0", "0-0"):
+                # "$": deliver only entries appended after creation
+                entries = cast(list[Any], store.setdefault(stream, []))
+                gs.last_delivered = max(
+                    (self.stream._id_to_int(m.id) for m in entries),  # type: ignore[reportPrivateUsage]
+                    default=0,
+                )
+
+            groups[(group, stream)] = gs
+
+    # ....................... #
+
     async def claim(
         self,
         group: str,

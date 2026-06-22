@@ -150,6 +150,30 @@ class StreamGroupQueryPort[M](Protocol):
         """
         ...  # pragma: no cover
 
+    # ....................... #
+
+    def ensure_group(
+        self,
+        group: str,
+        stream: str,
+        *,
+        start_id: str = "$",
+    ) -> Awaitable[None]:
+        """Idempotently create consumer *group* on *stream* (creating the stream if absent).
+
+        Must run before any group read on a backend that requires explicit group
+        creation (Redis: ``XGROUP CREATE … MKSTREAM``); a no-op if the group
+        already exists. Run it **early in startup, before anything publishes**, so
+        a ``start_id`` of ``"$"`` (deliver only entries added after creation —
+        the live default) does not miss messages produced in the startup window.
+        Pass ``"0"`` to start from the beginning of the stream.
+
+        :param group: Consumer group name.
+        :param stream: Stream the group consumes.
+        :param start_id: Where a freshly-created group starts.
+        """
+        ...  # pragma: no cover
+
 
 # ....................... #
 

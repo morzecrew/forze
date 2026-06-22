@@ -9,14 +9,21 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.realtime import Audience, AudienceKind, RealtimeEvent
-from forze.application.contracts.stream import StreamQueryDepKey
+from forze.application.contracts.realtime import Audience, AudienceKind, RealtimeEvent, RealtimeSignal
+from forze.application.contracts.stream import (
+    StreamCommandDepKey,
+    StreamGroupQueryDepKey,
+    StreamQueryDepKey,
+)
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.realtime import (
     RealtimePublisher,
+    RealtimeTransport,
+    build_realtime_transport,
+    realtime_group_ensure_lifecycle_step,
     realtime_outbox_spec,
     realtime_relay_lifecycle_step,
     realtime_stream_spec,
@@ -181,3 +188,45 @@ async def test_relay_lifecycle_step_moves_staged_signal_to_stream() -> None:
     assert len(rows) == 1
     assert rows[0].payload.event == "order.shipped"
     assert rows[0].payload.audience == Audience.principal("u1")
+
+
+# ----------------------- #
+# transport bundle + group-ensure step
+
+
+def test_build_realtime_transport_derives_consistent_specs() -> None:
+    t = build_realtime_transport("chat")
+
+    assert isinstance(t, RealtimeTransport)
+    assert str(t.stream_spec.name) == "chat"
+    assert str(t.outbox_spec.name) == "chat"
+    assert str(t.inbox_spec.name) == "chat-inbox"  # inbox derived from the channel
+    # the outbox relays to the same channel the stream consumes
+    assert t.outbox_spec.destination is not None
+    assert t.outbox_spec.destination.channel == "chat"
+
+
+async def test_group_ensure_step_skips_backlog_and_is_idempotent() -> None:
+    spec = realtime_stream_spec()
+    step = realtime_group_ensure_lifecycle_step(stream_spec=spec, group="gw")  # start_id="$"
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        cmd = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, spec, route=spec.name)
+
+        # a signal published BEFORE the group is created
+        await cmd.append(str(spec.name), RealtimeSignal.of(Audience.topic("a"), "e", {"x": 1}))
+
+        await step.startup(ctx)
+        await step.startup(ctx)  # idempotent — no error
+
+        group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
+        backlog = await group.read("gw", "c", {str(spec.name): ">"})
+
+        # "$" delivers only what arrives after creation
+        await cmd.append(str(spec.name), RealtimeSignal.of(Audience.topic("b"), "e", {"x": 2}))
+        fresh = await group.read("gw", "c", {str(spec.name): ">"})
+
+    assert backlog == []  # the pre-creation signal is skipped
+    assert [m.payload.audience for m in fresh] == [Audience.topic("b")]
