@@ -9,6 +9,7 @@ consumes the stream and bridges to live connections. Sibling of the ``notify`` k
 from .lifecycle import (
     realtime_group_ensure_lifecycle_step,
     realtime_relay_lifecycle_step,
+    realtime_tenant_group_ensure_lifecycle_step,
 )
 from .mailbox import (
     DocumentMailboxCursors,
@@ -51,4 +52,5 @@ __all__ = [
     "realtime_inbox_spec",
     "realtime_relay_lifecycle_step",
     "realtime_group_ensure_lifecycle_step",
+    "realtime_tenant_group_ensure_lifecycle_step",
 ]

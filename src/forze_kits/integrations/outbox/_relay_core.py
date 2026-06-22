@@ -48,6 +48,7 @@ swallowed.
 
 import random
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractContextManager, nullcontext
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -55,6 +56,7 @@ from uuid import UUID
 from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
 from forze.application.contracts.resilience import BackoffStrategy
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.resilience.backoff import compute_delay
 from forze.application.integrations.outbox import (
     decrypt_outbox_payload,
@@ -70,6 +72,26 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 PublishOne = Callable[["OutboxClaim", Any], Awaitable[None]]
+
+
+def _under_claim_tenant(
+    ctx: "ExecutionContext", tenant_id: UUID | None
+) -> AbstractContextManager[None]:
+    """Bind a claim's staging tenant while it is forwarded to its destination.
+
+    The relay runs as a tenant-less background process, so a tenant-aware destination —
+    e.g. a per-tenant realtime stream key ``tenant:{id}:stream:…`` (RFC 0007) — would
+    otherwise be written under no tenant, landing on the global key (and silently missed
+    by a per-tenant consumer). ``claim.tenant_id`` is the trusted tenant the row was staged
+    under (already used for at-rest decryption and the ``forze_tenant_id`` header), so
+    binding it routes the forward to the right tenant. A tenant-global destination ignores
+    the binding, so this is a no-op there.
+    """
+
+    if tenant_id is None:
+        return nullcontext()
+
+    return ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_id))
 
 # Published ids are marked in chunks of this size (one UPDATE per chunk
 # instead of one per row). Bounds the redelivery window after a crash to one
@@ -222,8 +244,11 @@ async def relay_outbox_claims(
             continue
 
         try:
-            # Publish step: broker errors are transient — retry with backoff.
-            await publish_one(claim, payload)
+            # Publish step: broker errors are transient — retry with backoff. Forward
+            # under the claim's staging tenant so a tenant-aware destination routes to the
+            # right tenant (no-op for a tenant-global destination).
+            with _under_claim_tenant(ctx, claim.tenant_id):
+                await publish_one(claim, payload)
 
         except Exception as e:
             attempts = claim.attempts + 1

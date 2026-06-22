@@ -98,6 +98,7 @@ from .gateway import (
     RealtimeSignalSource,
     SignalHandler,
     StreamGroupSignalSource,
+    TenantShardedSignalSource,
     room_for,
 )
 from .mailbox import (
@@ -146,6 +147,7 @@ __all__ = [
     "RealtimeSignalSource",
     "SignalHandler",
     "StreamGroupSignalSource",
+    "TenantShardedSignalSource",
     "GatewayDedup",
     "RealtimeMailbox",
     "MailboxCursors",

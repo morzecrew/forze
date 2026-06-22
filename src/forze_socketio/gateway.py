@@ -33,6 +33,7 @@ from typing import (
     Awaitable,
     Callable,
     Protocol,
+    Sequence,
     cast,
     final,
     runtime_checkable,
@@ -186,6 +187,115 @@ class RealtimeSignalSource(Protocol):
 # ....................... #
 
 
+async def _process_messages(
+    *,
+    group: Any,
+    group_name: str,
+    stream: str,
+    messages: list[Any],
+    handler: SignalHandler,
+    tenant_for: Callable[[Any], UUID | None],
+) -> None:
+    """Bridge each message to *handler*, acking per the durable/ephemeral policy.
+
+    *tenant_for* resolves the tenant handed to the handler — from the message header
+    (tenant-global stream) or the bound shard tenant (tenant-aware stream, RFC 0007).
+    A durable signal (carries an event id) is acked only on success, so a transient
+    failure stays pending and is recovered (at-least-once); an ephemeral signal is
+    acked regardless, so one bad signal can never wedge the live stream (at-most-once).
+    """
+
+    for message in messages:
+        durable = HEADER_EVENT_ID in message.headers
+        dedup_id = message.headers.get(HEADER_EVENT_ID)
+        ack = True
+
+        try:
+            await handler(
+                message.payload,
+                tenant_for(message),
+                dedup_id,
+                _hlc_from_headers(message.headers),
+            )
+
+        except Exception:  # noqa: BLE001
+            _logger.critical_exception(
+                "Realtime bridge failed", stream=stream, message_id=message.id
+            )
+            ack = not durable
+
+        if ack:
+            await group.ack(group=group_name, stream=stream, ids=[message.id])
+
+
+# ....................... #
+
+
+async def _consume_group_stream(
+    *,
+    group: Any,
+    stream: str,
+    group_name: str,
+    consumer: str,
+    batch: int,
+    poll_interval: timedelta,
+    reclaim_idle: timedelta | None,
+    handler: SignalHandler,
+    tenant_for: Callable[[Any], UUID | None],
+) -> None:
+    """Consume one stream's consumer group forever: read, reclaim, bridge, ack.
+
+    The loop body shared by every source (tenant-global and per-tenant): the sources
+    differ only in how the *group* port is resolved and how *tenant_for* derives the
+    tenant. A transient broker error is logged and retried, never fatal.
+    """
+
+    mapping = {stream: ">"}
+
+    while True:
+        try:
+            fresh = await group.read(
+                group_name, consumer, mapping, limit=batch, timeout=poll_interval
+            )
+            await _process_messages(
+                group=group,
+                group_name=group_name,
+                stream=stream,
+                messages=fresh,
+                handler=handler,
+                tenant_for=tenant_for,
+            )
+
+            reclaimed: list[Any] = []
+            if reclaim_idle is not None:
+                reclaimed = await group.claim(
+                    group_name, consumer, stream, idle=reclaim_idle, limit=batch
+                )
+                await _process_messages(
+                    group=group,
+                    group_name=group_name,
+                    stream=stream,
+                    messages=reclaimed,
+                    handler=handler,
+                    tenant_for=tenant_for,
+                )
+
+            if not fresh and not reclaimed:
+                # the read timeout already paces blocking backends; this is a small
+                # floor so a non-blocking backend cannot hot-loop.
+                await asyncio.sleep(min(_IDLE_FLOOR, poll_interval.total_seconds()))
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception:  # noqa: BLE001 - a transient broker error must not kill the loop
+            _logger.critical_exception("Realtime gateway loop error", stream=stream)
+            await asyncio.sleep(poll_interval.total_seconds())
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class StreamGroupSignalSource(RealtimeSignalSource):
@@ -230,81 +340,111 @@ class StreamGroupSignalSource(RealtimeSignalSource):
             self.stream_spec,
             route=self.stream_spec.name,
         )
-        stream = str(self.stream_spec.name)
-        mapping = {stream: ">"}
+        await _consume_group_stream(
+            group=group,
+            stream=str(self.stream_spec.name),
+            group_name=self.group,
+            consumer=self.consumer,
+            batch=self.batch,
+            poll_interval=self.poll_interval,
+            reclaim_idle=self.reclaim_idle,
+            handler=handler,
+            # tenant-global: the tenant rides each message's (untrusted) header.
+            tenant_for=lambda message: _tenant_from_headers(message.headers),
+        )
 
-        while True:
-            try:
-                fresh = await group.read(
-                    self.group,
-                    self.consumer,
-                    mapping,
-                    limit=self.batch,
-                    timeout=self.poll_interval,
-                )
-                await self._process(group, stream, fresh, handler)
 
-                reclaimed: list[Any] = []
-                if self.reclaim_idle is not None:
-                    reclaimed = await group.claim(
-                        self.group,
-                        self.consumer,
-                        stream,
-                        idle=self.reclaim_idle,
-                        limit=self.batch,
-                    )
-                    await self._process(group, stream, reclaimed, handler)
+# ....................... #
 
-                if not fresh and not reclaimed:
-                    # the read timeout already paces blocking backends; this is a
-                    # small floor so a non-blocking backend cannot hot-loop.
-                    await asyncio.sleep(
-                        min(_IDLE_FLOOR, self.poll_interval.total_seconds())
-                    )
 
-            except asyncio.CancelledError:
-                raise
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class TenantShardedSignalSource(RealtimeSignalSource):
+    """Consume a **per-tenant** realtime stream for each tenant in this gateway's
+    assigned shard, binding the tenant from the **stream identity** (RFC 0007).
 
-            except (
-                Exception
-            ):  # noqa: BLE001 - a transient broker error must not kill the gateway
-                _logger.critical_exception("Realtime gateway loop error", stream=stream)
-                await asyncio.sleep(self.poll_interval.total_seconds())
+    The tenant-global :class:`StreamGroupSignalSource` reads one shared stream and takes
+    the tenant from the (untrusted) ``forze_tenant_id`` header. This is the **namespace-tier**
+    alternative: the realtime stream route is wired ``tenant_aware`` (so the adapter scopes
+    each tenant to its own key/partition), and this source runs one consume loop per assigned
+    tenant, each **bound** to that tenant. The tenant a signal belongs to is therefore the
+    stream it was read from — set by the publisher's ambient tenant at write time — so a
+    tenant-aware mailbox and the room scope by a **trusted** tenant, with no header trust
+    (``RealtimeGateway.bind_tenant_from_headers`` is irrelevant in this mode). Pair it with
+    :func:`~forze_kits.integrations.realtime.realtime_tenant_group_ensure_lifecycle_step`.
+
+    Per-tenant loops run as sibling tasks; each binds its tenant in its own task-copied
+    context (``asyncio`` snapshots ContextVars at task creation), so the bindings never race.
+    Assign **disjoint** tenant shards across gateway instances; rebalancing a running fleet
+    is out of scope (RFC 0007 §9) — repartition by restart.
+    """
+
+    stream_spec: StreamSpec[RealtimeSignal]
+    """The realtime stream to consume (same spec the publisher appends to), wired
+    ``tenant_aware`` so it resolves to a per-tenant key/partition under the bound tenant."""
+
+    tenants: Callable[[], Sequence[UUID]]
+    """This gateway's assigned tenant shard, evaluated **once** at :meth:`run` start."""
+
+    group: str = DEFAULT_REALTIME_GROUP
+    """Consumer group name shared by all gateway instances on a given tenant stream."""
+
+    consumer: str = "gateway"
+    """This instance's consumer name within the group."""
+
+    batch: int = 64
+    """Maximum signals to read per poll, per tenant."""
+
+    poll_interval: timedelta = timedelta(seconds=1)
+    """Block timeout for one group read."""
+
+    reclaim_idle: timedelta | None = timedelta(seconds=60)
+    """Reclaim entries stranded (delivered, unacked) at least this long; ``None`` disables."""
 
     # ....................... #
 
-    async def _process(
-        self,
-        group: Any,
-        stream: str,
-        messages: list[Any],
-        handler: SignalHandler,
+    async def run(self, ctx: ExecutionContext, handler: SignalHandler) -> None:
+        tenants = list(self.tenants())
+
+        if not tenants:
+            # Nothing assigned: idle until cancelled. Returning would look like a crash
+            # to supervision (which expects the run task to end only via cancellation).
+            await asyncio.Event().wait()
+            return
+
+        async with asyncio.TaskGroup() as tasks:
+            for tenant in tenants:
+                tasks.create_task(
+                    self._run_tenant(ctx, tenant, handler),
+                    name=f"realtime_gateway_t:{tenant}",
+                )
+
+    # ....................... #
+
+    async def _run_tenant(
+        self, ctx: ExecutionContext, tenant: UUID, handler: SignalHandler
     ) -> None:
-        for message in messages:
-            # A durable signal (relayed from the outbox) carries an event id; it is
-            # acked only on success, so a transient failure stays pending and is
-            # recovered (at-least-once). An ephemeral signal is acked regardless, so
-            # one bad signal can never wedge the live stream (at-most-once).
-            durable = HEADER_EVENT_ID in message.headers
-            dedup_id = message.headers.get(HEADER_EVENT_ID)
-            ack = True
-
-            try:
-                await handler(
-                    message.payload,
-                    _tenant_from_headers(message.headers),
-                    dedup_id,
-                    _hlc_from_headers(message.headers),
-                )
-
-            except Exception:  # noqa: BLE001
-                _logger.critical_exception(
-                    "Realtime bridge failed", stream=stream, message_id=message.id
-                )
-                ack = not durable
-
-            if ack:
-                await group.ack(group=self.group, stream=stream, ids=[message.id])
+        # Bind the shard tenant for the whole loop so the per-tenant group port resolves
+        # to this tenant's key/partition and every handler call scopes under it. The
+        # tenant is the stream's identity (trusted), not a per-message header.
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+            group = ctx.deps.resolve_configurable(
+                ctx,
+                StreamGroupQueryDepKey,
+                self.stream_spec,
+                route=self.stream_spec.name,
+            )
+            await _consume_group_stream(
+                group=group,
+                stream=str(self.stream_spec.name),
+                group_name=self.group,
+                consumer=self.consumer,
+                batch=self.batch,
+                poll_interval=self.poll_interval,
+                reclaim_idle=self.reclaim_idle,
+                handler=handler,
+                tenant_for=lambda _message: tenant,
+            )
 
 
 # ----------------------- #

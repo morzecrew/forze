@@ -207,8 +207,58 @@ on a broker where every producer is trusted to assert tenancy.
     gateway has nothing to scope by unless you set `bind_tenant_from_headers=True`;
     leave it off and the store **fails closed** with `realtime_mailbox_tenant_unbound`
     naming this contract. (The connect layer is unaffected — it scopes by the
-    connection's authenticated tenant.) Trusted per-tenant scoping *without* trusting
-    the header is the tenant-aware-gateway follow-up — RFC 0007.
+    connection's authenticated tenant.) To scope by a **trusted** tenant *without* trusting
+    the header, use the tenant-aware gateway below.
+
+#### Tenant-aware (namespace-tier) gateway
+
+The tenant-global default carries tenant in the (untrusted) header. For **trusted**
+per-tenant isolation, put the realtime stream on the tenancy tier ladder like every
+other port (RFC 0007): wire the stream route `tenant_aware` so the adapter gives each
+tenant its own key/partition (`tenant:{id}:stream:realtime`), and consume with
+`TenantShardedSignalSource` instead of `StreamGroupSignalSource`:
+
+```python
+from forze_socketio import RealtimeGateway, TenantShardedSignalSource
+from forze_kits.integrations.realtime import (
+    realtime_stream_spec, realtime_tenant_group_ensure_lifecycle_step,
+)
+
+stream = realtime_stream_spec()
+my_tenants = lambda: load_assigned_shard()  # this instance's disjoint tenant set
+
+gateway = RealtimeGateway(
+    sio=sio,
+    source=TenantShardedSignalSource(stream_spec=stream, tenants=my_tenants),
+    dedup=..., mailbox_factory=build_realtime_mailbox,
+    # bind_tenant_from_headers stays off — the tenant is the stream's, not a header
+)
+ensure = realtime_tenant_group_ensure_lifecycle_step(stream_spec=stream, tenants=my_tenants)
+```
+
+The source runs one consume loop per assigned tenant, each **bound** to that tenant, so
+the tenant a signal belongs to is the stream it was read from — set by the publisher's
+ambient tenant at write time. A tenant-aware mailbox and the room then scope by that
+**trusted** tenant; the `forze_tenant_id` header is never trusted (or needed). The
+publisher needs no change — wiring the stream route `tenant_aware` makes it append to the
+per-tenant key automatically.
+
+**Durable signals route per-tenant too.** A staged (durable) signal travels through the
+outbox and the relay before reaching the stream, and the relay runs as a tenant-less
+background process. It forwards each row under the tenant it was staged with (carried on
+the outbox row), so the append lands on that tenant's stream key — and the sharded gateway,
+then the offline mailbox, see it. Keep the realtime **outbox** tenant-global (one route,
+rows tagged with their tenant) while only the **stream** route is `tenant_aware`; a
+tenant-aware outbox would need a per-tenant relay, which is out of scope.
+
+!!! note "Assignment, not discovery"
+    Each gateway instance consumes the **disjoint** tenant shard `tenants` returns,
+    evaluated once at startup — shard your tenants across instances (the same way the
+    "emit worker" deployment already shards). Rebalancing a *running* fleet is out of
+    scope (RFC 0007 §9): repartition by restart. `tenants` must match the shard
+    `realtime_tenant_group_ensure_lifecycle_step` ensures groups for. Broker-level
+    enforcement (so a rogue producer can't write another tenant's key) is Redis ACLs,
+    the operator's job — as with the dedicated tier.
 
 Each device has its own **cursor**, so it never re-receives what it acked. The
 device is keyed by `ClientIdentity` — a client-supplied `device_id` (stable across
@@ -266,6 +316,7 @@ to export stored/replayed/trimmed/acked as OpenTelemetry counters.
 | `SocketIONamespaceRouter.command(...)` | inbound: event → operation, with typed payload/ack |
 | `RealtimePublisher.publish` / `.stage` | egress: publish a signal to messaging (ephemeral / durable) |
 | `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms (optional `emit_timeout`) |
+| `TenantShardedSignalSource` + `realtime_tenant_group_ensure_lifecycle_step` | egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust (RFC 0007) |
 | `attach_realtime_connection` | auto-join principal rooms + presence on connect; offline replay + ack |
 | `DocumentRealtimeMailbox` + `DocumentMailboxCursors` | offline store-and-forward: per-principal mailbox + per-device cursor |
 | `RedisRealtimePresence` + `realtime_presence_heartbeat_lifecycle_step` | crash-safe multi-node presence (TTL + heartbeat) |
