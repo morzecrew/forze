@@ -61,12 +61,84 @@ the resolved `AuthnIdentity` onto the invocation context around each event;
 without one, handlers run unauthenticated and governance hooks that require
 identity will deny. Tenant resolution stays in the `context_factory`.
 
+## Push to clients (realtime egress)
+
+Server-initiated push is an **egress plane**, not a method you call to reach a
+connection. The application publishes a signal *as data* onto messaging; a
+**gateway** consumes it and bridges to live connections. So a handler stays on
+the messaging side and never touches a socket, and any transport can host the
+gateway.
+
+```python
+from forze_kits.integrations.realtime import (
+    RealtimePublisher, realtime_stream_spec, realtime_outbox_spec, realtime_inbox_spec,
+)
+from forze.application.contracts.realtime import Audience, RealtimeEvent
+
+MESSAGE_NEW = RealtimeEvent(name="message.new", payload_type=MessageView)
+rt = RealtimePublisher(stream_spec=realtime_stream_spec(), outbox_spec=realtime_outbox_spec())
+
+# from any handler/saga — addressed by a tenant-agnostic Audience:
+await rt.publish(ctx, Audience.topic("chat:42"), MESSAGE_NEW, view)   # ephemeral, at-most-once
+await rt.stage(ctx,   Audience.principal(user_id), ORDER_SHIPPED, dto) # durable, at-least-once
+```
+
+The **gateway** runs as a background lifecycle step, consuming the stream via a
+consumer group and emitting to a tenant-scoped room (fanned out cluster-wide by
+the Redis manager):
+
+```python
+from forze_socketio import (
+    RealtimeGateway, StreamGroupSignalSource, GatewayDedup,
+    realtime_gateway_lifecycle_step, attach_realtime_connection,
+)
+
+spec = realtime_stream_spec()
+gateway = RealtimeGateway(
+    sio=sio,
+    source=StreamGroupSignalSource(stream_spec=spec),
+    dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="..."),  # exactly-once for durable
+)
+lifecycle = [realtime_gateway_lifecycle_step(gateway)]
+
+# auto-join each connection to its principal room on connect:
+attach_realtime_connection(sio, resolve=resolve_connection, presence=presence)
+```
+
+Durable signals also need the **relay** (`realtime_relay_lifecycle_step`) to move
+staged rows from the outbox to the stream after commit, plus the gateway's
+`dedup` for exactly-once delivery to online recipients.
+
+### Tenancy and addressing
+
+`Audience` is `principal(id)` or `topic(name)` — **no tenant**. The publish layer
+puts the ambient tenant in the message headers; the gateway scopes the room
+(`t:{tenant}:{kind}:{name}`). Isolation is enforced at **room membership**: a
+connection only ever joins its own tenant's rooms, so the realtime stream can be
+tenant-global.
+
+### Deployment
+
+- **In-process** — run the gateway lifecycle step inside the socket-holding
+  workers (fine for single node / dev with the mock or in-process stream).
+- **Emit worker** — at scale, run the gateway (and relay) as a dedicated
+  `redis_write_only` process holding no client sockets; the Redis manager fans
+  emits to the nodes that do.
+- **Consumer group** — on real Redis the group must be **created at startup**
+  (`XGROUP CREATE … MKSTREAM`); the gateway reads but does not create it.
+- **Hardening** — presence wants a TTL-backed store across nodes (the in-memory
+  tracker is single-node); re-validate a connection's token periodically (a
+  long-lived socket outlives a short-lived token); the gateway lifecycle step
+  cancels cleanly on shutdown. Backpressure to slow clients is engine.io's.
+
 ## What it provides
 
 | Surface | What it does |
 |---------|--------------|
 | `SocketIONamespaceRouter.command(...)` | inbound: event → operation, with typed payload/ack |
-| `SocketIOEventEmitter` | outbound: typed, validated server-to-client emits |
+| `RealtimePublisher.publish` / `.stage` | egress: publish a signal to messaging (ephemeral / durable) |
+| `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms |
+| `attach_realtime_connection` | auto-join principal rooms + presence on connect |
 
 ## Notes
 

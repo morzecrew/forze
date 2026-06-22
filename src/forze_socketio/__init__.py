@@ -79,6 +79,13 @@ from .emitter import (
     SocketIONamespaceEmitter,
     SocketIOServerEvent,
 )
+from .connection import (
+    CONNECTION_SESSION_KEY,
+    InMemoryRealtimePresence,
+    RealtimeConnection,
+    RealtimePresence,
+    attach_realtime_connection,
+)
 from .gateway import (
     GatewayDedup,
     RealtimeGateway,
@@ -127,6 +134,11 @@ __all__ = [
     "GatewayDedup",
     "realtime_gateway_lifecycle_step",
     "room_for",
+    "attach_realtime_connection",
+    "RealtimeConnection",
+    "RealtimePresence",
+    "InMemoryRealtimePresence",
+    "CONNECTION_SESSION_KEY",
     "build_core_exception_ack",
     "build_socketio_server",
     "build_socketio_asgi_app",
