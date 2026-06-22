@@ -79,6 +79,13 @@ from .emitter import (
     SocketIONamespaceEmitter,
     SocketIOServerEvent,
 )
+from .gateway import (
+    RealtimeGateway,
+    RealtimeSignalSource,
+    StreamGroupSignalSource,
+    room_for,
+)
+from .gateway_lifecycle import realtime_gateway_lifecycle_step
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
     build_core_exception_ack,
@@ -113,6 +120,11 @@ __all__ = [
     "SocketIOServerEvent",
     "SocketIOEventEmitter",
     "SocketIONamespaceEmitter",
+    "RealtimeGateway",
+    "RealtimeSignalSource",
+    "StreamGroupSignalSource",
+    "realtime_gateway_lifecycle_step",
+    "room_for",
     "build_core_exception_ack",
     "build_socketio_server",
     "build_socketio_asgi_app",
