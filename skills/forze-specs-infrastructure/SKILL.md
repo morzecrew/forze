@@ -97,6 +97,7 @@ from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.durable.workflow import DurableWorkflowSpec
 from forze.base.serialization import PydanticModelCodec
+from forze_s3 import S3StorageConfig
 
 attachments = StorageSpec(name=ResourceName.PROJECT_ATTACHMENTS)
 orders = QueueSpec(
