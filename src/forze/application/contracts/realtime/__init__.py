@@ -9,6 +9,7 @@ import this contract; neither owns a connection-reaching port.
 """
 
 from .audience import Audience, AudienceKind
+from .constants import DEFAULT_REALTIME_GROUP
 from .events import RealtimeEvent, RealtimeEventCatalog
 from .signal import RealtimeSignal
 
@@ -17,6 +18,7 @@ from .signal import RealtimeSignal
 __all__ = [
     "Audience",
     "AudienceKind",
+    "DEFAULT_REALTIME_GROUP",
     "RealtimeEvent",
     "RealtimeEventCatalog",
     "RealtimeSignal",

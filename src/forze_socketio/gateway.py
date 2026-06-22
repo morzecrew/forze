@@ -34,7 +34,11 @@ from socketio.async_server import AsyncServer
 
 from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
 from forze.application.contracts.inbox import InboxSpec
-from forze.application.contracts.realtime import Audience, RealtimeSignal
+from forze.application.contracts.realtime import (
+    DEFAULT_REALTIME_GROUP,
+    Audience,
+    RealtimeSignal,
+)
 from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
 from forze.application.execution import ExecutionContext
 from forze.base.logging import Logger
@@ -121,7 +125,7 @@ class StreamGroupSignalSource(RealtimeSignalSource):
     stream_spec: StreamSpec[RealtimeSignal]
     """The realtime stream to consume (same spec the publisher appends to)."""
 
-    group: str = "realtime-gateway"
+    group: str = DEFAULT_REALTIME_GROUP
     """Consumer group name shared by all gateway instances."""
 
     consumer: str = "gateway"

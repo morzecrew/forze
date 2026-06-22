@@ -13,6 +13,7 @@ import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.outbox import OutboxSpec
+from forze.application.contracts.realtime import DEFAULT_REALTIME_GROUP
 from forze.application.contracts.stream import StreamGroupAdminDepKey, StreamSpec
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import StrKey
@@ -52,7 +53,7 @@ class _EnsureGroupStartup(LifecycleHook):
 def realtime_group_ensure_lifecycle_step(
     *,
     stream_spec: StreamSpec[Any],
-    group: str = "realtime-gateway",
+    group: str = DEFAULT_REALTIME_GROUP,
     start_id: str = "$",
     step_id: StrKey = "realtime_group",
 ) -> LifecycleStep:
