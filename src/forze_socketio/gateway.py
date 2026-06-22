@@ -58,6 +58,7 @@ from forze.application.contracts.realtime import (
 from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException, exc
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, JsonDict, StrKey, utcnow
 
@@ -420,16 +421,49 @@ class RealtimeGateway:
                 store = mailbox if (mailbox is not None and self._should_mailbox(signal)) else None
 
                 if store is not None:
-                    await store.store(
-                        principal=signal.audience.name,
-                        event_id=dedup_id,
-                        hlc=hlc,
-                        signal=signal,
-                    )
+                    try:
+                        await store.store(
+                            principal=signal.audience.name,
+                            event_id=dedup_id,
+                            hlc=hlc,
+                            signal=signal,
+                        )
+                    except CoreException as error:
+                        # A tenant-aware mailbox fails closed with an opaque
+                        # ``tenant_required`` when nothing is bound; the gateway is the
+                        # only place that knows *why* nothing is bound, so rewrap it.
+                        if error.code == "tenant_required":
+                            raise self._mailbox_tenant_unbound() from error
+                        raise
 
                 await self._emit_live(
                     signal, tenant, event_id=dedup_id, recoverable=store is not None
                 )
+
+    # ....................... #
+
+    def _mailbox_tenant_unbound(self) -> CoreException:
+        """Actionable error when a tenant-aware mailbox has no tenant to scope by.
+
+        The gateway is a **cross-tenant** consumer with no ambient tenant of its own
+        (the realtime stream is tenant-global; RFC 0002). So a tenant-aware mailbox's
+        only possible tenant is the stream's ``forze_tenant_id`` header — bound only
+        when :attr:`bind_tenant_from_headers` is enabled *and* the header is present.
+        Otherwise the adapter raises a bare ``tenant_required``; this names the wiring
+        contract instead. (Per-tenant *trusted* mailbox scoping without header trust is
+        the tenant-aware-gateway follow-up — RFC 0007.)
+        """
+
+        return exc.configuration(
+            "Realtime gateway cannot store into a tenant-aware mailbox: no tenant is "
+            "bound. The gateway has no ambient tenant of its own, so the only tenant "
+            "source is the stream's forze_tenant_id header. Either set "
+            "RealtimeGateway.bind_tenant_from_headers=True to bind it (the header must "
+            "be present on every signal, and is untrusted/forgeable — enable only where "
+            "every stream producer is trusted to assert tenancy), or wire a "
+            "tenant-global mailbox route (tenant_aware=False).",
+            code="realtime_mailbox_tenant_unbound",
+        )
 
     # ....................... #
 

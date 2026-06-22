@@ -199,6 +199,17 @@ binds the per-signal `forze_tenant_id` header when `bind_tenant_from_headers=Tru
 which is **off by default** because that header is untrusted/forgeable — enable it only
 on a broker where every producer is trusted to assert tenancy.
 
+!!! warning "A tenant-aware mailbox at the gateway requires `bind_tenant_from_headers`"
+    The realtime stream is **tenant-global** (RFC 0002): one stream carries every
+    tenant's signals so the cross-tenant gateway can drain it from one consumer group.
+    The gateway therefore has **no ambient tenant of its own** — its only tenant source
+    is the stream's `forze_tenant_id` header. So a `tenant_aware` *mailbox* at the
+    gateway has nothing to scope by unless you set `bind_tenant_from_headers=True`;
+    leave it off and the store **fails closed** with `realtime_mailbox_tenant_unbound`
+    naming this contract. (The connect layer is unaffected — it scopes by the
+    connection's authenticated tenant.) Trusted per-tenant scoping *without* trusting
+    the header is the tenant-aware-gateway follow-up — RFC 0007.
+
 Each device has its own **cursor**, so it never re-receives what it acked. The
 device is keyed by `ClientIdentity` — a client-supplied `device_id` (stable across
 logins, passed in the connect handshake `auth`), else the authenticated session

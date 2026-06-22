@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.realtime import (
@@ -14,6 +15,7 @@ from forze.application.contracts.realtime import (
     RealtimeSignal,
 )
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import realtime_inbox_spec
 from forze_socketio import (
@@ -128,6 +130,36 @@ async def test_offline_delivery_opt_out_is_not_mailboxed() -> None:
 
     assert await mailbox.read_since(principal="u1", since=None) == []  # opted out
     assert len(sio.emits) == 1  # still emitted live
+
+
+class _TenantRequiredMailbox(RealtimeMailbox):
+    """A tenant-aware mailbox standing in for the adapter's fail-closed behaviour:
+    with no tenant bound, ``store`` raises the adapter's bare ``tenant_required``."""
+
+    async def store(self, **_: Any) -> None:
+        raise exc.authentication("Tenant ID is required", code="tenant_required")
+
+    async def read_since(self, **_: Any) -> list[Any]:  # pragma: no cover
+        return []
+
+    async def position_of(self, **_: Any) -> None:  # pragma: no cover
+        return None
+
+    async def trim(self, **_: Any) -> None:  # pragma: no cover
+        return None
+
+
+async def test_tenant_aware_mailbox_without_binding_fails_with_actionable_error() -> None:
+    # The gateway has no ambient tenant and bind_tenant_from_headers is off (default),
+    # so a tenant-aware mailbox cannot scope — the opaque tenant_required is rewrapped
+    # into a configuration error naming the wiring contract.
+    sio = _StubSio()
+
+    with pytest.raises(CoreException) as caught:
+        await _drive(_gateway(sio), _TenantRequiredMailbox(), _principal_signal())
+
+    assert caught.value.code == "realtime_mailbox_tenant_unbound"
+    assert "bind_tenant_from_headers" in caught.value.summary
 
 
 async def test_presence_skips_live_emit_when_offline_but_still_stores() -> None:
