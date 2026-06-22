@@ -15,7 +15,11 @@ pytest.importorskip("redis")
 
 from forze.application.contracts.deps import Deps
 from forze.application.contracts.realtime import Audience, RealtimeSignal
-from forze.application.contracts.stream import StreamCommandDepKey, StreamGroupQueryDepKey
+from forze.application.contracts.stream import (
+    StreamCommandDepKey,
+    StreamGroupAdminDepKey,
+    StreamGroupQueryDepKey,
+)
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.serialization import PydanticModelCodec
 from forze_redis.adapters import RedisStreamAdapter, RedisStreamCodec, RedisStreamGroupAdapter
@@ -43,6 +47,7 @@ def _redis_module(redis_client: RedisClient):  # type: ignore[no-untyped-def]
         return Deps.plain({
             StreamCommandDepKey: lambda _ctx, _spec: writer,
             StreamGroupQueryDepKey: lambda _ctx, _spec: group,
+            StreamGroupAdminDepKey: lambda _ctx, _spec: group,  # same adapter, admin port
         })
 
     return module
@@ -72,8 +77,8 @@ async def test_two_gateways_share_load_exactly_once(redis_client: RedisClient) -
     async with runtime.scope():
         ctx = runtime.get_context()
         # create the group before publishing (start at the beginning so nothing is missed)
-        gport = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
-        await gport.ensure_group("realtime-gateway", channel, start_id="0")
+        admin = ctx.deps.resolve_configurable(ctx, StreamGroupAdminDepKey, spec, route=spec.name)
+        await admin.ensure_group("realtime-gateway", channel, start_id="0")
 
         cmd = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, spec, route=spec.name)
         for i in range(n):

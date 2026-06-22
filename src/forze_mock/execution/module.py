@@ -107,6 +107,7 @@ from forze.application.contracts.storage import (
 )
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
+    StreamGroupAdminDepKey,
     StreamGroupQueryDepKey,
     StreamQueryDepKey,
 )
@@ -341,6 +342,7 @@ class MockDepsModule(DepsModule):
             StreamQueryDepKey: ConfigurableMockStream(module=self),
             StreamCommandDepKey: ConfigurableMockStream(module=self, command=True),
             StreamGroupQueryDepKey: ConfigurableMockStreamGroup(module=self),
+            StreamGroupAdminDepKey: ConfigurableMockStreamGroup(module=self),
             OutboxCommandDepKey: ConfigurableMockOutboxCommand(module=self),
             OutboxQueryDepKey: ConfigurableMockOutboxQuery(module=self),
             DistributedLockQueryDepKey: dlock,

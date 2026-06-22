@@ -150,7 +150,19 @@ class StreamGroupQueryPort[M](Protocol):
         """
         ...  # pragma: no cover
 
-    # ....................... #
+
+# ....................... #
+
+
+@runtime_checkable
+class StreamGroupAdminPort(Protocol):
+    """Control-plane provisioning for stream consumer groups.
+
+    Kept **separate** from the data-plane :class:`StreamGroupQueryPort` (read /
+    ack / claim / pending): group creation mutates shared topology and runs once
+    at startup, so a request-path consumer never sees it. Mirrors the framework's
+    management/data split (e.g. ``TenantManagementPort`` vs ``TenantResolverPort``).
+    """
 
     def ensure_group(
         self,

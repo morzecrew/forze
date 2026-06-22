@@ -13,7 +13,7 @@ import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.outbox import OutboxSpec
-from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
+from forze.application.contracts.stream import StreamGroupAdminDepKey, StreamSpec
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import StrKey
 
@@ -32,10 +32,10 @@ class _EnsureGroupStartup(LifecycleHook):
     start_id: str
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        port = ctx.deps.resolve_configurable(
-            ctx, StreamGroupQueryDepKey, self.stream_spec, route=self.stream_spec.name
+        admin = ctx.deps.resolve_configurable(
+            ctx, StreamGroupAdminDepKey, self.stream_spec, route=self.stream_spec.name
         )
-        await port.ensure_group(
+        await admin.ensure_group(
             self.group, str(self.stream_spec.name), start_id=self.start_id
         )
 
