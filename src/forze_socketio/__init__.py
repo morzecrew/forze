@@ -85,6 +85,12 @@ from .connection import (
     RealtimeConnection,
     RealtimePresence,
     attach_realtime_connection,
+    refresh_presence,
+    sweep_expired_connections,
+)
+from .connection_lifecycle import (
+    realtime_identity_expiry_lifecycle_step,
+    realtime_presence_heartbeat_lifecycle_step,
 )
 from .gateway import (
     GatewayDedup,
@@ -137,6 +143,10 @@ __all__ = [
     "realtime_gateway_lifecycle_step",
     "room_for",
     "attach_realtime_connection",
+    "sweep_expired_connections",
+    "refresh_presence",
+    "realtime_identity_expiry_lifecycle_step",
+    "realtime_presence_heartbeat_lifecycle_step",
     "RealtimeConnection",
     "RealtimePresence",
     "InMemoryRealtimePresence",

@@ -16,6 +16,7 @@ require_socketio()
 
 # ....................... #
 
+from datetime import datetime
 from inspect import isawaitable
 from typing import Any, Awaitable, Callable, Mapping, Protocol, final, runtime_checkable
 from uuid import UUID
@@ -27,6 +28,7 @@ from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefu
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.realtime import Audience
 from forze.base.exceptions import CoreException
+from forze.base.primitives import utcnow
 
 from .exceptions import GENERIC_INTERNAL_DETAIL, is_server_error_kind, log_server_error
 from .gateway import room_for
@@ -51,11 +53,25 @@ class RealtimeConnection:
     tenant: UUID | None = None
     """The connection's tenant, used to scope its rooms."""
 
+    expires_at: datetime | None = None
+    """When the connection's credential expires; ``None`` never expires.
+
+    Captured from the verified assertion/token at connect time (``AuthnIdentity``
+    itself is principal-only). A sweeper drops the connection once past this, so a
+    long-lived socket can't outlive the credential that authenticated it."""
+
     # ....................... #
 
     @property
     def principal_room(self) -> str:
         return room_for(Audience.principal(str(self.authn.principal_id)), self.tenant)
+
+    # ....................... #
+
+    def is_expired(self, now: datetime) -> bool:
+        """Whether the connection's credential has expired as of *now*."""
+
+        return self.expires_at is not None and now >= self.expires_at
 
 
 # ....................... #
@@ -182,3 +198,69 @@ def attach_realtime_connection(
 
     sio.on("connect", handler=connect_handler, namespace=namespace)
     sio.on("disconnect", handler=disconnect_handler, namespace=namespace)
+
+
+# ----------------------- #
+
+
+def _local_connections(
+    sio: AsyncServer, namespace: str
+) -> "list[str]":
+    """The sids connected to *namespace* on this node (room ``None`` = all)."""
+
+    return [sid for sid, _eio in sio.manager.get_participants(namespace, None)]
+
+
+# ....................... #
+
+
+async def sweep_expired_connections(
+    sio: AsyncServer, *, namespace: str = "/", now: datetime | None = None
+) -> int:
+    """Disconnect connections whose credential has expired; return how many.
+
+    Identity is bound once at connect, so without this a socket outlives the
+    credential that authenticated it. Run it periodically (see
+    :func:`~forze_socketio.realtime_identity_expiry_lifecycle_step`). Only this
+    node's connections are visible — each node sweeps its own.
+    """
+
+    moment = now if now is not None else utcnow()
+    dropped = 0
+
+    for sid in _local_connections(sio, namespace):
+        session = await sio.get_session(sid, namespace=namespace)
+        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+
+        if connection is not None and connection.is_expired(moment):
+            await sio.disconnect(sid, namespace=namespace)
+            dropped += 1
+
+    return dropped
+
+
+# ....................... #
+
+
+async def refresh_presence(
+    sio: AsyncServer, presence: RealtimePresence, *, namespace: str = "/"
+) -> int:
+    """Re-assert presence for every connection this node holds; return how many.
+
+    A TTL-backed presence store (e.g. Redis) expires entries so a crashed node's
+    rows don't leak — which means live connections must re-assert (heartbeat) or
+    they'd wrongly expire too. Run this on an interval shorter than the store's TTL
+    (see :func:`~forze_socketio.realtime_presence_heartbeat_lifecycle_step`).
+    """
+
+    refreshed = 0
+
+    for sid in _local_connections(sio, namespace):
+        session = await sio.get_session(sid, namespace=namespace)
+        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+
+        if connection is not None:
+            await presence.joined(connection.principal_room, sid)
+            refreshed += 1
+
+    return refreshed

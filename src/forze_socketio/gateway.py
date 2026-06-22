@@ -260,6 +260,15 @@ class RealtimeGateway:
     dedup: GatewayDedup | None = None
     """When set, durable signals (those with a dedup id) emit at most once."""
 
+    emit_timeout: timedelta | None = None
+    """Bound on a single ``sio.emit``; ``None`` waits indefinitely.
+
+    Transport-level flow control (a slow consumer) is engine.io's; this only stops
+    one stuck delivery from wedging the whole consume loop. On timeout the emit
+    raises, so the source's per-signal error policy applies — an ephemeral signal is
+    acked (at-most-once) and a durable one is left pending to be redelivered.
+    """
+
     # ....................... #
 
     async def run(self, ctx: ExecutionContext) -> None:
@@ -297,12 +306,18 @@ class RealtimeGateway:
     # ....................... #
 
     async def _emit(self, signal: RealtimeSignal, tenant: UUID | None) -> None:
-        await self.sio.emit(
+        emit = self.sio.emit(
             signal.event,
             data=signal.payload,
             room=room_for(signal.audience, tenant),
             namespace=self.namespace,
         )
+
+        if self.emit_timeout is None:
+            await emit
+            return
+
+        await asyncio.wait_for(emit, timeout=self.emit_timeout.total_seconds())
 
     # ....................... #
 

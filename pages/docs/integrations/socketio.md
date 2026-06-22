@@ -92,19 +92,25 @@ consumer group and emitting to a tenant-scoped room (fanned out cluster-wide by
 the Redis manager):
 
 ```python
+from datetime import timedelta
+
 from forze_socketio import (
     RealtimeGateway, StreamGroupSignalSource, GatewayDedup,
     realtime_gateway_lifecycle_step, attach_realtime_connection,
+    realtime_identity_expiry_lifecycle_step, realtime_presence_heartbeat_lifecycle_step,
 )
 from forze_kits.integrations.realtime import (
     realtime_group_ensure_lifecycle_step, realtime_relay_lifecycle_step,
 )
+from forze_redis.adapters import RedisRealtimePresence  # crash-safe, multi-node
 
 gateway = RealtimeGateway(
     sio=sio,
     source=StreamGroupSignalSource(stream_spec=rt_transport.stream_spec),
     dedup=GatewayDedup(inbox_spec=rt_transport.inbox_spec, tx_route="..."),  # exactly-once for durable
+    emit_timeout=timedelta(seconds=5),  # a stuck delivery can't wedge the loop
 )
+presence = RedisRealtimePresence(client=redis_client, ttl=timedelta(seconds=90))
 lifecycle = [
     # order matters: create the consumer group before the relay/serving starts
     realtime_group_ensure_lifecycle_step(stream_spec=rt_transport.stream_spec),
@@ -112,9 +118,13 @@ lifecycle = [
         outbox_spec=rt_transport.outbox_spec, stream_spec=rt_transport.stream_spec,
     ),
     realtime_gateway_lifecycle_step(gateway),
+    # multi-node hygiene (each node runs its own):
+    realtime_presence_heartbeat_lifecycle_step(sio, presence, interval=timedelta(seconds=30)),
+    realtime_identity_expiry_lifecycle_step(sio, interval=timedelta(seconds=30)),
 ]
 
-# auto-join each connection to its principal room on connect:
+# auto-join each connection to its principal room on connect (set expires_at on the
+# resolved RealtimeConnection for the expiry sweep to act on):
 attach_realtime_connection(sio, resolve=resolve_connection, presence=presence)
 ```
 
@@ -148,10 +158,15 @@ tenant-global.
   a fresh group's `"$"` start misses nothing. The gateway also reclaims stranded
   pending entries (`reclaim_idle`) so a durable signal whose consumer died before ack
   is recovered (and deduped) rather than lost.
-- **Hardening** — presence wants a TTL-backed store across nodes (the in-memory
-  tracker is single-node); re-validate a connection's token periodically (a
-  long-lived socket outlives a short-lived token); the gateway lifecycle step
-  cancels cleanly on shutdown. Backpressure to slow clients is engine.io's.
+- **Hardening** — for multi-node, use `RedisRealtimePresence` (TTL-backed, so a
+  crashed node's rows lapse) instead of the single-node in-memory tracker, and run
+  `realtime_presence_heartbeat_lifecycle_step` so live connections re-assert within
+  the TTL. A long-lived socket can outlive a short-lived credential: set
+  `RealtimeConnection.expires_at` at connect and run
+  `realtime_identity_expiry_lifecycle_step` to drop expired connections. Give the
+  gateway an `emit_timeout` so one stuck delivery can't wedge the consume loop (the
+  signal is then redelivered/acked by the normal per-signal policy). Transport-level
+  backpressure to slow clients remains engine.io's.
 
 ## What it provides
 
@@ -159,8 +174,10 @@ tenant-global.
 |---------|--------------|
 | `SocketIONamespaceRouter.command(...)` | inbound: event → operation, with typed payload/ack |
 | `RealtimePublisher.publish` / `.stage` | egress: publish a signal to messaging (ephemeral / durable) |
-| `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms |
+| `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms (optional `emit_timeout`) |
 | `attach_realtime_connection` | auto-join principal rooms + presence on connect |
+| `RedisRealtimePresence` + `realtime_presence_heartbeat_lifecycle_step` | crash-safe multi-node presence (TTL + heartbeat) |
+| `realtime_identity_expiry_lifecycle_step` | drop connections whose credential (`expires_at`) has lapsed |
 
 ## Notes
 
