@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -16,6 +18,7 @@ from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.realtime import (
     RealtimePublisher,
     realtime_outbox_spec,
+    realtime_relay_lifecycle_step,
     realtime_stream_spec,
 )
 from forze_mock import MockDepsModule
@@ -149,3 +152,31 @@ async def test_stage_requires_outbox_spec() -> None:
             await rt.stage(ctx, Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
 
     assert err.value.kind.value == "configuration"
+
+
+async def test_relay_lifecycle_step_moves_staged_signal_to_stream() -> None:
+    spec = realtime_stream_spec()
+    outbox_spec = realtime_outbox_spec()
+    rt = RealtimePublisher(stream_spec=spec, outbox_spec=outbox_spec)
+    step = realtime_relay_lifecycle_step(
+        outbox_spec=outbox_spec, stream_spec=spec, interval=timedelta(seconds=0.02)
+    )
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await rt.stage(ctx, Audience.principal("u1"), _ORDER_SHIPPED, _MsgView(text="x"))
+        await ctx.outbox.command(outbox_spec).flush()
+
+        await step.startup(ctx)
+        rows: list = []
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            rows = await _read_stream(ctx, spec)
+            if rows:
+                break
+        await step.shutdown(ctx)
+
+    assert len(rows) == 1
+    assert rows[0].payload.event == "order.shipped"
+    assert rows[0].payload.audience == Audience.principal("u1")

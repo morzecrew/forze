@@ -32,11 +32,13 @@ from uuid import UUID
 import attrs
 from socketio.async_server import AsyncServer
 
-from forze.application.contracts.envelope import HEADER_TENANT_ID
+from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
+from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
 from forze.application.execution import ExecutionContext
 from forze.base.logging import Logger
+from forze.base.primitives import StrKey
 
 from ._logging import ForzeSocketIOLogger
 
@@ -44,8 +46,11 @@ from ._logging import ForzeSocketIOLogger
 
 _logger = Logger(ForzeSocketIOLogger.ERRORS)
 
-SignalHandler = Callable[[RealtimeSignal, UUID | None], Awaitable[None]]
-"""A per-signal bridge: receives a decoded signal and its tenant (from headers)."""
+SignalHandler = Callable[[RealtimeSignal, UUID | None, str | None], Awaitable[None]]
+"""A per-signal bridge: receives a decoded signal, its tenant, and a dedup id.
+
+The dedup id is the durable ``forze_event_id`` (``None`` for ephemeral signals).
+"""
 
 # ....................... #
 
@@ -144,18 +149,45 @@ class StreamGroupSignalSource(RealtimeSignalSource):
                 continue
 
             for message in messages:
-                try:
-                    await handler(message.payload, _tenant_from_headers(message.headers))
+                # A durable signal (relayed from the outbox) carries an event id;
+                # it is acked only on success so a transient failure redelivers
+                # (at-least-once). An ephemeral signal is acked regardless, so one
+                # bad signal can never wedge the live stream (at-most-once).
+                durable = HEADER_EVENT_ID in message.headers
+                dedup_id = message.headers.get(HEADER_EVENT_ID)
+                ack = True
 
-                except Exception:  # noqa: BLE001 - one bad signal must not wedge the stream
+                try:
+                    await handler(
+                        message.payload, _tenant_from_headers(message.headers), dedup_id
+                    )
+
+                except Exception:  # noqa: BLE001
                     _logger.critical_exception(
                         "Realtime bridge failed", stream=stream, message_id=message.id
                     )
+                    ack = not durable
 
-                await group.ack(group=self.group, stream=stream, ids=[message.id])
+                if ack:
+                    await group.ack(group=self.group, stream=stream, ids=[message.id])
 
 
 # ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class GatewayDedup:
+    """Inbox-based exactly-once for durable signals at the gateway."""
+
+    inbox_spec: InboxSpec
+    """The inbox route that records already-emitted durable signals."""
+
+    tx_route: StrKey
+    """Transaction route the dedup mark commits on."""
+
+
+# ....................... #
 
 
 @final
@@ -172,12 +204,42 @@ class RealtimeGateway:
     namespace: str = "/"
     """Namespace this gateway emits on and manages rooms within."""
 
+    dedup: GatewayDedup | None = None
+    """When set, durable signals (those with a dedup id) emit at most once."""
+
     # ....................... #
 
     async def run(self, ctx: ExecutionContext) -> None:
         """Consume signals forever and emit each to its room. Cancel to stop."""
 
-        await self.source.run(ctx, self._emit)
+        async def handle(
+            signal: RealtimeSignal, tenant: UUID | None, dedup_id: str | None
+        ) -> None:
+            await self._handle(ctx, signal, tenant, dedup_id)
+
+        await self.source.run(ctx, handle)
+
+    # ....................... #
+
+    async def _handle(
+        self,
+        ctx: ExecutionContext,
+        signal: RealtimeSignal,
+        tenant: UUID | None,
+        dedup_id: str | None,
+    ) -> None:
+        if self.dedup is None or dedup_id is None:
+            # ephemeral, or durable with no dedup configured — emit directly
+            await self._emit(signal, tenant)
+            return
+
+        # durable: mark + emit inside one transaction, so a redelivered signal
+        # (relay retry / consumer claim) is recognised and emitted at most once
+        async with ctx.tx_ctx.scope(self.dedup.tx_route):
+            inbox = ctx.inbox(self.dedup.inbox_spec)
+
+            if await inbox.mark_if_unseen(str(self.dedup.inbox_spec.name), dedup_id):
+                await self._emit(signal, tenant)
 
     # ....................... #
 

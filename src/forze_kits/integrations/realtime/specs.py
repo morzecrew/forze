@@ -8,6 +8,7 @@ it — no custom codec.
 
 from typing import Final
 
+from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.realtime import RealtimeSignal
 from forze.application.contracts.stream import StreamSpec
@@ -53,3 +54,12 @@ def realtime_outbox_spec(
         codec=PydanticModelCodec(model_type=RealtimeSignal),
         destination=OutboxDestination.stream(route=stream, channel=stream),
     )
+
+
+# ....................... #
+
+
+def realtime_inbox_spec(name: str = "realtime-inbox") -> InboxSpec:
+    """Build the inbox route the gateway uses to dedupe durable signals (exactly-once)."""
+
+    return InboxSpec(name=name)

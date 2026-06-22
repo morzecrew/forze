@@ -80,6 +80,7 @@ from .emitter import (
     SocketIOServerEvent,
 )
 from .gateway import (
+    GatewayDedup,
     RealtimeGateway,
     RealtimeSignalSource,
     StreamGroupSignalSource,
@@ -123,6 +124,7 @@ __all__ = [
     "RealtimeGateway",
     "RealtimeSignalSource",
     "StreamGroupSignalSource",
+    "GatewayDedup",
     "realtime_gateway_lifecycle_step",
     "room_for",
     "build_core_exception_ack",
