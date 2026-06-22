@@ -205,7 +205,10 @@ async def resolve_connection(connect) -> RealtimeConnection:
 
 Opt an event out of mailboxing with `RealtimeEvent(name=..., offline_delivery=False)`
 (emit-only, best-effort). Topic signals are never mailboxed. The mailbox is bounded
-recent history (TTL + cap via `mailbox.trim`), not a forever queue.
+recent history, not a forever queue: an ack trims what every known device has acked
+(`MailboxCursors.min_cursor`), with TTL/cap (`mailbox.trim`) as the backstop. Share a
+`MailboxStats` across the mailbox and cursors and pass it to `instrument_realtime_mailbox`
+to export stored/replayed/trimmed/acked as OpenTelemetry counters.
 
 !!! warning "Breaking change — the delivery envelope"
     Frames are now the uniform `{ id, data }` envelope (previously the bare

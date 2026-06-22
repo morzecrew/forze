@@ -43,6 +43,29 @@ _DEFAULT_CAP: Final = 1000
 
 
 # ----------------------- #
+
+
+@attrs.define(slots=True)
+class MailboxStats:
+    """Cumulative mailbox counters, sampled by :func:`instrument_realtime_mailbox`.
+
+    Share one instance across a :class:`DocumentRealtimeMailbox` and its
+    :class:`DocumentMailboxCursors` to watch a channel's offline-delivery rates."""
+
+    stored: int = 0
+    """Durable principal signals written to the mailbox."""
+
+    replayed: int = 0
+    """Entries returned for connect-time replay."""
+
+    trimmed: int = 0
+    """Entries dropped by retention/ack trimming."""
+
+    acked: int = 0
+    """Cursor advances (device acks that moved a cursor forward)."""
+
+
+# ----------------------- #
 # document models
 
 
@@ -163,6 +186,7 @@ class DocumentRealtimeMailbox:
         factory=realtime_mailbox_spec
     )
     cap: int = _DEFAULT_CAP
+    stats: MailboxStats = attrs.field(factory=MailboxStats)
 
     # ....................... #
 
@@ -176,6 +200,8 @@ class DocumentRealtimeMailbox:
         hlc: HlcTimestamp,
         signal: RealtimeSignal,
     ) -> None:
+        self.stats.stored += 1
+
         with _bind_tenant(ctx, tenant):
             await ctx.document.command(self.spec).ensure(
                 uuid5(_MAILBOX_NS, f"{tenant}:{event_id}"),
@@ -211,6 +237,8 @@ class DocumentRealtimeMailbox:
                 sorts={"hlc": "asc"},
                 pagination={"limit": self.cap},
             )
+
+        self.stats.replayed += len(page.hits)
 
         return [
             MailboxEntry(
@@ -271,6 +299,7 @@ class DocumentRealtimeMailbox:
                 await ctx.document.command(self.spec).kill_many(
                     [row.id for row in stale.hits]
                 )
+                self.stats.trimmed += len(stale.hits)
 
 
 # ....................... #
@@ -284,6 +313,7 @@ class DocumentMailboxCursors:
     spec: DocumentSpec[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate] = (
         attrs.field(factory=realtime_cursor_spec)
     )
+    stats: MailboxStats = attrs.field(factory=MailboxStats)
 
     # ....................... #
 
@@ -324,6 +354,8 @@ class DocumentMailboxCursors:
         if current is not None and up_to <= current:
             return  # monotonic: never moves backwards
 
+        self.stats.acked += 1
+
         with _bind_tenant(ctx, tenant):
             await ctx.document.command(self.spec).upsert(
                 uuid5(_MAILBOX_NS, f"cursor:{tenant}:{principal}:{client_key}"),
@@ -336,3 +368,23 @@ class DocumentMailboxCursors:
                 _CursorUpdate(hlc=up_to.pack()),
                 return_new=False,
             )
+
+    # ....................... #
+
+    async def min_cursor(
+        self,
+        ctx: ExecutionContext,
+        *,
+        tenant: UUID | None,
+        principal: str,
+    ) -> HlcTimestamp | None:
+        with _bind_tenant(ctx, tenant):
+            page = await ctx.document.query(self.spec).find_many(
+                filters={
+                    "$values": {"tenant_id": _tenant_filter(tenant), "principal": principal}
+                },
+                sorts={"hlc": "asc"},
+                pagination={"limit": 1},
+            )
+
+        return HlcTimestamp.unpack(page.hits[0].hlc) if page.hits else None

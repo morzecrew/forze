@@ -13,9 +13,11 @@ from .lifecycle import (
 from .mailbox import (
     DocumentMailboxCursors,
     DocumentRealtimeMailbox,
+    MailboxStats,
     realtime_cursor_spec,
     realtime_mailbox_spec,
 )
+from .observability import instrument_realtime_mailbox
 from .publisher import RealtimePublisher, build_realtime_publisher
 from .specs import (
     DEFAULT_REALTIME_CHANNEL,
@@ -33,6 +35,8 @@ __all__ = [
     "build_realtime_publisher",
     "DocumentRealtimeMailbox",
     "DocumentMailboxCursors",
+    "MailboxStats",
+    "instrument_realtime_mailbox",
     "realtime_mailbox_spec",
     "realtime_cursor_spec",
     "RealtimeTransport",

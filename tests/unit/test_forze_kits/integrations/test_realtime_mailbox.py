@@ -10,6 +10,7 @@ from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import (
     DocumentMailboxCursors,
     DocumentRealtimeMailbox,
+    MailboxStats,
 )
 from forze_mock import MockDepsModule
 
@@ -133,3 +134,38 @@ async def test_cursors_are_per_device_and_tenant() -> None:
         assert await cursors.get(ctx, tenant=_T1, principal="u1", client_key="d2") is None
         assert await cursors.get(ctx, tenant=_T2, principal="u1", client_key="d1") is None
         assert await cursors.get(ctx, tenant=_T1, principal="u1", client_key="d1") == _hlc(5)
+
+
+async def test_shared_stats_count_store_replay_trim_ack() -> None:
+    stats = MailboxStats()
+    mb = DocumentRealtimeMailbox(stats=stats)
+    cursors = DocumentMailboxCursors(stats=stats)
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await mb.store(ctx, tenant=_T1, principal="u1", event_id="e1", hlc=_hlc(1), signal=_signal("a"))
+        await mb.store(ctx, tenant=_T1, principal="u1", event_id="e2", hlc=_hlc(2), signal=_signal("b"))
+        replayed = await mb.read_since(ctx, tenant=_T1, principal="u1", since=None)
+        await cursors.advance(ctx, tenant=_T1, principal="u1", client_key="d1", up_to=_hlc(2))
+        await mb.trim(ctx, tenant=_T1, principal="u1", before=_hlc(1))
+
+    assert len(replayed) == 2
+    assert stats.stored == 2
+    assert stats.replayed == 2
+    assert stats.acked == 1
+    assert stats.trimmed == 1  # e1 dropped
+
+
+async def test_min_cursor_is_lowest_across_devices() -> None:
+    cursors = DocumentMailboxCursors()
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        assert await cursors.min_cursor(ctx, tenant=_T1, principal="u1") is None
+
+        await cursors.advance(ctx, tenant=_T1, principal="u1", client_key="d1", up_to=_hlc(8))
+        await cursors.advance(ctx, tenant=_T1, principal="u1", client_key="d2", up_to=_hlc(3))
+
+        assert await cursors.min_cursor(ctx, tenant=_T1, principal="u1") == _hlc(3)

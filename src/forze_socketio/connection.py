@@ -236,6 +236,17 @@ def attach_realtime_connection(
                     client_key=connection.client_key(sid), up_to=position,
                 )
 
+                # trim what every known device has now acked (TTL/cap is the backstop)
+                floor = await cursors.min_cursor(
+                    ctx, tenant=connection.tenant, principal=connection.principal
+                )
+
+                if floor is not None:
+                    await mailbox.trim(
+                        ctx, tenant=connection.tenant, principal=connection.principal,
+                        before=floor,
+                    )
+
     async def connect_handler(sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
         connect = SocketIOConnect(sid=sid, namespace=namespace, environ=environ, auth=auth)
 

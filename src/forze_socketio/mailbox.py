@@ -133,6 +133,21 @@ class MailboxCursors(Protocol):
 
         ...  # pragma: no cover
 
+    def min_cursor(
+        self,
+        ctx: ExecutionContext,
+        *,
+        tenant: UUID | None,
+        principal: str,
+    ) -> Awaitable[HlcTimestamp | None]:
+        """The lowest cursor across the principal's **known** devices, or ``None``.
+
+        Entries at or before it have been acked by every device that has a cursor,
+        so they can be trimmed. A device with no cursor row is not yet known (the
+        cursor rows are the device registry); the TTL/cap is the backstop for it."""
+
+        ...  # pragma: no cover
+
 
 # ----------------------- #
 
@@ -252,3 +267,18 @@ class InMemoryMailboxCursors(MailboxCursors):
 
         if current is None or up_to > current:  # monotonic: never moves backwards
             self._cursors[cursor_key] = up_to
+
+    async def min_cursor(
+        self,
+        ctx: ExecutionContext,
+        *,
+        tenant: UUID | None,
+        principal: str,
+    ) -> HlcTimestamp | None:
+        positions = [
+            hlc
+            for (t, p, _key), hlc in self._cursors.items()
+            if t == tenant and p == principal
+        ]
+
+        return min(positions) if positions else None

@@ -120,3 +120,16 @@ async def test_cursors_are_per_device() -> None:
 
     assert await cursors.get(_CTX, tenant=_TENANT, principal="u1", client_key="d2") is None
     assert await cursors.get(_CTX, tenant=_TENANT, principal="u1", client_key="d1") == _hlc(5)
+
+
+async def test_min_cursor_is_lowest_across_known_devices() -> None:
+    cursors = InMemoryMailboxCursors()
+
+    assert await cursors.min_cursor(_CTX, tenant=_TENANT, principal="u1") is None
+
+    await cursors.advance(_CTX, tenant=_TENANT, principal="u1", client_key="d1", up_to=_hlc(8))
+    await cursors.advance(_CTX, tenant=_TENANT, principal="u1", client_key="d2", up_to=_hlc(3))
+    await cursors.advance(_CTX, tenant=_TENANT, principal="u2", client_key="d1", up_to=_hlc(1))
+
+    # the slowest of u1's devices (not u2's)
+    assert await cursors.min_cursor(_CTX, tenant=_TENANT, principal="u1") == _hlc(3)

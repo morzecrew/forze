@@ -138,23 +138,74 @@ async def test_partial_ack_replays_only_the_tail_on_reconnect() -> None:
     assert [e["data"]["id"] for e in sio.emits] == ["e2"]  # only the unacked tail
 
 
-async def test_cursor_is_per_device() -> None:
+async def test_ack_trims_what_the_only_device_has_acked() -> None:
     sio, mailbox, cursors = _StubSio(), InMemoryRealtimeMailbox(), InMemoryMailboxCursors()
     await _populate(mailbox)
+    runtime = _runtime()
     attach_realtime_connection(
-        sio, resolve=_resolver(_connection(device_id="d1")),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=_runtime(),
+        sio, resolve=_resolver(_connection()),  # pyright: ignore[reportArgumentType]
+        mailbox=mailbox, cursors=cursors, runtime=runtime,
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)
-    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e2"})  # d1 caught up
+    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e2"})  # the only device acked all
 
-    # a different device (d2) still gets the full backlog
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        remaining = await mailbox.read_since(ctx, tenant=_TENANT, principal=_PRINCIPAL_STR, since=None)
+
+    assert remaining == []  # every known device acked through e2 → trimmed
+
+
+async def test_ack_keeps_entries_a_slower_device_has_not_acked() -> None:
+    sio, mailbox, cursors = _StubSio(), InMemoryRealtimeMailbox(), InMemoryMailboxCursors()
+    await _populate(mailbox)
+    runtime = _runtime()
+
+    # device d1 acks through e2
+    attach_realtime_connection(
+        sio, resolve=_resolver(_connection(device_id="d1")),  # pyright: ignore[reportArgumentType]
+        mailbox=mailbox, cursors=cursors, runtime=runtime,
+    )
+    await sio.handlers["connect"]("sid-1", {}, None)
+    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e1"})  # d1 establishes a cursor at e1
+
+    # device d2 acks only through e1 → min cursor is e1 → only e1 trimmed
+    sio.handlers.clear()
+    attach_realtime_connection(
+        sio, resolve=_resolver(_connection(device_id="d2")),  # pyright: ignore[reportArgumentType]
+        mailbox=mailbox, cursors=cursors, runtime=runtime,
+    )
+    await sio.handlers["connect"]("sid-2", {}, None)
+    await sio.handlers["realtime.ack"]("sid-2", {"up_to": "e1"})
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        remaining = await mailbox.read_since(ctx, tenant=_TENANT, principal=_PRINCIPAL_STR, since=None)
+
+    assert [e.event_id for e in remaining] == ["e2"]  # e2 retained until both ack it
+
+
+async def test_new_device_after_trim_gets_only_retained_entries() -> None:
+    # M4 trim semantics: once the only known device acks everything, the mailbox is
+    # trimmed; a device that connects afterwards is "unknown" and gets the retained
+    # window only (here: nothing) — the documented TTL-window bound.
+    sio, mailbox, cursors = _StubSio(), InMemoryRealtimeMailbox(), InMemoryMailboxCursors()
+    await _populate(mailbox)
+    runtime = _runtime()
+    attach_realtime_connection(
+        sio, resolve=_resolver(_connection(device_id="d1")),  # pyright: ignore[reportArgumentType]
+        mailbox=mailbox, cursors=cursors, runtime=runtime,
+    )
+
+    await sio.handlers["connect"]("sid-1", {}, None)
+    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e2"})  # sole device caught up → trimmed
+
     sio.handlers.clear()
     sio.emits.clear()
     attach_realtime_connection(
         sio, resolve=_resolver(_connection(device_id="d2")),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=_runtime(),
+        mailbox=mailbox, cursors=cursors, runtime=runtime,
     )
     await sio.handlers["connect"]("sid-2", {}, None)
-    assert [e["data"]["id"] for e in sio.emits] == ["e1", "e2"]
+    assert sio.emits == []  # backlog was trimmed before d2 was known
