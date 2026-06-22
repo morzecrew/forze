@@ -100,6 +100,13 @@ from .gateway import (
     StreamGroupSignalSource,
     room_for,
 )
+from .mailbox import (
+    InMemoryMailboxCursors,
+    InMemoryRealtimeMailbox,
+    MailboxCursors,
+    MailboxEntry,
+    RealtimeMailbox,
+)
 from .gateway_lifecycle import realtime_gateway_lifecycle_step
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
@@ -140,6 +147,11 @@ __all__ = [
     "SignalHandler",
     "StreamGroupSignalSource",
     "GatewayDedup",
+    "RealtimeMailbox",
+    "MailboxCursors",
+    "MailboxEntry",
+    "InMemoryRealtimeMailbox",
+    "InMemoryMailboxCursors",
     "realtime_gateway_lifecycle_step",
     "room_for",
     "attach_realtime_connection",

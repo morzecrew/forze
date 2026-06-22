@@ -26,25 +26,44 @@ require_socketio()
 
 import asyncio
 from datetime import timedelta
-from typing import Any, Awaitable, Callable, Protocol, cast, final, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Protocol,
+    cast,
+    final,
+    runtime_checkable,
+)
 from uuid import UUID
 
 import attrs
 from socketio.async_server import AsyncServer
 
-from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
+from forze.application.contracts.envelope import (
+    HEADER_EVENT_ID,
+    HEADER_HLC,
+    HEADER_TENANT_ID,
+)
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.realtime import (
     DEFAULT_REALTIME_GROUP,
     Audience,
+    AudienceKind,
+    RealtimeEventCatalog,
     RealtimeSignal,
 )
 from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
 from forze.application.execution import ExecutionContext
 from forze.base.logging import Logger
-from forze.base.primitives import JsonDict, StrKey
+from forze.base.primitives import HlcTimestamp, JsonDict, StrKey, utcnow
 
 from ._logging import ForzeSocketIOLogger
+from .mailbox import RealtimeMailbox
+
+if TYPE_CHECKING:
+    from .connection import RealtimePresence
 
 # ----------------------- #
 
@@ -53,10 +72,13 @@ _logger = Logger(ForzeSocketIOLogger.ERRORS)
 _IDLE_FLOOR = 0.05
 """Seconds: a small idle pause floor so a non-blocking backend can't hot-loop."""
 
-SignalHandler = Callable[[RealtimeSignal, UUID | None, str | None], Awaitable[None]]
-"""A per-signal bridge: receives a decoded signal, its tenant, and a dedup id.
+SignalHandler = Callable[
+    [RealtimeSignal, UUID | None, str | None, HlcTimestamp], Awaitable[None]
+]
+"""A per-signal bridge: a decoded signal, its tenant, a dedup id, and its HLC position.
 
-The dedup id is the durable ``forze_event_id`` (``None`` for ephemeral signals).
+The dedup id is the durable ``forze_event_id`` (``None`` for ephemeral signals); the
+HLC is the carried ``forze_hlc`` (or a wall-clock fallback) used for mailbox ordering.
 """
 
 # ....................... #
@@ -89,6 +111,24 @@ def _tenant_from_headers(headers: object) -> UUID | None:
     raw = headers.get(HEADER_TENANT_ID)
 
     return UUID(raw) if raw else None
+
+
+# ....................... #
+
+
+def _hlc_from_headers(headers: object) -> HlcTimestamp:
+    """The carried HLC (``forze_hlc``), or a wall-clock fallback when absent.
+
+    The durable relay forwards the outbox HLC on HLC-ordering backends; when no
+    HLC is carried, a ``(now_ms, 0)`` stamp keeps mailbox ordering wall-clock-close.
+    """
+
+    raw = headers.get(HEADER_HLC) if hasattr(headers, "get") else None
+
+    if raw:
+        return HlcTimestamp.parse(cast(str, raw))
+
+    return HlcTimestamp(physical_ms=int(utcnow().timestamp() * 1000), logical=0)
 
 
 # ----------------------- #
@@ -212,7 +252,10 @@ class StreamGroupSignalSource(RealtimeSignalSource):
 
             try:
                 await handler(
-                    message.payload, _tenant_from_headers(message.headers), dedup_id
+                    message.payload,
+                    _tenant_from_headers(message.headers),
+                    dedup_id,
+                    _hlc_from_headers(message.headers),
                 )
 
             except Exception:  # noqa: BLE001
@@ -260,6 +303,20 @@ class RealtimeGateway:
     dedup: GatewayDedup | None = None
     """When set, durable signals (those with a dedup id) emit at most once."""
 
+    mailbox: RealtimeMailbox | None = None
+    """When set (with ``dedup``), a durable **principal** signal is stored for offline
+    replay before it is emitted, so a recipient offline at emit time receives it on
+    reconnect (RFC 0006). Topic and ephemeral signals are never mailboxed."""
+
+    event_catalog: RealtimeEventCatalog | None = None
+    """Optional catalog consulted for the per-event ``offline_delivery`` opt-out; when
+    absent, every durable principal signal is mailboxed (always-store default)."""
+
+    presence: "RealtimePresence | None" = None
+    """When set with a mailbox, the live emit is skipped for a mailboxed signal whose
+    principal room is empty (saves a cross-node fan-out; the reconnect drain delivers
+    it). Never skips a signal that is not recoverable from the mailbox."""
+
     emit_timeout: timedelta | None = None
     """Bound on a single ``sio.emit``; ``None`` waits indefinitely.
 
@@ -275,9 +332,12 @@ class RealtimeGateway:
         """Consume signals forever and emit each to its room. Cancel to stop."""
 
         async def handle(
-            signal: RealtimeSignal, tenant: UUID | None, dedup_id: str | None
+            signal: RealtimeSignal,
+            tenant: UUID | None,
+            dedup_id: str | None,
+            hlc: HlcTimestamp,
         ) -> None:
-            await self._handle(ctx, signal, tenant, dedup_id)
+            await self._handle(ctx, signal, tenant, dedup_id, hlc)
 
         await self.source.run(ctx, handle)
 
@@ -289,26 +349,80 @@ class RealtimeGateway:
         signal: RealtimeSignal,
         tenant: UUID | None,
         dedup_id: str | None,
+        hlc: HlcTimestamp,
     ) -> None:
         if self.dedup is None or dedup_id is None:
             # ephemeral, or durable with no dedup configured — emit directly
-            await self._emit(signal, tenant)
+            await self._emit(signal, tenant, event_id=dedup_id)
             return
 
-        # durable: mark + emit inside one transaction, so a redelivered signal
-        # (relay retry / consumer claim) is recognised and emitted at most once
+        # durable: mark (+ store) + emit inside one transaction, so a redelivered
+        # signal (relay retry / consumer claim) is recognised and handled once
         async with ctx.tx_ctx.scope(self.dedup.tx_route):
             inbox = ctx.inbox(self.dedup.inbox_spec)
 
-            if await inbox.mark_if_unseen(str(self.dedup.inbox_spec.name), dedup_id):
-                await self._emit(signal, tenant)
+            if not await inbox.mark_if_unseen(str(self.dedup.inbox_spec.name), dedup_id):
+                return
+
+            mailbox = self.mailbox if self._should_mailbox(signal) else None
+
+            if mailbox is not None:
+                await mailbox.store(
+                    ctx,
+                    tenant=tenant,
+                    principal=signal.audience.name,
+                    event_id=dedup_id,
+                    hlc=hlc,
+                    signal=signal,
+                )
+
+            await self._emit_live(
+                signal, tenant, event_id=dedup_id, recoverable=mailbox is not None
+            )
 
     # ....................... #
 
-    async def _emit(self, signal: RealtimeSignal, tenant: UUID | None) -> None:
+    def _should_mailbox(self, signal: RealtimeSignal) -> bool:
+        """Whether this durable signal is stored for offline replay."""
+
+        if self.mailbox is None or signal.audience.kind is not AudienceKind.PRINCIPAL:
+            return False
+
+        if self.event_catalog is None:
+            return True  # always-store default
+
+        event = self.event_catalog.get(signal.event)
+
+        return event is None or event.offline_delivery
+
+    # ....................... #
+
+    async def _emit_live(
+        self,
+        signal: RealtimeSignal,
+        tenant: UUID | None,
+        *,
+        event_id: str | None,
+        recoverable: bool,
+    ) -> None:
+        if recoverable and self.presence is not None:
+            # offline: skip the fan-out; the reconnect drain delivers it from the mailbox
+            if await self.presence.count(room_for(signal.audience, tenant)) == 0:
+                return
+
+        await self._emit(signal, tenant, event_id=event_id)
+
+    # ....................... #
+
+    async def _emit(
+        self, signal: RealtimeSignal, tenant: UUID | None, *, event_id: str | None = None
+    ) -> None:
+        # Uniform delivery envelope (RFC 0006): every frame is ``{id, data}`` — the id
+        # is the durable event id (``None`` for ephemeral) so the client dedups
+        # live-vs-replayed and acks by it.
         emit = self.sio.emit(
             signal.event,
-            data=signal.payload,
+            data={"id": event_id, "data": signal.payload},
             room=room_for(signal.audience, tenant),
             namespace=self.namespace,
         )

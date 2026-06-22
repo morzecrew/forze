@@ -35,7 +35,7 @@ class _StubSio:
 
     async def emit(self, event: str, data: Any = None, *, namespace: str | None = None,
                    room: str | None = None, **_: Any) -> None:
-        self.emitted.append(data["n"])
+        self.emitted.append(data["data"]["n"])  # uniform {id, data} envelope
 
 
 def _redis_module(redis_client: RedisClient):  # type: ignore[no-untyped-def]

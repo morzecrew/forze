@@ -200,4 +200,6 @@ async def test_end_to_end_durable_stage_relay_gateway() -> None:
     assert len(sio.emits) == 1
     assert sio.emits[0]["event"] == "order.shipped"
     assert sio.emits[0]["room"] == f"t:{_TENANT.tenant_id}:principal:u1"
-    assert sio.emits[0]["data"] == {"text": "shipped"}
+    # uniform envelope: durable carries its event id + the payload under "data"
+    assert sio.emits[0]["data"]["id"] is not None
+    assert sio.emits[0]["data"]["data"] == {"text": "shipped"}

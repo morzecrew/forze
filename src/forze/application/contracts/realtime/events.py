@@ -44,6 +44,15 @@ class RealtimeEvent[Payload: BaseModel]:
     a ``message.new`` aimed at a ``principal`` when it is topic-only.
     """
 
+    offline_delivery: bool = True
+    """Whether a durable, principal-addressed signal is stored for offline replay.
+
+    ``True`` (default) stores the signal in the recipient's mailbox so a device
+    offline at emit time receives it on reconnect (RFC 0006). ``False`` opts the
+    event out — emit-only, best-effort, never mailboxed (e.g. a high-frequency
+    signal promoted to durable for ordering but not worth persisting).
+    """
+
     # ....................... #
 
     def accepts(self, audience: Audience) -> bool:

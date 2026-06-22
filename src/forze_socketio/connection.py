@@ -25,13 +25,15 @@ import attrs
 from socketio.async_server import AsyncServer
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
-from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience
+from forze.application.execution import ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 
 from .exceptions import GENERIC_INTERNAL_DETAIL, is_server_error_kind, log_server_error
 from .gateway import room_for
+from .mailbox import MailboxCursors, RealtimeMailbox
 from .routing import IDENTITY_SESSION_KEY, SocketIOConnect
 
 # ----------------------- #
@@ -60,11 +62,32 @@ class RealtimeConnection:
     itself is principal-only). A sweeper drops the connection once past this, so a
     long-lived socket can't outlive the credential that authenticated it."""
 
+    client: ClientIdentity | None = None
+    """The device/session this connection is, keying its offline-replay cursor.
+
+    Resolve it from the connect handshake (a client-supplied ``device_id``) and/or
+    the token ``sid``; absent one, the cursor falls back to the per-connection sid."""
+
     # ....................... #
 
     @property
     def principal_room(self) -> str:
         return room_for(Audience.principal(str(self.authn.principal_id)), self.tenant)
+
+    # ....................... #
+
+    @property
+    def principal(self) -> str:
+        return str(self.authn.principal_id)
+
+    # ....................... #
+
+    def client_key(self, sid: str) -> str:
+        """The stable cursor key: the client's ``device_id``/``session_id``, else *sid*."""
+
+        key = self.client.key if self.client is not None else None
+
+        return key or sid
 
     # ....................... #
 
@@ -136,6 +159,9 @@ def attach_realtime_connection(
     namespace: str = "/",
     resolve: ConnectionResolver,
     presence: RealtimePresence | None = None,
+    mailbox: RealtimeMailbox | None = None,
+    cursors: MailboxCursors | None = None,
+    runtime: ExecutionRuntime | None = None,
 ) -> None:
     """Register connect/disconnect handlers that auto-join the principal room.
 
@@ -144,6 +170,13 @@ def attach_realtime_connection(
     client-safe :class:`CoreException` from *resolve* refuses the connection;
     a server-side one is logged and refused generically.
 
+    When *mailbox*, *cursors* and *runtime* are all supplied, offline replay is
+    enabled (RFC 0006): on connect the connection's device is replayed everything
+    past its cursor, and a ``realtime.ack {up_to}`` event advances that cursor so a
+    device never re-receives what it acked. The device is keyed by
+    :meth:`RealtimeConnection.client_key` (its ``device_id``/``session_id``, else
+    the per-connection sid).
+
     .. important::
         Socket.IO keeps **one** ``connect`` handler per namespace, so this is the
         *single* connect path: it both authenticates (stores the ``AuthnIdentity``)
@@ -151,6 +184,57 @@ def attach_realtime_connection(
         :class:`ForzeSocketIOAdapter` for the same namespace — its connect handler
         would silently overwrite this one (or vice versa). Resolve identity here.
     """
+
+    replay_enabled = mailbox is not None and cursors is not None and runtime is not None
+
+    async def _replay(connection: RealtimeConnection, sid: str) -> None:
+        if mailbox is None or cursors is None or runtime is None:  # never (gated by replay_enabled)
+            return
+
+        client_key = connection.client_key(sid)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            since = await cursors.get(
+                ctx, tenant=connection.tenant, principal=connection.principal,
+                client_key=client_key,
+            )
+            entries = await mailbox.read_since(
+                ctx, tenant=connection.tenant, principal=connection.principal, since=since,
+            )
+
+        for entry in entries:
+            await sio.emit(
+                entry.event,
+                {"id": entry.event_id, "data": entry.payload},
+                to=sid,
+                namespace=namespace,
+            )
+
+    async def ack_handler(sid: str, data: Any = None) -> None:
+        if mailbox is None or cursors is None or runtime is None:  # never (gated by replay_enabled)
+            return
+
+        session = await sio.get_session(sid, namespace=namespace)
+        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+        raw = data.get("up_to") if isinstance(data, Mapping) else None
+        event_id = str(raw) if raw else None
+
+        if connection is None or event_id is None:
+            return
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            position = await mailbox.position_of(
+                ctx, tenant=connection.tenant, principal=connection.principal,
+                event_id=event_id,
+            )
+
+            if position is not None:
+                await cursors.advance(
+                    ctx, tenant=connection.tenant, principal=connection.principal,
+                    client_key=connection.client_key(sid), up_to=position,
+                )
 
     async def connect_handler(sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
         connect = SocketIOConnect(sid=sid, namespace=namespace, environ=environ, auth=auth)
@@ -186,6 +270,14 @@ def attach_realtime_connection(
         if presence is not None:
             await presence.joined(room, sid)
 
+        if replay_enabled:
+            # replay is best-effort: a drain error must not refuse the live connection
+            try:
+                await _replay(connection, sid)
+
+            except Exception as error:  # noqa: BLE001
+                log_server_error(error)
+
     async def disconnect_handler(sid: str) -> None:
         if presence is None:
             return
@@ -198,6 +290,9 @@ def attach_realtime_connection(
 
     sio.on("connect", handler=connect_handler, namespace=namespace)
     sio.on("disconnect", handler=disconnect_handler, namespace=namespace)
+
+    if replay_enabled:
+        sio.on("realtime.ack", handler=ack_handler, namespace=namespace)
 
 
 # ----------------------- #

@@ -112,7 +112,8 @@ async def test_gateway_emits_published_signal_to_tenant_room() -> None:
     assert sio.emits == [
         {
             "event": "message.new",
-            "data": {"text": "hi"},
+            # uniform envelope: ephemeral carries id=None
+            "data": {"id": None, "data": {"text": "hi"}},
             "room": f"t:{_TENANT.tenant_id}:topic:chat:42",
             "namespace": "/",
         }

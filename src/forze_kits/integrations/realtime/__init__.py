@@ -10,6 +10,12 @@ from .lifecycle import (
     realtime_group_ensure_lifecycle_step,
     realtime_relay_lifecycle_step,
 )
+from .mailbox import (
+    DocumentMailboxCursors,
+    DocumentRealtimeMailbox,
+    realtime_cursor_spec,
+    realtime_mailbox_spec,
+)
 from .publisher import RealtimePublisher, build_realtime_publisher
 from .specs import (
     DEFAULT_REALTIME_CHANNEL,
@@ -25,6 +31,10 @@ from .specs import (
 __all__ = [
     "RealtimePublisher",
     "build_realtime_publisher",
+    "DocumentRealtimeMailbox",
+    "DocumentMailboxCursors",
+    "realtime_mailbox_spec",
+    "realtime_cursor_spec",
     "RealtimeTransport",
     "build_realtime_transport",
     "DEFAULT_REALTIME_CHANNEL",

@@ -146,6 +146,72 @@ puts the ambient tenant in the message headers; the gateway scopes the room
 connection only ever joins its own tenant's rooms, so the realtime stream can be
 tenant-global.
 
+### The delivery envelope (client contract)
+
+Every frame the gateway emits is a uniform envelope — `{ "id": <id|null>, "data":
+<payload> }`. Durable frames carry the stable event id; ephemeral frames carry
+`null`. The client unwraps `data` and **dedups by `id`**:
+
+```js
+socket.on("order.shipped", ({ id, data }) => {
+  if (id && seen.has(id)) return;   // skip a frame seen live then replayed
+  if (id) { seen.add(id); socket.emit("realtime.ack", { up_to: id }); }
+  render(data);
+});
+```
+
+### Offline delivery (store-and-forward)
+
+A durable, **principal**-addressed signal is also stored in a per-recipient
+**mailbox** so a device offline at emit time receives it on reconnect. The mailbox
+is the source of truth; the live emit is an optimization. Wire it by giving the
+gateway a mailbox and the connect layer a mailbox + cursors:
+
+```python
+from forze_kits.integrations.realtime import (
+    DocumentRealtimeMailbox, DocumentMailboxCursors,
+)
+
+mailbox = DocumentRealtimeMailbox()   # over the document store (tenancy/TTL inherited)
+cursors = DocumentMailboxCursors()
+
+gateway = RealtimeGateway(
+    sio=sio, source=..., dedup=...,
+    mailbox=mailbox,            # store durable principal signals before emit
+    presence=presence,          # skip the live emit when the room is empty
+)
+
+# replay-on-connect + ack-advances-cursor (needs a runtime to open a scope):
+attach_realtime_connection(
+    sio, resolve=resolve_connection, presence=presence,
+    mailbox=mailbox, cursors=cursors, runtime=runtime,
+)
+```
+
+Each device has its own **cursor**, so it never re-receives what it acked. The
+device is keyed by `ClientIdentity` — a client-supplied `device_id` (stable across
+logins, passed in the connect handshake `auth`), else the authenticated session
+`sid`, else the per-connection sid. Set it when you resolve the connection:
+
+```python
+async def resolve_connection(connect) -> RealtimeConnection:
+    claims = await verify(connect.auth["token"])
+    return RealtimeConnection(
+        authn=AuthnIdentity(principal_id=claims.sub),
+        tenant=claims.tenant,
+        client=ClientIdentity(device_id=connect.auth.get("device_id"), session_id=claims.sid),
+    )
+```
+
+Opt an event out of mailboxing with `RealtimeEvent(name=..., offline_delivery=False)`
+(emit-only, best-effort). Topic signals are never mailboxed. The mailbox is bounded
+recent history (TTL + cap via `mailbox.trim`), not a forever queue.
+
+!!! warning "Breaking change — the delivery envelope"
+    Frames are now the uniform `{ id, data }` envelope (previously the bare
+    payload). Clients must read `data` (and dedup by `id`). There is no
+    transitional dual-emit; update clients in step with the server.
+
 ### Deployment
 
 - **In-process** — run the gateway lifecycle step inside the socket-holding
@@ -175,7 +241,8 @@ tenant-global.
 | `SocketIONamespaceRouter.command(...)` | inbound: event → operation, with typed payload/ack |
 | `RealtimePublisher.publish` / `.stage` | egress: publish a signal to messaging (ephemeral / durable) |
 | `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms (optional `emit_timeout`) |
-| `attach_realtime_connection` | auto-join principal rooms + presence on connect |
+| `attach_realtime_connection` | auto-join principal rooms + presence on connect; offline replay + ack |
+| `DocumentRealtimeMailbox` + `DocumentMailboxCursors` | offline store-and-forward: per-principal mailbox + per-device cursor |
 | `RedisRealtimePresence` + `realtime_presence_heartbeat_lifecycle_step` | crash-safe multi-node presence (TTL + heartbeat) |
 | `realtime_identity_expiry_lifecycle_step` | drop connections whose credential (`expires_at`) has lapsed |
 
