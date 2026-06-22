@@ -42,19 +42,25 @@ class _StubSio:
         self.emits: list[dict[str, Any]] = []
         self.attempts = 0
         self.fail = False
+        self.fail_times = 0  # fail the first N emit attempts, then succeed
 
     async def emit(self, event: str, data: Any = None, *, namespace: str | None = None,
                    room: str | None = None, **_: Any) -> None:
         self.attempts += 1
-        if self.fail:
+        if self.fail or self.attempts <= self.fail_times:
             raise RuntimeError("boom")
         self.emits.append({"event": event, "room": room, "data": data})
 
 
-def _deduping_gateway(sio: _StubSio, spec) -> RealtimeGateway:  # type: ignore[no-untyped-def]
+def _deduping_gateway(sio: _StubSio, spec, *, reclaim_idle=None) -> RealtimeGateway:  # type: ignore[no-untyped-def]
+    source = (
+        StreamGroupSignalSource(stream_spec=spec, poll_interval=_FAST, reclaim_idle=reclaim_idle)
+        if reclaim_idle is not None
+        else StreamGroupSignalSource(stream_spec=spec, poll_interval=_FAST)
+    )
     return RealtimeGateway(
         sio=sio,  # pyright: ignore[reportArgumentType]
-        source=StreamGroupSignalSource(stream_spec=spec, poll_interval=_FAST),
+        source=source,
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
     )
 
@@ -152,6 +158,27 @@ async def test_durable_emit_failure_is_not_acked() -> None:
 
     assert sio.emits == []  # never delivered
     assert pending != []  # left pending → redeliverable (at-least-once)
+
+
+async def test_durable_failure_is_reclaimed_and_re_emitted() -> None:
+    spec = realtime_stream_spec()
+    sio = _StubSio()
+    sio.fail_times = 1  # first emit fails (mark rolls back, not acked)
+    gw = _deduping_gateway(sio, spec, reclaim_idle=timedelta(0))  # reclaim stranded entries at once
+    sig = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", {"text": "x"})
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await _append(ctx, spec, sig, event_id="evt-1")
+        await _run_settle(gw, ctx, lambda: bool(sio.emits))
+
+        group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
+        pending = await group.pending("realtime-gateway", str(spec.name))
+
+    assert sio.attempts == 2  # one failure, then a successful retry via reclaim
+    assert len(sio.emits) == 1  # recovered and emitted exactly once
+    assert pending == []  # acked after the successful retry
 
 
 async def test_end_to_end_durable_stage_relay_gateway() -> None:

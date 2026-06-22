@@ -127,6 +127,13 @@ def attach_realtime_connection(
     command handlers see it) and a gateway key (for disconnect presence). A
     client-safe :class:`CoreException` from *resolve* refuses the connection;
     a server-side one is logged and refused generically.
+
+    .. important::
+        Socket.IO keeps **one** ``connect`` handler per namespace, so this is the
+        *single* connect path: it both authenticates (stores the ``AuthnIdentity``)
+        and auto-joins. Do **not** also pass an ``identity_resolver`` to
+        :class:`ForzeSocketIOAdapter` for the same namespace — its connect handler
+        would silently overwrite this one (or vice versa). Resolve identity here.
     """
 
     async def connect_handler(sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:

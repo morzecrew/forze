@@ -26,7 +26,7 @@ require_socketio()
 
 import asyncio
 from datetime import timedelta
-from typing import Awaitable, Callable, Protocol, final, runtime_checkable
+from typing import Any, Awaitable, Callable, Protocol, final, runtime_checkable
 from uuid import UUID
 
 import attrs
@@ -45,6 +45,9 @@ from ._logging import ForzeSocketIOLogger
 # ----------------------- #
 
 _logger = Logger(ForzeSocketIOLogger.ERRORS)
+
+_IDLE_FLOOR = 0.05
+"""Seconds: a small idle pause floor so a non-blocking backend can't hot-loop."""
 
 SignalHandler = Callable[[RealtimeSignal, UUID | None, str | None], Awaitable[None]]
 """A per-signal bridge: receives a decoded signal, its tenant, and a dedup id.
@@ -121,7 +124,16 @@ class StreamGroupSignalSource(RealtimeSignalSource):
     """Maximum signals to read per poll."""
 
     poll_interval: timedelta = timedelta(seconds=1)
-    """Read block timeout, and the idle pause when a poll returns nothing."""
+    """Block timeout for one group read."""
+
+    reclaim_idle: timedelta | None = timedelta(seconds=60)
+    """Reclaim entries stranded (delivered, unacked) at least this long.
+
+    Recovers durable signals whose consumer died after read but before ack (the
+    ``">"`` cursor never redelivers them): each tick claims stale pending entries
+    and reprocesses them — deduped, so a recovered durable signal still emits at
+    most once. ``None`` disables recovery (e.g. a single ephemeral-only node).
+    """
 
     # ....................... #
 
@@ -136,40 +148,57 @@ class StreamGroupSignalSource(RealtimeSignalSource):
         mapping = {stream: ">"}
 
         while True:
-            messages = await group.read(
-                self.group,
-                self.consumer,
-                mapping,
-                limit=self.batch,
-                timeout=self.poll_interval,
-            )
+            try:
+                fresh = await group.read(
+                    self.group, self.consumer, mapping, limit=self.batch, timeout=self.poll_interval
+                )
+                await self._process(group, stream, fresh, handler)
 
-            if not messages:
+                reclaimed: list[Any] = []
+                if self.reclaim_idle is not None:
+                    reclaimed = await group.claim(
+                        self.group, self.consumer, stream,
+                        idle=self.reclaim_idle, limit=self.batch,
+                    )
+                    await self._process(group, stream, reclaimed, handler)
+
+                if not fresh and not reclaimed:
+                    # the read timeout already paces blocking backends; this is a
+                    # small floor so a non-blocking backend cannot hot-loop.
+                    await asyncio.sleep(min(_IDLE_FLOOR, self.poll_interval.total_seconds()))
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:  # noqa: BLE001 - a transient broker error must not kill the gateway
+                _logger.critical_exception("Realtime gateway loop error", stream=stream)
                 await asyncio.sleep(self.poll_interval.total_seconds())
-                continue
 
-            for message in messages:
-                # A durable signal (relayed from the outbox) carries an event id;
-                # it is acked only on success so a transient failure redelivers
-                # (at-least-once). An ephemeral signal is acked regardless, so one
-                # bad signal can never wedge the live stream (at-most-once).
-                durable = HEADER_EVENT_ID in message.headers
-                dedup_id = message.headers.get(HEADER_EVENT_ID)
-                ack = True
+    # ....................... #
 
-                try:
-                    await handler(
-                        message.payload, _tenant_from_headers(message.headers), dedup_id
-                    )
+    async def _process(
+        self, group: Any, stream: str, messages: list[Any], handler: SignalHandler
+    ) -> None:
+        for message in messages:
+            # A durable signal (relayed from the outbox) carries an event id; it is
+            # acked only on success, so a transient failure stays pending and is
+            # recovered (at-least-once). An ephemeral signal is acked regardless, so
+            # one bad signal can never wedge the live stream (at-most-once).
+            durable = HEADER_EVENT_ID in message.headers
+            dedup_id = message.headers.get(HEADER_EVENT_ID)
+            ack = True
 
-                except Exception:  # noqa: BLE001
-                    _logger.critical_exception(
-                        "Realtime bridge failed", stream=stream, message_id=message.id
-                    )
-                    ack = not durable
+            try:
+                await handler(message.payload, _tenant_from_headers(message.headers), dedup_id)
 
-                if ack:
-                    await group.ack(group=self.group, stream=stream, ids=[message.id])
+            except Exception:  # noqa: BLE001
+                _logger.critical_exception(
+                    "Realtime bridge failed", stream=stream, message_id=message.id
+                )
+                ack = not durable
+
+            if ack:
+                await group.ack(group=self.group, stream=stream, ids=[message.id])
 
 
 # ----------------------- #

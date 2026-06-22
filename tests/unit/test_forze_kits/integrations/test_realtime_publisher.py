@@ -73,6 +73,7 @@ async def test_publish_appends_signal_with_tenant_header() -> None:
     assert mid
     [msg] = rows
     assert msg.type == "message.new"
+    assert msg.key == "topic:chat:42"  # per-audience partition key keeps a topic ordered
     assert msg.payload.event == "message.new"
     assert msg.payload.audience == Audience.topic("chat:42")
     assert msg.payload.payload == {"text": "hi"}

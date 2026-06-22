@@ -22,11 +22,30 @@ import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
+from forze.base.logging import Logger
 from forze.base.primitives import StrKey
 
+from ._logging import ForzeSocketIOLogger
 from .gateway import RealtimeGateway
 
 # ----------------------- #
+
+_logger = Logger(ForzeSocketIOLogger.ERRORS)
+
+
+def _log_task_exit(task: asyncio.Task[None]) -> None:
+    """Surface an unexpected gateway-task exit (it should only end via cancellation)."""
+
+    if task.cancelled():
+        return
+
+    exc = task.exception()
+
+    if exc is not None:
+        _logger.critical_exception("Realtime gateway task exited", exc=exc)
+
+
+# ....................... #
 
 
 @final
@@ -45,6 +64,7 @@ class _RealtimeGatewayStartup(LifecycleHook):
             return
 
         self.task = asyncio.create_task(self.gateway.run(ctx), name="realtime_gateway")
+        self.task.add_done_callback(_log_task_exit)
 
 
 # ....................... #

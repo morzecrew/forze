@@ -53,7 +53,12 @@ class Audience:
 
     @classmethod
     def principal(cls, principal_id: str) -> "Audience":
-        """A specific principal's live connections."""
+        """A specific principal's live connections.
+
+        *principal_id* must be the same string form the gateway derives from the
+        connection's identity (``str(authn.principal_id)`` — the principal UUID as
+        a string). Publish and membership agree only if both use that form.
+        """
 
         return cls(kind=AudienceKind.PRINCIPAL, name=principal_id)
 

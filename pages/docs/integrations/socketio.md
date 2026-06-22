@@ -105,6 +105,12 @@ lifecycle = [realtime_gateway_lifecycle_step(gateway)]
 attach_realtime_connection(sio, resolve=resolve_connection, presence=presence)
 ```
 
+`attach_realtime_connection` is the **single** connect path — it authenticates
+*and* auto-joins. Socket.IO keeps one connect handler per namespace, so do not
+also give `ForzeSocketIOAdapter` an `identity_resolver` on the same namespace
+(it would silently overwrite this one). The publish-side `Audience.principal(id)`
+must use the same id form the gateway joins with (`str(authn.principal_id)`).
+
 Durable signals also need the **relay** (`realtime_relay_lifecycle_step`) to move
 staged rows from the outbox to the stream after commit, plus the gateway's
 `dedup` for exactly-once delivery to online recipients.
@@ -125,7 +131,9 @@ tenant-global.
   `redis_write_only` process holding no client sockets; the Redis manager fans
   emits to the nodes that do.
 - **Consumer group** — on real Redis the group must be **created at startup**
-  (`XGROUP CREATE … MKSTREAM`); the gateway reads but does not create it.
+  (`XGROUP CREATE … MKSTREAM`); the gateway reads but does not create it. The
+  gateway reclaims stranded pending entries (`reclaim_idle`) so a durable signal
+  whose consumer died before ack is recovered (and deduped) rather than lost.
 - **Hardening** — presence wants a TTL-backed store across nodes (the in-memory
   tracker is single-node); re-validate a connection's token periodically (a
   long-lived socket outlives a short-lived token); the gateway lifecycle step

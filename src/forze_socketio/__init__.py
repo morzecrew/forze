@@ -90,6 +90,7 @@ from .gateway import (
     GatewayDedup,
     RealtimeGateway,
     RealtimeSignalSource,
+    SignalHandler,
     StreamGroupSignalSource,
     room_for,
 )
@@ -130,6 +131,7 @@ __all__ = [
     "SocketIONamespaceEmitter",
     "RealtimeGateway",
     "RealtimeSignalSource",
+    "SignalHandler",
     "StreamGroupSignalSource",
     "GatewayDedup",
     "realtime_gateway_lifecycle_step",
