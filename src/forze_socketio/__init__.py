@@ -84,7 +84,6 @@ from .exceptions import (
     build_core_exception_ack,
     build_unhandled_exception_ack,
 )
-from .realtime import SocketIORealtimeAdapter, socketio_realtime_deps
 from .routing import (
     IDENTITY_SESSION_KEY,
     ExecutionContextFactoryPort,
@@ -114,8 +113,6 @@ __all__ = [
     "SocketIOServerEvent",
     "SocketIOEventEmitter",
     "SocketIONamespaceEmitter",
-    "SocketIORealtimeAdapter",
-    "socketio_realtime_deps",
     "build_core_exception_ack",
     "build_socketio_server",
     "build_socketio_asgi_app",

@@ -91,7 +91,6 @@ from forze.application.contracts.queue import (
     QueueCommandDepKey,
     QueueQueryDepKey,
 )
-from forze.application.contracts.realtime import RealtimeDepKey
 from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
@@ -137,7 +136,6 @@ from forze_mock.adapters import (
     MockHttpRegistry,
     MockKeyManagement,
     MockState,
-    RecordingRealtimePort,
 )
 from forze_mock.adapters.events import RecordingAuthnEventSink
 from forze_mock.adapters.identity import (
@@ -243,13 +241,6 @@ class MockDepsModule(DepsModule):
     resilience: Literal["passthrough", "real"] = "passthrough"
     domain_events: DomainEventRegistry | None = attrs.field(default=None)
 
-    realtime: RecordingRealtimePort | None = attrs.field(default=None)
-    """Recording :class:`RealtimePort` for ``ctx.realtime()`` (server→client push).
-
-    ``None`` registers a fresh internal recorder so the port always resolves;
-    pass your own :class:`~forze_mock.adapters.realtime.RecordingRealtimePort` to
-    inspect emitted events and room membership in tests."""
-
     transactions: Literal["journal", "none", "strict"] = attrs.field(default="journal")
     """Which mock transaction manager to wire (default ``"journal"``):
 
@@ -318,16 +309,10 @@ class MockDepsModule(DepsModule):
         def _domain_dispatcher(ctx: ExecutionContext) -> InProcessDomainEventDispatcher:
             return InProcessDomainEventDispatcher(registry=domain_registry, ctx=ctx)
 
-        realtime = self.realtime or RecordingRealtimePort()
-
-        def _realtime(_ctx: ExecutionContext) -> RecordingRealtimePort:
-            return realtime
-
         deps: dict[DepKey[Any], Any] = {
             MockStateDepKey: self.state,
             ResilienceExecutorDepKey: resilience_executor,
             DomainEventDispatcherDepKey: _domain_dispatcher,
-            RealtimeDepKey: _realtime,
             DocumentQueryDepKey: document,
             DocumentCommandDepKey: document,
             SearchQueryDepKey: ConfigurableMockSearch(module=self),
