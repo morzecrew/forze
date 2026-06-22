@@ -102,7 +102,8 @@ class RealtimeConnection:
 # ....................... #
 
 ConnectionResolver = Callable[
-    [SocketIOConnect], "RealtimeConnection | None | Awaitable[RealtimeConnection | None]"
+    [SocketIOConnect],
+    "RealtimeConnection | None | Awaitable[RealtimeConnection | None]",
 ]
 """Resolve a connection's identity at connect time. Return ``None`` for anonymous
 (no principal room joined), or raise a client-safe :class:`CoreException`
@@ -149,13 +150,17 @@ class InMemoryRealtimePresence(RealtimePresence):
 # ----------------------- #
 
 
-async def _resolve(resolver: ConnectionResolver, connect: SocketIOConnect) -> RealtimeConnection | None:
+async def _resolve(
+    resolver: ConnectionResolver, connect: SocketIOConnect
+) -> RealtimeConnection | None:
     result = resolver(connect)
 
     return await result if isawaitable(result) else result
 
 
-def _bind_tenant(ctx: ExecutionContext, tenant: UUID | None) -> AbstractContextManager[None]:
+def _bind_tenant(
+    ctx: ExecutionContext, tenant: UUID | None
+) -> AbstractContextManager[None]:
     """Bind the connection's *tenant* so the mailbox/cursors scope ambiently."""
 
     if tenant is None:
@@ -201,7 +206,9 @@ def attach_realtime_connection(
     replay_enabled = mailbox is not None and cursors is not None and runtime is not None
 
     async def _replay(connection: RealtimeConnection, sid: str) -> None:
-        if mailbox is None or cursors is None or runtime is None:  # never (gated by replay_enabled)
+        if (
+            mailbox is None or cursors is None or runtime is None
+        ):  # never (gated by replay_enabled)
             return
 
         client_key = connection.client_key(sid)
@@ -225,13 +232,21 @@ def attach_realtime_connection(
             )
 
     async def ack_handler(sid: str, data: Any = None) -> None:
-        if mailbox is None or cursors is None or runtime is None:  # never (gated by replay_enabled)
+        if (
+            mailbox is None or cursors is None or runtime is None
+        ):  # never (gated by replay_enabled)
             return
 
         session = await sio.get_session(sid, namespace=namespace)
         connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
-        raw = data.get("up_to") if isinstance(data, Mapping) else None
-        event_id = str(raw) if raw else None
+        raw = (  # pyright: ignore[reportUnknownVariableType]
+            data.get("up_to")  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(data, Mapping)
+            else None
+        )
+        event_id = (
+            str(raw) if raw else None  # pyright: ignore[reportUnknownArgumentType]
+        )
 
         if connection is None or event_id is None:
             return
@@ -245,20 +260,28 @@ def attach_realtime_connection(
 
                 if position is not None:
                     await cursors.advance(
-                        ctx, principal=connection.principal,
-                        client_key=connection.client_key(sid), up_to=position,
+                        ctx,
+                        principal=connection.principal,
+                        client_key=connection.client_key(sid),
+                        up_to=position,
                     )
 
                     # trim what every known device has now acked (TTL/cap is the backstop)
-                    floor = await cursors.min_cursor(ctx, principal=connection.principal)
+                    floor = await cursors.min_cursor(
+                        ctx, principal=connection.principal
+                    )
 
                     if floor is not None:
                         await mailbox.trim(
                             ctx, principal=connection.principal, before=floor
                         )
 
-    async def connect_handler(sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
-        connect = SocketIOConnect(sid=sid, namespace=namespace, environ=environ, auth=auth)
+    async def connect_handler(
+        sid: str, environ: Mapping[str, Any], auth: Any = None
+    ) -> None:
+        connect = SocketIOConnect(
+            sid=sid, namespace=namespace, environ=environ, auth=auth
+        )
 
         try:
             connection = await _resolve(resolve, connect)
@@ -319,9 +342,7 @@ def attach_realtime_connection(
 # ----------------------- #
 
 
-def _local_connections(
-    sio: AsyncServer, namespace: str
-) -> "list[str]":
+def _local_connections(sio: AsyncServer, namespace: str) -> "list[str]":
     """The sids connected to *namespace* on this node (room ``None`` = all)."""
 
     return [sid for sid, _eio in sio.manager.get_participants(namespace, None)]

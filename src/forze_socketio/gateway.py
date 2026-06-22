@@ -125,7 +125,13 @@ def _hlc_from_headers(headers: object) -> HlcTimestamp:
     HLC is carried, a ``(now_ms, 0)`` stamp keeps mailbox ordering wall-clock-close.
     """
 
-    raw = headers.get(HEADER_HLC) if hasattr(headers, "get") else None
+    raw = (  # pyright: ignore[reportUnknownVariableType]
+        headers.get(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            HEADER_HLC
+        )
+        if hasattr(headers, "get")
+        else None
+    )
 
     if raw:
         return HlcTimestamp.parse(cast(str, raw))
@@ -136,7 +142,10 @@ def _hlc_from_headers(headers: object) -> HlcTimestamp:
 # ....................... #
 
 
-def _bind_tenant(ctx: ExecutionContext, tenant: UUID | None) -> AbstractContextManager[None]:
+def _bind_tenant(
+    ctx: ExecutionContext,
+    tenant: UUID | None,
+) -> AbstractContextManager[None]:
     """Bind the per-signal *tenant* (from the header) so the mailbox scopes ambiently.
 
     The gateway consumes a tenant-global stream, so it binds each signal's tenant the
@@ -260,7 +269,11 @@ class StreamGroupSignalSource(RealtimeSignalSource):
     # ....................... #
 
     async def _process(
-        self, group: Any, stream: str, messages: list[Any], handler: SignalHandler
+        self,
+        group: Any,
+        stream: str,
+        messages: list[Any],
+        handler: SignalHandler,
     ) -> None:
         for message in messages:
             # A durable signal (relayed from the outbox) carries an event id; it is
@@ -384,7 +397,9 @@ class RealtimeGateway:
             async with ctx.tx_ctx.scope(self.dedup.tx_route):
                 inbox = ctx.inbox(self.dedup.inbox_spec)
 
-                if not await inbox.mark_if_unseen(str(self.dedup.inbox_spec.name), dedup_id):
+                if not await inbox.mark_if_unseen(
+                    str(self.dedup.inbox_spec.name), dedup_id
+                ):
                     return
 
                 mailbox = self.mailbox if self._should_mailbox(signal) else None
@@ -427,17 +442,23 @@ class RealtimeGateway:
         event_id: str | None,
         recoverable: bool,
     ) -> None:
-        if recoverable and self.presence is not None:
-            # offline: skip the fan-out; the reconnect drain delivers it from the mailbox
-            if await self.presence.count(room_for(signal.audience, tenant)) == 0:
-                return
+        if (
+            recoverable
+            and self.presence is not None
+            and await self.presence.count(room_for(signal.audience, tenant)) == 0
+        ):
+            return
 
         await self._emit(signal, tenant, event_id=event_id)
 
     # ....................... #
 
     async def _emit(
-        self, signal: RealtimeSignal, tenant: UUID | None, *, event_id: str | None = None
+        self,
+        signal: RealtimeSignal,
+        tenant: UUID | None,
+        *,
+        event_id: str | None = None,
     ) -> None:
         # Uniform delivery envelope (RFC 0006): every frame is ``{id, data}`` — the id
         # is the durable event id (``None`` for ephemeral) so the client dedups
@@ -458,7 +479,10 @@ class RealtimeGateway:
     # ....................... #
 
     async def join_principal(
-        self, sid: str, principal_id: UUID | str, tenant: UUID | None
+        self,
+        sid: str,
+        principal_id: UUID | str,
+        tenant: UUID | None,
     ) -> None:
         """Join *sid* to its tenant-scoped principal room (auto-join on connect)."""
 
@@ -474,7 +498,9 @@ class RealtimeGateway:
         """Subscribe *sid* to a tenant-scoped topic room (app-driven)."""
 
         await self.sio.enter_room(
-            sid, room_for(Audience.topic(topic), tenant), namespace=self.namespace
+            sid,
+            room_for(Audience.topic(topic), tenant),
+            namespace=self.namespace,
         )
 
     # ....................... #
@@ -483,5 +509,7 @@ class RealtimeGateway:
         """Unsubscribe *sid* from a tenant-scoped topic room."""
 
         await self.sio.leave_room(
-            sid, room_for(Audience.topic(topic), tenant), namespace=self.namespace
+            sid,
+            room_for(Audience.topic(topic), tenant),
+            namespace=self.namespace,
         )

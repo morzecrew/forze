@@ -277,19 +277,22 @@ class DocumentRealtimeMailbox:
         principal: str,
         before: HlcTimestamp,
     ) -> None:
-        values = {
-            "tenant_id": _tenant_filter(_tenant(ctx)),
-            "principal": principal,
-            "hlc": {"$lte": before.pack()},
-        }
-
         query = ctx.document.query(self.spec)
         stale = await query.find_many(
-            filters={"$values": values}, pagination={"limit": self.cap}
+            filters={
+                "$values": {
+                    "tenant_id": _tenant_filter(_tenant(ctx)),
+                    "principal": principal,
+                    "hlc": {"$lte": before.pack()},
+                }
+            },
+            pagination={"limit": self.cap},
         )
 
         if stale.hits:
-            await ctx.document.command(self.spec).kill_many([row.id for row in stale.hits])
+            await ctx.document.command(self.spec).kill_many(
+                [row.id for row in stale.hits]
+            )
             self.stats.trimmed += len(stale.hits)
 
 
