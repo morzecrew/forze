@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience, RealtimeSignal
-from forze.application.execution import (
-    DepsRegistry,
-    ExecutionContext,
-    ExecutionRuntime,
-)
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.primitives import HlcTimestamp
 from forze_socketio import (
     InMemoryMailboxCursors,
@@ -27,7 +24,6 @@ from forze_mock import MockDepsModule
 _PRINCIPAL = UUID("22222222-2222-2222-2222-222222222222")
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
 _PRINCIPAL_STR = str(_PRINCIPAL)
-_NULL_CTX = cast(ExecutionContext, None)
 
 
 def _runtime() -> ExecutionRuntime:
@@ -80,8 +76,13 @@ def _resolver(connection: RealtimeConnection):  # type: ignore[no-untyped-def]
 
 
 async def _populate(mailbox: InMemoryRealtimeMailbox) -> None:
-    await mailbox.store(_NULL_CTX, tenant=_TENANT, principal=_PRINCIPAL_STR, event_id="e1", hlc=_hlc(1), signal=_signal("a"))
-    await mailbox.store(_NULL_CTX, tenant=_TENANT, principal=_PRINCIPAL_STR, event_id="e2", hlc=_hlc(2), signal=_signal("b"))
+    # the tenant is ambient; store under the recipient's tenant (the gateway would bind it)
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+            await mailbox.store(ctx, principal=_PRINCIPAL_STR, event_id="e1", hlc=_hlc(1), signal=_signal("a"))
+            await mailbox.store(ctx, principal=_PRINCIPAL_STR, event_id="e2", hlc=_hlc(2), signal=_signal("b"))
 
 
 # ----------------------- #
@@ -152,7 +153,8 @@ async def test_ack_trims_what_the_only_device_has_acked() -> None:
 
     async with runtime.scope():
         ctx = runtime.get_context()
-        remaining = await mailbox.read_since(ctx, tenant=_TENANT, principal=_PRINCIPAL_STR, since=None)
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+            remaining = await mailbox.read_since(ctx, principal=_PRINCIPAL_STR, since=None)
 
     assert remaining == []  # every known device acked through e2 → trimmed
 
@@ -181,7 +183,8 @@ async def test_ack_keeps_entries_a_slower_device_has_not_acked() -> None:
 
     async with runtime.scope():
         ctx = runtime.get_context()
-        remaining = await mailbox.read_since(ctx, tenant=_TENANT, principal=_PRINCIPAL_STR, since=None)
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+            remaining = await mailbox.read_since(ctx, principal=_PRINCIPAL_STR, since=None)
 
     assert [e.event_id for e in remaining] == ["e2"]  # e2 retained until both ack it
 

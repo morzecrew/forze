@@ -25,6 +25,7 @@ require_socketio()
 # ....................... #
 
 import asyncio
+from contextlib import AbstractContextManager, nullcontext
 from datetime import timedelta
 from typing import (
     TYPE_CHECKING,
@@ -55,6 +56,7 @@ from forze.application.contracts.realtime import (
     RealtimeSignal,
 )
 from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, JsonDict, StrKey, utcnow
@@ -129,6 +131,25 @@ def _hlc_from_headers(headers: object) -> HlcTimestamp:
         return HlcTimestamp.parse(cast(str, raw))
 
     return HlcTimestamp(physical_ms=int(utcnow().timestamp() * 1000), logical=0)
+
+
+# ....................... #
+
+
+def _bind_tenant(ctx: ExecutionContext, tenant: UUID | None) -> AbstractContextManager[None]:
+    """Bind the per-signal *tenant* (from the header) so the mailbox scopes ambiently.
+
+    The gateway consumes a tenant-global stream, so it binds each signal's tenant the
+    way the inbox consumer does — the mailbox then reads the ambient tenant, never a
+    parameter. ``None`` (untenanted signal) binds nothing.
+    """
+
+    if tenant is None:
+        return nullcontext()
+
+    return ctx.inv_ctx.bind_identity(
+        authn=ctx.inv_ctx.get_authn(), tenant=TenantIdentity(tenant_id=tenant)
+    )
 
 
 # ----------------------- #
@@ -357,28 +378,29 @@ class RealtimeGateway:
             return
 
         # durable: mark (+ store) + emit inside one transaction, so a redelivered
-        # signal (relay retry / consumer claim) is recognised and handled once
-        async with ctx.tx_ctx.scope(self.dedup.tx_route):
-            inbox = ctx.inbox(self.dedup.inbox_spec)
+        # signal (relay retry / consumer claim) is recognised and handled once. The
+        # tenant is bound (from the header) so the mailbox scopes by the ambient tenant.
+        with _bind_tenant(ctx, tenant):
+            async with ctx.tx_ctx.scope(self.dedup.tx_route):
+                inbox = ctx.inbox(self.dedup.inbox_spec)
 
-            if not await inbox.mark_if_unseen(str(self.dedup.inbox_spec.name), dedup_id):
-                return
+                if not await inbox.mark_if_unseen(str(self.dedup.inbox_spec.name), dedup_id):
+                    return
 
-            mailbox = self.mailbox if self._should_mailbox(signal) else None
+                mailbox = self.mailbox if self._should_mailbox(signal) else None
 
-            if mailbox is not None:
-                await mailbox.store(
-                    ctx,
-                    tenant=tenant,
-                    principal=signal.audience.name,
-                    event_id=dedup_id,
-                    hlc=hlc,
-                    signal=signal,
+                if mailbox is not None:
+                    await mailbox.store(
+                        ctx,
+                        principal=signal.audience.name,
+                        event_id=dedup_id,
+                        hlc=hlc,
+                        signal=signal,
+                    )
+
+                await self._emit_live(
+                    signal, tenant, event_id=dedup_id, recoverable=mailbox is not None
                 )
-
-            await self._emit_live(
-                signal, tenant, event_id=dedup_id, recoverable=mailbox is not None
-            )
 
     # ....................... #
 

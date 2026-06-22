@@ -17,8 +17,7 @@ store has no native TTL (RFC 0006 §6). Encryption is whatever the app configure
 on the spec (no forced default).
 """
 
-from contextlib import contextmanager
-from typing import Any, Final, Iterator, final
+from typing import Any, Final, final
 from uuid import UUID, uuid5
 
 import attrs
@@ -26,7 +25,6 @@ from pydantic import Field
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
-from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import HlcTimestamp
 from forze.domain.models import BaseDTO, Document, ReadDocument
@@ -156,18 +154,17 @@ def realtime_cursor_spec(
 # ----------------------- #
 
 
-@contextmanager
-def _bind_tenant(ctx: ExecutionContext, tenant: UUID | None) -> Iterator[None]:
-    """Bind *tenant* for the enclosed document op (no-op when untenanted)."""
+def _tenant(ctx: ExecutionContext) -> UUID | None:
+    """The ambient tenant id — the document store scopes the collection by it.
 
-    if tenant is None:
-        yield
-        return
+    Tenant is never a parameter (that would make the caller multi-tenancy-aware): a
+    tenant-global worker binds the per-signal / per-connection tenant before calling,
+    and this reads it back, exactly as the publisher reads it for the message header.
+    """
 
-    with ctx.inv_ctx.bind_identity(
-        authn=ctx.inv_ctx.get_authn(), tenant=TenantIdentity(tenant_id=tenant)
-    ):
-        yield
+    tenant = ctx.inv_ctx.get_tenant()
+
+    return tenant.tenant_id if tenant is not None else None
 
 
 def _tenant_filter(tenant: UUID | None) -> Any:
@@ -194,27 +191,26 @@ class DocumentRealtimeMailbox:
         self,
         ctx: ExecutionContext,
         *,
-        tenant: UUID | None,
         principal: str,
         event_id: str,
         hlc: HlcTimestamp,
         signal: RealtimeSignal,
     ) -> None:
         self.stats.stored += 1
+        tenant = _tenant(ctx)
 
-        with _bind_tenant(ctx, tenant):
-            await ctx.document.command(self.spec).ensure(
-                uuid5(_MAILBOX_NS, f"{tenant}:{event_id}"),
-                _MailboxCreate(
-                    tenant_id=tenant,
-                    principal=principal,
-                    event_id=event_id,
-                    hlc=hlc.pack(),
-                    event=signal.event,
-                    payload=dict(signal.payload),
-                ),
-                return_new=False,
-            )
+        await ctx.document.command(self.spec).ensure(
+            uuid5(_MAILBOX_NS, f"{tenant}:{event_id}"),
+            _MailboxCreate(
+                tenant_id=tenant,
+                principal=principal,
+                event_id=event_id,
+                hlc=hlc.pack(),
+                event=signal.event,
+                payload=dict(signal.payload),
+            ),
+            return_new=False,
+        )
 
     # ....................... #
 
@@ -222,21 +218,22 @@ class DocumentRealtimeMailbox:
         self,
         ctx: ExecutionContext,
         *,
-        tenant: UUID | None,
         principal: str,
         since: HlcTimestamp | None,
     ) -> list[MailboxEntry]:
-        values: dict[str, Any] = {"tenant_id": _tenant_filter(tenant), "principal": principal}
+        values: dict[str, Any] = {
+            "tenant_id": _tenant_filter(_tenant(ctx)),
+            "principal": principal,
+        }
 
         if since is not None:
             values["hlc"] = {"$gt": since.pack()}
 
-        with _bind_tenant(ctx, tenant):
-            page = await ctx.document.query(self.spec).find_many(
-                filters={"$values": values},
-                sorts={"hlc": "asc"},
-                pagination={"limit": self.cap},
-            )
+        page = await ctx.document.query(self.spec).find_many(
+            filters={"$values": values},
+            sorts={"hlc": "asc"},
+            pagination={"limit": self.cap},
+        )
 
         self.stats.replayed += len(page.hits)
 
@@ -256,20 +253,18 @@ class DocumentRealtimeMailbox:
         self,
         ctx: ExecutionContext,
         *,
-        tenant: UUID | None,
         principal: str,
         event_id: str,
     ) -> HlcTimestamp | None:
-        with _bind_tenant(ctx, tenant):
-            row = await ctx.document.query(self.spec).find(
-                filters={
-                    "$values": {
-                        "tenant_id": _tenant_filter(tenant),
-                        "principal": principal,
-                        "event_id": event_id,
-                    }
+        row = await ctx.document.query(self.spec).find(
+            filters={
+                "$values": {
+                    "tenant_id": _tenant_filter(_tenant(ctx)),
+                    "principal": principal,
+                    "event_id": event_id,
                 }
-            )
+            }
+        )
 
         return HlcTimestamp.unpack(row.hlc) if row is not None else None
 
@@ -279,27 +274,23 @@ class DocumentRealtimeMailbox:
         self,
         ctx: ExecutionContext,
         *,
-        tenant: UUID | None,
         principal: str,
         before: HlcTimestamp,
     ) -> None:
         values = {
-            "tenant_id": _tenant_filter(tenant),
+            "tenant_id": _tenant_filter(_tenant(ctx)),
             "principal": principal,
             "hlc": {"$lte": before.pack()},
         }
 
-        with _bind_tenant(ctx, tenant):
-            query = ctx.document.query(self.spec)
-            stale = await query.find_many(
-                filters={"$values": values}, pagination={"limit": self.cap}
-            )
+        query = ctx.document.query(self.spec)
+        stale = await query.find_many(
+            filters={"$values": values}, pagination={"limit": self.cap}
+        )
 
-            if stale.hits:
-                await ctx.document.command(self.spec).kill_many(
-                    [row.id for row in stale.hits]
-                )
-                self.stats.trimmed += len(stale.hits)
+        if stale.hits:
+            await ctx.document.command(self.spec).kill_many([row.id for row in stale.hits])
+            self.stats.trimmed += len(stale.hits)
 
 
 # ....................... #
@@ -321,20 +312,18 @@ class DocumentMailboxCursors:
         self,
         ctx: ExecutionContext,
         *,
-        tenant: UUID | None,
         principal: str,
         client_key: str,
     ) -> HlcTimestamp | None:
-        with _bind_tenant(ctx, tenant):
-            row = await ctx.document.query(self.spec).find(
-                filters={
-                    "$values": {
-                        "tenant_id": _tenant_filter(tenant),
-                        "principal": principal,
-                        "client_key": client_key,
-                    }
+        row = await ctx.document.query(self.spec).find(
+            filters={
+                "$values": {
+                    "tenant_id": _tenant_filter(_tenant(ctx)),
+                    "principal": principal,
+                    "client_key": client_key,
                 }
-            )
+            }
+        )
 
         return HlcTimestamp.unpack(row.hlc) if row is not None else None
 
@@ -344,30 +333,29 @@ class DocumentMailboxCursors:
         self,
         ctx: ExecutionContext,
         *,
-        tenant: UUID | None,
         principal: str,
         client_key: str,
         up_to: HlcTimestamp,
     ) -> None:
-        current = await self.get(ctx, tenant=tenant, principal=principal, client_key=client_key)
+        current = await self.get(ctx, principal=principal, client_key=client_key)
 
         if current is not None and up_to <= current:
             return  # monotonic: never moves backwards
 
         self.stats.acked += 1
+        tenant = _tenant(ctx)
 
-        with _bind_tenant(ctx, tenant):
-            await ctx.document.command(self.spec).upsert(
-                uuid5(_MAILBOX_NS, f"cursor:{tenant}:{principal}:{client_key}"),
-                _CursorCreate(
-                    tenant_id=tenant,
-                    principal=principal,
-                    client_key=client_key,
-                    hlc=up_to.pack(),
-                ),
-                _CursorUpdate(hlc=up_to.pack()),
-                return_new=False,
-            )
+        await ctx.document.command(self.spec).upsert(
+            uuid5(_MAILBOX_NS, f"cursor:{tenant}:{principal}:{client_key}"),
+            _CursorCreate(
+                tenant_id=tenant,
+                principal=principal,
+                client_key=client_key,
+                hlc=up_to.pack(),
+            ),
+            _CursorUpdate(hlc=up_to.pack()),
+            return_new=False,
+        )
 
     # ....................... #
 
@@ -375,16 +363,17 @@ class DocumentMailboxCursors:
         self,
         ctx: ExecutionContext,
         *,
-        tenant: UUID | None,
         principal: str,
     ) -> HlcTimestamp | None:
-        with _bind_tenant(ctx, tenant):
-            page = await ctx.document.query(self.spec).find_many(
-                filters={
-                    "$values": {"tenant_id": _tenant_filter(tenant), "principal": principal}
-                },
-                sorts={"hlc": "asc"},
-                pagination={"limit": 1},
-            )
+        page = await ctx.document.query(self.spec).find_many(
+            filters={
+                "$values": {
+                    "tenant_id": _tenant_filter(_tenant(ctx)),
+                    "principal": principal,
+                }
+            },
+            sorts={"hlc": "asc"},
+            pagination={"limit": 1},
+        )
 
         return HlcTimestamp.unpack(page.hits[0].hlc) if page.hits else None

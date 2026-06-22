@@ -13,6 +13,7 @@ from forze.application.contracts.realtime import (
     RealtimeEventCatalog,
     RealtimeSignal,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import realtime_inbox_spec
@@ -79,7 +80,8 @@ async def test_durable_principal_signal_is_stored_and_emitted() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         await gw._handle(ctx, _principal_signal(), _TENANT, "evt-1", _HLC)
-        rows = await mailbox.read_since(ctx, tenant=_TENANT, principal="u1", since=None)
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+            rows = await mailbox.read_since(ctx, principal="u1", since=None)
 
     assert [r.event_id for r in rows] == ["evt-1"]  # stored
     assert sio.emits[0]["data"] == {"id": "evt-1", "data": {"text": "hi"}}  # emitted live
@@ -94,7 +96,8 @@ async def test_redelivered_durable_signal_is_stored_once() -> None:
         ctx = runtime.get_context()
         await gw._handle(ctx, _principal_signal(), _TENANT, "evt-1", _HLC)
         await gw._handle(ctx, _principal_signal(), _TENANT, "evt-1", _HLC)  # relay retry / claim
-        rows = await mailbox.read_since(ctx, tenant=_TENANT, principal="u1", since=None)
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+            rows = await mailbox.read_since(ctx, principal="u1", since=None)
 
     assert len(rows) == 1  # inbox dedup → stored + emitted once
     assert len(sio.emits) == 1
@@ -109,7 +112,8 @@ async def test_topic_signal_is_not_mailboxed() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         await gw._handle(ctx, signal, _TENANT, "evt-1", _HLC)
-        rows = await mailbox.read_since(ctx, tenant=_TENANT, principal="room", since=None)
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+            rows = await mailbox.read_since(ctx, principal="room", since=None)
 
     assert rows == []  # topic has no per-recipient mailbox
     assert len(sio.emits) == 1  # but still emitted live
@@ -123,7 +127,8 @@ async def test_ephemeral_signal_is_not_mailboxed() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         await gw._handle(ctx, _principal_signal(), _TENANT, None, _HLC)  # no dedup id = ephemeral
-        rows = await mailbox.read_since(ctx, tenant=_TENANT, principal="u1", since=None)
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+            rows = await mailbox.read_since(ctx, principal="u1", since=None)
 
     assert rows == []
     assert sio.emits[0]["data"] == {"id": None, "data": {"text": "hi"}}
@@ -140,7 +145,8 @@ async def test_offline_delivery_opt_out_is_not_mailboxed() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         await gw._handle(ctx, _principal_signal(), _TENANT, "evt-1", _HLC)
-        rows = await mailbox.read_since(ctx, tenant=_TENANT, principal="u1", since=None)
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+            rows = await mailbox.read_since(ctx, principal="u1", since=None)
 
     assert rows == []  # opted out of offline delivery
     assert len(sio.emits) == 1  # still emitted live
@@ -155,7 +161,8 @@ async def test_presence_skips_live_emit_when_offline_but_still_stores() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         await gw._handle(ctx, _principal_signal(), _TENANT, "evt-1", _HLC)
-        rows = await mailbox.read_since(ctx, tenant=_TENANT, principal="u1", since=None)
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+            rows = await mailbox.read_since(ctx, principal="u1", since=None)
 
     assert [r.event_id for r in rows] == ["evt-1"]  # stored for reconnect
     assert sio.emits == []  # offline → live emit skipped

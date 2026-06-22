@@ -57,6 +57,7 @@ nav = [
             "data-events/reading-data.md",
             "data-events/caching.md",
             "data-events/events-sagas.md",
+            "data-events/realtime.md",
         ] },
         { "Identity, tenancy & encryption" = [
             "identity-tenancy-enc/identity.md",
@@ -142,6 +143,7 @@ nav = [
             "recipes/end-to-end-saga-outbox-inbox.md",
             "recipes/transactional-outbox.md",
             "recipes/transactional-notifications.md",
+            "recipes/realtime-offline-delivery.md",
             "recipes/background-workflow.md",
             "recipes/scheduled-queue-jobs.md",
         ] },

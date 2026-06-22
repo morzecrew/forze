@@ -16,6 +16,7 @@ require_socketio()
 
 # ....................... #
 
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from inspect import isawaitable
 from typing import Any, Awaitable, Callable, Mapping, Protocol, final, runtime_checkable
@@ -27,7 +28,8 @@ from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefu
 
 from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience
-from forze.application.execution import ExecutionRuntime
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 
@@ -153,6 +155,17 @@ async def _resolve(resolver: ConnectionResolver, connect: SocketIOConnect) -> Re
     return await result if isawaitable(result) else result
 
 
+def _bind_tenant(ctx: ExecutionContext, tenant: UUID | None) -> AbstractContextManager[None]:
+    """Bind the connection's *tenant* so the mailbox/cursors scope ambiently."""
+
+    if tenant is None:
+        return nullcontext()
+
+    return ctx.inv_ctx.bind_identity(
+        authn=ctx.inv_ctx.get_authn(), tenant=TenantIdentity(tenant_id=tenant)
+    )
+
+
 def attach_realtime_connection(
     sio: AsyncServer,
     *,
@@ -195,13 +208,13 @@ def attach_realtime_connection(
 
         async with runtime.scope():
             ctx = runtime.get_context()
-            since = await cursors.get(
-                ctx, tenant=connection.tenant, principal=connection.principal,
-                client_key=client_key,
-            )
-            entries = await mailbox.read_since(
-                ctx, tenant=connection.tenant, principal=connection.principal, since=since,
-            )
+            with _bind_tenant(ctx, connection.tenant):
+                since = await cursors.get(
+                    ctx, principal=connection.principal, client_key=client_key
+                )
+                entries = await mailbox.read_since(
+                    ctx, principal=connection.principal, since=since
+                )
 
         for entry in entries:
             await sio.emit(
@@ -225,27 +238,24 @@ def attach_realtime_connection(
 
         async with runtime.scope():
             ctx = runtime.get_context()
-            position = await mailbox.position_of(
-                ctx, tenant=connection.tenant, principal=connection.principal,
-                event_id=event_id,
-            )
-
-            if position is not None:
-                await cursors.advance(
-                    ctx, tenant=connection.tenant, principal=connection.principal,
-                    client_key=connection.client_key(sid), up_to=position,
+            with _bind_tenant(ctx, connection.tenant):
+                position = await mailbox.position_of(
+                    ctx, principal=connection.principal, event_id=event_id
                 )
 
-                # trim what every known device has now acked (TTL/cap is the backstop)
-                floor = await cursors.min_cursor(
-                    ctx, tenant=connection.tenant, principal=connection.principal
-                )
-
-                if floor is not None:
-                    await mailbox.trim(
-                        ctx, tenant=connection.tenant, principal=connection.principal,
-                        before=floor,
+                if position is not None:
+                    await cursors.advance(
+                        ctx, principal=connection.principal,
+                        client_key=connection.client_key(sid), up_to=position,
                     )
+
+                    # trim what every known device has now acked (TTL/cap is the backstop)
+                    floor = await cursors.min_cursor(ctx, principal=connection.principal)
+
+                    if floor is not None:
+                        await mailbox.trim(
+                            ctx, principal=connection.principal, before=floor
+                        )
 
     async def connect_handler(sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
         connect = SocketIOConnect(sid=sid, namespace=namespace, environ=environ, auth=auth)

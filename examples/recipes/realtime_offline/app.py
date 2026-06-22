@@ -19,6 +19,7 @@ import asyncio
 from uuid import UUID
 
 from forze.application.contracts.realtime import Audience, MailboxEntry, RealtimeSignal
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import (
@@ -34,6 +35,11 @@ BOB = "bob"  # the recipient principal (Audience.principal id form)
 
 def _signal(text: str) -> RealtimeSignal:
     return RealtimeSignal.of(Audience.principal(BOB), "order.shipped", {"text": text})
+
+
+# The mailbox scopes by the **ambient** tenant — never a parameter. A worker binds it
+# (the gateway from the signal header, the connection from the live connection); here
+# `main()` binds it once around the flow.
 # --8<-- [end:setup]
 
 
@@ -52,7 +58,7 @@ async def emit_while_offline(
     the only delivery, drained on reconnect.)
     """
 
-    await mailbox.store(ctx, tenant=TENANT, principal=BOB, event_id=event_id, hlc=hlc, signal=signal)
+    await mailbox.store(ctx, principal=BOB, event_id=event_id, hlc=hlc, signal=signal)
 # --8<-- [end:emit]
 
 
@@ -66,9 +72,9 @@ async def reconnect(
 ) -> list[MailboxEntry]:
     """What the connection layer replays on connect: everything past this device's cursor."""
 
-    since = await cursors.get(ctx, tenant=TENANT, principal=BOB, client_key=device)
+    since = await cursors.get(ctx, principal=BOB, client_key=device)
 
-    return await mailbox.read_since(ctx, tenant=TENANT, principal=BOB, since=since)
+    return await mailbox.read_since(ctx, principal=BOB, since=since)
 
 
 async def ack(
@@ -81,14 +87,14 @@ async def ack(
 ) -> None:
     """What ``realtime.ack {up_to}`` does: advance the device cursor, trim what all acked."""
 
-    position = await mailbox.position_of(ctx, tenant=TENANT, principal=BOB, event_id=event_id)
+    position = await mailbox.position_of(ctx, principal=BOB, event_id=event_id)
 
     if position is not None:
-        await cursors.advance(ctx, tenant=TENANT, principal=BOB, client_key=device, up_to=position)
-        floor = await cursors.min_cursor(ctx, tenant=TENANT, principal=BOB)
+        await cursors.advance(ctx, principal=BOB, client_key=device, up_to=position)
+        floor = await cursors.min_cursor(ctx, principal=BOB)
 
         if floor is not None:
-            await mailbox.trim(ctx, tenant=TENANT, principal=BOB, before=floor)
+            await mailbox.trim(ctx, principal=BOB, before=floor)
 # --8<-- [end:reconnect]
 
 
@@ -99,20 +105,22 @@ async def main() -> None:
     mailbox = DocumentRealtimeMailbox()
     cursors = DocumentMailboxCursors()
 
-    # Two durable signals arrive while Bob's phone is offline.
-    await emit_while_offline(ctx, mailbox, event_id="e1", hlc=HlcTimestamp(physical_ms=1, logical=0), signal=_signal("shipped"))
-    await emit_while_offline(ctx, mailbox, event_id="e2", hlc=HlcTimestamp(physical_ms=2, logical=0), signal=_signal("delivered"))
+    # A worker binds the recipient's tenant; the mailbox reads it ambiently.
+    with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=TENANT)):
+        # Two durable signals arrive while Bob's phone is offline.
+        await emit_while_offline(ctx, mailbox, event_id="e1", hlc=HlcTimestamp(physical_ms=1, logical=0), signal=_signal("shipped"))
+        await emit_while_offline(ctx, mailbox, event_id="e2", hlc=HlcTimestamp(physical_ms=2, logical=0), signal=_signal("delivered"))
 
-    # Bob's phone reconnects → it receives both, in order.
-    first = await reconnect(ctx, mailbox, cursors, device="phone")
-    print(f"phone reconnect: {[e.payload['text'] for e in first]}")
+        # Bob's phone reconnects → it receives both, in order.
+        first = await reconnect(ctx, mailbox, cursors, device="phone")
+        print(f"phone reconnect: {[e.payload['text'] for e in first]}")
 
-    # The client acks the last one it processed.
-    await ack(ctx, mailbox, cursors, device="phone", event_id="e2")
+        # The client acks the last one it processed.
+        await ack(ctx, mailbox, cursors, device="phone", event_id="e2")
 
-    # A later reconnect of the same device replays nothing — it's caught up.
-    second = await reconnect(ctx, mailbox, cursors, device="phone")
-    print(f"phone reconnect again: {[e.payload['text'] for e in second]}")
+        # A later reconnect of the same device replays nothing — it's caught up.
+        second = await reconnect(ctx, mailbox, cursors, device="phone")
+        print(f"phone reconnect again: {[e.payload['text'] for e in second]}")
 
 
 if __name__ == "__main__":
