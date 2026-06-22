@@ -134,6 +134,8 @@ page = await project_search_facade(ctx).search(
 hits, total = page.hits, page.count
 ```
 
+`ResourceName.PROJECTS` (your spec-name enum) and `ProjectRead` (your read model) are app-defined symbols.
+
 Methods: `search` (typed, offset), `cursor_search` (typed, keyset), `projected_search` / `projected_cursor_search` (raw dict rows). The physical FTS/PGroonga/vector layout belongs in **`PostgresDepsModule.searches`** (or hub/federated maps), never on the spec.
 
 ## Hub and federated search

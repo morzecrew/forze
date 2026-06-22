@@ -107,7 +107,7 @@ workflow_spec: DurableWorkflowSpec[StartOrderIn, OrderResult] = ...
 
 s3_module = S3DepsModule(
     client=s3_client,
-    storages={ResourceName.PROJECT_ATTACHMENTS: {"bucket": "project-files"}},
+    storages={ResourceName.PROJECT_ATTACHMENTS: S3StorageConfig(bucket="project-files")},
 )
 sqs_module = SQSDepsModule(
     client=sqs_client,

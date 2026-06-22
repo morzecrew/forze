@@ -37,13 +37,13 @@ The module's `client=` alone registers only the client key; `ctx.storage.query/c
 ```python
 import os
 
-from forze_s3 import S3Client, S3Config, S3DepsModule, s3_lifecycle_step
+from forze_s3 import S3Client, S3Config, S3DepsModule, S3StorageConfig, s3_lifecycle_step
 from forze.application.execution import LifecyclePlan
 
 s3_module = S3DepsModule(
     client=S3Client(),
     storages={
-        ResourceName.PROJECT_ATTACHMENTS: {"bucket": "project-files", "tenant_aware": True},
+        ResourceName.PROJECT_ATTACHMENTS: S3StorageConfig(bucket="project-files", tenant_aware=True),
     },
 )
 lifecycle = LifecyclePlan.from_steps(
@@ -60,13 +60,13 @@ lifecycle = LifecyclePlan.from_steps(
 ### Google Cloud Storage
 
 ```python
-from forze_gcs import GCSClient, GCSDepsModule, gcs_lifecycle_step
+from forze_gcs import GCSClient, GCSDepsModule, GCSStorageConfig, gcs_lifecycle_step
 from forze.application.execution import LifecyclePlan
 
 gcs_module = GCSDepsModule(
     client=GCSClient(),
     storages={
-        ResourceName.PROJECT_ATTACHMENTS: {"bucket": "project-files", "tenant_aware": True},
+        ResourceName.PROJECT_ATTACHMENTS: GCSStorageConfig(bucket="project-files", tenant_aware=True),
     },
 )
 lifecycle = LifecyclePlan.from_steps(
@@ -93,7 +93,9 @@ from forze_kits.aggregates.storage import (
     BeginUploadRequestDTO,
     CompleteUploadRequestDTO,
     ListObjectsRequestDTO,
+    PresignDownloadRequestDTO,
     PresignPartRequestDTO,
+    PresignUploadRequestDTO,
     StorageFacade,
     UploadObjectRequestDTO,
     UploadSessionRequestDTO,
@@ -102,8 +104,10 @@ from forze_kits.aggregates.storage import (
 
 storage_registry = build_storage_registry(attachments_spec).freeze()
 files = StorageFacade(ctx=ctx, registry=storage_registry, namespace=attachments_spec.default_namespace)
-# each method takes its request DTO from forze_kits.aggregates.storage, e.g.
+# download(key) and delete(key) take the raw object-key string; every other
+# method takes its request DTO from forze_kits.aggregates.storage, e.g.
 # files.upload(UploadObjectRequestDTO(...)) / files.list(ListObjectsRequestDTO(...))
+# presign: presign_download(PresignDownloadRequestDTO) / presign_upload(PresignUploadRequestDTO)
 # multipart: begin_upload(BeginUploadRequestDTO) / presign_part(PresignPartRequestDTO) /
 #   list_parts + abort_upload(UploadSessionRequestDTO) / complete_upload(CompleteUploadRequestDTO)
 ```
