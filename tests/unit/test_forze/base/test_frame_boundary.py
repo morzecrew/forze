@@ -1,9 +1,8 @@
-"""Unit tests for :mod:`forze.application.contracts.transport.frames`."""
+"""Unit tests for :mod:`forze.base.exceptions.boundary`."""
 
 import pytest
 
-from forze.application.contracts.transport import FrameErr, FrameOk, guard_frame
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, FrameErr, FrameOk, exc, guard_frame
 
 # ----------------------- #
 

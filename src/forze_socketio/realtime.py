@@ -29,7 +29,6 @@ from socketio.async_server import AsyncServer
 from forze.application.contracts.deps import Deps
 from forze.application.contracts.realtime import (
     Audience,
-    AudienceKind,
     RealtimeDepKey,
     RealtimePort,
 )
@@ -59,16 +58,17 @@ class SocketIORealtimeAdapter(TenancyMixin, RealtimePort):
     # ....................... #
 
     def _room(self, audience: Audience) -> str:
-        """Resolve *audience* to a tenant-scoped Socket.IO room name."""
+        """Resolve *audience* to a tenant-scoped Socket.IO room name.
+
+        The room-name format is the adapter's concern, not the contract's: a
+        ``kind:name`` segment, prefixed with the ambient tenant when one is bound
+        so tenants cannot share a room.
+        """
 
         tenant_id: UUID | None = self._tenant_id_for_resolve()
-        prefix = f"t:{tenant_id}:" if tenant_id is not None else ""
+        base = f"{audience.kind.value}:{audience.name}"
 
-        if audience.kind is AudienceKind.TENANT:
-            # the tenant-broadcast room is the prefix root itself
-            return f"t:{tenant_id}" if tenant_id is not None else "tenant"
-
-        return f"{prefix}{audience}"
+        return f"t:{tenant_id}:{base}" if tenant_id is not None else base
 
     # ....................... #
 

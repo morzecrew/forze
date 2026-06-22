@@ -1,24 +1,22 @@
-"""Transport-neutral inbound frame dispatch.
+"""Guarded execution boundary — run a coroutine, project any error to an envelope.
 
-Every realtime/RPC transport — Socket.IO today, FastAPI websockets and SSE next
-— shares one inbound shape: run an operation for an incoming frame and, if it
-raises, project the error into a client-safe :class:`ErrorEnvelope`.
-:func:`guard_frame` is that boundary. A transport keeps its own logger and wire
-rendering; it passes a thunk that resolves and invokes the handler, and receives
-a :class:`FrameOk` carrying the result or a :class:`FrameErr` carrying the
-envelope to render.
+The companion to :mod:`~forze.base.exceptions.envelope`: where ``envelope``
+*projects* a raised exception into a client-safe :class:`ErrorEnvelope`,
+:func:`guard_frame` *runs* a unit of work under that projection and hands back a
+:class:`FrameOk` (the result) or a :class:`FrameErr` (the envelope to render).
+
+It is transport-neutral: any dispatch-style transport (Socket.IO today, a
+websocket or SSE adapter next) wraps its handler call in :func:`guard_frame` and
+renders the resulting envelope its own way. Logging stays with the caller via the
+``on_server_error`` hook, so this boundary performs no I/O of its own.
 """
 
 from typing import Any, Awaitable, Callable, final
 
 import attrs
 
-from forze.base.exceptions import (
-    CoreException,
-    ErrorEnvelope,
-    error_envelope,
-    unhandled_error_envelope,
-)
+from .envelope import ErrorEnvelope, error_envelope, unhandled_error_envelope
+from .model import CoreException
 
 # ----------------------- #
 
@@ -26,26 +24,31 @@ from forze.base.exceptions import (
 @final
 @attrs.define(slots=True, frozen=True)
 class FrameOk:
-    """Successful frame dispatch carrying the handler result."""
+    """A successfully run unit of work, carrying its result."""
 
     value: Any
-    """Handler result, ready for the transport to render as a reply/ack."""
+    """Handler result, ready for the caller to render as a reply/ack."""
+
+
+# ....................... #
 
 
 @final
 @attrs.define(slots=True, frozen=True)
 class FrameErr:
-    """Failed frame dispatch carrying the client-safe error envelope."""
+    """A failed unit of work, carrying the client-safe error envelope."""
 
     envelope: ErrorEnvelope
-    """Projected error for the transport to render."""
+    """Projected error for the caller to render."""
 
+
+# ....................... #
 
 FrameOutcome = FrameOk | FrameErr
 """Result of :func:`guard_frame`."""
 
 ServerErrorHook = Callable[[CoreException | None, BaseException], None]
-"""Called on a server-side failure so the transport can log it.
+"""Called on a server-side failure so the caller can log it.
 
 Receives the originating :class:`CoreException` (or :obj:`None` for an unhandled
 error) and the raised exception.
@@ -64,13 +67,13 @@ async def guard_frame(
     A :class:`CoreException` is projected with :func:`error_envelope`; any other
     exception becomes the generic :func:`unhandled_error_envelope`. When the
     outcome is a server-side error (or an unhandled exception), *on_server_error*
-    is invoked so the transport logs it with its own logger — keeping this
-    boundary free of I/O.
+    is invoked so the caller logs it with its own logger — keeping this boundary
+    free of I/O.
 
-    :param run: Thunk that resolves and invokes the handler for the frame.
+    :param run: Thunk that resolves and invokes the unit of work.
     :param on_server_error: Optional server-side logging hook.
-    :returns: :class:`FrameOk` with the handler result, or :class:`FrameErr`
-        with the envelope to render.
+    :returns: :class:`FrameOk` with the result, or :class:`FrameErr` with the
+        envelope to render.
     """
 
     try:

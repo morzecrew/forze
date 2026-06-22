@@ -12,20 +12,16 @@ from fastapi.responses import JSONResponse
 
 from forze.base.exceptions import (
     CoreException,
-    exception_egress_policy,
-    http_status_for_kind,
+    error_envelope,
+    unhandled_error_envelope,
 )
 from forze.base.logging import Logger
-from forze.base.scrubbing import sanitize
 from forze_fastapi._logging import ForzeFastAPILogger
 
 # ----------------------- #
 
 ERROR_CODE_HEADER: Final[str] = "X-Error-Code"
 """Key of the header used for error code."""
-
-GENERIC_500_DETAIL: Final[str] = "Internal server error"
-"""Generic detail message for unhandled server errors."""
 
 error_logger = Logger(ForzeFastAPILogger.ERRORS)
 """Logger for FastAPI server-side error diagnostics."""
@@ -62,28 +58,26 @@ def _log_server_error(exc: BaseException, *, core: CoreException | None = None) 
 def build_core_exception_response(exc: CoreException) -> JSONResponse:
     """Build the standard JSON response for a :class:`CoreException`.
 
-    Server errors (``>= 500``) are logged and their summary is replaced with a
-    generic detail message so internal diagnostics never leak to clients. The
-    sanitized ``context`` field is only included when the egress policy for
-    the exception kind allows exposing details.
+    Renders the shared core :func:`~forze.base.exceptions.error_envelope`
+    projection — server-error masking and egress sanitization already applied —
+    into a FastAPI :class:`JSONResponse`, logging server-side errors on the way.
+    The same envelope the Socket.IO transport renders, so both stay in lock-step.
     """
 
-    policy = exception_egress_policy(exc.kind)
-    status_code = http_status_for_kind(exc.kind)
+    envelope = error_envelope(exc)
 
-    if status_code >= 500:
+    if envelope.server_error:
         _log_server_error(exc, core=exc)
 
-    detail = GENERIC_500_DETAIL if status_code >= 500 else exc.summary
-    content: JsonDict = {"detail": detail}
+    content: JsonDict = {"detail": envelope.detail}
 
-    if exc.details and policy.expose_details and status_code < 500:
-        content["context"] = sanitize(exc.details, context="egress")
+    if envelope.context is not None:
+        content["context"] = envelope.context
 
     return JSONResponse(
-        status_code=status_code,
+        status_code=envelope.status,
         content=content,
-        headers={ERROR_CODE_HEADER: exc.code},
+        headers={ERROR_CODE_HEADER: envelope.code},
     )
 
 
@@ -104,9 +98,11 @@ async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONRespon
 
     _log_server_error(exc)
 
+    envelope = unhandled_error_envelope()
+
     return JSONResponse(
-        status_code=500,
-        content={"detail": GENERIC_500_DETAIL},
+        status_code=envelope.status,
+        content={"detail": envelope.detail},
     )
 
 

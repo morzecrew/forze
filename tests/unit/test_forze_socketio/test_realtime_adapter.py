@@ -111,17 +111,6 @@ async def test_principal_room_is_scoped() -> None:
 # ....................... #
 
 
-async def test_tenant_broadcast_room() -> None:
-    sio = StubSocketIOServer()
-
-    await _adapter(sio, tenant=_TENANT).emit(Audience.tenant(), "announce", _Msg(text="x"))
-
-    assert sio.emits[0]["room"] == f"t:{_TENANT.tenant_id}"
-
-
-# ....................... #
-
-
 async def test_tenant_aware_fails_closed_without_tenant() -> None:
     sio = StubSocketIOServer()
     adapter = _adapter(sio, tenant_aware=True, tenant=None)
@@ -139,7 +128,7 @@ async def test_tenant_aware_fails_closed_without_tenant() -> None:
 async def test_emit_uses_adapter_namespace() -> None:
     sio = StubSocketIOServer()
 
-    await _adapter(sio, namespace="/chat").emit(Audience.tenant(), "evt", _Msg(text="x"))
+    await _adapter(sio, namespace="/chat").emit(Audience.topic("x"), "evt", _Msg(text="x"))
 
     assert sio.emits[0]["namespace"] == "/chat"
 

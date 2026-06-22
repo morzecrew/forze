@@ -87,5 +87,5 @@ async def test_ctx_realtime_defaults_to_a_working_recorder() -> None:
         port = ctx.realtime()
 
         assert isinstance(port, RecordingRealtimePort)
-        await port.emit(Audience.tenant(), "broadcast", _Msg(text="hi"))
+        await port.emit(Audience.topic("announcements"), "broadcast", _Msg(text="hi"))
         assert len(port.emits) == 1

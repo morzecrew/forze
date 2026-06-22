@@ -1,3 +1,10 @@
+from .boundary import (
+    FrameErr,
+    FrameOk,
+    FrameOutcome,
+    ServerErrorHook,
+    guard_frame,
+)
 from .egress import exception_egress_policy, http_status_for_kind
 from .envelope import (
     GENERIC_INTERNAL_DETAIL,
@@ -35,6 +42,11 @@ __all__ = [
     "is_server_error_kind",
     "GENERIC_INTERNAL_DETAIL",
     "INTERNAL_ERROR_CODE",
+    "FrameOk",
+    "FrameErr",
+    "FrameOutcome",
+    "ServerErrorHook",
+    "guard_frame",
     "ExceptionInterceptor",
     "fallback_exception_mapper",
     "make_http_exception_mapper",

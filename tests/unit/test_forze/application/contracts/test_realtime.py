@@ -10,30 +10,24 @@ def test_principal_audience() -> None:
 
     assert audience.kind is AudienceKind.PRINCIPAL
     assert audience.name == "u-1"
-    assert str(audience) == "principal:u-1"
 
 
 # ....................... #
 
 
-def test_topic_audience_carries_no_tenant() -> None:
-    # the logical form is tenant-agnostic; the adapter applies the tenant
+def test_topic_audience_is_a_free_string_key() -> None:
     audience = Audience.topic("chat-42")
 
     assert audience.kind is AudienceKind.TOPIC
-    assert str(audience) == "topic:chat-42"
+    assert audience.name == "chat-42"
 
 
 # ....................... #
 
 
-def test_tenant_audience_is_ambient() -> None:
-    # no id — "the current tenant", resolved ambiently at the adapter
-    audience = Audience.tenant()
-
-    assert audience.kind is AudienceKind.TENANT
-    assert audience.name == ""
-    assert str(audience) == "tenant"
+def test_no_tenant_audience_exists() -> None:
+    # the contract cannot name a tenant — only principal/topic kinds exist
+    assert {k.value for k in AudienceKind} == {"principal", "topic"}
 
 
 # ....................... #
@@ -53,3 +47,4 @@ def test_audience_is_frozen_and_hashable() -> None:
 
     assert audience == Audience.principal("u-1")
     assert {audience, Audience.principal("u-1")} == {audience}
+    assert Audience.principal("u-1") != Audience.topic("u-1")  # kind matters
