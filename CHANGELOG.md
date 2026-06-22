@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Shared error boundary in core** — `ErrorEnvelope` + `error_envelope()` in `forze.base.exceptions` is the one client-safe projection of a `CoreException` (server-error masking, egress-policy context, status hint), and `guard_frame()` (same module) is the guarded-execution boundary dispatch-style transports wrap their handler call in. **Both FastAPI and Socket.IO now render the same envelope** instead of each duplicating the masking/egress logic (behavior unchanged).
 
+- **Realtime message contract** — `forze.application.contracts.realtime` defines the data shared by realtime publishers and transport gateways: a logical, tenant-agnostic `Audience` (`principal`/`topic`), a declared+typed `RealtimeEvent` with a frozen `RealtimeEventCatalog`, and the `RealtimeSignal` wire model. Data only — no port; an application publishes signals through ordinary messaging ports and a gateway bridges them to live connections (egress-plane model; publish surface + Socket.IO gateway land next).
+
 - **Materialized derived fields** — `DocumentSpec(materialized=…)` persists selected computed fields as real columns, making them filterable and sortable. Names are validated, create/update collisions are rejected, and startup checks require matching columns.
 
 - **Two-phase prepare/apply handlers** — `prepare(args)` runs outside the transaction (CPU or external work) and `apply(args, payload)` inside it, so the transaction wraps only the writes. Adds the `TwoPhaseHandler` contract and a kit base; a tx route is required and `prepare` is read-only.
