@@ -1,40 +1,40 @@
 """Document-backed offline mailbox + per-device cursors (the default implementations).
 
-These structurally satisfy the ``RealtimeMailbox`` / ``MailboxCursors`` Protocols
-that ``forze_socketio`` defines — they are **not** imported from there (so the kit
-keeps no dependency on the socket.io edge), only the shared
-:class:`~forze.application.contracts.realtime.MailboxEntry` data VO from core.
+These structurally satisfy the ``RealtimeMailbox`` / ``MailboxCursors`` Protocols that
+``forze_socketio`` defines — not imported here (so the kit keeps no dependency on the
+socket.io edge), only the shared ``MailboxEntry`` / ``RealtimeSignal`` VOs from core.
 
-Both are tenant-global document collections keyed by explicit ``(tenant_id,
-principal[, client_key])`` fields; the per-message tenant is bound into the
-context for the write/read (the inbox-consumer pattern), so a tenant-partitioned
-adapter scopes correctly and an unpartitioned one is isolated by the explicit
-filter. Ordering and cursors use the HLC the durable path already carries
-(``HEADER_HLC``), stored as its lexsortable encoding so range scans work.
-
-Retention is by TTL/cap via :meth:`DocumentRealtimeMailbox.trim`; the document
-store has no native TTL (RFC 0006 §6). Encryption is whatever the app configures
-on the spec (no forced default).
+**Dependencies are materialized at build** — ``build_realtime_mailbox`` /
+``build_realtime_cursors`` resolve the document ports once (the publisher pattern), so a
+misrouted spec fails at wiring, not on first emit, and a write-side build is refused in a
+read-only (QUERY) operation. **Tenancy is the document store's concern** — wire the
+mailbox/cursor collections ``tenant_aware`` and the adapter scopes every row by the
+ambient tenant; this kit carries **zero** tenant code. The mailbox doc's key is the
+durable event's own id (already a ``UUID``); cursors look up by ``(principal, client_key)``
+— no derived ids. Ordering/cursor values are the HLC the durable path carries, stored
+packed (monotonic int, range-queryable). Encryption is whatever the app sets on the spec.
 """
 
 from typing import Any, Final, final
-from uuid import UUID, uuid5
+from uuid import UUID
 
 import attrs
 from pydantic import Field
 
-from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.document import (
+    DocumentCommandPort,
+    DocumentQueryPort,
+    DocumentSpec,
+)
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
 from forze.application.execution import ExecutionContext
-from forze.base.primitives import HlcTimestamp
+from forze.base.exceptions import exc
+from forze.base.primitives import HlcTimestamp, uuid7
 from forze.domain.models import BaseDTO, Document, ReadDocument
 
 from .specs import DEFAULT_REALTIME_CHANNEL
 
 # ----------------------- #
-
-_MAILBOX_NS: Final = UUID("6d61696c-626f-7800-0000-000000000000")
-"""Fixed namespace for deriving deterministic mailbox/cursor document ids (uuid5)."""
 
 _DEFAULT_CAP: Final = 1000
 """Max entries replayed per principal (newest-first retention bound)."""
@@ -43,12 +43,14 @@ _DEFAULT_CAP: Final = 1000
 # ----------------------- #
 
 
-@attrs.define(slots=True)
+@final
+@attrs.define(slots=True, frozen=True)
 class MailboxStats:
-    """Cumulative mailbox counters, sampled by :func:`instrument_realtime_mailbox`.
+    """An immutable snapshot of a channel's offline-delivery counters.
 
-    Share one instance across a :class:`DocumentRealtimeMailbox` and its
-    :class:`DocumentMailboxCursors` to watch a channel's offline-delivery rates."""
+    The implementations keep mutable counters internally and snapshot into this frozen
+    value object on read — the :func:`~forze_kits.integrations.realtime.instrument_realtime_mailbox`
+    pattern (mirrors the identity plane's ``SigningStats``)."""
 
     stored: int = 0
     """Durable principal signals written to the mailbox."""
@@ -64,11 +66,10 @@ class MailboxStats:
 
 
 # ----------------------- #
-# document models
+# document models (NO tenant_id — the tenant-aware adapter injects + scopes it)
 
 
 class _MailboxDoc(Document):
-    tenant_id: UUID | None = None
     principal: str
     event_id: str
     hlc: int  # packed HlcTimestamp (monotonic int; range-queryable)
@@ -77,7 +78,6 @@ class _MailboxDoc(Document):
 
 
 class _MailboxCreate(BaseDTO):
-    tenant_id: UUID | None = None
     principal: str
     event_id: str
     hlc: int
@@ -86,7 +86,6 @@ class _MailboxCreate(BaseDTO):
 
 
 class _MailboxRead(ReadDocument):
-    tenant_id: UUID | None = None
     principal: str
     event_id: str
     hlc: int
@@ -95,14 +94,12 @@ class _MailboxRead(ReadDocument):
 
 
 class _CursorDoc(Document):
-    tenant_id: UUID | None = None
     principal: str
     client_key: str
     hlc: int
 
 
 class _CursorCreate(BaseDTO):
-    tenant_id: UUID | None = None
     principal: str
     client_key: str
     hlc: int
@@ -113,7 +110,6 @@ class _CursorUpdate(BaseDTO):
 
 
 class _CursorRead(ReadDocument):
-    tenant_id: UUID | None = None
     principal: str
     client_key: str
     hlc: int
@@ -126,7 +122,7 @@ class _CursorRead(ReadDocument):
 def realtime_mailbox_spec(
     channel: str = DEFAULT_REALTIME_CHANNEL,
 ) -> DocumentSpec[_MailboxRead, _MailboxDoc, _MailboxCreate, Any]:
-    """The document collection holding per-principal durable signals."""
+    """The document collection holding per-principal durable signals (wire it tenant-aware)."""
 
     return DocumentSpec(
         name=f"{channel}-mailbox",
@@ -138,7 +134,7 @@ def realtime_mailbox_spec(
 def realtime_cursor_spec(
     channel: str = DEFAULT_REALTIME_CHANNEL,
 ) -> DocumentSpec[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate]:
-    """The document collection holding per-device read cursors."""
+    """The document collection holding per-device read cursors (wire it tenant-aware)."""
 
     return DocumentSpec(
         name=f"{channel}-cursors",
@@ -154,55 +150,38 @@ def realtime_cursor_spec(
 # ----------------------- #
 
 
-def _tenant(ctx: ExecutionContext) -> UUID | None:
-    """The ambient tenant id — the document store scopes the collection by it.
+@final
+@attrs.define(slots=True, kw_only=True)  # not frozen — holds mutable counters
+class DocumentRealtimeMailbox:
+    """The offline mailbox over a document collection (RFC 0006 default).
 
-    Tenant is never a parameter (that would make the caller multi-tenancy-aware): a
-    tenant-global worker binds the per-signal / per-connection tenant before calling,
-    and this reads it back, exactly as the publisher reads it for the message header.
+    Built via :func:`build_realtime_mailbox`. The document key is the durable
+    ``event_id`` (a ``UUID``), so ``ensure`` is idempotent on redelivery.
     """
 
-    tenant = ctx.inv_ctx.get_tenant()
-
-    return tenant.tenant_id if tenant is not None else None
-
-
-def _tenant_filter(tenant: UUID | None) -> Any:
-    return {"$null": True} if tenant is None else tenant
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class DocumentRealtimeMailbox:
-    """The offline mailbox over a document collection (RFC 0006 default)."""
-
-    spec: DocumentSpec[_MailboxRead, _MailboxDoc, _MailboxCreate, Any] = attrs.field(
-        factory=realtime_mailbox_spec
-    )
+    command: DocumentCommandPort[_MailboxRead, _MailboxDoc, _MailboxCreate, Any]
+    query: DocumentQueryPort[_MailboxRead]
     cap: int = _DEFAULT_CAP
-    stats: MailboxStats = attrs.field(factory=MailboxStats)
+
+    _stored: int = attrs.field(default=0, init=False)
+    _replayed: int = attrs.field(default=0, init=False)
+    _trimmed: int = attrs.field(default=0, init=False)
+
+    # ....................... #
+
+    def stats(self) -> MailboxStats:
+        return MailboxStats(stored=self._stored, replayed=self._replayed, trimmed=self._trimmed)
 
     # ....................... #
 
     async def store(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        event_id: str,
-        hlc: HlcTimestamp,
-        signal: RealtimeSignal,
+        self, *, principal: str, event_id: str, hlc: HlcTimestamp, signal: RealtimeSignal
     ) -> None:
-        self.stats.stored += 1
-        tenant = _tenant(ctx)
+        self._stored += 1
 
-        await ctx.document.command(self.spec).ensure(
-            uuid5(_MAILBOX_NS, f"{tenant}:{event_id}"),
+        await self.command.ensure(
+            UUID(event_id),  # the durable event's own id — idempotent on redelivery
             _MailboxCreate(
-                tenant_id=tenant,
                 principal=principal,
                 event_id=event_id,
                 hlc=hlc.pack(),
@@ -215,27 +194,20 @@ class DocumentRealtimeMailbox:
     # ....................... #
 
     async def read_since(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        since: HlcTimestamp | None,
+        self, *, principal: str, since: HlcTimestamp | None
     ) -> list[MailboxEntry]:
-        values: dict[str, Any] = {
-            "tenant_id": _tenant_filter(_tenant(ctx)),
-            "principal": principal,
-        }
+        values: dict[str, Any] = {"principal": principal}
 
         if since is not None:
             values["hlc"] = {"$gt": since.pack()}
 
-        page = await ctx.document.query(self.spec).find_many(
+        page = await self.query.find_many(
             filters={"$values": values},
             sorts={"hlc": "asc"},
             pagination={"limit": self.cap},
         )
 
-        self.stats.replayed += len(page.hits)
+        self._replayed += len(page.hits)
 
         return [
             MailboxEntry(
@@ -250,133 +222,138 @@ class DocumentRealtimeMailbox:
     # ....................... #
 
     async def position_of(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        event_id: str,
+        self, *, principal: str, event_id: str
     ) -> HlcTimestamp | None:
-        row = await ctx.document.query(self.spec).find(
-            filters={
-                "$values": {
-                    "tenant_id": _tenant_filter(_tenant(ctx)),
-                    "principal": principal,
-                    "event_id": event_id,
-                }
-            }
+        row = await self.query.find(
+            filters={"$values": {"principal": principal, "event_id": event_id}}
         )
 
         return HlcTimestamp.unpack(row.hlc) if row is not None else None
 
     # ....................... #
 
-    async def trim(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        before: HlcTimestamp,
-    ) -> None:
-        query = ctx.document.query(self.spec)
-        stale = await query.find_many(
-            filters={
-                "$values": {
-                    "tenant_id": _tenant_filter(_tenant(ctx)),
-                    "principal": principal,
-                    "hlc": {"$lte": before.pack()},
-                }
-            },
+    async def trim(self, *, principal: str, before: HlcTimestamp) -> None:
+        stale = await self.query.find_many(
+            filters={"$values": {"principal": principal, "hlc": {"$lte": before.pack()}}},
             pagination={"limit": self.cap},
         )
 
         if stale.hits:
-            await ctx.document.command(self.spec).kill_many(
-                [row.id for row in stale.hits]
-            )
-            self.stats.trimmed += len(stale.hits)
+            await self.command.kill_many([row.id for row in stale.hits])
+            self._trimmed += len(stale.hits)
 
 
 # ....................... #
 
 
 @final
-@attrs.define(slots=True, frozen=True, kw_only=True)
+@attrs.define(slots=True, kw_only=True)  # not frozen — holds a mutable counter
 class DocumentMailboxCursors:
-    """Per-device read cursors over a document collection (RFC 0006 default)."""
+    """Per-device read cursors over a document collection (RFC 0006 default).
 
-    spec: DocumentSpec[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate] = (
-        attrs.field(factory=realtime_cursor_spec)
-    )
-    stats: MailboxStats = attrs.field(factory=MailboxStats)
+    Built via :func:`build_realtime_cursors`. No derived ids — a cursor is found by
+    ``(principal, client_key)`` and created with a fresh ``uuid7`` on first ack.
+    """
+
+    command: DocumentCommandPort[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate]
+    query: DocumentQueryPort[_CursorRead]
+
+    _acked: int = attrs.field(default=0, init=False)
 
     # ....................... #
 
-    async def get(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        client_key: str,
-    ) -> HlcTimestamp | None:
-        row = await ctx.document.query(self.spec).find(
-            filters={
-                "$values": {
-                    "tenant_id": _tenant_filter(_tenant(ctx)),
-                    "principal": principal,
-                    "client_key": client_key,
-                }
-            }
+    def stats(self) -> MailboxStats:
+        return MailboxStats(acked=self._acked)
+
+    # ....................... #
+
+    async def _find(self, principal: str, client_key: str) -> _CursorRead | None:
+        return await self.query.find(
+            filters={"$values": {"principal": principal, "client_key": client_key}}
         )
+
+    # ....................... #
+
+    async def get(self, *, principal: str, client_key: str) -> HlcTimestamp | None:
+        row = await self._find(principal, client_key)
 
         return HlcTimestamp.unpack(row.hlc) if row is not None else None
 
     # ....................... #
 
     async def advance(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        client_key: str,
-        up_to: HlcTimestamp,
+        self, *, principal: str, client_key: str, up_to: HlcTimestamp
     ) -> None:
-        current = await self.get(ctx, principal=principal, client_key=client_key)
+        row = await self._find(principal, client_key)
+        target = up_to.pack()
 
-        if current is not None and up_to <= current:
+        if row is not None and target <= row.hlc:
             return  # monotonic: never moves backwards
 
-        self.stats.acked += 1
-        tenant = _tenant(ctx)
+        self._acked += 1
 
-        await ctx.document.command(self.spec).upsert(
-            uuid5(_MAILBOX_NS, f"cursor:{tenant}:{principal}:{client_key}"),
-            _CursorCreate(
-                tenant_id=tenant,
-                principal=principal,
-                client_key=client_key,
-                hlc=up_to.pack(),
-            ),
-            _CursorUpdate(hlc=up_to.pack()),
-            return_new=False,
-        )
+        if row is None:
+            await self.command.create(
+                _CursorCreate(principal=principal, client_key=client_key, hlc=target),
+                id=uuid7(),
+                return_new=False,
+            )
+        else:
+            await self.command.update(row.id, row.rev, _CursorUpdate(hlc=target), return_new=False)
 
     # ....................... #
 
-    async def min_cursor(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-    ) -> HlcTimestamp | None:
-        page = await ctx.document.query(self.spec).find_many(
-            filters={
-                "$values": {
-                    "tenant_id": _tenant_filter(_tenant(ctx)),
-                    "principal": principal,
-                }
-            },
+    async def min_cursor(self, *, principal: str) -> HlcTimestamp | None:
+        page = await self.query.find_many(
+            filters={"$values": {"principal": principal}},
             sorts={"hlc": "asc"},
             pagination={"limit": 1},
         )
 
         return HlcTimestamp.unpack(page.hits[0].hlc) if page.hits else None
+
+
+# ----------------------- #
+# build factories (resolve ports once; refuse a write-side build in read-only)
+
+
+def build_realtime_mailbox(
+    ctx: ExecutionContext,
+    *,
+    spec: DocumentSpec[_MailboxRead, _MailboxDoc, _MailboxCreate, Any] | None = None,
+    cap: int = _DEFAULT_CAP,
+) -> DocumentRealtimeMailbox:
+    """Resolve the mailbox's document ports once and build it — the publisher pattern.
+
+    Call from the gateway's ``run(ctx)`` or the connection layer's per-unit-of-work scope.
+    Refuses a build in a read-only (QUERY) operation, since the mailbox writes.
+    """
+
+    if ctx.inv_ctx.is_read_only():
+        raise exc.precondition("Cannot build a realtime mailbox in a read-only (QUERY) operation")
+
+    resolved = spec if spec is not None else realtime_mailbox_spec()
+
+    return DocumentRealtimeMailbox(
+        command=ctx.document.command(resolved),
+        query=ctx.document.query(resolved),
+        cap=cap,
+    )
+
+
+def build_realtime_cursors(
+    ctx: ExecutionContext,
+    *,
+    spec: DocumentSpec[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate] | None = None,
+) -> DocumentMailboxCursors:
+    """Resolve the cursor collection's document ports once and build it (write-side guard)."""
+
+    if ctx.inv_ctx.is_read_only():
+        raise exc.precondition("Cannot build realtime cursors in a read-only (QUERY) operation")
+
+    resolved = spec if spec is not None else realtime_cursor_spec()
+
+    return DocumentMailboxCursors(
+        command=ctx.document.command(resolved),
+        query=ctx.document.query(resolved),
+    )

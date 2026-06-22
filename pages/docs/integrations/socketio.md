@@ -167,26 +167,37 @@ A durable, **principal**-addressed signal is also stored in a per-recipient
 is the source of truth; the live emit is an optimization. Wire it by giving the
 gateway a mailbox and the connect layer a mailbox + cursors:
 
+The mailbox + cursors are **factories**, not built objects — they materialize their
+document ports against each unit-of-work ctx (`build_realtime_mailbox`,
+`build_realtime_cursors`), the same pattern as the publisher:
+
 ```python
 from forze_kits.integrations.realtime import (
-    DocumentRealtimeMailbox, DocumentMailboxCursors,
+    build_realtime_mailbox, build_realtime_cursors,
 )
-
-mailbox = DocumentRealtimeMailbox()   # over the document store (tenancy/TTL inherited)
-cursors = DocumentMailboxCursors()
 
 gateway = RealtimeGateway(
     sio=sio, source=..., dedup=...,
-    mailbox=mailbox,            # store durable principal signals before emit
-    presence=presence,          # skip the live emit when the room is empty
+    mailbox_factory=build_realtime_mailbox,  # store durable principal signals before emit
+    presence=presence,                        # skip the live emit when the room is empty
+    bind_tenant_from_headers=True,            # multi-tenant: trust the broker's tenant header
 )
 
 # replay-on-connect + ack-advances-cursor (needs a runtime to open a scope):
 attach_realtime_connection(
     sio, resolve=resolve_connection, presence=presence,
-    mailbox=mailbox, cursors=cursors, runtime=runtime,
+    mailbox_factory=build_realtime_mailbox, cursors_factory=build_realtime_cursors,
+    runtime=runtime,
 )
 ```
+
+**Tenancy is the document store's job, not the kit's.** Wire the mailbox + cursor
+collections `tenant_aware` (`realtime_mailbox_spec` / `realtime_cursor_spec`) and the
+adapter scopes every row by the ambient tenant — these helpers carry no tenant code.
+The connect layer binds the connection's **authenticated** tenant; the gateway only
+binds the per-signal `forze_tenant_id` header when `bind_tenant_from_headers=True`,
+which is **off by default** because that header is untrusted/forgeable — enable it only
+on a broker where every producer is trusted to assert tenancy.
 
 Each device has its own **cursor**, so it never re-receives what it acked. The
 device is keyed by `ClientIdentity` — a client-supplied `device_id` (stable across

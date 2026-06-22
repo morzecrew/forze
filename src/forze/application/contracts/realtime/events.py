@@ -45,12 +45,15 @@ class RealtimeEvent[Payload: BaseModel]:
     """
 
     offline_delivery: bool = True
-    """Whether a durable, principal-addressed signal is stored for offline replay.
+    """Declared delivery tier: whether this event is worth delivering to a recipient
+    who is offline when it is sent (vs. live-only, best-effort).
 
-    ``True`` (default) stores the signal in the recipient's mailbox so a device
-    offline at emit time receives it on reconnect (RFC 0006). ``False`` opts the
-    event out — emit-only, best-effort, never mailboxed (e.g. a high-frequency
-    signal promoted to durable for ordering but not worth persisting).
+    A declared property the edges recognise (like :attr:`audience_kinds`): ``True``
+    (default) means a durable, principal-addressed signal of this event should still
+    reach the recipient when they reconnect; ``False`` opts it out as emit-only — e.g.
+    a high-frequency signal promoted to durable for ordering but not worth retaining.
+    *How* an edge fulfils offline delivery (a store-and-forward gateway, etc.) is the
+    edge's concern, not the contract's.
     """
 
     # ....................... #

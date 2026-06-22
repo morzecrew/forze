@@ -145,15 +145,19 @@ def _hlc_from_headers(headers: object) -> HlcTimestamp:
 def _bind_tenant(
     ctx: ExecutionContext,
     tenant: UUID | None,
+    *,
+    enabled: bool,
 ) -> AbstractContextManager[None]:
-    """Bind the per-signal *tenant* (from the header) so the mailbox scopes ambiently.
+    """Bind the per-signal header *tenant* so a tenant-aware mailbox scopes ambiently.
 
-    The gateway consumes a tenant-global stream, so it binds each signal's tenant the
-    way the inbox consumer does — the mailbox then reads the ambient tenant, never a
-    parameter. ``None`` (untenanted signal) binds nothing.
+    **Opt-in** (``enabled``): the ``forze_tenant_id`` header is **untrusted** input —
+    within a deployment the relay writes it, but any producer with broker access could
+    forge it, so binding it is only safe on brokers where every producer is trusted to
+    assert tenancy (the same posture as the inbox consumer's ``bind_tenant_from_headers``).
+    Disabled, or untenanted, binds nothing — the mailbox runs under the ambient tenant.
     """
 
-    if tenant is None:
+    if not enabled or tenant is None:
         return nullcontext()
 
     return ctx.inv_ctx.bind_identity(
@@ -337,10 +341,12 @@ class RealtimeGateway:
     dedup: GatewayDedup | None = None
     """When set, durable signals (those with a dedup id) emit at most once."""
 
-    mailbox: RealtimeMailbox | None = None
-    """When set (with ``dedup``), a durable **principal** signal is stored for offline
-    replay before it is emitted, so a recipient offline at emit time receives it on
-    reconnect (RFC 0006). Topic and ephemeral signals are never mailboxed."""
+    mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox] | None = None
+    """Builds the mailbox once at ``run(ctx)`` start, with its ports resolved (e.g.
+    ``build_realtime_mailbox``). When set (with ``dedup``), a durable **principal**
+    signal is stored for offline replay before it is emitted, so a recipient offline at
+    emit time receives it on reconnect (RFC 0006). Topic and ephemeral signals are never
+    mailboxed. A factory (not a built object) so deps materialize against the run ctx."""
 
     event_catalog: RealtimeEventCatalog | None = None
     """Optional catalog consulted for the per-event ``offline_delivery`` opt-out; when
@@ -350,6 +356,11 @@ class RealtimeGateway:
     """When set with a mailbox, the live emit is skipped for a mailboxed signal whose
     principal room is empty (saves a cross-node fan-out; the reconnect drain delivers
     it). Never skips a signal that is not recoverable from the mailbox."""
+
+    bind_tenant_from_headers: bool = False
+    """Opt-in: bind each signal's ``forze_tenant_id`` header so a tenant-aware mailbox
+    scopes by it. Off by default because the header is untrusted/forgeable — enable only
+    on brokers where every producer is trusted to assert tenancy (see :func:`_bind_tenant`)."""
 
     emit_timeout: timedelta | None = None
     """Bound on a single ``sio.emit``; ``None`` waits indefinitely.
@@ -365,13 +376,16 @@ class RealtimeGateway:
     async def run(self, ctx: ExecutionContext) -> None:
         """Consume signals forever and emit each to its room. Cancel to stop."""
 
+        # resolve the mailbox's ports once, against the run ctx (worker-resolved-once)
+        mailbox = self.mailbox_factory(ctx) if self.mailbox_factory is not None else None
+
         async def handle(
             signal: RealtimeSignal,
             tenant: UUID | None,
             dedup_id: str | None,
             hlc: HlcTimestamp,
         ) -> None:
-            await self._handle(ctx, signal, tenant, dedup_id, hlc)
+            await self._handle(ctx, mailbox, signal, tenant, dedup_id, hlc)
 
         await self.source.run(ctx, handle)
 
@@ -380,6 +394,7 @@ class RealtimeGateway:
     async def _handle(
         self,
         ctx: ExecutionContext,
+        mailbox: RealtimeMailbox | None,
         signal: RealtimeSignal,
         tenant: UUID | None,
         dedup_id: str | None,
@@ -392,8 +407,8 @@ class RealtimeGateway:
 
         # durable: mark (+ store) + emit inside one transaction, so a redelivered
         # signal (relay retry / consumer claim) is recognised and handled once. The
-        # tenant is bound (from the header) so the mailbox scopes by the ambient tenant.
-        with _bind_tenant(ctx, tenant):
+        # header tenant is bound only when opted-in (it is untrusted, see _bind_tenant).
+        with _bind_tenant(ctx, tenant, enabled=self.bind_tenant_from_headers):
             async with ctx.tx_ctx.scope(self.dedup.tx_route):
                 inbox = ctx.inbox(self.dedup.inbox_spec)
 
@@ -402,11 +417,10 @@ class RealtimeGateway:
                 ):
                     return
 
-                mailbox = self.mailbox if self._should_mailbox(signal) else None
+                store = mailbox if (mailbox is not None and self._should_mailbox(signal)) else None
 
-                if mailbox is not None:
-                    await mailbox.store(
-                        ctx,
+                if store is not None:
+                    await store.store(
                         principal=signal.audience.name,
                         event_id=dedup_id,
                         hlc=hlc,
@@ -414,15 +428,15 @@ class RealtimeGateway:
                     )
 
                 await self._emit_live(
-                    signal, tenant, event_id=dedup_id, recoverable=mailbox is not None
+                    signal, tenant, event_id=dedup_id, recoverable=store is not None
                 )
 
     # ....................... #
 
     def _should_mailbox(self, signal: RealtimeSignal) -> bool:
-        """Whether this durable signal is stored for offline replay."""
+        """Whether this durable signal is stored for offline replay (audience + opt-out)."""
 
-        if self.mailbox is None or signal.audience.kind is not AudienceKind.PRINCIPAL:
+        if signal.audience.kind is not AudienceKind.PRINCIPAL:
             return False
 
         if self.event_catalog is None:

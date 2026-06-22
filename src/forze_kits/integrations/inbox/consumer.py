@@ -23,7 +23,8 @@ from forze.base.primitives import HlcTimestamp, HybridLogicalClock, StrKey, uuid
 
 
 def _merge_inbound_hlc(
-    headers: Mapping[str, object], clock: HybridLogicalClock
+    headers: Mapping[str, object],
+    clock: HybridLogicalClock,
 ) -> None:
     """Advance this node's clock past a consumed event's HLC (best-effort).
 
@@ -54,6 +55,7 @@ def _parse_uuid(value: object) -> UUID | None:
 
     try:
         return UUID(value)
+
     except ValueError:
         return None
 
@@ -66,10 +68,9 @@ def _message_headers(message: object) -> Mapping[str, str]:
 
     headers = getattr(message, "headers", None)
 
-    if isinstance(headers, Mapping):
-        return headers  # pyright: ignore[reportUnknownVariableType]
-
-    return {}
+    return (
+        headers if isinstance(headers, Mapping) else {}
+    )  # pyright: ignore[reportUnknownVariableType]
 
 
 # ....................... #

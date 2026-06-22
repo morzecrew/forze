@@ -177,8 +177,8 @@ def attach_realtime_connection(
     namespace: str = "/",
     resolve: ConnectionResolver,
     presence: RealtimePresence | None = None,
-    mailbox: RealtimeMailbox | None = None,
-    cursors: MailboxCursors | None = None,
+    mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox] | None = None,
+    cursors_factory: Callable[[ExecutionContext], MailboxCursors] | None = None,
     runtime: ExecutionRuntime | None = None,
 ) -> None:
     """Register connect/disconnect handlers that auto-join the principal room.
@@ -188,10 +188,12 @@ def attach_realtime_connection(
     client-safe :class:`CoreException` from *resolve* refuses the connection;
     a server-side one is logged and refused generically.
 
-    When *mailbox*, *cursors* and *runtime* are all supplied, offline replay is
-    enabled (RFC 0006): on connect the connection's device is replayed everything
-    past its cursor, and a ``realtime.ack {up_to}`` event advances that cursor so a
-    device never re-receives what it acked. The device is keyed by
+    When *mailbox_factory*, *cursors_factory* and *runtime* are all supplied, offline
+    replay is enabled (RFC 0006): on connect the connection's device is replayed
+    everything past its cursor, and a ``realtime.ack {up_to}`` event advances that cursor
+    so a device never re-receives what it acked. The factories build their store with
+    ports resolved against each unit-of-work ctx (e.g. ``build_realtime_mailbox``); the
+    device is keyed by
     :meth:`RealtimeConnection.client_key` (its ``device_id``/``session_id``, else
     the per-connection sid).
 
@@ -203,11 +205,13 @@ def attach_realtime_connection(
         would silently overwrite this one (or vice versa). Resolve identity here.
     """
 
-    replay_enabled = mailbox is not None and cursors is not None and runtime is not None
+    replay_enabled = (
+        mailbox_factory is not None and cursors_factory is not None and runtime is not None
+    )
 
     async def _replay(connection: RealtimeConnection, sid: str) -> None:
         if (
-            mailbox is None or cursors is None or runtime is None
+            mailbox_factory is None or cursors_factory is None or runtime is None
         ):  # never (gated by replay_enabled)
             return
 
@@ -215,13 +219,11 @@ def attach_realtime_connection(
 
         async with runtime.scope():
             ctx = runtime.get_context()
-            with _bind_tenant(ctx, connection.tenant):
-                since = await cursors.get(
-                    ctx, principal=connection.principal, client_key=client_key
-                )
-                entries = await mailbox.read_since(
-                    ctx, principal=connection.principal, since=since
-                )
+            with _bind_tenant(ctx, connection.tenant):  # authenticated tenant — always bound
+                mailbox = mailbox_factory(ctx)  # ports resolved for this unit of work
+                cursors = cursors_factory(ctx)
+                since = await cursors.get(principal=connection.principal, client_key=client_key)
+                entries = await mailbox.read_since(principal=connection.principal, since=since)
 
         for entry in entries:
             await sio.emit(
@@ -233,7 +235,7 @@ def attach_realtime_connection(
 
     async def ack_handler(sid: str, data: Any = None) -> None:
         if (
-            mailbox is None or cursors is None or runtime is None
+            mailbox_factory is None or cursors_factory is None or runtime is None
         ):  # never (gated by replay_enabled)
             return
 
@@ -254,27 +256,24 @@ def attach_realtime_connection(
         async with runtime.scope():
             ctx = runtime.get_context()
             with _bind_tenant(ctx, connection.tenant):
+                mailbox = mailbox_factory(ctx)
+                cursors = cursors_factory(ctx)
                 position = await mailbox.position_of(
-                    ctx, principal=connection.principal, event_id=event_id
+                    principal=connection.principal, event_id=event_id
                 )
 
                 if position is not None:
                     await cursors.advance(
-                        ctx,
                         principal=connection.principal,
                         client_key=connection.client_key(sid),
                         up_to=position,
                     )
 
                     # trim what every known device has now acked (TTL/cap is the backstop)
-                    floor = await cursors.min_cursor(
-                        ctx, principal=connection.principal
-                    )
+                    floor = await cursors.min_cursor(principal=connection.principal)
 
                     if floor is not None:
-                        await mailbox.trim(
-                            ctx, principal=connection.principal, before=floor
-                        )
+                        await mailbox.trim(principal=connection.principal, before=floor)
 
     async def connect_handler(
         sid: str, environ: Mapping[str, Any], auth: Any = None

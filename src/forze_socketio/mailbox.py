@@ -8,13 +8,12 @@ layer depend on (the app supplies the implementations, like ``RealtimePresence``
 - :class:`RealtimeMailbox` — the per-principal log: ``store`` / ``read_since`` / ``trim``.
 - :class:`MailboxCursors` — per-device read positions: ``get`` / ``advance``.
 
-The methods take an :class:`ExecutionContext` because a durable backing store
-(the document store, RFC 0006 §4) is context-scoped (tenancy, transaction) — the
-same way the gateway already calls ``ctx.inbox(spec)`` per signal. **Tenant is
-ambient**, never a parameter: the implementations read it from the bound context
-(``ctx.inv_ctx.get_tenant()``), so a tenant-global worker (the gateway, the
-connection layer) binds the per-signal / per-connection tenant before calling —
-exactly as the publisher reads the ambient tenant for the message header.
+The methods take **no context and no tenant** — tenancy and transactions are ambient
+infrastructure. The document-backed default holds ports resolved once at build, which
+scope by the bound tenant and join the current transaction on their own; a tenant-global
+worker binds the tenant around the call. The in-memory implementation here is a
+single-node test/dev aid keyed by ``principal`` only (multi-tenant isolation is the
+durable store's concern).
 
 Ordering and the cursor value are an :class:`HlcTimestamp` — the HLC the durable
 path already carries (``HEADER_HLC``), captured at store time.
@@ -27,12 +26,10 @@ require_socketio()
 # ....................... #
 
 from typing import Awaitable, Protocol, final, runtime_checkable
-from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
-from forze.application.execution import ExecutionContext
 from forze.base.primitives import HlcTimestamp
 
 # ----------------------- #
@@ -48,40 +45,24 @@ __all__ = [
 
 @runtime_checkable
 class RealtimeMailbox(Protocol):
-    """A bounded, append-only per-principal log of recent durable signals.
-
-    Scoped to the ambient tenant (read from the bound context); callers bind it."""
+    """A bounded, append-only per-principal log of recent durable signals."""
 
     def store(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        event_id: str,
-        hlc: HlcTimestamp,
-        signal: RealtimeSignal,
+        self, *, principal: str, event_id: str, hlc: HlcTimestamp, signal: RealtimeSignal
     ) -> Awaitable[None]:
         """Append a durable signal (idempotent on ``event_id``)."""
 
         ...  # pragma: no cover
 
     def read_since(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        since: HlcTimestamp | None,
+        self, *, principal: str, since: HlcTimestamp | None
     ) -> Awaitable[list[MailboxEntry]]:
         """The retained entries strictly after *since* (all when ``None``), oldest-first."""
 
         ...  # pragma: no cover
 
     def position_of(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        event_id: str,
+        self, *, principal: str, event_id: str
     ) -> Awaitable[HlcTimestamp | None]:
         """The HLC position of *event_id*, or ``None`` if no longer retained.
 
@@ -90,14 +71,8 @@ class RealtimeMailbox(Protocol):
 
         ...  # pragma: no cover
 
-    def trim(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        before: HlcTimestamp,
-    ) -> Awaitable[None]:
-        """Drop entries at or before *before* (retention by age)."""
+    def trim(self, *, principal: str, before: HlcTimestamp) -> Awaitable[None]:
+        """Drop entries at or before *before* (retention by age/ack-floor)."""
 
         ...  # pragma: no cover
 
@@ -107,37 +82,23 @@ class RealtimeMailbox(Protocol):
 
 @runtime_checkable
 class MailboxCursors(Protocol):
-    """Per-device read positions over a principal's mailbox (ambient-tenant scoped)."""
+    """Per-device read positions over a principal's mailbox."""
 
     def get(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        client_key: str,
+        self, *, principal: str, client_key: str
     ) -> Awaitable[HlcTimestamp | None]:
         """The device's last-acked position, or ``None`` for a device seen first time."""
 
         ...  # pragma: no cover
 
     def advance(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        client_key: str,
-        up_to: HlcTimestamp,
+        self, *, principal: str, client_key: str, up_to: HlcTimestamp
     ) -> Awaitable[None]:
         """Advance the device's cursor to *up_to* (monotonic: never moves backwards)."""
 
         ...  # pragma: no cover
 
-    def min_cursor(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-    ) -> Awaitable[HlcTimestamp | None]:
+    def min_cursor(self, *, principal: str) -> Awaitable[HlcTimestamp | None]:
         """The lowest cursor across the principal's **known** devices, or ``None``.
 
         Entries at or before it have been acked by every device that has a cursor,
@@ -150,33 +111,17 @@ class MailboxCursors(Protocol):
 # ----------------------- #
 
 
-def _tenant(ctx: ExecutionContext) -> UUID | None:
-    """The ambient tenant id, the same source the publisher reads for the header."""
-
-    tenant = ctx.inv_ctx.get_tenant()
-
-    return tenant.tenant_id if tenant is not None else None
-
-
 @final
 @attrs.define(slots=True)
 class InMemoryRealtimeMailbox(RealtimeMailbox):
-    """Single-node, in-memory mailbox. For multi-node use a durable store."""
+    """Single-node, in-memory mailbox keyed by principal. For multi-node use a durable store."""
 
-    _logs: dict[tuple[UUID | None, str], list[MailboxEntry]] = attrs.field(
-        factory=dict, init=False
-    )
+    _logs: dict[str, list[MailboxEntry]] = attrs.field(factory=dict, init=False)
 
     async def store(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        event_id: str,
-        hlc: HlcTimestamp,
-        signal: RealtimeSignal,
+        self, *, principal: str, event_id: str, hlc: HlcTimestamp, signal: RealtimeSignal
     ) -> None:
-        log = self._logs.setdefault((_tenant(ctx), principal), [])
+        log = self._logs.setdefault(principal, [])
 
         if any(entry.event_id == event_id for entry in log):
             return  # idempotent on event_id
@@ -189,13 +134,9 @@ class InMemoryRealtimeMailbox(RealtimeMailbox):
         log.sort(key=lambda entry: entry.hlc)
 
     async def read_since(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        since: HlcTimestamp | None,
+        self, *, principal: str, since: HlcTimestamp | None
     ) -> list[MailboxEntry]:
-        log = self._logs.get((_tenant(ctx), principal), [])
+        log = self._logs.get(principal, [])
 
         if since is None:
             return list(log)
@@ -203,33 +144,22 @@ class InMemoryRealtimeMailbox(RealtimeMailbox):
         return [entry for entry in log if entry.hlc > since]
 
     async def position_of(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        event_id: str,
+        self, *, principal: str, event_id: str
     ) -> HlcTimestamp | None:
         return next(
             (
                 entry.hlc
-                for entry in self._logs.get((_tenant(ctx), principal), [])
+                for entry in self._logs.get(principal, [])
                 if entry.event_id == event_id
             ),
             None,
         )
 
-    async def trim(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        before: HlcTimestamp,
-    ) -> None:
-        key = (_tenant(ctx), principal)
-        log = self._logs.get(key)
+    async def trim(self, *, principal: str, before: HlcTimestamp) -> None:
+        log = self._logs.get(principal)
 
         if log is not None:
-            self._logs[key] = [entry for entry in log if entry.hlc > before]
+            self._logs[principal] = [entry for entry in log if entry.hlc > before]
 
 
 # ....................... #
@@ -238,46 +168,23 @@ class InMemoryRealtimeMailbox(RealtimeMailbox):
 @final
 @attrs.define(slots=True)
 class InMemoryMailboxCursors(MailboxCursors):
-    """Single-node, in-memory per-device cursors."""
+    """Single-node, in-memory per-device cursors keyed by ``(principal, client_key)``."""
 
-    _cursors: dict[tuple[UUID | None, str, str], HlcTimestamp] = attrs.field(
-        factory=dict, init=False
-    )
+    _cursors: dict[tuple[str, str], HlcTimestamp] = attrs.field(factory=dict, init=False)
 
-    async def get(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        client_key: str,
-    ) -> HlcTimestamp | None:
-        return self._cursors.get((_tenant(ctx), principal, client_key))
+    async def get(self, *, principal: str, client_key: str) -> HlcTimestamp | None:
+        return self._cursors.get((principal, client_key))
 
     async def advance(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-        client_key: str,
-        up_to: HlcTimestamp,
+        self, *, principal: str, client_key: str, up_to: HlcTimestamp
     ) -> None:
-        cursor_key = (_tenant(ctx), principal, client_key)
-        current = self._cursors.get(cursor_key)
+        key = (principal, client_key)
+        current = self._cursors.get(key)
 
         if current is None or up_to > current:  # monotonic: never moves backwards
-            self._cursors[cursor_key] = up_to
+            self._cursors[key] = up_to
 
-    async def min_cursor(
-        self,
-        ctx: ExecutionContext,
-        *,
-        principal: str,
-    ) -> HlcTimestamp | None:
-        tenant = _tenant(ctx)
-        positions = [
-            hlc
-            for (t, p, _key), hlc in self._cursors.items()
-            if t == tenant and p == principal
-        ]
+    async def min_cursor(self, *, principal: str) -> HlcTimestamp | None:
+        positions = [hlc for (p, _key), hlc in self._cursors.items() if p == principal]
 
         return min(positions, default=None)

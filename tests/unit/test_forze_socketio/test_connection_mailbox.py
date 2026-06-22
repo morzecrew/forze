@@ -76,13 +76,8 @@ def _resolver(connection: RealtimeConnection):  # type: ignore[no-untyped-def]
 
 
 async def _populate(mailbox: InMemoryRealtimeMailbox) -> None:
-    # the tenant is ambient; store under the recipient's tenant (the gateway would bind it)
-    runtime = _runtime()
-    async with runtime.scope():
-        ctx = runtime.get_context()
-        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
-            await mailbox.store(ctx, principal=_PRINCIPAL_STR, event_id="e1", hlc=_hlc(1), signal=_signal("a"))
-            await mailbox.store(ctx, principal=_PRINCIPAL_STR, event_id="e2", hlc=_hlc(2), signal=_signal("b"))
+    await mailbox.store(principal=_PRINCIPAL_STR, event_id="e1", hlc=_hlc(1), signal=_signal("a"))
+    await mailbox.store(principal=_PRINCIPAL_STR, event_id="e2", hlc=_hlc(2), signal=_signal("b"))
 
 
 # ----------------------- #
@@ -94,7 +89,7 @@ async def test_connect_replays_pending_to_the_device() -> None:
 
     attach_realtime_connection(
         sio, resolve=_resolver(_connection()),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=_runtime(),
+        mailbox_factory=lambda ctx: mailbox, cursors_factory=lambda ctx: cursors, runtime=_runtime(),
     )
     await sio.handlers["connect"]("sid-1", {}, {"device_id": "d1"})
 
@@ -110,7 +105,7 @@ async def test_ack_advances_cursor_so_reconnect_replays_only_unseen() -> None:
     await _populate(mailbox)
     attach_realtime_connection(
         sio, resolve=_resolver(_connection()),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=_runtime(),
+        mailbox_factory=lambda ctx: mailbox, cursors_factory=lambda ctx: cursors, runtime=_runtime(),
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)  # first connect: replays e1, e2
@@ -128,7 +123,7 @@ async def test_partial_ack_replays_only_the_tail_on_reconnect() -> None:
     await _populate(mailbox)
     attach_realtime_connection(
         sio, resolve=_resolver(_connection()),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=_runtime(),
+        mailbox_factory=lambda ctx: mailbox, cursors_factory=lambda ctx: cursors, runtime=_runtime(),
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)
@@ -145,16 +140,13 @@ async def test_ack_trims_what_the_only_device_has_acked() -> None:
     runtime = _runtime()
     attach_realtime_connection(
         sio, resolve=_resolver(_connection()),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=runtime,
+        mailbox_factory=lambda ctx: mailbox, cursors_factory=lambda ctx: cursors, runtime=runtime,
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)
     await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e2"})  # the only device acked all
 
-    async with runtime.scope():
-        ctx = runtime.get_context()
-        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
-            remaining = await mailbox.read_since(ctx, principal=_PRINCIPAL_STR, since=None)
+    remaining = await mailbox.read_since(principal=_PRINCIPAL_STR, since=None)
 
     assert remaining == []  # every known device acked through e2 → trimmed
 
@@ -167,7 +159,7 @@ async def test_ack_keeps_entries_a_slower_device_has_not_acked() -> None:
     # device d1 acks through e2
     attach_realtime_connection(
         sio, resolve=_resolver(_connection(device_id="d1")),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=runtime,
+        mailbox_factory=lambda ctx: mailbox, cursors_factory=lambda ctx: cursors, runtime=runtime,
     )
     await sio.handlers["connect"]("sid-1", {}, None)
     await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e1"})  # d1 establishes a cursor at e1
@@ -176,15 +168,12 @@ async def test_ack_keeps_entries_a_slower_device_has_not_acked() -> None:
     sio.handlers.clear()
     attach_realtime_connection(
         sio, resolve=_resolver(_connection(device_id="d2")),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=runtime,
+        mailbox_factory=lambda ctx: mailbox, cursors_factory=lambda ctx: cursors, runtime=runtime,
     )
     await sio.handlers["connect"]("sid-2", {}, None)
     await sio.handlers["realtime.ack"]("sid-2", {"up_to": "e1"})
 
-    async with runtime.scope():
-        ctx = runtime.get_context()
-        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
-            remaining = await mailbox.read_since(ctx, principal=_PRINCIPAL_STR, since=None)
+    remaining = await mailbox.read_since(principal=_PRINCIPAL_STR, since=None)
 
     assert [e.event_id for e in remaining] == ["e2"]  # e2 retained until both ack it
 
@@ -198,7 +187,7 @@ async def test_new_device_after_trim_gets_only_retained_entries() -> None:
     runtime = _runtime()
     attach_realtime_connection(
         sio, resolve=_resolver(_connection(device_id="d1")),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=runtime,
+        mailbox_factory=lambda ctx: mailbox, cursors_factory=lambda ctx: cursors, runtime=runtime,
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)
@@ -208,7 +197,7 @@ async def test_new_device_after_trim_gets_only_retained_entries() -> None:
     sio.emits.clear()
     attach_realtime_connection(
         sio, resolve=_resolver(_connection(device_id="d2")),  # pyright: ignore[reportArgumentType]
-        mailbox=mailbox, cursors=cursors, runtime=runtime,
+        mailbox_factory=lambda ctx: mailbox, cursors_factory=lambda ctx: cursors, runtime=runtime,
     )
     await sio.handlers["connect"]("sid-2", {}, None)
     assert sio.emits == []  # backlog was trimmed before d2 was known

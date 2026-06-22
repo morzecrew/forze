@@ -14,6 +14,8 @@ from .mailbox import (
     DocumentMailboxCursors,
     DocumentRealtimeMailbox,
     MailboxStats,
+    build_realtime_cursors,
+    build_realtime_mailbox,
     realtime_cursor_spec,
     realtime_mailbox_spec,
 )
@@ -35,6 +37,8 @@ __all__ = [
     "build_realtime_publisher",
     "DocumentRealtimeMailbox",
     "DocumentMailboxCursors",
+    "build_realtime_mailbox",
+    "build_realtime_cursors",
     "MailboxStats",
     "instrument_realtime_mailbox",
     "realtime_mailbox_spec",
