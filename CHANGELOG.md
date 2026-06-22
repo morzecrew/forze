@@ -117,7 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Outbox relay forwards under the staging tenant** — the background relay now binds each claim's tenant before publishing, so a tenant-aware destination routes to that tenant instead of the global key, completing the namespace-tier realtime durable path. A tenant-global destination is unaffected.
+- **Outbox relay tenancy** — the background relay now binds each claim's tenant before publishing, so a tenant-aware destination routes per-tenant instead of the global key. Wiring a tenant-aware outbox, which the tenant-less relay cannot read, now fails closed with a clear `outbox_relay_tenant_unbound` error.
 
 - **Keyring fill-lock stripe is now cross-process stable** — the per-`key_id` crypto fill-lock stripe used Python's `hash()` (PYTHONHASHSEED-randomized), so it varied per process and broke deterministic-simulation replay. It now uses a stable hash, and the guard bans the `hash(x) % n` pattern.
 

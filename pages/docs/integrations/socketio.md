@@ -253,12 +253,15 @@ tenant-aware outbox would need a per-tenant relay, which is out of scope.
 
 !!! note "Assignment, not discovery"
     Each gateway instance consumes the **disjoint** tenant shard `tenants` returns,
-    evaluated once at startup — shard your tenants across instances (the same way the
-    "emit worker" deployment already shards). Rebalancing a *running* fleet is out of
-    scope (RFC 0007 §9): repartition by restart. `tenants` must match the shard
-    `realtime_tenant_group_ensure_lifecycle_step` ensures groups for. Broker-level
-    enforcement (so a rogue producer can't write another tenant's key) is Redis ACLs,
-    the operator's job — as with the dedicated tier.
+    evaluated **once at startup** — shard your tenants across instances (the same way the
+    "emit worker" deployment already shards). Two consequences follow from "once at
+    startup": onboarding a **new tenant** (and rebalancing a running fleet) requires a
+    **restart** — a tenant created after boot has no group ensured and no consume loop, so
+    it is unserved until you restart with the updated shard. Pass the **same** `tenants`
+    provider and group to both `TenantShardedSignalSource` and
+    `realtime_tenant_group_ensure_lifecycle_step` so the groups ensured match the streams
+    consumed. Broker-level enforcement (so a rogue producer can't write another tenant's
+    key) is Redis ACLs, the operator's job — as with the dedicated tier.
 
 Each device has its own **cursor**, so it never re-receives what it acked. The
 device is keyed by `ClientIdentity` — a client-supplied `device_id` (stable across

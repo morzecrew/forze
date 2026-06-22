@@ -62,7 +62,7 @@ from forze.application.integrations.outbox import (
     decrypt_outbox_payload,
     is_encrypted_payload,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import current_entropy_source, utcnow
 
 if TYPE_CHECKING:
@@ -92,6 +92,26 @@ def _under_claim_tenant(
         return nullcontext()
 
     return ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_id))
+
+
+def _outbox_tenant_unbound(outbox_spec: OutboxSpec[Any]) -> CoreException:
+    """Actionable error when a tenant-aware outbox is relayed with no bound tenant.
+
+    The background relay drains every tenant in one pass and has no ambient tenant, so it
+    cannot read a ``tenant_aware`` (partitioned, fail-closed) outbox. Keep the outbox
+    **tenant-global / tagged** — rows still carry their ``tenant_id`` and the relay forwards
+    under it, routing correctly to a tenant-aware destination — or run the relay under a
+    bound tenant per tenant. A per-tenant sharded relay is not yet available.
+    """
+
+    return exc.configuration(
+        f"The outbox relay cannot read tenant-aware outbox route "
+        f"{str(outbox_spec.name)!r} without a bound tenant: the background relay drains "
+        "all tenants in one pass. Keep the outbox tenant-global (tagged — rows still carry "
+        "their tenant_id and the relay forwards under it, so a tenant-aware destination "
+        "still routes per-tenant), or run the relay under a bound tenant per tenant.",
+        code="outbox_relay_tenant_unbound",
+    )
 
 # Published ids are marked in chunks of this size (one UPDATE per chunk
 # instead of one per row). Bounds the redelivery window after a crash to one
@@ -193,11 +213,20 @@ async def relay_outbox_claims(
     query = ctx.outbox.query(outbox_spec)
     reclaimed = 0
 
-    if reclaim_stale_after is not None:
-        older_than = utcnow() - reclaim_stale_after
-        reclaimed = await query.reclaim_stale_processing(older_than=older_than)
+    try:
+        if reclaim_stale_after is not None:
+            older_than = utcnow() - reclaim_stale_after
+            reclaimed = await query.reclaim_stale_processing(older_than=older_than)
 
-    claims = await query.claim_pending(limit=limit)
+        claims = await query.claim_pending(limit=limit)
+
+    except CoreException as read_error:
+        # A tenant-aware outbox fail-closes when read with no bound tenant. The relay is a
+        # tenant-less background drain, so name the contract instead of leaking the opaque
+        # tenant_required from deep in the adapter.
+        if read_error.code == "tenant_required":
+            raise _outbox_tenant_unbound(outbox_spec) from read_error
+        raise
 
     if not claims:
         return OutboxRelayResult(reclaimed=reclaimed)
