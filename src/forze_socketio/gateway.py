@@ -26,7 +26,7 @@ require_socketio()
 
 import asyncio
 from datetime import timedelta
-from typing import Any, Awaitable, Callable, Protocol, final, runtime_checkable
+from typing import Any, Awaitable, Callable, Protocol, cast, final, runtime_checkable
 from uuid import UUID
 
 import attrs
@@ -38,7 +38,7 @@ from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
 from forze.application.execution import ExecutionContext
 from forze.base.logging import Logger
-from forze.base.primitives import StrKey
+from forze.base.primitives import JsonDict, StrKey
 
 from ._logging import ForzeSocketIOLogger
 
@@ -75,7 +75,14 @@ def room_for(audience: Audience, tenant: UUID | None) -> str:
 
 
 def _tenant_from_headers(headers: object) -> UUID | None:
-    raw = headers.get(HEADER_TENANT_ID) if hasattr(headers, "get") else None
+    """Extract the tenant id from the headers."""
+
+    if not hasattr(headers, "get"):
+        return None
+
+    # dirty cast to supress pyright
+    headers = cast(JsonDict, headers)
+    raw = headers.get(HEADER_TENANT_ID)
 
     return UUID(raw) if raw else None
 
@@ -150,27 +157,38 @@ class StreamGroupSignalSource(RealtimeSignalSource):
         while True:
             try:
                 fresh = await group.read(
-                    self.group, self.consumer, mapping, limit=self.batch, timeout=self.poll_interval
+                    self.group,
+                    self.consumer,
+                    mapping,
+                    limit=self.batch,
+                    timeout=self.poll_interval,
                 )
                 await self._process(group, stream, fresh, handler)
 
                 reclaimed: list[Any] = []
                 if self.reclaim_idle is not None:
                     reclaimed = await group.claim(
-                        self.group, self.consumer, stream,
-                        idle=self.reclaim_idle, limit=self.batch,
+                        self.group,
+                        self.consumer,
+                        stream,
+                        idle=self.reclaim_idle,
+                        limit=self.batch,
                     )
                     await self._process(group, stream, reclaimed, handler)
 
                 if not fresh and not reclaimed:
                     # the read timeout already paces blocking backends; this is a
                     # small floor so a non-blocking backend cannot hot-loop.
-                    await asyncio.sleep(min(_IDLE_FLOOR, self.poll_interval.total_seconds()))
+                    await asyncio.sleep(
+                        min(_IDLE_FLOOR, self.poll_interval.total_seconds())
+                    )
 
             except asyncio.CancelledError:
                 raise
 
-            except Exception:  # noqa: BLE001 - a transient broker error must not kill the gateway
+            except (
+                Exception
+            ):  # noqa: BLE001 - a transient broker error must not kill the gateway
                 _logger.critical_exception("Realtime gateway loop error", stream=stream)
                 await asyncio.sleep(self.poll_interval.total_seconds())
 
@@ -189,7 +207,9 @@ class StreamGroupSignalSource(RealtimeSignalSource):
             ack = True
 
             try:
-                await handler(message.payload, _tenant_from_headers(message.headers), dedup_id)
+                await handler(
+                    message.payload, _tenant_from_headers(message.headers), dedup_id
+                )
 
             except Exception:  # noqa: BLE001
                 _logger.critical_exception(

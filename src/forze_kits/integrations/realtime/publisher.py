@@ -1,18 +1,22 @@
 """Publish realtime signals onto messaging — the application-facing surface.
 
+A :class:`RealtimePublisher` holds its **resolved ports** (the stream command
+port, the optional durable outbox port) and a tenant provider, all materialized
+once by :func:`build_realtime_publisher` at construction — call it from a handler
+factory, the same way handlers inject `ctx.doc.command(spec)`. So the publish
+methods take only their arguments (never a spec to resolve or the whole context),
+and a misconfigured route fails when the handler is built, not on the first emit.
+
 Two disciplines, made explicit at the call site (one method each):
 
-- :meth:`RealtimePublisher.publish` — **ephemeral, at-most-once**: append the
-  signal directly to the realtime stream, fire-and-forget. Lost if no connection
-  is currently joined (typing indicators, presence, live cursors).
-- :meth:`RealtimePublisher.stage` — **durable, at-least-once**: stage the signal
-  to the outbox in the current transaction; the relay appends it to the same
-  stream after commit (must-arrive-while-online signals).
+- :meth:`RealtimePublisher.publish` — **ephemeral, at-most-once**: append directly
+  to the realtime stream, fire-and-forget (typing, presence, live cursors).
+- :meth:`RealtimePublisher.stage` — **durable, at-least-once**: stage to the outbox
+  in the current transaction; the relay appends it to the stream after commit.
 
 The application stays on the messaging side — it never reaches a connection. The
 tenant rides in the message headers (ephemeral) or the relayed claim headers
-(durable); the gateway scopes the room from it. Publishing is a side effect, so
-it is refused from a read-only (``QUERY``) operation.
+(durable); the gateway scopes the room from it.
 """
 
 from typing import final
@@ -21,30 +25,18 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.envelope import HEADER_TENANT_ID
-from forze.application.contracts.outbox import OutboxSpec
+from forze.application.contracts.outbox import OutboxCommandPort, OutboxSpec
 from forze.application.contracts.realtime import Audience, RealtimeEvent, RealtimeSignal
-from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
+from forze.application.contracts.stream import (
+    StreamCommandDepKey,
+    StreamCommandPort,
+    StreamSpec,
+)
+from forze.application.contracts.tenancy import TenantProviderPort
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 
 # ----------------------- #
-
-
-def _require_writable(ctx: ExecutionContext) -> None:
-    """Refuse a realtime publish from a read-only (``QUERY``) operation.
-
-    Stream/pubsub command ports are not guarded by the kernel's read-only check
-    (they have no convenience accessor), so the realtime surface enforces it
-    itself: pushing to clients is a side effect a query must not perform.
-    """
-
-    if ctx.inv_ctx.is_read_only():
-        raise exc.precondition(
-            "Cannot publish a realtime signal from a read-only (QUERY) operation"
-        )
-
-
-# ....................... #
 
 
 def _partition_key(audience: Audience) -> str:
@@ -56,33 +48,31 @@ def _partition_key(audience: Audience) -> str:
 # ....................... #
 
 
-def _tenant_headers(ctx: ExecutionContext) -> dict[str, str]:
-    """Carry the ambient tenant on the message, mirroring the outbox relay."""
-
-    tenant = ctx.inv_ctx.get_tenant()
-
-    return {HEADER_TENANT_ID: str(tenant.tenant_id)} if tenant is not None else {}
-
-
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class RealtimePublisher:
-    """Publish realtime signals onto a stream (ephemeral) or the outbox (durable)."""
+    """Publish realtime signals onto a stream (ephemeral) or the outbox (durable).
 
-    stream_spec: StreamSpec[RealtimeSignal]
-    """The realtime stream signals are appended to."""
+    Built with its resolved ports injected (see :func:`build_realtime_publisher`);
+    the methods take only their arguments.
+    """
 
-    outbox_spec: OutboxSpec[RealtimeSignal] | None = None
-    """Outbox route for durable signals; required by :meth:`stage`."""
+    stream: StreamCommandPort[RealtimeSignal]
+    """The resolved realtime stream command port."""
+
+    stream_name: str
+    """The stream name signals are appended to."""
+
+    tenant_provider: TenantProviderPort
+    """Reads the ambient tenant at emit time (carried in the message headers)."""
+
+    outbox: OutboxCommandPort[RealtimeSignal] | None = None
+    """The resolved durable outbox port; required by :meth:`stage`."""
 
     # ....................... #
 
     async def publish[Payload: BaseModel](
         self,
-        ctx: ExecutionContext,
         audience: Audience,
         event: RealtimeEvent[Payload],
         payload: Payload,
@@ -92,29 +82,20 @@ class RealtimePublisher:
         :returns: The broker-assigned message id.
         """
 
-        _require_writable(ctx)
-
         signal = RealtimeSignal.for_event(audience, event, payload)
-        command = ctx.deps.resolve_configurable(
-            ctx,
-            StreamCommandDepKey,
-            self.stream_spec,
-            route=self.stream_spec.name,
-        )
 
-        return await command.append(
-            str(self.stream_spec.name),
+        return await self.stream.append(
+            self.stream_name,
             signal,
             type=event.name,
             key=_partition_key(audience),
-            headers=_tenant_headers(ctx),
+            headers=self._tenant_headers(),
         )
 
     # ....................... #
 
     async def stage[Payload: BaseModel](
         self,
-        ctx: ExecutionContext,
         audience: Audience,
         event: RealtimeEvent[Payload],
         payload: Payload,
@@ -125,17 +106,57 @@ class RealtimePublisher:
         transaction (or call ``ctx.outbox.command(spec).flush()``).
         """
 
-        if self.outbox_spec is None:
+        if self.outbox is None:
             raise exc.configuration(
-                "RealtimePublisher.stage requires an outbox_spec"
+                "RealtimePublisher was built without an outbox; pass outbox_spec to "
+                "build_realtime_publisher to enable durable .stage"
             )
-
-        _require_writable(ctx)
 
         signal = RealtimeSignal.for_event(audience, event, payload)
 
-        await ctx.outbox.command(self.outbox_spec).stage(
+        await self.outbox.stage(
             event.name,
             signal,
             ordering_key=_partition_key(audience),
         )
+
+    # ....................... #
+
+    def _tenant_headers(self) -> dict[str, str]:
+        tenant = self.tenant_provider()
+
+        return {HEADER_TENANT_ID: str(tenant.tenant_id)} if tenant is not None else {}
+
+
+# ....................... #
+
+
+def build_realtime_publisher(
+    ctx: ExecutionContext,
+    *,
+    stream_spec: StreamSpec[RealtimeSignal],
+    outbox_spec: OutboxSpec[RealtimeSignal] | None = None,
+) -> RealtimePublisher:
+    """Resolve the realtime ports and build a publisher — call from a handler factory.
+
+    Materializes the dependencies at build time, so a missing route is caught when
+    the handler is constructed, not on first emit. Publishing is a side effect, so
+    this refuses to build in a read-only (``QUERY``) operation.
+    """
+
+    if ctx.inv_ctx.is_read_only():
+        raise exc.precondition(
+            "Cannot build a RealtimePublisher in a read-only (QUERY) operation"
+        )
+
+    stream = ctx.deps.resolve_configurable(
+        ctx, StreamCommandDepKey, stream_spec, route=stream_spec.name
+    )
+    outbox = ctx.outbox.command(outbox_spec) if outbox_spec is not None else None
+
+    return RealtimePublisher(
+        stream=stream,
+        stream_name=str(stream_spec.name),
+        tenant_provider=ctx.inv_ctx.get_tenant,
+        outbox=outbox,
+    )

@@ -10,7 +10,7 @@ from .lifecycle import (
     realtime_group_ensure_lifecycle_step,
     realtime_relay_lifecycle_step,
 )
-from .publisher import RealtimePublisher
+from .publisher import RealtimePublisher, build_realtime_publisher
 from .specs import (
     DEFAULT_REALTIME_CHANNEL,
     RealtimeTransport,
@@ -24,6 +24,7 @@ from .specs import (
 
 __all__ = [
     "RealtimePublisher",
+    "build_realtime_publisher",
     "RealtimeTransport",
     "build_realtime_transport",
     "DEFAULT_REALTIME_CHANNEL",

@@ -14,7 +14,7 @@ from forze.application.contracts.realtime import Audience, AudienceKind, Realtim
 from forze.application.contracts.stream import StreamGroupQueryDepKey
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze_kits.integrations.realtime import RealtimePublisher, realtime_stream_spec
+from forze_kits.integrations.realtime import build_realtime_publisher, realtime_stream_spec
 from forze_socketio import (
     RealtimeGateway,
     StreamGroupSignalSource,
@@ -98,15 +98,15 @@ def test_room_for_scoped_and_unscoped() -> None:
 
 async def test_gateway_emits_published_signal_to_tenant_room() -> None:
     spec = realtime_stream_spec()
-    pub = RealtimePublisher(stream_spec=spec)
     sio = _StubSio()
     gw = _gateway(sio, spec)
 
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
+        pub = build_realtime_publisher(ctx, stream_spec=spec)
         with ctx.inv_ctx.bind_identity(tenant=_TENANT):
-            await pub.publish(ctx, Audience.topic("chat:42"), _MESSAGE_NEW, _MsgView(text="hi"))
+            await pub.publish(Audience.topic("chat:42"), _MESSAGE_NEW, _MsgView(text="hi"))
         await _run_until(gw, ctx, lambda: bool(sio.emits))
 
     assert sio.emits == [
@@ -121,14 +121,14 @@ async def test_gateway_emits_published_signal_to_tenant_room() -> None:
 
 async def test_gateway_emits_unscoped_when_no_tenant() -> None:
     spec = realtime_stream_spec()
-    pub = RealtimePublisher(stream_spec=spec)
     sio = _StubSio()
     gw = _gateway(sio, spec)
 
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
-        await pub.publish(ctx, Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
+        pub = build_realtime_publisher(ctx, stream_spec=spec)
+        await pub.publish(Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
         await _run_until(gw, ctx, lambda: bool(sio.emits))
 
     assert sio.emits[0]["room"] == "topic:c"
@@ -136,14 +136,14 @@ async def test_gateway_emits_unscoped_when_no_tenant() -> None:
 
 async def test_signal_is_acked_after_emit() -> None:
     spec = realtime_stream_spec()
-    pub = RealtimePublisher(stream_spec=spec)
     sio = _StubSio()
     gw = _gateway(sio, spec)
 
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
-        await pub.publish(ctx, Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
+        pub = build_realtime_publisher(ctx, stream_spec=spec)
+        await pub.publish(Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
         await _run_until(gw, ctx, lambda: bool(sio.emits))
 
         group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
@@ -154,7 +154,6 @@ async def test_signal_is_acked_after_emit() -> None:
 
 async def test_bridge_error_is_isolated_and_acked() -> None:
     spec = realtime_stream_spec()
-    pub = RealtimePublisher(stream_spec=spec)
     sio = _StubSio()
     sio.fail_first_emit = True  # first emit raises; loop must keep going + ack
     gw = _gateway(sio, spec)
@@ -162,8 +161,9 @@ async def test_bridge_error_is_isolated_and_acked() -> None:
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
-        await pub.publish(ctx, Audience.topic("a"), _MESSAGE_NEW, _MsgView(text="1"))
-        await pub.publish(ctx, Audience.topic("b"), _MESSAGE_NEW, _MsgView(text="2"))
+        pub = build_realtime_publisher(ctx, stream_spec=spec)
+        await pub.publish(Audience.topic("a"), _MESSAGE_NEW, _MsgView(text="1"))
+        await pub.publish(Audience.topic("b"), _MESSAGE_NEW, _MsgView(text="2"))
         await _run_until(gw, ctx, lambda: bool(sio.emits))
 
         group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
@@ -200,7 +200,6 @@ async def test_membership_join_and_leave() -> None:
 
 async def test_lifecycle_step_runs_and_stops() -> None:
     spec = realtime_stream_spec()
-    pub = RealtimePublisher(stream_spec=spec)
     sio = _StubSio()
     gw = _gateway(sio, spec)
     step = realtime_gateway_lifecycle_step(gw)
@@ -208,7 +207,8 @@ async def test_lifecycle_step_runs_and_stops() -> None:
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
-        await pub.publish(ctx, Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
+        pub = build_realtime_publisher(ctx, stream_spec=spec)
+        await pub.publish(Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
 
         await step.startup(ctx)
         waited = 0.0

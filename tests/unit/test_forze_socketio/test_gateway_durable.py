@@ -17,7 +17,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.realtime import (
-    RealtimePublisher,
+    build_realtime_publisher,
     realtime_inbox_spec,
     realtime_outbox_spec,
     realtime_stream_spec,
@@ -184,15 +184,15 @@ async def test_durable_failure_is_reclaimed_and_re_emitted() -> None:
 async def test_end_to_end_durable_stage_relay_gateway() -> None:
     spec = realtime_stream_spec()
     outbox_spec = realtime_outbox_spec()
-    pub = RealtimePublisher(stream_spec=spec, outbox_spec=outbox_spec)
     sio = _StubSio()
     gw = _deduping_gateway(sio, spec)
 
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
+        pub = build_realtime_publisher(ctx, stream_spec=spec, outbox_spec=outbox_spec)
         with ctx.inv_ctx.bind_identity(tenant=_TENANT):
-            await pub.stage(ctx, Audience.principal("u1"), _ORDER_SHIPPED, _MsgView(text="shipped"))
+            await pub.stage(Audience.principal("u1"), _ORDER_SHIPPED, _MsgView(text="shipped"))
             await ctx.outbox.command(outbox_spec).flush()
             await OutboxRelay(outbox_spec=outbox_spec).to_stream(ctx, spec)
         await _run_settle(gw, ctx, lambda: bool(sio.emits))

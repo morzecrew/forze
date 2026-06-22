@@ -20,8 +20,8 @@ from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.realtime import (
-    RealtimePublisher,
     RealtimeTransport,
+    build_realtime_publisher,
     build_realtime_transport,
     realtime_group_ensure_lifecycle_step,
     realtime_outbox_spec,
@@ -46,18 +46,15 @@ _ORDER_SHIPPED = RealtimeEvent(name="order.shipped", payload_type=_MsgView)  # a
 _TENANT = TenantIdentity(tenant_id=UUID("11111111-1111-1111-1111-111111111111"))
 
 
+_STREAM = realtime_stream_spec()
+_OUTBOX = realtime_outbox_spec()
+
+
 def _runtime() -> ExecutionRuntime:
     return ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
 
-def _publisher() -> RealtimePublisher:
-    return RealtimePublisher(
-        stream_spec=realtime_stream_spec(),
-        outbox_spec=realtime_outbox_spec(),
-    )
-
-
-async def _read_stream(ctx, spec):  # type: ignore[no-untyped-def]
+async def _read_stream(ctx, spec=_STREAM):  # type: ignore[no-untyped-def]
     query = ctx.deps.resolve_configurable(ctx, StreamQueryDepKey, spec, route=spec.name)
     return await query.read({str(spec.name): "0"})
 
@@ -67,15 +64,13 @@ async def _read_stream(ctx, spec):  # type: ignore[no-untyped-def]
 
 
 async def test_publish_appends_signal_with_tenant_header() -> None:
-    rt = _publisher()
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
+        rt = build_realtime_publisher(ctx, stream_spec=_STREAM, outbox_spec=_OUTBOX)
         with ctx.inv_ctx.bind_identity(tenant=_TENANT):
-            mid = await rt.publish(
-                ctx, Audience.topic("chat:42"), _MESSAGE_NEW, _MsgView(text="hi")
-            )
-        rows = await _read_stream(ctx, rt.stream_spec)
+            mid = await rt.publish(Audience.topic("chat:42"), _MESSAGE_NEW, _MsgView(text="hi"))
+        rows = await _read_stream(ctx)
 
     assert mid
     [msg] = rows
@@ -89,36 +84,36 @@ async def test_publish_appends_signal_with_tenant_header() -> None:
 
 
 async def test_publish_without_tenant_has_no_tenant_header() -> None:
-    rt = _publisher()
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
-        await rt.publish(ctx, Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
-        rows = await _read_stream(ctx, rt.stream_spec)
+        rt = build_realtime_publisher(ctx, stream_spec=_STREAM)
+        await rt.publish(Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
+        rows = await _read_stream(ctx)
 
     assert dict(rows[0].headers) == {}
 
 
-async def test_publish_refused_in_read_only_operation() -> None:
-    rt = _publisher()
+async def test_build_refused_in_read_only_operation() -> None:
+    # the read-only guard now fires when the publisher is BUILT, not on first emit
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
         with ctx.inv_ctx.bind_read_only():
             with pytest.raises(CoreException) as err:
-                await rt.publish(ctx, Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
+                build_realtime_publisher(ctx, stream_spec=_STREAM)
 
     assert err.value.kind.value == "precondition"
 
 
 async def test_publish_enforces_audience_constraint() -> None:
-    rt = _publisher()
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
+        rt = build_realtime_publisher(ctx, stream_spec=_STREAM)
         # message.new is topic-only; a principal target is rejected
         with pytest.raises(CoreException) as err:
-            await rt.publish(ctx, Audience.principal("u"), _MESSAGE_NEW, _MsgView(text="x"))
+            await rt.publish(Audience.principal("u"), _MESSAGE_NEW, _MsgView(text="x"))
 
     assert err.value.kind.value == "precondition"
 
@@ -128,20 +123,16 @@ async def test_publish_enforces_audience_constraint() -> None:
 
 
 async def test_stage_then_relay_reaches_stream() -> None:
-    rt = _publisher()
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
+        rt = build_realtime_publisher(ctx, stream_spec=_STREAM, outbox_spec=_OUTBOX)
         with ctx.inv_ctx.bind_identity(tenant=_TENANT):
-            await rt.stage(
-                ctx, Audience.principal("u1"), _ORDER_SHIPPED, _MsgView(text="shipped")
-            )
-            assert await ctx.outbox.command(rt.outbox_spec).flush() == 1
+            await rt.stage(Audience.principal("u1"), _ORDER_SHIPPED, _MsgView(text="shipped"))
+            assert await ctx.outbox.command(_OUTBOX).flush() == 1
 
-            result = await OutboxRelay(outbox_spec=rt.outbox_spec).to_stream(
-                ctx, rt.stream_spec
-            )
-        rows = await _read_stream(ctx, rt.stream_spec)
+            result = await OutboxRelay(outbox_spec=_OUTBOX).to_stream(ctx, _STREAM)
+        rows = await _read_stream(ctx)
 
     assert result.published == 1
     [msg] = rows
@@ -151,13 +142,13 @@ async def test_stage_then_relay_reaches_stream() -> None:
     assert dict(msg.headers).get("forze_tenant_id") == str(_TENANT.tenant_id)
 
 
-async def test_stage_requires_outbox_spec() -> None:
-    rt = RealtimePublisher(stream_spec=realtime_stream_spec())  # no outbox_spec
+async def test_stage_requires_outbox() -> None:
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
+        rt = build_realtime_publisher(ctx, stream_spec=_STREAM)  # no outbox
         with pytest.raises(CoreException) as err:
-            await rt.stage(ctx, Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
+            await rt.stage(Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
 
     assert err.value.kind.value == "configuration"
 
@@ -165,7 +156,6 @@ async def test_stage_requires_outbox_spec() -> None:
 async def test_relay_lifecycle_step_moves_staged_signal_to_stream() -> None:
     spec = realtime_stream_spec()
     outbox_spec = realtime_outbox_spec()
-    rt = RealtimePublisher(stream_spec=spec, outbox_spec=outbox_spec)
     step = realtime_relay_lifecycle_step(
         outbox_spec=outbox_spec, stream_spec=spec, interval=timedelta(seconds=0.02)
     )
@@ -173,7 +163,8 @@ async def test_relay_lifecycle_step_moves_staged_signal_to_stream() -> None:
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
-        await rt.stage(ctx, Audience.principal("u1"), _ORDER_SHIPPED, _MsgView(text="x"))
+        rt = build_realtime_publisher(ctx, stream_spec=spec, outbox_spec=outbox_spec)
+        await rt.stage(Audience.principal("u1"), _ORDER_SHIPPED, _MsgView(text="x"))
         await ctx.outbox.command(outbox_spec).flush()
 
         await step.startup(ctx)

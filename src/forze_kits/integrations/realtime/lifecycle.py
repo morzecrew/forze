@@ -16,7 +16,6 @@ from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.stream import StreamGroupAdminDepKey, StreamSpec
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import StrKey
-
 from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
 
 # ----------------------- #
@@ -31,12 +30,19 @@ class _EnsureGroupStartup(LifecycleHook):
     group: str
     start_id: str
 
+    # ....................... #
+
     async def __call__(self, ctx: ExecutionContext) -> None:
         admin = ctx.deps.resolve_configurable(
-            ctx, StreamGroupAdminDepKey, self.stream_spec, route=self.stream_spec.name
+            ctx,
+            StreamGroupAdminDepKey,
+            self.stream_spec,
+            route=self.stream_spec.name,
         )
         await admin.ensure_group(
-            self.group, str(self.stream_spec.name), start_id=self.start_id
+            self.group,
+            str(self.stream_spec.name),
+            start_id=self.start_id,
         )
 
 
@@ -60,7 +66,9 @@ def realtime_group_ensure_lifecycle_step(
 
     return LifecycleStep(
         id=step_id,
-        startup=_EnsureGroupStartup(stream_spec=stream_spec, group=group, start_id=start_id),
+        startup=_EnsureGroupStartup(
+            stream_spec=stream_spec, group=group, start_id=start_id
+        ),
         mutates_shared_state=True,
     )
 

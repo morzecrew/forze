@@ -70,16 +70,21 @@ the messaging side and never touches a socket, and any transport can host the
 gateway.
 
 ```python
-from forze_kits.integrations.realtime import build_realtime_transport, RealtimePublisher
+from forze_kits.integrations.realtime import build_realtime_transport, build_realtime_publisher
 from forze.application.contracts.realtime import Audience, RealtimeEvent
 
 MESSAGE_NEW = RealtimeEvent(name="message.new", payload_type=MessageView)
 rt_transport = build_realtime_transport()          # one source of truth for all specs
-rt = RealtimePublisher(stream_spec=rt_transport.stream_spec, outbox_spec=rt_transport.outbox_spec)
+
+# build from a handler factory — ports are resolved once, so a bad route fails at
+# wiring, not on first emit (and it refuses to build in a read-only operation):
+rt = build_realtime_publisher(
+    ctx, stream_spec=rt_transport.stream_spec, outbox_spec=rt_transport.outbox_spec
+)
 
 # from any handler/saga — addressed by a tenant-agnostic Audience:
-await rt.publish(ctx, Audience.topic("chat:42"), MESSAGE_NEW, view)   # ephemeral, at-most-once
-await rt.stage(ctx,   Audience.principal(user_id), ORDER_SHIPPED, dto) # durable, at-least-once
+await rt.publish(Audience.topic("chat:42"), MESSAGE_NEW, view)   # ephemeral, at-most-once
+await rt.stage(Audience.principal(user_id), ORDER_SHIPPED, dto)  # durable, at-least-once
 ```
 
 The **gateway** runs as a background lifecycle step, consuming the stream via a
