@@ -29,7 +29,7 @@ from .model import CoreException, ExceptionKind
 # importing it here would form an init-time cycle.
 type JsonDict = dict[str, Any]
 
-# ----------------------- #
+# ....................... #
 
 GENERIC_INTERNAL_DETAIL: Final[str] = "Internal server error"
 """Client-facing detail substituted for any server-side (``>= 500``) error."""

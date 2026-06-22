@@ -33,7 +33,9 @@ from .adapters import (
     MockStreamGroupAdapter,
     MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
+    RecordedEmit,
     RecordingAuthnEventSink,
+    RecordingRealtimePort,
 )
 from .adapters.identity import (
     MockSecretsPort,
@@ -100,4 +102,6 @@ __all__ = [
     "MockTenantManagementPort",
     "MockHashEmbeddingsProvider",
     "RecordingAuthnEventSink",
+    "RecordingRealtimePort",
+    "RecordedEmit",
 ]

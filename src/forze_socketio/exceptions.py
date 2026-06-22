@@ -93,7 +93,7 @@ def render_error_ack(envelope: ErrorEnvelope) -> JsonDict:
 
     Pure: the envelope has already masked server-side details and sanitized any
     exposable ``context``, so this only maps fields onto the wire shape. Logging
-    is the caller's responsibility (see :func:`forze.application.transport.guard_frame`).
+    is the caller's responsibility (see :func:`forze.application.contracts.transport.guard_frame`).
     """
 
     payload: JsonDict = {

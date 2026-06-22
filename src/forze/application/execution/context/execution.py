@@ -16,6 +16,7 @@ from forze.application.contracts.http import HttpServiceDeps
 from forze.application.contracts.idempotency import IdempotencyDeps
 from forze.application.contracts.inbox import InboxDeps
 from forze.application.contracts.outbox import OutboxDeps
+from forze.application.contracts.realtime import RealtimeDeps
 from forze.application.contracts.resilience import ResilienceDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
@@ -208,6 +209,9 @@ class ExecutionContext:
     inbox: InboxDeps = attrs.field(factory=InboxDeps, init=False)
     """Inbox (consumer-side dedup) dependencies."""
 
+    realtime: RealtimeDeps = attrs.field(factory=RealtimeDeps, init=False)
+    """Realtime push dependencies (server→client emit, addressed by subject)."""
+
     # ....................... #
 
     @property
@@ -328,6 +332,7 @@ class ExecutionContext:
         self.idempotency.lock(self)
         self.domain.lock(self)
         self.inbox.lock(self)
+        self.realtime.lock(self)
 
         self.tx_ctx.lock(
             self.transaction,

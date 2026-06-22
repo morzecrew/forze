@@ -37,7 +37,7 @@ from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefu
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
-from forze.application.transport import FrameErr, guard_frame
+from forze.application.contracts.transport import FrameErr, guard_frame
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 from forze.base.scrubbing import sanitize_pydantic_errors
