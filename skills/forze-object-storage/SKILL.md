@@ -35,6 +35,8 @@ The module's `client=` alone registers only the client key; `ctx.storage.query/c
 ### S3 / S3-compatible
 
 ```python
+import os
+
 from forze_s3 import S3Client, S3Config, S3DepsModule, s3_lifecycle_step
 from forze.application.execution import LifecyclePlan
 
@@ -46,9 +48,10 @@ s3_module = S3DepsModule(
 )
 lifecycle = LifecyclePlan.from_steps(
     s3_lifecycle_step(
-        endpoint="http://localhost:9000",     # MinIO/LocalStack for local dev
-        access_key_id="minioadmin",
-        secret_access_key="minioadmin",
+        # read credentials from env/secrets — never commit literal keys
+        endpoint=os.environ.get("S3_ENDPOINT"),          # e.g. http://localhost:9000 for MinIO/LocalStack
+        access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
         config=S3Config(max_pool_connections=20),
     )
 )
@@ -86,7 +89,16 @@ After a presigned/direct upload (where the app never sees the bytes), confirm th
 **Standalone object operations (driving code)** — drive a frozen storage registry through a **`StorageFacade`**, or project it onto FastAPI with `attach_storage_routes` (see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md)):
 
 ```python
-from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
+from forze_kits.aggregates.storage import (
+    BeginUploadRequestDTO,
+    CompleteUploadRequestDTO,
+    ListObjectsRequestDTO,
+    PresignPartRequestDTO,
+    StorageFacade,
+    UploadObjectRequestDTO,
+    UploadSessionRequestDTO,
+    build_storage_registry,
+)
 
 storage_registry = build_storage_registry(attachments_spec).freeze()
 files = StorageFacade(ctx=ctx, registry=storage_registry, namespace=attachments_spec.default_namespace)

@@ -99,6 +99,8 @@ project_spec = DocumentSpec(
 )
 ```
 
+`ResourceName` (your spec-name enum) and `Project` / `ProjectRead` / `CreateProject` / `UpdateProject` (your domain model and DTOs) are app-defined symbols.
+
 Stampede protection, an opt-in in-process L1 (`CacheSpec(l1=L1Spec(...))`, a cross-replica staleness budget), early refresh, and adaptive lifetimes are all spec-level opt-ins — see [Caching reads](https://morzecrew.github.io/forze/latest/data-events/caching/) for the full set and their consistency trade-offs.
 
 ## Search with `SearchFacade`

@@ -15,7 +15,7 @@ Use when querying pre-provisioned warehouse tables/views or appending typed batc
 
 ## Spec and deps route
 
-`AnalyticsSpec.name` is the logical route. Register the same key in the backend module's `analytics` map with the dataset/database, the named `queries`, and an optional `ingest` relation (`(namespace, table)`). SQL lives in the deps config (never in handlers); each query is referenced by key.
+`AnalyticsSpec.name` is the logical route. Register the same key in the backend module's `analytics` map as a backend `*AnalyticsConfig` object (not a plain dict — the module freezes the mapping but does not coerce nested dicts) carrying the dataset/database, the named `queries` (each a `*QueryConfig`), and an optional `ingest` relation (`(namespace, table)`). SQL lives in the deps config (never in handlers); each query is referenced by key.
 
 ```python
 from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
@@ -32,16 +32,22 @@ spec = AnalyticsSpec(
 
 ```python
 from forze.application.execution import LifecyclePlan
-from forze_bigquery import BigQueryClient, BigQueryDepsModule, bigquery_lifecycle_step
+from forze_bigquery import (
+    BigQueryAnalyticsConfig,
+    BigQueryClient,
+    BigQueryDepsModule,
+    BigQueryQueryConfig,
+    bigquery_lifecycle_step,
+)
 
 module = BigQueryDepsModule(
     client=BigQueryClient(),
     analytics={
-        "events": {
-            "dataset": "analytics",
-            "queries": {"daily": {"sql": "SELECT day, count(*) AS n FROM events WHERE day = @day GROUP BY day"}},
-            "ingest": ("analytics", "events_raw"),
-        },
+        "events": BigQueryAnalyticsConfig(  # a config object, not a plain dict
+            dataset="analytics",
+            queries={"daily": BigQueryQueryConfig(sql="SELECT day, count(*) AS n FROM events WHERE day = @day GROUP BY day")},
+            ingest=("analytics", "events_raw"),
+        ),
     },
 )
 lifecycle = LifecyclePlan.from_steps(
@@ -56,20 +62,22 @@ Local emulator: set `BIGQUERY_EMULATOR_HOST=http://localhost:9050` before startu
 ```python
 from forze.application.execution import LifecyclePlan
 from forze_clickhouse import (
+    ClickHouseAnalyticsConfig,
     ClickHouseClient,
     ClickHouseConfig,
     ClickHouseDepsModule,
+    ClickHouseQueryConfig,
     clickhouse_lifecycle_step,
 )
 
 module = ClickHouseDepsModule(
     client=ClickHouseClient(),
     analytics={
-        "events": {
-            "database": "analytics",
-            "queries": {"daily": {"sql": "SELECT day, count(*) AS n FROM events WHERE day = {day:Date} GROUP BY day"}},
-            "ingest": ("analytics", "events_raw"),
-        },
+        "events": ClickHouseAnalyticsConfig(  # a config object, not a plain dict
+            database="analytics",
+            queries={"daily": ClickHouseQueryConfig(sql="SELECT day, count(*) AS n FROM events WHERE day = {day:Date} GROUP BY day")},
+            ingest=("analytics", "events_raw"),
+        ),
     },
 )
 lifecycle = LifecyclePlan.from_steps(
@@ -83,7 +91,7 @@ ClickHouse keyset cursors need `cursor_column` on the query config plus a matchi
 
 ## Consuming analytics
 
-Open a runtime scope, resolve the query/ingest port, and call by query key:
+Open a runtime scope, resolve the query/ingest port, and call by query key (`DailyParams` is your query-params model and `EventRow` your ingest-row model — the same ones the `AnalyticsSpec` references):
 
 ```python
 async with runtime.scope():

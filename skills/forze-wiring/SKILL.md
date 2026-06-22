@@ -82,6 +82,8 @@ deps_registry = DepsRegistry.from_modules(
 
 Manages startup/shutdown of connection pools. Use `LifecyclePlan.from_modules(...)` for integration modules (for example `PostgresLifecycleModule`) or `from_steps(...)` for individual factories. Call `freeze()` to build topological waves using `requires` / `provides` / `depends_on` on each `LifecycleStep`, then pass the frozen plan to `ExecutionRuntime`. Use `with_concurrent()` when independent steps in the same wave may start in parallel.
 
+This block continues the dependency-registry snippet above — it reuses its imports (`PostgresConfig`, `RedisConfig`, `redis_lifecycle_step`) and the `postgres_client` / `redis_client` instances.
+
 ```python
 from forze_postgres import PostgresLifecycleModule
 
@@ -295,6 +297,8 @@ See [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) and the map
 In-memory adapters — no external services:
 
 ```python
+from uuid import uuid4
+
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.aggregates.document import DocumentFacade, DocumentIdDTO
 from forze_mock import MockDepsModule
@@ -306,6 +310,7 @@ async with runtime.scope():
     ctx = runtime.get_context()
     # project_spec + registry as built in "Document composition" above
     facade = DocumentFacade(ctx=ctx, registry=registry, namespace=project_spec.default_namespace)
+    some_uuid = uuid4()  # in a real test, the id you created via facade.create(...)
     result = await facade.get(DocumentIdDTO(id=some_uuid))
 ```
 
