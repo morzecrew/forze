@@ -98,6 +98,8 @@ Keep Cypher, AQL, and engine-specific query strings inside your adapter. Registe
 
 ## Reference
 
-- [Graph contracts](https://morzecrew.github.io/forze/reference/contracts/)
-- [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Graph contracts](https://morzecrew.github.io/forze/latest/reference/contracts/)
+- [Specs and wiring](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
 - [`forze-custom-deps`](../forze-custom-deps/SKILL.md)

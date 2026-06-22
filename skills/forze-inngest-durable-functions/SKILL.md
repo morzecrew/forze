@@ -120,7 +120,9 @@ await step.run("notify", lambda: notifier.send(...))
 
 ## Reference
 
-- [Inngest integration](https://morzecrew.github.io/forze/integrations/inngest/)
-- [Durable function contracts](https://morzecrew.github.io/forze/reference/contracts/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Inngest integration](https://morzecrew.github.io/forze/latest/integrations/inngest/)
+- [Durable function contracts](https://morzecrew.github.io/forze/latest/reference/contracts/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)
 - [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

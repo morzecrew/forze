@@ -30,8 +30,7 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 | **forze-custom-deps** | Advanced: custom `DepKey` and `DepsModule` for private integrations. |
 | **forze-documents-search** | Document/search ports, query DSL, cache-aware specs, Postgres/Mongo/Firestore + Meilisearch behavior. |
 | **forze-fastapi-interface** | FastAPI context deps, generated routes (`attach_*_routes`), middleware, errors. |
-| **forze-storage-s3** | `StorageSpec`, `S3DepsModule`, tenant-aware buckets, lifecycle, mock tests. |
-| **forze-storage-gcs** | GCS storage with `GCSDepsModule`, emulator, tenant-aware buckets, mock tests. |
+| **forze-object-storage** | `StorageSpec` + `StorageFacade`, S3 (`S3DepsModule`) and GCS (`GCSDepsModule`) backends, tenant-aware buckets, presigned/multipart uploads, mock tests. |
 | **forze-http-outbound** | Outbound HTTP: declarative `BaseHttpIntegration` / `async_http_op`, `HttpServiceSpec`, `HttpDepsModule`, auth, tenant routing. |
 | **forze-messaging-streaming** | Queue, pub/sub, stream contracts; SQS/RabbitMQ; Redis custom wiring notes. |
 | **forze-temporal-workflows** | `DurableWorkflowSpec`, Temporal deps, workflow ports, schedules, worker context. |
@@ -40,9 +39,8 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 | **forze-graph-contracts** | Graph specs and ports; custom adapter wiring (no official graph package). |
 | **forze-observability-errors** | `CoreException` / `exc` factories, logging, call context, FastAPI error responses. |
 | **forze-resilience-deadlines** | Resilience policies, invocation deadlines, graceful drain/readiness, fleet deployment posture. |
-| **forze-analytics-clickhouse** | `AnalyticsSpec`, ClickHouse query/ingest, local Docker setup. |
-| **forze-analytics-bigquery** | BigQuery analytics, emulator env, streaming ingest. |
+| **forze-analytics** | `AnalyticsSpec` query/ingest ports, BigQuery (`@param`) and ClickHouse (`{name:Type}`) backends, named SQL templates. |
 
 ## Documentation
 
-Skills link to the published docs at [morzecrew.github.io/forze](https://morzecrew.github.io/forze/). Framework contribution is documented in the Forze repository (`AGENTS.md`, `CONTRIBUTING.md`), not in these skills.
+Skills link to the published docs at [morzecrew.github.io/forze](https://morzecrew.github.io/forze/latest/), which are **versioned**: each skill's links use the `latest` alias, and the Reference section notes how to swap `latest` for an older pinned `forze` minor. Framework contribution is documented in the Forze repository (`AGENTS.md`, `CONTRIBUTING.md`), not in these skills.

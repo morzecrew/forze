@@ -96,7 +96,9 @@ Register a shared client as a plain dep; routed factories pick tenant-specific c
 
 ## Reference
 
-- [Execution reference](https://morzecrew.github.io/forze/in-depth/wiring/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Execution reference](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
 - [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md)
 - [`forze-graph-contracts`](../forze-graph-contracts/SKILL.md) (graph ports + custom module)
 - [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) (Redis pub/sub/stream custom wiring)

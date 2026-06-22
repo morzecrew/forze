@@ -97,6 +97,7 @@ from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.durable.workflow import DurableWorkflowSpec
 from forze.base.serialization import PydanticModelCodec
+from forze_s3 import S3StorageConfig
 
 attachments = StorageSpec(name=ResourceName.PROJECT_ATTACHMENTS)
 orders = QueueSpec(
@@ -107,7 +108,7 @@ workflow_spec: DurableWorkflowSpec[StartOrderIn, OrderResult] = ...
 
 s3_module = S3DepsModule(
     client=s3_client,
-    storages={ResourceName.PROJECT_ATTACHMENTS: {"bucket": "project-files"}},
+    storages={ResourceName.PROJECT_ATTACHMENTS: S3StorageConfig(bucket="project-files")},
 )
 sqs_module = SQSDepsModule(
     client=sqs_client,
@@ -120,6 +121,8 @@ temporal_module = TemporalDepsModule(
 )
 ```
 
+`GCSDepsModule` takes the same `storages={...}` map as `S3DepsModule` shown here — for either backend, `<Module>(client=...)` alone registers no storage route (see [`forze-object-storage`](../forze-object-storage/SKILL.md)).
+
 ## Transaction routes
 
 Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFAULT})`). Application code uses `async with ctx.tx_ctx.scope(TxRoute.DEFAULT):` and `registry.bind(...).bind_tx().set_route(TxRoute.DEFAULT).finish(deep=True).freeze()`.
@@ -129,15 +132,17 @@ Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFA
 - Mismatch between `spec.name` and infra dict keys is a frequent wiring bug — check the spec enum and deps-module map when debugging “dependency not registered”.
 - Do not mix plain strings and enum members casually in new code. Equality works by value, but shared enums make missing routes easier to catch in review.
 - Enable `history_enabled` on the **spec** when you want history semantics; the **relation** still comes from infra (`history` on Postgres/Mongo config).
-- `S3DepsModule(client=...)`, `SQSDepsModule(client=...)`, and `TemporalDepsModule(client=...)` register only client keys unless their routed maps are populated.
+- `S3DepsModule(client=...)` / `GCSDepsModule(client=...)`, `SQSDepsModule(client=...)`, and `TemporalDepsModule(client=...)` register only client keys unless their routed maps are populated — for object storage the `storages={...}` map is required for **both** S3 and GCS.
 
 ## Reference
 
-- [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/)
-- [Postgres integration](https://morzecrew.github.io/forze/integrations/postgres/)
-- [Mongo integration](https://morzecrew.github.io/forze/integrations/mongo/)
-- [Redis integration](https://morzecrew.github.io/forze/integrations/redis/)
-- [S3 integration](https://morzecrew.github.io/forze/integrations/s3/)
-- [SQS integration](https://morzecrew.github.io/forze/integrations/sqs/)
-- [RabbitMQ integration](https://morzecrew.github.io/forze/integrations/rabbitmq/)
-- [Temporal integration](https://morzecrew.github.io/forze/integrations/temporal/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Specs and wiring](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
+- [Postgres integration](https://morzecrew.github.io/forze/latest/integrations/postgres/)
+- [Mongo integration](https://morzecrew.github.io/forze/latest/integrations/mongo/)
+- [Redis integration](https://morzecrew.github.io/forze/latest/integrations/redis/)
+- [S3 integration](https://morzecrew.github.io/forze/latest/integrations/s3/)
+- [SQS integration](https://morzecrew.github.io/forze/latest/integrations/sqs/)
+- [RabbitMQ integration](https://morzecrew.github.io/forze/latest/integrations/rabbitmq/)
+- [Temporal integration](https://morzecrew.github.io/forze/latest/integrations/temporal/)

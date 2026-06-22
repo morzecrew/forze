@@ -73,8 +73,9 @@ app.include_router(router)
   `PATCH /{id}?rev=`, `DELETE /{id}` 204); `style="rpc"` keeps one
   operation-named path per op and puts the id in a query parameter
   (`GET /get?id=`, `PATCH /update?id=&rev=` with the patch body,
-  `DELETE /kill?id=` 204). `create` and list operations are `POST /<op>` with
-  the input DTO as body in both styles (no id to address).
+  `DELETE /kill?id=` 204). List operations are `POST /<op>` with a filter body
+  in both styles. `create` also posts its input DTO as a body, but mounts at the
+  router root in REST (`POST ""`, 201) and at `POST /create` in RPC.
 - Only operations the registry holds are attached (a read-only spec yields a
   read-only router); narrow with `include={"get", "list"}`.
 - Merging `build_soft_deletion_registry(spec)` into the document registry adds
@@ -106,25 +107,33 @@ app.include_router(router)
 
 ## Hand-written routes
 
-Define plain FastAPI routes that resolve a context with `ctx_dep`, dispatch through your operation registry / facade (see [`forze-wiring`](../forze-wiring/SKILL.md) and [`forze-documents-search`](../forze-documents-search/SKILL.md)), and return the result. For simple reads you can call the ports directly:
+When you need a route the generators don't cover, define a plain FastAPI route that resolves a context with `ctx_dep` and dispatches through a **facade** built from your frozen registry (see [`forze-documents-search`](../forze-documents-search/SKILL.md)) — not the raw ports:
 
 ```python
+from __future__ import annotations
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
+from forze_kits.aggregates.document import DocumentFacade, DocumentIdDTO
+
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+def projects(ctx) -> DocumentFacade[ProjectRead, CreateProject, UpdateProject]:
+    return DocumentFacade(ctx=ctx, registry=registry, namespace=project_spec.default_namespace)
 
 
 @router.get("/{project_id}")
 async def get_project(project_id: UUID, ctx=Depends(ctx_dep)):
-    return await ctx.document.query(project_spec).get(project_id)
+    return await projects(ctx).get(DocumentIdDTO(id=project_id))
 
 
 app.include_router(router)
 ```
 
-For writes, run them inside a transaction scope (`ctx.tx_ctx.scope(route)`) or dispatch through the frozen `OperationRegistry` / facade built with `forze_kits.aggregates.*`.
+The facade runs each operation through the pipeline (mapping, hooks, transaction). Reach a raw `ctx.<port>` only inside a custom handler that a facade operation can't express.
 
 ## Middleware, errors, and docs
 
@@ -163,6 +172,8 @@ register_scalar_docs(app, path="/docs")
 
 ## Reference
 
-- [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [FastAPI integration](https://morzecrew.github.io/forze/latest/integrations/fastapi/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)
 - [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md)

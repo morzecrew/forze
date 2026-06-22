@@ -11,11 +11,11 @@ description: >-
 
 Use when setting up the Forze runtime, dependency registry, lifecycle, operation composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For dependency resolution, see [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md); for private integrations, see [`forze-custom-deps`](../forze-custom-deps/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day handler code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
 
-For which plan enables deps, lifecycle hooks, or operation stages, see [Three execution plans](https://morzecrew.github.io/forze/in-depth/wiring/) (`DepsRegistry`, `LifecyclePlan`, `OperationRegistry`).
+For which plan enables deps, lifecycle hooks, or operation stages, see [Three execution plans](https://morzecrew.github.io/forze/latest/writing-operation/wiring/) (`DepsRegistry`, `LifecyclePlan`, `OperationRegistry`).
 
 ## Runtime setup
 
-Logical **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsRegistry.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/).
+Logical **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsRegistry.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [Specs and wiring](https://morzecrew.github.io/forze/latest/writing-operation/wiring/).
 
 ### Dependency registry
 
@@ -65,9 +65,9 @@ deps_registry = DepsRegistry.from_modules(
 )
 ```
 
-Alternatively, a single callable module may return `Deps.merge(...)` — see [Getting started](https://morzecrew.github.io/forze/get-started/quickstart/).
+Alternatively, a single callable module may return `Deps.merge(...)` — see [Getting started](https://morzecrew.github.io/forze/latest/get-started/quickstart/).
 
-Merge optional integration modules the same way — for example `TenancyDepsModule` from `forze_identity.tenancy.execution` registers `TenantResolverDepKey` / `TenantManagementDepKey` routes for document-backed tenant resolution (see [Multi-tenancy](https://morzecrew.github.io/forze/in-depth/multi-tenancy/)):
+Merge optional integration modules the same way — for example `TenancyDepsModule` from `forze_identity.tenancy.execution` registers `TenantResolverDepKey` / `TenantManagementDepKey` routes for document-backed tenant resolution (see [Multi-tenancy](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/multi-tenancy/)):
 
 ```python
 from forze_identity.tenancy.execution import TenancyDepsModule
@@ -82,12 +82,14 @@ deps_registry = DepsRegistry.from_modules(
 
 Manages startup/shutdown of connection pools. Use `LifecyclePlan.from_modules(...)` for integration modules (for example `PostgresLifecycleModule`) or `from_steps(...)` for individual factories. Call `freeze()` to build topological waves using `requires` / `provides` / `depends_on` on each `LifecycleStep`, then pass the frozen plan to `ExecutionRuntime`. Use `with_concurrent()` when independent steps in the same wave may start in parallel.
 
+This block continues the dependency-registry snippet above — it reuses its imports (`PostgresConfig`, `RedisConfig`, `redis_lifecycle_step`) and the `postgres_client` / `redis_client` instances.
+
 ```python
 from forze_postgres import PostgresLifecycleModule
 
 lifecycle_plan = LifecyclePlan.from_modules(
     PostgresLifecycleModule(
-        client=pg,
+        client=postgres_client,
         dsn="postgresql://app:app@localhost:5432/app",
         config=PostgresConfig(min_size=2, max_size=15),
     ),
@@ -141,11 +143,11 @@ write_ops = [
     for op in (
         DocumentKernelOp.CREATE,
         DocumentKernelOp.UPDATE,
-        DocumentKernelOp.DELETE,
         DocumentKernelOp.KILL,
-        DocumentKernelOp.RESTORE,
     )
 ]
+# soft delete/restore are a separate registry — bind SoftDeletionKernelOp ops
+# from build_soft_deletion_registry the same way
 
 registry = (
     build_document_registry(project_spec, project_dtos)
@@ -207,11 +209,11 @@ registry = (
 
 ### Stage order
 
-Outer `before` / `wrap` / `on_success` / `on_failure` / `finally_`, then optional transaction scope (`tx_before`, handler, transactional `on_success`, `after_commit`, `dispatch_after_commit`). Higher `priority` runs first within the same stage. See [Middleware and plans](https://morzecrew.github.io/forze/in-depth/capability-execution/).
+Outer `before` / `wrap` / `on_success` / `on_failure` / `finally_`, then optional transaction scope (`tx_before`, handler, transactional `on_success`, `after_commit`, `dispatch_after_commit`). Higher `priority` runs first within the same stage. See [Middleware and plans](https://morzecrew.github.io/forze/latest/writing-operation/capability-execution/).
 
 ### Cross-cutting patches
 
-`registry.patch(selector)` applies a plan default (route, deadline, hook) to every operation a selector matches. Patches are **late-bound** — resolved at `freeze()` against the full key set. Across `OperationRegistry.merge(...)` the cross-registry reach is **fail-closed**: if a patch from one part matches another part's operations, `merge` raises naming the selectors and ops. Resolve it by scoping the patch (`patch(selector, namespace=ns)` — matches only ops under `ns`), folding it into per-operation plans first (`registry.materialize_patches()`), or allowing it explicitly (`merge(..., cross_registry=True)`). A policy patch applied *after* the merge never travels through `merge`. A **live** patch is "apply wherever this lands"; a **materialized** one is "settled here." See [Middleware and plans](https://morzecrew.github.io/forze/in-depth/capability-execution/).
+`registry.patch(selector)` applies a plan default (route, deadline, hook) to every operation a selector matches. Patches are **late-bound** — resolved at `freeze()` against the full key set. Across `OperationRegistry.merge(...)` the cross-registry reach is **fail-closed**: if a patch from one part matches another part's operations, `merge` raises naming the selectors and ops. Resolve it by scoping the patch (`patch(selector, namespace=ns)` — matches only ops under `ns`), folding it into per-operation plans first (`registry.materialize_patches()`), or allowing it explicitly (`merge(..., cross_registry=True)`). A policy patch applied *after* the merge never travels through `merge`. A **live** patch is "apply wherever this lands"; a **materialized** one is "settled here." See [Middleware and plans](https://morzecrew.github.io/forze/latest/writing-operation/capability-execution/).
 
 ## FastAPI integration
 
@@ -227,14 +229,19 @@ def context_dependency():
 > **Note:** the former `forze_fastapi.endpoints.*` router helpers (`attach_document_endpoints`, `attach_search_endpoints`, `attach_http_endpoint`, …) have been removed. Their replacement is `forze_fastapi.routes` (`attach_document_routes`, `attach_search_routes`, `attach_storage_routes`), which generates routes from a frozen operation registry — see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). You can also define your own FastAPI routes that resolve a context with the dependency above, dispatch through your operation registry / facade (see [Search composition](#search-composition)), and return the result. Use `SecurityContextMiddleware` for identity binding and `register_exception_handlers(app)` for error mapping (see [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md) and [`forze-observability-errors`](../forze-observability-errors/SKILL.md)).
 
 ```python
-from fastapi import APIRouter
+from uuid import UUID
+
+from fastapi import APIRouter, Depends
+
+from forze_kits.aggregates.document import DocumentFacade, DocumentIdDTO
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 @router.get("/{project_id}")
 async def get_project(project_id: UUID, ctx=Depends(context_dependency)):
-    return await ctx.document.query(project_spec).get(project_id)
+    facade = DocumentFacade(ctx=ctx, registry=registry, namespace=project_spec.default_namespace)
+    return await facade.get(DocumentIdDTO(id=project_id))
 
 
 app.include_router(router)
@@ -290,7 +297,10 @@ See [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) and the map
 In-memory adapters — no external services:
 
 ```python
+from uuid import uuid4
+
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze_kits.aggregates.document import DocumentFacade, DocumentIdDTO
 from forze_mock import MockDepsModule
 
 mock_module = MockDepsModule()
@@ -298,8 +308,10 @@ runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mock_module).freeze())
 
 async with runtime.scope():
     ctx = runtime.get_context()
-    doc_q = ctx.document.query(project_spec)
-    result = await doc_q.get(some_uuid)
+    # project_spec + registry as built in "Document composition" above
+    facade = DocumentFacade(ctx=ctx, registry=registry, namespace=project_spec.default_namespace)
+    some_uuid = uuid4()  # in a real test, the id you created via facade.create(...)
+    result = await facade.get(DocumentIdDTO(id=some_uuid))
 ```
 
 ## Search composition
@@ -314,7 +326,7 @@ facade = SearchFacade(
     registry=search_registry,
     namespace=project_search_spec.default_namespace,
 )
-result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
+result = await facade.search(SearchRequestDTO(query="roadmap", page=1, size=20))
 ```
 
 ## Transactional notifications
@@ -334,7 +346,7 @@ router.register("project.created", lambda e: [EmailNotification(...)])
 # stage in handler; flush via outbox_flush_tx_on_success_factory; relay; worker calls process_notification_message
 ```
 
-See [Transactional notifications](https://morzecrew.github.io/forze/recipes/transactional-notifications/).
+See [Transactional notifications](https://morzecrew.github.io/forze/latest/recipes/transactional-notifications/).
 
 ## Anti-patterns
 
@@ -347,8 +359,10 @@ See [Transactional notifications](https://morzecrew.github.io/forze/recipes/tran
 
 ## Reference
 
-- [Getting started](https://morzecrew.github.io/forze/get-started/quickstart/)
-- [Operation composition](https://morzecrew.github.io/forze/in-depth/capability-execution/)
-- [Composition reference](https://morzecrew.github.io/forze/in-depth/capability-execution/)
-- [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)
-- [Mock integration](https://morzecrew.github.io/forze/integrations/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Getting started](https://morzecrew.github.io/forze/latest/get-started/quickstart/)
+- [Operation composition](https://morzecrew.github.io/forze/latest/writing-operation/capability-execution/)
+- [Composition reference](https://morzecrew.github.io/forze/latest/writing-operation/capability-execution/)
+- [FastAPI integration](https://morzecrew.github.io/forze/latest/integrations/fastapi/)
+- [Mock integration](https://morzecrew.github.io/forze/latest/integrations/)

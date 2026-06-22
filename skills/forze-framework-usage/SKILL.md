@@ -59,15 +59,19 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in
 
 For configurable keys without a convenience wrapper, use `ctx.deps.resolve_configurable(ctx, DepKey, spec, route=spec.name)`.
 
-See [Execution reference](https://morzecrew.github.io/forze/in-depth/wiring/).
+See [Execution reference](https://morzecrew.github.io/forze/latest/writing-operation/wiring/).
 
 ### Handler pattern
 
 Handlers implement `Handler[Args, R]` from `forze.application.contracts.execution` and are registered on `OperationRegistry`:
 
 ```python
+import attrs
+
 from forze.application.contracts.execution import Handler
 
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class GetProject(Handler[UUID, ProjectReadModel]):
     doc: DocumentQueryPort[ProjectReadModel]
 
@@ -75,7 +79,7 @@ class GetProject(Handler[UUID, ProjectReadModel]):
         return await self.doc.get(args)
 ```
 
-Factories receive `ExecutionContext` and inject ports: `lambda ctx: GetProject(doc=ctx.document.query(project_spec))`.
+Factories receive `ExecutionContext` and inject ports: `lambda ctx: GetProject(doc=ctx.document.query(project_spec))`. The `@attrs.define(kw_only=True)` gives the handler its keyword constructor — `Handler` is a `Protocol` and provides no `__init__`.
 
 ### Transactions
 
@@ -90,7 +94,7 @@ async with ctx.tx_ctx.scope(TxRoute.DEFAULT):
 
 Use `ctx.tx_ctx.defer_after_commit()` for side effects that must run only after the root transaction commits.
 
-Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` — see [Middleware and plans](https://morzecrew.github.io/forze/in-depth/capability-execution/).
+Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` — see [Middleware and plans](https://morzecrew.github.io/forze/latest/writing-operation/capability-execution/).
 
 ### Identity and tenancy
 
@@ -131,7 +135,9 @@ rows, total = page.hits, page.count
 
 ## Common patterns
 
-### Document reads and writes
+For standard document CRUD in application/driving code (routes, services), prefer a **`DocumentFacade`** — and `SearchFacade` for search — over resolving ports by hand; see [`forze-documents-search`](../forze-documents-search/SKILL.md). The port-level snippets below are what a **custom handler** does internally, once a facade operation can't express the work.
+
+### Document reads and writes (inside a custom handler)
 
 ```python
 doc_q = ctx.document.query(project_spec)
@@ -205,7 +211,9 @@ See [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) and [`f
 
 ## Reference
 
-- [Execution reference](https://morzecrew.github.io/forze/in-depth/wiring/)
-- [Contracts and adapters](https://morzecrew.github.io/forze/core-concepts/contracts/)
-- [Query syntax](https://morzecrew.github.io/forze/reference/query-syntax/)
-- [Contracts overview](https://morzecrew.github.io/forze/reference/contracts/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Execution reference](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
+- [Contracts and adapters](https://morzecrew.github.io/forze/latest/core-concepts/contracts/)
+- [Query syntax](https://morzecrew.github.io/forze/latest/reference/query-syntax/)
+- [Contracts overview](https://morzecrew.github.io/forze/latest/reference/contracts/)

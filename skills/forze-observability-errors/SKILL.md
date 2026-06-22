@@ -116,6 +116,8 @@ register_exception_handlers(app)
 
 ## Reference
 
-- [Base layer (errors and logging)](https://morzecrew.github.io/forze/reference/errors/)
-- [Observability](https://morzecrew.github.io/forze/in-depth/observability/)
-- [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)
+> Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
+
+- [Base layer (errors and logging)](https://morzecrew.github.io/forze/latest/reference/errors/)
+- [Observability](https://morzecrew.github.io/forze/latest/running-in-prod/observability/)
+- [FastAPI integration](https://morzecrew.github.io/forze/latest/integrations/fastapi/)

@@ -12,7 +12,7 @@ Skills target engineers building **applications** that depend on Forze (`forze`,
 | `DepsRegistry`, built-in `*DepsModule`, `forze_mock` tests | Import-linter contracts, CHANGELOG, CI, `AGENTS.md` workflow |
 | Custom `DepsModule` in **your app** (advanced skill) | Reading `src/forze_*` to implement framework adapters |
 
-Framework contributors should use [`AGENTS.md`](../AGENTS.md), [canonical docs](https://morzecrew.github.io/forze/), and `.claude/skills/`.
+Framework contributors should use [`AGENTS.md`](../AGENTS.md), [canonical docs](https://morzecrew.github.io/forze/latest/), and `.claude/skills/`.
 
 ## Vocabulary
 
@@ -25,7 +25,7 @@ Framework contributors should use [`AGENTS.md`](../AGENTS.md), [canonical docs](
 
 ## Links
 
-- **Published docs:** `https://morzecrew.github.io/forze/...` (see [`pages/zensical.toml`](../pages/zensical.toml) `site_url`). Use trailing-slash paths, e.g. `.../forze/integrations/inngest/`.
+- **Published docs:** `https://morzecrew.github.io/forze/latest/...` (see [`pages/zensical.toml`](../pages/zensical.toml) `site_url`). Docs are **versioned** with mike — the bare `.../forze/<page>/` form (no version segment) **404s**; always include the `latest` alias segment and a trailing slash, e.g. `.../forze/latest/integrations/inngest/`. Each skill's **Reference** section must open with the one-line note telling readers to swap `latest` for their pinned `forze` minor (or use the site version selector).
 - **Cross-skill:** relative paths only, e.g. [`forze-wiring`](forze-wiring/SKILL.md).
 - **Never** link to `../../src/`, `../../tests/`, or `../../pages/` — installed skills are copied outside the Forze repo and those paths break.
 
@@ -52,6 +52,13 @@ Optional **Gotchas** section for migration notes and debugging.
 - **`forze-custom-deps`** — advanced: private `DepsModule` / `DepKey` in the application.
 
 Do not publish `forze-deps-modules` (retired name).
+
+## Retired (merged) skill names
+
+Do not re-create these — they were merged and removed (breaking change):
+
+- `forze-storage-s3`, `forze-storage-gcs` → **`forze-object-storage`** (S3 + GCS in one skill).
+- `forze-analytics-bigquery`, `forze-analytics-clickhouse` → **`forze-analytics`** (BigQuery + ClickHouse in one skill).
 
 ## Adding or changing a skill
 
