@@ -37,16 +37,16 @@ from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefu
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
+from forze.application.transport import FrameErr, guard_frame
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
-    build_core_exception_ack,
-    build_unhandled_exception_ack,
     is_server_error_kind,
     log_server_error,
+    render_error_ack,
 )
 
 # ----------------------- #
@@ -318,30 +318,25 @@ class SocketIONamespaceRouter:
                     event=_route.event,
                 )
 
-                try:
-                    ctx = await _resolve_context(context_factory, request)
-                    args = _parse_payload(_route, payload)
+                outcome = await guard_frame(
+                    lambda: _dispatch_event(
+                        sio,
+                        request,
+                        _route,
+                        payload,
+                        with_identity=_with_identity,
+                        context_factory=context_factory,
+                        operation_resolver=operation_resolver,
+                    ),
+                    on_server_error=lambda core, error: log_server_error(
+                        error, core=core
+                    ),
+                )
 
-                    binding: AbstractContextManager[None] = nullcontext()
+                if isinstance(outcome, FrameErr):
+                    return render_error_ack(outcome.envelope)
 
-                    if _with_identity:
-                        session = await sio.get_session(sid, namespace=_namespace)
-                        identity: AuthnIdentity | None = session.get(
-                            IDENTITY_SESSION_KEY
-                        )
-                        binding = ctx.inv_ctx.bind_identity(authn=identity)
-
-                    with binding:
-                        op = operation_resolver(_route.operation, ctx)
-                        result = await op(args)
-
-                    return _route.parse_ack(result)
-
-                except CoreException as error:
-                    return build_core_exception_ack(error)
-
-                except Exception as error:  # noqa: BLE001
-                    return build_unhandled_exception_ack(error)
+                return outcome.value
 
             sio.on(route.event, handler=handler, namespace=namespace)
 
@@ -428,6 +423,43 @@ class ForzeSocketIOAdapter:
             self.include_router(router)
 
         return self
+
+
+# ....................... #
+
+
+async def _dispatch_event(
+    sio: AsyncServer,
+    request: SocketIORequest,
+    route: SocketIOCommandRoute[Any, Any],
+    payload: Any,
+    *,
+    with_identity: bool,
+    context_factory: ExecutionContextFactoryPort,
+    operation_resolver: HandlerResolverPort,
+) -> Any:
+    """Resolve the context, validate the payload, run the operation, parse the ack.
+
+    The transport-neutral error boundary (:func:`guard_frame`) wraps this thunk:
+    a :class:`CoreException` (including payload-validation failures) or any other
+    exception raised here is projected into the structured error ack.
+    """
+
+    ctx = await _resolve_context(context_factory, request)
+    args = _parse_payload(route, payload)
+
+    binding: AbstractContextManager[None] = nullcontext()
+
+    if with_identity:
+        session = await sio.get_session(request.sid, namespace=request.namespace)
+        identity: AuthnIdentity | None = session.get(IDENTITY_SESSION_KEY)
+        binding = ctx.inv_ctx.bind_identity(authn=identity)
+
+    with binding:
+        op = operation_resolver(route.operation, ctx)
+        result = await op(args)
+
+    return route.parse_ack(result)
 
 
 # ....................... #

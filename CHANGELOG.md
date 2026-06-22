@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **HTTP status mapping in core** — `http_status_for_kind(kind)` in `forze.base.exceptions` maps an `ExceptionKind` to its conventional HTTP status (404/409/422/…, else 500), so any HTTP-serving layer can reuse it. FastAPI's response builder now uses this shared helper instead of a private one.
 
+- **Shared transport error boundary** — `ErrorEnvelope` + `error_envelope()` in `forze.base.exceptions` is the one client-safe projection of a `CoreException` (server-error masking, egress-policy context, status hint), and `guard_frame()` in `forze.application.transport` is the inbound dispatch boundary realtime/RPC transports render. Socket.IO now renders the envelope instead of duplicating the mapping (behavior unchanged).
+
 - **Materialized derived fields** — `DocumentSpec(materialized=…)` persists selected computed fields as real columns, making them filterable and sortable. Names are validated, create/update collisions are rejected, and startup checks require matching columns.
 
 - **Two-phase prepare/apply handlers** — `prepare(args)` runs outside the transaction (CPU or external work) and `apply(args, payload)` inside it, so the transaction wraps only the writes. Adds the `TwoPhaseHandler` contract and a kit base; a tx route is required and `prepare` is read-only.

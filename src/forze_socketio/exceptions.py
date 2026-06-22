@@ -26,46 +26,38 @@ require_socketio()
 
 # ....................... #
 
-from typing import Final
-
 from forze.base.exceptions import (
+    GENERIC_INTERNAL_DETAIL,
+    INTERNAL_ERROR_CODE,
     CoreException,
-    ExceptionKind,
-    exception_egress_policy,
-    http_status_for_kind,
+    ErrorEnvelope,
+    error_envelope,
+    is_server_error_kind,
+    unhandled_error_envelope,
 )
 from forze.base.logging import Logger
 from forze.base.primitives import JsonDict
-from forze.base.scrubbing import sanitize
 
 from ._logging import ForzeSocketIOLogger
 
 # ----------------------- #
 
-GENERIC_INTERNAL_DETAIL: Final[str] = "Internal server error"
-"""Generic detail message for server-side errors."""
-
-INTERNAL_ERROR_CODE: Final[str] = "core.internal"
-"""Error code used for unhandled non-:class:`CoreException` errors."""
+# ``GENERIC_INTERNAL_DETAIL``, ``INTERNAL_ERROR_CODE``, ``is_server_error_kind``,
+# and the egress projection are re-exported from core
+# (:mod:`forze.base.exceptions.envelope`) so the canonical mapping is shared with
+# :mod:`forze_fastapi.exceptions` and any future realtime transport.
+__all__ = [
+    "GENERIC_INTERNAL_DETAIL",
+    "INTERNAL_ERROR_CODE",
+    "is_server_error_kind",
+    "log_server_error",
+    "render_error_ack",
+    "build_core_exception_ack",
+    "build_unhandled_exception_ack",
+]
 
 error_logger = Logger(ForzeSocketIOLogger.ERRORS)
 """Logger for Socket.IO server-side error diagnostics."""
-
-# ....................... #
-
-
-def is_server_error_kind(kind: ExceptionKind) -> bool:
-    """Return whether *kind* is a server-side error.
-
-    Shares the canonical status mapping with :mod:`forze_fastapi.exceptions`
-    via :func:`http_status_for_kind`: kinds that map to a status ``>= 500`` (and
-    unknown kinds, which fall back to ``500``) are server-side and must never
-    expose their summary or details to clients. Deriving from the single source
-    of truth keeps both transports in lock-step as kinds are added or remapped.
-    """
-
-    return http_status_for_kind(kind) >= 500
-
 
 # ....................... #
 
@@ -96,31 +88,43 @@ def log_server_error(exc: BaseException, *, core: CoreException | None = None) -
 # ....................... #
 
 
+def render_error_ack(envelope: ErrorEnvelope) -> JsonDict:
+    """Render a core :class:`ErrorEnvelope` into the Socket.IO ack error shape.
+
+    Pure: the envelope has already masked server-side details and sanitized any
+    exposable ``context``, so this only maps fields onto the wire shape. Logging
+    is the caller's responsibility (see :func:`forze.application.transport.guard_frame`).
+    """
+
+    payload: JsonDict = {
+        "detail": envelope.detail,
+        "code": envelope.code,
+        "kind": envelope.kind.value,
+    }
+
+    if envelope.context is not None:
+        payload["context"] = envelope.context
+
+    return {"error": payload}
+
+
+# ....................... #
+
+
 def build_core_exception_ack(exc: CoreException) -> JsonDict:
     """Build the standard error acknowledgement payload for a :class:`CoreException`.
 
-    Server-side kinds are logged and their summary is replaced with a generic
-    detail message so internal diagnostics never leak to clients. The sanitized
-    ``context`` field is only included when the egress policy for the exception
-    kind allows exposing details.
+    Convenience wrapper that projects *exc* via the core egress mapping, logs
+    server-side errors, and renders the ack. The dispatch path logs through
+    :func:`guard_frame` instead and calls :func:`render_error_ack` directly.
     """
 
-    policy = exception_egress_policy(exc.kind)
-    server_error = is_server_error_kind(exc.kind)
+    envelope = error_envelope(exc)
 
-    if server_error:
+    if envelope.server_error:
         log_server_error(exc, core=exc)
 
-    payload: JsonDict = {
-        "detail": GENERIC_INTERNAL_DETAIL if server_error else exc.summary,
-        "code": exc.code,
-        "kind": exc.kind.value,
-    }
-
-    if exc.details and policy.expose_details and not server_error:
-        payload["context"] = sanitize(exc.details, context="egress")
-
-    return {"error": payload}
+    return render_error_ack(envelope)
 
 
 # ....................... #
@@ -135,10 +139,4 @@ def build_unhandled_exception_ack(exc: BaseException) -> JsonDict:
 
     log_server_error(exc)
 
-    return {
-        "error": {
-            "detail": GENERIC_INTERNAL_DETAIL,
-            "code": INTERNAL_ERROR_CODE,
-            "kind": ExceptionKind.INTERNAL.value,
-        }
-    }
+    return render_error_ack(unhandled_error_envelope())
