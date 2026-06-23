@@ -22,6 +22,7 @@ from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import exc
 from forze.base.logging import Logger
 from forze.base.primitives import StrKey
 
@@ -99,6 +100,10 @@ class _PeriodicShutdown(LifecycleHook):
 def _periodic_step(
     *, tick: Callable[[], Awaitable[None]], interval: timedelta, label: str, step_id: StrKey
 ) -> LifecycleStep:
+    if interval.total_seconds() <= 0:
+        # A non-positive interval would spin the worker (sleep(0) hot-loop) — fail at wiring.
+        raise exc.configuration(f"{label} interval must be positive")
+
     startup = _PeriodicStartup(tick=tick, interval=interval, label=label)
 
     return LifecycleStep(

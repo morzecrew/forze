@@ -1,7 +1,7 @@
 """Unit tests for the realtime message contract (E1) — data only, no port."""
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.realtime import (
     Audience,
@@ -55,7 +55,7 @@ def test_event_accepts_respects_audience_kinds() -> None:
 
 def test_event_parse_validates_payload() -> None:
     assert _MESSAGE_NEW.parse({"text": "hi"}) == _MsgView(text="hi")
-    with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError
+    with pytest.raises(ValidationError):
         _MESSAGE_NEW.parse({"wrong": 1})
 
 

@@ -132,7 +132,7 @@ attach_realtime_connection(sio, resolve=resolve_connection, presence=presence)
 *and* auto-joins. Socket.IO keeps one connect handler per namespace, so do not
 also give `ForzeSocketIOAdapter` an `identity_resolver` on the same namespace
 (it would silently overwrite this one). The publish-side `Audience.principal(id)`
-must use the same id form the gateway joins with (`str(authn.principal_id)`).
+must use the same id from the gateway joins with (`str(authn.principal_id)`).
 
 Durable signals also need the **relay** (`realtime_relay_lifecycle_step`) to move
 staged rows from the outbox to the stream after commit, plus the gateway's

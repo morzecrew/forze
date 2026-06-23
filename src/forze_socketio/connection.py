@@ -30,7 +30,7 @@ from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, ExecutionRuntime
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import utcnow
 
 from .exceptions import GENERIC_INTERNAL_DETAIL, is_server_error_kind, log_server_error
@@ -142,6 +142,9 @@ class InMemoryRealtimePresence(RealtimePresence):
 
         if members is not None:
             members.discard(sid)
+
+            if not members:  # drop the empty bucket so churn doesn't leak room keys
+                del self._rooms[room]
 
     async def count(self, room: str) -> int:
         return len(self._rooms.get(room, ()))
@@ -372,6 +375,15 @@ def attach_realtime_connection(
         :class:`ForzeSocketIOAdapter` for the same namespace — its connect handler
         would silently overwrite this one (or vice versa). Resolve identity here.
     """
+
+    # Offline replay needs all three of mailbox_factory / cursors_factory / runtime. Partial
+    # wiring would silently disable replay (broken offline delivery, no warning) — fail closed.
+    replay_parts = (mailbox_factory, cursors_factory, runtime)
+    if sum(p is not None for p in replay_parts) not in (0, len(replay_parts)):
+        raise exc.configuration(
+            "Offline replay needs all of mailbox_factory, cursors_factory, and runtime "
+            "(or none) — partial wiring would silently disable replay"
+        )
 
     lifecycle = _ConnectionLifecycle(
         sio=sio,

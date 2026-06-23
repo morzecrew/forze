@@ -23,6 +23,8 @@ from typing import Final, final
 
 import attrs
 
+from forze.base.exceptions import exc
+
 from ..kernel.client import RedisClientPort
 from ..kernel.scripts import PRESENCE_COUNT, PRESENCE_JOIN, PRESENCE_LEAVE
 
@@ -49,6 +51,14 @@ class RedisRealtimePresence:
 
     ttl: timedelta = _DEFAULT_TTL
     """How long a member stays live without a heartbeat refresh."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # A non-positive TTL would score every member as already-expired (and < 1ms truncates
+        # to 0 ms), silently suppressing all presence tracking — fail closed at wiring instead.
+        if self.ttl.total_seconds() < 0.001:
+            raise exc.configuration("RedisRealtimePresence ttl must be at least 1 millisecond")
 
     # ....................... #
 

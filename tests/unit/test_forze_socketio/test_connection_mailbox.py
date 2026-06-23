@@ -156,7 +156,7 @@ async def test_ack_keeps_entries_a_slower_device_has_not_acked() -> None:
     await _populate(mailbox)
     runtime = _runtime()
 
-    # device d1 acks through e2
+    # device d1 acks through e1
     attach_realtime_connection(
         sio, resolve=_resolver(_connection(device_id="d1")),  # pyright: ignore[reportArgumentType]
         mailbox_factory=lambda ctx: mailbox, cursors_factory=lambda ctx: cursors, runtime=runtime,

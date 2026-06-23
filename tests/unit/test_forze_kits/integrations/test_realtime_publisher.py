@@ -221,3 +221,24 @@ async def test_group_ensure_step_skips_backlog_and_is_idempotent() -> None:
 
     assert backlog == []  # the pre-creation signal is skipped
     assert [m.payload.audience for m in fresh] == [Audience.topic("b")]
+
+
+async def test_group_ensure_step_honours_an_explicit_start_id() -> None:
+    spec = realtime_stream_spec()
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        cmd = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, spec, route=spec.name)
+
+        id_a = await cmd.append(str(spec.name), RealtimeSignal.of(Audience.topic("a"), "e", {"x": 1}))
+        await cmd.append(str(spec.name), RealtimeSignal.of(Audience.topic("b"), "e", {"x": 2}))
+
+        # create the group at an explicit cursor — strictly after signal A (not "$"/"0")
+        step = realtime_group_ensure_lifecycle_step(stream_spec=spec, group="gw", start_id=id_a)
+        await step.startup(ctx)
+
+        group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
+        delivered = await group.read("gw", "c", {str(spec.name): ">"})
+
+    # the explicit cursor is respected: A is skipped, B (after it) is delivered
+    assert [m.payload.audience for m in delivered] == [Audience.topic("b")]

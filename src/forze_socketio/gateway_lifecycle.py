@@ -43,6 +43,10 @@ def _log_task_exit(task: asyncio.Task[None]) -> None:
 
     if exc is not None:
         _logger.critical_exception("Realtime gateway task exited", exc=exc)
+    else:
+        # A clean return is also wrong — run() loops forever and should only end via cancel;
+        # a normal exit means delivery is silently down. Surface it.
+        _logger.critical("Realtime gateway task exited cleanly (delivery is down)")
 
 
 # ....................... #

@@ -10,9 +10,12 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from uuid import UUID
 
+import pytest
+
 from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
+from forze.base.exceptions import CoreException
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import (
     MailboxStats,
@@ -119,11 +122,8 @@ async def test_build_refused_in_read_only_operation() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         with ctx.inv_ctx.bind_read_only():
-            try:
+            with pytest.raises(CoreException, match="read-only"):
                 build_realtime_mailbox(ctx)
-                assert False, "expected a read-only refusal"
-            except Exception as err:  # CoreException(precondition)
-                assert "read-only" in str(err).lower()
 
 
 # ----------------------- #

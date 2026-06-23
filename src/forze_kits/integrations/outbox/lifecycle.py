@@ -176,12 +176,13 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        async def _loop() -> None:
-            # Freeze the assigned shard once at startup (restart to repartition), so the relay,
-            # the gateway source, and the group-ensure step all evaluate the shard at start —
-            # one consistent "restart to onboard a tenant" model, no per-tick drift.
-            tenants = list(self.tenants()) if self.tenants is not None else None
+        # Freeze the assigned shard at **startup** (not inside the detached task), so a broken
+        # tenants provider fails startup loudly instead of spawning a task that dies and
+        # silently stops draining. Restart to repartition — one consistent onboarding model,
+        # shared with the gateway source and the group-ensure step.
+        tenants = list(self.tenants()) if self.tenants is not None else None
 
+        async def _loop() -> None:
             while True:
                 try:
                     await self._drain_tick(ctx, tenants)

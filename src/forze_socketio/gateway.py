@@ -27,7 +27,7 @@ require_socketio()
 import asyncio
 import os
 import socket
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, suppress
 from datetime import timedelta
 from typing import (
     TYPE_CHECKING,
@@ -61,7 +61,7 @@ from forze.application.contracts.realtime import (
 from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, JsonDict, StrKey, utcnow
 
@@ -130,7 +130,15 @@ def _tenant_from_headers(headers: object) -> UUID | None:
     headers = cast(JsonDict, headers)
     raw = headers.get(HEADER_TENANT_ID)
 
-    return UUID(raw) if raw else None
+    if not raw:
+        return None
+
+    try:
+        return UUID(raw)
+    except (ValueError, TypeError):
+        # the header is untrusted input — a malformed value is dropped, not raised (raising
+        # would fail the bridge and reclaim-loop the message forever)
+        return None
 
 
 # ....................... #
@@ -152,7 +160,10 @@ def _hlc_from_headers(headers: object) -> HlcTimestamp:
     )
 
     if raw:
-        return HlcTimestamp.parse(cast(str, raw))
+        # untrusted header — a malformed value falls back to a wall-clock stamp rather than
+        # raising (which would fail the bridge and reclaim-loop the message)
+        with suppress(ValueError, TypeError):
+            return HlcTimestamp.parse(cast(str, raw))
 
     return HlcTimestamp(physical_ms=int(utcnow().timestamp() * 1000), logical=0)
 
@@ -234,7 +245,14 @@ async def _process_messages(
                 _hlc_from_headers(message.headers),
             )
 
-        except Exception:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001
+            # A deterministic wiring error (e.g. a tenant-aware mailbox with no bound tenant)
+            # never succeeds on retry — re-raise to fail fast instead of leaving the durable
+            # message pending and reclaim-looping it forever. The message stays unacked, so it
+            # redelivers once the operator fixes the wiring and restarts.
+            if isinstance(error, CoreException) and error.kind is ExceptionKind.CONFIGURATION:
+                raise
+
             _logger.critical_exception(
                 "Realtime bridge failed", stream=stream, message_id=message.id
             )
@@ -303,6 +321,13 @@ async def _consume_group_stream(
 
         except asyncio.CancelledError:
             raise
+
+        except CoreException as error:
+            if error.kind is ExceptionKind.CONFIGURATION:
+                raise  # a wiring error won't fix itself by retrying — let the task exit (logged)
+
+            _logger.critical_exception("Realtime gateway loop error", stream=stream)
+            await asyncio.sleep(poll_interval.total_seconds())
 
         except Exception:  # noqa: BLE001 - a transient broker error must not kill the loop
             _logger.critical_exception("Realtime gateway loop error", stream=stream)

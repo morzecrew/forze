@@ -322,13 +322,16 @@ class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
 
             gs = _MockGroupState()
 
-            if start_id not in ("0", "0-0"):
-                # "$": deliver only entries appended after creation
+            if start_id == "$":
+                # "$": deliver only entries appended after creation (cursor at the tail)
                 entries = cast(list[Any], store.setdefault(stream, []))
                 gs.last_delivered = max(
                     (self.stream._id_to_int(m.id) for m in entries),  # type: ignore[reportPrivateUsage]
                     default=0,
                 )
+            elif start_id not in ("0", "0-0"):
+                # an explicit cursor: deliver entries strictly after it ("0"/"0-0" stays at 0)
+                gs.last_delivered = self.stream._id_to_int(start_id)  # type: ignore[reportPrivateUsage]
 
             groups[(group, stream)] = gs
 
