@@ -108,17 +108,17 @@ async def test_redelivered_durable_signal_is_stored_once() -> None:
     assert len(sio.emits) == 1
 
 
-async def test_mailboxed_signal_is_stored_even_when_live_emit_fails() -> None:
-    # recoverable path: the store commits with the dedup mark, THEN the live emit runs. A
-    # failed emit does not undo the store — the recipient still gets it via reconnect-replay
-    # (commit-then-emit → exactly-once, no permanent loss).
+async def test_mailboxed_signal_survives_and_acks_when_live_emit_fails() -> None:
+    # recoverable path: the store commits with the dedup mark, THEN the live emit runs. The
+    # emit is best-effort — a failure is swallowed (not raised), so _handle returns normally
+    # and the caller can ack the durable message instead of leaving it pending forever. The
+    # recipient still gets it via reconnect-replay (the mailbox is the delivery guarantee).
     sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
     sio.fail = True
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
-        with pytest.raises(RuntimeError):  # the post-commit live emit fails and propagates
-            await _gateway(sio)._handle(ctx, mailbox, _principal_signal(), _TENANT, "evt-1", _HLC)
+        await _gateway(sio)._handle(ctx, mailbox, _principal_signal(), _TENANT, "evt-1", _HLC)
 
     assert [r.event_id for r in await mailbox.read_since(principal="u1", since=None)] == ["evt-1"]
     assert sio.emits == []  # the live emit failed, but the signal survives in the mailbox

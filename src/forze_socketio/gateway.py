@@ -666,10 +666,26 @@ class RealtimeGateway:
                     )
 
             if store is not None:
-                # replay-safe: mark + store committed; emit live best-effort after the commit
-                await self._emit_live(
-                    signal, tenant, event_id=dedup_id, recoverable=True
-                )
+                # replay-safe: mark + store committed, so the durable obligation is met and the
+                # recipient gets the signal on reconnect. The live emit is best-effort — a
+                # failure (Socket.IO/presence outage, timeout) must not propagate, or the caller
+                # would leave the message pending forever (it never re-emits live once the mark
+                # is committed, and reclaim may be disabled). Swallow it; the mailbox recovers.
+                try:
+                    await self._emit_live(
+                        signal, tenant, event_id=dedup_id, recoverable=True
+                    )
+                except Exception as error:  # noqa: BLE001 - best-effort; the mailbox is the guarantee
+                    if (
+                        isinstance(error, CoreException)
+                        and error.kind is ExceptionKind.CONFIGURATION
+                    ):
+                        raise  # a wiring error must fail fast, not be swallowed as best-effort
+
+                    _logger.critical_exception(
+                        "Realtime live emit failed after commit (recoverable via mailbox)",
+                        event_id=dedup_id,
+                    )
 
     # ....................... #
 
