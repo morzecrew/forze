@@ -16,6 +16,7 @@ from forze.application.contracts.http import HttpServiceDeps
 from forze.application.contracts.idempotency import IdempotencyDeps
 from forze.application.contracts.inbox import InboxDeps
 from forze.application.contracts.outbox import OutboxDeps
+from forze.application.contracts.procedures import ProceduresDeps
 from forze.application.contracts.resilience import ResilienceDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
@@ -166,6 +167,9 @@ class ExecutionContext:
     analytics: AnalyticsDeps = attrs.field(factory=AnalyticsDeps, init=False)
     """Analytics dependencies."""
 
+    procedures: ProceduresDeps = attrs.field(factory=ProceduresDeps, init=False)
+    """Procedures dependencies (governed parametrized commands/compute; command-only)."""
+
     cache: CacheDeps = attrs.field(factory=CacheDeps, init=False)
     """Cache dependencies."""
 
@@ -314,6 +318,7 @@ class ExecutionContext:
         self.search.lock(self)
         self.http.lock(self)
         self.analytics.lock(self)
+        self.procedures.lock(self)
         self.cache.lock(self)
         self.counter.lock(self)
         self.storage.lock(self)
