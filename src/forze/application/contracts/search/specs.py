@@ -136,6 +136,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
                 self.default_sort,
                 read_fields=read_fields_for_model(self.model_type),
                 spec_name=self.name,
+                model=self.model_type,
             )
 
         _validate_search_encryption(
@@ -222,6 +223,7 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
                 self.default_sort,
                 read_fields=read_fields_for_model(self.model_type),
                 spec_name=self.name,
+                model=self.model_type,
             )
 
         _validate_search_encryption(

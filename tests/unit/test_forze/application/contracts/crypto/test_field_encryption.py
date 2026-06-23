@@ -75,3 +75,16 @@ def test_forbidden_sort_fields() -> None:
 
     assert enc.forbidden_sort_fields(["title", "ssn", "email"]) == ["email", "ssn"]
     assert enc.forbidden_sort_fields(["title", "created_at"]) == []
+
+
+def test_forbidden_sort_fields_is_root_aware_for_nested_paths() -> None:
+    # Sealing a whole column forbids sorting on any nested path inside it: the value
+    # still lives in the sealed ciphertext and a keyset token would leak it.
+    enc = FieldEncryption(
+        encrypted=frozenset({"contract"}), searchable=frozenset({"profile"})
+    )
+
+    assert enc.forbidden_sort_fields(["contract.ssn"]) == ["contract.ssn"]
+    assert enc.forbidden_sort_fields(["profile.email"]) == ["profile.email"]
+    # an unsealed column's nested path is fine
+    assert enc.forbidden_sort_fields(["address.city"]) == []

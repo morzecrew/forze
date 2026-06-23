@@ -404,6 +404,7 @@ class HubSearchSqlMixin[M: BaseModel]:
             read_fields=self._hub_host.read_fields,
             spec_name=self._hub_host.hub_spec.name,
             rank_field=HUB_RANK,
+            model=self._hub_host.model_type,
         )
         plan = HubSearchPlan(
             terms=query_terms,
@@ -510,6 +511,7 @@ class HubSearchSqlMixin[M: BaseModel]:
             read_fields=self._hub_host.read_fields,
             spec_name=self._hub_host.hub_spec.name,
             rank_field=HUB_RANK,
+            model=self._hub_host.model_type,
         )
         plan = HubSearchPlan(
             terms=query_terms,
@@ -550,4 +552,5 @@ class HubSearchSqlMixin[M: BaseModel]:
             read_fields=self._hub_host.read_fields,
             spec_name=self._hub_host.hub_spec.name,
             rank_field=HUB_RANK,
+            model=self._hub_host.model_type,
         )

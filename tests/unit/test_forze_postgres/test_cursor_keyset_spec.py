@@ -67,3 +67,24 @@ def test_cursor_return_fields_for_select_browse_order() -> None:
         return_fields=("name",),
     )
     assert out == ("name", "id")
+
+
+def test_cursor_return_fields_for_select_reduces_nested_sort_key_to_root() -> None:
+    # A nested sort key projects its ROOT column (the whole JSON column); the cursor
+    # token reads the nested value out of it, so the dotted path is never selected.
+    out = cursor_return_fields_for_select(
+        sort_keys=("_rank", "addr.city", "id"),
+        rank_field="_rank",
+        return_fields=("name",),
+    )
+    assert out == ("addr", "id", "name")
+
+
+def test_cursor_return_fields_for_select_nested_root_dedupes_with_return_field() -> None:
+    out = cursor_return_fields_for_select(
+        sort_keys=("addr.city", "id"),
+        rank_field=None,
+        return_fields=("addr",),
+    )
+    # ``addr`` contributed by both the sort root and the caller — kept once.
+    assert out == ("addr", "id")

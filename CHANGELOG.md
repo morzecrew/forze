@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Nested-field sorting** — sort keys may now be dotted paths into nested Pydantic sub-models and `str`-keyed mappings (`sorts={"addr.city": "asc"}`), resolved the same way nested filters already are, across offset and keyset-cursor reads and every backend. `default_sort` on document/search specs accepts nested paths too. Tightening: sorting on a nested path whose **root** column is field-encrypted is now rejected (it was silently allowed and could leak the value in a cursor token).
+
 - **CPU-offload seam** — `run_cpu` / `run_cpu_map` run blocking or CPU-bound work off the event loop via a context-bound `CpuExecutor` (bounded thread pool in production; inline and deterministic under simulation, so offloading handlers stay testable), honoring the invocation deadline with a cooperative `checkpoint()`.
 
 - **HTTP status mapping in core** — `http_status_for_kind(kind)` in `forze.base.exceptions` maps an `ExceptionKind` to its conventional HTTP status (404/409/422/…, else 500), so any HTTP-serving layer can reuse it. FastAPI's response builder now uses this shared helper instead of a private one.

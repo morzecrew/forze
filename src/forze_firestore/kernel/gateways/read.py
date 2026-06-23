@@ -398,6 +398,7 @@ class FirestoreReadGateway[M: BaseModel](
         normalized = normalize_sorts_for_keyset(
             sorts,
             read_fields=self.read_fields,
+            model=self.model_type,
         )
 
         if [k for k, _, _ in normalized] != [ID_FIELD] or len(normalized) != 1:

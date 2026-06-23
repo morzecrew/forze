@@ -655,6 +655,7 @@ class PostgresReadGateway[M: BaseModel](
         normalized = normalize_sorts_for_keyset(
             sorts,
             read_fields=self.read_fields,
+            model=self.model_type,
         )
         sort_keys = [k for k, _, _ in normalized]
         directions = [d for _, d, _ in normalized]

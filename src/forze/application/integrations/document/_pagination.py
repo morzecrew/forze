@@ -210,6 +210,7 @@ class DocumentPaginationMixin(Generic[R]):
         normalized = normalize_sorts_for_keyset(
             effective,
             read_fields=self._read_fields,
+            model=self.read_gw.model_type,
         )
 
         sort_keys = [k for k, _, _ in normalized]

@@ -60,6 +60,12 @@ class FakeReadGateway:
 
     # ....................... #
 
+    @property
+    def model_type(self) -> type[_Row]:
+        return _Row
+
+    # ....................... #
+
     def compile_filters(self, filters: Any) -> Any:
         return ("parsed", filters)
 

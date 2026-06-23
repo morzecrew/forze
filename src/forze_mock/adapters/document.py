@@ -926,8 +926,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             default_sort=self.spec.default_sort,
             read_fields=read_fields,
             spec_name=self.spec.name,
+            model=self.read_model,
         )
-        normalized = normalize_sorts_for_keyset(effective, read_fields=read_fields)
+        normalized = normalize_sorts_for_keyset(
+            effective, read_fields=read_fields, model=self.read_model
+        )
         sort_keys = [k for k, _, _ in normalized]
         directions = [d for _, d, _ in normalized]
         nulls = [n for _, _, n in normalized]
