@@ -13,6 +13,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **HTTP status mapping in core** — `http_status_for_kind(kind)` in `forze.base.exceptions` maps an `ExceptionKind` to its conventional HTTP status (404/409/422/…, else 500), so any HTTP-serving layer can reuse it. FastAPI's response builder now uses this shared helper instead of a private one.
 
+- **Shared error boundary in core** — `error_envelope()` and `guard_frame()` give one client-safe projection of a `CoreException` (masking, egress context, status hint) plus a shared guarded boundary, so FastAPI and Socket.IO render the same envelope instead of each duplicating that logic.
+
+- **Realtime egress — server push** — a handler publishes a `RealtimeSignal` to a principal or topic through messaging ports, and the Socket.IO gateway bridges it to a tenant-scoped room. Ephemeral at-most-once or durable exactly-once; read-only operations cannot publish. (RFC 0002.)
+
+- **Realtime multi-node hardening** — TTL-backed presence with heartbeat re-assertion so a crashed node's rooms lapse, eviction of a connection once its credential expires, and a per-emit timeout so one stuck delivery cannot wedge the gateway's consume loop.
+
+- **Realtime offline store-and-forward** — a durable principal-addressed signal also reaches a recipient offline at emit time: the gateway mailboxes it atomically with the dedup, and on reconnect each device replays from its cursor and acks to advance it. Topic and ephemeral signals are never mailboxed. (RFC 0006.)
+
+- **Tenant-aware realtime gateway** — `TenantShardedSignalSource` puts per-tenant realtime isolation on the standard tenancy tier ladder: it runs one consume loop per assigned tenant and scopes the mailbox and rooms by a trusted tenant from the stream, not the header. Tenant-global stays the default. (RFC 0007.)
+
+- **`RealtimeShard`** — one value object bundling a namespace-tier instance's assignment (stream, tenants, group). Hand the same shard to `TenantShardedSignalSource`, the group-ensure step, and the tenant relay so the three can't drift on which tenants, stream, or group an instance owns.
+
+- **Tenant-sharded outbox relay** — pass `tenants` to the background relay step (or `realtime_tenant_relay_lifecycle_step`) and it drains each assigned tenant's partition under a bound tenant, sequentially per tick. This brings a partitioned (tenant-aware) outbox to namespace tier, alongside the stream and inbox.
+
+- **Tenant-aware realtime mailbox fails closed clearly** — when the gateway has no bound tenant to scope a tenant-aware mailbox, it now raises an actionable `realtime_mailbox_tenant_unbound` error naming the fix, instead of an opaque tenant-required failure deep in the adapter.
+
+- **BREAKING — realtime delivery envelope** — every frame the Socket.IO gateway emits is now the uniform `{id, data}` envelope instead of the bare payload (durable carries the event id, ephemeral null). Clients must read `data` and dedup by `id`; there is no transitional dual-emit. (RFC 0006.)
+
+- **Mock document adapter — tenant scoping on every write** — the in-memory mock now injects the tenant column on ensure, upsert, update, and touch (not only create), matching Postgres, so a tenant-aware collection using idempotent or update writes isolates correctly under the mock.
+
 - **Materialized derived fields** — `DocumentSpec(materialized=…)` persists selected computed fields as real columns, making them filterable and sortable. Names are validated, create/update collisions are rejected, and startup checks require matching columns.
 
 - **Two-phase prepare/apply handlers** — `prepare(args)` runs outside the transaction (CPU or external work) and `apply(args, payload)` inside it, so the transaction wraps only the writes. Adds the `TwoPhaseHandler` contract and a kit base; a tx route is required and `prepare` is read-only.
@@ -101,6 +121,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Log scrubbing no longer corrupts ordinary text** — sensitive-word scrubbing of log string values now requires a secret-bearing shape (`session=…`), not a bare word, so paths like `/v1/authn/login` survive intact while the value after a sensitive key is fully masked. Key-name masking of structured fields is unchanged.
+
+- **Outbox relay tenancy** — the background relay now binds each claim's tenant before publishing, so a tenant-aware destination routes per-tenant instead of the global key. A tenant-aware outbox on the plain (non-sharded) relay fails closed with a clear `outbox_relay_tenant_unbound` error.
+
 - **Keyring fill-lock stripe is now cross-process stable** — the per-`key_id` crypto fill-lock stripe used Python's `hash()` (PYTHONHASHSEED-randomized), so it varied per process and broke deterministic-simulation replay. It now uses a stable hash, and the guard bans the `hash(x) % n` pattern.
 
 - **Runtime sorts and filters on unknown fields fail loud across backends** — a query-time sort or filter on a field absent from the read model raises `exc.configuration` on Mongo, Firestore, and the mock (matching Postgres). This covers computed fields, which were silently mishandled before.
@@ -135,7 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres schema validation accepts parameterized column types** — a field over `NUMERIC(10,2)` or `TIMESTAMP(3) WITH TIME ZONE` is no longer rejected: type compatibility compares modifier-insensitively while still carrying the modifier, so casts keep precision and scale.
 
-- **`forze_postgres` search index-definition parsing hardened** — index expressions parse via a balanced-delimiter, quote- and dollar-quote-aware scanner. PGroonga resolution accepts more array and cast forms but fails closed on ones it cannot reproduce; GIN-to-FTS detection keys on a real `to_tsvector(` call.
+- **`forze_postgres` search index-definition parsing hardened** — index expressions parse via a balanced-delimiter, quote- and dollar-quote-aware scanner. PGroonga resolution accepts more array and cast forms but fails closed on ones it cannot reproduce; GIN-to-FTS detection keys on a real `to_tsvector(...)` call.
 
 ## [0.4.1] - 2026-06-17
 

@@ -23,17 +23,23 @@ class OwnedTempPath:
     path: str | None = None
     owned: bool = False
 
+    # ....................... #
+
     @classmethod
     def empty(cls) -> OwnedTempPath:
         """Return a placeholder with no path."""
 
         return cls()
 
+    # ....................... #
+
     @classmethod
     def unowned(cls, path: str | None) -> OwnedTempPath:
         """Wrap an existing path that Forze must not delete."""
 
         return cls(path=path, owned=False)
+
+    # ....................... #
 
     @classmethod
     def materialize_text(
@@ -63,6 +69,8 @@ class OwnedTempPath:
             os.close(fd)
 
         return cls(path=path, owned=True)
+
+    # ....................... #
 
     def release(self) -> None:
         """Remove the path when owned; reset to :meth:`empty` afterwards."""

@@ -396,3 +396,56 @@ backoff re-measures the whole fleet together, mirroring the shared breaker.
 
 KEYS[1]: digest hash. Returns ``"OK"``.
 """
+
+
+# ....................... #
+
+
+PRESENCE_JOIN: Final = """
+local t = redis.call('TIME')
+local now_ms = (tonumber(t[1]) * 1000) + math.floor(tonumber(t[2]) / 1000)
+local ttl_ms = tonumber(ARGV[2])
+redis.call('ZADD', KEYS[1], now_ms + ttl_ms, ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ttl_ms + 1000)
+return 1
+"""
+"""Record (or refresh) a connection in a room's presence set, expiring by TTL.
+
+The room is a sorted set of ``sid`` members scored by their absolute expiry
+(server ``TIME`` + ttl), so a crashed node's rows lapse on their own. The set
+key itself gets a ``PEXPIRE`` just past the newest member so an emptied room
+self-cleans. Live connections must re-run this within the TTL (heartbeat).
+
+KEYS[1]: room set. ARGV: sid, ttl_ms. Returns 1.
+"""
+
+
+# ....................... #
+
+
+PRESENCE_COUNT: Final = """
+local t = redis.call('TIME')
+local now_ms = (tonumber(t[1]) * 1000) + math.floor(tonumber(t[2]) / 1000)
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now_ms)
+return redis.call('ZCARD', KEYS[1])
+"""
+"""Count live connections in a room, pruning lapsed entries first.
+
+Drops members whose expiry score is at or before server ``now`` (the lazy prune
+that makes the TTL real even with no writes), then returns the remaining count.
+
+KEYS[1]: room set. Returns the live member count.
+"""
+
+
+# ....................... #
+
+
+PRESENCE_LEAVE: Final = """
+redis.call('ZREM', KEYS[1], ARGV[1])
+return redis.call('ZCARD', KEYS[1])
+"""
+"""Remove a connection from a room's presence set on a clean disconnect.
+
+KEYS[1]: room set. ARGV: sid. Returns the remaining member count.
+"""

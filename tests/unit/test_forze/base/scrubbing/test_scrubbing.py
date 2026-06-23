@@ -89,6 +89,19 @@ class TestSanitizeLog:
         assert "-----BEGIN PRIVATE KEY-----" not in result
         assert SECRET_PLACEHOLDER in result
 
+    def test_does_not_corrupt_endpoint_paths(self) -> None:
+        # a bare sensitive word as a path segment is NOT a secret value — keep it
+        for path in ("/v1/authn/login", "/oauth/callback", "/storage/credentials/list"):
+            assert scrub_log_string(path) == path
+            assert SECRET_PLACEHOLDER not in scrub_log_string(f"GET {path}")
+
+    def test_still_masks_secret_query_parameter_value(self) -> None:
+        # the value-bearing shape (key=value) is what carries the secret
+        result = scrub_log_string("GET /v1/authn/login?session=abc123&token=xyz")
+        assert "abc123" not in result
+        assert "xyz" not in result
+        assert "/v1/authn/login" in result  # the path is left intact
+
 
 class TestSanitizePydanticErrors:
     def test_strips_input_and_ctx(self) -> None:
@@ -228,24 +241,10 @@ class TestRegisterSensitivePatterns:
 # One matching sample per built-in log-string fragment. The exhaustiveness test
 # below fails when a fragment is added without a sample here.
 _FRAGMENT_SAMPLES: dict[str, str] = {
-    r"(?:password|passwd|secret|token|api[._ -]?key)\s*[=:]\s*\S+": "retry with api key=abc123",
-    "password": "the password leaked",
-    "passwd": "passwd file touched",
-    "mysql_pwd": "MYSQL_PWD was exported",
-    "secret": "a secret value appeared",
-    r"auth(?!ors?\b)": "auth handshake failed",
-    "credential": "credential rotation due",
-    "private[._ -]?key": "private key on disk",
-    "api[._ -]?key": "api_key present in env",
-    "session": "session expired early",
-    "cookie": "cookie jar persisted",
-    "social[._ -]?security": "social security number on file",
-    "credit[._ -]?card": "credit card declined",
-    "logfire[._ -]?token": "logfire token configured",
-    r"(?:\b|_)csrf(?:\b|_)": "csrf check failed",
-    r"(?:\b|_)xsrf(?:\b|_)": "xsrf header missing",
-    r"(?:\b|_)jwt(?:\b|_)": "jwt validation error",
-    r"(?:\b|_)ssn(?:\b|_)": "ssn redaction needed",
+    (
+        r"(?:password|passwd|mysql[._ -]?pwd|secret|token|api[._ -]?key"
+        r"|credential|session|cookie|csrf|xsrf|jwt|ssn)\s*[=:]\s*\S+"
+    ): "retry with api key=abc123",
     r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}": "mail sent to alice@example.com today",
     r"Bearer\s+\S+": "header was Bearer eyJhbGci.x.y",
     r"postgresql(?:\+[a-z]+)?://\S+": "dsn postgresql+asyncpg://u:p@db:5432/app",
@@ -262,9 +261,10 @@ class TestPrefilterSupersetness:
     def test_every_builtin_fragment_has_a_sample(self) -> None:
         from forze.base.scrubbing import policy
 
+        # The value regex uses assignment + extras only — the bare Logfire
+        # key-name fragments are for is_sensitive_key, not value scrubbing.
         builtin = {
             *policy._LOG_ASSIGNMENT_FRAGMENTS,
-            *policy._LOGFIRE_SENSITIVE_FRAGMENTS,
             *policy._LOG_STRING_EXTRAS,
         }
         assert builtin == set(_FRAGMENT_SAMPLES)

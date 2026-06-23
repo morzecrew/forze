@@ -259,6 +259,18 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M], TenancyMixi
 
     # ....................... #
 
+    async def ensure_group(self, group: str, stream: str, *, start_id: str = "$") -> None:
+        try:
+            await self.client.xgroup_create(
+                _stream_physical(self, stream), group, id=start_id, mkstream=True
+            )
+
+        except Exception as error:  # noqa: BLE001 - idempotent: ignore an existing group
+            if "BUSYGROUP" not in str(error):
+                raise
+
+    # ....................... #
+
     async def claim(
         self,
         group: str,

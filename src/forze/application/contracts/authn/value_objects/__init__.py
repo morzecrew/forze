@@ -6,6 +6,7 @@ as before; submodules expose narrower seams when needed (e.g. resolvers consume 
 """
 
 from .assertion import ACT_CLAIM, VerifiedAssertion
+from .client import ClientIdentity
 from .credentials import (
     AccessTokenCredentials,
     ApiKeyCredentials,
@@ -32,6 +33,7 @@ __all__ = [
     "ApiKeyCredentials",
     "AuthnIdentity",
     "AuthnResult",
+    "ClientIdentity",
     "CredentialLifetime",
     "IssuedAccessToken",
     "ApiKeyInfo",

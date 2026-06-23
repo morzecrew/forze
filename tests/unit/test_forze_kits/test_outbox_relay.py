@@ -16,15 +16,39 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import OutboxRelay
-from forze_mock import MockDepsModule, MockStateDepKey
+from forze_mock import MockDepsModule, MockRouteConfig, MockStateDepKey
 from forze_mock.adapters.outbox import MockOutboxRow
 
 
 class _EventPayload(BaseModel):
     n: int
+
+
+@pytest.mark.asyncio
+async def test_relay_of_tenant_aware_outbox_unbound_fails_with_actionable_error() -> None:
+    # A tenant-aware outbox can't be read by the tenant-less background relay; the opaque
+    # tenant_required is rewrapped into an actionable error naming the tenant-global contract.
+    codec = PydanticModelCodec(_EventPayload)
+    outbox_spec = OutboxSpec(
+        name="events",
+        codec=codec,
+        destination=OutboxDestination.queue(route="jobs", channel="jobs"),
+    )
+    queue_spec = QueueSpec(name="jobs", codec=codec)
+
+    module = MockDepsModule(routes={"events": MockRouteConfig(tenant_aware=True)})
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
+    async with runtime.scope():
+        ctx = runtime.get_context()  # no tenant bound — the background-relay case
+        with pytest.raises(CoreException) as caught:
+            await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
+
+    assert caught.value.code == "outbox_relay_tenant_unbound"
+    assert "tenant-global" in caught.value.summary
 
 
 @pytest.mark.asyncio

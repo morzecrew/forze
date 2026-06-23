@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.stream import (
     PendingEntry,
     StreamCommandPort,
+    StreamGroupAdminPort,
     StreamGroupQueryPort,
     StreamMessage,
     StreamQueryPort,
@@ -111,6 +112,11 @@ class _StubStreamGroupQuery:
         ]
 
 
+class _StubStreamGroupAdmin:
+    async def ensure_group(self, group: str, stream: str, *, start_id: str = "$") -> None:
+        return None
+
+
 class _StubStreamCommand:
     async def append(
         self,
@@ -142,6 +148,18 @@ class TestStreamQueryPort:
 class TestStreamGroupQueryPort:
     def test_runtime_checkable(self) -> None:
         assert isinstance(_StubStreamGroupQuery(), StreamGroupQueryPort)
+
+    def test_query_port_excludes_control_plane(self) -> None:
+        # ensure_group is control-plane (StreamGroupAdminPort), not on the data port
+        assert not hasattr(_StubStreamGroupQuery(), "ensure_group")
+
+
+class TestStreamGroupAdminPort:
+    def test_runtime_checkable(self) -> None:
+        assert isinstance(_StubStreamGroupAdmin(), StreamGroupAdminPort)
+
+    async def test_ensure_group(self) -> None:
+        assert await _StubStreamGroupAdmin().ensure_group("g", "s") is None
 
     async def test_read_and_ack(self) -> None:
         stub = _StubStreamGroupQuery()

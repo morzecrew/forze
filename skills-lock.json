@@ -68,7 +68,7 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/python-google-docstrings/SKILL.md",
-      "computedHash": "7fcd6bd8a695e31ba922c5b35bddc5fff4a75cab0648a6a226fa4e34f1716479"
+      "computedHash": "266c2aa9149558942793f6525ed0a1344143bf14e41866f3ab6d6fa6b8773740"
     },
     "python-performance-optimization": {
       "source": "wshobson/agents",
