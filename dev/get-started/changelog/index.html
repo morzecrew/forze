@@ -2296,6 +2296,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../data-events/realtime/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-radio-tower" viewBox="0 0 24 24"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9M7.8 4.7a6.14 6.14 0 0 0-.8 7.5"/><circle cx="12" cy="9" r="2"/><path d="M16.2 4.8c2 2 2.26 5.11.8 7.47M19.1 1.9a9.96 9.96 0 0 1 0 14.1M9.5 18h5M8 22l4-11 4 11"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Realtime push
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -4766,6 +4795,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/realtime-offline-delivery/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Realtime delivery to offline users
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/background-workflow/" class="md-nav__link">
         
   
@@ -5283,6 +5341,64 @@
           </ul>
         </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/tenancy-matrix/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M16 3.128a4 4 0 0 1 0 7.744M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Tenancy matrix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/encryption-matrix/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Encryption matrix
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -6505,6 +6621,36 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>HTTP status mapping in core</strong> — <code>http_status_for_kind(kind)</code> in <code>forze.base.exceptions</code> maps an <code>ExceptionKind</code> to its conventional HTTP status (404/409/422/…, else 500), so any HTTP-serving layer can reuse it. FastAPI's response builder now uses this shared helper instead of a private one.</p>
 </li>
 <li>
+<p><strong>Shared error boundary in core</strong> — <code>error_envelope()</code> and <code>guard_frame()</code> give one client-safe projection of a <code>CoreException</code> (masking, egress context, status hint) plus a shared guarded boundary, so FastAPI and Socket.IO render the same envelope instead of each duplicating that logic.</p>
+</li>
+<li>
+<p><strong>Realtime egress — server push</strong> — a handler publishes a <code>RealtimeSignal</code> to a principal or topic through messaging ports, and the Socket.IO gateway bridges it to a tenant-scoped room. Ephemeral at-most-once or durable exactly-once; read-only operations cannot publish. (RFC 0002.)</p>
+</li>
+<li>
+<p><strong>Realtime multi-node hardening</strong> — TTL-backed presence with heartbeat re-assertion so a crashed node's rooms lapse, eviction of a connection once its credential expires, and a per-emit timeout so one stuck delivery cannot wedge the gateway's consume loop.</p>
+</li>
+<li>
+<p><strong>Realtime offline store-and-forward</strong> — a durable principal-addressed signal also reaches a recipient offline at emit time: the gateway mailboxes it atomically with the dedup, and on reconnect each device replays from its cursor and acks to advance it. Topic and ephemeral signals are never mailboxed. (RFC 0006.)</p>
+</li>
+<li>
+<p><strong>Tenant-aware realtime gateway</strong> — <code>TenantShardedSignalSource</code> puts per-tenant realtime isolation on the standard tenancy tier ladder: it runs one consume loop per assigned tenant and scopes the mailbox and rooms by a trusted tenant from the stream, not the header. Tenant-global stays the default. (RFC 0007.)</p>
+</li>
+<li>
+<p><strong><code>RealtimeShard</code></strong> — one value object bundling a namespace-tier instance's assignment (stream, tenants, group). Hand the same shard to <code>TenantShardedSignalSource</code>, the group-ensure step, and the tenant relay so the three can't drift on which tenants, stream, or group an instance owns.</p>
+</li>
+<li>
+<p><strong>Tenant-sharded outbox relay</strong> — pass <code>tenants</code> to the background relay step (or <code>realtime_tenant_relay_lifecycle_step</code>) and it drains each assigned tenant's partition under a bound tenant, sequentially per tick. This brings a partitioned (tenant-aware) outbox to namespace tier, alongside the stream and inbox.</p>
+</li>
+<li>
+<p><strong>Tenant-aware realtime mailbox fails closed clearly</strong> — when the gateway has no bound tenant to scope a tenant-aware mailbox, it now raises an actionable <code>realtime_mailbox_tenant_unbound</code> error naming the fix, instead of an opaque tenant-required failure deep in the adapter.</p>
+</li>
+<li>
+<p><strong>BREAKING — realtime delivery envelope</strong> — every frame the Socket.IO gateway emits is now the uniform <code>{id, data}</code> envelope instead of the bare payload (durable carries the event id, ephemeral null). Clients must read <code>data</code> and dedup by <code>id</code>; there is no transitional dual-emit. (RFC 0006.)</p>
+</li>
+<li>
+<p><strong>Mock document adapter — tenant scoping on every write</strong> — the in-memory mock now injects the tenant column on ensure, upsert, update, and touch (not only create), matching Postgres, so a tenant-aware collection using idempotent or update writes isolates correctly under the mock.</p>
+</li>
+<li>
 <p><strong>Materialized derived fields</strong> — <code>DocumentSpec(materialized=…)</code> persists selected computed fields as real columns, making them filterable and sortable. Names are validated, create/update collisions are rejected, and startup checks require matching columns.</p>
 </li>
 <li>
@@ -6637,6 +6783,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Log scrubbing no longer corrupts ordinary text</strong> — sensitive-word scrubbing of log string values now requires a secret-bearing shape (<code>session=…</code>), not a bare word, so paths like <code>/v1/authn/login</code> survive intact while the value after a sensitive key is fully masked. Key-name masking of structured fields is unchanged.</p>
+</li>
+<li>
+<p><strong>Outbox relay tenancy</strong> — the background relay now binds each claim's tenant before publishing, so a tenant-aware destination routes per-tenant instead of the global key. A tenant-aware outbox on the plain (non-sharded) relay fails closed with a clear <code>outbox_relay_tenant_unbound</code> error.</p>
+</li>
+<li>
 <p><strong>Keyring fill-lock stripe is now cross-process stable</strong> — the per-<code>key_id</code> crypto fill-lock stripe used Python's <code>hash()</code> (PYTHONHASHSEED-randomized), so it varied per process and broke deterministic-simulation replay. It now uses a stable hash, and the guard bans the <code>hash(x) % n</code> pattern.</p>
 </li>
 <li>
@@ -6688,7 +6840,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Postgres schema validation accepts parameterized column types</strong> — a field over <code>NUMERIC(10,2)</code> or <code>TIMESTAMP(3) WITH TIME ZONE</code> is no longer rejected: type compatibility compares modifier-insensitively while still carrying the modifier, so casts keep precision and scale.</p>
 </li>
 <li>
-<p><strong><code>forze_postgres</code> search index-definition parsing hardened</strong> — index expressions parse via a balanced-delimiter, quote- and dollar-quote-aware scanner. PGroonga resolution accepts more array and cast forms but fails closed on ones it cannot reproduce; GIN-to-FTS detection keys on a real <code>to_tsvector(</code> call.</p>
+<p><strong><code>forze_postgres</code> search index-definition parsing hardened</strong> — index expressions parse via a balanced-delimiter, quote- and dollar-quote-aware scanner. PGroonga resolution accepts more array and cast forms but fails closed on ones it cannot reproduce; GIN-to-FTS detection keys on a real <code>to_tsvector(...)</code> call.</p>
 </li>
 </ul>
 <h2 id="041-2026-06-17"><a href="https://github.com/morzecrew/forze/compare/v0.4.0...v0.4.1">0.4.1</a> - 2026-06-17<a class="headerlink" href="#041-2026-06-17" title="Permanent link">&para;</a></h2>

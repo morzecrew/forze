@@ -64,6 +64,9 @@
         <loc>https://morzecrew.github.io/forze/dev/data-events/events-sagas/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/realtime/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/identity/</loc>
       </url>
       <url>
@@ -223,6 +226,9 @@
         <loc>https://morzecrew.github.io/forze/dev/recipes/transactional-notifications/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/realtime-offline-delivery/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/background-workflow/</loc>
       </url>
       <url>
@@ -251,6 +257,12 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/contracts/messaging/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/tenancy-matrix/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/encryption-matrix/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/query-syntax/</loc>

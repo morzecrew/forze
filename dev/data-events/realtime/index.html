@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/running-in-prod/resilience/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/data-events/realtime/">
       
       
-        <link rel="prev" href="../deadlines/">
+        <link rel="prev" href="../events-sagas/">
       
       
-        <link rel="next" href="../shutdown-and-fleets/">
+        <link rel="next" href="../../identity-tenancy-enc/identity/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Resilience - Forze</title>
+        <title>Realtime push - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#built-in-policies" class="md-skip">
+        <a href="#a-connection-is-not-a-port" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Resilience
+              Realtime push
             
           </span>
         </div>
@@ -1183,6 +1183,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1198,11 +1200,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
@@ -1222,7 +1224,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1239,7 +1241,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/reading-data/" class="md-nav__link">
+      <a href="../reading-data/" class="md-nav__link">
         
   
   
@@ -1268,7 +1270,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/caching/" class="md-nav__link">
+      <a href="../caching/" class="md-nav__link">
         
   
   
@@ -1297,7 +1299,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/events-sagas/" class="md-nav__link">
+      <a href="../events-sagas/" class="md-nav__link">
         
   
   
@@ -1323,10 +1325,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../data-events/realtime/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-radio-tower" viewBox="0 0 24 24"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9M7.8 4.7a6.14 6.14 0 0 0-.8 7.5"/><circle cx="12" cy="9" r="2"/><path d="M16.2 4.8c2 2 2.26 5.11.8 7.47M19.1 1.9a9.96 9.96 0 0 1 0 14.1M9.5 18h5M8 22l4-11 4 11"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Realtime push
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1343,6 +1371,80 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#a-connection-is-not-a-port" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A connection is not a port
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#two-ways-to-publish" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Two ways to publish
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-gateway-bridges-to-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A gateway bridges to connections
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reaching-someone-whos-offline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reaching someone who's offline
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-to-go-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where to go next
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1508,8 +1610,6 @@
                 
   
   
-    
-  
   
   
     
@@ -1525,11 +1625,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
           <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
@@ -1549,7 +1649,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1566,7 +1666,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../deadlines/" class="md-nav__link">
+      <a href="../../running-in-prod/deadlines/" class="md-nav__link">
         
   
   
@@ -1592,36 +1692,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Resilience
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../running-in-prod/resilience/" class="md-nav__link">
         
   
   
@@ -1638,141 +1712,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#built-in-policies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Built-in policies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#applying-a-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Applying a policy
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#a-policy-is-composed-strategies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        A policy is composed strategies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rate-limiting" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Rate limiting
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#bulkheads" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Bulkheads
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Bulkheads">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#managing-the-queue" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Managing the queue
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#hedging-the-tail" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Hedging the tail
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#shedding-for-a-degraded-downstream" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Shedding for a degraded downstream
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#port-level-policies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Port-level policies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fleet-wide-state" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Fleet-wide state
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1785,7 +1724,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shutdown-and-fleets/" class="md-nav__link">
+      <a href="../../running-in-prod/shutdown-and-fleets/" class="md-nav__link">
         
   
   
@@ -1814,7 +1753,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../observability/" class="md-nav__link">
+      <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
   
@@ -4791,10 +4730,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#built-in-policies" class="md-nav__link">
+  <a href="#a-connection-is-not-a-port" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Built-in policies
+        A connection is not a port
       </span>
     </span>
   </a>
@@ -4802,10 +4741,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#applying-a-policy" class="md-nav__link">
+  <a href="#two-ways-to-publish" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Applying a policy
+        Two ways to publish
       </span>
     </span>
   </a>
@@ -4813,10 +4752,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#a-policy-is-composed-strategies" class="md-nav__link">
+  <a href="#a-gateway-bridges-to-connections" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        A policy is composed strategies
+        A gateway bridges to connections
       </span>
     </span>
   </a>
@@ -4824,10 +4763,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rate-limiting" class="md-nav__link">
+  <a href="#reaching-someone-whos-offline" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Rate limiting
+        Reaching someone who's offline
       </span>
     </span>
   </a>
@@ -4835,71 +4774,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bulkheads" class="md-nav__link">
+  <a href="#where-to-go-next" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Bulkheads
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Bulkheads">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#managing-the-queue" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Managing the queue
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#hedging-the-tail" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Hedging the tail
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#shedding-for-a-degraded-downstream" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Shedding for a degraded downstream
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#port-level-policies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Port-level policies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fleet-wide-state" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Fleet-wide state
+        Where to go next
       </span>
     </span>
   </a>
@@ -4986,11 +4864,11 @@
     
     
       <li class="md-path__item">
-        <a href="../deadlines/" class="md-path__link">
+        <a href="../reading-data/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Running in production
+    Data & events
   </span>
 
         </a>
@@ -5010,305 +4888,129 @@
   
 
 
-  <h1 id="__skip">Resilience</h1>
+  <h1 id="__skip">Realtime push</h1>
 
-<p>Calls to other systems fail transiently. A <strong>resilience policy</strong> wraps an
-operation (or a single call) with rate limits, retries, timeouts, and circuit
-breakers — declaratively, by name — so fault tolerance lives in the wiring, not
-scattered through handlers.</p>
-<p><a class="glightbox" data-gallery="light" data-title="A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain" data-type="image" href="../../_diagrams/light/resilience-stack.svg#only-light"><img alt="A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain" src="../../_diagrams/light/resilience-stack.svg#only-light" /></a>
-<a class="glightbox" data-gallery="dark" data-title="A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain" data-type="image" href="../../_diagrams/dark/resilience-stack.svg#only-dark"><img alt="A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain" src="../../_diagrams/dark/resilience-stack.svg#only-dark" /></a></p>
-<h2 id="built-in-policies">Built-in policies<a class="headerlink" href="#built-in-policies" title="Permanent link">&para;</a></h2>
-<p>Two ship ready to use, no <code>ResilienceSpec</code> required:</p>
+<p>A shipment is confirmed in a background saga, and the customer staring at their
+order page should see it <em>now</em> — no refresh, no poll. That push originates on the
+server, far from the request that opened the socket. Forze models it the same way
+it models every other cross-system effect: not as a method you call to reach a
+connection, but as a <strong>signal you publish as data</strong>, which a gateway delivers.</p>
+<p>This page is the conceptual tour. The <a href="../../integrations/socketio/">Socket.IO integration</a>
+has the wiring; the <a href="https://github.com/morzecrew/forze/tree/main/examples/recipes/realtime_offline"><code>realtime_offline</code> example</a>
+is a runnable, test-backed program.</p>
+<h2 id="a-connection-is-not-a-port">A connection is not a port<a class="headerlink" href="#a-connection-is-not-a-port" title="Permanent link">&para;</a></h2>
+<p>Forze's ports are <em>driven</em> dependencies — a database, a broker, an email vendor —
+infrastructure with an existence of its own. A live WebSocket is not that. It is
+the <strong>inbound adapter's own state</strong>: ephemeral, pinned to one node, tied to a
+session that a request opened. A saga reaching sideways into that connection
+would be coupling the application to the interface edge — the egress twin of
+letting a use case render an HTTP route.</p>
+<p>So the application never touches a connection. It publishes a <strong><code>RealtimeSignal</code></strong> —
+a logical <code>Audience</code> (a <code>principal</code> or a <code>topic</code>), a typed event, and a payload —
+onto the messaging it already uses. Everything realtime delivery needs comes from
+that choice for free: tenancy, the read-only guard, encryption, transactional
+safety, and a clean simulation boundary all come from the messaging port, not a
+bespoke realtime stack.</p>
+<h2 id="two-ways-to-publish">Two ways to publish<a class="headerlink" href="#two-ways-to-publish" title="Permanent link">&para;</a></h2>
+<p>The application picks a delivery discipline by <em>how</em> it publishes, and the choice
+is visible at the call site:</p>
+<div class="grid cards">
 <ul>
-<li><strong><code>occ</code></strong> — retry on <code>concurrency</code> (optimistic-concurrency contention).</li>
-<li><strong><code>transient</code></strong> — retry on <code>infrastructure</code>, with a 30 s per-attempt timeout.</li>
+<li>
+<p><strong><code>publish</code> — ephemeral</strong></p>
+<p>Appended straight to the realtime stream, fire-and-forget. At-most-once:
+perfect for typing indicators, presence, live cursors — signals that are
+worthless a second later, so a missed one costs nothing.</p>
+</li>
+<li>
+<p><strong><code>stage</code> — durable</strong></p>
+<p>Staged in the outbox with the business write and relayed after commit.
+At-least-once, deduplicated at delivery: for things that <em>must</em> arrive while
+the recipient is online — order shipped, payment received.</p>
+</li>
 </ul>
-<h2 id="applying-a-policy">Applying a policy<a class="headerlink" href="#applying-a-policy" title="Permanent link">&para;</a></h2>
-<p>Declaratively, wrap an operation on its registry with a named policy:</p>
-<div class="highlight"><pre><span></span><code><span class="n">ResilienceWrap</span><span class="p">(</span><span class="n">policy</span><span class="o">=</span><span class="s2">&quot;transient&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">()</span>
-</code></pre></div>
-<p>Or imperatively, around a specific call:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">resilience</span><span class="p">()</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-    <span class="k">lambda</span><span class="p">:</span> <span class="n">charge_card</span><span class="p">(</span><span class="n">payment</span><span class="p">),</span>
-    <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;transient&quot;</span><span class="p">,</span>
-    <span class="n">route</span><span class="o">=</span><span class="s2">&quot;payments&quot;</span><span class="p">,</span>   <span class="c1"># keys breaker/bulkhead state per dependency</span>
-<span class="p">)</span>
-</code></pre></div>
-<div class="admonition warning">
-<p class="admonition-title">A retry re-runs the whole operation</p>
-<p>Each attempt opens a <strong>fresh transaction</strong>, so a failed attempt's writes roll
-back before the next one — retries never leave half-applied state. It also
-means retried work must be safe to repeat.</p>
 </div>
-<h2 id="a-policy-is-composed-strategies">A policy is composed strategies<a class="headerlink" href="#a-policy-is-composed-strategies" title="Permanent link">&para;</a></h2>
-<p>When the built-ins aren't enough, compose your own. A <code>ResiliencePolicy</code> is an
-ordered stack of strategy objects (outer → inner: rate limit → bulkhead →
-circuit breaker → retry → timeout), plus optional fallback and hedge:</p>
-<table>
-<thead>
-<tr>
-<th>Strategy</th>
-<th>What it does</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Rate limit</strong></td>
-<td>token bucket — sustained <code>permits/per</code>, capacity <code>burst or permits</code>; an empty bucket <strong>rejects immediately</strong> with <code>throttled</code></td>
-</tr>
-<tr>
-<td><strong>Retry</strong></td>
-<td>re-run on a <a href="../../writing-operation/errors/">retryable</a> failure — <code>max_attempts</code>, <code>backoff</code> (base, max, multiplier, jitter)</td>
-</tr>
-<tr>
-<td><strong>Timeout</strong></td>
-<td>a per-attempt timeout</td>
-</tr>
-<tr>
-<td><strong>Circuit breaker</strong></td>
-<td>stop calling a failing dependency once a failure ratio trips, for a cool-off window</td>
-</tr>
-<tr>
-<td><strong>Adaptive throttle</strong></td>
-<td><a href="#shedding-for-a-degraded-downstream">shed proportionally</a> when the downstream stops accepting — the breaker's sibling for degraded-but-alive dependencies</td>
-</tr>
-<tr>
-<td><strong>Bulkhead</strong></td>
-<td>cap concurrent calls — fixed, or <a href="#bulkheads">adaptive / delay-based</a> — with an optional managed queue</td>
-</tr>
-<tr>
-<td><strong>Fallback / Hedge</strong></td>
-<td>a fallback value on failure; or race staggered attempts</td>
-</tr>
-</tbody>
-</table>
-<p>Retry only fires on kinds that declare themselves <strong>retryable</strong> —
-<code>concurrency</code>, <code>infrastructure</code>, and <code>throttled</code> (see
-<a href="../../writing-operation/errors/">Errors &amp; failures</a>). You can't retry a <code>validation</code> or <code>domain</code>
-failure, by design.</p>
-<p>When the invocation carries a <a href="../deadlines/">deadline</a>, it gates the whole
-strategy chain from the outside — and a retry abandons a backoff sleep that
-would outlive the budget, surfacing the real error instead of a pointless
-wait.</p>
-<h2 id="rate-limiting">Rate limiting<a class="headerlink" href="#rate-limiting" title="Permanent link">&para;</a></h2>
-<p><code>RateLimitStrategy(permits=10, per=timedelta(seconds=1))</code> is a token bucket:
-<code>permits/per</code> is the sustained rate, <code>burst or permits</code> the capacity, refilled
-continuously from the monotonic clock. State is keyed <code>(policy, route)</code> like
-the breaker's, so distinct backends under one policy get distinct buckets.</p>
-<p>There is <strong>no queuing</strong>: a call that finds the bucket empty raises
-<code>exc.throttled(code="rate_limited")</code> right away, before it can occupy a
-bulkhead slot or count against the breaker.</p>
-<p>To <strong>wait</strong> instead of failing fast, lean on the taxonomy: <code>throttled</code> is
-retryable, so a retry-with-backoff policy <em>around</em> the rate-limited call turns
-rejection into waiting:</p>
-<div class="highlight"><pre><span></span><code><span class="n">patient</span> <span class="o">=</span> <span class="n">ResiliencePolicy</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;patient&quot;</span><span class="p">,</span>
-    <span class="n">strategies</span><span class="o">=</span><span class="p">(</span>
-        <span class="n">RetryStrategy</span><span class="p">(</span>
-            <span class="n">max_attempts</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-            <span class="n">backoff</span><span class="o">=</span><span class="n">BackoffStrategy</span><span class="p">(</span>
-                <span class="n">base</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">milliseconds</span><span class="o">=</span><span class="mi">100</span><span class="p">),</span>
-                <span class="nb">max</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
-            <span class="p">),</span>
-            <span class="n">retry_on</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="n">ExceptionKind</span><span class="o">.</span><span class="n">THROTTLED</span><span class="p">}),</span>
-        <span class="p">),</span>
-    <span class="p">),</span>
-<span class="p">)</span>
+<p>Durable publishing dissolves the usual "did the emit race the commit?" problem:
+the signal rides the same transactional outbox as every other integration event,
+relayed only once the transaction is durable.</p>
+<h2 id="a-gateway-bridges-to-connections">A gateway bridges to connections<a class="headerlink" href="#a-gateway-bridges-to-connections" title="Permanent link">&para;</a></h2>
+<p>On the other side, a <strong>gateway</strong> consumes the realtime stream and emits each
+signal to the connections it owns. It is an edge adapter — the egress twin of the
+inbound Socket.IO adapter — and it is where Socket.IO is confined. It resolves a
+signal's <code>Audience</code> to a tenant-scoped <em>room</em> and emits; the Redis manager fans
+that emit to whichever node actually holds the recipient's socket, so the gateway
+need not be co-located with connections.</p>
+<p>Tenancy lives at <strong>room membership</strong>: a connection only ever joins its own
+tenant's rooms, so the stream itself can be tenant-global. A second transport —
+<abbr title="Server-Side Encryption">SSE</abbr>, a push vendor — is just another gateway consuming the same stream, never a
+new application contract.</p>
+<h2 id="reaching-someone-whos-offline">Reaching someone who's offline<a class="headerlink" href="#reaching-someone-whos-offline" title="Permanent link">&para;</a></h2>
+<p>Online delivery is only half the promise. If the recipient's phone is asleep when
+the shipment confirms, emitting into an empty room loses the signal. So a durable,
+principal-addressed signal is also written to a per-recipient <strong>mailbox</strong> — the
+mailbox is the source of truth, and the live emit is just a latency optimization
+on top. In a live app the gateway does this store as it processes the signal:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">emit_while_offline</span><span class="p">(</span>
+    <span class="n">mailbox</span><span class="p">:</span> <span class="n">DocumentRealtimeMailbox</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">event_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">hlc</span><span class="p">:</span> <span class="n">HlcTimestamp</span><span class="p">,</span>
+    <span class="n">signal</span><span class="p">:</span> <span class="n">RealtimeSignal</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;What the gateway does for a durable principal signal: store it for replay.</span>
 
-<span class="c1"># vendor calls run under a rate-limit policy; the call site waits it out.</span>
-<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">resilience</span><span class="p">()</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-    <span class="k">lambda</span><span class="p">:</span> <span class="n">vendor</span><span class="o">.</span><span class="n">fetch</span><span class="p">(</span><span class="n">order_id</span><span class="p">),</span>
-    <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;patient&quot;</span><span class="p">,</span>
-<span class="p">)</span>
+<span class="sd">    (Online it would also ``sio.emit``; offline — no room members — the mailbox is the</span>
+<span class="sd">    only delivery, drained on reconnect.) No tenant here — the store scopes ambiently.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">await</span> <span class="n">mailbox</span><span class="o">.</span><span class="n">store</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">,</span> <span class="n">event_id</span><span class="o">=</span><span class="n">event_id</span><span class="p">,</span> <span class="n">hlc</span><span class="o">=</span><span class="n">hlc</span><span class="p">,</span> <span class="n">signal</span><span class="o">=</span><span class="n">signal</span><span class="p">)</span>
 </code></pre></div>
-<p>The same <code>retry_on</code> also waits out backend-raised throttles (an upstream 429
-mapped to <code>throttled</code>) — your limiter and the backend reject the same way. At
-the FastAPI edge, an uncaught <code>throttled</code> becomes a <strong>429</strong>.</p>
-<h2 id="bulkheads">Bulkheads<a class="headerlink" href="#bulkheads" title="Permanent link">&para;</a></h2>
-<p>A bulkhead caps how many calls may be in flight at once, so one slow
-dependency can't absorb every task in the process. The fixed form is one
-number — <code>BulkheadStrategy(max_concurrency=8, max_queue=4)</code>: eight in flight,
-four waiting, the rest rejected immediately.</p>
-<p>A fixed cap has to be guessed, and the right number moves with downstream
-health. <strong><code>AdaptiveBulkheadStrategy</code></strong> lets latency set it instead:</p>
-<div class="highlight"><pre><span></span><code><span class="n">AdaptiveBulkheadStrategy</span><span class="p">(</span>
-    <span class="n">latency_threshold</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">milliseconds</span><span class="o">=</span><span class="mi">300</span><span class="p">),</span>
-    <span class="n">max_concurrency</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
-<span class="p">)</span>
+<p>When the device reconnects, it is replayed everything past its own <strong>cursor</strong>, and
+its ack advances that cursor — so a device never re-receives what it already saw,
+and once every device has acked an entry it's trimmed away:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">reconnect</span><span class="p">(</span>
+    <span class="n">mailbox</span><span class="p">:</span> <span class="n">DocumentRealtimeMailbox</span><span class="p">,</span>
+    <span class="n">cursors</span><span class="p">:</span> <span class="n">DocumentMailboxCursors</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">MailboxEntry</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;What the connection layer replays on connect: everything past this device&#39;s cursor.&quot;&quot;&quot;</span>
+
+    <span class="n">since</span> <span class="o">=</span> <span class="k">await</span> <span class="n">cursors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">,</span> <span class="n">client_key</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="k">await</span> <span class="n">mailbox</span><span class="o">.</span><span class="n">read_since</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">,</span> <span class="n">since</span><span class="o">=</span><span class="n">since</span><span class="p">)</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">ack</span><span class="p">(</span>
+    <span class="n">mailbox</span><span class="p">:</span> <span class="n">DocumentRealtimeMailbox</span><span class="p">,</span>
+    <span class="n">cursors</span><span class="p">:</span> <span class="n">DocumentMailboxCursors</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">event_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;What ``realtime.ack {up_to}`` does: advance the device cursor, trim what all acked.&quot;&quot;&quot;</span>
+
+    <span class="n">position</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mailbox</span><span class="o">.</span><span class="n">position_of</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">,</span> <span class="n">event_id</span><span class="o">=</span><span class="n">event_id</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">position</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">cursors</span><span class="o">.</span><span class="n">advance</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">,</span> <span class="n">client_key</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">up_to</span><span class="o">=</span><span class="n">position</span><span class="p">)</span>
+        <span class="n">floor</span> <span class="o">=</span> <span class="k">await</span> <span class="n">cursors</span><span class="o">.</span><span class="n">min_cursor</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">floor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">mailbox</span><span class="o">.</span><span class="n">trim</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">,</span> <span class="n">before</span><span class="o">=</span><span class="n">floor</span><span class="p">)</span>
 </code></pre></div>
-<p>It starts at <code>max_concurrency</code> and behaves exactly like a fixed bulkhead while
-calls complete inside the threshold. A completion <em>over</em> the threshold backs
-the limit off multiplicatively (<code>backoff_ratio</code>, at most once per <code>cooldown</code> —
-a burst of slow completions backs off once, not to the floor); in-budget
-completions recover it additively, about one slot per <code>limit</code> successes. This
-is AIMD — the TCP congestion algorithm — and that's exactly why it suits a
-fleet: N replicas' process-local limits sharing one downstream converge like N
-TCP flows sharing a link, with no distributed state.</p>
-<p>Two things it deliberately does <em>not</em> do. Errors don't shrink the limit —
-fast failures are the circuit breaker's signal, and a fast-failing downstream
-must not crater concurrency exactly when failures are cheap. And shrinking
-never evicts in-flight work — the limit only gates admission.</p>
-<p>By default any <em>single</em> completion over the threshold is a breach — instant
-reaction, but one GC pause or cold query halves your concurrency.
-<code>latency_quantile=0.95</code> makes the signal distributional instead: breach only
-when the <strong>observed p95</strong> of recent completions (a windowed streaming P²
-estimate, the same machinery as <a href="#hedging-the-tail">adaptive hedging</a>)
-exceeds the threshold. The contract becomes "the p95 must stay under the
-threshold" — outliers can't move a quantile, only a genuinely shifted
-distribution can. Each backoff opens a fresh measurement epoch, so the
-decision to shrink again is made from the <em>new</em> concurrency's latencies, not
-the stale history that justified the last one.</p>
-<p>A third kind, <strong><code>GradientBulkheadStrategy</code></strong>, drops the threshold entirely.
-Where AIMD reacts once latency crosses a number you have to pick, the Gradient2
-controller (from Netflix's <code>concurrency-limits</code>) <em>learns</em> the no-load latency
-baseline and tracks the gradient between it and recent latency — finding the
-load/latency knee on its own:</p>
-<div class="highlight"><pre><span></span><code><span class="n">GradientBulkheadStrategy</span><span class="p">(</span><span class="n">max_concurrency</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>   <span class="c1"># no latency_threshold to tune</span>
-</code></pre></div>
-<p>It probes the limit up gently while latency sits near baseline and contracts it
-as latency inflates (bounded so one spike can't more than roughly halve it),
-with a no-load guard so a lightly-loaded service never ratchets the limit up on
-noise. Only successful completions feed it — like AIMD, failures are the
-breaker's job. The three bulkhead kinds are mutually exclusive within a policy.</p>
-<h3 id="managing-the-queue">Managing the queue<a class="headerlink" href="#managing-the-queue" title="Permanent link">&para;</a></h3>
-<p>When a bulkhead has a queue (<code>max_queue &gt;= 1</code>), a size bound alone isn't
-enough under sustained overload — a short queue that never empties still adds
-its full length of latency to every call. Every bulkhead kind takes three
-opt-in controls for that — the first two from Facebook's <em>Fail at Scale</em>, the
-last Netflix-style prioritized shedding:</p>
+<p>The mailbox is <strong>bounded recent history</strong>, not an unbounded queue: a recipient
+offline longer than the retention window loses the oldest signals (delivery you
+need to guarantee forever belongs in domain state, not in realtime). Topic
+broadcasts are never mailboxed — there's no fixed membership to store them for —
+and an event can opt out of offline delivery when it isn't worth persisting.</p>
+<h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>queue_target=</code></strong> (CoDel) — bound queueing by the <em>time</em> a waiter
-  experiences. While the queue has recently been empty, a waiter may sojourn
-  up to <code>queue_interval</code> (default 100 ms); under sustained congestion,
-  anything parked longer than the target is shed at dequeue
-  (<code>code="bulkhead_queue_shed"</code>).</li>
-<li><strong><code>queue_adaptive_lifo=True</code></strong> — while congested, serve the <em>newest</em> waiter
-  first: its client is the one most likely still listening. FIFO otherwise.
-  LIFO starves the old tail under overload by design, so pair it with
-  <code>queue_target</code> to shed that tail instead of parking it forever.</li>
-<li><strong><code>prioritized=True</code></strong> — make shedding <em>criticality-aware</em>. Under a full
-  queue a higher-criticality arrival displaces the lowest-criticality waiter
-  instead of being rejected, and lower tiers get a tighter CoDel allowance so
-  they shed first. Tiers come from the task-scoped <code>Criticality</code>
-  (<code>BEST_EFFORT &lt; DEGRADED &lt; NORMAL &lt; CRITICAL</code>, default <code>NORMAL</code>), bound at the
-  boundary like a deadline — so a background prefetch sheds before a user's
-  interactive call:</li>
+<li><a href="../../integrations/socketio/">Socket.IO integration</a> — the full wiring: the
+  publisher, the gateway and its lifecycle, presence, the device-identity
+  handshake, the delivery envelope, and the production hardening knobs.</li>
+<li><a href="../events-sagas/">Events &amp; sagas</a> — the outbox and relay the durable path rides on.</li>
 </ul>
-<div class="highlight"><pre><span></span><code><span class="k">with</span> <span class="n">bind_criticality</span><span class="p">(</span><span class="n">Criticality</span><span class="o">.</span><span class="n">BEST_EFFORT</span><span class="p">):</span>
-    <span class="k">await</span> <span class="n">prefetch</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-</code></pre></div>
-<p>A parked waiter whose <a href="../deadlines/">invocation deadline</a> has already expired
-is failed at wake instead of being granted a slot it can no longer use — no
-knob needed.</p>
-<h2 id="hedging-the-tail">Hedging the tail<a class="headerlink" href="#hedging-the-tail" title="Permanent link">&para;</a></h2>
-<p>Even a healthy downstream has a slow tail. A <strong>hedge</strong> races it: if the
-primary attempt hasn't completed after <code>delay</code>, fire a concurrent copy and
-take whichever finishes first (losers are cancelled). Only safe on idempotent
-reads — and <code>budget</code> caps the extra load it may add.</p>
-<p>The textbook delay is "about the p95 latency" — but a fixed number is always
-either too eager (wasted duplicate load) or too late (no tail rescue) as the
-downstream's distribution moves. Let it track the observed tail instead:</p>
-<div class="highlight"><pre><span></span><code><span class="n">HedgeStrategy</span><span class="p">(</span>
-    <span class="n">delay</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">milliseconds</span><span class="o">=</span><span class="mi">200</span><span class="p">),</span>   <span class="c1"># fallback until the estimator warms</span>
-    <span class="n">max_attempts</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-    <span class="n">adaptive_delay_quantile</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span>        <span class="c1"># hedge after the *observed* p95</span>
-    <span class="n">delay_min</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">milliseconds</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>The executor keeps a streaming quantile estimate (P² — five floats, no sample
-storage) of primary-attempt latencies per <code>(policy, route)</code>, windowed so a
-shifted distribution is picked up quickly, and hedges after <em>that</em> instead of
-the fixed delay. <code>delay_min</code> / <code>delay_max</code> clamp it: the floor guards against
-over-eager hedging when every call is fast, the cap against a degraded
-downstream pushing the trigger past usefulness. The effective delay is
-visible as the <code>forze.resilience.hedge.delay</code> gauge once
-<a href="../observability/#resilience-metrics"><code>instrument_resilience</code></a> is attached.</p>
-<h2 id="shedding-for-a-degraded-downstream">Shedding for a degraded downstream<a class="headerlink" href="#shedding-for-a-degraded-downstream" title="Permanent link">&para;</a></h2>
-<p>The circuit breaker is <strong>binary</strong>: full traffic, or a half-open trickle. At
-50% downstream failure both answers are wrong — the right one is to send
-roughly the traffic the downstream is still absorbing. That's the <strong>adaptive
-client throttle</strong> (Google's SRE book): track <code>requests</code> and <code>accepts</code> per
-window, and reject locally with probability</p>
-<div class="highlight"><pre><span></span><code>max(0, (requests − k·accepts) / (requests + 1))
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">AdaptiveThrottleStrategy</span><span class="p">()</span>   <span class="c1"># k=2.0, window=2min, min_throughput=10</span>
-</code></pre></div>
-<p>A healthy downstream (<code>accepts ≈ requests</code>, <code>k=2</code>) computes a negative number
-— nothing is shed, ever. As the accept ratio degrades, shedding rises
-<em>proportionally</em>, and the steady state is self-limiting: shed calls count as
-requests but not accepts, so the client converges on roughly <code>k ×</code> the
-downstream's current capacity, leaving a continuous probe stream that detects
-recovery on its own (no half-open ceremony). Shed calls fail with a
-<strong>retryable</strong> <code>throttled</code> (<code>code="adaptive_throttle"</code>, 429 at the edge) and a
-<code>throttle_reject</code> resilience event. "Accepted" uses the breaker's outcome
-classification inverted — a domain rejection is the downstream doing its job,
-not buckling, so it never triggers shedding.</p>
-<p>The throttle and the breaker are <strong>mutually exclusive in one policy</strong> (they
-occupy the same outcome-observing slot, and composed, the throttle would read
-the breaker's own local rejections as overload). Pick per dependency: the
-throttle for downstreams that degrade, the breaker for ones that die outright.</p>
-<h2 id="port-level-policies">Port-level policies<a class="headerlink" href="#port-level-policies" title="Permanent link">&para;</a></h2>
-<p>Instead of wrapping individual calls, bind a policy to a <strong>dependency key</strong> —
-every resolved port for that key gets its public coroutine methods run under
-the policy, transparently:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.http</span><span class="w"> </span><span class="kn">import</span> <span class="n">HttpServiceDepKey</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.queue</span><span class="w"> </span><span class="kn">import</span> <span class="n">QueueCommandDepKey</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.resilience</span><span class="w"> </span><span class="kn">import</span> <span class="n">PortPolicy</span>
-
-<span class="n">ResilienceDepsModule</span><span class="p">(</span>
-    <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>  <span class="c1"># defines &quot;vendor_rl&quot;</span>
-    <span class="n">port_policies</span><span class="o">=</span><span class="p">(</span>
-        <span class="c1"># every HTTP service method runs under &quot;vendor_rl&quot;</span>
-        <span class="n">PortPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">HttpServiceDepKey</span><span class="p">,</span> <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;vendor_rl&quot;</span><span class="p">),</span>
-        <span class="c1"># only enqueues, under one shared bucket across queues</span>
-        <span class="n">PortPolicy</span><span class="p">(</span>
-            <span class="n">key</span><span class="o">=</span><span class="n">QueueCommandDepKey</span><span class="p">,</span>
-            <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;vendor_rl&quot;</span><span class="p">,</span>
-            <span class="n">route</span><span class="o">=</span><span class="s2">&quot;all-queues&quot;</span><span class="p">,</span>
-            <span class="n">methods</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;enqueue&quot;</span><span class="p">,</span> <span class="s2">&quot;enqueue_many&quot;</span><span class="p">),</span>
-        <span class="p">),</span>
-    <span class="p">),</span>
-<span class="p">)</span>
-</code></pre></div>
-<p><code>route</code> defaults to the route the port resolved under (its <code>spec.name</code>), so
-each backend keys its own breaker/bucket state; set it explicitly to share.
-<code>methods=None</code> wraps every public coroutine method. Async-generator methods
-(<code>consume</code>, <code>tail</code>, <code>subscribe</code>-style streams) are never wrapped — a stream
-can't run inside a single <code>run()</code> call; guard the consumption loop instead.</p>
-<h2 id="fleet-wide-state">Fleet-wide state<a class="headerlink" href="#fleet-wide-state" title="Permanent link">&para;</a></h2>
-<p>Breaker and rate-limit state is per-process by default — which means N
-replicas each enforce <code>permits/per</code> independently (a fleet-effective rate of
-<code>permits × replicas</code>), and a circuit opened on one replica protects only that
-replica. <code>forze[redis]</code> makes both <strong>shared</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">redis_circuit_breaker_store</span><span class="p">,</span>
-    <span class="n">redis_latency_digest_store</span><span class="p">,</span>
-    <span class="n">redis_rate_limit_store</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">ResilienceDepsModule</span><span class="p">(</span>
-    <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>
-    <span class="n">breaker_store</span><span class="o">=</span><span class="n">redis_circuit_breaker_store</span><span class="p">(</span><span class="n">redis</span><span class="p">),</span>
-    <span class="n">rate_limit_store</span><span class="o">=</span><span class="n">redis_rate_limit_store</span><span class="p">(</span><span class="n">redis</span><span class="p">),</span>
-    <span class="n">latency_digest_store</span><span class="o">=</span><span class="n">redis_latency_digest_store</span><span class="p">(</span><span class="n">redis</span><span class="p">),</span>  <span class="c1"># see below</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>The shared rate limiter keeps its token bucket in Redis, mutated atomically on
-the server's clock — the declared rate becomes the <em>fleet's</em> rate. The shared
-breaker store does the same for circuit state, so one replica tripping opens
-the circuit for all. Both <strong>fail open</strong>: on a Redis error they fall back to
-the process-local implementation (emitting a <code>*_store_degraded</code> trace event),
-so a coordination-store hiccup degrades to per-replica behavior instead of
-failing calls.</p>
-<p>Bulkhead <em>capacity</em> stays process-local by design — fleet capacity is
-<code>max_concurrency × replicas</code>, and the <a href="#bulkheads">adaptive bulkhead</a> converges
-across uncoordinated replicas like N TCP flows. Its congestion <em>signal</em> can be
-shared, though: for a <code>latency_quantile</code> policy, <code>latency_digest_store</code> keeps
-the latency sketch in Redis (a mergeable DDSketch), so every replica's adaptive
-limit reacts to the <em>fleet's</em> p95 instead of its own — same fail-open posture
-as the other two stores. The rest of the fleet story — drain, readiness,
-singleton startup steps — is in <a href="../shutdown-and-fleets/">Shutdown &amp; fleets</a>.</p>
 
 
 
@@ -5349,7 +5051,7 @@ singleton startup steps — is in <a href="../shutdown-and-fleets/">Shutdown &am
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../deadlines/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Deadlines">
+          <a href="../events-sagas/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Events &amp; sagas">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -5359,20 +5061,20 @@ singleton startup steps — is in <a href="../shutdown-and-fleets/">Shutdown &am
                 Previous
               </span>
               <div class="md-ellipsis">
-                Deadlines
+                Events & sagas
               </div>
             </div>
           </a>
         
         
           
-          <a href="../shutdown-and-fleets/" class="md-footer__link md-footer__link--next" aria-label="Next: Shutdown &amp; fleets">
+          <a href="../../identity-tenancy-enc/identity/" class="md-footer__link md-footer__link--next" aria-label="Next: Identity &amp; access">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Shutdown & fleets
+                Identity & access
               </div>
             </div>
             <div class="md-footer__button md-icon">

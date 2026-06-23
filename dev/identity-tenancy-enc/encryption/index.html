@@ -1319,6 +1319,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../data-events/realtime/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-radio-tower" viewBox="0 0 24 24"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9M7.8 4.7a6.14 6.14 0 0 0-.8 7.5"/><circle cx="12" cy="9" r="2"/><path d="M16.2 4.8c2 2 2.26 5.11.8 7.47M19.1 1.9a9.96 9.96 0 0 1 0 14.1M9.5 18h5M8 22l4-11 4 11"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Realtime push
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -3975,6 +4004,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/realtime-offline-delivery/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Realtime delivery to offline users
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/background-workflow/" class="md-nav__link">
         
   
@@ -4504,6 +4562,64 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/tenancy-matrix/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M16 3.128a4 4 0 0 1 0 7.744M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Tenancy matrix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/encryption-matrix/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Encryption matrix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/query-syntax/" class="md-nav__link">
         
   
@@ -4965,8 +5081,49 @@ it is for tests and local runs, never production. It exists so the encryption
 paths exercise end-to-end without a real <abbr title="Key Management Service">KMS</abbr>; it protects nothing.</p>
 </div>
 <h2 id="where-data-gets-encrypted">Where data gets encrypted<a class="headerlink" href="#where-data-gets-encrypted" title="Permanent link">&para;</a></h2>
-<p>Three surfaces opt in independently, each declaring its own coverage tier. You
-encrypt only what needs it.</p>
+<p>Each surface opts in independently, declaring its own coverage. You encrypt only
+what needs it — at a glance:</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>What's sealed</th>
+<th>Coverage</th>
+<th>Reach</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Document fields (+ search, analytics, graph — one shared policy)</td>
+<td>the marked fields</td>
+<td>per-field — <code>encrypted</code> (randomized) · <code>searchable</code> (deterministic)</td>
+<td>at rest</td>
+</tr>
+<tr>
+<td>Object storage</td>
+<td>the object bytes</td>
+<td>whole object</td>
+<td>client-side — the backend only ever stores the envelope</td>
+</tr>
+<tr>
+<td>Outbox · direct queue / stream / pub-sub</td>
+<td>the message payload</td>
+<td>whole payload</td>
+<td><code>at_rest</code> (relay decrypts) or <code>end_to_end</code> (consumer decrypts)</td>
+</tr>
+<tr>
+<td>Idempotency result</td>
+<td>the cached return value</td>
+<td>whole result</td>
+<td>at rest</td>
+</tr>
+</tbody>
+</table>
+<p>Not encrypted: the <strong>inbox</strong> (dedup state) and the general <strong>cache</strong> (except a
+search route's result snapshots, sealed automatically). The full surface — reach,
+searchability, <abbr title="Additional Authenticated Data">AAD</abbr> binding, per-tenant keys, and the fail-closed code per surface
+— is the <a href="../../reference/encryption-matrix/">encryption reference</a>. The rest of this
+page is the per-surface detail.</p>
 <h3 id="document-fields">Document fields<a class="headerlink" href="#document-fields" title="Permanent link">&para;</a></h3>
 <p>A document spec names the fields to seal. Tiers run weakest to strongest —
 <code>none</code> &lt; <code>field</code> &lt; <code>envelope</code> — and a spec derives its tier from what it marks:</p>
