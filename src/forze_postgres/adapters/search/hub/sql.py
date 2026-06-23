@@ -397,15 +397,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         )
         do_legs = bool(query_terms) and bool(active)
         effective_sorts = sorts if sorts else self._hub_host.hub_spec.default_sort
-        key_spec = hub_order_key_spec(
-            do_legs=do_legs,
-            sorts=sorts,
-            default_sort=self._hub_host.hub_spec.default_sort,
-            read_fields=self._hub_host.read_fields,
-            spec_name=self._hub_host.hub_spec.name,
-            rank_field=HUB_RANK,
-            model=self._hub_host.model_type,
-        )
+        key_spec = self._hub_cursor_key_spec(do_legs=do_legs, sorts=sorts)
         plan = HubSearchPlan(
             terms=query_terms,
             do_legs=do_legs,
@@ -504,15 +496,7 @@ class HubSearchSqlMixin[M: BaseModel]:
             if member_weights_list[i] > 0.0
         )
         do_legs = bool(query_terms) and bool(active)
-        key_spec = hub_order_key_spec(
-            do_legs=do_legs,
-            sorts=sorts,
-            default_sort=self._hub_host.hub_spec.default_sort,
-            read_fields=self._hub_host.read_fields,
-            spec_name=self._hub_host.hub_spec.name,
-            rank_field=HUB_RANK,
-            model=self._hub_host.model_type,
-        )
+        key_spec = self._hub_cursor_key_spec(do_legs=do_legs, sorts=sorts)
         plan = HubSearchPlan(
             terms=query_terms,
             do_legs=do_legs,

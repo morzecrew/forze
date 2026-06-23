@@ -27,7 +27,8 @@ def assert_cursor_projection_includes_sort_keys(
     """
     if return_fields is None:
         return
-    if all(k.split(".", 1)[0] in return_fields for k in sort_keys):
+    projected = set(return_fields)
+    if all(k.split(".", 1)[0] in projected for k in sort_keys):
         return
     raise exc.internal(
         "When using return_fields with cursor list, the projection must include "
