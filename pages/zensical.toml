@@ -163,6 +163,8 @@ nav = [
             "reference/contracts/search.md",
             "reference/contracts/messaging.md",
         ] },
+        "reference/tenancy-matrix.md",
+        "reference/encryption-matrix.md",
         "reference/query-syntax.md",
         "reference/mapping.md",
         "reference/fastapi-routes.md",

@@ -63,8 +63,21 @@ directory (see [Per-tenant keys](#per-tenant-keys-byok) below).
 
 ## Where data gets encrypted
 
-Three surfaces opt in independently, each declaring its own coverage tier. You
-encrypt only what needs it.
+Each surface opts in independently, declaring its own coverage. You encrypt only
+what needs it — at a glance:
+
+| Surface | What's sealed | Coverage | Reach |
+|---------|---------------|----------|-------|
+| Document fields (+ search, analytics, graph — one shared policy) | the marked fields | per-field — `encrypted` (randomized) · `searchable` (deterministic) | at rest |
+| Object storage | the object bytes | whole object | client-side — the backend only ever stores the envelope |
+| Outbox · direct queue / stream / pub-sub | the message payload | whole payload | `at_rest` (relay decrypts) or `end_to_end` (consumer decrypts) |
+| Idempotency result | the cached return value | whole result | at rest |
+
+Not encrypted: the **inbox** (dedup state) and the general **cache** (except a
+search route's result snapshots, sealed automatically). The full surface — reach,
+searchability, AAD binding, per-tenant keys, and the fail-closed code per surface
+— is the [encryption reference](../reference/encryption-matrix.md). The rest of this
+page is the per-surface detail.
 
 ### Document fields
 
