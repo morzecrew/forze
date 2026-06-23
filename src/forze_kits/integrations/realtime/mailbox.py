@@ -10,13 +10,14 @@ misrouted spec fails at wiring, not on first emit, and a write-side build is ref
 read-only (QUERY) operation. **Tenancy is the document store's concern** — wire the
 mailbox/cursor collections ``tenant_aware`` and the adapter scopes every row by the
 ambient tenant; this kit carries **zero** tenant code. The mailbox doc's key is the
-durable event's own id (already a ``UUID``); cursors look up by ``(principal, client_key)``
-— no derived ids. Ordering/cursor values are the HLC the durable path carries, stored
+durable event's own id (already a ``UUID``); a cursor's key is a **deterministic** id
+derived from ``(principal, client_key)`` (``uuid5``), so a concurrent first-ack ``ensure``
+is atomic. Ordering/cursor values are the HLC the durable path carries, stored
 packed (monotonic int, range-queryable). Encryption is whatever the app sets on the spec.
 """
 
 from typing import Any, Final, final
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import attrs
 from pydantic import Field
@@ -29,7 +30,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
-from forze.base.primitives import HlcTimestamp, uuid7
+from forze.base.primitives import HlcTimestamp
 from forze.domain.models import BaseDTO, Document, ReadDocument
 
 from .specs import DEFAULT_REALTIME_CHANNEL
@@ -38,6 +39,21 @@ from .specs import DEFAULT_REALTIME_CHANNEL
 
 _DEFAULT_CAP: Final = 1000
 """Max entries replayed per principal (newest-first retention bound)."""
+
+_CURSOR_NS: Final = UUID("1d3e0b5a-7c9f-4e2a-8b6d-0a1c2e4f6a8b")
+"""Fixed namespace for deriving a cursor's id from ``(principal, client_key)``."""
+
+
+def _cursor_id(principal: str, client_key: str) -> UUID:
+    """A deterministic cursor id, so concurrent first-acks for one device converge on a
+    single row (``ensure`` is then idempotent) instead of racing two inserts.
+
+    ``uuid5`` is a SHA-1 hash of its inputs — no clock or entropy — so it needs no
+    ``base.primitives`` seam (used directly, like ``hashlib``) and is byte-identical
+    under simulation.
+    """
+
+    return uuid5(_CURSOR_NS, f"{principal}\x00{client_key}")
 
 
 # ----------------------- #
@@ -251,8 +267,9 @@ class DocumentRealtimeMailbox:
 class DocumentMailboxCursors:
     """Per-device read cursors over a document collection (RFC 0006 default).
 
-    Built via :func:`build_realtime_cursors`. No derived ids — a cursor is found by
-    ``(principal, client_key)`` and created with a fresh ``uuid7`` on first ack.
+    Built via :func:`build_realtime_cursors`. A cursor is found by ``(principal, client_key)``
+    and created under a **deterministic** id derived from them (:func:`_cursor_id`), so a
+    concurrent first-ack converges on one row via ``ensure`` rather than racing two inserts.
     """
 
     command: DocumentCommandPort[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate]
@@ -293,9 +310,11 @@ class DocumentMailboxCursors:
         self._acked += 1
 
         if row is None:
-            await self.command.create(
+            # Deterministic id + ensure: two concurrent first-acks for the same device both
+            # see no row, but converge on one insert instead of creating duplicates.
+            await self.command.ensure(
+                _cursor_id(principal, client_key),
                 _CursorCreate(principal=principal, client_key=client_key, hlc=target),
-                id=uuid7(),
                 return_new=False,
             )
         else:

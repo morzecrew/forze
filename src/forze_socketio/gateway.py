@@ -25,6 +25,8 @@ require_socketio()
 # ....................... #
 
 import asyncio
+import os
+import socket
 from contextlib import AbstractContextManager, nullcontext
 from datetime import timedelta
 from typing import (
@@ -84,6 +86,20 @@ SignalHandler = Callable[
 The dedup id is the durable ``forze_event_id`` (``None`` for ephemeral signals); the
 HLC is the carried ``forze_hlc`` (or a wall-clock fallback) used for mailbox ordering.
 """
+
+# ....................... #
+
+
+def _default_consumer() -> str:
+    """A consumer name unique to this process (host + pid).
+
+    Redis consumer-group semantics key the pending-entries list by consumer name, so two
+    gateway instances sharing a name would each claim/reclaim the *other's* in-flight entries
+    (double-processing, broken idle recovery). One stable, distinct name per process avoids it.
+    """
+
+    return f"{socket.gethostname()}-{os.getpid()}"
+
 
 # ....................... #
 
@@ -313,8 +329,9 @@ class StreamGroupSignalSource(RealtimeSignalSource):
     group: str = DEFAULT_REALTIME_GROUP
     """Consumer group name shared by all gateway instances."""
 
-    consumer: str = "gateway"
-    """This instance's consumer name within the group."""
+    consumer: str = attrs.field(factory=_default_consumer)
+    """This instance's consumer name within the group — defaults **unique per process**
+    (host + pid) so multiple instances don't clobber each other's pending-entries list."""
 
     batch: int = 64
     """Maximum signals to read per poll."""
@@ -385,8 +402,9 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     wired ``tenant_aware``, so it resolves to a per-tenant key/partition under the bound tenant;
     the tenants are evaluated **once** at :meth:`run` start."""
 
-    consumer: str = "gateway"
-    """This instance's consumer name within the group."""
+    consumer: str = attrs.field(factory=_default_consumer)
+    """This instance's consumer name within the group — defaults **unique per process**
+    (host + pid) so multiple instances don't clobber each other's pending-entries list."""
 
     batch: int = 64
     """Maximum signals to read per poll, per tenant."""

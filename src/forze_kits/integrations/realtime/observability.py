@@ -47,14 +47,13 @@ def instrument_realtime_mailbox(
     """
 
     from opentelemetry import metrics
-    from opentelemetry.metrics import Observation
 
     meter = meter or metrics.get_meter("forze")
     attributes = {"forze.realtime.channel": channel}
 
     def _counter(name: str, pick: Callable[[], int], description: str) -> None:
         def callback(_options: "CallbackOptions") -> Iterable["Observation"]:
-            return [Observation(pick(), attributes)]
+            return [metrics.Observation(pick(), attributes)]
 
         meter.create_observable_counter(
             name, callbacks=[callback], unit="1", description=description

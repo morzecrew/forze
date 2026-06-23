@@ -16,7 +16,7 @@ require_socketio()
 
 # ....................... #
 
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager
 from datetime import datetime
 from inspect import isawaitable
 from typing import Any, Awaitable, Callable, Mapping, Protocol, final, runtime_checkable
@@ -158,17 +158,185 @@ async def _resolve(
     return await result if isawaitable(result) else result
 
 
-def _bind_tenant(
-    ctx: ExecutionContext, tenant: UUID | None
+def _bind_connection(
+    ctx: ExecutionContext, connection: RealtimeConnection
 ) -> AbstractContextManager[None]:
-    """Bind the connection's *tenant* so the mailbox/cursors scope ambiently."""
+    """Bind the connection's authenticated identity **and** tenant for a fresh scope.
 
-    if tenant is None:
-        return nullcontext()
+    Replay and ack open a *new* execution scope, which has neither the authn nor the tenant
+    bound — so the connection's own identity (captured at connect time) must be re-established,
+    or the mailbox/cursor operations run unauthenticated (and a tenant-aware store fails
+    closed). Both come from the connection, never from the empty fresh ``ctx``.
+    """
 
-    return ctx.inv_ctx.bind_identity(
-        authn=ctx.inv_ctx.get_authn(), tenant=TenantIdentity(tenant_id=tenant)
-    )
+    tenant = TenantIdentity(tenant_id=connection.tenant) if connection.tenant is not None else None
+
+    return ctx.inv_ctx.bind_identity(authn=connection.authn, tenant=tenant)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _ConnectionLifecycle:
+    """The connect / ack / disconnect handlers, as methods so each can be unit-tested in
+    isolation (the closures they replaced could not be reached from a test)."""
+
+    sio: AsyncServer
+    namespace: str
+    resolve: ConnectionResolver
+    presence: RealtimePresence | None = None
+    mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox] | None = None
+    cursors_factory: Callable[[ExecutionContext], MailboxCursors] | None = None
+    runtime: ExecutionRuntime | None = None
+
+    # ....................... #
+
+    @property
+    def replay_enabled(self) -> bool:
+        return (
+            self.mailbox_factory is not None
+            and self.cursors_factory is not None
+            and self.runtime is not None
+        )
+
+    # ....................... #
+
+    async def replay(self, connection: RealtimeConnection, sid: str) -> None:
+        """Drain everything past this device's cursor to the freshly-connected socket."""
+
+        if self.mailbox_factory is None or self.cursors_factory is None or self.runtime is None:
+            return
+
+        client_key = connection.client_key(sid)
+
+        async with self.runtime.scope():
+            ctx = self.runtime.get_context()
+            with _bind_connection(ctx, connection):  # connection identity — fresh scope is empty
+                mailbox = self.mailbox_factory(ctx)  # ports resolved for this unit of work
+                cursors = self.cursors_factory(ctx)
+                since = await cursors.get(principal=connection.principal, client_key=client_key)
+                entries = await mailbox.read_since(principal=connection.principal, since=since)
+
+        for entry in entries:
+            await self.sio.emit(
+                entry.event,
+                {"id": entry.event_id, "data": entry.payload},
+                to=sid,
+                namespace=self.namespace,
+            )
+
+    # ....................... #
+
+    async def on_ack(self, sid: str, data: Any = None) -> None:
+        """``realtime.ack {up_to}``: advance the device cursor, trim the all-device floor."""
+
+        if self.mailbox_factory is None or self.cursors_factory is None or self.runtime is None:
+            return
+
+        session = await self.sio.get_session(sid, namespace=self.namespace)
+        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+        raw = (  # pyright: ignore[reportUnknownVariableType]
+            data.get("up_to")  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(data, Mapping)
+            else None
+        )
+        event_id = (
+            str(raw) if raw else None  # pyright: ignore[reportUnknownArgumentType]
+        )
+
+        if connection is None or event_id is None:
+            return
+
+        async with self.runtime.scope():
+            ctx = self.runtime.get_context()
+            with _bind_connection(ctx, connection):
+                mailbox = self.mailbox_factory(ctx)
+                cursors = self.cursors_factory(ctx)
+                position = await mailbox.position_of(
+                    principal=connection.principal, event_id=event_id
+                )
+
+                if position is not None:
+                    await cursors.advance(
+                        principal=connection.principal,
+                        client_key=connection.client_key(sid),
+                        up_to=position,
+                    )
+
+                    # trim what every known device has now acked (TTL/cap is the backstop)
+                    floor = await cursors.min_cursor(principal=connection.principal)
+
+                    if floor is not None:
+                        await mailbox.trim(principal=connection.principal, before=floor)
+
+    # ....................... #
+
+    async def on_connect(
+        self, sid: str, environ: Mapping[str, Any], auth: Any = None
+    ) -> None:
+        """Authenticate (store the identity), auto-join the principal room, replay."""
+
+        connect = SocketIOConnect(
+            sid=sid, namespace=self.namespace, environ=environ, auth=auth
+        )
+
+        try:
+            connection = await _resolve(self.resolve, connect)
+
+        except SocketIOConnectionRefusedError:
+            raise
+
+        except CoreException as error:
+            if is_server_error_kind(error.kind):
+                log_server_error(error, core=error)
+                raise SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL) from error
+
+            raise SocketIOConnectionRefusedError(error.summary) from error
+
+        except Exception as error:  # noqa: BLE001
+            log_server_error(error)
+            raise SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL) from error
+
+        if connection is None:
+            return  # anonymous: no principal room, may still join topics later
+
+        session = await self.sio.get_session(sid, namespace=self.namespace)
+        session[IDENTITY_SESSION_KEY] = connection.authn
+        session[CONNECTION_SESSION_KEY] = connection
+        await self.sio.save_session(sid, session, namespace=self.namespace)
+
+        room = connection.principal_room
+        await self.sio.enter_room(sid, room, namespace=self.namespace)
+
+        if self.presence is not None:
+            await self.presence.joined(room, sid)
+
+        if self.replay_enabled:
+            # replay is best-effort: a drain error must not refuse the live connection
+            try:
+                await self.replay(connection, sid)
+
+            except Exception as error:  # noqa: BLE001
+                log_server_error(error)
+
+    # ....................... #
+
+    async def on_disconnect(self, sid: str) -> None:
+        """Update presence on disconnect (Socket.IO drops room membership itself)."""
+
+        if self.presence is None:
+            return
+
+        session = await self.sio.get_session(sid, namespace=self.namespace)
+        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+
+        if connection is not None:
+            await self.presence.left(connection.principal_room, sid)
+
+
+# ....................... #
 
 
 def attach_realtime_connection(
@@ -205,137 +373,21 @@ def attach_realtime_connection(
         would silently overwrite this one (or vice versa). Resolve identity here.
     """
 
-    replay_enabled = (
-        mailbox_factory is not None and cursors_factory is not None and runtime is not None
+    lifecycle = _ConnectionLifecycle(
+        sio=sio,
+        namespace=namespace,
+        resolve=resolve,
+        presence=presence,
+        mailbox_factory=mailbox_factory,
+        cursors_factory=cursors_factory,
+        runtime=runtime,
     )
 
-    async def _replay(connection: RealtimeConnection, sid: str) -> None:
-        if (
-            mailbox_factory is None or cursors_factory is None or runtime is None
-        ):  # never (gated by replay_enabled)
-            return
+    sio.on("connect", handler=lifecycle.on_connect, namespace=namespace)
+    sio.on("disconnect", handler=lifecycle.on_disconnect, namespace=namespace)
 
-        client_key = connection.client_key(sid)
-
-        async with runtime.scope():
-            ctx = runtime.get_context()
-            with _bind_tenant(ctx, connection.tenant):  # authenticated tenant — always bound
-                mailbox = mailbox_factory(ctx)  # ports resolved for this unit of work
-                cursors = cursors_factory(ctx)
-                since = await cursors.get(principal=connection.principal, client_key=client_key)
-                entries = await mailbox.read_since(principal=connection.principal, since=since)
-
-        for entry in entries:
-            await sio.emit(
-                entry.event,
-                {"id": entry.event_id, "data": entry.payload},
-                to=sid,
-                namespace=namespace,
-            )
-
-    async def ack_handler(sid: str, data: Any = None) -> None:
-        if (
-            mailbox_factory is None or cursors_factory is None or runtime is None
-        ):  # never (gated by replay_enabled)
-            return
-
-        session = await sio.get_session(sid, namespace=namespace)
-        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
-        raw = (  # pyright: ignore[reportUnknownVariableType]
-            data.get("up_to")  # pyright: ignore[reportUnknownMemberType]
-            if isinstance(data, Mapping)
-            else None
-        )
-        event_id = (
-            str(raw) if raw else None  # pyright: ignore[reportUnknownArgumentType]
-        )
-
-        if connection is None or event_id is None:
-            return
-
-        async with runtime.scope():
-            ctx = runtime.get_context()
-            with _bind_tenant(ctx, connection.tenant):
-                mailbox = mailbox_factory(ctx)
-                cursors = cursors_factory(ctx)
-                position = await mailbox.position_of(
-                    principal=connection.principal, event_id=event_id
-                )
-
-                if position is not None:
-                    await cursors.advance(
-                        principal=connection.principal,
-                        client_key=connection.client_key(sid),
-                        up_to=position,
-                    )
-
-                    # trim what every known device has now acked (TTL/cap is the backstop)
-                    floor = await cursors.min_cursor(principal=connection.principal)
-
-                    if floor is not None:
-                        await mailbox.trim(principal=connection.principal, before=floor)
-
-    async def connect_handler(
-        sid: str, environ: Mapping[str, Any], auth: Any = None
-    ) -> None:
-        connect = SocketIOConnect(
-            sid=sid, namespace=namespace, environ=environ, auth=auth
-        )
-
-        try:
-            connection = await _resolve(resolve, connect)
-
-        except SocketIOConnectionRefusedError:
-            raise
-
-        except CoreException as error:
-            if is_server_error_kind(error.kind):
-                log_server_error(error, core=error)
-                raise SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL) from error
-
-            raise SocketIOConnectionRefusedError(error.summary) from error
-
-        except Exception as error:  # noqa: BLE001
-            log_server_error(error)
-            raise SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL) from error
-
-        if connection is None:
-            return  # anonymous: no principal room, may still join topics later
-
-        session = await sio.get_session(sid, namespace=namespace)
-        session[IDENTITY_SESSION_KEY] = connection.authn
-        session[CONNECTION_SESSION_KEY] = connection
-        await sio.save_session(sid, session, namespace=namespace)
-
-        room = connection.principal_room
-        await sio.enter_room(sid, room, namespace=namespace)
-
-        if presence is not None:
-            await presence.joined(room, sid)
-
-        if replay_enabled:
-            # replay is best-effort: a drain error must not refuse the live connection
-            try:
-                await _replay(connection, sid)
-
-            except Exception as error:  # noqa: BLE001
-                log_server_error(error)
-
-    async def disconnect_handler(sid: str) -> None:
-        if presence is None:
-            return
-
-        session = await sio.get_session(sid, namespace=namespace)
-        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
-
-        if connection is not None:
-            await presence.left(connection.principal_room, sid)
-
-    sio.on("connect", handler=connect_handler, namespace=namespace)
-    sio.on("disconnect", handler=disconnect_handler, namespace=namespace)
-
-    if replay_enabled:
-        sio.on("realtime.ack", handler=ack_handler, namespace=namespace)
+    if lifecycle.replay_enabled:
+        sio.on("realtime.ack", handler=lifecycle.on_ack, namespace=namespace)
 
 
 # ----------------------- #
