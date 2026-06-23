@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Iterable, final
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsSpec
-from forze.application.contracts.procedures import ProcedureSpec
+from forze.application.contracts.procedure import ProcedureSpec
 from forze.application.contracts.authn import (
     ApiKeyVerifierDepKey,
     AuthnSpec,
@@ -84,7 +84,7 @@ from forze_mock.adapters import (
     MockIdempotencyAdapter,
     MockInboxAdapter,
     MockProcedureRegistry,
-    MockProceduresAdapter,
+    MockProcedureAdapter,
     MockPubSubAdapter,
     MockQueueAdapter,
     MockSearchAdapter,
@@ -248,14 +248,14 @@ class ConfigurableMockAnalytics(_MockFactoryBase):
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class ConfigurableMockProcedures(_MockFactoryBase):
+class ConfigurableMockProcedure(_MockFactoryBase):
     def __call__(
         self,
         context: ExecutionContext,
         spec: ProcedureSpec[Any, Any],
-    ) -> MockProceduresAdapter[Any, Any]:
+    ) -> MockProcedureAdapter[Any, Any]:
         cfg = self._route(spec.name)
-        return MockProceduresAdapter(
+        return MockProcedureAdapter(
             state=self._state(context),
             spec=spec,
             registry=self.module.procedures or MockProcedureRegistry(),

@@ -10,7 +10,7 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
-from forze.application.contracts.procedures import ProcedureCommandDepKey
+from forze.application.contracts.procedure import ProcedureCommandDepKey
 from forze.application.contracts.authn import (
     ApiKeyLifecycleDepKey,
     ApiKeyVerifierDepKey,
@@ -163,7 +163,7 @@ from forze_mock.adapters.identity import (
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
 from forze_mock.execution.factories import (
     ConfigurableMockAnalytics,
-    ConfigurableMockProcedures,
+    ConfigurableMockProcedure,
     ConfigurableMockAuthn,
     ConfigurableMockCache,
     ConfigurableMockCounter,
@@ -334,7 +334,7 @@ class MockDepsModule(DepsModule):
             FederatedSearchQueryDepKey: ConfigurableMockFederatedSearch(module=self),
             AnalyticsQueryDepKey: ConfigurableMockAnalytics(module=self),
             AnalyticsIngestDepKey: ConfigurableMockAnalytics(module=self),
-            ProcedureCommandDepKey: ConfigurableMockProcedures(module=self),
+            ProcedureCommandDepKey: ConfigurableMockProcedure(module=self),
             CounterDepKey: ConfigurableMockCounter(module=self),
             CacheDepKey: ConfigurableMockCache(module=self),
             IdempotencyDepKey: ConfigurableMockIdempotency(module=self),

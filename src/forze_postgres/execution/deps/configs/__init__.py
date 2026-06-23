@@ -11,7 +11,7 @@ from .federated import (
 from .hub import PostgresHubSearchConfig, PostgresHubSearchMemberConfig
 from .inbox import PostgresInboxConfig
 from .outbox import PostgresOutboxConfig
-from .procedures import PostgresProcedureConfig
+from .procedure import PostgresProcedureConfig
 from .search import (
     FtsEngine,
     PgroongaAuto,

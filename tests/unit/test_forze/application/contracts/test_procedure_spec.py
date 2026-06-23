@@ -6,11 +6,11 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import FieldEncryption
-from forze.application.contracts.procedures import (
+from forze.application.contracts.procedure import (
     ExecResult,
     ProcedureCommandDepKey,
     ProcedureSpec,
-    ProceduresDeps,
+    ProcedureDeps,
     validate_procedure_spec,
 )
 from forze.base.exceptions import CoreException
@@ -97,8 +97,8 @@ class TestProcedureDeps:
 
     def test_command_only_surface(self) -> None:
         # Procedures is command-only: no query accessor exists.
-        assert hasattr(ProceduresDeps, "command")
-        assert not hasattr(ProceduresDeps, "query")
+        assert hasattr(ProcedureDeps, "command")
+        assert not hasattr(ProcedureDeps, "query")
 
 
 class TestExecResult:

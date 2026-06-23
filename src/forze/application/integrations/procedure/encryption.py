@@ -1,7 +1,7 @@
 """Field-encryption resolution for the procedures port.
 
 Encryption applies to **params** first; result encryption is deferred. This wraps a
-:class:`~forze.application.contracts.procedures.ProcedureSpec`'s params codec with an
+:class:`~forze.application.contracts.procedure.ProcedureSpec`'s params codec with an
 :class:`EncryptingModelCodec`, so declared fields are sealed before they are bound into the SQL.
 """
 
@@ -14,7 +14,7 @@ from forze.application.contracts.crypto import (
     DeterministicFieldCipherPort,
     FieldCipherPort,
 )
-from forze.application.contracts.procedures import ProcedureSpec
+from forze.application.contracts.procedure import ProcedureSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import EncryptingModelCodec
 from forze.base.exceptions import exc

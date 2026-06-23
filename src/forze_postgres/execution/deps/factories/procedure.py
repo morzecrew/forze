@@ -8,14 +8,14 @@ from forze.application.contracts.crypto import (
     DeterministicCipherDepKey,
     KeyringDepKey,
 )
-from forze.application.integrations.procedures import resolve_procedure_codecs_spec
+from forze.application.integrations.procedure import resolve_procedure_codecs_spec
 
-from ....adapters.procedures import PostgresProceduresAdapter
+from ....adapters.procedure import PostgresProcedureAdapter
 from ..configs import PostgresProcedureConfig
 from ..keys import PostgresClientDepKey
 
 if TYPE_CHECKING:
-    from forze.application.contracts.procedures import ProcedureSpec
+    from forze.application.contracts.procedure import ProcedureSpec
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurablePostgresProcedures:
-    """Build a :class:`PostgresProceduresAdapter` for a procedure spec route."""
+class ConfigurablePostgresProcedure:
+    """Build a :class:`PostgresProcedureAdapter` for a procedure spec route."""
 
     config: PostgresProcedureConfig
     """Postgres-specific configuration for the route."""
@@ -35,7 +35,7 @@ class ConfigurablePostgresProcedures:
         self,
         ctx: "ExecutionContext",
         spec: "ProcedureSpec[Any, Any]",
-    ) -> PostgresProceduresAdapter[Any, Any]:
+    ) -> PostgresProcedureAdapter[Any, Any]:
         self.config.validate_against_spec(spec)
         client = ctx.deps.provide(PostgresClientDepKey)
         spec = resolve_procedure_codecs_spec(
@@ -52,7 +52,7 @@ class ConfigurablePostgresProcedures:
             ),
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
-        return PostgresProceduresAdapter(
+        return PostgresProcedureAdapter(
             client=client,
             spec=spec,
             config=self.config,

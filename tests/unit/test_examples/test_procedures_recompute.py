@@ -58,4 +58,4 @@ async def test_command_refused_in_read_only_operation() -> None:
     ctx = build_context()
     ctx.inv_ctx.set_read_only()
     with pytest.raises(CoreException, match="read-only"):
-        ctx.procedures.command(RECOMPUTE_SPEC)
+        ctx.procedure.command(RECOMPUTE_SPEC)

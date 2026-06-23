@@ -32,7 +32,7 @@ class ProcedureSpec[In: BaseModel, Out](BaseSpec):
     single value, a Pydantic model -> single row).
 
     The port is **command-only**: it cannot be acquired in a read-only (``QUERY``) operation. See
-    :class:`~forze.application.contracts.procedures.ports.ProcedurePort`.
+    :class:`~forze.application.contracts.procedure.ports.ProcedurePort`.
     """
 
     params: type[In]

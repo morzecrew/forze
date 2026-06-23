@@ -15,7 +15,7 @@ from psycopg import sql
 from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
-from forze.application.contracts.procedures import (
+from forze.application.contracts.procedure import (
     ExecResult,
     ProcedurePort,
     ProcedureSpec,
@@ -34,7 +34,7 @@ from forze_postgres.kernel.client import PostgresClientPort
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresProceduresAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
+class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
     """A single governed procedure backed by PostgreSQL (command-only)."""
 
     client: PostgresClientPort

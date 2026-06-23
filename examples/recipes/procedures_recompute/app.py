@@ -23,7 +23,7 @@ from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
 )
-from forze.application.contracts.procedures import ExecResult, ProcedureSpec
+from forze.application.contracts.procedure import ExecResult, ProcedureSpec
 from forze.application.execution import DepsRegistry, ExecutionContext
 from forze_mock import MockDepsModule, MockProcedureRegistry, MockState
 
@@ -75,7 +75,7 @@ RECOMPUTE_SPEC = ProcedureSpec[RecomputeWindow, None](
 #       procedures={"recompute_region_totals": PROCEDURE_CONFIG},
 #   )
 #
-# The handlers below call `ctx.procedures.command(RECOMPUTE_SPEC).run(...)` unchanged.
+# The handlers below call `ctx.procedure.command(RECOMPUTE_SPEC).run(...)` unchanged.
 
 
 # --8<-- [start:recompute-model]
@@ -122,7 +122,7 @@ async def ingest_sales(ctx: ExecutionContext, sales: list[Sale]) -> None:
 
 async def recompute(ctx: ExecutionContext, since: str = "2026-01-01") -> int:
     # ONE governed set-based statement over the whole batch — no per-row triggers.
-    result = await ctx.procedures.command(RECOMPUTE_SPEC).run(
+    result = await ctx.procedure.command(RECOMPUTE_SPEC).run(
         RecomputeWindow(since=since)
     )
     return result.affected_count or 0

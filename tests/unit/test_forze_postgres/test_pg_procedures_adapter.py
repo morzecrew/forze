@@ -1,4 +1,4 @@
-"""Tests for PostgresProceduresAdapter and its config, with a mocked client."""
+"""Tests for PostgresProcedureAdapter and its config, with a mocked client."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.procedures import ProcedureSpec
+from forze.application.contracts.procedure import ProcedureSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
-from forze_postgres.adapters.procedures import PostgresProceduresAdapter
+from forze_postgres.adapters.procedure import PostgresProcedureAdapter
 from forze_postgres.execution.deps.configs import PostgresProcedureConfig
 
 # ----------------------- #
@@ -76,8 +76,8 @@ def _adapter(
     spec: ProcedureSpec[Any, Any],
     config: PostgresProcedureConfig,
     tenant_provider: Any = None,
-) -> PostgresProceduresAdapter[Any, Any]:
-    return PostgresProceduresAdapter(
+) -> PostgresProcedureAdapter[Any, Any]:
+    return PostgresProcedureAdapter(
         client=mock, spec=spec, config=config, tenant_provider=tenant_provider
     )
 
@@ -288,7 +288,7 @@ def test_deps_module_registers_procedure_command_key() -> None:
         },
     )
     ctx = context_from_deps(module())
-    assert ctx.procedures.command(ProcedureSpec(name="recompute", params=_Params)) is not None
+    assert ctx.procedure.command(ProcedureSpec(name="recompute", params=_Params)) is not None
 
 
 def test_required_dedicated_isolation_rejects_shared_client_with_procedure() -> None:

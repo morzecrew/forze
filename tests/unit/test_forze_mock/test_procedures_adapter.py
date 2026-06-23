@@ -1,16 +1,16 @@
-"""Tests for MockProceduresAdapter and ctx.procedures resolution."""
+"""Tests for MockProcedureAdapter and ctx.procedure resolution."""
 
 from __future__ import annotations
 
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.procedures import ExecResult, ProcedureSpec
+from forze.application.contracts.procedure import ExecResult, ProcedureSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_mock import MockDepsModule, MockProcedureRegistry, MockState
-from forze_mock.adapters.procedures import MockProceduresAdapter
+from forze_mock.adapters.procedure import MockProcedureAdapter
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
@@ -40,7 +40,7 @@ async def test_command_via_ctx_runs_handler() -> None:
     )
     ctx: ExecutionContext = context_from_deps(MockDepsModule(procedures=registry)())
 
-    result = await ctx.procedures.command(_spec()).run(_Params())
+    result = await ctx.procedure.command(_spec()).run(_Params())
 
     assert result.affected_count == 3
 
@@ -58,7 +58,7 @@ async def test_handler_computes_over_mock_state() -> None:
     registry = MockProcedureRegistry().on("recompute", _recompute)
     ctx = context_from_deps(MockDepsModule(state=state, procedures=registry)())
 
-    result = await ctx.procedures.command(_spec(result=int)).run(_Params())
+    result = await ctx.procedure.command(_spec(result=int)).run(_Params())
 
     assert result.value == 3
 
@@ -71,7 +71,7 @@ async def test_async_handler_is_awaited() -> None:
     registry = MockProcedureRegistry().on("recompute", _handler)
     ctx = context_from_deps(MockDepsModule(procedures=registry)())
 
-    result = await ctx.procedures.command(_spec(result=_RowOut)).run(_Params())
+    result = await ctx.procedure.command(_spec(result=_RowOut)).run(_Params())
 
     assert isinstance(result.value, _RowOut)
     assert result.value.total == 7
@@ -82,7 +82,7 @@ async def test_unprogrammed_procedure_raises() -> None:
     ctx = context_from_deps(MockDepsModule()())  # no registry
 
     with pytest.raises(CoreException, match="mock.procedures.unprogrammed"):
-        await ctx.procedures.command(_spec()).run(_Params())
+        await ctx.procedure.command(_spec()).run(_Params())
 
 
 @pytest.mark.asyncio
@@ -96,7 +96,7 @@ async def test_params_must_be_spec_type() -> None:
     ctx = context_from_deps(MockDepsModule(procedures=registry)())
 
     with pytest.raises(CoreException, match="must be a _Params instance"):
-        await ctx.procedures.command(_spec()).run(_Other())  # type: ignore[arg-type]
+        await ctx.procedure.command(_spec()).run(_Other())  # type: ignore[arg-type]
 
 
 # ----------------------- #
@@ -108,7 +108,7 @@ async def test_tenant_aware_fails_closed_without_tenant() -> None:
     registry = MockProcedureRegistry().on(
         "recompute", lambda p, s: ExecResult(affected_count=1)
     )
-    adapter = MockProceduresAdapter(
+    adapter = MockProcedureAdapter(
         state=MockState(),
         spec=_spec(),
         registry=registry,
@@ -127,7 +127,7 @@ async def test_tenant_aware_runs_with_bound_tenant() -> None:
     registry = MockProcedureRegistry().on(
         "recompute", lambda p, s: ExecResult(affected_count=5)
     )
-    adapter = MockProceduresAdapter(
+    adapter = MockProcedureAdapter(
         state=MockState(),
         spec=_spec(),
         registry=registry,

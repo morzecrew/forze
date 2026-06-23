@@ -3,7 +3,7 @@
 from .deps import (
     ProcedureCommandDepKey,
     ProcedureCommandDepPort,
-    ProceduresDeps,
+    ProcedureDeps,
 )
 from .ports import (
     BaseProcedurePort,
@@ -24,6 +24,6 @@ __all__ = [
     "ProcedureCommandDepPort",
     "ProcedurePort",
     "ProcedureSpec",
-    "ProceduresDeps",
+    "ProcedureDeps",
     "validate_procedure_spec",
 ]

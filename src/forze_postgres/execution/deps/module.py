@@ -10,7 +10,7 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
-from forze.application.contracts.procedures import ProcedureCommandDepKey
+from forze.application.contracts.procedure import ProcedureCommandDepKey
 from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
@@ -59,7 +59,7 @@ from .factories import (
     ConfigurablePostgresInbox,
     ConfigurablePostgresOutboxCommand,
     ConfigurablePostgresOutboxQuery,
-    ConfigurablePostgresProcedures,
+    ConfigurablePostgresProcedure,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
     postgres_txmanager,
@@ -492,7 +492,7 @@ class PostgresDepsModule(DepsModule):
                 Deps.routed(
                     {
                         ProcedureCommandDepKey: {
-                            name: ConfigurablePostgresProcedures(config=config)
+                            name: ConfigurablePostgresProcedure(config=config)
                             for name, config in self.procedures.items()
                         },
                     }

@@ -29,7 +29,7 @@ ProcedureCommandDepKey = DepKey[ProcedureCommandDepPort]("procedure_command")
 # ....................... #
 
 
-class ProceduresDeps(ConvenientDeps):
+class ProcedureDeps(ConvenientDeps):
     """Convenience wrapper for the procedures port.
 
     Command-only: there is no query accessor. A procedure mutates or computes, so it is resolved

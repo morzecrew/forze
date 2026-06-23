@@ -14,14 +14,14 @@ from forze.application.integrations.tenancy_sql import unreferenced_param_keys
 from forze.base.exceptions import exc
 
 if TYPE_CHECKING:
-    from forze.application.contracts.procedures import ProcedureSpec
+    from forze.application.contracts.procedure import ProcedureSpec
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresProcedureConfig(TenantAwareIntegrationConfig):
-    """Physical Postgres mapping for one :class:`~forze.application.contracts.procedures.ProcedureSpec` route.
+    """Physical Postgres mapping for one :class:`~forze.application.contracts.procedure.ProcedureSpec` route.
 
     One spec = one procedure, so the config is flat (no operations map). When ``tenant_aware``
     (inherited), the adapter binds the current tenant id as the ``%(tenant)s`` parameter and fails

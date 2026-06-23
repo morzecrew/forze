@@ -1,4 +1,4 @@
-"""In-memory :class:`~forze.application.contracts.procedures.ProcedurePort` for tests / simulation.
+"""In-memory :class:`~forze.application.contracts.procedure.ProcedurePort` for tests / simulation.
 
 The mock cannot run the author's registered SQL, so each procedure route is answered by a handler
 registered on a :class:`MockProcedureRegistry`. The handler receives the validated params and the
@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable, final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.procedures import (
+from forze.application.contracts.procedure import (
     ExecResult,
     ProcedurePort,
     ProcedureSpec,
@@ -65,7 +65,7 @@ class MockProcedureRegistry:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockProceduresAdapter[In: BaseModel, Out](MockTenancyMixin, ProcedurePort[In, Out]):
+class MockProcedureAdapter[In: BaseModel, Out](MockTenancyMixin, ProcedurePort[In, Out]):
     """In-memory ``ProcedurePort`` bound to one spec + a handler registry (command-only)."""
 
     state: MockState

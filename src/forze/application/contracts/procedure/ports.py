@@ -1,6 +1,6 @@
 """Procedure port definition (command-only).
 
-A :class:`~forze.application.contracts.procedures.specs.ProcedureSpec` registers one
+A :class:`~forze.application.contracts.procedure.specs.ProcedureSpec` registers one
 parametrized command/compute operation; the backend adapter maps ``params`` to author-supplied
 registered SQL (a function call, ``CALL``, set-based DML, or ``REFRESH``). Handlers must not pass
 raw SQL on this port — the SQL lives in the wiring config, the handler passes only typed params.
@@ -40,6 +40,6 @@ class ProcedurePort[In: BaseModel, Out](BaseProcedurePort, Protocol):
 
         The result cardinality follows the spec's ``result``: a scalar, a single
         typed row, or an affected-row count — surfaced through
-        :class:`~forze.application.contracts.procedures.value_objects.ExecResult`.
+        :class:`~forze.application.contracts.procedure.value_objects.ExecResult`.
         """
         ...  # pragma: no cover
