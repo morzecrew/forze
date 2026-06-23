@@ -6,6 +6,7 @@ import asyncio
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
@@ -197,3 +198,66 @@ def test_lifecycle_step_rejects_invalid_options() -> None:
             queue_spec=queue_spec,
             max_batches_per_tick=0,
         )
+
+
+# ----------------------- #
+# Tenant-sharded drain (namespace-tier outbox, RFC 0007)
+
+
+_T1 = UUID("11111111-1111-1111-1111-111111111111")
+_T2 = UUID("22222222-2222-2222-2222-222222222222")
+
+
+async def _drain_capturing_tenants(startup: _OutboxRelayBackgroundStartup) -> list[UUID | None]:
+    """Run one drain tick with ``to_queue`` mocked to record the bound tenant per pass."""
+
+    seen: list[UUID | None] = []
+
+    async def _capture(self: Any, ctx: Any, queue_spec: Any, *, limit: Any = None) -> OutboxRelayResult:
+        tenant = ctx.inv_ctx.get_tenant()
+        seen.append(tenant.tenant_id if tenant is not None else None)
+        return _result(0)
+
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+    with patch.object(OutboxRelay, "to_queue", autospec=True, side_effect=_capture):
+        async with runtime.scope():
+            await startup._drain_tick(runtime.get_context())
+
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_drain_tick_relays_each_assigned_tenant_bound() -> None:
+    seen = await _drain_capturing_tenants(_startup(tenants=lambda: [_T1, _T2]))
+
+    assert seen == [_T1, _T2]  # one pass per assigned tenant, each bound, in shard order
+
+
+@pytest.mark.asyncio
+async def test_drain_tick_without_tenants_runs_one_global_pass() -> None:
+    seen = await _drain_capturing_tenants(_startup(tenants=None))
+
+    assert seen == [None]  # tenant-global outbox: a single unbound pass
+
+
+@pytest.mark.asyncio
+async def test_drain_tick_isolates_a_failing_tenant() -> None:
+    startup = _startup(tenants=lambda: [_T1, _T2])
+    seen: list[UUID] = []
+
+    async def _once(self: Any, ctx: Any) -> None:
+        tenant = ctx.inv_ctx.get_tenant().tenant_id
+        seen.append(tenant)
+        if tenant == _T1:
+            raise RuntimeError("boom")
+
+    logger_mock = MagicMock()
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    with patch.object(_OutboxRelayBackgroundStartup, "_relay_once", autospec=True, side_effect=_once):
+        with patch("forze_kits.integrations.outbox.lifecycle.logger", logger_mock):
+            async with runtime.scope():
+                await startup._drain_tick(runtime.get_context())
+
+    assert seen == [_T1, _T2]  # T1 failed but T2 still drained this tick
+    logger_mock.exception.assert_called_once()  # the failing tenant was logged

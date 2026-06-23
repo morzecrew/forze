@@ -247,9 +247,17 @@ per-tenant key automatically.
 outbox and the relay before reaching the stream, and the relay runs as a tenant-less
 background process. It forwards each row under the tenant it was staged with (carried on
 the outbox row), so the append lands on that tenant's stream key — and the sharded gateway,
-then the offline mailbox, see it. Keep the realtime **outbox** tenant-global (one route,
-rows tagged with their tenant) while only the **stream** route is `tenant_aware`; a
-tenant-aware outbox would need a per-tenant relay, which is out of scope.
+then the offline mailbox, see it. The simplest wiring keeps the realtime **outbox**
+tenant-global (one route, rows tagged with their tenant) while only the **stream** route is
+`tenant_aware`; `realtime_relay_lifecycle_step` drains it with per-row routing.
+
+If you need the outbox itself **partitioned** per tenant (namespace-tier *storage* of the
+staging buffer), wire the outbox route `tenant_aware` too and use
+`realtime_tenant_relay_lifecycle_step(outbox_spec=…, stream_spec=…, tenants=…)` instead: it
+drains each assigned tenant's partition under a bound tenant (sequentially per tick). Pass
+the **same** `tenants` shard the gateway and the group-ensure step use — one instance owns a
+tenant shard end to end. A tenant-aware outbox drained by the plain (non-sharded) relay fails
+closed with `outbox_relay_tenant_unbound`.
 
 !!! note "Assignment, not discovery"
     Each gateway instance consumes the **disjoint** tenant shard `tenants` returns,
@@ -320,6 +328,7 @@ to export stored/replayed/trimmed/acked as OpenTelemetry counters.
 | `RealtimePublisher.publish` / `.stage` | egress: publish a signal to messaging (ephemeral / durable) |
 | `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms (optional `emit_timeout`) |
 | `TenantShardedSignalSource` + `realtime_tenant_group_ensure_lifecycle_step` | egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust (RFC 0007) |
+| `realtime_tenant_relay_lifecycle_step` | egress: per-tenant durable relay for a partitioned (tenant-aware) outbox; drains each assigned tenant's partition bound (RFC 0007) |
 | `attach_realtime_connection` | auto-join principal rooms + presence on connect; offline replay + ack |
 | `DocumentRealtimeMailbox` + `DocumentMailboxCursors` | offline store-and-forward: per-principal mailbox + per-device cursor |
 | `RedisRealtimePresence` + `realtime_presence_heartbeat_lifecycle_step` | crash-safe multi-node presence (TTL + heartbeat) |

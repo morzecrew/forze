@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Tenant-aware realtime gateway** — `TenantShardedSignalSource` puts per-tenant realtime isolation on the standard tenancy tier ladder: it runs one consume loop per assigned tenant and scopes the mailbox and rooms by a trusted tenant from the stream, not the header. Tenant-global stays the default. (RFC 0007.)
 
+- **Tenant-sharded outbox relay** — pass `tenants` to the background relay step (or `realtime_tenant_relay_lifecycle_step`) and it drains each assigned tenant's partition under a bound tenant, sequentially per tick. This brings a partitioned (tenant-aware) outbox to namespace tier, alongside the stream and inbox.
+
 - **Tenant-aware realtime mailbox fails closed clearly** — when the gateway has no bound tenant to scope a tenant-aware mailbox, it now raises an actionable `realtime_mailbox_tenant_unbound` error naming the fix, instead of an opaque tenant-required failure deep in the adapter.
 
 - **BREAKING — realtime delivery envelope** — every frame the Socket.IO gateway emits is now the uniform `{id, data}` envelope instead of the bare payload (durable carries the event id, ephemeral null). Clients must read `data` and dedup by `id`; there is no transitional dual-emit. (RFC 0006.)
@@ -117,7 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Outbox relay tenancy** — the background relay now binds each claim's tenant before publishing, so a tenant-aware destination routes per-tenant instead of the global key. Wiring a tenant-aware outbox, which the tenant-less relay cannot read, now fails closed with a clear `outbox_relay_tenant_unbound` error.
+- **Outbox relay tenancy** — the background relay now binds each claim's tenant before publishing, so a tenant-aware destination routes per-tenant instead of the global key. A tenant-aware outbox on the plain (non-sharded) relay fails closed with a clear `outbox_relay_tenant_unbound` error.
 
 - **Keyring fill-lock stripe is now cross-process stable** — the per-`key_id` crypto fill-lock stripe used Python's `hash()` (PYTHONHASHSEED-randomized), so it varied per process and broke deterministic-simulation replay. It now uses a stable hash, and the guard bans the `hash(x) % n` pattern.
 

@@ -10,6 +10,7 @@ from .lifecycle import (
     realtime_group_ensure_lifecycle_step,
     realtime_relay_lifecycle_step,
     realtime_tenant_group_ensure_lifecycle_step,
+    realtime_tenant_relay_lifecycle_step,
 )
 from .mailbox import (
     DocumentMailboxCursors,
@@ -53,4 +54,5 @@ __all__ = [
     "realtime_relay_lifecycle_step",
     "realtime_group_ensure_lifecycle_step",
     "realtime_tenant_group_ensure_lifecycle_step",
+    "realtime_tenant_relay_lifecycle_step",
 ]

@@ -166,3 +166,37 @@ def realtime_relay_lifecycle_step(
         interval=interval,
         step_id=step_id,
     )
+
+
+# ....................... #
+
+
+def realtime_tenant_relay_lifecycle_step(
+    *,
+    outbox_spec: OutboxSpec[Any],
+    stream_spec: StreamSpec[Any],
+    tenants: Callable[[], Sequence[UUID]],
+    interval: timedelta = timedelta(seconds=2),
+    step_id: StrKey = "realtime_tenant_relay",
+) -> LifecycleStep:
+    """Relay durable realtime signals **per assigned tenant** — the namespace-tier on-ramp.
+
+    The namespace-tier counterpart of :func:`realtime_relay_lifecycle_step`, paired with
+    :class:`~forze_socketio.TenantShardedSignalSource` and
+    :func:`realtime_tenant_group_ensure_lifecycle_step`: when the realtime **outbox** is
+    wired ``tenant_aware`` (partitioned), the relay must drain each tenant's partition under
+    a bound tenant. Each tick relays every assigned tenant's staged signals to that tenant's
+    stream key. Pass the **same** *tenants* shard this instance's gateway consumes (one
+    instance owns a tenant shard end-to-end: ensure-group → relay → gateway). Keep the outbox
+    tenant-global and use :func:`realtime_relay_lifecycle_step` instead when you don't need a
+    physically-partitioned outbox.
+    """
+
+    return outbox_relay_background_lifecycle_step(
+        outbox_spec=outbox_spec,
+        transport="stream",
+        stream_spec=stream_spec,
+        tenants=tenants,
+        interval=interval,
+        step_id=step_id,
+    )

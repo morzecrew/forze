@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import timedelta
 from typing import Any, final
+from uuid import UUID
 
 import attrs
 
@@ -15,6 +17,7 @@ from forze.application.contracts.outbox import OutboxDestinationKind, OutboxSpec
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream import StreamSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
 from forze.application.contracts.outbox import OutboxRelayResult
 from forze.base.exceptions import exc
@@ -44,6 +47,10 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     retry_base_delay: timedelta
     retry_max_backoff: timedelta
     max_batches_per_tick: int
+    tenants: Callable[[], Sequence[UUID]] | None = None
+    """When set, the outbox is tenant-aware (partitioned): each tick drains every assigned
+    tenant's partition under a bound tenant (namespace tier, RFC 0007). ``None`` = the
+    outbox is tenant-global and one unbound pass drains it."""
     task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
 
     # ....................... #
@@ -138,11 +145,37 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
+    async def _drain_tick(self, ctx: ExecutionContext) -> None:
+        """Drain the backlog once: globally, or per assigned tenant when sharded.
+
+        Sharded, each tenant's pass runs **bound** (so the relay reads/marks that tenant's
+        partition and forwards under it) and is isolated — one tenant's failure must not
+        skip the rest of the shard this tick. Tenants are drained **sequentially** (one DB
+        connection at a time); shard across instances to parallelize.
+        """
+
+        if self.tenants is None:
+            await self._relay_once(ctx)
+            return
+
+        for tenant in self.tenants():
+            try:
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                    await self._relay_once(ctx)
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                logger.exception("Outbox background relay failed for tenant", tenant=str(tenant))
+
+    # ....................... #
+
     async def __call__(self, ctx: ExecutionContext) -> None:
         async def _loop() -> None:
             while True:
                 try:
-                    await self._relay_once(ctx)
+                    await self._drain_tick(ctx)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -214,6 +247,7 @@ def outbox_relay_background_lifecycle_step(
     retry_base_delay: timedelta = timedelta(seconds=1),
     retry_max_backoff: timedelta = timedelta(minutes=5),
     max_batches_per_tick: int = 100,
+    tenants: Callable[[], Sequence[UUID]] | None = None,
     step_id: StrKey = "outbox_relay",
 ) -> LifecycleStep:
     """Build a lifecycle step that relays outbox rows on a background interval.
@@ -236,6 +270,13 @@ def outbox_relay_background_lifecycle_step(
     per-row transient-failure retry policy — see
     :class:`~forze_kits.integrations.outbox.OutboxRelay`. Delivery is
     at-least-once and ordering is not preserved across failures/retries.
+
+    When *tenants* is set the outbox is **tenant-aware** (partitioned): each tick drains
+    every assigned tenant's partition under a bound tenant, so the relay can read a
+    namespace-tier outbox (which fail-closes when read unbound) and forward each row to its
+    tenant's destination. Tenants drain **sequentially** per tick; assign the **same shard**
+    this instance's gateway consumes, and shard across instances to parallelize. Omit it for
+    a tenant-global (tagged) outbox, which one unbound pass drains with per-row routing.
 
     Opt-in for long-running processes. Production deployments often prefer
     external cron or workflow schedulers instead of in-process polling.
@@ -264,6 +305,7 @@ def outbox_relay_background_lifecycle_step(
         retry_base_delay=retry_base_delay,
         retry_max_backoff=retry_max_backoff,
         max_batches_per_tick=max_batches_per_tick,
+        tenants=tenants,
     )
     shutdown = _OutboxRelayBackgroundShutdown(startup=startup)
 
