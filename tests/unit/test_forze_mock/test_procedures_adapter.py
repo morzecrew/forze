@@ -166,5 +166,45 @@ async def test_scalar_spec_rejects_model_handler_result() -> None:
         "recompute", lambda p, s: ExecResult(value=_RowOut(total=1))
     )
     ctx = context_from_deps(MockDepsModule(procedures=registry)())
-    with pytest.raises(CoreException, match="returns a scalar"):
+    with pytest.raises(CoreException, match="scalar result must be int"):
+        await ctx.procedure.command(_spec(result=int)).run(_Params())
+
+
+@pytest.mark.asyncio
+async def test_scalar_spec_rejects_wrong_typed_value() -> None:
+    # A non-coercible scalar fails at the boundary, parity with the real port.
+    registry = MockProcedureRegistry().on(
+        "recompute", lambda p, s: ExecResult(value="not an int")
+    )
+    ctx = context_from_deps(MockDepsModule(procedures=registry)())
+    with pytest.raises(CoreException, match="scalar result must be int"):
+        await ctx.procedure.command(_spec(result=int)).run(_Params())
+
+
+@pytest.mark.asyncio
+async def test_scalar_spec_coerces_value() -> None:
+    # Lax coercion matches the real port (decoded the same way a row is).
+    registry = MockProcedureRegistry().on("recompute", lambda p, s: ExecResult(value="42"))
+    ctx = context_from_deps(MockDepsModule(procedures=registry)())
+    result = await ctx.procedure.command(_spec(result=int)).run(_Params())
+    assert result.value == 42
+
+
+@pytest.mark.asyncio
+async def test_row_spec_rejects_stray_affected_count() -> None:
+    registry = MockProcedureRegistry().on(
+        "recompute", lambda p, s: ExecResult(value=_RowOut(total=1), affected_count=5)
+    )
+    ctx = context_from_deps(MockDepsModule(procedures=registry)())
+    with pytest.raises(CoreException, match="set affected_count"):
+        await ctx.procedure.command(_spec(result=_RowOut)).run(_Params())
+
+
+@pytest.mark.asyncio
+async def test_scalar_spec_rejects_stray_affected_count() -> None:
+    registry = MockProcedureRegistry().on(
+        "recompute", lambda p, s: ExecResult(value=1, affected_count=5)
+    )
+    ctx = context_from_deps(MockDepsModule(procedures=registry)())
+    with pytest.raises(CoreException, match="set affected_count"):
         await ctx.procedure.command(_spec(result=int)).run(_Params())

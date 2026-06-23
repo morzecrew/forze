@@ -158,7 +158,7 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
         async def _dispatch() -> ExecResult[Out]:
             if self.spec.returns_scalar:
                 value = await self.client.fetch_value(query, bound)
-                return ExecResult(value=cast("Out | None", value))
+                return ExecResult(value=cast("Out | None", self.spec.coerce_scalar(value)))
 
             if self.spec.returns_row:
                 row = await self.client.fetch_one(query, bound)

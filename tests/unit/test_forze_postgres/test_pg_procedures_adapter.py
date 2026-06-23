@@ -114,6 +114,32 @@ async def test_scalar_returns_value() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scalar_coerces_text_to_declared_type() -> None:
+    # A function returning text "42" for result=int is coerced at the boundary.
+    mock = _MockClient(value="42")
+    adapter = _adapter(
+        mock,
+        spec=ProcedureSpec(name="compute", params=_Params, result=int),
+        config=PostgresProcedureConfig(sql="SELECT compute(%(window)s)"),
+    )
+    result = await adapter.run(_Params())
+    assert result.value == 42
+    assert isinstance(result.value, int)
+
+
+@pytest.mark.asyncio
+async def test_scalar_rejects_wrong_typed_value() -> None:
+    mock = _MockClient(value="oops")
+    adapter = _adapter(
+        mock,
+        spec=ProcedureSpec(name="compute", params=_Params, result=int),
+        config=PostgresProcedureConfig(sql="SELECT compute(%(window)s)"),
+    )
+    with pytest.raises(CoreException, match="scalar result must be int"):
+        await adapter.run(_Params())
+
+
+@pytest.mark.asyncio
 async def test_row_returns_decoded_model() -> None:
     mock = _MockClient(row={"total": 99})
     adapter = _adapter(

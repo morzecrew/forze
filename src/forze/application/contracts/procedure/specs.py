@@ -3,7 +3,7 @@
 from typing import Any, final
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from forze.base.exceptions import exc
 from forze.base.serialization import (
@@ -93,6 +93,29 @@ class ProcedureSpec[In: BaseModel, Out](BaseSpec):
         """Whether :attr:`result` is a single scalar value (a non-model type)."""
 
         return self.result is not None and not self.returns_row
+
+    # ....................... #
+
+    def coerce_scalar(self, value: Any) -> Any:
+        """Validate/coerce a scalar fetch result to the declared scalar :attr:`result` type.
+
+        Mirrors how a row result is validated through its codec: a non-``None`` value is coerced
+        via Pydantic (lax), so a value of the wrong type fails at the procedure boundary rather
+        than surfacing as a different runtime type. ``None`` (SQL ``NULL``) passes through, and a
+        ``None`` :attr:`result` is a no-op.
+        """
+
+        if value is None or self.result is None:
+            return value
+
+        try:
+            return TypeAdapter(self.result).validate_python(value)
+
+        except ValidationError as e:
+            raise exc.validation(
+                f"Procedure {self.name!r} scalar result must be "
+                f"{self.result.__name__}, got {type(value).__name__}."
+            ) from e
 
 
 # ....................... #

@@ -100,13 +100,11 @@ class MockProcedureAdapter[In: BaseModel, Out](
         if inspect.isawaitable(result):
             result = await result
 
-        self._validate_result(result)
-
-        return result
+        return self._validated_result(result)
 
     # ....................... #
 
-    def _validate_result(self, result: ExecResult[Out]) -> None:
+    def _validated_result(self, result: ExecResult[Out]) -> ExecResult[Out]:
         # Enforce the declared cardinality so a mismatched handler fails under the mock instead of
         # silently passing while the real adapter would take a different decode path.
         if not isinstance(
@@ -125,13 +123,23 @@ class MockProcedureAdapter[In: BaseModel, Out](
                     f"Procedure {self.spec.name!r} is side-effect-only (result=None) but the "
                     "handler set ExecResult.value; use affected_count."
                 )
-        elif self.spec.returns_row:
+            return result
+
+        # Row/scalar procedures populate only `value` on the real port — reject a stray count.
+        if result.affected_count is not None:
+            shape = "row" if self.spec.returns_row else "scalar"
+            raise exc.internal(
+                f"Procedure {self.spec.name!r} returns a {shape} but the handler set "
+                "affected_count; the real port populates only value."
+            )
+
+        if self.spec.returns_row:
             if value is not None and not isinstance(value, self.spec.result):
                 raise exc.internal(
                     f"Procedure {self.spec.name!r} returns {self.spec.result.__name__} but the "
                     f"handler returned {type(value).__name__}."
                 )
-        elif isinstance(value, BaseModel):  # scalar result
-            raise exc.internal(
-                f"Procedure {self.spec.name!r} returns a scalar but the handler returned a model."
-            )
+            return result
+
+        # Scalar: validate/coerce against the declared type, parity with the real port.
+        return attrs.evolve(result, value=self.spec.coerce_scalar(value))
