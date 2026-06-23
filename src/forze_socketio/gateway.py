@@ -134,8 +134,8 @@ def _tenant_from_headers(headers: object) -> UUID | None:
         return None
 
     try:
-        return UUID(raw)
-    except (ValueError, TypeError):
+        return UUID(str(raw))  # str(): a JSON-decoded number reaches UUID as a non-str
+    except (ValueError, TypeError, AttributeError):
         # the header is untrusted input — a malformed value is dropped, not raised (raising
         # would fail the bridge and reclaim-loop the message forever)
         return None
@@ -161,9 +161,13 @@ def _hlc_from_headers(headers: object) -> HlcTimestamp:
 
     if raw:
         # untrusted header — a malformed value falls back to a wall-clock stamp rather than
-        # raising (which would fail the bridge and reclaim-loop the message)
-        with suppress(ValueError, TypeError):
-            return HlcTimestamp.parse(cast(str, raw))
+        # raising (which would fail the bridge and reclaim-loop the message). str(): a
+        # JSON-decoded number reaches parse() as a non-str. CoreException: parse() raises
+        # exc.validation (not ValueError) on a malformed string, which must fall back too.
+        with suppress(ValueError, TypeError, AttributeError, CoreException):
+            return HlcTimestamp.parse(
+                str(raw)  # pyright: ignore[reportUnknownArgumentType]
+            )
 
     return HlcTimestamp(physical_ms=int(utcnow().timestamp() * 1000), logical=0)
 
@@ -250,7 +254,10 @@ async def _process_messages(
             # never succeeds on retry — re-raise to fail fast instead of leaving the durable
             # message pending and reclaim-looping it forever. The message stays unacked, so it
             # redelivers once the operator fixes the wiring and restarts.
-            if isinstance(error, CoreException) and error.kind is ExceptionKind.CONFIGURATION:
+            if (
+                isinstance(error, CoreException)
+                and error.kind is ExceptionKind.CONFIGURATION
+            ):
                 raise
 
             _logger.critical_exception(
@@ -329,7 +336,9 @@ async def _consume_group_stream(
             _logger.critical_exception("Realtime gateway loop error", stream=stream)
             await asyncio.sleep(poll_interval.total_seconds())
 
-        except Exception:  # noqa: BLE001 - a transient broker error must not kill the loop
+        except (
+            Exception
+        ):  # noqa: BLE001 - a transient broker error must not kill the loop
             _logger.critical_exception("Realtime gateway loop error", stream=stream)
             await asyncio.sleep(poll_interval.total_seconds())
 
@@ -559,7 +568,9 @@ class RealtimeGateway:
         """Consume signals forever and emit each to its room. Cancel to stop."""
 
         # resolve the mailbox's ports once, against the run ctx (worker-resolved-once)
-        mailbox = self.mailbox_factory(ctx) if self.mailbox_factory is not None else None
+        mailbox = (
+            self.mailbox_factory(ctx) if self.mailbox_factory is not None else None
+        )
 
         async def handle(
             signal: RealtimeSignal,
@@ -599,7 +610,11 @@ class RealtimeGateway:
                 ):
                     return
 
-                store = mailbox if (mailbox is not None and self._should_mailbox(signal)) else None
+                store = (
+                    mailbox
+                    if (mailbox is not None and self._should_mailbox(signal))
+                    else None
+                )
 
                 if store is not None:
                     try:

@@ -2,12 +2,15 @@
 
 Codacy MEDIUM: the old `advance` did find-then-`create` with a fresh ``uuid7``, so two
 concurrent first-acks both saw no row and inserted **two** cursor records. The fix derives
-the id from ``(principal, client_key)`` and uses ``ensure``, so the inserts converge on a
-single row. Asserting the *id* (not just a row count) is the real regression guard — a
-random ``uuid7`` would not equal :func:`_cursor_id`.
+the id from ``(principal, client_key)`` so the inserts converge on a single row, and the
+loser of that insert reconciles up to the max via a monotonic update. Asserting the *id*
+(not just a row count) is the real regression guard — a random ``uuid7`` would not equal
+:func:`_cursor_id`.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.primitives import HlcTimestamp
@@ -53,4 +56,24 @@ async def test_second_ack_advances_the_same_row_not_a_duplicate() -> None:
 
         rows = await query.find_many(filters={"$values": {"principal": "u1", "client_key": "dev"}})
         assert len(rows.hits) == 1
+        assert await cursors.get(principal="u1", client_key="dev") == HlcTimestamp(physical_ms=9, logical=0)
+
+
+async def test_concurrent_first_acks_keep_the_higher_position() -> None:
+    # two first-acks for the same device race with different positions: the deterministic
+    # id keeps it to one row, and the loser of the insert reconciles up to the max — the
+    # lower value must never be the one that persists
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        query = ctx.document.query(_SPEC)
+        cursors = DocumentMailboxCursors(command=ctx.document.command(_SPEC), query=query)
+
+        await asyncio.gather(
+            cursors.advance(principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=3, logical=0)),
+            cursors.advance(principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=9, logical=0)),
+        )
+
+        rows = await query.find_many(filters={"$values": {"principal": "u1", "client_key": "dev"}})
+        assert len(rows.hits) == 1  # converged on the deterministic id, never duplicated
         assert await cursors.get(principal="u1", client_key="dev") == HlcTimestamp(physical_ms=9, logical=0)

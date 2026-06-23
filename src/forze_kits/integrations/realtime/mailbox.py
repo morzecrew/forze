@@ -11,8 +11,8 @@ read-only (QUERY) operation. **Tenancy is the document store's concern** — wir
 mailbox/cursor collections ``tenant_aware`` and the adapter scopes every row by the
 ambient tenant; this kit carries **zero** tenant code. The mailbox doc's key is the
 durable event's own id (already a ``UUID``); a cursor's key is a **deterministic** id
-derived from ``(principal, client_key)`` (``uuid5``), so a concurrent first-ack ``ensure``
-is atomic. Ordering/cursor values are the HLC the durable path carries, stored
+derived from ``(principal, client_key)`` (``uuid5``), so concurrent first-acks converge on
+one row. Ordering/cursor values are the HLC the durable path carries, stored
 packed (monotonic int, range-queryable). Encryption is whatever the app sets on the spec.
 """
 
@@ -46,7 +46,8 @@ _CURSOR_NS: Final = UUID("1d3e0b5a-7c9f-4e2a-8b6d-0a1c2e4f6a8b")
 
 def _cursor_id(principal: str, client_key: str) -> UUID:
     """A deterministic cursor id, so concurrent first-acks for one device converge on a
-    single row (``ensure`` is then idempotent) instead of racing two inserts.
+    single row (the losing insert reconciles via a monotonic update) instead of racing
+    two inserts.
 
     ``uuid5`` is a SHA-1 hash of its inputs — no clock or entropy — so it needs no
     ``base.primitives`` seam (used directly, like ``hashlib``) and is byte-identical
@@ -281,8 +282,9 @@ class DocumentMailboxCursors:
     """Per-device read cursors over a document collection (RFC 0006 default).
 
     Built via :func:`build_realtime_cursors`. A cursor is found by ``(principal, client_key)``
-    and created under a **deterministic** id derived from them (:func:`_cursor_id`), so a
-    concurrent first-ack converges on one row via ``ensure`` rather than racing two inserts.
+    and created under a **deterministic** id derived from them (:func:`_cursor_id`), so
+    concurrent first-acks converge on one row — the loser reconciles via a monotonic update
+    rather than racing two inserts.
     """
 
     command: DocumentCommandPort[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate]
@@ -314,24 +316,44 @@ class DocumentMailboxCursors:
     async def advance(
         self, *, principal: str, client_key: str, up_to: HlcTimestamp
     ) -> None:
-        row = await self._find(principal, client_key)
         target = up_to.pack()
 
-        if row is not None and target <= row.hlc:
-            return  # monotonic: never moves backwards
+        # Monotonic compare-and-advance. The first ack inserts under a deterministic
+        # id; a concurrent first-ack that loses the insert hits a conflict and retries
+        # via the update path — otherwise the loser's (possibly higher) position would
+        # be silently dropped. The counter moves only after a write actually lands.
+        while True:
+            row = await self._find(principal, client_key)
 
-        self._acked += 1
+            if row is None:
+                try:
+                    await self.command.create(
+                        _CursorCreate(principal=principal, client_key=client_key, hlc=target),
+                        id=_cursor_id(principal, client_key),
+                        return_new=False,
+                    )
+                except CoreException as error:
+                    if error.kind is ExceptionKind.CONFLICT:
+                        continue  # a concurrent first-ack won the insert — reconcile
+                    raise
 
-        if row is None:
-            # Deterministic id + ensure: two concurrent first-acks for the same device both
-            # see no row, but converge on one insert instead of creating duplicates.
-            await self.command.ensure(
-                _cursor_id(principal, client_key),
-                _CursorCreate(principal=principal, client_key=client_key, hlc=target),
-                return_new=False,
-            )
-        else:
-            await self.command.update(row.id, row.rev, _CursorUpdate(hlc=target), return_new=False)
+                self._acked += 1
+                return
+
+            if target <= row.hlc:
+                return  # monotonic: never moves backwards
+
+            try:
+                await self.command.update(
+                    row.id, row.rev, _CursorUpdate(hlc=target), return_new=False
+                )
+            except CoreException as error:
+                if error.kind is ExceptionKind.CONCURRENCY:
+                    continue  # a concurrent advance bumped the rev — retry the CAS
+                raise
+
+            self._acked += 1
+            return
 
     # ....................... #
 
