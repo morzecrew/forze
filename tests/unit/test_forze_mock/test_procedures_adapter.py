@@ -81,7 +81,7 @@ async def test_async_handler_is_awaited() -> None:
 async def test_unprogrammed_procedure_raises() -> None:
     ctx = context_from_deps(MockDepsModule()())  # no registry
 
-    with pytest.raises(CoreException, match="mock.procedures.unprogrammed"):
+    with pytest.raises(CoreException, match=r"mock\.procedures\.unprogrammed"):
         await ctx.procedure.command(_spec()).run(_Params())
 
 

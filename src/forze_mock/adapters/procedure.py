@@ -65,7 +65,9 @@ class MockProcedureRegistry:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockProcedureAdapter[In: BaseModel, Out](MockTenancyMixin, ProcedurePort[In, Out]):
+class MockProcedureAdapter[In: BaseModel, Out](
+    MockTenancyMixin, ProcedurePort[In, Out]
+):
     """In-memory ``ProcedurePort`` bound to one spec + a handler registry (command-only)."""
 
     state: MockState
@@ -107,7 +109,9 @@ class MockProcedureAdapter[In: BaseModel, Out](MockTenancyMixin, ProcedurePort[I
     def _validate_result(self, result: ExecResult[Out]) -> None:
         # Enforce the declared cardinality so a mismatched handler fails under the mock instead of
         # silently passing while the real adapter would take a different decode path.
-        if not isinstance(result, ExecResult):
+        if not isinstance(
+            result, ExecResult
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise exc.internal(
                 f"Procedure {self.spec.name!r} handler must return an ExecResult, got "
                 f"{type(result).__name__}."
