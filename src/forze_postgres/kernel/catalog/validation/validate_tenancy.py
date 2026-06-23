@@ -23,6 +23,7 @@ PostgresTenancyRouteKind = Literal[
     "hub_search",
     "federated_search",
     "analytics",
+    "procedures",
     "outbox",
     "inbox",
 ]

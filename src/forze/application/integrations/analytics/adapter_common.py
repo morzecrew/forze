@@ -1,6 +1,5 @@
 """Shared helpers for warehouse analytics adapters."""
 
-import re
 from typing import Any, Awaitable, Callable, Mapping, Sequence, TypeVar, cast
 
 from pydantic import BaseModel
@@ -15,8 +14,12 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
 )
-from forze.application.contracts.tenancy import TenantProviderPort
 from forze.application.integrations.crypto import decrypt_rows
+from forze.application.integrations.tenancy_sql import (
+    TENANT_PARAM as TENANT_PARAM,
+    bind_tenant_param as bind_tenant_param,
+    unreferenced_param_keys,
+)
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, StrKey
@@ -27,61 +30,6 @@ from forze.base.serialization import ModelCodec, default_model_codec
 T = TypeVar("T", bound=BaseModel)
 
 _ANALYTICS_CURSOR_CODEC = B64UrlJsonCodec()
-
-TENANT_PARAM = "tenant"
-"""Bound query-parameter name carrying the current tenant id on tenant-aware routes.
-
-The registered SQL references it per backend — ``{tenant:UUID}`` (ClickHouse),
-``@tenant`` (BigQuery), ``$tenant`` (DuckDB), ``%(tenant)s`` (Postgres) — and the adapter
-binds the bound tenant id (as a string) under this name.
-"""
-
-# ....................... #
-
-
-def bind_tenant_param(
-    params: BaseModel | JsonDict,
-    *,
-    tenant_aware: bool,
-    tenant_provider: TenantProviderPort | None,
-    key: str = TENANT_PARAM,
-) -> BaseModel | JsonDict:
-    """Merge the current tenant id into bound query params on a tenant-aware route.
-
-    Mirrors the graph raw hatch: on a tenant-aware route this **fails closed** — raising
-    if the route is wired tenant-aware without a tenant provider (configuration) or with no
-    bound tenant (authentication) — rather than running an unscoped query. The id is bound
-    as a string under *key* so the registered SQL can reference it (``{tenant:UUID}`` /
-    ``@tenant`` / ``$tenant`` / ``%(tenant)s``). On a non-tenant-aware route *params* is
-    returned unchanged.
-
-    Advisory by construction: binding the parameter does not guarantee the SQL *uses* it to
-    scope. The wiring-time :func:`assert_tenant_param_referenced` guard rejects a
-    tenant-aware route whose SQL never references the parameter.
-    """
-
-    if not tenant_aware:
-        return params
-
-    if tenant_provider is None:
-        raise exc.configuration(
-            "Tenant provider is required for a tenant-aware analytics route.",
-            code="analytics_tenant_provider_missing",
-        )
-
-    tenant = tenant_provider()
-
-    if tenant is None:
-        raise exc.authentication("Tenant ID is required", code="tenant_required")
-
-    data = params.model_dump() if isinstance(params, BaseModel) else dict(params)
-    data[key] = str(tenant.tenant_id)
-
-    return data
-
-
-# ....................... #
-
 
 def assert_tenant_param_referenced(
     queries: Mapping[str, str],
@@ -102,9 +50,7 @@ def assert_tenant_param_referenced(
     :param placeholder_hint: Human placeholder form for the error (e.g. ``{tenant:UUID}``).
     """
 
-    rx = re.compile(pattern)
-
-    if missing := sorted(key for key, sql in queries.items() if not rx.search(sql)):
+    if missing := unreferenced_param_keys(queries, pattern=pattern):
         raise exc.configuration(
             f"{integration} analytics route {route!r} is tenant_aware but query keys "
             f"{missing!r} never reference the tenant parameter ({placeholder_hint}). A "

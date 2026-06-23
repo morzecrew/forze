@@ -10,6 +10,7 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
+from forze.application.contracts.procedures import ProcedureCommandDepKey
 from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
@@ -46,6 +47,7 @@ from .configs import (
     PostgresHubSearchConfig,
     PostgresInboxConfig,
     PostgresOutboxConfig,
+    PostgresProcedureConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
 )
@@ -57,6 +59,7 @@ from .factories import (
     ConfigurablePostgresInbox,
     ConfigurablePostgresOutboxCommand,
     ConfigurablePostgresOutboxQuery,
+    ConfigurablePostgresProcedures,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
     postgres_txmanager,
@@ -145,6 +148,12 @@ class PostgresDepsModule(DepsModule):
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from analytics route names to their Postgres-specific configurations."""
+
+    procedures: StrKeyMapping[PostgresProcedureConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from procedure route names to their Postgres-specific configurations."""
 
     outboxes: StrKeyMapping[PostgresOutboxConfig] | None = attrs.field(
         default=None,
@@ -313,6 +322,17 @@ class PostgresDepsModule(DepsModule):
                     ),
                 )
 
+        if self.procedures:
+            for name, procedure_cfg in self.procedures.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=procedure_cfg.tenant_aware,
+                        kind="procedures",
+                        has_namespace_routing=callable(procedure_cfg.query_schema),
+                    ),
+                )
+
         if self.outboxes:
             for name, outbox_cfg in self.outboxes.items():
                 routes.append(
@@ -367,6 +387,7 @@ class PostgresDepsModule(DepsModule):
         federated_search_deps = Deps()
         tx_deps = Deps()
         analytics_deps = Deps()
+        procedures_deps = Deps()
         outbox_deps = Deps()
 
         # ``cast`` erases the factories' generic parameters (``partial`` would otherwise
@@ -466,6 +487,18 @@ class PostgresDepsModule(DepsModule):
                 )
             )
 
+        if self.procedures:
+            procedures_deps = procedures_deps.merge(
+                Deps.routed(
+                    {
+                        ProcedureCommandDepKey: {
+                            name: ConfigurablePostgresProcedures(config=config)
+                            for name, config in self.procedures.items()
+                        },
+                    }
+                )
+            )
+
         if self.outboxes:
             outbox_deps = outbox_deps.merge(
                 Deps.routed(
@@ -501,6 +534,7 @@ class PostgresDepsModule(DepsModule):
             hub_search_deps,
             federated_search_deps,
             analytics_deps,
+            procedures_deps,
             outbox_deps,
             inbox_deps,
         )
