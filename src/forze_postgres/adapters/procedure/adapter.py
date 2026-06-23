@@ -97,16 +97,16 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
                 f"{self.spec.params.__name__} instance."
             )
 
-        # Seal encrypted params before binding when the resolved codec encrypts (the factory wraps
-        # it via ``resolve_procedure_codecs_spec``); a plain codec keeps the model_dump path.
+        # Always bind through the resolved params codec so a custom codec's field names/values are
+        # honored; an encrypting codec (wrapped by the factory via ``resolve_procedure_codecs_spec``)
+        # also needs its cipher warmed first, hence the ``prepare_encrypt`` pre-pass when present.
         codec = self.spec.resolved_params_codec
         prepare_encrypt = getattr(codec, "prepare_encrypt", None)
 
         if prepare_encrypt is not None:
             await prepare_encrypt()
-            data: JsonDict = codec.encode_persistence_mapping(params)
-        else:
-            data = params.model_dump()
+
+        data: JsonDict = codec.encode_persistence_mapping(params)
 
         bound = bind_tenant_param(
             data,
@@ -170,6 +170,9 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
                 decoded = default_model_codec(result_type).decode_mapping(row)
                 return ExecResult(value=cast("Out", decoded))
 
+            # Side-effect (result=None): surface the statement rowcount (rows affected by DML /
+            # CALL). A function that *returns* a count must declare a scalar result instead —
+            # `SELECT my_fn(...)` yields one row, so its rowcount here is 1, not the value.
             count = await self.client.execute(query, bound, return_rowcount=True)
             return ExecResult(affected_count=count)
 

@@ -22,11 +22,14 @@ class ExecResult(Generic[Out]):
     - ``result`` is a Pydantic model  -> :attr:`value` carries the single row.
     - ``result`` is a scalar type      -> :attr:`value` carries the scalar.
     - ``result`` is ``None``           -> side-effect only; :attr:`affected_count` carries the
-      rows touched (when the backend reports it).
+      statement's rows-affected count (when the backend reports it).
     """
 
     value: Out | None = attrs.field(default=None)
     """Scalar or single typed row returned by the procedure; ``None`` for a side-effect-only op."""
 
     affected_count: int | None = attrs.field(default=None)
-    """Rows affected by a side-effect/DML procedure; ``None`` when the backend reports no count."""
+    """Rows affected by the **statement** (DML / ``CALL`` rowcount); ``None`` when the backend
+    reports no count. This is the statement's rowcount, not a function's return value — a
+    ``SELECT my_fn(...)`` returns one row (count ``1``), so a function that *returns* a count must
+    declare a scalar ``result`` (e.g. ``int``) to surface it through :attr:`value`."""

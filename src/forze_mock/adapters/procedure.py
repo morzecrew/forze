@@ -98,4 +98,36 @@ class MockProcedureAdapter[In: BaseModel, Out](MockTenancyMixin, ProcedurePort[I
         if inspect.isawaitable(result):
             result = await result
 
+        self._validate_result(result)
+
         return result
+
+    # ....................... #
+
+    def _validate_result(self, result: ExecResult[Out]) -> None:
+        # Enforce the declared cardinality so a mismatched handler fails under the mock instead of
+        # silently passing while the real adapter would take a different decode path.
+        if not isinstance(result, ExecResult):
+            raise exc.internal(
+                f"Procedure {self.spec.name!r} handler must return an ExecResult, got "
+                f"{type(result).__name__}."
+            )
+
+        value = result.value
+
+        if self.spec.result is None:
+            if value is not None:
+                raise exc.internal(
+                    f"Procedure {self.spec.name!r} is side-effect-only (result=None) but the "
+                    "handler set ExecResult.value; use affected_count."
+                )
+        elif self.spec.returns_row:
+            if value is not None and not isinstance(value, self.spec.result):
+                raise exc.internal(
+                    f"Procedure {self.spec.name!r} returns {self.spec.result.__name__} but the "
+                    f"handler returned {type(value).__name__}."
+                )
+        elif isinstance(value, BaseModel):  # scalar result
+            raise exc.internal(
+                f"Procedure {self.spec.name!r} returns a scalar but the handler returned a model."
+            )

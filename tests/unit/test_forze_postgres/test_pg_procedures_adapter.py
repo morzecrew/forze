@@ -249,6 +249,26 @@ def test_config_rejects_unscoped_tenant_aware_sql() -> None:
         config.validate_against_spec(spec)
 
 
+def test_config_rejects_tenant_param_only_in_comment() -> None:
+    # A tenant placeholder that appears only in a comment does not scope the statement.
+    spec = ProcedureSpec(name="recompute", params=_Params)
+    config = PostgresProcedureConfig(
+        tenant_aware=True,
+        sql="SELECT recompute_all(%(window)s) -- scope by %(tenant)s",
+    )
+    with pytest.raises(CoreException, match="procedures_tenant_param_unreferenced"):
+        config.validate_against_spec(spec)
+
+
+def test_config_accepts_real_tenant_use_alongside_comment() -> None:
+    spec = ProcedureSpec(name="recompute", params=_Params)
+    config = PostgresProcedureConfig(
+        tenant_aware=True,
+        sql="SELECT recompute(%(window)s, %(tenant)s) /* scoped */",
+    )
+    config.validate_against_spec(spec)  # does not raise
+
+
 def test_config_autocommit_with_timeout_rejected() -> None:
     with pytest.raises(CoreException, match="procedures_autocommit_timeout"):
         PostgresProcedureConfig(

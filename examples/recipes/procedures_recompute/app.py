@@ -65,11 +65,19 @@ RECOMPUTE_SPEC = ProcedureSpec[RecomputeWindow, None](
 
 
 # In production the spec maps to ONE set-based Postgres statement that recomputes every region in a
-# single pass over the freshly-ingested batch — e.g. a function or `INSERT ... SELECT ... GROUP BY`:
+# single pass over the freshly-ingested batch. With result=None the statement's rowcount is the
+# affected count, so it is set-based DML, not `SELECT a_function(...)` (which returns one row, so
+# its rowcount would be 1 — a function that returns a count should declare a scalar result):
 #
 #   from forze_postgres import PostgresProcedureConfig, PostgresDepsModule
 #
-#   PROCEDURE_CONFIG = PostgresProcedureConfig(sql="SELECT recompute_region_totals(%(since)s)")
+#   PROCEDURE_CONFIG = PostgresProcedureConfig(
+#       sql=(
+#           "INSERT INTO region_totals (region, total) "
+#           "SELECT region, sum(amount) FROM sales WHERE since >= %(since)s GROUP BY region "
+#           "ON CONFLICT (region) DO UPDATE SET total = excluded.total"
+#       ),
+#   )
 #   module = PostgresDepsModule(
 #       client=client,
 #       procedures={"recompute_region_totals": PROCEDURE_CONFIG},

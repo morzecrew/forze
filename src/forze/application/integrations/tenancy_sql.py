@@ -74,16 +74,32 @@ def bind_tenant_param(
 # ....................... #
 
 
+_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
+_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """Blank out ``--`` line and ``/* */`` block comments.
+
+    So a placeholder that appears only in a comment is not mistaken for a real reference. This is
+    conservative — it may also blank text inside a string literal — but that can only *over*-report
+    a missing reference, which is the fail-closed direction for a wiring guard.
+    """
+
+    return _SQL_BLOCK_COMMENT.sub(" ", _SQL_LINE_COMMENT.sub(" ", sql))
+
+
 def unreferenced_param_keys(
     queries: Mapping[str, str],
     *,
     pattern: str,
 ) -> list[str]:
-    """Return the sorted query keys whose SQL never references *pattern*.
+    """Return the sorted query keys whose SQL never references *pattern* (outside comments).
 
     The reusable core of the wiring-time tenant-placeholder guard: it checks *reference*, not
     correctness (the parameter could be referenced outside a filter), so it is a floor, not a
-    proof of isolation. Each integration wraps this with its own error message.
+    proof of isolation. SQL comments are stripped first, so a placeholder that appears only in a
+    comment does not satisfy the guard. Each integration wraps this with its own error message.
 
     :param queries: ``key -> SQL`` for the route.
     :param pattern: Backend regex matching the tenant placeholder (e.g. ``r"%\\(tenant\\)s"``).
@@ -91,4 +107,6 @@ def unreferenced_param_keys(
 
     rx = re.compile(pattern)
 
-    return sorted(key for key, sql in queries.items() if not rx.search(sql))
+    return sorted(
+        key for key, sql in queries.items() if not rx.search(_strip_sql_comments(sql))
+    )

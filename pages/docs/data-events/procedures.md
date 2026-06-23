@@ -68,7 +68,14 @@ placeholders:
 
 ```python
 PostgresProcedureConfig(
-    sql="SELECT recompute_region_totals(%(since)s)",
+    # A set-based statement; with result=None the rowcount is the affected count, so this is DML
+    # (not `SELECT a_function(...)`, which returns one row — a count-returning function uses a
+    # scalar result instead).
+    sql=(
+        "INSERT INTO region_totals (region, total) "
+        "SELECT region, sum(amount) FROM sales WHERE since >= %(since)s GROUP BY region "
+        "ON CONFLICT (region) DO UPDATE SET total = excluded.total"
+    ),
     in_transaction=True,            # False for REFRESH MATERIALIZED VIEW CONCURRENTLY
     statement_timeout=None,         # SET LOCAL statement_timeout for long compute
     query_schema=None,              # per-tenant schema (namespace tier)
