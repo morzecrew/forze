@@ -90,12 +90,14 @@ async def execute_projection_keyset_cursor[M: BaseModel](
         default_sort=spec.default_sort,
         read_fields=gw.read_fields,
         spec_name=spec.name,
+        model=gw.model_type,
     )
     key_spec = [
         (k, d)
         for k, d, _ in normalize_sorts_for_keyset(
             effective,
             read_fields=gw.read_fields,
+            model=gw.model_type,
         )
     ]
 

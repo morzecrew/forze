@@ -126,6 +126,7 @@ async def build_hub_search_plan(
         read_fields=host.read_fields,
         spec_name=hub_spec.name,
         rank_field=HUB_RANK,
+        model=host.model_type,
     )
 
     return HubSearchPlan(

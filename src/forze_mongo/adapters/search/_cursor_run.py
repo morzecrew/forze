@@ -75,11 +75,13 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
             default_sort=gw.spec.default_sort,
             read_fields=gw.read_fields,
             spec_name=gw.spec.name,
+            model=gw.model_type,
         )
         _norm = list(
             normalize_sorts_for_keyset(
                 effective,
                 read_fields=gw.read_fields,
+                model=gw.model_type,
             )
         )
         key_spec = [(k, d) for k, d, _ in _norm]

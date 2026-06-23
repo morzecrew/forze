@@ -44,6 +44,25 @@ def _validate_search_encryption(
             f"{forbidden}: sealed fields have no order at rest and cannot be sort keys."
         )
 
+
+def _validate_search_default_sort(
+    *,
+    spec_name: str,
+    model_type: type[BaseModel],
+    default_sort: QuerySortExpression | None,
+) -> None:
+    """Validate a search spec's ``default_sort`` against the read model (nested-path aware)."""
+
+    if default_sort is None:
+        return
+
+    validate_sort_fields(
+        default_sort,
+        read_fields=read_fields_for_model(model_type),
+        spec_name=spec_name,
+        model=model_type,
+    )
+
 # ----------------------- #
 
 
@@ -131,12 +150,11 @@ class SearchSpec[M: BaseModel](BaseSpec):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.default_sort is not None:
-            validate_sort_fields(
-                self.default_sort,
-                read_fields=read_fields_for_model(self.model_type),
-                spec_name=self.name,
-            )
+        _validate_search_default_sort(
+            spec_name=self.name,
+            model_type=self.model_type,
+            default_sort=self.default_sort,
+        )
 
         _validate_search_encryption(
             spec_name=self.name,
@@ -217,12 +235,11 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.default_sort is not None:
-            validate_sort_fields(
-                self.default_sort,
-                read_fields=read_fields_for_model(self.model_type),
-                spec_name=self.name,
-            )
+        _validate_search_default_sort(
+            spec_name=self.name,
+            model_type=self.model_type,
+            default_sort=self.default_sort,
+        )
 
         _validate_search_encryption(
             spec_name=self.name,

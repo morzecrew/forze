@@ -44,6 +44,23 @@ def test_assert_cursor_projection_raises_when_sort_key_missing() -> None:
         )
 
 
+def test_assert_cursor_projection_nested_key_satisfied_by_root() -> None:
+    # Projecting the root JSON column satisfies a nested sort key (the token reads
+    # the nested value out of it).
+    assert_cursor_projection_includes_sort_keys(
+        return_fields=["addr", ID_FIELD],
+        sort_keys=["addr.city", ID_FIELD],
+    )
+
+
+def test_assert_cursor_projection_nested_key_missing_root_raises() -> None:
+    with pytest.raises(CoreException, match="root column"):
+        assert_cursor_projection_includes_sort_keys(
+            return_fields=["name", ID_FIELD],
+            sort_keys=["addr.city", ID_FIELD],
+        )
+
+
 def test_resolved_cursor_limit_default() -> None:
     assert resolved_cursor_limit(None) == 10
     assert resolved_cursor_limit({}) == 10

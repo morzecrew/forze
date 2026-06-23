@@ -119,11 +119,13 @@ def resolve_sort_keys(
     *,
     read_fields: frozenset[str] | None = None,
     spec_name: str = "<sort>",
+    model: type[BaseModel] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Resolve a sort map to ``(field, direction, nulls)`` triples (no tie-breaker).
 
     For offset ORDER BY and in-memory sort, where a total order isn't required. Validates
-    field membership when *read_fields* is given.
+    field membership when *read_fields* is given; pass *model* to allow nested/dotted sort
+    paths (validated the same way filters are — see :func:`field_path_resolves`).
     """
 
     if not sorts:
@@ -132,7 +134,9 @@ def resolve_sort_keys(
     out: list[tuple[str, str, str]] = []
 
     for field, value in sorts.items():
-        if read_fields is not None and field not in read_fields:
+        if read_fields is not None and not _sort_field_resolves(
+            field, read_fields=read_fields, model=model
+        ):
             raise exc.configuration(
                 f"Sort field {field!r} is not on read model for spec {spec_name!r}.",
             )
@@ -160,11 +164,17 @@ def validate_sort_fields(
     *,
     read_fields: frozenset[str],
     spec_name: str,
+    model: type[BaseModel] | None = None,
 ) -> None:
-    """Raise :class:`~forze.base.exceptions.exc.configuration` when sorts are invalid."""
+    """Raise :class:`~forze.base.exceptions.exc.configuration` when sorts are invalid.
+
+    Pass *model* to permit nested/dotted sort paths, validated the same way filters are
+    (via :func:`field_path_resolves`); without it, only flat *read_fields* membership is
+    accepted (legacy behavior).
+    """
 
     for field, value in sorts.items():
-        if field not in read_fields:
+        if not _sort_field_resolves(field, read_fields=read_fields, model=model):
             raise exc.configuration(
                 f"Sort field {field!r} is not on read model for spec {spec_name!r}.",
             )
@@ -271,6 +281,28 @@ def field_path_resolves(
     )
 
 
+def _sort_field_resolves(
+    field: str,
+    *,
+    read_fields: frozenset[str],
+    model: type[BaseModel] | None,
+) -> bool:
+    """Whether *field* (possibly dotted) is a legal sort key.
+
+    A single-segment key uses flat *read_fields* membership (which already covers
+    materialized computed fields). A dotted key needs *model* to walk nested Pydantic
+    models and ``str``-keyed mappings via :func:`field_path_resolves`, matching how filters
+    resolve nested paths; without a *model* the legacy flat check stands (a dotted key is
+    rejected), so callers opt into nested sorts by threading their read model.
+    """
+
+    if "." not in field or model is None:
+        return field in read_fields
+
+    materialized = read_fields - read_fields_for_model(model)
+    return field_path_resolves(model, field, materialized=materialized)
+
+
 def validate_runtime_sort_fields(
     sorts: QuerySortExpression | None,
     *,
@@ -308,19 +340,25 @@ def resolve_effective_sorts(
     default_sort: QuerySortExpression | None,
     read_fields: frozenset[str],
     spec_name: str,
+    model: type[BaseModel] | None = None,
 ) -> QuerySortExpression:
     """Pick the sort map used for queries when the caller omits ``sorts``.
 
     Caller ``sorts`` win when non-empty. Otherwise ``default_sort``, then ``id``
-    when the read model has an ``id`` field. Otherwise raise precondition.
+    when the read model has an ``id`` field. Otherwise raise precondition. Pass *model*
+    to permit nested/dotted sort paths.
     """
 
     if sorts:
-        validate_sort_fields(sorts, read_fields=read_fields, spec_name=spec_name)
+        validate_sort_fields(
+            sorts, read_fields=read_fields, spec_name=spec_name, model=model
+        )
         return sorts
 
     if default_sort:
-        validate_sort_fields(default_sort, read_fields=read_fields, spec_name=spec_name)
+        validate_sort_fields(
+            default_sort, read_fields=read_fields, spec_name=spec_name, model=model
+        )
         return default_sort
 
     if ID_FIELD in read_fields:
@@ -379,6 +417,7 @@ def normalize_sorts_for_keyset(
     *,
     read_fields: frozenset[str],
     tiebreaker: str = ID_FIELD,
+    model: type[BaseModel] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Resolve sorts into ``(field, direction, nulls)`` keys with a final tie-breaker.
 
@@ -398,7 +437,7 @@ def normalize_sorts_for_keyset(
             "Keyset pagination requires non-empty sorts; resolve effective sorts first.",
         )
 
-    validate_sort_fields(s, read_fields=read_fields, spec_name="<keyset>")
+    validate_sort_fields(s, read_fields=read_fields, spec_name="<keyset>", model=model)
 
     return _with_tiebreaker(
         s,

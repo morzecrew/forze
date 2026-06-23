@@ -253,3 +253,66 @@ class TestValidateRuntimeSortFields:
                 {"name": "asc", "nmae": "desc"}, model=_Doc, backend="mongo"
             )
         assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+
+class TestSharedValidatorsNestedPaths:
+    """The shared sort validators accept nested/dotted paths when given the model,
+    matching how filters resolve them — and keep the flat reject without a model."""
+
+    fields = read_fields_for_model(_Doc)
+
+    def test_validate_sort_fields_accepts_nested_with_model(self) -> None:
+        validate_sort_fields(
+            {"addr.city": "asc", "meta.anykey": "desc"},
+            read_fields=self.fields,
+            spec_name="d",
+            model=_Doc,
+        )
+
+    def test_validate_sort_fields_rejects_bogus_nested_with_model(self) -> None:
+        with pytest.raises(CoreException, match="not on read model"):
+            validate_sort_fields(
+                {"addr.zip": "asc"},
+                read_fields=self.fields,
+                spec_name="d",
+                model=_Doc,
+            )
+
+    def test_validate_sort_fields_rejects_nested_without_model(self) -> None:
+        # Back-compat: no model → flat membership, a dotted key is rejected.
+        with pytest.raises(CoreException, match="not on read model"):
+            validate_sort_fields(
+                {"addr.city": "asc"},
+                read_fields=self.fields,
+                spec_name="d",
+            )
+
+    def test_resolve_effective_sorts_accepts_nested_with_model(self) -> None:
+        out = resolve_effective_sorts(
+            sorts={"addr.city": "desc"},
+            default_sort=None,
+            read_fields=self.fields,
+            spec_name="d",
+            model=_Doc,
+        )
+        assert out == {"addr.city": "desc"}
+
+    def test_normalize_sorts_for_keyset_accepts_nested_with_model(self) -> None:
+        out = normalize_sorts_for_keyset(
+            {"addr.city": "asc"},
+            read_fields=self.fields,
+            model=_Doc,
+        )
+        # nested key kept verbatim; id tie-breaker appended (present on _Doc)
+        assert out == [("addr.city", "asc", "first"), (ID_FIELD, "asc", "first")]
+
+    def test_document_spec_accepts_nested_default_sort(self) -> None:
+        DocumentSpec(name="d", read=_Doc, default_sort={"addr.city": "asc"})
+
+    def test_search_spec_accepts_nested_default_sort(self) -> None:
+        SearchSpec(
+            name="s",
+            model_type=_Doc,
+            fields=["name"],
+            default_sort={"addr.city": "asc"},
+        )

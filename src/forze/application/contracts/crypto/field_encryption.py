@@ -109,7 +109,11 @@ class FieldEncryption:
         A randomized :attr:`encrypted` ciphertext is unordered and a deterministic
         :attr:`searchable` one supports equality only; sorting on either is meaningless and a
         keyset cursor would leak its raw value in the token.
+
+        Sealing applies to whole top-level columns, so a *nested* sort key is forbidden when
+        its **root** segment is sealed: sorting on ``contract.ssn`` is rejected when
+        ``contract`` is encrypted (the value still lives inside the sealed ciphertext).
         """
 
         sealed = self.encrypted | self.searchable
-        return sorted({field for field in fields if field in sealed})
+        return sorted({field for field in fields if field.split(".", 1)[0] in sealed})

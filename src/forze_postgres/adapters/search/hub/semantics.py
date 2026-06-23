@@ -26,6 +26,8 @@ from forze.domain.constants import ID_FIELD
 from .constants import HUB_RANK, LEG_EID, LEG_SCORE
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from .runtime import HubLegRuntime
 
 # ----------------------- #
@@ -115,6 +117,7 @@ def hub_order_key_spec(
     read_fields: frozenset[str],
     spec_name: str,
     rank_field: str,
+    model: type[BaseModel] | None = None,
 ) -> list[tuple[str, str]]:
     if not do_legs:
         effective = resolve_effective_sorts(
@@ -122,12 +125,14 @@ def hub_order_key_spec(
             default_sort=default_sort,
             read_fields=read_fields,
             spec_name=spec_name,
+            model=model,
         )
         return [
             (k, d)
             for k, d, _ in normalize_sorts_for_keyset(
                 effective,
                 read_fields=read_fields,
+                model=model,
             )
         ]
 

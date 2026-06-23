@@ -20,13 +20,17 @@ def cursor_return_fields_for_select(
     Merges keyset columns (*sort_keys*) with caller *return_fields* (order preserved,
     duplicates dropped). When *rank_field* is set (synthetic score alias), it is omitted
     here because the engine adapter adds it separately in ``SELECT``.
+
+    A nested/dotted sort key contributes its **root** column (``address.city`` →
+    ``address``): the projection selects the whole JSON column and the cursor token reads
+    the nested value out of it via ``row_value_for_sort_key``.
     """
 
     if rank_field is not None:
-        sk_proj = [k for k in sort_keys if k != rank_field]
+        sk_proj = [k.split(".", 1)[0] for k in sort_keys if k != rank_field]
 
     else:
-        sk_proj = list(sort_keys)
+        sk_proj = [k.split(".", 1)[0] for k in sort_keys]
 
     merged = tuple(dict.fromkeys([*sk_proj, *return_fields]))
 

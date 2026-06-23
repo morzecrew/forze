@@ -144,6 +144,7 @@ class DocumentAdapter(
             default_sort=self.spec.default_sort,
             read_fields=self._read_fields,
             spec_name=self.spec.name,
+            model=self.spec.read,
         )
 
     # ....................... #

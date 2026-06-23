@@ -121,6 +121,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 self.default_sort,
                 read_fields=read_fields,
                 spec_name=str(self.name),
+                model=self.read,
             )
 
         if self.query_policy is not None:
