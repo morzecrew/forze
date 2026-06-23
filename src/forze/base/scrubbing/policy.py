@@ -57,8 +57,17 @@ _FORZE_KEY_EXTRAS: tuple[str, ...] = (
 )
 
 # Log-context string rules only (assignments, email, Bearer tokens).
+#
+# Value scrubbing must match a secret-bearing *shape*, never a bare word: the
+# Logfire fragments above are key-name heuristics (for ``is_sensitive_key``) and
+# matching them inside arbitrary string content corrupts ordinary text — a path
+# like ``/v1/authn/login`` or a message mentioning "session" — while still leaking
+# the real value next to the masked word. So a sensitive term scrubs a log value
+# only when it is followed by ``=``/``:`` and a token (``session=abc`` → masked
+# whole), which is the form that actually carries the secret.
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
-    r"(?:password|passwd|secret|token|api[._ -]?key)\s*[=:]\s*\S+",
+    r"(?:password|passwd|mysql[._ -]?pwd|secret|token|api[._ -]?key"
+    r"|credential|session|cookie|csrf|xsrf|jwt|ssn)\s*[=:]\s*\S+",
 )
 
 _LOG_STRING_EXTRAS: tuple[str, ...] = (
@@ -97,11 +106,12 @@ def _compile_sensitive_key_re() -> re.Pattern[str]:
 
 
 def _compile_log_string_re() -> re.Pattern[str]:
+    # Deliberately excludes _LOGFIRE_SENSITIVE_FRAGMENTS: those are bare key-name
+    # terms for is_sensitive_key, not value patterns (see _LOG_ASSIGNMENT_FRAGMENTS).
     return re.compile(
         "|".join(
             (
                 *_LOG_ASSIGNMENT_FRAGMENTS,
-                *_LOGFIRE_SENSITIVE_FRAGMENTS,
                 *_LOG_STRING_EXTRAS,
                 *_EXTRA_LOG_STRING_PATTERNS,
             )
@@ -240,7 +250,6 @@ def _derive_log_string_literals() -> tuple[str, ...] | None:
 
     for fragment in (
         *_LOG_ASSIGNMENT_FRAGMENTS,
-        *_LOGFIRE_SENSITIVE_FRAGMENTS,
         *_LOG_STRING_EXTRAS,
         *_EXTRA_LOG_STRING_PATTERNS,
     ):

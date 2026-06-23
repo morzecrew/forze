@@ -121,6 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Log scrubbing no longer corrupts ordinary text** — sensitive-word scrubbing of log string values now requires a secret-bearing shape (`session=…`), not a bare word, so paths like `/v1/authn/login` survive intact while the value after a sensitive key is fully masked. Key-name masking of structured fields is unchanged.
+
 - **Outbox relay tenancy** — the background relay now binds each claim's tenant before publishing, so a tenant-aware destination routes per-tenant instead of the global key. A tenant-aware outbox on the plain (non-sharded) relay fails closed with a clear `outbox_relay_tenant_unbound` error.
 
 - **Keyring fill-lock stripe is now cross-process stable** — the per-`key_id` crypto fill-lock stripe used Python's `hash()` (PYTHONHASHSEED-randomized), so it varied per process and broke deterministic-simulation replay. It now uses a stable hash, and the guard bans the `hash(x) % n` pattern.
@@ -157,7 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres schema validation accepts parameterized column types** — a field over `NUMERIC(10,2)` or `TIMESTAMP(3) WITH TIME ZONE` is no longer rejected: type compatibility compares modifier-insensitively while still carrying the modifier, so casts keep precision and scale.
 
-- **`forze_postgres` search index-definition parsing hardened** — index expressions parse via a balanced-delimiter, quote- and dollar-quote-aware scanner. PGroonga resolution accepts more array and cast forms but fails closed on ones it cannot reproduce; GIN-to-FTS detection keys on a real `to_tsvector(` call.
+- **`forze_postgres` search index-definition parsing hardened** — index expressions parse via a balanced-delimiter, quote- and dollar-quote-aware scanner. PGroonga resolution accepts more array and cast forms but fails closed on ones it cannot reproduce; GIN-to-FTS detection keys on a real `to_tsvector(...)` call.
 
 ## [0.4.1] - 2026-06-17
 
