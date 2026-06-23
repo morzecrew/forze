@@ -6,6 +6,8 @@ through :class:`RealtimePublisher` — ephemeral (stream, fire-and-forget) or du
 consumes the stream and bridges to live connections. Sibling of the ``notify`` kit.
 """
 
+from forze.application.contracts.realtime import RealtimeShard
+
 from .lifecycle import (
     realtime_group_ensure_lifecycle_step,
     realtime_relay_lifecycle_step,
@@ -55,4 +57,5 @@ __all__ = [
     "realtime_group_ensure_lifecycle_step",
     "realtime_tenant_group_ensure_lifecycle_step",
     "realtime_tenant_relay_lifecycle_step",
+    "RealtimeShard",
 ]

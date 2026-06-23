@@ -36,6 +36,7 @@ from forze_kits.integrations.realtime import (
 from forze_socketio import (
     GatewayDedup,
     RealtimeGateway,
+    RealtimeShard,
     TenantShardedSignalSource,
 )
 from forze_mock import MockDepsModule, MockRouteConfig
@@ -73,12 +74,14 @@ def _runtime(module: MockDepsModule) -> ExecutionRuntime:
     return ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
 
 
+def _shard(spec: Any, tenants: list[UUID]) -> RealtimeShard:
+    return RealtimeShard(stream_spec=spec, tenants=lambda: tenants)
+
+
 def _sharded_gateway(sio: _StubSio, spec: Any, *, tenants: list[UUID], **kw: Any) -> RealtimeGateway:
     return RealtimeGateway(
         sio=sio,  # type: ignore[arg-type]
-        source=TenantShardedSignalSource(
-            stream_spec=spec, tenants=lambda: tenants, poll_interval=_FAST
-        ),
+        source=TenantShardedSignalSource(shard=_shard(spec, tenants), poll_interval=_FAST),
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
         **kw,
     )
@@ -176,7 +179,7 @@ async def test_durable_signal_relayed_to_per_tenant_stream_reaches_sharded_gatew
     sio = _StubSio()
     gw = RealtimeGateway(
         sio=sio,  # type: ignore[arg-type]
-        source=TenantShardedSignalSource(stream_spec=stream, tenants=lambda: [_T1, _T2], poll_interval=_FAST),
+        source=TenantShardedSignalSource(shard=_shard(stream, [_T1, _T2]), poll_interval=_FAST),
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
         mailbox_factory=build_realtime_mailbox,
     )
@@ -232,7 +235,7 @@ async def test_tenant_aware_mailbox_scopes_by_trusted_tenant_without_header_bind
     sio = _StubSio()
     gw = RealtimeGateway(
         sio=sio,  # type: ignore[arg-type]
-        source=TenantShardedSignalSource(stream_spec=spec, tenants=lambda: [_T1, _T2], poll_interval=_FAST),
+        source=TenantShardedSignalSource(shard=_shard(spec, [_T1, _T2]), poll_interval=_FAST),
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
         mailbox_factory=build_realtime_mailbox,
     )

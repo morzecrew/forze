@@ -12,6 +12,7 @@ from .audience import Audience, AudienceKind
 from .constants import DEFAULT_REALTIME_GROUP
 from .events import RealtimeEvent, RealtimeEventCatalog
 from .mailbox import MailboxEntry
+from .shard import RealtimeShard
 from .signal import RealtimeSignal
 
 # ----------------------- #
@@ -23,5 +24,6 @@ __all__ = [
     "MailboxEntry",
     "RealtimeEvent",
     "RealtimeEventCatalog",
+    "RealtimeShard",
     "RealtimeSignal",
 ]

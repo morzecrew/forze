@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Tenant-aware realtime gateway** — `TenantShardedSignalSource` puts per-tenant realtime isolation on the standard tenancy tier ladder: it runs one consume loop per assigned tenant and scopes the mailbox and rooms by a trusted tenant from the stream, not the header. Tenant-global stays the default. (RFC 0007.)
 
+- **`RealtimeShard`** — one value object bundling a namespace-tier instance's assignment (stream, tenants, group). Hand the same shard to `TenantShardedSignalSource`, the group-ensure step, and the tenant relay so the three can't drift on which tenants, stream, or group an instance owns.
+
 - **Tenant-sharded outbox relay** — pass `tenants` to the background relay step (or `realtime_tenant_relay_lifecycle_step`) and it drains each assigned tenant's partition under a bound tenant, sequentially per tick. This brings a partitioned (tenant-aware) outbox to namespace tier, alongside the stream and inbox.
 
 - **Tenant-aware realtime mailbox fails closed clearly** — when the gateway has no bound tenant to scope a tenant-aware mailbox, it now raises an actionable `realtime_mailbox_tenant_unbound` error naming the fix, instead of an opaque tenant-required failure deep in the adapter.

@@ -6,16 +6,14 @@ consumes them. A thin convenience over the generic
 :func:`outbox_relay_background_lifecycle_step`.
 """
 
-from collections.abc import Callable, Sequence
 from datetime import timedelta
 from typing import Any, final
-from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.outbox import OutboxSpec
-from forze.application.contracts.realtime import DEFAULT_REALTIME_GROUP
+from forze.application.contracts.realtime import DEFAULT_REALTIME_GROUP, RealtimeShard
 from forze.application.contracts.stream import StreamGroupAdminDepKey, StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
@@ -86,9 +84,7 @@ class _EnsureTenantGroupsStartup(LifecycleHook):
     """Idempotently create the gateway's consumer group on **each** assigned tenant's
     realtime stream (namespace-tier; RFC 0007)."""
 
-    stream_spec: StreamSpec[Any]
-    tenants: Callable[[], Sequence[UUID]]
-    group: str
+    shard: RealtimeShard
     start_id: str
 
     # ....................... #
@@ -96,17 +92,19 @@ class _EnsureTenantGroupsStartup(LifecycleHook):
     async def __call__(self, ctx: ExecutionContext) -> None:
         # Sequential bind/ensure per tenant (a startup hook, not the hot path): under
         # each bound tenant the admin port resolves to that tenant's stream key/partition.
-        for tenant in self.tenants():
+        stream_spec = self.shard.stream_spec
+
+        for tenant in self.shard.tenants():
             with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
                 admin = ctx.deps.resolve_configurable(
                     ctx,
                     StreamGroupAdminDepKey,
-                    self.stream_spec,
-                    route=self.stream_spec.name,
+                    stream_spec,
+                    route=stream_spec.name,
                 )
                 await admin.ensure_group(
-                    self.group,
-                    str(self.stream_spec.name),
+                    self.shard.group,
+                    str(stream_spec.name),
                     start_id=self.start_id,
                 )
 
@@ -116,9 +114,7 @@ class _EnsureTenantGroupsStartup(LifecycleHook):
 
 def realtime_tenant_group_ensure_lifecycle_step(
     *,
-    stream_spec: StreamSpec[Any],
-    tenants: Callable[[], Sequence[UUID]],
-    group: str = DEFAULT_REALTIME_GROUP,
+    shard: RealtimeShard,
     start_id: str = "$",
     step_id: StrKey = "realtime_tenant_groups",
 ) -> LifecycleStep:
@@ -127,17 +123,16 @@ def realtime_tenant_group_ensure_lifecycle_step(
     The namespace-tier counterpart of :func:`realtime_group_ensure_lifecycle_step`, paired
     with :class:`~forze_socketio.TenantShardedSignalSource`: the realtime stream route is
     wired ``tenant_aware``, so ensuring the group under each bound tenant creates it on that
-    tenant's per-tenant stream key/partition. *tenants* must list the same shard the sharded
-    source consumes. Order it **before** the relay and before serving (a fresh group's ``"$"``
-    start would otherwise miss durable signals produced in the startup window). Idempotent;
-    creates shared infrastructure, so under a ``FLEET`` profile wrap it with a singleton step.
+    tenant's per-tenant stream key/partition. Pass the **same** :class:`RealtimeShard` the
+    sharded source and relay use, so they can't drift. Order it **before** the relay and
+    before serving (a fresh group's ``"$"`` start would otherwise miss durable signals
+    produced in the startup window). Idempotent; creates shared infrastructure, so under a
+    ``FLEET`` profile wrap it with a singleton step.
     """
 
     return LifecycleStep(
         id=step_id,
-        startup=_EnsureTenantGroupsStartup(
-            stream_spec=stream_spec, tenants=tenants, group=group, start_id=start_id
-        ),
+        startup=_EnsureTenantGroupsStartup(shard=shard, start_id=start_id),
         mutates_shared_state=True,
     )
 
@@ -173,9 +168,8 @@ def realtime_relay_lifecycle_step(
 
 def realtime_tenant_relay_lifecycle_step(
     *,
+    shard: RealtimeShard,
     outbox_spec: OutboxSpec[Any],
-    stream_spec: StreamSpec[Any],
-    tenants: Callable[[], Sequence[UUID]],
     interval: timedelta = timedelta(seconds=2),
     step_id: StrKey = "realtime_tenant_relay",
 ) -> LifecycleStep:
@@ -186,8 +180,8 @@ def realtime_tenant_relay_lifecycle_step(
     :func:`realtime_tenant_group_ensure_lifecycle_step`: when the realtime **outbox** is
     wired ``tenant_aware`` (partitioned), the relay must drain each tenant's partition under
     a bound tenant. Each tick relays every assigned tenant's staged signals to that tenant's
-    stream key. Pass the **same** *tenants* shard this instance's gateway consumes (one
-    instance owns a tenant shard end-to-end: ensure-group → relay → gateway). Keep the outbox
+    stream key. Pass the **same** :class:`RealtimeShard` this instance's gateway and
+    group-ensure step use (one instance owns a tenant shard end to end). Keep the outbox
     tenant-global and use :func:`realtime_relay_lifecycle_step` instead when you don't need a
     physically-partitioned outbox.
     """
@@ -195,8 +189,8 @@ def realtime_tenant_relay_lifecycle_step(
     return outbox_relay_background_lifecycle_step(
         outbox_spec=outbox_spec,
         transport="stream",
-        stream_spec=stream_spec,
-        tenants=tenants,
+        stream_spec=shard.stream_spec,
+        tenants=shard.tenants,
         interval=interval,
         step_id=step_id,
     )

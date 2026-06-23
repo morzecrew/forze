@@ -33,7 +33,6 @@ from typing import (
     Awaitable,
     Callable,
     Protocol,
-    Sequence,
     cast,
     final,
     runtime_checkable,
@@ -54,6 +53,7 @@ from forze.application.contracts.realtime import (
     Audience,
     AudienceKind,
     RealtimeEventCatalog,
+    RealtimeShard,
     RealtimeSignal,
 )
 from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
@@ -379,15 +379,11 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     is out of scope (RFC 0007 §9) — repartition by restart.
     """
 
-    stream_spec: StreamSpec[RealtimeSignal]
-    """The realtime stream to consume (same spec the publisher appends to), wired
-    ``tenant_aware`` so it resolves to a per-tenant key/partition under the bound tenant."""
-
-    tenants: Callable[[], Sequence[UUID]]
-    """This gateway's assigned tenant shard, evaluated **once** at :meth:`run` start."""
-
-    group: str = DEFAULT_REALTIME_GROUP
-    """Consumer group name shared by all gateway instances on a given tenant stream."""
+    shard: RealtimeShard
+    """The per-instance tenant shard — stream, tenants, group — shared with the group-ensure
+    and relay steps so they cannot drift (one instance owns a shard end to end). The stream is
+    wired ``tenant_aware``, so it resolves to a per-tenant key/partition under the bound tenant;
+    the tenants are evaluated **once** at :meth:`run` start."""
 
     consumer: str = "gateway"
     """This instance's consumer name within the group."""
@@ -404,7 +400,7 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     # ....................... #
 
     async def run(self, ctx: ExecutionContext, handler: SignalHandler) -> None:
-        tenants = list(self.tenants())
+        tenants = list(self.shard.tenants())
 
         if not tenants:
             # Nothing assigned: idle until cancelled. Returning would look like a crash
@@ -427,17 +423,19 @@ class TenantShardedSignalSource(RealtimeSignalSource):
         # Bind the shard tenant for the whole loop so the per-tenant group port resolves
         # to this tenant's key/partition and every handler call scopes under it. The
         # tenant is the stream's identity (trusted), not a per-message header.
+        stream_spec = self.shard.stream_spec
+
         with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
             group = ctx.deps.resolve_configurable(
                 ctx,
                 StreamGroupQueryDepKey,
-                self.stream_spec,
-                route=self.stream_spec.name,
+                stream_spec,
+                route=stream_spec.name,
             )
             await _consume_group_stream(
                 group=group,
-                stream=str(self.stream_spec.name),
-                group_name=self.group,
+                stream=str(stream_spec.name),
+                group_name=self.shard.group,
                 consumer=self.consumer,
                 batch=self.batch,
                 poll_interval=self.poll_interval,

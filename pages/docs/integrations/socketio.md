@@ -219,21 +219,21 @@ tenant its own key/partition (`tenant:{id}:stream:realtime`), and consume with
 `TenantShardedSignalSource` instead of `StreamGroupSignalSource`:
 
 ```python
-from forze_socketio import RealtimeGateway, TenantShardedSignalSource
+from forze_socketio import RealtimeGateway, RealtimeShard, TenantShardedSignalSource
 from forze_kits.integrations.realtime import (
     realtime_stream_spec, realtime_tenant_group_ensure_lifecycle_step,
 )
 
-stream = realtime_stream_spec()
-my_tenants = lambda: load_assigned_shard()  # this instance's disjoint tenant set
+# one shard → every sharded component, so they can't drift on tenants / stream / group
+shard = RealtimeShard(stream_spec=realtime_stream_spec(), tenants=lambda: load_assigned_shard())
 
 gateway = RealtimeGateway(
     sio=sio,
-    source=TenantShardedSignalSource(stream_spec=stream, tenants=my_tenants),
+    source=TenantShardedSignalSource(shard=shard),
     dedup=..., mailbox_factory=build_realtime_mailbox,
     # bind_tenant_from_headers stays off — the tenant is the stream's, not a header
 )
-ensure = realtime_tenant_group_ensure_lifecycle_step(stream_spec=stream, tenants=my_tenants)
+ensure = realtime_tenant_group_ensure_lifecycle_step(shard=shard)
 ```
 
 The source runs one consume loop per assigned tenant, each **bound** to that tenant, so
@@ -253,7 +253,7 @@ tenant-global (one route, rows tagged with their tenant) while only the **stream
 
 If you need the outbox itself **partitioned** per tenant (namespace-tier *storage* of the
 staging buffer), wire the outbox route `tenant_aware` too and use
-`realtime_tenant_relay_lifecycle_step(outbox_spec=…, stream_spec=…, tenants=…)` instead: it
+`realtime_tenant_relay_lifecycle_step(shard=shard, outbox_spec=…)` instead: it
 drains each assigned tenant's partition under a bound tenant (sequentially per tick). Pass
 the **same** `tenants` shard the gateway and the group-ensure step use — one instance owns a
 tenant shard end to end. A tenant-aware outbox drained by the plain (non-sharded) relay fails
@@ -265,11 +265,11 @@ closed with `outbox_relay_tenant_unbound`.
     "emit worker" deployment already shards). Two consequences follow from "once at
     startup": onboarding a **new tenant** (and rebalancing a running fleet) requires a
     **restart** — a tenant created after boot has no group ensured and no consume loop, so
-    it is unserved until you restart with the updated shard. Pass the **same** `tenants`
-    provider and group to both `TenantShardedSignalSource` and
-    `realtime_tenant_group_ensure_lifecycle_step` so the groups ensured match the streams
-    consumed. Broker-level enforcement (so a rogue producer can't write another tenant's
-    key) is Redis ACLs, the operator's job — as with the dedicated tier.
+    it is unserved until you restart with the updated shard. Build **one** `RealtimeShard`
+    and hand it to every sharded component (the source, the group-ensure step, and — for a
+    partitioned outbox — the relay) so the groups ensured, the streams consumed, and the
+    partitions drained can't drift. Broker-level enforcement (so a rogue producer can't
+    write another tenant's key) is Redis ACLs, the operator's job — as with the dedicated tier.
 
 Each device has its own **cursor**, so it never re-receives what it acked. The
 device is keyed by `ClientIdentity` — a client-supplied `device_id` (stable across

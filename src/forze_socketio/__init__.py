@@ -92,6 +92,8 @@ from .connection_lifecycle import (
     realtime_identity_expiry_lifecycle_step,
     realtime_presence_heartbeat_lifecycle_step,
 )
+from forze.application.contracts.realtime import RealtimeShard
+
 from .gateway import (
     GatewayDedup,
     RealtimeGateway,
@@ -148,6 +150,7 @@ __all__ = [
     "SignalHandler",
     "StreamGroupSignalSource",
     "TenantShardedSignalSource",
+    "RealtimeShard",
     "GatewayDedup",
     "RealtimeMailbox",
     "MailboxCursors",
