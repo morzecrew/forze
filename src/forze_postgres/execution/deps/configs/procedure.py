@@ -74,13 +74,21 @@ class PostgresProcedureConfig(TenantAwareIntegrationConfig):
     def validate_against_spec(self, spec: "ProcedureSpec[Any, Any]") -> None:
         """Ensure the integration config aligns with the kernel :class:`ProcedureSpec`."""
 
-        if self.tenant_aware and unreferenced_param_keys(
-            {str(spec.name): self.sql}, pattern=r"%\(tenant\)s"
+        # A per-tenant ``query_schema`` (a resolver) scopes the statement by schema via
+        # ``SET LOCAL search_path`` (namespace tier), so the tagged ``%(tenant)s`` placeholder is
+        # only required when there is no namespace routing.
+        if (
+            self.tenant_aware
+            and not callable(self.query_schema)
+            and unreferenced_param_keys(
+                {str(spec.name): self.sql}, pattern=r"%\(tenant\)s"
+            )
         ):
             raise exc.configuration(
                 f"Postgres procedure route {str(spec.name)!r} is tenant_aware but its SQL never "
-                "references the tenant parameter (%(tenant)s). A tenant-aware procedure must "
-                "scope itself on the bound tenant.",
+                "references the tenant parameter (%(tenant)s) and no per-tenant query_schema is "
+                "set. Bind %(tenant)s (tagged tier) or set a per-tenant query_schema (namespace "
+                "tier) so the statement is scoped to the tenant.",
                 code="procedures_tenant_param_unreferenced",
                 details={"route": str(spec.name)},
             )

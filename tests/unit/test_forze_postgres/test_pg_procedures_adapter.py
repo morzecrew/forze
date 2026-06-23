@@ -295,6 +295,29 @@ def test_config_accepts_real_tenant_use_alongside_comment() -> None:
     config.validate_against_spec(spec)  # does not raise
 
 
+def test_config_allows_namespace_tier_without_tenant_param() -> None:
+    # A per-tenant query_schema scopes by schema, so %(tenant)s is not required.
+    spec = ProcedureSpec(name="recompute", params=_Params)
+    config = PostgresProcedureConfig(
+        tenant_aware=True,
+        sql="REFRESH MATERIALIZED VIEW region_totals",
+        query_schema=lambda t: f"tenant_{t.hex}",
+    )
+    config.validate_against_spec(spec)  # does not raise
+
+
+def test_config_static_schema_still_requires_tenant_param() -> None:
+    # A static (non-per-tenant) schema does not isolate, so the placeholder is still required.
+    spec = ProcedureSpec(name="recompute", params=_Params)
+    config = PostgresProcedureConfig(
+        tenant_aware=True,
+        sql="SELECT recompute(%(window)s)",
+        query_schema="fixed_schema",
+    )
+    with pytest.raises(CoreException, match="procedures_tenant_param_unreferenced"):
+        config.validate_against_spec(spec)
+
+
 def test_config_autocommit_with_timeout_rejected() -> None:
     with pytest.raises(CoreException, match="procedures_autocommit_timeout"):
         PostgresProcedureConfig(
