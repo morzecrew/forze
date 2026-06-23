@@ -43,24 +43,32 @@ which routing supports but is the less common deployment.
 
 ## Messaging you consume — the read-side catch
 
-A **stream or queue drained in the background** has no ambient tenant — the consumer
-isn't inside a tenanted request. So `tenant_aware` on the *resource* (a per-tenant key)
-isolates the **write** side automatically, but the **read** side must bind the tenant
-itself. How depends on the consumer:
+A **stream, queue, or table drained in the background** has no ambient tenant — the
+consumer isn't inside a tenanted request. So isolating the *resource* doesn't isolate
+the *read*: the consumer must bind the tenant itself.
 
-| Resource | Write side | Read side (how to isolate per tenant) |
-|----------|-----------|----------------------------------------|
+Here **tenant-global** means the resource is deliberately **shared** across tenants
+(≈ tier `none`) — the sensible default for anything a tenant-less worker drains, since
+the worker can't bind a tenant to read an isolated one. It is **not** the `tagged` tier:
+rows may carry a `tenant_id`, but that's for the worker to **route** each item, not a
+filter that isolates the store. Isolating the resource itself moves the worker to a
+sharded, per-tenant read.
+
+| Resource | Default & reachable isolation | Read side (how to isolate per tenant) |
+|----------|------------------------------|----------------------------------------|
 | Stream / Pub/Sub (Redis) | `namespace` via `tenant_aware` key prefix | A **sharded gateway** — `TenantShardedSignalSource` + a `RealtimeShard` per instance binds each assigned tenant and reads its key ([RFC 0007](../integrations/socketio.md#tenant-aware-namespace-tier-gateway)). |
 | Queue (RabbitMQ, SQS) | `namespace` via name prefix | Keep the queue **tenant-global** and bind the tenant from the message envelope in the consumer; or run a **per-tenant worker** per queue. A built-in sharded queue worker is not yet shipped. |
-| Outbox | **tenant-global** (`tagged` — rows carry `tenant_id`) | The relay drains all rows tenant-less and **binds each row's tenant** as it forwards (`_under_claim_tenant`), so a tenant-aware *destination* still routes per-tenant. A *partitioned* (tenant-aware) outbox needs the sharded relay (`realtime_tenant_relay_lifecycle_step`); it fails closed (`outbox_relay_tenant_unbound`) on the plain relay. |
-| Inbox | tenant-global (dedup keyed by id + tenant) | No isolation needed — dedup is by globally-unique id; runs under whatever tenant the gateway binds. |
-| Realtime end-to-end | outbox `tagged` → stream `namespace` | The whole path is on the tier ladder: stage (tenant-tagged outbox) → relay (binds per row) → per-tenant stream key → sharded gateway (binds from the key) → tenant-scoped room. Ceiling `namespace`. |
+| Outbox | **tenant-global** by default; as a Postgres/Mongo table it can reach `tagged`→`dedicated` (see read side) | The plain relay drains a tenant-global outbox cross-tenant and **binds each row's `tenant_id`** as it forwards (`_under_claim_tenant`), so a tenant-aware *destination* routes per-tenant. To isolate the **outbox table itself** (`tenant_aware` and up), use the sharded relay (`realtime_tenant_relay_lifecycle_step`); the plain relay fails closed (`outbox_relay_tenant_unbound`). |
+| Inbox | **tenant-global** by default; can be `tenant_aware` | Dedup is keyed by the globally-unique event id, so per-tenant isolation is **optional** (ids can't collide across tenants). Runs under whatever tenant the gateway binds — the shard tenant in namespace mode — so a tenant-aware inbox works there too. |
+| Realtime end-to-end | outbox **tenant-global** → stream `namespace` | The whole path stays on the ladder: stage (tenant-global outbox, relay binds per row) → per-tenant stream key → sharded gateway (binds from the key) → tenant-scoped room. The outbox stays shared; only the stream is isolated. Ceiling `namespace`. |
 | Durable — Temporal | `namespace` via per-tenant task queue | A worker drains one task queue; per-tenant isolation means a per-tenant queue with a worker assigned to it (operator-managed), or `tagged` with the tenant in the workflow context. |
-| Durable — Inngest | — | No route-level marker; isolation only via a routed client (`dedicated`). |
+| Durable — Inngest | `dedicated` (routed) only | No route-level marker; isolation only via a routed client. |
 
 The rule across all of these: **the reader binds the tenant.** A handler-read store
 binds it from the request; a background consumer binds it from the resource it was
 assigned (a sharded stream key) or from each item it processes (the relay per row).
+That's why the **default** for relay/worker-drained resources is tenant-global, and
+isolating them is opt-in — it costs a sharded reader.
 
 ## Declaring and enforcing a floor
 

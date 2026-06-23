@@ -141,9 +141,11 @@ anything you *consume* — see below. The full breakdown, per port, is the
     tenant. Isolating it per tenant means binding the tenant on the read side —
     a **sharded gateway/relay** for realtime (one instance owns a disjoint tenant
     shard, [RFC 0007](../integrations/socketio.md#tenant-aware-namespace-tier-gateway)),
-    or a per-tenant worker for a queue. The outbox stays tenant-global (tagged)
-    and its relay binds each row's tenant as it forwards — so the *outbox* needs
-    no sharding even when its destination is per-tenant.
+    or a per-tenant worker for a queue. By default the outbox stays **tenant-global**
+    (a shared table; rows carry their tenant for *routing*, not isolation) and its
+    relay binds each row's tenant as it forwards — so the *outbox* needs no sharding
+    even when its destination is per-tenant. Isolating the outbox table itself is
+    opt-in, and then the relay must be sharded too.
 
 ## Declaring a minimum
 
