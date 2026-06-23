@@ -221,11 +221,12 @@ tenant its own key/partition (`tenant:{id}:stream:realtime`), and consume with
 ```python
 from forze_socketio import RealtimeGateway, RealtimeShard, TenantShardedSignalSource
 from forze_kits.integrations.realtime import (
-    realtime_stream_spec, realtime_tenant_group_ensure_lifecycle_step,
+    build_realtime_transport, realtime_tenant_group_ensure_lifecycle_step,
 )
 
-# one shard → every sharded component, so they can't drift on tenants / stream / group
-shard = RealtimeShard(stream_spec=realtime_stream_spec(), tenants=lambda: load_assigned_shard())
+rt_transport = build_realtime_transport()  # the one source of truth for the channel specs
+# one shard → every sharded component; reuse the transport's stream so they can't drift
+shard = RealtimeShard(stream_spec=rt_transport.stream_spec, tenants=lambda: load_assigned_shard())
 
 gateway = RealtimeGateway(
     sio=sio,
@@ -253,11 +254,11 @@ tenant-global (one route, rows tagged with their tenant) while only the **stream
 
 If you need the outbox itself **partitioned** per tenant (namespace-tier *storage* of the
 staging buffer), wire the outbox route `tenant_aware` too and use
-`realtime_tenant_relay_lifecycle_step(shard=shard, outbox_spec=…)` instead: it
-drains each assigned tenant's partition under a bound tenant (sequentially per tick). Pass
-the **same** `tenants` shard the gateway and the group-ensure step use — one instance owns a
-tenant shard end to end. A tenant-aware outbox drained by the plain (non-sharded) relay fails
-closed with `outbox_relay_tenant_unbound`.
+`realtime_tenant_relay_lifecycle_step(shard=shard, outbox_spec=rt_transport.outbox_spec)`
+instead: it drains each assigned tenant's partition under a bound tenant (sequentially per
+tick). Pass the **same** `shard` the gateway and the group-ensure step use — one instance
+owns a tenant shard end to end. A tenant-aware outbox drained by the plain (non-sharded)
+relay fails closed with `outbox_relay_tenant_unbound`.
 
 !!! note "Assignment, not discovery"
     Each gateway instance consumes the **disjoint** tenant shard `tenants` returns,
