@@ -218,10 +218,11 @@ async def _drain_capturing_tenants(startup: _OutboxRelayBackgroundStartup) -> li
         seen.append(tenant.tenant_id if tenant is not None else None)
         return _result(0)
 
+    frozen = list(startup.tenants()) if startup.tenants is not None else None
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
     with patch.object(OutboxRelay, "to_queue", autospec=True, side_effect=_capture):
         async with runtime.scope():
-            await startup._drain_tick(runtime.get_context())
+            await startup._drain_tick(runtime.get_context(), frozen)
 
     return seen
 
@@ -257,7 +258,7 @@ async def test_drain_tick_isolates_a_failing_tenant() -> None:
     with patch.object(_OutboxRelayBackgroundStartup, "_relay_once", autospec=True, side_effect=_once):
         with patch("forze_kits.integrations.outbox.lifecycle.logger", logger_mock):
             async with runtime.scope():
-                await startup._drain_tick(runtime.get_context())
+                await startup._drain_tick(runtime.get_context(), [_T1, _T2])
 
     assert seen == [_T1, _T2]  # T1 failed but T2 still drained this tick
     logger_mock.exception.assert_called_once()  # the failing tenant was logged

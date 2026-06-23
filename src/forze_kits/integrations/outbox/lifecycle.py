@@ -49,8 +49,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     max_batches_per_tick: int
     tenants: Callable[[], Sequence[UUID]] | None = None
     """When set, the outbox is tenant-aware (partitioned): each tick drains every assigned
-    tenant's partition under a bound tenant (namespace tier, RFC 0007). ``None`` = the
-    outbox is tenant-global and one unbound pass drains it."""
+    tenant's partition under a bound tenant (namespace tier, RFC 0007). The shard is
+    evaluated **once at startup** and frozen for the process (restart to repartition),
+    matching the gateway source. ``None`` = tenant-global; one unbound pass drains it."""
     task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
 
     # ....................... #
@@ -145,20 +146,23 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
-    async def _drain_tick(self, ctx: ExecutionContext) -> None:
+    async def _drain_tick(
+        self, ctx: ExecutionContext, tenants: Sequence[UUID] | None
+    ) -> None:
         """Drain the backlog once: globally, or per assigned tenant when sharded.
 
+        *tenants* is the shard **frozen at startup** (``None`` for a tenant-global outbox).
         Sharded, each tenant's pass runs **bound** (so the relay reads/marks that tenant's
         partition and forwards under it) and is isolated — one tenant's failure must not
         skip the rest of the shard this tick. Tenants are drained **sequentially** (one DB
         connection at a time); shard across instances to parallelize.
         """
 
-        if self.tenants is None:
+        if tenants is None:
             await self._relay_once(ctx)
             return
 
-        for tenant in self.tenants():
+        for tenant in tenants:
             try:
                 with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
                     await self._relay_once(ctx)
@@ -173,9 +177,14 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         async def _loop() -> None:
+            # Freeze the assigned shard once at startup (restart to repartition), so the relay,
+            # the gateway source, and the group-ensure step all evaluate the shard at start —
+            # one consistent "restart to onboard a tenant" model, no per-tick drift.
+            tenants = list(self.tenants()) if self.tenants is not None else None
+
             while True:
                 try:
-                    await self._drain_tick(ctx)
+                    await self._drain_tick(ctx, tenants)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
