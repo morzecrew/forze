@@ -43,9 +43,12 @@ class _MsgView(BaseModel):
 class _StubSio:
     def __init__(self) -> None:
         self.emits: list[dict[str, Any]] = []
+        self.fail = False  # when set, every emit raises (a failed live delivery)
 
     async def emit(self, event: str, data: Any = None, *, namespace: str | None = None,
                    room: str | None = None, **_: Any) -> None:
+        if self.fail:
+            raise RuntimeError("boom")
         self.emits.append({"event": event, "data": data, "room": room})
 
 
@@ -103,6 +106,22 @@ async def test_redelivered_durable_signal_is_stored_once() -> None:
 
     assert len(await mailbox.read_since(principal="u1", since=None)) == 1  # inbox dedup
     assert len(sio.emits) == 1
+
+
+async def test_mailboxed_signal_is_stored_even_when_live_emit_fails() -> None:
+    # recoverable path: the store commits with the dedup mark, THEN the live emit runs. A
+    # failed emit does not undo the store — the recipient still gets it via reconnect-replay
+    # (commit-then-emit → exactly-once, no permanent loss).
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    sio.fail = True
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with pytest.raises(RuntimeError):  # the post-commit live emit fails and propagates
+            await _gateway(sio)._handle(ctx, mailbox, _principal_signal(), _TENANT, "evt-1", _HLC)
+
+    assert [r.event_id for r in await mailbox.read_since(principal="u1", since=None)] == ["evt-1"]
+    assert sio.emits == []  # the live emit failed, but the signal survives in the mailbox
 
 
 async def test_topic_signal_is_not_mailboxed() -> None:
@@ -165,6 +184,24 @@ async def test_malformed_payload_is_rejected_and_not_emitted() -> None:
 
     assert sio.emits == []
     assert await mailbox.read_since(principal="u1", since=None) == []
+
+
+class _CountView(BaseModel):
+    count: int
+
+
+async def test_emitted_and_stored_payload_is_catalog_normalized() -> None:
+    # a catalog normalizes the payload to the declared model's JSON shape before emit: a raw
+    # string "1" for an int field reaches the client (and the mailbox) coerced to 1, so the
+    # emitted contract matches the declared event — not the raw producer payload.
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    catalog = RealtimeEventCatalog.of(RealtimeEvent(name="counter", payload_type=_CountView))
+    raw = RealtimeSignal.of(Audience.principal("u1"), "counter", {"count": "1"})
+    await _drive(_gateway(sio, event_catalog=catalog), mailbox, raw)
+
+    assert sio.emits[0]["data"] == {"id": "evt-1", "data": {"count": 1}}  # int, not "1"
+    stored = await mailbox.read_since(principal="u1", since=None)
+    assert stored[0].payload == {"count": 1}  # replay matches the normalized live frame
 
 
 async def test_disallowed_audience_kind_is_rejected() -> None:

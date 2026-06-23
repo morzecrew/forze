@@ -504,7 +504,13 @@ class TenantShardedSignalSource(RealtimeSignalSource):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class GatewayDedup:
-    """Inbox-based exactly-once for durable signals at the gateway."""
+    """Inbox-based delivery dedup for durable signals at the gateway.
+
+    A mailboxed (recoverable) signal is exactly-once — the mark and the mailbox store commit
+    together, then the live emit is best-effort (recovery via reconnect-replay). A signal with
+    no replay-safe store (topic, no mailbox, ``offline_delivery=False``) is at-least-once: the
+    emit must succeed for the mark to stand, so a failed emit is reclaimed and re-delivered,
+    and the client dedups any redelivery by the envelope id."""
 
     inbox_spec: InboxSpec
     """The inbox route that records already-emitted durable signals."""
@@ -531,7 +537,8 @@ class RealtimeGateway:
     """Namespace this gateway emits on and manages rooms within."""
 
     dedup: GatewayDedup | None = None
-    """When set, durable signals (those with a dedup id) emit at most once."""
+    """When set, durable signals (those with a dedup id) are deduplicated at the gateway —
+    exactly-once for mailboxed signals, at-least-once otherwise (see :class:`GatewayDedup`)."""
 
     mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox] | None = None
     """Builds the mailbox once at ``run(ctx)`` start, with its ports resolved (e.g.
@@ -594,20 +601,34 @@ class RealtimeGateway:
         dedup_id: str | None,
         hlc: HlcTimestamp,
     ) -> None:
-        if not self._passes_catalog(signal):
+        admitted = self._admit(signal)
+
+        if admitted is None:
             # undeclared event, disallowed audience, or wrong payload shape — drop it (the
             # caller then acks, so it never reaches a client and never reclaim-loops).
             return
+
+        signal = admitted  # emit/store the catalog-normalized payload, not the raw one
 
         if self.dedup is None or dedup_id is None:
             # ephemeral, or durable with no dedup configured — emit directly
             await self._emit(signal, tenant, event_id=dedup_id)
             return
 
-        # durable: mark (+ store) inside one transaction, then emit only **after** it
-        # commits, so a redelivered signal (relay retry / consumer claim) is recognised
-        # and handled once. The header tenant is bound only when opted-in (it is untrusted,
-        # see _bind_tenant).
+        # durable: mark (+ store) inside one transaction. Where the live emit sits relative to
+        # the commit depends on whether the signal is **replay-safe**, so the dedup mark never
+        # becomes final until delivery is guaranteed:
+        #
+        #  - mailboxed (recoverable): the store commits with the mark, so the recipient gets
+        #    the signal on reconnect even if the live emit fails. Emit best-effort AFTER the
+        #    commit — a commit failure then can't double-emit (exactly-once, mailbox recovery).
+        #  - not mailboxed (topic, no mailbox, offline opt-out): nothing persists it, so the
+        #    emit must succeed for the mark to stand. Emit INSIDE the transaction — a failed
+        #    emit rolls the mark back, the entry stays pending, and reclaim re-delivers instead
+        #    of dropping the frame. A commit failure after a successful emit redelivers too; the
+        #    client dedups by the envelope id (at-least-once).
+        #
+        # The header tenant is bound only when opted-in (it is untrusted, see _bind_tenant).
         with _bind_tenant(ctx, tenant, enabled=self.bind_tenant_from_headers):
             async with ctx.tx_ctx.scope(self.dedup.tx_route):
                 inbox = ctx.inbox(self.dedup.inbox_spec)
@@ -638,15 +659,17 @@ class RealtimeGateway:
                         if error.code == "tenant_required":
                             raise self._mailbox_tenant_unbound() from error
                         raise
+                else:
+                    # not replay-safe: emit inside the tx so a failed emit rolls the mark back
+                    await self._emit_live(
+                        signal, tenant, event_id=dedup_id, recoverable=False
+                    )
 
-            # Emit only after the dedup mark (+ mailbox store) has committed. Emitting inside
-            # the transaction would deliver a live frame that a commit failure then rolls
-            # back — the mark is lost, the stream message stays unacked, and redelivery
-            # double-emits. A crash after commit but before emit drops only the live frame;
-            # a recoverable signal is still replayed from the mailbox on reconnect.
-            await self._emit_live(
-                signal, tenant, event_id=dedup_id, recoverable=store is not None
-            )
+            if store is not None:
+                # replay-safe: mark + store committed; emit live best-effort after the commit
+                await self._emit_live(
+                    signal, tenant, event_id=dedup_id, recoverable=True
+                )
 
     # ....................... #
 
@@ -675,18 +698,22 @@ class RealtimeGateway:
 
     # ....................... #
 
-    def _passes_catalog(self, signal: RealtimeSignal) -> bool:
-        """Whether *signal* is admissible on the gateway's declared surface.
+    def _admit(self, signal: RealtimeSignal) -> RealtimeSignal | None:
+        """Admit *signal* on the gateway's declared surface, **normalized** — or ``None``.
 
         With a catalog set the emitted surface is **closed**: a signal whose event is
         undeclared, whose audience kind the event forbids, or whose payload does not match
         the declared :class:`RealtimeEvent` is rejected (logged + dropped) rather than
         emitted — so a raw ``RealtimeSignal.of(...)`` producer or a malformed stream row
-        can't bypass the contract. No catalog means an open surface (emit what is consumed).
+        can't bypass the contract. An admitted signal is returned with its payload replaced
+        by the **parsed model's JSON form** (defaults, aliases, and coercions applied — the
+        same ``model_dump(mode="json")`` :meth:`RealtimeSignal.for_event` produces), so the
+        client receives the declared shape, not the raw payload. No catalog means an open
+        surface: the signal passes through unchanged.
         """
 
         if self.event_catalog is None:
-            return True
+            return signal
 
         event = self.event_catalog.get(signal.event)
 
@@ -694,7 +721,7 @@ class RealtimeGateway:
             _logger.critical(
                 "Realtime signal rejected: event not in catalog", realtime_event=signal.event
             )
-            return False
+            return None
 
         if not event.accepts(signal.audience):
             _logger.critical(
@@ -702,18 +729,18 @@ class RealtimeGateway:
                 realtime_event=signal.event,
                 audience_kind=signal.audience.kind.value,
             )
-            return False
+            return None
 
         try:
-            event.parse(signal.payload)
+            normalized = event.parse(signal.payload).model_dump(mode="json")
         except ValidationError:
             _logger.critical_exception(
                 "Realtime signal rejected: payload does not match catalog",
                 realtime_event=signal.event,
             )
-            return False
+            return None
 
-        return True
+        return signal.model_copy(update={"payload": normalized})
 
     # ....................... #
 

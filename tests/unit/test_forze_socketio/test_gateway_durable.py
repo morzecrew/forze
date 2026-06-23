@@ -160,14 +160,13 @@ async def test_durable_emit_failure_is_not_acked() -> None:
     assert pending != []  # left pending → redeliverable (at-least-once)
 
 
-async def test_durable_emit_failure_is_not_re_emitted() -> None:
-    # commit-then-emit: the dedup mark commits BEFORE the live emit, so a failed emit is
-    # never retried into a duplicate — the gateway honours GatewayDedup's "emit at most
-    # once". The committed mark also means the message is acked (not stuck pending). A
-    # mailboxed signal is still recoverable via reconnect-replay (see the connection tests).
+async def test_durable_transient_emit_failure_is_reclaimed_and_re_emitted() -> None:
+    # a non-mailboxed durable signal is emitted INSIDE the dedup transaction, so a failed
+    # emit rolls the mark back and the stream entry stays pending — reclaim re-delivers and
+    # the retry succeeds. The frame is never lost (at-least-once; the client dedups by id).
     spec = realtime_stream_spec()
     sio = _StubSio()
-    sio.fail = True  # every emit attempt fails
+    sio.fail_times = 1  # first emit fails (mark rolls back, not acked), the retry succeeds
     gw = _deduping_gateway(sio, spec, reclaim_idle=timedelta(0))  # reclaim stranded entries at once
     sig = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", {"text": "x"})
 
@@ -175,14 +174,14 @@ async def test_durable_emit_failure_is_not_re_emitted() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         await _append(ctx, spec, sig, event_id="evt-1")
-        await _run_settle(gw, ctx, lambda: sio.attempts >= 1)
+        await _run_settle(gw, ctx, lambda: bool(sio.emits))
 
         group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
         pending = await group.pending("realtime-gateway", str(spec.name))
 
-    assert sio.emits == []  # the emit failed; the committed mark blocks any reclaim re-emit
-    assert sio.attempts == 1  # tried once — the reclaim path sees the mark and skips re-emit
-    assert pending == []  # the mark committed, so the message is acked, not left pending
+    assert sio.attempts == 2  # one failure, then a successful retry via reclaim
+    assert len(sio.emits) == 1  # recovered and emitted — not lost
+    assert pending == []  # acked after the successful retry
 
 
 async def test_end_to_end_durable_stage_relay_gateway() -> None:
