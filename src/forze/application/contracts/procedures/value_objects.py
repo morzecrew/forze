@@ -15,7 +15,7 @@ Out = TypeVar("Out")
 class ExecResult(Generic[Out]):
     """Result of one procedure execution.
 
-    Narrow by design (RFC 0008 §4): a procedure returns a scalar, a single typed row, or
+    Narrow by design: a procedure returns a scalar, a single typed row, or
     an affected-row count — never a page of rows (that is analytics). Which field is set is
     driven by the spec's declared ``result`` cardinality:
 

@@ -4,7 +4,7 @@ The egress twin of the inbound :class:`ForzeSocketIOAdapter`. It is **not** a
 contract — it is an edge adapter that consumes :class:`RealtimeSignal` s from a
 messaging substrate and emits them to the live Socket.IO connections it owns.
 
-Three separate seams (RFC 0002 §7):
+Three separate seams:
 
 - **source** — where signals come from (a stream consumer group here); swappable.
 - **bridge** — :meth:`RealtimeGateway._emit`: ``signal → room → sio.emit``. The
@@ -231,7 +231,7 @@ async def _process_messages(
     """Bridge each message to *handler*, acking per the durable/ephemeral policy.
 
     *tenant_for* resolves the tenant handed to the handler — from the message header
-    (tenant-global stream) or the bound shard tenant (tenant-aware stream, RFC 0007).
+    (tenant-global stream) or the bound shard tenant (tenant-aware stream).
     A durable signal (carries an event id) is acked only on success, so a transient
     failure stays pending and is recovered (at-least-once); an ephemeral signal is
     acked regardless, so one bad signal can never wedge the live stream (at-most-once).
@@ -413,7 +413,7 @@ class StreamGroupSignalSource(RealtimeSignalSource):
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TenantShardedSignalSource(RealtimeSignalSource):
     """Consume a **per-tenant** realtime stream for each tenant in this gateway's
-    assigned shard, binding the tenant from the **stream identity** (RFC 0007).
+    assigned shard, binding the tenant from the **stream identity**.
 
     The tenant-global :class:`StreamGroupSignalSource` reads one shared stream and takes
     the tenant from the (untrusted) ``forze_tenant_id`` header. This is the **namespace-tier**
@@ -428,7 +428,7 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     Per-tenant loops run as sibling tasks; each binds its tenant in its own task-copied
     context (``asyncio`` snapshots ContextVars at task creation), so the bindings never race.
     Assign **disjoint** tenant shards across gateway instances; rebalancing a running fleet
-    is out of scope (RFC 0007 §9) — repartition by restart.
+    is out of scope — repartition by restart.
     """
 
     shard: RealtimeShard
@@ -544,7 +544,7 @@ class RealtimeGateway:
     """Builds the mailbox once at ``run(ctx)`` start, with its ports resolved (e.g.
     ``build_realtime_mailbox``). When set (with ``dedup``), a durable **principal**
     signal is stored for offline replay before it is emitted, so a recipient offline at
-    emit time receives it on reconnect (RFC 0006). Topic and ephemeral signals are never
+    emit time receives it on reconnect. Topic and ephemeral signals are never
     mailboxed. A factory (not a built object) so deps materialize against the run ctx."""
 
     event_catalog: RealtimeEventCatalog | None = None
@@ -675,7 +675,9 @@ class RealtimeGateway:
                     await self._emit_live(
                         signal, tenant, event_id=dedup_id, recoverable=True
                     )
-                except Exception as error:  # noqa: BLE001 - best-effort; the mailbox is the guarantee
+                except (
+                    Exception
+                ) as error:  # noqa: BLE001 - best-effort; the mailbox is the guarantee
                     if (
                         isinstance(error, CoreException)
                         and error.kind is ExceptionKind.CONFIGURATION
@@ -693,12 +695,12 @@ class RealtimeGateway:
         """Actionable error when a tenant-aware mailbox has no tenant to scope by.
 
         The gateway is a **cross-tenant** consumer with no ambient tenant of its own
-        (the realtime stream is tenant-global; RFC 0002). So a tenant-aware mailbox's
+        (the realtime stream is tenant-global). So a tenant-aware mailbox's
         only possible tenant is the stream's ``forze_tenant_id`` header — bound only
         when :attr:`bind_tenant_from_headers` is enabled *and* the header is present.
         Otherwise the adapter raises a bare ``tenant_required``; this names the wiring
         contract instead. (Per-tenant *trusted* mailbox scoping without header trust is
-        the tenant-aware-gateway follow-up — RFC 0007.)
+        the tenant-aware-gateway follow-up.)
         """
 
         return exc.configuration(
@@ -735,7 +737,8 @@ class RealtimeGateway:
 
         if event is None:
             _logger.critical(
-                "Realtime signal rejected: event not in catalog", realtime_event=signal.event
+                "Realtime signal rejected: event not in catalog",
+                realtime_event=signal.event,
             )
             return None
 
@@ -801,7 +804,7 @@ class RealtimeGateway:
         *,
         event_id: str | None = None,
     ) -> None:
-        # Uniform delivery envelope (RFC 0006): every frame is ``{id, data}`` — the id
+        # Uniform delivery envelope: every frame is ``{id, data}`` — the id
         # is the durable event id (``None`` for ephemeral) so the client dedups
         # live-vs-replayed and acks by it.
         emit = self.sio.emit(

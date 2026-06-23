@@ -1,6 +1,6 @@
 """Field-encryption resolution for the procedures port.
 
-RFC 0008 §9-Q6: encryption applies to **params** first (result encryption deferred). This wraps a
+Encryption applies to **params** first; result encryption is deferred. This wraps a
 :class:`~forze.application.contracts.procedures.ProcedureSpec`'s params codec with an
 :class:`EncryptingModelCodec`, so declared fields are sealed before they are bound into the SQL.
 """

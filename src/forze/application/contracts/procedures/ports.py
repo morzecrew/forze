@@ -38,7 +38,7 @@ class ProcedurePort[In: BaseModel, Out](BaseProcedurePort, Protocol):
     def run(self, params: In) -> Awaitable[ExecResult[Out]]:
         """Execute the procedure with bound *params* and return its result.
 
-        The result cardinality follows the spec's ``result`` (RFC 0008 §4): a scalar, a single
+        The result cardinality follows the spec's ``result``: a scalar, a single
         typed row, or an affected-row count — surfaced through
         :class:`~forze.application.contracts.procedures.value_objects.ExecResult`.
         """

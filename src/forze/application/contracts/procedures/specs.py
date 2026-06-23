@@ -1,8 +1,6 @@
 """Declarative specification for a governed parametrized command/compute operation."""
 
-from __future__ import annotations
-
-from typing import Any, Generic, TypeVar, final
+from typing import Any, final
 
 import attrs
 from pydantic import BaseModel
@@ -19,15 +17,10 @@ from ..crypto import FieldEncryption
 
 # ----------------------- #
 
-In = TypeVar("In", bound=BaseModel)
-Out = TypeVar("Out")
-
-# ....................... #
-
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ProcedureSpec(BaseSpec, Generic[In, Out]):
+class ProcedureSpec[In: BaseModel, Out](BaseSpec):
     """Specification for one governed parametrized DB command/compute operation.
 
     **One spec = one procedure** (unlike :class:`~forze.application.contracts.analytics.AnalyticsSpec`,
@@ -50,9 +43,7 @@ class ProcedureSpec(BaseSpec, Generic[In, Out]):
     a side-effect-only procedure (returns an affected-row count)."""
 
     encryption: FieldEncryption | None = attrs.field(default=None)
-    """Field-encryption policy applied to **params** (RFC 0008 §9-Q6: params first, result
-    encryption deferred). ``binds_record_id`` is unsupported — procedure params have no stable
-    record id to bind into the AAD. ``None`` (default) = no encryption."""
+    """Field-encryption policy applied to **params**. ``binds_record_id`` is unsupported — procedure params have no stable record id to bind into the AAD. ``None`` (default) = no encryption."""
 
     params_codec: ModelCodec[In, Any] | None = attrs.field(
         default=None,
@@ -89,7 +80,9 @@ class ProcedureSpec(BaseSpec, Generic[In, Out]):
 
         return (
             self.result is not None
-            and isinstance(self.result, type)
+            and isinstance(
+                self.result, type
+            )  # pyright: ignore[reportUnnecessaryIsInstance]
             and issubclass(self.result, BaseModel)
         )
 
@@ -111,12 +104,17 @@ def validate_procedure_spec(spec: ProcedureSpec[Any, Any]) -> None:
     :param spec: Procedure specification to validate.
     """
 
-    if not (isinstance(spec.params, type) and issubclass(spec.params, BaseModel)):
+    if not (
+        isinstance(spec.params, type)  # pyright: ignore[reportUnnecessaryIsInstance]
+        and issubclass(spec.params, BaseModel)
+    ):
         raise exc.configuration(
             "ProcedureSpec.params must be a Pydantic BaseModel subclass."
         )
 
-    if spec.result is not None and not isinstance(spec.result, type):
+    if spec.result is not None and not isinstance(
+        spec.result, type
+    ):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise exc.configuration(
             "ProcedureSpec.result must be a type — a Pydantic model (single row) or a scalar "
             "type (single value) — or None for a side-effect-only procedure."

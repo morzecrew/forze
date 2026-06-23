@@ -2,7 +2,7 @@
 
 Thin wrapper over :class:`~forze_postgres.kernel.client.PostgresClient`: binds the typed params
 (sealing encrypted fields and the ``%(tenant)s`` floor), runs the registered statement, and
-dispatches the result on the spec's declared cardinality (RFC 0008 §4).
+dispatches the result on the spec's declared cardinality.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable, cast, final
 from uuid import UUID
 
+import attrs
 from psycopg import sql
 from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
@@ -27,8 +28,6 @@ from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import default_model_codec
 from forze_postgres.execution.deps.configs import PostgresProcedureConfig
 from forze_postgres.kernel.client import PostgresClientPort
-
-import attrs
 
 # ----------------------- #
 
@@ -67,7 +66,9 @@ class PostgresProceduresAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
             tenant = self.tenant_provider()
 
             if tenant is None:
-                raise exc.authentication("Tenant ID is required", code="tenant_required")
+                raise exc.authentication(
+                    "Tenant ID is required", code="tenant_required"
+                )
 
             return tenant.tenant_id
 

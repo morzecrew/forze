@@ -1,5 +1,5 @@
 """Real-Postgres offline mailbox: the document-backed mailbox + cursors over two
-**tenant-aware** Postgres collections — the production substrate behind RFC 0006.
+**tenant-aware** Postgres collections.
 
 Proves the document logic the mock-backed unit tests assert (ordering, since-cursor,
 tenant isolation, monotonic + min cursor, ack-trim) holds against a real adapter, with
@@ -137,14 +137,22 @@ async def _tables(pg_client: PostgresClient):
 
 
 @pytest.mark.asyncio
-async def test_store_read_since_and_tenant_isolation(mailbox_ctx: ExecutionContext) -> None:
+async def test_store_read_since_and_tenant_isolation(
+    mailbox_ctx: ExecutionContext,
+) -> None:
     ctx = mailbox_ctx
 
     with _bind(ctx, _T1):
         mb = build_realtime_mailbox(ctx)
-        await mb.store(principal="u1", event_id=_eid(2), hlc=_hlc(2), signal=_signal("b"))
-        await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a"))
-        await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a"))  # idempotent
+        await mb.store(
+            principal="u1", event_id=_eid(2), hlc=_hlc(2), signal=_signal("b")
+        )
+        await mb.store(
+            principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a")
+        )
+        await mb.store(
+            principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a")
+        )  # idempotent
 
         everything = await mb.read_since(principal="u1", since=None)
         after_e1 = await mb.read_since(principal="u1", since=_hlc(1))
@@ -153,16 +161,23 @@ async def test_store_read_since_and_tenant_isolation(mailbox_ctx: ExecutionConte
         assert everything[0].payload == {"text": "a"}
         assert [e.event_id for e in after_e1] == [_eid(2)]  # strictly after
 
-        assert await mb.read_since(principal="u2", since=None) == []  # principal isolation
+        assert (
+            await mb.read_since(principal="u2", since=None) == []
+        )  # principal isolation
         assert await mb.position_of(principal="u1", event_id=_eid(2)) == _hlc(2)
         assert await mb.position_of(principal="u1", event_id=_eid(99)) is None
 
     with _bind(ctx, _T2):  # a different tenant sees nothing — the adapter scopes it
-        assert await build_realtime_mailbox(ctx).read_since(principal="u1", since=None) == []
+        assert (
+            await build_realtime_mailbox(ctx).read_since(principal="u1", since=None)
+            == []
+        )
 
 
 @pytest.mark.asyncio
-async def test_cursors_monotonic_min_and_ack_trim(mailbox_ctx: ExecutionContext) -> None:
+async def test_cursors_monotonic_min_and_ack_trim(
+    mailbox_ctx: ExecutionContext,
+) -> None:
     ctx = mailbox_ctx
 
     with _bind(ctx, _T1):
@@ -170,11 +185,15 @@ async def test_cursors_monotonic_min_and_ack_trim(mailbox_ctx: ExecutionContext)
         cursors = build_realtime_cursors(ctx)
 
         for i in (1, 2, 3):
-            await mb.store(principal="u1", event_id=_eid(i), hlc=_hlc(i), signal=_signal(str(i)))
+            await mb.store(
+                principal="u1", event_id=_eid(i), hlc=_hlc(i), signal=_signal(str(i))
+            )
 
         # monotonic cursor (update path under tenant_aware works on a real adapter)
         await cursors.advance(principal="u1", client_key="d1", up_to=_hlc(2))
-        await cursors.advance(principal="u1", client_key="d1", up_to=_hlc(1))  # backwards
+        await cursors.advance(
+            principal="u1", client_key="d1", up_to=_hlc(1)
+        )  # backwards
         assert await cursors.get(principal="u1", client_key="d1") == _hlc(2)
 
         # a slower second device drags the floor down

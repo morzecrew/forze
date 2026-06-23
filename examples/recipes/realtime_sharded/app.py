@@ -2,7 +2,7 @@
 
 The default realtime stream is tenant-global: one stream carries every tenant's signals
 and the tenant rides an (untrusted) header. For **trusted** per-tenant isolation you put the
-stream on the tenancy tier ladder (RFC 0007): wire the realtime **stream** route
+stream on the tenancy tier ladder: wire the realtime **stream** route
 ``tenant_aware`` so each tenant gets its own key/partition, and consume with
 ``TenantShardedSignalSource`` — one consume loop per assigned tenant, each bound to that
 tenant. The tenant a signal belongs to is then the stream it was read from (set by the
@@ -65,6 +65,8 @@ def _context() -> ExecutionContext:
     return ExecutionContext(
         deps=DepsRegistry.from_modules(MockDepsModule(routes=routes)).freeze().resolve()
     )
+
+
 # --8<-- [end:setup]
 
 
@@ -79,8 +81,14 @@ async def publish_durable(ctx: ExecutionContext, *, tenant: UUID, order: str) ->
     """
 
     with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-        publisher = build_realtime_publisher(ctx, stream_spec=STREAM, outbox_spec=OUTBOX)
-        await publisher.stage(Audience.principal("alice"), SHIPPED, _OrderShipped(order=order))
+        publisher = build_realtime_publisher(
+            ctx, stream_spec=STREAM, outbox_spec=OUTBOX
+        )
+        await publisher.stage(
+            Audience.principal("alice"), SHIPPED, _OrderShipped(order=order)
+        )
+
+
 # --8<-- [end:publish]
 
 
@@ -92,13 +100,19 @@ async def relay(ctx: ExecutionContext) -> None:
     tenant before appending, so the durable signal lands on that tenant's stream key.
     """
 
-    await ctx.outbox.command(OUTBOX).flush()  # write staged rows to the tenant-global outbox
+    await ctx.outbox.command(
+        OUTBOX
+    ).flush()  # write staged rows to the tenant-global outbox
     await OutboxRelay(outbox_spec=OUTBOX).to_stream(ctx, STREAM)
+
+
 # --8<-- [end:relay]
 
 
 # --8<-- [start:consume]
-async def read_tenant_stream(ctx: ExecutionContext, tenant: UUID) -> list[RealtimeSignal]:
+async def read_tenant_stream(
+    ctx: ExecutionContext, tenant: UUID
+) -> list[RealtimeSignal]:
     """What ``TenantShardedSignalSource`` does per assigned tenant: bind it, read its stream.
 
     Binding the tenant resolves the stream adapter to *that tenant's* key, so this only ever
@@ -106,10 +120,14 @@ async def read_tenant_stream(ctx: ExecutionContext, tenant: UUID) -> list[Realti
     """
 
     with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-        stream = ctx.deps.resolve_configurable(ctx, StreamQueryDepKey, STREAM, route=STREAM.name)
+        stream = ctx.deps.resolve_configurable(
+            ctx, StreamQueryDepKey, STREAM, route=STREAM.name
+        )
         messages = await stream.read({str(STREAM.name): "0"})
 
     return [m.payload for m in messages]
+
+
 # --8<-- [end:consume]
 
 
