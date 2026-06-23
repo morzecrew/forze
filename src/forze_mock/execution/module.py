@@ -10,6 +10,7 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
+from forze.application.contracts.procedures import ProcedureCommandDepKey
 from forze.application.contracts.authn import (
     ApiKeyLifecycleDepKey,
     ApiKeyVerifierDepKey,
@@ -136,6 +137,7 @@ from forze_mock.adapters import (
     MockDurableFunctionStepAdapter,
     MockHttpRegistry,
     MockKeyManagement,
+    MockProcedureRegistry,
     MockState,
 )
 from forze_mock.adapters.events import RecordingAuthnEventSink
@@ -161,6 +163,7 @@ from forze_mock.adapters.identity import (
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
 from forze_mock.execution.factories import (
     ConfigurableMockAnalytics,
+    ConfigurableMockProcedures,
     ConfigurableMockAuthn,
     ConfigurableMockCache,
     ConfigurableMockCounter,
@@ -238,6 +241,14 @@ class MockDepsModule(DepsModule):
     ``None`` registers the port but leaves every operation unprogrammed (any call
     raises ``code="mock.http.unprogrammed"``); pass a :class:`MockHttpRegistry`
     with handlers to answer HTTP ops in-process with zero external services."""
+
+    procedures: MockProcedureRegistry | None = attrs.field(default=None)
+    """Programmable in-memory handlers for the ``ProcedurePort`` (governed parametrized
+    commands/compute).
+
+    ``None`` registers the port but leaves every procedure unprogrammed (any call raises
+    ``code="mock.procedures.unprogrammed"``); pass a :class:`MockProcedureRegistry` with handlers
+    that model each procedure's effect on :class:`MockState`."""
 
     resilience: Literal["passthrough", "real"] = "passthrough"
     domain_events: DomainEventRegistry | None = attrs.field(default=None)
@@ -323,6 +334,7 @@ class MockDepsModule(DepsModule):
             FederatedSearchQueryDepKey: ConfigurableMockFederatedSearch(module=self),
             AnalyticsQueryDepKey: ConfigurableMockAnalytics(module=self),
             AnalyticsIngestDepKey: ConfigurableMockAnalytics(module=self),
+            ProcedureCommandDepKey: ConfigurableMockProcedures(module=self),
             CounterDepKey: ConfigurableMockCounter(module=self),
             CacheDepKey: ConfigurableMockCache(module=self),
             IdempotencyDepKey: ConfigurableMockIdempotency(module=self),

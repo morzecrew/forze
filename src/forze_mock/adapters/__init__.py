@@ -23,6 +23,11 @@ from forze_mock.adapters.http import MockHttpRegistry, MockHttpServiceAdapter
 from forze_mock.adapters.idempotency import MockIdempotencyAdapter
 from forze_mock.adapters.inbox import MockInboxAdapter
 from forze_mock.adapters.outbox import MockOutboxRow, MockOutboxStore
+from forze_mock.adapters.procedures import (
+    MockProcedureHandler,
+    MockProcedureRegistry,
+    MockProceduresAdapter,
+)
 from forze_mock.adapters.pubsub import MockPubSubAdapter
 from forze_mock.adapters.queue import MockQueueAdapter
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
@@ -68,6 +73,9 @@ __all__ = [
     "MockStreamAdapter",
     "MockStreamGroupAdapter",
     "MockAnalyticsAdapter",
+    "MockProceduresAdapter",
+    "MockProcedureRegistry",
+    "MockProcedureHandler",
     "MockDistributedLockAdapter",
     "MockDurableWorkflowCommandAdapter",
     "MockDurableWorkflowQueryAdapter",
