@@ -29,7 +29,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
 from forze.application.execution import ExecutionContext
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import HlcTimestamp
 from forze.domain.models import BaseDTO, Document, ReadDocument
 
@@ -172,7 +172,8 @@ class DocumentRealtimeMailbox:
     """The offline mailbox over a document collection (RFC 0006 default).
 
     Built via :func:`build_realtime_mailbox`. The document key is the durable
-    ``event_id`` (a ``UUID``), so ``ensure`` is idempotent on redelivery.
+    ``event_id`` (a ``UUID``); a redelivery hits the primary-key conflict and is
+    skipped, so ``store`` is idempotent and the ``stored`` counter tracks real writes.
     """
 
     command: DocumentCommandPort[_MailboxRead, _MailboxDoc, _MailboxCreate, Any]
@@ -193,19 +194,26 @@ class DocumentRealtimeMailbox:
     async def store(
         self, *, principal: str, event_id: str, hlc: HlcTimestamp, signal: RealtimeSignal
     ) -> None:
-        self._stored += 1
+        try:
+            await self.command.create(
+                _MailboxCreate(
+                    principal=principal,
+                    event_id=event_id,
+                    hlc=hlc.pack(),
+                    event=signal.event,
+                    payload=dict(signal.payload),
+                ),
+                id=UUID(event_id),  # the durable event's own id keys the row
+                return_new=False,
+            )
+        except CoreException as error:
+            # A conflict means this event is already stored — a relay retry or a
+            # cross-resource crash redelivery. Idempotent: skip without recounting.
+            if error.kind is ExceptionKind.CONFLICT:
+                return
+            raise
 
-        await self.command.ensure(
-            UUID(event_id),  # the durable event's own id — idempotent on redelivery
-            _MailboxCreate(
-                principal=principal,
-                event_id=event_id,
-                hlc=hlc.pack(),
-                event=signal.event,
-                payload=dict(signal.payload),
-            ),
-            return_new=False,
-        )
+        self._stored += 1  # count only a real insert, honouring the "written" contract
 
     # ....................... #
 

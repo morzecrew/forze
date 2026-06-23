@@ -81,6 +81,19 @@ async def test_store_read_since_ordered_and_idempotent() -> None:
     assert [e.event_id for e in after_e1] == [_eid(2)]
 
 
+async def test_stored_counter_tracks_real_writes_not_redeliveries() -> None:
+    # a redelivered signal (same event_id) is idempotent and must NOT recount
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx)
+            await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a"))
+            await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a"))
+
+    assert mb.stats().stored == 1  # one real write, despite two store() calls
+
+
 async def test_mailbox_is_tenant_isolated_by_the_store() -> None:
     runtime = _runtime()
     async with runtime.scope():
