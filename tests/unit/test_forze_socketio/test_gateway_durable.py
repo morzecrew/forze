@@ -160,10 +160,14 @@ async def test_durable_emit_failure_is_not_acked() -> None:
     assert pending != []  # left pending → redeliverable (at-least-once)
 
 
-async def test_durable_failure_is_reclaimed_and_re_emitted() -> None:
+async def test_durable_emit_failure_is_not_re_emitted() -> None:
+    # commit-then-emit: the dedup mark commits BEFORE the live emit, so a failed emit is
+    # never retried into a duplicate — the gateway honours GatewayDedup's "emit at most
+    # once". The committed mark also means the message is acked (not stuck pending). A
+    # mailboxed signal is still recoverable via reconnect-replay (see the connection tests).
     spec = realtime_stream_spec()
     sio = _StubSio()
-    sio.fail_times = 1  # first emit fails (mark rolls back, not acked)
+    sio.fail = True  # every emit attempt fails
     gw = _deduping_gateway(sio, spec, reclaim_idle=timedelta(0))  # reclaim stranded entries at once
     sig = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", {"text": "x"})
 
@@ -171,14 +175,14 @@ async def test_durable_failure_is_reclaimed_and_re_emitted() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         await _append(ctx, spec, sig, event_id="evt-1")
-        await _run_settle(gw, ctx, lambda: bool(sio.emits))
+        await _run_settle(gw, ctx, lambda: sio.attempts >= 1)
 
         group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
         pending = await group.pending("realtime-gateway", str(spec.name))
 
-    assert sio.attempts == 2  # one failure, then a successful retry via reclaim
-    assert len(sio.emits) == 1  # recovered and emitted exactly once
-    assert pending == []  # acked after the successful retry
+    assert sio.emits == []  # the emit failed; the committed mark blocks any reclaim re-emit
+    assert sio.attempts == 1  # tried once — the reclaim path sees the mark and skips re-emit
+    assert pending == []  # the mark committed, so the message is acked, not left pending
 
 
 async def test_end_to_end_durable_stage_relay_gateway() -> None:

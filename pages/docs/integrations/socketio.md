@@ -225,8 +225,9 @@ from forze_kits.integrations.realtime import (
 )
 
 rt_transport = build_realtime_transport()  # the one source of truth for the channel specs
-# one shard → every sharded component; reuse the transport's stream so they can't drift
-shard = RealtimeShard(stream_spec=rt_transport.stream_spec, tenants=lambda: load_assigned_shard())
+# one shard → every sharded component; reuse the transport's stream so they can't drift.
+# `tenants` is a fixed snapshot resolved once here — repartition by restart, not at runtime
+shard = RealtimeShard(stream_spec=rt_transport.stream_spec, tenants=load_assigned_shard())
 
 gateway = RealtimeGateway(
     sio=sio,
@@ -261,8 +262,8 @@ owns a tenant shard end to end. A tenant-aware outbox drained by the plain (non-
 relay fails closed with `outbox_relay_tenant_unbound`.
 
 !!! note "Assignment, not discovery"
-    Each gateway instance consumes the **disjoint** tenant shard `tenants` returns,
-    evaluated **once at startup** — shard your tenants across instances (the same way the
+    Each gateway instance consumes the **disjoint** tenant shard in `tenants`, a fixed
+    snapshot resolved **once** when the shard is built — shard your tenants across instances (the same way the
     "emit worker" deployment already shards). Two consequences follow from "once at
     startup": onboarding a **new tenant** (and rebalancing a running fleet) requires a
     **restart** — a tenant created after boot has no group ensured and no consume loop, so

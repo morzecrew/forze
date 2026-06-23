@@ -94,7 +94,7 @@ class _EnsureTenantGroupsStartup(LifecycleHook):
         # each bound tenant the admin port resolves to that tenant's stream key/partition.
         stream_spec = self.shard.stream_spec
 
-        for tenant in self.shard.tenants():
+        for tenant in self.shard.tenants:
             with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
                 admin = ctx.deps.resolve_configurable(
                     ctx,
@@ -190,7 +190,9 @@ def realtime_tenant_relay_lifecycle_step(
         outbox_spec=outbox_spec,
         transport="stream",
         stream_spec=shard.stream_spec,
-        tenants=shard.tenants,
+        # the relay step takes a provider; hand it one that returns the shard's fixed
+        # snapshot, so it sees the same tenant set as the gateway and group-ensure step
+        tenants=lambda: shard.tenants,
         interval=interval,
         step_id=step_id,
     )

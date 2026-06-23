@@ -310,7 +310,6 @@ class SocketIONamespaceRouter:
                 *,
                 _namespace: str = namespace,
                 _route: SocketIOCommandRoute[Any, Any] = route,
-                _with_identity: bool = identity_resolver is not None,
             ) -> Any:
                 request = SocketIORequest(
                     sid=sid,
@@ -324,7 +323,6 @@ class SocketIONamespaceRouter:
                         request,
                         _route,
                         payload,
-                        with_identity=_with_identity,
                         context_factory=context_factory,
                         operation_resolver=operation_resolver,
                     ),
@@ -434,7 +432,6 @@ async def _dispatch_event(
     route: SocketIOCommandRoute[Any, Any],
     payload: Any,
     *,
-    with_identity: bool,
     context_factory: ExecutionContextFactoryPort,
     operation_resolver: HandlerResolverPort,
 ) -> Any:
@@ -448,11 +445,16 @@ async def _dispatch_event(
     ctx = await _resolve_context(context_factory, request)
     args = _parse_payload(route, payload)
 
+    # Bind a connect-time identity whenever one was stored on the session — regardless of
+    # whether this adapter has an ``identity_resolver``. ``attach_realtime_connection`` is
+    # the documented connect/auth path and stores the principal here with the resolver left
+    # ``None``; gating on the resolver would skip it, so a socket could join its principal
+    # room yet run command events with no ambient authn (denied by auth-required hooks).
+    session = await sio.get_session(request.sid, namespace=request.namespace)
     binding: AbstractContextManager[None] = nullcontext()
 
-    if with_identity:
-        session = await sio.get_session(request.sid, namespace=request.namespace)
-        identity: AuthnIdentity | None = session.get(IDENTITY_SESSION_KEY)
+    if IDENTITY_SESSION_KEY in session:
+        identity: AuthnIdentity | None = session[IDENTITY_SESSION_KEY]
         binding = ctx.inv_ctx.bind_identity(authn=identity)
 
     with binding:

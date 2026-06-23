@@ -10,7 +10,6 @@ is silently half-served (relayed but not consumed, or consumed but its group nev
 drift is structurally impossible: one instance owns a disjoint shard end to end.
 """
 
-from collections.abc import Callable, Sequence
 from typing import final
 from uuid import UUID
 
@@ -39,8 +38,13 @@ class RealtimeShard:
     stream_spec: StreamSpec[RealtimeSignal]
     """The per-tenant realtime stream (wired ``tenant_aware``) that all three components share."""
 
-    tenants: Callable[[], Sequence[UUID]]
-    """This instance's assigned tenant shard, evaluated by each component as it needs it."""
+    tenants: tuple[UUID, ...] = attrs.field(converter=tuple)
+    """This instance's assigned tenant shard — a **fixed snapshot**, resolved once where the
+    shard is built (e.g. ``tenants=load_assigned_shard()``), not a provider each component
+    re-reads. Storing the resolved assignment is what keeps the three components from drifting:
+    a provider read independently during a rollout could hand them divergent tenant sets, so a
+    tenant ends up consumed without its group ensured. Rebalancing a running fleet is out of
+    scope (RFC 0007 §9) — repartition by restart, which re-snapshots here."""
 
     group: str = DEFAULT_REALTIME_GROUP
     """Consumer group name the gateway reads and the ensure step creates."""

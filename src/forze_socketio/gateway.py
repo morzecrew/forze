@@ -42,6 +42,7 @@ from typing import (
 from uuid import UUID
 
 import attrs
+from pydantic import ValidationError
 from socketio.async_server import AsyncServer
 
 from forze.application.contracts.envelope import (
@@ -434,7 +435,7 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     """The per-instance tenant shard — stream, tenants, group — shared with the group-ensure
     and relay steps so they cannot drift (one instance owns a shard end to end). The stream is
     wired ``tenant_aware``, so it resolves to a per-tenant key/partition under the bound tenant;
-    the tenants are evaluated **once** at :meth:`run` start."""
+    the tenants are the shard's fixed snapshot (same set every component sees)."""
 
     consumer: str = attrs.field(factory=_default_consumer)
     """This instance's consumer name within the group — defaults **unique per process**
@@ -452,7 +453,7 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     # ....................... #
 
     async def run(self, ctx: ExecutionContext, handler: SignalHandler) -> None:
-        tenants = list(self.shard.tenants())
+        tenants = list(self.shard.tenants)
 
         if not tenants:
             # Nothing assigned: idle until cancelled. Returning would look like a crash
@@ -593,14 +594,20 @@ class RealtimeGateway:
         dedup_id: str | None,
         hlc: HlcTimestamp,
     ) -> None:
+        if not self._passes_catalog(signal):
+            # undeclared event, disallowed audience, or wrong payload shape — drop it (the
+            # caller then acks, so it never reaches a client and never reclaim-loops).
+            return
+
         if self.dedup is None or dedup_id is None:
             # ephemeral, or durable with no dedup configured — emit directly
             await self._emit(signal, tenant, event_id=dedup_id)
             return
 
-        # durable: mark (+ store) + emit inside one transaction, so a redelivered
-        # signal (relay retry / consumer claim) is recognised and handled once. The
-        # header tenant is bound only when opted-in (it is untrusted, see _bind_tenant).
+        # durable: mark (+ store) inside one transaction, then emit only **after** it
+        # commits, so a redelivered signal (relay retry / consumer claim) is recognised
+        # and handled once. The header tenant is bound only when opted-in (it is untrusted,
+        # see _bind_tenant).
         with _bind_tenant(ctx, tenant, enabled=self.bind_tenant_from_headers):
             async with ctx.tx_ctx.scope(self.dedup.tx_route):
                 inbox = ctx.inbox(self.dedup.inbox_spec)
@@ -632,9 +639,14 @@ class RealtimeGateway:
                             raise self._mailbox_tenant_unbound() from error
                         raise
 
-                await self._emit_live(
-                    signal, tenant, event_id=dedup_id, recoverable=store is not None
-                )
+            # Emit only after the dedup mark (+ mailbox store) has committed. Emitting inside
+            # the transaction would deliver a live frame that a commit failure then rolls
+            # back — the mark is lost, the stream message stays unacked, and redelivery
+            # double-emits. A crash after commit but before emit drops only the live frame;
+            # a recoverable signal is still replayed from the mailbox on reconnect.
+            await self._emit_live(
+                signal, tenant, event_id=dedup_id, recoverable=store is not None
+            )
 
     # ....................... #
 
@@ -660,6 +672,48 @@ class RealtimeGateway:
             "tenant-global mailbox route (tenant_aware=False).",
             code="realtime_mailbox_tenant_unbound",
         )
+
+    # ....................... #
+
+    def _passes_catalog(self, signal: RealtimeSignal) -> bool:
+        """Whether *signal* is admissible on the gateway's declared surface.
+
+        With a catalog set the emitted surface is **closed**: a signal whose event is
+        undeclared, whose audience kind the event forbids, or whose payload does not match
+        the declared :class:`RealtimeEvent` is rejected (logged + dropped) rather than
+        emitted — so a raw ``RealtimeSignal.of(...)`` producer or a malformed stream row
+        can't bypass the contract. No catalog means an open surface (emit what is consumed).
+        """
+
+        if self.event_catalog is None:
+            return True
+
+        event = self.event_catalog.get(signal.event)
+
+        if event is None:
+            _logger.critical(
+                "Realtime signal rejected: event not in catalog", realtime_event=signal.event
+            )
+            return False
+
+        if not event.accepts(signal.audience):
+            _logger.critical(
+                "Realtime signal rejected: audience kind not allowed for event",
+                realtime_event=signal.event,
+                audience_kind=signal.audience.kind.value,
+            )
+            return False
+
+        try:
+            event.parse(signal.payload)
+        except ValidationError:
+            _logger.critical_exception(
+                "Realtime signal rejected: payload does not match catalog",
+                realtime_event=signal.event,
+            )
+            return False
+
+        return True
 
     # ....................... #
 

@@ -410,6 +410,22 @@ class TestSocketIOIdentity:
         assert ack == {"principal_id": None}
 
     @pytest.mark.asyncio
+    async def test_session_identity_is_bound_even_without_a_resolver(self) -> None:
+        # attach_realtime_connection stores the principal on the session with
+        # identity_resolver left None; command events must still run under it
+        principal_id = uuid4()
+        sio = _whoami_setup(None)
+        await sio.save_session(
+            "sid-1",
+            {IDENTITY_SESSION_KEY: AuthnIdentity(principal_id=principal_id)},
+            namespace="/chat",
+        )
+
+        whoami = sio.handlers[("/chat", "whoami")]
+        ack = await whoami("sid-1", {"text": "who am i"})
+
+        assert ack == {"principal_id": str(principal_id)}
+
     async def test_without_resolver_no_connect_handler_and_no_identity(self) -> None:
         sio = _whoami_setup(None)
 
@@ -418,5 +434,7 @@ class TestSocketIOIdentity:
         whoami = sio.handlers[("/chat", "whoami")]
         ack = await whoami("sid-1", {"text": "who am i"})
 
+        # no connect handler stored an identity, so the session carries none and the event
+        # runs with no ambient authn (the dispatch consults the session but binds nothing)
         assert ack == {"principal_id": None}
-        assert sio.sessions == {}
+        assert IDENTITY_SESSION_KEY not in sio.sessions.get(("/chat", "sid-1"), {})

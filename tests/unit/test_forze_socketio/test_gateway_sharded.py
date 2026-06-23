@@ -75,7 +75,7 @@ def _runtime(module: MockDepsModule) -> ExecutionRuntime:
 
 
 def _shard(spec: Any, tenants: list[UUID]) -> RealtimeShard:
-    return RealtimeShard(stream_spec=spec, tenants=lambda: tenants)
+    return RealtimeShard(stream_spec=spec, tenants=tenants)
 
 
 def _sharded_gateway(sio: _StubSio, spec: Any, *, tenants: list[UUID], **kw: Any) -> RealtimeGateway:

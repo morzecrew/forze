@@ -61,7 +61,7 @@ async def _group_read(ctx, tenant: UUID, group: str) -> list[str]:  # type: igno
 
 
 async def test_tenant_group_ensure_creates_a_group_per_assigned_tenant() -> None:
-    shard = RealtimeShard(stream_spec=_STREAM, tenants=lambda: [_T1, _T2], group="gw")
+    shard = RealtimeShard(stream_spec=_STREAM, tenants=[_T1, _T2], group="gw")
     runtime = _runtime()
 
     async with runtime.scope():
@@ -84,13 +84,15 @@ async def test_tenant_group_ensure_creates_a_group_per_assigned_tenant() -> None
 
 def test_tenant_relay_step_forwards_the_shard_to_the_background_relay() -> None:
     outbox = realtime_outbox_spec(name="realtime-outbox", stream=str(_STREAM.name))
-    shard = RealtimeShard(stream_spec=_STREAM, tenants=lambda: [_T1, _T2])
+    shard = RealtimeShard(stream_spec=_STREAM, tenants=[_T1, _T2])
 
     step = realtime_tenant_relay_lifecycle_step(shard=shard, outbox_spec=outbox)
     startup = step.startup
 
     assert isinstance(startup, _OutboxRelayBackgroundStartup)
-    assert startup.tenants is shard.tenants  # same callable → no drift
+    # the relay's provider returns the shard's fixed snapshot — same tenant set, no drift
+    assert startup.tenants is not None
+    assert tuple(startup.tenants()) == shard.tenants == (_T1, _T2)
     assert startup.stream_spec is shard.stream_spec
     assert startup.outbox_spec is outbox
     assert startup.transport == "stream"

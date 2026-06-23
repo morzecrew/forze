@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.realtime import (
     Audience,
+    AudienceKind,
     RealtimeEvent,
     RealtimeEventCatalog,
     RealtimeSignal,
@@ -130,6 +131,56 @@ async def test_offline_delivery_opt_out_is_not_mailboxed() -> None:
 
     assert await mailbox.read_since(principal="u1", since=None) == []  # opted out
     assert len(sio.emits) == 1  # still emitted live
+
+
+# ----------------------- #
+# a declared catalog closes the emitted surface (undeclared / off-shape signals are dropped)
+
+
+def _catalog() -> RealtimeEventCatalog:
+    return RealtimeEventCatalog.of(RealtimeEvent(name="order.shipped", payload_type=_MsgView))
+
+
+async def test_catalogued_signal_passes_and_is_emitted() -> None:
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    await _drive(_gateway(sio, event_catalog=_catalog()), mailbox, _principal_signal())
+
+    assert len(sio.emits) == 1  # declared event + valid payload → admitted
+
+
+async def test_undeclared_event_is_rejected_and_not_emitted() -> None:
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    rogue = RealtimeSignal.of(Audience.principal("u1"), "totally.undeclared", {"text": "x"})
+    await _drive(_gateway(sio, event_catalog=_catalog()), mailbox, rogue)
+
+    assert sio.emits == []  # never reaches a client
+    assert await mailbox.read_since(principal="u1", since=None) == []  # nor the mailbox
+
+
+async def test_malformed_payload_is_rejected_and_not_emitted() -> None:
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    # declared event, but the payload doesn't match _MsgView (missing "text")
+    bad = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", {"wrong": 1})
+    await _drive(_gateway(sio, event_catalog=_catalog()), mailbox, bad)
+
+    assert sio.emits == []
+    assert await mailbox.read_since(principal="u1", since=None) == []
+
+
+async def test_disallowed_audience_kind_is_rejected() -> None:
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    catalog = RealtimeEventCatalog.of(
+        RealtimeEvent(
+            name="message.new",
+            payload_type=_MsgView,
+            audience_kinds=frozenset({AudienceKind.TOPIC}),
+        )
+    )
+    # message.new is topic-only; a principal-addressed signal is off-contract
+    off = RealtimeSignal.of(Audience.principal("u1"), "message.new", {"text": "x"})
+    await _drive(_gateway(sio, event_catalog=catalog), mailbox, off)
+
+    assert sio.emits == []
 
 
 class _TenantRequiredMailbox(RealtimeMailbox):
