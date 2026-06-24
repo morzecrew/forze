@@ -129,7 +129,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     # ....................... #
 
     def _param_source_rows(self) -> list[JsonDict]:
-        """Rows the registered parametrized source yields for the bound params, as mappings."""
+        """Rows the registered parametrized source yields for the bound params, as mappings.
+
+        Filtered through :meth:`_doc_visible` so a multi-tenant source can't expose other tenants'
+        rows — mirroring the tenant ``WHERE`` clause the Postgres relation carries. Centralizing it
+        here keeps ``get`` / ``get_many`` / ``_candidate_docs`` consistent.
+        """
 
         if self.query_params_source is None:
             raise exc.configuration(
@@ -147,10 +152,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         rows = self.query_params_source(self.bound_params, self.state)
 
-        return [
+        mapped = (
             row.model_dump(mode="python") if isinstance(row, BaseModel) else dict(row)
             for row in rows
-        ]
+        )
+        return [doc for doc in mapped if self._doc_visible(doc)]
 
     # ....................... #
 
@@ -161,14 +167,13 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self._require_params_bound()
 
         if self.bound_params is not None:
-            return [
-                doc for doc in self._param_source_rows() if self._doc_visible(doc)
-            ]
+            return self._param_source_rows()
 
-        with self.state.lock:
-            return [
-                dict(doc) for doc in self._store().values() if self._doc_visible(doc)
-            ]
+        # ``_store()`` acquires ``state.lock`` itself; the comprehension has no await, so the live
+        # view can't be mutated mid-iteration — no extra outer lock needed.
+        return [
+            dict(doc) for doc in self._store().values() if self._doc_visible(doc)
+        ]
 
     # ....................... #
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from uuid import uuid4
 
 import pytest
@@ -56,6 +57,18 @@ def test_with_parameters_type_mismatch_rejected() -> None:
         ctx.document.query(_spec()).with_parameters(_Other())
 
 
+def test_with_parameters_subclass_rejected() -> None:
+    # A subclass would bind its extra fields as undeclared session settings — require the exact
+    # declared model.
+    ctx = context_from_deps(MockDepsModule()())
+
+    class _WindowPlus(_Window):
+        extra: str = "leak"
+
+    with pytest.raises(CoreException, match="query_parameters_type_mismatch"):
+        ctx.document.query(_spec()).with_parameters(_WindowPlus())
+
+
 @pytest.mark.asyncio
 async def test_declared_but_unbound_fails_closed() -> None:
     # Reading a query_params spec without binding fails closed (the relation needs the settings).
@@ -67,7 +80,7 @@ async def test_declared_but_unbound_fails_closed() -> None:
 @pytest.mark.asyncio
 async def test_bound_without_source_unprogrammed() -> None:
     ctx = context_from_deps(MockDepsModule()())  # no source registered
-    with pytest.raises(CoreException, match="mock.query_parameters.unprogrammed"):
+    with pytest.raises(CoreException, match=re.escape("mock.query_parameters.unprogrammed")):
         await ctx.document.query(_spec()).with_parameters(_Window()).find_many()
 
 
@@ -115,13 +128,15 @@ async def test_bound_count_over_source() -> None:
 async def test_bound_source_rows_are_tenant_scoped() -> None:
     # A source that yields rows for several tenants must still be filtered to the bound tenant —
     # mirroring the tenant WHERE clause Postgres applies — so a multi-tenant source can't leak.
+    # The filter lives in _param_source_rows, so find_many *and* get/get_many are all covered.
     tid = uuid4()
     other = uuid4()
+    mine, theirs = uuid4(), uuid4()
 
     def _multi_tenant_source(params: BaseModel, state: MockState) -> list[dict]:
         return [
-            {"region": "eu", "total": 10, "tenant_id": str(tid)},
-            {"region": "us", "total": 20, "tenant_id": str(other)},
+            {"id": str(mine), "region": "eu", "total": 10, "tenant_id": str(tid)},
+            {"id": str(theirs), "region": "us", "total": 20, "tenant_id": str(other)},
         ]
 
     adapter: MockDocumentAdapter = MockDocumentAdapter(
@@ -135,5 +150,8 @@ async def test_bound_source_rows_are_tenant_scoped() -> None:
     ).with_parameters(_Window())
 
     page = await adapter.find_many()
-
     assert [(r.region, r.total) for r in page.hits] == [("eu", 10)]  # other tenant excluded
+
+    # get_many draws from the same filtered source: the other tenant's row is not found.
+    with pytest.raises(CoreException, match="not found"):
+        await adapter.get_many([theirs])

@@ -286,8 +286,9 @@ def validate_query_parameters(
 ) -> BaseModel:
     """Validate bound query *params* against the spec's :attr:`~DocumentSpec.query_params` contract.
 
-    Raises if the spec declares no parameter contract (nothing to bind) or *params* is not an
-    instance of the declared model. Returns the validated model. Used by every backend's
+    Raises if the spec declares no parameter contract (nothing to bind) or *params* is not exactly
+    the declared model class — a subclass is rejected, since its extra fields would bind as
+    undeclared session settings. Returns the validated model. Used by every backend's
     ``with_parameters`` so the contract check is uniform.
     """
 
@@ -297,7 +298,7 @@ def validate_query_parameters(
             code="query_parameters_undeclared",
         )
 
-    if not isinstance(params, spec.query_params):
+    if type(params) is not spec.query_params:
         raise exc.precondition(
             f"Document {spec.name!r}: query parameters must be a "
             f"{spec.query_params.__name__} instance, got {type(params).__name__}.",

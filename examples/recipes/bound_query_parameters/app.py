@@ -97,8 +97,15 @@ def _standings_as_of(params: BaseModel, state: MockState) -> list[Standing]:
         ranked = sorted(
             (r for r in eligible if r[0] == region), key=lambda r: r[2], reverse=True
         )
+        # SQL ``rank()`` semantics: tied scores share a rank, and the next rank skips the gap —
+        # so the mock matches the view's window function rather than a plain row number.
+        rank = 0
+        prev_score: int | None = None
         for position, (reg, player, score, _) in enumerate(ranked, start=1):
-            rows.append(Standing(region=reg, player=player, score=score, rank=position))
+            if score != prev_score:
+                rank = position
+                prev_score = score
+            rows.append(Standing(region=reg, player=player, score=score, rank=rank))
     return rows
 
 

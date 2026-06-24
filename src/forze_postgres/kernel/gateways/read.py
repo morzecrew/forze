@@ -75,15 +75,16 @@ def _for_update_sql(mode: RowLockMode) -> sql.SQL | None:
 def _param_text(value: Any) -> str:
     """Serialize a bound query-parameter value to GUC text.
 
-    Containers are JSON-encoded (so a view can ``current_setting(...)::jsonb``); other values —
-    already JSON-normalized by ``model_dump(mode="json")`` — use their plain string form so typed
-    casts like ``::date``/``::int`` see the bare value rather than a quoted/repr'd one.
+    Strings pass through bare so typed casts like ``::date``/``::int`` see the raw value (not a
+    quoted JSON string). Every other value — containers, bools, numbers, already JSON-normalized by
+    ``model_dump(mode="json")`` — is JSON-encoded, so a view reads it with ``current_setting(...)``
+    cast to ``::jsonb`` (or ``::boolean`` for ``true``/``false``) without Python ``repr`` artifacts.
     """
 
-    if isinstance(value, (list, dict)):
-        return json.dumps(value)
+    if isinstance(value, str):
+        return value
 
-    return str(value)
+    return json.dumps(value)
 
 
 # ----------------------- #
@@ -143,9 +144,9 @@ class PostgresReadGateway[M: BaseModel](
         any type) instead of ``''`` (which fails a typed cast like ``::date``). A view reading an
         optional parameter must use the ``missing_ok`` form ``current_setting(name, true)``.
 
-        Container values (lists/dicts) are JSON-encoded so a view can read them with
-        ``current_setting(...)::jsonb``; scalars (already JSON-normalized by ``model_dump``) pass
-        through as their plain string form for casts like ``::date`` or ``::int``.
+        Strings pass through bare (for ``::date``/``::int`` casts); every other value is
+        JSON-encoded so a view can read containers/bools with ``current_setting(...)::jsonb`` —
+        see :func:`_param_text`.
         """
 
         if self.bound_params is None:
