@@ -169,6 +169,8 @@ nav = [
             "reference/contracts/messaging.md",
             "reference/contracts/streaming.md",
             "reference/contracts/durable.md",
+            "reference/contracts/coordination.md",
+            "reference/contracts/identity.md",
         ] },
         { "Matrices" = [
             "reference/tenancy-matrix.md",
