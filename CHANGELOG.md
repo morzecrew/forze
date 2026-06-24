@@ -131,6 +131,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A missing dependency now reports as a legible configuration error** — looking up an unregistered port (a forgotten `DepsModule` entry) raised an opaque `internal` error; it now raises `configuration` and names what *is* registered (the plain dependency or route inventory) with a "did you forget a DepsModule entry?" hint. It stays a server-side 500 (a wiring fault is the server's, and the detail is never exposed to clients) — the win is an actionable message in logs instead of a generic internal error indistinguishable from a crash.
+
 - **Log scrubbing no longer corrupts ordinary text** — sensitive-word scrubbing of log string values now requires a secret-bearing shape (`session=…`), not a bare word, so paths like `/v1/authn/login` survive intact while the value after a sensitive key is fully masked. Key-name masking of structured fields is unchanged.
 
 - **Outbox relay tenancy** — the background relay now binds each claim's tenant before publishing, so a tenant-aware destination routes per-tenant instead of the global key. A tenant-aware outbox on the plain (non-sharded) relay fails closed with a clear `outbox_relay_tenant_unbound` error.
