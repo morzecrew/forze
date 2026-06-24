@@ -2245,6 +2245,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/procedures/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cog" viewBox="0 0 24 24"><path d="M11 10.27 7 3.34M11 13.73l-4 6.93M12 22v-2M12 2v2M14 12h8M17 20.66l-1-1.73M17 3.34l-1 1.73M2 12h2M20.66 17l-1.73-1M20.66 7l-1.73 1M3.34 17l1.73-1M3.34 7l1.73 1"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="8"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Procedures
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/caching/" class="md-nav__link">
         
   
@@ -6615,6 +6644,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Procedures port — governed parametrized commands/compute</strong> — <code>ctx.procedure.command(spec).run(params)</code> runs a spec-named, parametrized statement (a function/<code>CALL</code>, set-based recompute, or <code>REFRESH MATERIALIZED VIEW</code>): analytics' write/compute twin, for recomputing over an ingested batch in one statement instead of per-row triggers. One <code>ProcedureSpec[In, Out]</code> per procedure, command-only (refused in a read-only operation), on Postgres plus a programmable mock. Tenant-aware routes fail closed at wiring unless the SQL binds <code>%(tenant)s</code>.</p>
+</li>
+<li>
+<p><strong>Nested-field sorting</strong> — sort keys may now be dotted paths into nested Pydantic sub-models and <code>str</code>-keyed mappings (<code>sorts={"addr.city": "asc"}</code>), resolved the same way nested filters already are, across offset and keyset-cursor reads and every backend. <code>default_sort</code> on document/search specs accepts nested paths too. Tightening: sorting on a nested path whose <strong>root</strong> column is field-encrypted is now rejected (it was silently allowed and could leak the value in a cursor token).</p>
+</li>
+<li>
 <p><strong>CPU-offload seam</strong> — <code>run_cpu</code> / <code>run_cpu_map</code> run blocking or CPU-bound work off the event loop via a context-bound <code>CpuExecutor</code> (bounded thread pool in production; inline and deterministic under simulation, so offloading handlers stay testable), honoring the invocation deadline with a cooperative <code>checkpoint()</code>.</p>
 </li>
 <li>
@@ -6624,16 +6659,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Shared error boundary in core</strong> — <code>error_envelope()</code> and <code>guard_frame()</code> give one client-safe projection of a <code>CoreException</code> (masking, egress context, status hint) plus a shared guarded boundary, so FastAPI and Socket.IO render the same envelope instead of each duplicating that logic.</p>
 </li>
 <li>
-<p><strong>Realtime egress — server push</strong> — a handler publishes a <code>RealtimeSignal</code> to a principal or topic through messaging ports, and the Socket.IO gateway bridges it to a tenant-scoped room. Ephemeral at-most-once or durable exactly-once; read-only operations cannot publish. (RFC 0002.)</p>
+<p><strong>Realtime egress — server push</strong> — a handler publishes a <code>RealtimeSignal</code> to a principal or topic through messaging ports, and the Socket.IO gateway bridges it to a tenant-scoped room. Ephemeral at-most-once or durable exactly-once; read-only operations cannot publish.</p>
 </li>
 <li>
 <p><strong>Realtime multi-node hardening</strong> — TTL-backed presence with heartbeat re-assertion so a crashed node's rooms lapse, eviction of a connection once its credential expires, and a per-emit timeout so one stuck delivery cannot wedge the gateway's consume loop.</p>
 </li>
 <li>
-<p><strong>Realtime offline store-and-forward</strong> — a durable principal-addressed signal also reaches a recipient offline at emit time: the gateway mailboxes it atomically with the dedup, and on reconnect each device replays from its cursor and acks to advance it. Topic and ephemeral signals are never mailboxed. (RFC 0006.)</p>
+<p><strong>Realtime offline store-and-forward</strong> — a durable principal-addressed signal also reaches a recipient offline at emit time: the gateway mailboxes it atomically with the dedup, and on reconnect each device replays from its cursor and acks to advance it. Topic and ephemeral signals are never mailboxed.</p>
 </li>
 <li>
-<p><strong>Tenant-aware realtime gateway</strong> — <code>TenantShardedSignalSource</code> puts per-tenant realtime isolation on the standard tenancy tier ladder: it runs one consume loop per assigned tenant and scopes the mailbox and rooms by a trusted tenant from the stream, not the header. Tenant-global stays the default. (RFC 0007.)</p>
+<p><strong>Tenant-aware realtime gateway</strong> — <code>TenantShardedSignalSource</code> puts per-tenant realtime isolation on the standard tenancy tier ladder: it runs one consume loop per assigned tenant and scopes the mailbox and rooms by a trusted tenant from the stream, not the header. Tenant-global stays the default.</p>
 </li>
 <li>
 <p><strong><code>RealtimeShard</code></strong> — one value object bundling a namespace-tier instance's assignment (stream, tenants, group). Hand the same shard to <code>TenantShardedSignalSource</code>, the group-ensure step, and the tenant relay so the three can't drift on which tenants, stream, or group an instance owns.</p>
@@ -6645,7 +6680,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Tenant-aware realtime mailbox fails closed clearly</strong> — when the gateway has no bound tenant to scope a tenant-aware mailbox, it now raises an actionable <code>realtime_mailbox_tenant_unbound</code> error naming the fix, instead of an opaque tenant-required failure deep in the adapter.</p>
 </li>
 <li>
-<p><strong>BREAKING — realtime delivery envelope</strong> — every frame the Socket.IO gateway emits is now the uniform <code>{id, data}</code> envelope instead of the bare payload (durable carries the event id, ephemeral null). Clients must read <code>data</code> and dedup by <code>id</code>; there is no transitional dual-emit. (RFC 0006.)</p>
+<p><strong>BREAKING — realtime delivery envelope</strong> — every frame the Socket.IO gateway emits is now the uniform <code>{id, data}</code> envelope instead of the bare payload (durable carries the event id, ephemeral null). Clients must read <code>data</code> and dedup by <code>id</code>; there is no transitional dual-emit.</p>
 </li>
 <li>
 <p><strong>Mock document adapter — tenant scoping on every write</strong> — the in-memory mock now injects the tenant column on ensure, upsert, update, and touch (not only create), matching Postgres, so a tenant-aware collection using idempotent or update writes isolates correctly under the mock.</p>

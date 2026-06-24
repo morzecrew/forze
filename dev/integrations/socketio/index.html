@@ -1252,6 +1252,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/procedures/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cog" viewBox="0 0 24 24"><path d="M11 10.27 7 3.34M11 13.73l-4 6.93M12 22v-2M12 2v2M14 12h8M17 20.66l-1-1.73M17 3.34l-1 1.73M2 12h2M20.66 17l-1.73-1M20.66 7l-1.73 1M3.34 17l1.73-1M3.34 7l1.73 1"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="8"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Procedures
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/caching/" class="md-nav__link">
         
   
@@ -5216,7 +5245,7 @@ which is <strong>off by default</strong> because that header is untrusted/forgea
 on a broker where every producer is trusted to assert tenancy.</p>
 <div class="admonition warning">
 <p class="admonition-title">A tenant-aware mailbox at the gateway requires <code>bind_tenant_from_headers</code></p>
-<p>The realtime stream is <strong>tenant-global</strong> (RFC 0002): one stream carries every
+<p>The realtime stream is <strong>tenant-global</strong>: one stream carries every
 tenant's signals so the cross-tenant gateway can drain it from one consumer group.
 The gateway therefore has <strong>no ambient tenant of its own</strong> — its only tenant source
 is the stream's <code>forze_tenant_id</code> header. So a <code>tenant_aware</code> <em>mailbox</em> at the
@@ -5229,7 +5258,7 @@ the header, use the tenant-aware gateway below.</p>
 <h4 id="tenant-aware-namespace-tier-gateway">Tenant-aware (namespace-tier) gateway<a class="headerlink" href="#tenant-aware-namespace-tier-gateway" title="Permanent link">&para;</a></h4>
 <p>The tenant-global default carries tenant in the (untrusted) header. For <strong>trusted</strong>
 per-tenant isolation, put the realtime stream on the tenancy tier ladder like every
-other port (RFC 0007): wire the stream route <code>tenant_aware</code> so the adapter gives each
+other port: wire the stream route <code>tenant_aware</code> so the adapter gives each
 tenant its own key/partition (<code>tenant:{id}:stream:realtime</code>), and consume with
 <code>TenantShardedSignalSource</code> instead of <code>StreamGroupSignalSource</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_socketio</span><span class="w"> </span><span class="kn">import</span> <span class="n">RealtimeGateway</span><span class="p">,</span> <span class="n">RealtimeShard</span><span class="p">,</span> <span class="n">TenantShardedSignalSource</span>
@@ -5352,11 +5381,11 @@ transitional dual-emit; update clients in step with the server.</p>
 </tr>
 <tr>
 <td><code>TenantShardedSignalSource</code> + <code>realtime_tenant_group_ensure_lifecycle_step</code></td>
-<td>egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust (RFC 0007)</td>
+<td>egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust</td>
 </tr>
 <tr>
 <td><code>realtime_tenant_relay_lifecycle_step</code></td>
-<td>egress: per-tenant durable relay for a partitioned (tenant-aware) outbox; drains each assigned tenant's partition bound (RFC 0007)</td>
+<td>egress: per-tenant durable relay for a partitioned (tenant-aware) outbox; drains each assigned tenant's partition bound</td>
 </tr>
 <tr>
 <td><code>attach_realtime_connection</code></td>

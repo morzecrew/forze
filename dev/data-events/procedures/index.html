@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/dst/crashes-and-clusters/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/data-events/procedures/">
       
       
-        <link rel="prev" href="../environment/">
+        <link rel="prev" href="../reading-data/">
       
       
-        <link rel="next" href="../exploration/">
+        <link rel="next" href="../caching/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Crashes & partitions - Forze</title>
+        <title>Procedures - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#crash-and-restart" class="md-skip">
+        <a href="#where-it-sits" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Crashes & partitions
+              Procedures
             
           </span>
         </div>
@@ -1183,6 +1183,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1198,11 +1200,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
@@ -1222,7 +1224,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1239,7 +1241,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/reading-data/" class="md-nav__link">
+      <a href="../reading-data/" class="md-nav__link">
         
   
   
@@ -1265,10 +1267,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../data-events/procedures/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cog" viewBox="0 0 24 24"><path d="M11 10.27 7 3.34M11 13.73l-4 6.93M12 22v-2M12 2v2M14 12h8M17 20.66l-1-1.73M17 3.34l-1 1.73M2 12h2M20.66 17l-1.73-1M20.66 7l-1.73 1M3.34 17l1.73-1M3.34 7l1.73 1"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="8"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Procedures
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1285,6 +1313,91 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#where-it-sits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where it sits
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-shape-in-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The shape in code
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-comes-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What comes back
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mapping-it-to-postgres" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Mapping it to Postgres
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tenancy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tenancy
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-batch-recompute-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The batch-recompute case
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1297,7 +1410,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/caching/" class="md-nav__link">
+      <a href="../caching/" class="md-nav__link">
         
   
   
@@ -1326,7 +1439,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/events-sagas/" class="md-nav__link">
+      <a href="../events-sagas/" class="md-nav__link">
         
   
   
@@ -1355,7 +1468,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/realtime/" class="md-nav__link">
+      <a href="../realtime/" class="md-nav__link">
         
   
   
@@ -1833,8 +1946,6 @@
                 
   
   
-    
-  
   
   
     
@@ -1850,11 +1961,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
           <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="">
@@ -1874,7 +1985,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_7">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1891,7 +2002,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../overview/" class="md-nav__link">
+      <a href="../../dst/overview/" class="md-nav__link">
         
   
   
@@ -1920,7 +2031,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../invariants/" class="md-nav__link">
+      <a href="../../dst/invariants/" class="md-nav__link">
         
   
   
@@ -1949,7 +2060,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../environment/" class="md-nav__link">
+      <a href="../../dst/environment/" class="md-nav__link">
         
   
   
@@ -1975,36 +2086,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-power-off" viewBox="0 0 24 24"><path d="M18.36 6.64A9 9 0 0 1 20.77 15M6.16 6.16a9 9 0 1 0 12.68 12.68M12 2v4M2 2l20 20"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Crashes & partitions
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../dst/crashes-and-clusters/" class="md-nav__link">
         
   
   
@@ -2021,47 +2106,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#crash-and-restart" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Crash and restart
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#across-n-nodes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Across N nodes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2074,7 +2118,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../exploration/" class="md-nav__link">
+      <a href="../../dst/exploration/" class="md-nav__link">
         
   
   
@@ -2103,7 +2147,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../the-loop/" class="md-nav__link">
+      <a href="../../dst/the-loop/" class="md-nav__link">
         
   
   
@@ -4726,10 +4770,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#crash-and-restart" class="md-nav__link">
+  <a href="#where-it-sits" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Crash and restart
+        Where it sits
       </span>
     </span>
   </a>
@@ -4737,10 +4781,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#across-n-nodes" class="md-nav__link">
+  <a href="#the-shape-in-code" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Across N nodes
+        The shape in code
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-comes-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What comes back
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mapping-it-to-postgres" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Mapping it to Postgres
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tenancy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tenancy
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-batch-recompute-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The batch-recompute case
       </span>
     </span>
   </a>
@@ -4827,11 +4915,11 @@
     
     
       <li class="md-path__item">
-        <a href="../overview/" class="md-path__link">
+        <a href="../reading-data/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Deterministic simulation
+    Data & events
   </span>
 
         </a>
@@ -4851,51 +4939,232 @@
   
 
 
-  <h1 id="__skip">Crashes & partitions</h1>
+  <h1 id="__skip">Procedures</h1>
 
-<p>Faults and latency perturb a process that keeps running. The failures that corrupt state are the ones that stop it: a process that <em>dies</em> mid-write, or a network that <em>splits</em> a cluster in two. <abbr title="Deterministic Simulation Testing">DST</abbr> drives both — a single-process crash-and-restart, and a multi-runtime cluster under network partitions — from the same master seed, against the same invariants.</p>
-<p><a class="glightbox" data-gallery="light" data-title="DST crashes the process at a port boundary, rolling back in-flight work while committed state persists; a fresh runtime restarts over the store, recovers, and the invariants check the post-recovery world" data-type="image" href="../../_diagrams/light/dst-crash-restart.svg#only-light"><img alt="DST crashes the process at a port boundary, rolling back in-flight work while committed state persists; a fresh runtime restarts over the store, recovers, and the invariants check the post-recovery world" src="../../_diagrams/light/dst-crash-restart.svg#only-light" /></a>
-<a class="glightbox" data-gallery="dark" data-title="DST crashes the process at a port boundary, rolling back in-flight work while committed state persists; a fresh runtime restarts over the store, recovers, and the invariants check the post-recovery world" data-type="image" href="../../_diagrams/dark/dst-crash-restart.svg#only-dark"><img alt="DST crashes the process at a port boundary, rolling back in-flight work while committed state persists; a fresh runtime restarts over the store, recovers, and the invariants check the post-recovery world" src="../../_diagrams/dark/dst-crash-restart.svg#only-dark" /></a></p>
-<h2 id="crash-and-restart">Crash and restart<a class="headerlink" href="#crash-and-restart" title="Permanent link">&para;</a></h2>
-<p>Set a <code>CrashPolicy</code> and a run becomes a crash → restart → recovery scenario. The process <em>dies</em> at a matched port boundary — the in-flight transaction rolls back, committed state persists — then a fresh runtime restarts over the <strong>same persisted store</strong>, an optional <code>recover</code> pass redrives interrupted work, and the invariants check the post-recovery world:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">SimulationConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.faults</span><span class="w"> </span><span class="kn">import</span> <span class="n">CrashPolicy</span>
+<p>Some database work is neither a document write nor an analytical read: recomputing
+a rollup over a freshly-ingested batch, calling a stored function, refreshing a
+materialized view. You can always reach for the raw client — but then you own
+correctness, with no parameter validation, no tenancy, no portability. The
+<strong>procedures</strong> port is the governed middle ground: a spec-named, parametrized
+command or compute step. It is the write-and-compute twin of the governed,
+parametrized <em>reads</em> you run through <a href="../../recipes/analytics-over-a-data-lake/">analytics</a>,
+sharing the same machinery and differing only in intent.</p>
+<h2 id="where-it-sits">Where it sits<a class="headerlink" href="#where-it-sits" title="Permanent link">&para;</a></h2>
+<p>A handler touches the database three ways, and procedures fills the gap between
+the other two:</p>
+<table>
+<thead>
+<tr>
+<th>Approach</th>
+<th>What it does</th>
+<th>Governed?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Raw client</td>
+<td>any SQL, inline</td>
+<td>no — you own validation, tenancy, portability</td>
+</tr>
+<tr>
+<td><strong>Procedures</strong></td>
+<td>a named command / compute step</td>
+<td><strong>yes</strong> — validated params, tenancy, backend-portable</td>
+</tr>
+<tr>
+<td>Analytics</td>
+<td>named reads, pages of rows</td>
+<td>yes</td>
+</tr>
+</tbody>
+</table>
+<p>Procedures promotes raw SQL to a <em>named, validated, tenant-aware, portable</em>
+operation. Unlike analytics it mutates or computes rather than returning pages —
+so it is <strong>command-only</strong>, and acquiring it inside a read-only operation fails
+closed. The motivating case is a batch pipeline: ingest a large batch, then run
+<strong>one</strong> set-based statement over it, instead of per-row triggers that overload
+the database.</p>
+<h2 id="the-shape-in-code">The shape in code<a class="headerlink" href="#the-shape-in-code" title="Permanent link">&para;</a></h2>
+<p>One spec is one procedure: a typed params model in, and an optional typed result.
+It names nothing about SQL or the backend — that lives in the wiring.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Sale</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">region</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">amount</span><span class="p">:</span> <span class="nb">int</span>
 
-<span class="n">report</span> <span class="o">=</span> <span class="n">simulation</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">SimulationConfig</span><span class="p">(</span>
-    <span class="n">seeds</span><span class="o">=</span><span class="nb">range</span><span class="p">(</span><span class="mi">64</span><span class="p">),</span>
-    <span class="n">crash</span><span class="o">=</span><span class="n">CrashPolicy</span><span class="p">(</span><span class="n">surface</span><span class="o">=</span><span class="s2">&quot;document_command&quot;</span><span class="p">,</span> <span class="n">route</span><span class="o">=</span><span class="s2">&quot;orders&quot;</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="s2">&quot;update&quot;</span><span class="p">),</span>
-<span class="p">))</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RegionTotal</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">region</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">total</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RegionQuery</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="k">pass</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RecomputeWindow</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2026-01-01&quot;</span>
+
+
+<span class="c1"># The batch lands via analytics append; the read side serves recomputed per-region totals.</span>
+<span class="n">SALES_SPEC</span> <span class="o">=</span> <span class="n">AnalyticsSpec</span><span class="p">[</span><span class="n">RegionTotal</span><span class="p">,</span> <span class="n">Sale</span><span class="p">](</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;sales&quot;</span><span class="p">,</span>
+    <span class="n">read</span><span class="o">=</span><span class="n">RegionTotal</span><span class="p">,</span>
+    <span class="n">queries</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;by_region&quot;</span><span class="p">:</span> <span class="n">AnalyticsQueryDefinition</span><span class="p">(</span><span class="n">params</span><span class="o">=</span><span class="n">RegionQuery</span><span class="p">)},</span>
+    <span class="n">ingest</span><span class="o">=</span><span class="n">Sale</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># The procedure is the whole handler-facing surface: typed params, no result model means</span>
+<span class="c1"># side-effect only (returns an affected-row count). Command-only — it mutates/computes.</span>
+<span class="n">RECOMPUTE_SPEC</span> <span class="o">=</span> <span class="n">ProcedureSpec</span><span class="p">[</span><span class="n">RecomputeWindow</span><span class="p">,</span> <span class="kc">None</span><span class="p">](</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;recompute_region_totals&quot;</span><span class="p">,</span>
+    <span class="n">params</span><span class="o">=</span><span class="n">RecomputeWindow</span><span class="p">,</span>
+<span class="p">)</span>
 </code></pre></div>
-<p>This is how you catch recovery bugs. A charge committed <em>before</em> a crashed follow-up write leaves an orphan that survives the restart when the operation is non-transactional — while the same operation routed through a transaction rolls the partial write back atomically. The crash point is seeded, so the bug reproduces at the exact boundary that produced it.</p>
-<h2 id="across-n-nodes">Across N nodes<a class="headerlink" href="#across-n-nodes" title="Permanent link">&para;</a></h2>
-<p>A <code>Cluster</code> runs <em>N</em> real runtimes over one shared store, from one master seed, under <strong>network partitions</strong> — the distributed capstone. A partition cuts a node-group off from the gated port surfaces for a window of virtual time (modelled as <em>unreachable</em> — a retryable error), so a correct retry/outbox flow heals while a fire-and-forget one loses work. The distributed invariants are the same ones: <code>mutual_exclusion</code> for no split-brain, <code>no_duplicate_effect</code> for exactly-once.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">Cluster</span><span class="p">,</span> <span class="n">SimulationConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.cluster</span><span class="w"> </span><span class="kn">import</span> <span class="n">ClusterConfig</span><span class="p">,</span> <span class="n">Partition</span><span class="p">,</span> <span class="n">PartitionSchedule</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockDepsModule</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock.state</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockState</span>
+<p>A handler resolves the port off the context and runs it with typed params. The
+recompute below replaces a swarm of per-row triggers with a single governed call:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">ingest_sales</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">sales</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Sale</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="c1"># Append-only ingest of the batch (stands in for a large bulk load).</span>
+    <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">analytics</span><span class="o">.</span><span class="n">ingest</span><span class="p">(</span><span class="n">SALES_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sales</span><span class="p">)</span>
 
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">node</span><span class="p">(</span><span class="n">node_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="o">...</span>  <span class="c1"># this node&#39;s work, over ctx ports on the shared store</span>
 
-<span class="n">report</span> <span class="o">=</span> <span class="n">Cluster</span><span class="p">(</span>
-    <span class="n">deps</span><span class="o">=</span><span class="k">lambda</span> <span class="n">state</span><span class="p">:</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">state</span><span class="o">=</span><span class="n">state</span><span class="p">),</span>
-    <span class="n">node</span><span class="o">=</span><span class="n">node</span><span class="p">,</span>
-    <span class="n">state_factory</span><span class="o">=</span><span class="n">MockState</span><span class="p">,</span>
-    <span class="n">invariants</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">],</span>
-<span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">SimulationConfig</span><span class="p">(</span>
-    <span class="n">seeds</span><span class="o">=</span><span class="nb">range</span><span class="p">(</span><span class="mi">32</span><span class="p">),</span>
-    <span class="n">cluster</span><span class="o">=</span><span class="n">ClusterConfig</span><span class="p">(</span>
-        <span class="n">nodes</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-        <span class="n">partitions</span><span class="o">=</span><span class="n">PartitionSchedule</span><span class="p">(</span>
-            <span class="n">windows</span><span class="o">=</span><span class="p">(</span><span class="n">Partition</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">isolated</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="mi">1</span><span class="p">})),),</span>
-            <span class="n">surfaces</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;queue_command&quot;</span><span class="p">}),</span>
-        <span class="p">),</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">recompute</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2026-01-01&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="c1"># ONE governed set-based statement over the whole batch — no per-row triggers.</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">procedure</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">RECOMPUTE_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+        <span class="n">RecomputeWindow</span><span class="p">(</span><span class="n">since</span><span class="o">=</span><span class="n">since</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">affected_count</span> <span class="ow">or</span> <span class="mi">0</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">region_totals</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">RegionTotal</span><span class="p">]:</span>
+    <span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">analytics</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SALES_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;by_region&quot;</span><span class="p">,</span> <span class="n">RegionQuery</span><span class="p">())</span>
+    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">hits</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="what-comes-back">What comes back<a class="headerlink" href="#what-comes-back" title="Permanent link">&para;</a></h2>
+<p>The <code>result</code> you declare on the spec drives the shape of the <code>ExecResult</code>. The
+cardinality is deliberately narrow — a scalar, a single row, or an affected-row
+count. Pages of rows are analytics' job, not this port's.</p>
+<table>
+<thead>
+<tr>
+<th><code>result</code> on the spec</th>
+<th><code>ExecResult</code> carries</th>
+<th>Use for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>None</code></td>
+<td><code>affected_count</code></td>
+<td>a side effect — recompute, <code>REFRESH</code>, <code>CALL</code></td>
+</tr>
+<tr>
+<td>a scalar type (<code>int</code>, …)</td>
+<td><code>value</code></td>
+<td>a function returning one value</td>
+</tr>
+<tr>
+<td>a Pydantic model</td>
+<td><code>value</code></td>
+<td>a function or <code>SELECT</code> returning one row</td>
+</tr>
+</tbody>
+</table>
+<h2 id="mapping-it-to-postgres">Mapping it to Postgres<a class="headerlink" href="#mapping-it-to-postgres" title="Permanent link">&para;</a></h2>
+<p>The handler-facing spec stays backend-agnostic; the statement lives in the
+integration config. On <a href="../../integrations/postgres/">Postgres</a>, one
+<code>PostgresProcedureConfig</code> maps a route to a statement with <code>%(name)s</code>
+placeholders:</p>
+<div class="highlight"><pre><span></span><code><span class="n">PostgresProcedureConfig</span><span class="p">(</span>
+    <span class="c1"># A set-based statement; with result=None the rowcount is the affected count, so this is DML</span>
+    <span class="c1"># (not `SELECT a_function(...)`, which returns one row — a count-returning function uses a</span>
+    <span class="c1"># scalar result instead).</span>
+    <span class="n">sql</span><span class="o">=</span><span class="p">(</span>
+        <span class="s2">&quot;INSERT INTO region_totals (region, total) &quot;</span>
+        <span class="s2">&quot;SELECT region, sum(amount) FROM sales WHERE since &gt;= </span><span class="si">%(since)s</span><span class="s2"> GROUP BY region &quot;</span>
+        <span class="s2">&quot;ON CONFLICT (region) DO UPDATE SET total = excluded.total&quot;</span>
     <span class="p">),</span>
-<span class="p">))</span>
+    <span class="n">in_transaction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>            <span class="c1"># False for REFRESH MATERIALIZED VIEW CONCURRENTLY</span>
+    <span class="n">statement_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>         <span class="c1"># SET LOCAL statement_timeout for long compute</span>
+    <span class="n">query_schema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>              <span class="c1"># per-tenant schema (namespace tier)</span>
+<span class="p">)</span>
 </code></pre></div>
-<p>On a violation the cluster minimises by <strong>dropping nodes</strong> — the smallest cluster that still breaks, usually two.</p>
-<p>A window's <code>loss</code> turns a clean cut into a <strong>flaky link</strong>: <code>Partition(start=0.5, end=1.5, isolated=frozenset({1}), loss=0.3)</code> drops 30 % of node 1's gated calls (seeded) instead of all of them, and overlapping windows on different node-groups give an <strong>asymmetric</strong> split. <code>loss=1.0</code> (the default) is the hard partition above.</p>
-<p>These scenarios generate large interleaving spaces — a crash can land at any matched boundary, a partition can strike at any point in its window. <a href="../exploration/">Exploration strategies</a> is how <abbr title="Deterministic Simulation Testing">DST</abbr> searches that space efficiently instead of by brute luck.</p>
+<p>Set <code>in_transaction=False</code> for statements that cannot run inside a transaction
+(<code>REFRESH MATERIALIZED VIEW CONCURRENTLY</code> and some maintenance); they take the
+autocommit path. <code>statement_timeout</code> and <code>query_schema</code> both need a transaction,
+so they are rejected at wiring when combined with <code>in_transaction=False</code>.</p>
+<h2 id="tenancy">Tenancy<a class="headerlink" href="#tenancy" title="Permanent link">&para;</a></h2>
+<p>Analytics and document writes can <em>enforce</em> tenant isolation because the framework
+composes the predicate. A procedure runs author-supplied opaque SQL, so the
+framework can only enforce isolation where the tenant boundary lives outside that
+SQL:</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Mechanism</th>
+<th>Posture</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>namespace</code></td>
+<td>per-tenant schema via <code>query_schema</code></td>
+<td>enforced — the SQL runs in the tenant's own schema</td>
+</tr>
+<tr>
+<td><code>dedicated</code></td>
+<td>a routed client per tenant</td>
+<td>enforced — strongest isolation</td>
+</tr>
+<tr>
+<td><code>tagged</code></td>
+<td><code>%(tenant)s</code> bound into the SQL</td>
+<td>offered, then validated (below)</td>
+</tr>
+</tbody>
+</table>
+<p>At the tagged tier the framework binds the current tenant id as the <code>%(tenant)s</code>
+parameter, but it cannot prove the SQL <em>uses</em> it to scope. So a <code>tenant_aware</code>
+route is allowed, but checked.</p>
+<div class="admonition warning">
+<p class="admonition-title">A tenant-aware route fails closed at wiring</p>
+<p>Wiring a <code>tenant_aware</code> procedure whose SQL never references <code>%(tenant)s</code>
+raises at startup, not at runtime — a route that declares tenant-scoping but
+forgets to bind the tenant is a configuration error, never a silent leak.
+This proves the parameter is <em>bound</em>; for genuinely enforced isolation, prefer
+the <code>namespace</code> or <code>dedicated</code> tier. See <a href="../../identity-tenancy-enc/multi-tenancy/">multi-tenancy</a>.</p>
+</div>
+<p>A procedure that is inherently cross-tenant — refreshing a shared materialized
+view, a cross-tenant rollup — is simply not <code>tenant_aware</code>, the same as any other
+non-tenant port.</p>
+<h2 id="the-batch-recompute-case">The batch-recompute case<a class="headerlink" href="#the-batch-recompute-case" title="Permanent link">&para;</a></h2>
+<p>The flow that motivates the port: a batch lands, then one set-based statement
+recomputes over it. The compute is expressed once, in the registered statement —
+here modelled in-process so the recipe runs without a warehouse:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_recompute_region_totals</span><span class="p">(</span>
+    <span class="n">params</span><span class="p">:</span> <span class="n">RecomputeWindow</span><span class="p">,</span>
+    <span class="n">state</span><span class="p">:</span> <span class="n">MockState</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecResult</span><span class="p">[</span><span class="kc">None</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Model the set-based recompute the production SQL performs: read the ingested batch,</span>
+<span class="sd">    aggregate per region in one pass, materialize the read model. Returns the rows written.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">sales</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">analytics_ingest_log</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;sales&quot;</span><span class="p">,</span> <span class="p">[])</span>
+
+    <span class="n">totals</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">sales</span><span class="p">:</span>
+        <span class="n">totals</span><span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;region&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="n">totals</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;region&quot;</span><span class="p">],</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;amount&quot;</span><span class="p">])</span>
+
+    <span class="n">state</span><span class="o">.</span><span class="n">analytics_query_hits</span><span class="p">[</span><span class="s2">&quot;sales&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;by_region&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="n">r</span><span class="p">,</span> <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="n">t</span><span class="p">}</span> <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">totals</span><span class="o">.</span><span class="n">items</span><span class="p">())]</span>
+    <span class="p">}</span>
+
+    <span class="k">return</span> <span class="n">ExecResult</span><span class="p">(</span><span class="n">affected_count</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">totals</span><span class="p">))</span>
+</code></pre></div>
+<p>In production that handler is a single Postgres statement; the calling code does
+not change. Field encryption applies to a procedure's <strong>params</strong> when a keyring is
+wired — the same field-level <a href="../../identity-tenancy-enc/encryption/">encryption</a>
+the document and analytics paths use.</p>
 
 
 
@@ -4936,7 +5205,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../environment/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Faults, latency &amp; time">
+          <a href="../reading-data/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Reading data">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4946,20 +5215,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Faults, latency & time
+                Reading data
               </div>
             </div>
           </a>
         
         
           
-          <a href="../exploration/" class="md-footer__link md-footer__link--next" aria-label="Next: Exploration strategies">
+          <a href="../caching/" class="md-footer__link md-footer__link--next" aria-label="Next: Caching reads">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Exploration strategies
+                Caching reads
               </div>
             </div>
             <div class="md-footer__button md-icon">
