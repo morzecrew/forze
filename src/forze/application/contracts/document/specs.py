@@ -74,6 +74,15 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     ``None`` (default) allows every read-model field. Drives discovery and (when enforced)
     boundary validation."""
 
+    query_params: type[BaseModel] | None = attrs.field(default=None)
+    """Optional **query-parameter contract** — a Pydantic model whose fields are typed values a
+    handler binds per read via ``ctx.document.query(spec).with_parameters(...)``. A supporting
+    backend applies them as query-scoped session settings the underlying relation reads internally
+    (e.g. a Postgres view reading ``current_setting``), so the parameter can drive logic an outer
+    filter cannot reach. The full read DSL composes on top, unchanged. When declared, binding is
+    **mandatory** (a read without ``with_parameters`` fails closed). ``None`` (default) = an
+    ordinary, unparametrized read."""
+
     encryption: FieldEncryption | None = attrs.field(default=None)
     """Field-encryption policy: which stored fields are sealed at rest, and how (see
     :class:`FieldEncryption`).
@@ -134,6 +143,19 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         if self.encryption is not None:
             self.encryption.validate_fields_exist(
                 stored_field_names_for(self.read), spec_name=self.name
+            )
+
+        if self.query_params is not None and not (
+            isinstance(
+                self.query_params, type
+            )  # pyright: ignore[reportUnnecessaryIsInstance]
+            and issubclass(
+                self.query_params, BaseModel
+            )  # pyright: ignore[reportUnnecessaryIsInstance]
+        ):
+            raise exc.configuration(
+                f"DocumentSpec.query_params for {self.name!r} must be a Pydantic BaseModel "
+                "subclass."
             )
 
     # ....................... #
@@ -254,3 +276,33 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 include_computed=False,
             )
         )
+
+
+# ....................... #
+
+
+def validate_query_parameters(
+    spec: DocumentSpec[Any, Any, Any, Any], params: BaseModel
+) -> BaseModel:
+    """Validate bound query *params* against the spec's :attr:`~DocumentSpec.query_params` contract.
+
+    Raises if the spec declares no parameter contract (nothing to bind) or *params* is not exactly
+    the declared model class — a subclass is rejected, since its extra fields would bind as
+    undeclared session settings. Returns the validated model. Used by every backend's
+    ``with_parameters`` so the contract check is uniform.
+    """
+
+    if spec.query_params is None:
+        raise exc.configuration(
+            f"Document {spec.name!r} declares no query_params; with_parameters is not applicable.",
+            code="query_parameters_undeclared",
+        )
+
+    if type(params) is not spec.query_params:
+        raise exc.precondition(
+            f"Document {spec.name!r}: query parameters must be a "
+            f"{spec.query_params.__name__} instance, got {type(params).__name__}.",
+            code="query_parameters_type_mismatch",
+        )
+
+    return params

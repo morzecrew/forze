@@ -6,6 +6,7 @@ require_psycopg()
 
 # ....................... #
 
+import json
 from typing import (
     Any,
     AsyncGenerator,
@@ -70,6 +71,24 @@ def _for_update_sql(mode: RowLockMode) -> sql.SQL | None:
 
 # ----------------------- #
 
+
+def _param_text(value: Any) -> str:
+    """Serialize a bound query-parameter value to GUC text.
+
+    Strings pass through bare so typed casts like ``::date``/``::int`` see the raw value (not a
+    quoted JSON string). Every other value — containers, bools, numbers, already JSON-normalized by
+    ``model_dump(mode="json")`` — is JSON-encoded, so a view reads it with ``current_setting(...)``
+    cast to ``::jsonb`` (or ``::boolean`` for ``true``/``false``) without Python ``repr`` artifacts.
+    """
+
+    if isinstance(value, str):
+        return value
+
+    return json.dumps(value)
+
+
+# ----------------------- #
+
 T = TypeVar("T", bound=BaseModel)
 M = TypeVar("M", bound=BaseModel)
 
@@ -88,6 +107,136 @@ class PostgresReadGateway[M: BaseModel](
         default="strict",
         kw_only=True,
     )
+
+    param_namespace: str = attrs.field(default="forze", kw_only=True)
+    """Namespace prefix for query-parameter session settings (``<namespace>.<field>``)."""
+
+    params_required: bool = attrs.field(default=False, kw_only=True)
+    """Whether the spec declares a query-parameter contract (binding is then mandatory)."""
+
+    bound_params: BaseModel | None = attrs.field(default=None, kw_only=True)
+    """Query parameters bound via ``with_parameters``; applied as session settings per read."""
+
+    # ....................... #
+
+    def _require_params_bound(self) -> None:
+        """Fail closed when the relation needs query parameters but none were bound."""
+
+        if self.params_required and self.bound_params is None:
+            raise exc.precondition(
+                "This read requires query parameters; acquire the port via with_parameters(...) "
+                "before reading.",
+                code="query_parameters_unbound",
+            )
+
+    # ....................... #
+
+    async def _apply_params(self) -> None:
+        """Apply bound query parameters as transaction-local session settings.
+
+        Emits ``set_config('<namespace>.<field>', <value>, true)`` for each field — equivalent to
+        ``SET LOCAL`` but with the (custom, dotted) setting name and value passed as safe arguments
+        rather than composed into identifier/literal SQL. Must run inside a transaction so the
+        settings are local to the surrounding read.
+
+        ``None`` values are skipped rather than serialized to an empty string: a GUC the view reads
+        with ``current_setting('<namespace>.<field>', true)`` then yields SQL ``NULL`` (castable to
+        any type) instead of ``''`` (which fails a typed cast like ``::date``). A view reading an
+        optional parameter must use the ``missing_ok`` form ``current_setting(name, true)``.
+
+        Strings pass through bare (for ``::date``/``::int`` casts); every other value is
+        JSON-encoded so a view can read containers/bools with ``current_setting(...)::jsonb`` —
+        see :func:`_param_text`.
+        """
+
+        if self.bound_params is None:
+            return
+
+        data = self.bound_params.model_dump(mode="json")
+
+        calls = [
+            sql.SQL("set_config({name}, {val}, true)").format(
+                name=sql.Literal(f"{self.param_namespace}.{field}"),
+                val=sql.Literal(_param_text(value)),
+            )
+            for field, value in data.items()
+            if value is not None
+        ]
+
+        if not calls:
+            return
+
+        await self.client.execute(sql.SQL("SELECT {}").format(sql.SQL(", ").join(calls)))
+
+    # ....................... #
+
+    async def _read_one(
+        self,
+        stmt: Any,
+        params: Any,
+        *,
+        row_factory: Literal["dict"] = "dict",
+    ) -> JsonDict | None:
+        self._require_params_bound()
+
+        if self.bound_params is None:
+            return await self.client.fetch_one(stmt, params, row_factory=row_factory)
+
+        async with self.client.transaction():
+            await self._apply_params()
+            return await self.client.fetch_one(stmt, params, row_factory=row_factory)
+
+    async def _read_all(
+        self,
+        stmt: Any,
+        params: Any,
+        *,
+        row_factory: Literal["dict"] = "dict",
+    ) -> list[JsonDict]:
+        self._require_params_bound()
+
+        if self.bound_params is None:
+            return await self.client.fetch_all(stmt, params, row_factory=row_factory)
+
+        async with self.client.transaction():
+            await self._apply_params()
+            return await self.client.fetch_all(stmt, params, row_factory=row_factory)
+
+    async def _read_value(self, stmt: Any, params: Any, *, default: Any = None) -> Any:
+        self._require_params_bound()
+
+        if self.bound_params is None:
+            return await self.client.fetch_value(stmt, params, default=default)
+
+        async with self.client.transaction():
+            await self._apply_params()
+            return await self.client.fetch_value(stmt, params, default=default)
+
+    async def _read_batched(
+        self,
+        stmt: Any,
+        params: Any,
+        *,
+        batch_size: int,
+        row_factory: Literal["dict"] = "dict",
+    ) -> AsyncGenerator[list[JsonDict] | list[tuple[Any, ...]]]:
+        self._require_params_bound()
+
+        if self.bound_params is None:
+            async for batch in self.client.fetch_all_batched(
+                stmt, params, batch_size=batch_size, row_factory=row_factory
+            ):
+                yield batch
+            return
+
+        async with self.client.transaction():
+            await self._apply_params()
+            async for batch in self.client.fetch_all_batched(
+                stmt, params, batch_size=batch_size, row_factory=row_factory
+            ):
+                yield batch
+
+    # ....................... #
 
     def _effective_sql_limit(self, limit: int | None) -> int | None:
         """Apply :attr:`~forze_postgres.kernel.gateways.base.PostgresGateway.find_many_implicit_limit` when *limit* is omitted."""
@@ -125,7 +274,7 @@ class PostgresReadGateway[M: BaseModel](
             self.client.require_transaction()
             stmt += fu
 
-        row = await self.client.fetch_one(stmt, where_params, row_factory="dict")
+        row = await self._read_one(stmt, where_params, row_factory="dict")
 
         if row is None:
             raise exc.not_found(f"Record not found: {pk}")
@@ -135,6 +284,8 @@ class PostgresReadGateway[M: BaseModel](
     # ....................... #
 
     async def get_many(self, pks: Sequence[UUID]) -> list[M]:
+        self._require_params_bound()
+
         if not pks:
             return []
 
@@ -152,7 +303,7 @@ class PostgresReadGateway[M: BaseModel](
             where=where_sql,
         )
 
-        rows = await self.client.fetch_all(stmt, where_params, row_factory="dict")
+        rows = await self._read_all(stmt, where_params, row_factory="dict")
 
         m = {row[ID_FIELD]: row for row in rows}
         ordered = [m[pk] for pk in pks if pk in m]
@@ -228,7 +379,7 @@ class PostgresReadGateway[M: BaseModel](
             self.client.require_transaction()
             stmt += fu
 
-        row = await self.client.fetch_one(stmt, params, row_factory="dict")
+        row = await self._read_one(stmt, params, row_factory="dict")
 
         if row is None:
             return None
@@ -375,7 +526,7 @@ class PostgresReadGateway[M: BaseModel](
             stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(offset)
 
-        rows = await self.client.fetch_all(stmt, params, row_factory="dict")
+        rows = await self._read_all(stmt, params, row_factory="dict")
 
         if return_model is not None:
             return await self._adecode_rows(rows, model=return_model)
@@ -431,7 +582,7 @@ class PostgresReadGateway[M: BaseModel](
             stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(offset)
 
-        async for raw_chunk in self.client.fetch_all_batched(
+        async for raw_chunk in self._read_batched(
             stmt,
             params,
             row_factory="dict",
@@ -523,7 +674,7 @@ class PostgresReadGateway[M: BaseModel](
             stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(offset)
 
-        rows = await self.client.fetch_all(stmt, params, row_factory="dict")
+        rows = await self._read_all(stmt, params, row_factory="dict")
 
         if return_model is not None:
             return await self._adecode_rows(rows, model=return_model)
@@ -576,7 +727,7 @@ class PostgresReadGateway[M: BaseModel](
             params = list(params) + list(having_params)
 
         stmt = sql.SQL("SELECT COUNT(*) FROM ({inner}) AS agg").format(inner=inner)
-        res = await self.client.fetch_value(stmt, params, default=0)
+        res = await self._read_value(stmt, params, default=0)
 
         return int(res)
 
@@ -712,7 +863,7 @@ class PostgresReadGateway[M: BaseModel](
         params = list(params)  # type: ignore[assignment]
         params.append(plim)
 
-        raw_rows = list(await self.client.fetch_all(stmt, params, row_factory="dict"))
+        raw_rows = list(await self._read_all(stmt, params, row_factory="dict"))
 
         if use_before:
             raw_rows = list(reversed(raw_rows))
@@ -743,6 +894,6 @@ class PostgresReadGateway[M: BaseModel](
             where=where,
         )
 
-        res = await self.client.fetch_value(stmt, params, default=0)
+        res = await self._read_value(stmt, params, default=0)
 
         return int(res)

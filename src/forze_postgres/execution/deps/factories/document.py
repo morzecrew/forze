@@ -122,6 +122,8 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             nested_field_hints=self.config.nested_field_hints,
             codec=codecs.read,
             read_validation=self.config.read_validation,
+            param_namespace=self.config.param_namespace,
+            params_required=spec.query_params is not None,
         )
 
         after_commit = ctx.tx_ctx.run_or_defer if cache is not None else None
@@ -192,6 +194,8 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             nested_field_hints=self.config.nested_field_hints,
             codec=codecs.read,
             read_validation=self.config.read_validation,
+            param_namespace=self.config.param_namespace,
+            params_required=spec.query_params is not None,
         )
 
         history_relation = self.config.history

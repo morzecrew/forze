@@ -17,8 +17,6 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.domain import DomainEventDispatcherPort
-
 from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
@@ -31,7 +29,9 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
     RowLockMode,
+    validate_query_parameters,
 )
+from forze.application.contracts.domain import DomainEventDispatcherPort
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
@@ -55,8 +55,10 @@ from forze.application.integrations.document._limits import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
+from forze.domain.constants import ID_FIELD
 from forze_mock.adapters._journal import JournalingStore
 from forze_mock.adapters._mvcc import current_mvcc_tx
+from forze_mock.adapters.query_params import MockQueryParamsSource
 from forze_mock.query._types import (
     C,
     D,
@@ -101,6 +103,77 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     dispatcher_provider: Callable[[], DomainEventDispatcherPort | None] = attrs.field(
         default=lambda: None
     )
+    bound_params: BaseModel | None = None
+    query_params_source: MockQueryParamsSource | None = None
+
+    # ....................... #
+
+    def with_parameters(self, params: BaseModel) -> "MockDocumentAdapter[R, D, C, U]":
+        # Bind the validated params onto a clone; reads then draw rows from the registered source
+        # (modelling the parametrized relation) instead of stored documents.
+        validate_query_parameters(self.spec, params)
+        return attrs.evolve(self, bound_params=params)
+
+    # ....................... #
+
+    def _require_params_bound(self) -> None:
+        """Fail closed when the spec needs query parameters but none were bound."""
+
+        if self.spec.query_params is not None and self.bound_params is None:
+            raise exc.precondition(
+                "This read requires query parameters; acquire the port via with_parameters(...) "
+                "before reading.",
+                code="query_parameters_unbound",
+            )
+
+    # ....................... #
+
+    def _param_source_rows(self) -> list[JsonDict]:
+        """Rows the registered parametrized source yields for the bound params, as mappings.
+
+        Filtered through :meth:`_doc_visible` so a multi-tenant source can't expose other tenants'
+        rows — mirroring the tenant ``WHERE`` clause the Postgres relation carries. Centralizing it
+        here keeps ``get`` / ``get_many`` / ``_candidate_docs`` consistent.
+        """
+
+        if self.query_params_source is None:
+            raise exc.configuration(
+                f"Document {self.spec.name!r}: no mock query-parameter source registered — "
+                "register one via MockQueryParamsRegistry.on().",
+                code="mock.query_parameters.unprogrammed",
+            )
+
+        if self.bound_params is None:
+            raise exc.precondition(
+                "This read requires query parameters; acquire the port via with_parameters(...) "
+                "before reading.",
+                code="query_parameters_unbound",
+            )
+
+        rows = self.query_params_source(self.bound_params, self.state)
+
+        mapped = (
+            row.model_dump(mode="python") if isinstance(row, BaseModel) else dict(row)
+            for row in rows
+        )
+        return [doc for doc in mapped if self._doc_visible(doc)]
+
+    # ....................... #
+
+    def _candidate_docs(self) -> list[JsonDict]:
+        """Visible documents for a filter/sort/page read — from the bound query-parameter source
+        when parameters are bound, otherwise from stored documents."""
+
+        self._require_params_bound()
+
+        if self.bound_params is not None:
+            return self._param_source_rows()
+
+        # ``_store()`` acquires ``state.lock`` itself; the comprehension has no await, so the live
+        # view can't be mutated mid-iteration — no extra outer lock needed.
+        return [
+            dict(doc) for doc in self._store().values() if self._doc_visible(doc)
+        ]
 
     # ....................... #
 
@@ -123,14 +196,17 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
             return store
 
+    # ....................... #
+
     def _doc_visible(self, doc: JsonDict) -> bool:
         if not self.tenant_aware:
             return True
+
         tenant_id = self.require_tenant_if_aware()
+
         doc_tid = doc.get("tenant_id")
-        if doc_tid is None:
-            return tenant_id is None
-        return str(doc_tid) == str(tenant_id)
+
+        return tenant_id is None if doc_tid is None else str(doc_tid) == str(tenant_id)
 
     # ....................... #
 
@@ -223,9 +299,23 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         skip_cache: bool = False,
     ) -> R:
         del for_update, skip_cache
+
+        self._require_params_bound()
+
+        if self.bound_params is not None:
+            return self._to_read(self._param_doc_by_pk(pk))
+
         with self.state.lock:
             doc = dict(self._ensure_exists(pk))
         return self._to_read(doc)
+
+    # ....................... #
+
+    def _param_doc_by_pk(self, pk: UUID) -> JsonDict:
+        for doc in self._param_source_rows():
+            if str(doc.get(ID_FIELD)) == str(pk):
+                return doc
+        raise exc.not_found(f"Record not found: {pk}")
 
     # ....................... #
 
@@ -236,6 +326,17 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         skip_cache: bool = False,
     ) -> Sequence[R]:
         del skip_cache
+
+        self._require_params_bound()
+
+        if self.bound_params is not None:
+            by_id = {str(d.get(ID_FIELD)): d for d in self._param_source_rows()}
+            missing = [pk for pk in pks if str(pk) not in by_id]
+
+            if missing:
+                raise exc.not_found(f"Documents not found: {missing}")
+
+            return [self._to_read(by_id[str(pk)]) for pk in pks]
 
         with self.state.lock:
             store = self._store()
@@ -478,10 +579,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         self._validate_filter_types(filters)
 
-        with self.state.lock:
-            docs = [
-                dict(doc) for doc in self._store().values() if self._doc_visible(doc)
-            ]
+        docs = self._candidate_docs()
 
         filtered = [doc for doc in docs if _match_filters(doc, filters)]
         rows: list[Any]
@@ -940,10 +1038,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             sort_keys=sort_keys,
         )
 
-        with self.state.lock:
-            docs = [
-                dict(doc) for doc in self._store().values() if self._doc_visible(doc)
-            ]
+        docs = self._candidate_docs()
 
         filtered = [doc for doc in docs if _match_filters(doc, filters)]
         page_docs, has_more, next_c, prev_c = _mock_keyset_window(
@@ -976,8 +1071,5 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def count(self, filters: QueryFilterExpression | None = None) -> int:  # type: ignore[valid-type, return-value]
         self._validate_filter_types(filters)
 
-        with self.state.lock:
-            docs = [
-                dict(doc) for doc in self._store().values() if self._doc_visible(doc)
-            ]
+        docs = self._candidate_docs()
         return sum(1 for doc in docs if _match_filters(doc, filters))

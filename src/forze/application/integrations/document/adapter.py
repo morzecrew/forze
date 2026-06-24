@@ -6,11 +6,13 @@ from typing import Sequence
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
+    validate_query_parameters,
 )
 from forze.application.contracts.document.gateways import (
     DocumentReadGatewayPort,
@@ -78,6 +80,24 @@ class DocumentAdapter(
     Injected by the integration factory from ``ctx.domain()``; defaults to a no-op so a
     non-aggregate document never requires a dispatcher.
     """
+
+    # ....................... #
+
+    def with_parameters(self, params: BaseModel) -> "DocumentAdapter[R, D, C, U]":
+        """Bind typed query parameters (default: validate the contract, then fail closed).
+
+        Validates *params* against the spec's ``query_params`` contract, then refuses — a backend
+        that can apply query parameters (as query-scoped session settings the relation reads)
+        overrides this to return a param-bound clone. The default keeps unsupporting backends
+        honest: they reject the call instead of silently ignoring the parameters.
+        """
+
+        validate_query_parameters(self.spec, params)
+        raise exc.precondition(
+            f"Document route {str(self.spec.name)!r}: this backend does not support query "
+            "parameters.",
+            code="query_parameters_unsupported",
+        )
 
     # ....................... #
 

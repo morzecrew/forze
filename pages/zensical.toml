@@ -55,6 +55,7 @@ nav = [
         ] },
         { "Data & events" = [
             "data-events/reading-data.md",
+            "data-events/query-parameters.md",
             "data-events/procedures.md",
             "data-events/caching.md",
             "data-events/events-sagas.md",
