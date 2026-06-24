@@ -92,38 +92,17 @@ registry = (
 )
 ```
 
-Patches are **late-bound**: their selectors aren't resolved until `freeze()`,
-against the full set of registered operations. That's the power — a top-level
-`patch(all_keys())` policy applied *after* assembling the registry covers
-everything in it. But it's also a sharp edge across `OperationRegistry.merge(...)`:
-a broad patch authored *inside* one sub-registry would otherwise reach a sibling's
-operations once they share the merged key set.
-
-So that reach is **fail-closed**. If a patch from one part matches operations
-contributed by another part, `merge` raises and names the offending selectors and
-operations. A patch matching only its own part's operations is never flagged, and
-a policy patch added *after* the merge never travels through `merge`, so it's
-unaffected. Three ways forward when the gate fires:
-
-- **Scope the patch to a namespace.** `patch(selector, namespace=ns)` matches only
-  keys under `ns` and tests the selector against the namespace-relative remainder
-  — mirroring the `namespace=` argument on `bind`/`set_handler`. A kit can write
-  `patch(all_keys(), namespace=ns)` to mean "everything *I* contribute" and
-  remount cleanly under a merge.
-- **Materialize the patch into plans.** `registry.materialize_patches()` resolves
-  every patch into the explicit plan of each operation it matches and drops the
-  live selectors, so a later `merge` carries concrete per-operation plans instead
-  of selectors that could reach a sibling. Pass specific selectors
-  (`materialize_patches(sel)`) to settle some and leave others live.
-- **Allow it explicitly.** `OperationRegistry.merge(..., cross_registry=True)`
-  permits the reach when a patch is *meant* to govern downstream-contributed
-  operations (logged for the record).
-
-The mental model: a **live** patch is late-bound ("apply wherever this lands"); a
-**materialized** patch is early-bound ("settled here"). Materializing is cleanest
-on a leaf registry or for order-orthogonal steps (deadlines, independent hooks),
-and it does not make an operation immune to a patch applied to the assembled
-registry afterwards — the op stays in the handler set and still matches.
+Patches are **late-bound** — selectors resolve at `freeze()` against the full set of
+operations — so a top-level `patch(all_keys())` applied *after* assembling the registry
+covers everything in it. That reach is **fail-closed** across
+`OperationRegistry.merge(...)`: a broad patch authored inside one sub-registry that
+would reach a sibling's operations makes `merge` raise, naming the offending selectors
+(a patch matching only its own part, or one added after the merge, is never flagged).
+Resolve a flagged reach by scoping the patch to a namespace
+(`patch(selector, namespace=ns)` — "everything *I* contribute"), settling it into
+concrete per-operation plans (`materialize_patches()`), or allowing it explicitly
+(`merge(..., cross_registry=True)`) when the patch is *meant* to govern
+downstream-contributed operations.
 
 ## Validated at freeze, not at request
 

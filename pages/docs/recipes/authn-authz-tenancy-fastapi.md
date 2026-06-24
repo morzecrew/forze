@@ -164,16 +164,12 @@ it, or keep it off the router with `include=`.
 
 ## Self-service password reset
 
-The reset pair is also part of the registry. `/password-reset/request` answers
-a **uniform 202** for known and unknown logins alike (no account enumeration)
-and never returns the token; `/password-reset/confirm` consumes the single-use
-token (1 hour TTL by default), sets the new password, and revokes **all** of
-the principal's sessions — the same "log out everywhere" cascade as
-change-password. Any bad token — wrong, expired, used, superseded — is a
-uniform `401`.
-
-Wiring needs two things on top of the login stack: the reset pepper on the
-kernel, and the `password_reset` route set:
+The reset pair is part of the registry too. `/password-reset/request` answers a
+**uniform 202** for known and unknown logins alike (no account enumeration) and never
+returns the token; `/password-reset/confirm` consumes the single-use token (1-hour TTL),
+sets the new password, and revokes all of the principal's sessions. Any bad token is a
+uniform `401`. Wiring adds the reset pepper and the `password_reset` route set on top of
+the login stack:
 
 ```python
 AuthnDepsModule(
@@ -189,14 +185,10 @@ AuthnDepsModule(
 )
 ```
 
-Only the token's HMAC digest is persisted (`authn_password_resets`, a
-`sensitive` document spec like the other credential stores); issuing a new
-reset supersedes the previous outstanding one (single active reset per
-principal).
-
-**Delivery — getting the token to the user.** The raw token must reach the
-account holder out of band, never via the HTTP response. The registry has an
-outbox seam for exactly this:
+**Delivery.** The raw token must reach the account holder out of band, never in the HTTP
+response. Set `reset_events` and a successful request stages an
+`authn.password_reset_requested` event (`login`, `principal_id`, raw `token`,
+`expires_at`) onto the standard outbox → relay → notify pipeline:
 
 ```python
 from forze.application.contracts.outbox import OutboxSpec
@@ -207,30 +199,15 @@ RESET_EVENTS = OutboxSpec(
     codec=PydanticModelCodec(AuthnPasswordResetRequestedPayload),
     destination=OutboxDestination.queue(route="jobs", channel="notify"),
 )
-
 registry = build_authn_registry(AUTH, reset_events=RESET_EVENTS).freeze()
 ```
 
-With `reset_events` set, a successful request stages an
-`authn.password_reset_requested` integration event (payload: `login`,
-`principal_id`, raw `token`, `expires_at`). From there it is the standard
-outbox → relay → notify pipeline: relay the route to your queue and map the
-event to an e-mail/SMS command in your notify consumer (a `NotificationRouter`
-event-mapper turns the payload into a message embedding the reset link).
-Unknown logins stage nothing — the uniform ack is all an outside observer ever
-sees.
-
-Two caveats, by design:
-
-- The raw token transits the outbox row. The 1-hour TTL and single-use
-  semantics bound the exposure, but treat the outbox store like the credential
-  stores (and keep its retention tight). Apps wanting zero persistence of the
-  raw token skip `reset_events` and call `ctx.authn.password_reset(spec)` from
-  a custom handler that hands the token straight to a mailer.
-- Without `reset_events` **or** a custom delivery handler, requesting a reset
-  mints a token nobody ever receives — wire one of the two before exposing the
-  route. And rate-limit `/password-reset/request` at the edge: it is an
-  unauthenticated write.
+The raw token transits the outbox row, so treat that store like the credential stores
+(tight retention); apps wanting zero persistence skip `reset_events` and call
+`ctx.authn.password_reset(spec)` from a custom handler that hands the token straight to a
+mailer. Either way, wire delivery before exposing the route — without it a reset mints a
+token nobody receives — and rate-limit `/password-reset/request` at the edge (it is an
+unauthenticated write).
 
 ## Multiple organizations
 

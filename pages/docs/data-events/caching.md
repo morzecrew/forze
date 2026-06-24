@@ -78,10 +78,6 @@ from forze.application.integrations.document import tiny_lfu_l1_store
 L1Spec(ttl=timedelta(seconds=2), store_factory=tiny_lfu_l1_store)
 ```
 
-In simulation it holds an ~18-point hit-rate lead over LRU under scan
-pressure, at the cost of a couple of microseconds per access — noise next to
-the round-trip each extra hit avoids.
-
 ### Push invalidation: shrink the staleness window to ~zero
 
 On Redis 6+, the L1 staleness budget can become a *backstop* instead of the

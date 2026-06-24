@@ -54,18 +54,10 @@ only the dependency wiring adds caching:
 
 ## Going further
 
-The cache contract layers more on top of plain read-through, each a one-line
-addition to the `CacheSpec` — covered in [Caching reads](../data-events/caching.md):
-
-- **Stampede protection** — concurrent misses collapse to one fetch, and hot keys
-  can refresh early so they never expire for every replica at once. Both
-  automatic (early refresh is one opt-in flag).
-- **An in-process L1** — serve the hottest documents from process memory, already
-  decoded, on a small staleness budget; switch to W-TinyLFU when scans evict your
-  hot set, or add Redis [push invalidation](../integrations/redis.md#l1-push-invalidation)
-  to shrink that budget to ~zero.
-- **Adaptive lifetimes** — stable documents earn longer TTLs and hot ones stay
-  cached while they're read, with no per-document tuning.
+Read-through is the floor. The cache contract layers stampede protection, an
+in-process L1 (with W-TinyLFU admission and Redis push invalidation), and adaptive
+TTLs on top — each a one-line addition to the `CacheSpec`, covered in
+[Caching reads](../data-events/caching.md).
 
 ## Run it
 
