@@ -1,6 +1,6 @@
 """Factories for document plans, mappers, and registries."""
 
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import attrs
 from pydantic import BaseModel
@@ -232,7 +232,7 @@ def _build_document_descriptors(
 
 def build_document_registry(
     spec: DocumentSpec[R, D, C_cmd, U_cmd],
-    dtos: DocumentDTOs[R, C, U],
+    dtos: DocumentDTOs[R, C, U] | None = None,
     mappers: DocumentMappers[C, C_cmd, U, U_cmd] = DocumentMappers(),
     *,
     ns: StrKeyNamespace | None = None,
@@ -240,11 +240,22 @@ def build_document_registry(
     """Build document operation registry.
 
     :param spec: Document specification.
-    :param dtos: Document DTO specification.
+    :param dtos: Document DTO specification. Derived from the spec when omitted
+        (:meth:`DocumentDTOs.from_spec`) — the common case where the inbound create/update
+        DTOs are the spec's own commands; pass an explicit mapping to override or to disable
+        an op.
     :param mappers: Document mappers.
     :param ns: Optional namespace.
     :returns: Operation registry with all supported operations.
     """
+
+    # When omitted, the inbound DTOs are the spec's commands, so the derived ``C``/``U`` are
+    # the spec's ``C_cmd``/``U_cmd`` — the cast records that identity for the type checker.
+    dtos = (
+        dtos
+        if dtos is not None
+        else cast("DocumentDTOs[R, C, U]", DocumentDTOs.from_spec(spec))
+    )
 
     ns = ns or spec.default_namespace
 

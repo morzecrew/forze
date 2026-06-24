@@ -151,6 +151,44 @@ class TestBuildDocumentRegistry:
         assert not registry_has_handler(reg, ns.key(DocumentKernelOp.CREATE))
 
 
+class TestDtosFromSpec:
+    def test_derives_read_create_update_from_write_spec(self) -> None:
+        dtos = DocumentDTOs.from_spec(_write_spec(update_cmd=_UpdateCmd))
+        assert dtos.read is ReadDocument
+        assert dtos.create is CreateDocumentCmd
+        assert dtos.update is _UpdateCmd
+
+    def test_read_only_spec_has_no_write_dtos(self) -> None:
+        dtos = DocumentDTOs.from_spec(_read_only_spec())
+        assert dtos.read is ReadDocument
+        assert dtos.create is None
+        assert dtos.update is None
+
+    def test_omitted_dtos_are_derived_from_spec(self) -> None:
+        # build_document_registry(spec) with no dtos registers the same write ops as
+        # passing the explicitly-derived DTOs.
+        spec = _write_spec()
+        ns = spec.default_namespace
+        reg = build_document_registry(spec)
+
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.GET))
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.CREATE))
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.UPDATE))
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.KILL))
+
+    def test_explicit_dtos_still_override_to_disable_an_op(self) -> None:
+        # The override path survives: create=None disables CREATE despite the spec
+        # declaring a create command.
+        spec = _write_spec()
+        ns = spec.default_namespace
+        reg = build_document_registry(
+            spec, DocumentDTOs(read=ReadDocument, create=None, update=_UpdateCmd)
+        )
+
+        assert not registry_has_handler(reg, ns.key(DocumentKernelOp.CREATE))
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.UPDATE))
+
+
 class TestDocumentCatalog:
     def test_read_ops_are_query_and_writes_are_command(self) -> None:
         spec = _write_spec()

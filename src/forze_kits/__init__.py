@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 # Curated name -> canonical module (single source of truth for the front door).
 _EXPORTS: dict[str, str] = {
     "DocumentFacade": "forze_kits.aggregates.document",
+    "document_facade": "forze_kits.aggregates.document",
     "build_document_registry": "forze_kits.aggregates.document",
     "DocumentDTOs": "forze_kits.aggregates.document",
     "DocumentMappers": "forze_kits.aggregates.document",
@@ -28,6 +29,7 @@ _EXPORTS: dict[str, str] = {
 
 __all__ = [
     "DocumentFacade",
+    "document_facade",
     "build_document_registry",
     "DocumentDTOs",
     "DocumentMappers",
@@ -60,6 +62,7 @@ if TYPE_CHECKING:
         DocumentKernelOp,
         DocumentMappers,
         build_document_registry,
+        document_facade,
     )
     from forze_kits.dto import Paginated
     from forze_kits.integrations.outbox import OutboxRelay

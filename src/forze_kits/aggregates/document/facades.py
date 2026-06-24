@@ -1,10 +1,13 @@
-from typing import Any, Generic, TypeVar
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application.execution.operations.facade import (
     OperationFacade,
+    OperationFacadeFactory,
     facade_op,
     namespaced_facade,
 )
@@ -22,6 +25,12 @@ from .handlers import (
 from forze.domain.models import BaseDTO
 
 from .operations import DocumentKernelOp
+
+if TYPE_CHECKING:
+    from forze.application.contracts.document import DocumentSpec
+    from forze.application.execution import ExecutionRuntime
+    from forze.application.execution.operations import FrozenOperationRegistry
+    from forze.base.primitives import StrKeyNamespace
 
 # ----------------------- #
 
@@ -90,3 +99,37 @@ class DocumentFacade(OperationFacade, Generic[R, C, U]):
         uc=KillDocument,
     )
     """Kill document operation."""
+
+
+# ....................... #
+
+
+def document_facade(
+    runtime: ExecutionRuntime,
+    registry: FrozenOperationRegistry,
+    spec: DocumentSpec[R, Any, C, U],
+    *,
+    namespace: StrKeyNamespace | None = None,
+) -> OperationFacadeFactory[DocumentFacade[R, C, U]]:
+    """Build a per-call :class:`DocumentFacade` factory bound to *runtime*'s context.
+
+    Returns a zero-argument callable that yields a fresh, fully-typed facade on each call,
+    reading the runtime's *current* scope context — so it is safe to build once at startup
+    and call per request; it never caches a context across scopes. The namespace defaults to
+    the spec's, matching :func:`build_document_registry`.
+
+    Replaces the hand-written factory — ``def users(): return DocumentFacade(
+    ctx=runtime.get_context(), registry=registry, namespace=...)`` — with one call::
+
+        users = document_facade(runtime, registry, user_spec)
+        await users().create(cmd)
+    """
+
+    factory: OperationFacadeFactory[DocumentFacade[R, C, U]] = OperationFacadeFactory(
+        type=DocumentFacade,
+        registry=registry,
+        ctx_factory=runtime.get_context,
+        ns=namespace if namespace is not None else spec.default_namespace,
+    )
+
+    return factory

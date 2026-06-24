@@ -1,4 +1,6 @@
-from typing import Any, Generic, TypeVar
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import attrs
 from pydantic import BaseModel
@@ -13,6 +15,9 @@ from .dto import (
     ProjectedCursorListRequestDTO,
     ProjectedListRequestDTO,
 )
+
+if TYPE_CHECKING:
+    from forze.application.contracts.document import DocumentSpec
 
 # ----------------------- #
 
@@ -38,6 +43,29 @@ class DocumentDTOs(Generic[R, C, U]):
 
     update: type[U] | None = attrs.field(default=None)
     """Update command type; optional when update is not supported."""
+
+    # ....................... #
+
+    @classmethod
+    def from_spec(cls, spec: DocumentSpec[R, Any, C, U]) -> DocumentDTOs[R, C, U]:
+        """Derive the DTO mapping from a spec's read and write models.
+
+        The read DTO is the spec's read model; the create/update DTOs are the spec's
+        create/update commands. This covers the common case where the inbound DTO *is* the
+        domain command. Pass an explicit :class:`DocumentDTOs` instead when an inbound DTO
+        differs from the command, or to disable an op (``create=None`` / ``update=None``).
+        """
+
+        write = spec.write
+
+        if write is None:
+            return cls(read=spec.read)
+
+        return cls(
+            read=spec.read,
+            create=write["create_cmd"],
+            update=write.get("update_cmd"),
+        )
 
 
 # ....................... #
