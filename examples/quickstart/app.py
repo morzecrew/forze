@@ -6,25 +6,27 @@ Exercised by tests/unit/test_examples/test_quickstart.py (FastAPI TestClient, no
 
 from __future__ import annotations
 
+# --8<-- [start:imports]
 from uuid import UUID
 
 from fastapi import FastAPI
 from pydantic import computed_field
 
-from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import build_runtime
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze import (
+    CreateDocumentCmd,
+    Document,
+    DocumentSpec,
+    DocumentWriteTypes,
+    ReadDocument,
+    build_runtime,
+)
 from forze_fastapi import runtime_lifespan
 from forze_fastapi.exceptions import register_exception_handlers
-from forze_kits.aggregates.document import (
-    DocumentDTOs,
-    DocumentFacade,
-    DocumentIdDTO,
-    ListRequestDTO,
-    build_document_registry,
-)
-from forze_kits.dto import Paginated
+from forze_kits import Paginated, build_document_registry, document_facade
+from forze_kits.aggregates.document import DocumentIdDTO, ListRequestDTO
 from forze_mock import MockDepsModule
+
+# --8<-- [end:imports]
 
 
 # --8<-- [start:domain]
@@ -55,32 +57,23 @@ class ReadUser(ReadDocument):
 user_spec = DocumentSpec(
     name="users",
     read=ReadUser,
-    write={
-        "domain": User,
-        "create_cmd": CreateUserCmd,
-    },
+    write=DocumentWriteTypes(domain=User, create_cmd=CreateUserCmd),
 )
 # --8<-- [end:spec]
 
 
 # --8<-- [start:registry]
-registry = build_document_registry(
-    user_spec, DocumentDTOs(read=ReadUser, create=CreateUserCmd)
-).freeze()
+# DTOs are derived from the spec; pass an explicit DocumentDTOs only to override.
+registry = build_document_registry(user_spec).freeze()
 # --8<-- [end:registry]
 
 
 # --8<-- [start:runtime]
 runtime = build_runtime(MockDepsModule())
+
+# A per-call, fully-typed facade factory bound to the runtime's current context.
+users = document_facade(runtime, registry, user_spec)
 # --8<-- [end:runtime]
-
-
-def users() -> DocumentFacade[ReadUser, CreateUserCmd, BaseDTO]:
-    return DocumentFacade(
-        ctx=runtime.get_context(),
-        registry=registry,
-        namespace=user_spec.default_namespace,
-    )
 
 
 # --8<-- [start:routes]
