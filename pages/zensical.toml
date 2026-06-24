@@ -168,6 +168,7 @@ nav = [
         "reference/tenancy-matrix.md",
         "reference/encryption-matrix.md",
         "reference/query-syntax.md",
+        "reference/resilience-tuning.md",
         "reference/mapping.md",
         "reference/fastapi-routes.md",
         "reference/outbox-schema.md",

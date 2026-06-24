@@ -111,41 +111,31 @@ swap it in at [wiring](../writing-operation/wiring.md) time — `RoutedPostgresC
 
 ### Which integration reaches which tier
 
-Each integration derives the tier its wiring actually reaches. The ceiling is set
-by the backend — an in-process store can't route a per-tenant connection:
+Each integration derives the tier its wiring reaches, and the **backend sets the
+ceiling** — an in-process store can't route a per-tenant connection. Three shapes
+cover it:
 
-| Integration | Reaches | Via |
-|-------------|---------|-----|
-| Document — Postgres, Mongo, Firestore | `tagged` → `namespace` → `dedicated` | column · schema/collection resolver · routed client |
-| Analytics — Postgres, ClickHouse, BigQuery | `tagged` → `namespace` → `dedicated` | column · dataset/database resolver · routed client |
-| Analytics — DuckDB | `tagged` | column (in-process — its ceiling) |
-| Search — Meilisearch | `tagged` → `namespace` → `dedicated` | tenant filter · per-tenant index · routed client |
-| Graph — Neo4j | `tagged` → `namespace` → `dedicated` | tenant property · per-tenant database · routed client |
-| Cache · Stream · Pub/Sub · Lock · Idempotency — Redis | `namespace` → `dedicated` | key prefix · routed client |
-| Queue — RabbitMQ, SQS | `namespace` → `dedicated` | name prefix · routed client |
-| Object storage — S3, GCS | `namespace` → `dedicated` | path prefix · per-tenant bucket · routed client |
-| Outbound HTTP | `dedicated` | per-tenant credentials (routed client) |
-| Durable — Temporal | `tagged` → `namespace` → `dedicated` | context marker · per-tenant task queue · routed client |
-| Durable — Inngest | `dedicated` | routed client only |
-| Realtime (stream-backed) | `namespace` | per-tenant stream key + sharded gateway/relay |
+- A **column store** (Postgres / Mongo / Firestore documents, most analytics) spans
+  the whole ladder: `tagged` (column) → `namespace` (schema/collection resolver) →
+  `dedicated` (routed client).
+- A **key/path store** (Redis, S3/GCS, queues) has no shared container to tag, so it
+  *starts* at `namespace` — the per-tenant key or prefix **is** `tenant_aware` — and
+  reaches `dedicated` with a routed client.
+- An **in-process** backend caps low: DuckDB analytics at `tagged`, the mock at
+  `namespace`, with no routed-client equivalent.
 
-Key/path stores start at `namespace`: there is no shared container to tag, so
-`tenant_aware` *is* the per-tenant key. The catch is on the **read** side of
-anything you *consume* — see below. The full breakdown, per port, is the
-[tenancy reference](../reference/tenancy-matrix.md).
+The exhaustive per-port breakdown — every integration, its mechanism, and its ceiling
+— is the [tenancy matrix](../reference/tenancy-matrix.md).
 
 !!! warning "Isolating messaging you consume"
 
-    A store you *query* under the bound tenant scopes itself. A **stream or queue
-    you drain in the background** does not: the consumer runs with no ambient
-    tenant. Isolating it per tenant means binding the tenant on the read side —
-    a **sharded gateway/relay** for realtime (one instance owns a disjoint tenant
-    shard, [tenant-aware namespace-tier gateway](../integrations/socketio.md#tenant-aware-namespace-tier-gateway)),
-    or a per-tenant worker for a queue. By default the outbox stays **tenant-global**
-    (a shared table; rows carry their tenant for *routing*, not isolation) and its
-    relay binds each row's tenant as it forwards — so the *outbox* needs no sharding
-    even when its destination is per-tenant. Isolating the outbox table itself is
-    opt-in, and then the relay must be sharded too.
+    A store you *query* under the bound tenant scopes itself. A **stream or queue you
+    drain in the background** does not: the consumer runs with no ambient tenant, so
+    isolating it means binding the tenant on the *read* side — a **sharded
+    gateway/relay** for realtime, or a per-tenant worker for a queue. The outbox stays
+    **tenant-global** by default (rows carry their tenant for routing, not isolation;
+    the relay binds each row's tenant as it forwards). The per-resource read-side rules
+    are in the [tenancy matrix](../reference/tenancy-matrix.md#messaging-you-consume-the-read-side-catch).
 
 ## Declaring a minimum
 
