@@ -119,6 +119,11 @@ class PostgresReadGateway[M: BaseModel](
         ``SET LOCAL`` but with the (custom, dotted) setting name and value passed as safe arguments
         rather than composed into identifier/literal SQL. Must run inside a transaction so the
         settings are local to the surrounding read.
+
+        ``None`` values are skipped rather than serialized to an empty string: a GUC the view reads
+        with ``current_setting('<namespace>.<field>', true)`` then yields SQL ``NULL`` (castable to
+        any type) instead of ``''`` (which fails a typed cast like ``::date``). A view reading an
+        optional parameter must use the ``missing_ok`` form ``current_setting(name, true)``.
         """
 
         if self.bound_params is None:
@@ -126,16 +131,17 @@ class PostgresReadGateway[M: BaseModel](
 
         data = self.bound_params.model_dump(mode="json")
 
-        if not data:
-            return
-
         calls = [
             sql.SQL("set_config({name}, {val}, true)").format(
                 name=sql.Literal(f"{self.param_namespace}.{field}"),
-                val=sql.Literal("" if value is None else str(value)),
+                val=sql.Literal(str(value)),
             )
             for field, value in data.items()
+            if value is not None
         ]
+
+        if not calls:
+            return
 
         await self.client.execute(sql.SQL("SELECT {}").format(sql.SQL(", ").join(calls)))
 

@@ -26,6 +26,11 @@ class _Params(BaseModel):
     window: str = "2026-01-01"
 
 
+class _OptionalParams(BaseModel):
+    window: str | None = None
+    region: str | None = None
+
+
 def _client() -> MagicMock:
     client = MagicMock(spec=PostgresClient)
     client.fetch_all = AsyncMock(return_value=[])
@@ -86,6 +91,37 @@ async def test_bound_params_apply_set_config_in_tx() -> None:
     assert "forze.window" in rendered
     assert "2026-01-01" in rendered
     assert client.fetch_all.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_none_param_is_skipped_not_empty_string() -> None:
+    client = _client()
+    gw = _gw(
+        client,
+        params_required=True,
+        bound_params=_OptionalParams(window="2026-01-01", region=None),
+    )
+
+    await gw.find_many(None)
+
+    rendered = _rendered(client.execute.await_args[0][0])
+    assert "forze.window" in rendered  # set value emitted
+    assert "forze.region" not in rendered  # None skipped, not serialized to ''
+
+
+@pytest.mark.asyncio
+async def test_all_none_params_emit_no_set_config() -> None:
+    client = _client()
+    gw = _gw(
+        client,
+        params_required=True,
+        bound_params=_OptionalParams(window=None, region=None),
+    )
+
+    await gw.find_many(None)
+
+    assert client.execute.await_count == 0  # nothing to set
+    assert client.fetch_all.await_count == 1  # but the read still runs (in its tx)
 
 
 @pytest.mark.asyncio

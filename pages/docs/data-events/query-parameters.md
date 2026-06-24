@@ -84,6 +84,10 @@ A few rules follow from the mechanism:
 - **Settings are text.** GUCs are strings, so parameters serialize to strings and
   the view casts (`current_setting('forze.as_of')::date`). The GUC prefix
   (`forze` by default) is configurable per route on the Postgres document config.
+- **Optional parameters skip the GUC.** A `None` value is not set at all (rather
+  than serialized to `''`, which would fail a typed cast). A view reading an
+  optional parameter must use the `missing_ok` form — `current_setting('forze.as_of', true)::date`
+  — so an unset parameter reads as SQL `NULL` instead of raising.
 
 ## Fails closed
 
