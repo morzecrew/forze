@@ -11,6 +11,7 @@ from .federated import (
 from .hub import PostgresHubSearchConfig, PostgresHubSearchMemberConfig
 from .inbox import PostgresInboxConfig
 from .outbox import PostgresOutboxConfig
+from .procedure import PostgresProcedureConfig
 from .search import (
     FtsEngine,
     PgroongaAuto,
@@ -43,6 +44,7 @@ __all__ = [
     "PostgresHubSearchMemberConfig",
     "PostgresInboxConfig",
     "PostgresOutboxConfig",
+    "PostgresProcedureConfig",
     "PostgresQueryConfig",
     "PostgresReadOnlyDocumentConfig",
     "PostgresSearchConfig",

@@ -43,6 +43,8 @@ _DEFAULT_CAP: Final = 1000
 _CURSOR_NS: Final = UUID("1d3e0b5a-7c9f-4e2a-8b6d-0a1c2e4f6a8b")
 """Fixed namespace for deriving a cursor's id from ``(principal, client_key)``."""
 
+# ....................... #
+
 
 def _cursor_id(principal: str, client_key: str) -> UUID:
     """A deterministic cursor id, so concurrent first-acks for one device converge on a
@@ -57,7 +59,7 @@ def _cursor_id(principal: str, client_key: str) -> UUID:
     return uuid5(_CURSOR_NS, f"{principal}\x00{client_key}")
 
 
-# ----------------------- #
+# ....................... #
 
 
 @final
@@ -82,7 +84,7 @@ class MailboxStats:
     """Cursor advances (device acks that moved a cursor forward)."""
 
 
-# ----------------------- #
+# ....................... #
 # document models (NO tenant_id — the tenant-aware adapter injects + scopes it)
 
 
@@ -132,7 +134,7 @@ class _CursorRead(ReadDocument):
     hlc: int
 
 
-# ----------------------- #
+# ....................... #
 # specs
 
 
@@ -146,6 +148,9 @@ def realtime_mailbox_spec(
         read=_MailboxRead,
         write={"domain": _MailboxDoc, "create_cmd": _MailboxCreate},
     )
+
+
+# ....................... #
 
 
 def realtime_cursor_spec(
@@ -164,13 +169,13 @@ def realtime_cursor_spec(
     )
 
 
-# ----------------------- #
+# ....................... #
 
 
 @final
 @attrs.define(slots=True, kw_only=True)  # not frozen — holds mutable counters
 class DocumentRealtimeMailbox:
-    """The offline mailbox over a document collection (RFC 0006 default).
+    """The offline mailbox over a document collection.
 
     Built via :func:`build_realtime_mailbox`. The document key is the durable
     ``event_id`` (a ``UUID``); a redelivery hits the primary-key conflict and is
@@ -178,8 +183,15 @@ class DocumentRealtimeMailbox:
     """
 
     command: DocumentCommandPort[_MailboxRead, _MailboxDoc, _MailboxCreate, Any]
+    """The document command port for storing mailbox entries."""
+
     query: DocumentQueryPort[_MailboxRead]
+    """The document query port for reading mailbox entries."""
+
     cap: int = _DEFAULT_CAP
+    """The max entries replayed per principal (newest-first retention bound)."""
+
+    # ....................... #
 
     _stored: int = attrs.field(default=0, init=False)
     _replayed: int = attrs.field(default=0, init=False)
@@ -188,12 +200,21 @@ class DocumentRealtimeMailbox:
     # ....................... #
 
     def stats(self) -> MailboxStats:
-        return MailboxStats(stored=self._stored, replayed=self._replayed, trimmed=self._trimmed)
+        return MailboxStats(
+            stored=self._stored,
+            replayed=self._replayed,
+            trimmed=self._trimmed,
+        )
 
     # ....................... #
 
     async def store(
-        self, *, principal: str, event_id: str, hlc: HlcTimestamp, signal: RealtimeSignal
+        self,
+        *,
+        principal: str,
+        event_id: str,
+        hlc: HlcTimestamp,
+        signal: RealtimeSignal,
     ) -> None:
         try:
             await self.command.create(
@@ -262,7 +283,9 @@ class DocumentRealtimeMailbox:
         # rows behind when more than ``cap`` have accumulated.
         while True:
             stale = await self.query.find_many(
-                filters={"$values": {"principal": principal, "hlc": {"$lte": before.pack()}}},
+                filters={
+                    "$values": {"principal": principal, "hlc": {"$lte": before.pack()}}
+                },
                 pagination={"limit": self.cap},
             )
 
@@ -279,7 +302,7 @@ class DocumentRealtimeMailbox:
 @final
 @attrs.define(slots=True, kw_only=True)  # not frozen — holds a mutable counter
 class DocumentMailboxCursors:
-    """Per-device read cursors over a document collection (RFC 0006 default).
+    """Per-device read cursors over a document collection.
 
     Built via :func:`build_realtime_cursors`. A cursor is found by ``(principal, client_key)``
     and created under a **deterministic** id derived from them (:func:`_cursor_id`), so
@@ -288,7 +311,12 @@ class DocumentMailboxCursors:
     """
 
     command: DocumentCommandPort[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate]
+    """The document command port for creating and updating cursor rows."""
+
     query: DocumentQueryPort[_CursorRead]
+    """The document query port for reading cursor rows."""
+
+    # ....................... #
 
     _acked: int = attrs.field(default=0, init=False)
 
@@ -328,7 +356,9 @@ class DocumentMailboxCursors:
             if row is None:
                 try:
                     await self.command.create(
-                        _CursorCreate(principal=principal, client_key=client_key, hlc=target),
+                        _CursorCreate(
+                            principal=principal, client_key=client_key, hlc=target
+                        ),
                         id=_cursor_id(principal, client_key),
                         return_new=False,
                     )
@@ -384,7 +414,9 @@ def build_realtime_mailbox(
     """
 
     if ctx.inv_ctx.is_read_only():
-        raise exc.precondition("Cannot build a realtime mailbox in a read-only (QUERY) operation")
+        raise exc.precondition(
+            "Cannot build a realtime mailbox in a read-only (QUERY) operation"
+        )
 
     resolved = spec if spec is not None else realtime_mailbox_spec()
 
@@ -398,12 +430,16 @@ def build_realtime_mailbox(
 def build_realtime_cursors(
     ctx: ExecutionContext,
     *,
-    spec: DocumentSpec[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate] | None = None,
+    spec: (
+        DocumentSpec[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate] | None
+    ) = None,
 ) -> DocumentMailboxCursors:
     """Resolve the cursor collection's document ports once and build it (write-side guard)."""
 
     if ctx.inv_ctx.is_read_only():
-        raise exc.precondition("Cannot build realtime cursors in a read-only (QUERY) operation")
+        raise exc.precondition(
+            "Cannot build realtime cursors in a read-only (QUERY) operation"
+        )
 
     resolved = spec if spec is not None else realtime_cursor_spec()
 

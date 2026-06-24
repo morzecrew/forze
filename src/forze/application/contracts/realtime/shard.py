@@ -1,4 +1,4 @@
-"""The realtime shard — one gateway instance's tenant assignment (RFC 0007).
+"""The realtime shard — one gateway instance's tenant assignment.
 
 The namespace-tier realtime plane has three sharded components that must agree on *which*
 tenants, *which* stream, and *which* consumer group: the gateway's
@@ -44,7 +44,7 @@ class RealtimeShard:
     re-reads. Storing the resolved assignment is what keeps the three components from drifting:
     a provider read independently during a rollout could hand them divergent tenant sets, so a
     tenant ends up consumed without its group ensured. Rebalancing a running fleet is out of
-    scope (RFC 0007 §9) — repartition by restart, which re-snapshots here."""
+    scope — repartition by restart, which re-snapshots here."""
 
     group: str = DEFAULT_REALTIME_GROUP
     """Consumer group name the gateway reads and the ensure step creates."""

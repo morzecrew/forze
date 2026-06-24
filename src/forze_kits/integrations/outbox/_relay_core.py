@@ -80,7 +80,7 @@ def _under_claim_tenant(
     """Bind a claim's staging tenant while it is forwarded to its destination.
 
     The relay runs as a tenant-less background process, so a tenant-aware destination —
-    e.g. a per-tenant realtime stream key ``tenant:{id}:stream:…`` (RFC 0007) — would
+    e.g. a per-tenant realtime stream key ``tenant:{id}:stream:…`` — would
     otherwise be written under no tenant, landing on the global key (and silently missed
     by a per-tenant consumer). ``claim.tenant_id`` is the trusted tenant the row was staged
     under (already used for at-rest decryption and the ``forze_tenant_id`` header), so
@@ -112,6 +112,7 @@ def _outbox_tenant_unbound(outbox_spec: OutboxSpec[Any]) -> CoreException:
         "still routes per-tenant), or run the relay under a bound tenant per tenant.",
         code="outbox_relay_tenant_unbound",
     )
+
 
 # Published ids are marked in chunks of this size (one UPDATE per chunk
 # instead of one per row). Bounds the redelivery window after a crash to one

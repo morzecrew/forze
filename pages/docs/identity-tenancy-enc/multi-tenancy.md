@@ -140,7 +140,7 @@ anything you *consume* — see below. The full breakdown, per port, is the
     you drain in the background** does not: the consumer runs with no ambient
     tenant. Isolating it per tenant means binding the tenant on the read side —
     a **sharded gateway/relay** for realtime (one instance owns a disjoint tenant
-    shard, [RFC 0007](../integrations/socketio.md#tenant-aware-namespace-tier-gateway)),
+    shard, [tenant-aware namespace-tier gateway](../integrations/socketio.md#tenant-aware-namespace-tier-gateway)),
     or a per-tenant worker for a queue. By default the outbox stays **tenant-global**
     (a shared table; rows carry their tenant for *routing*, not isolation) and its
     relay binds each row's tenant as it forwards — so the *outbox* needs no sharding

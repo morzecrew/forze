@@ -172,7 +172,11 @@ def _bind_connection(
     closed). Both come from the connection, never from the empty fresh ``ctx``.
     """
 
-    tenant = TenantIdentity(tenant_id=connection.tenant) if connection.tenant is not None else None
+    tenant = (
+        TenantIdentity(tenant_id=connection.tenant)
+        if connection.tenant is not None
+        else None
+    )
 
     return ctx.inv_ctx.bind_identity(authn=connection.authn, tenant=tenant)
 
@@ -209,18 +213,30 @@ class _ConnectionLifecycle:
     async def replay(self, connection: RealtimeConnection, sid: str) -> None:
         """Drain everything past this device's cursor to the freshly-connected socket."""
 
-        if self.mailbox_factory is None or self.cursors_factory is None or self.runtime is None:
+        if (
+            self.mailbox_factory is None
+            or self.cursors_factory is None
+            or self.runtime is None
+        ):
             return
 
         client_key = connection.client_key(sid)
 
         async with self.runtime.scope():
             ctx = self.runtime.get_context()
-            with _bind_connection(ctx, connection):  # connection identity — fresh scope is empty
-                mailbox = self.mailbox_factory(ctx)  # ports resolved for this unit of work
+            with _bind_connection(
+                ctx, connection
+            ):  # connection identity — fresh scope is empty
+                mailbox = self.mailbox_factory(
+                    ctx
+                )  # ports resolved for this unit of work
                 cursors = self.cursors_factory(ctx)
-                since = await cursors.get(principal=connection.principal, client_key=client_key)
-                entries = await mailbox.read_since(principal=connection.principal, since=since)
+                since = await cursors.get(
+                    principal=connection.principal, client_key=client_key
+                )
+                entries = await mailbox.read_since(
+                    principal=connection.principal, since=since
+                )
 
         for entry in entries:
             await self.sio.emit(
@@ -235,7 +251,11 @@ class _ConnectionLifecycle:
     async def on_ack(self, sid: str, data: Any = None) -> None:
         """``realtime.ack {up_to}``: advance the device cursor, trim the all-device floor."""
 
-        if self.mailbox_factory is None or self.cursors_factory is None or self.runtime is None:
+        if (
+            self.mailbox_factory is None
+            or self.cursors_factory is None
+            or self.runtime is None
+        ):
             return
 
         session = await self.sio.get_session(sid, namespace=self.namespace)
@@ -360,7 +380,7 @@ def attach_realtime_connection(
     a server-side one is logged and refused generically.
 
     When *mailbox_factory*, *cursors_factory* and *runtime* are all supplied, offline
-    replay is enabled (RFC 0006): on connect the connection's device is replayed
+    replay is enabled: on connect the connection's device is replayed
     everything past its cursor, and a ``realtime.ack {up_to}`` event advances that cursor
     so a device never re-receives what it acked. The factories build their store with
     ports resolved against each unit-of-work ctx (e.g. ``build_realtime_mailbox``); the

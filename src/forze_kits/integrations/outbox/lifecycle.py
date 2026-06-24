@@ -13,13 +13,16 @@ import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.contracts.outbox import OutboxDestinationKind, OutboxSpec
+from forze.application.contracts.outbox import (
+    OutboxDestinationKind,
+    OutboxRelayResult,
+    OutboxSpec,
+)
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream import StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
-from forze.application.contracts.outbox import OutboxRelayResult
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 
@@ -35,23 +38,52 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     """Start a background task that periodically relays outbox rows."""
 
     outbox_spec: OutboxSpec[Any]
+    """The outbox spec."""
+
     transport: OutboxDestinationKind
+    """The transport to use."""
+
     queue_spec: QueueSpec[Any] | None
+    """The queue spec to use."""
+
     stream_spec: StreamSpec[Any] | None
+    """The stream spec to use."""
+
     pubsub_spec: PubSubSpec[Any] | None
+    """The pubsub spec to use."""
+
     interval: timedelta
+    """The interval to use."""
+
     jitter: float = 0.2
+    """The jitter to use."""
+
     reclaim_stale_after: timedelta | None
+    """The reclaim stale after to use."""
+
     limit: int | None
+    """The limit to use."""
+
     max_attempts: int
+    """The max attempts to use."""
+
     retry_base_delay: timedelta
+    """The retry base delay to use."""
+
     retry_max_backoff: timedelta
+    """The retry max backoff to use."""
+
     max_batches_per_tick: int
+    """The max batches per tick to use."""
+
     tenants: Callable[[], Sequence[UUID]] | None = None
     """When set, the outbox is tenant-aware (partitioned): each tick drains every assigned
-    tenant's partition under a bound tenant (namespace tier, RFC 0007). The shard is
+    tenant's partition under a bound tenant (namespace tier). The shard is
     evaluated **once at startup** and frozen for the process (restart to repartition),
     matching the gateway source. ``None`` = tenant-global; one unbound pass drains it."""
+
+    # ....................... #
+
     task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
 
     # ....................... #
@@ -147,7 +179,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     # ....................... #
 
     async def _drain_tick(
-        self, ctx: ExecutionContext, tenants: Sequence[UUID] | None
+        self,
+        ctx: ExecutionContext,
+        tenants: Sequence[UUID] | None,
     ) -> None:
         """Drain the backlog once: globally, or per assigned tenant when sharded.
 
@@ -171,7 +205,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 raise
 
             except Exception:
-                logger.exception("Outbox background relay failed for tenant", tenant=str(tenant))
+                logger.exception(
+                    "Outbox background relay failed for tenant", tenant=str(tenant)
+                )
 
     # ....................... #
 
@@ -199,9 +235,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                     # Desynchronization jitter, not security randomness.
                     * (
                         1.0
-                        + current_entropy_source().as_random().uniform(
-                            -self.jitter, self.jitter
-                        )
+                        + current_entropy_source()
+                        .as_random()
+                        .uniform(-self.jitter, self.jitter)
                     )
                 )
 

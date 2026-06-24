@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Procedures port — governed parametrized commands/compute** — `ctx.procedure.command(spec).run(params)` runs a spec-named, parametrized statement (a function/`CALL`, set-based recompute, or `REFRESH MATERIALIZED VIEW`): analytics' write/compute twin, for recomputing over an ingested batch in one statement instead of per-row triggers. One `ProcedureSpec[In, Out]` per procedure, command-only (refused in a read-only operation), on Postgres plus a programmable mock. Tenant-aware routes fail closed at wiring unless the SQL binds `%(tenant)s`.
+
 - **Nested-field sorting** — sort keys may now be dotted paths into nested Pydantic sub-models and `str`-keyed mappings (`sorts={"addr.city": "asc"}`), resolved the same way nested filters already are, across offset and keyset-cursor reads and every backend. `default_sort` on document/search specs accepts nested paths too. Tightening: sorting on a nested path whose **root** column is field-encrypted is now rejected (it was silently allowed and could leak the value in a cursor token).
 
 - **CPU-offload seam** — `run_cpu` / `run_cpu_map` run blocking or CPU-bound work off the event loop via a context-bound `CpuExecutor` (bounded thread pool in production; inline and deterministic under simulation, so offloading handlers stay testable), honoring the invocation deadline with a cooperative `checkpoint()`.
@@ -17,13 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Shared error boundary in core** — `error_envelope()` and `guard_frame()` give one client-safe projection of a `CoreException` (masking, egress context, status hint) plus a shared guarded boundary, so FastAPI and Socket.IO render the same envelope instead of each duplicating that logic.
 
-- **Realtime egress — server push** — a handler publishes a `RealtimeSignal` to a principal or topic through messaging ports, and the Socket.IO gateway bridges it to a tenant-scoped room. Ephemeral at-most-once or durable exactly-once; read-only operations cannot publish. (RFC 0002.)
+- **Realtime egress — server push** — a handler publishes a `RealtimeSignal` to a principal or topic through messaging ports, and the Socket.IO gateway bridges it to a tenant-scoped room. Ephemeral at-most-once or durable exactly-once; read-only operations cannot publish.
 
 - **Realtime multi-node hardening** — TTL-backed presence with heartbeat re-assertion so a crashed node's rooms lapse, eviction of a connection once its credential expires, and a per-emit timeout so one stuck delivery cannot wedge the gateway's consume loop.
 
-- **Realtime offline store-and-forward** — a durable principal-addressed signal also reaches a recipient offline at emit time: the gateway mailboxes it atomically with the dedup, and on reconnect each device replays from its cursor and acks to advance it. Topic and ephemeral signals are never mailboxed. (RFC 0006.)
+- **Realtime offline store-and-forward** — a durable principal-addressed signal also reaches a recipient offline at emit time: the gateway mailboxes it atomically with the dedup, and on reconnect each device replays from its cursor and acks to advance it. Topic and ephemeral signals are never mailboxed.
 
-- **Tenant-aware realtime gateway** — `TenantShardedSignalSource` puts per-tenant realtime isolation on the standard tenancy tier ladder: it runs one consume loop per assigned tenant and scopes the mailbox and rooms by a trusted tenant from the stream, not the header. Tenant-global stays the default. (RFC 0007.)
+- **Tenant-aware realtime gateway** — `TenantShardedSignalSource` puts per-tenant realtime isolation on the standard tenancy tier ladder: it runs one consume loop per assigned tenant and scopes the mailbox and rooms by a trusted tenant from the stream, not the header. Tenant-global stays the default.
 
 - **`RealtimeShard`** — one value object bundling a namespace-tier instance's assignment (stream, tenants, group). Hand the same shard to `TenantShardedSignalSource`, the group-ensure step, and the tenant relay so the three can't drift on which tenants, stream, or group an instance owns.
 
@@ -31,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Tenant-aware realtime mailbox fails closed clearly** — when the gateway has no bound tenant to scope a tenant-aware mailbox, it now raises an actionable `realtime_mailbox_tenant_unbound` error naming the fix, instead of an opaque tenant-required failure deep in the adapter.
 
-- **BREAKING — realtime delivery envelope** — every frame the Socket.IO gateway emits is now the uniform `{id, data}` envelope instead of the bare payload (durable carries the event id, ephemeral null). Clients must read `data` and dedup by `id`; there is no transitional dual-emit. (RFC 0006.)
+- **BREAKING — realtime delivery envelope** — every frame the Socket.IO gateway emits is now the uniform `{id, data}` envelope instead of the bare payload (durable carries the event id, ephemeral null). Clients must read `data` and dedup by `id`; there is no transitional dual-emit.
 
 - **Mock document adapter — tenant scoping on every write** — the in-memory mock now injects the tenant column on ensure, upsert, update, and touch (not only create), matching Postgres, so a tenant-aware collection using idempotent or update writes isolates correctly under the mock.
 

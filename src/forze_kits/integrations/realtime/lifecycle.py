@@ -82,10 +82,13 @@ def realtime_group_ensure_lifecycle_step(
 @attrs.define(slots=True, kw_only=True)
 class _EnsureTenantGroupsStartup(LifecycleHook):
     """Idempotently create the gateway's consumer group on **each** assigned tenant's
-    realtime stream (namespace-tier; RFC 0007)."""
+    realtime stream (namespace-tier)."""
 
     shard: RealtimeShard
+    """The realtime shard."""
+
     start_id: str
+    """The start id to use."""
 
     # ....................... #
 

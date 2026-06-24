@@ -1,6 +1,6 @@
 """Minimal supervision for the realtime gateway — spawn the run task, cancel it.
 
-Deliberately thin (RFC 0002 §7): it owns the gateway's ``run(ctx)`` task with
+Deliberately thin: it owns the gateway's ``run(ctx)`` task with
 structured cancellation and nothing else. The "restart on crash with backoff,
 drain on shutdown" concern is **not** baked in here — that belongs to a future
 unified background-runner, and keeping supervision separate from the gateway's
