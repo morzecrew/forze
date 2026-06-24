@@ -36,6 +36,8 @@ def read_gw(
     nested_field_hints: Mapping[str, type[Any]] | None = None,
     codec: ModelCodec[Any, Any] | None = None,
     read_validation: Literal["strict", "trusted"] = "strict",
+    param_namespace: str = "forze",
+    params_required: bool = False,
 ) -> PostgresReadGateway[Any]:
     """Build a read gateway for a relation and model.
 
@@ -43,6 +45,8 @@ def read_gw(
     :param read_type: Read type.
     :param read_relation: Read table name or resolver.
     :param tenant_aware: Whether the document is tenant-aware.
+    :param param_namespace: Session-setting prefix for bound query parameters.
+    :param params_required: Whether the spec declares a query-parameter contract.
     :returns: Postgres read gateway.
     """
 
@@ -61,6 +65,8 @@ def read_gw(
         tenant_aware=tenant_aware,
         nested_field_hints=nested_field_hints,
         read_validation=read_validation,
+        param_namespace=param_namespace,
+        params_required=params_required,
     )
 
 

@@ -38,6 +38,12 @@ class PostgresReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
     read_validation: Literal["strict", "trusted"] = "strict"
     """How SELECT rows are turned into read models (``trusted`` rejects unknown columns up front, then validates like ``strict``)."""
 
+    param_namespace: str = "forze"
+    """Prefix for query-parameter session settings on a parametrized read: a bound field ``window``
+    is applied as ``set_config('<param_namespace>.window', …, true)`` and the relation reads it via
+    ``current_setting('<param_namespace>.window')``. Only used when the spec declares
+    ``query_params``."""
+
 
 # ....................... #
 
