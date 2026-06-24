@@ -10,8 +10,9 @@ full paths (``forze_kits.aggregates.document``, ``forze_kits.dto``, …). Re-exp
 lazily (PEP 562) so importing the package stays cheap.
 """
 
-import importlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from forze.base.lazy import lazy_exports
 
 # ----------------------- #
 
@@ -39,19 +40,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> Any:
-    """Resolve a curated export on first access (PEP 562 lazy import)."""
-
-    module = _EXPORTS.get(name)
-
-    if module is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-    return getattr(importlib.import_module(module), name)
-
-
-def __dir__() -> list[str]:
-    return sorted({*globals(), *__all__})
+__getattr__, __dir__ = lazy_exports(__name__, _EXPORTS)
 
 
 if TYPE_CHECKING:
