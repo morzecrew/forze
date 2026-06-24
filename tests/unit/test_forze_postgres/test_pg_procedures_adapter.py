@@ -295,6 +295,16 @@ def test_config_accepts_real_tenant_use_alongside_comment() -> None:
     config.validate_against_spec(spec)  # does not raise
 
 
+def test_config_accepts_tenant_param_after_quoted_double_dash() -> None:
+    # A `--` inside a string literal must not be treated as a comment that swallows the real bind.
+    spec = ProcedureSpec(name="recompute", params=_Params)
+    config = PostgresProcedureConfig(
+        tenant_aware=True,
+        sql="SELECT recompute(%(window)s) WHERE note = '-- note' AND tenant_id = %(tenant)s",
+    )
+    config.validate_against_spec(spec)  # does not raise
+
+
 def test_config_allows_namespace_tier_without_tenant_param() -> None:
     # A per-tenant query_schema scopes by schema, so %(tenant)s is not required.
     spec = ProcedureSpec(name="recompute", params=_Params)

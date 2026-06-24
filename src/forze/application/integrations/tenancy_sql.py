@@ -74,19 +74,31 @@ def bind_tenant_param(
 # ....................... #
 
 
-_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
-_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+# One token = a single-quoted string, a double-quoted identifier, a line comment, or a block
+# comment. Listing strings/identifiers first means a ``--`` or ``/*`` *inside* a quoted literal is
+# consumed as part of that literal (and kept), so only genuine comments are blanked.
+_SQL_TOKEN = re.compile(
+    r"'(?:[^']|'')*'"  # single-quoted string ('' escapes a quote)
+    r'|"(?:[^"]|"")*"'  # double-quoted identifier ("" escapes a quote)
+    r"|--[^\n]*"  # line comment
+    r"|/\*.*?\*/",  # block comment
+    re.DOTALL,
+)
 
 
 def _strip_sql_comments(sql: str) -> str:
-    """Blank out ``--`` line and ``/* */`` block comments.
+    """Blank out ``--`` line and ``/* */`` comments, leaving string/identifier literals intact.
 
-    So a placeholder that appears only in a comment is not mistaken for a real reference. This is
-    conservative — it may also blank text inside a string literal — but that can only *over*-report
-    a missing reference, which is the fail-closed direction for a wiring guard.
+    A naive strip would also remove a ``--`` that sits inside a quoted literal, dropping any real
+    reference later on that line and failing a valid route at wiring. Scanning literals as whole
+    tokens keeps them, so only genuine comments are removed.
     """
 
-    return _SQL_BLOCK_COMMENT.sub(" ", _SQL_LINE_COMMENT.sub(" ", sql))
+    def _blank(match: "re.Match[str]") -> str:
+        token = match.group(0)
+        return " " if token.startswith(("--", "/*")) else token
+
+    return _SQL_TOKEN.sub(_blank, sql)
 
 
 def unreferenced_param_keys(
