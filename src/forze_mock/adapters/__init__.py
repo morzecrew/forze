@@ -28,6 +28,10 @@ from forze_mock.adapters.procedure import (
     MockProcedureRegistry,
     MockProcedureAdapter,
 )
+from forze_mock.adapters.query_params import (
+    MockQueryParamsRegistry,
+    MockQueryParamsSource,
+)
 from forze_mock.adapters.pubsub import MockPubSubAdapter
 from forze_mock.adapters.queue import MockQueueAdapter
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
@@ -76,6 +80,8 @@ __all__ = [
     "MockProcedureAdapter",
     "MockProcedureRegistry",
     "MockProcedureHandler",
+    "MockQueryParamsRegistry",
+    "MockQueryParamsSource",
     "MockDistributedLockAdapter",
     "MockDurableWorkflowCommandAdapter",
     "MockDurableWorkflowQueryAdapter",

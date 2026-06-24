@@ -138,6 +138,7 @@ from forze_mock.adapters import (
     MockHttpRegistry,
     MockKeyManagement,
     MockProcedureRegistry,
+    MockQueryParamsRegistry,
     MockState,
 )
 from forze_mock.adapters.events import RecordingAuthnEventSink
@@ -249,6 +250,13 @@ class MockDepsModule(DepsModule):
     ``None`` registers the port but leaves every procedure unprogrammed (any call raises
     ``code="mock.procedures.unprogrammed"``); pass a :class:`MockProcedureRegistry` with handlers
     that model each procedure's effect on :class:`MockState`."""
+
+    query_param_sources: MockQueryParamsRegistry | None = attrs.field(default=None)
+    """Programmable sources modelling parametrized document reads (``with_parameters``).
+
+    ``None`` leaves a ``query_params`` document read unprogrammed (a bound read raises
+    ``code="mock.query_parameters.unprogrammed"``); pass a :class:`MockQueryParamsRegistry` whose
+    sources produce rows from the bound params + :class:`MockState`, over which the DSL composes."""
 
     resilience: Literal["passthrough", "real"] = "passthrough"
     domain_events: DomainEventRegistry | None = attrs.field(default=None)

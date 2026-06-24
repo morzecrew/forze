@@ -199,6 +199,10 @@ class ConfigurableMockDocument(_MockFactoryBase):
         state = self._state(context)
         cfg = self._route(spec.name)
         domain_model = spec.write["domain"] if spec.write is not None else None
+        sources = self.module.query_param_sources
+        query_params_source = (
+            sources.source_for(str(spec.name)) if sources is not None else None
+        )
 
         return MockDocumentAdapter[Any, Any, Any, Any](
             spec=spec,
@@ -209,6 +213,7 @@ class ConfigurableMockDocument(_MockFactoryBase):
             dispatcher_provider=domain_dispatcher_provider(context),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
+            query_params_source=query_params_source,
         )
 
 
