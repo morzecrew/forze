@@ -16,7 +16,8 @@ All methods are `async`. Naming is systematic: `get*`/`find*` return the read
 model `R`; `project*` returns a `JsonDict` of selected fields; `select*` validates
 into a caller-supplied `return_type`. The suffix sets the result container —
 none → `CountlessPage` (no total), `_page` → `Page` (with `.count`), `_cursor` →
-`CursorPage` (keyset), `_stream` → an async generator of batches.
+`CursorPage` (keyset), `_stream` → an async generator of batches. The `filters`,
+`sorts`, and `aggregates` arguments follow the [query DSL](../query-syntax.md).
 
 ## Query port
 
@@ -91,10 +92,3 @@ model(s), or `None` when you don't need them back.
 `kill(pk)` and `kill_many(pks)` **hard-delete** — there is no soft-delete or
 `restore` on the port (model soft-delete is a domain concern, applied via
 `update`).
-
-## See also
-
-- [Query DSL](../query-syntax.md) — `filters` / `sorts` / `aggregates`.
-- [Mapping & codecs](../mapping.md) — how a create command becomes the domain
-  model and comes back as the read model.
-- [Reading data](../../data-events/reading-data.md) · [Concurrency & conflicts](../../writing-operation/concurrency-conflicts.md).

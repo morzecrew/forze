@@ -119,7 +119,7 @@ get / neighbors / walk / shortest-path. Encrypted fields stay **confidential**:
 they're never content-searchable, aggregatable, or matchable in a graph predicate
 (that's physics, not a limit) — so encrypt what you store-and-return but never
 query by, and use `searchable` (deterministic) fields for the equality lookups you
-do need. Each plane fails closed the same way (`core.{search,analytics,graph}.encryption_wiring`).
+do need.
 One caveat when sharing a policy: `binds_record_id` needs a stable per-record id, so it
 applies to the document and graph (key-addressed) planes only — an `AnalyticsSpec` (warehouse
 rows have no id) and an endpoint-identity graph edge reject it at wiring. Leave it off the

@@ -135,6 +135,7 @@ nav = [
         ] },
         { "Identity" = [
             "recipes/authn-authz-tenancy-fastapi.md",
+            "recipes/password-reset.md",
             "recipes/tenant-selector-and-admin.md",
             "recipes/local-identity.md",
             "recipes/external-bootstrap-forze-jwt.md",

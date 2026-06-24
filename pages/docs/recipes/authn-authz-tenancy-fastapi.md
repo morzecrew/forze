@@ -164,50 +164,10 @@ it, or keep it off the router with `include=`.
 
 ## Self-service password reset
 
-The reset pair is part of the registry too. `/password-reset/request` answers a
-**uniform 202** for known and unknown logins alike (no account enumeration) and never
-returns the token; `/password-reset/confirm` consumes the single-use token (1-hour TTL),
-sets the new password, and revokes all of the principal's sessions. Any bad token is a
-uniform `401`. Wiring adds the reset pepper and the `password_reset` route set on top of
-the login stack:
-
-```python
-AuthnDepsModule(
-    kernel=AuthnKernelConfig(
-        access_token_secret=secret,
-        refresh_token_pepper=refresh_pepper,
-        password=PasswordConfig(),
-        reset_token_pepper=reset_pepper,  # bytes, ≥ 32 — separate from invite_token_pepper
-    ),
-    authn={"api": frozenset({"password", "token"})},
-    token_lifecycle={"api"},
-    password_reset={"api"},
-)
-```
-
-**Delivery.** The raw token must reach the account holder out of band, never in the HTTP
-response. Set `reset_events` and a successful request stages an
-`authn.password_reset_requested` event (`login`, `principal_id`, raw `token`,
-`expires_at`) onto the standard outbox → relay → notify pipeline:
-
-```python
-from forze.application.contracts.outbox import OutboxSpec
-from forze_kits.aggregates.authn import AuthnPasswordResetRequestedPayload
-
-RESET_EVENTS = OutboxSpec(
-    name="authn_events",
-    codec=PydanticModelCodec(AuthnPasswordResetRequestedPayload),
-    destination=OutboxDestination.queue(route="jobs", channel="notify"),
-)
-registry = build_authn_registry(AUTH, reset_events=RESET_EVENTS).freeze()
-```
-
-The raw token transits the outbox row, so treat that store like the credential stores
-(tight retention); apps wanting zero persistence skip `reset_events` and call
-`ctx.authn.password_reset(spec)` from a custom handler that hands the token straight to a
-mailer. Either way, wire delivery before exposing the route — without it a reset mints a
-token nobody receives — and rate-limit `/password-reset/request` at the edge (it is an
-unauthenticated write).
+Request → deliver → confirm is a separate route set on the same registry: add the reset
+pepper and `password_reset={"api"}`, then deliver the token out of band (it is never
+returned in the response). The full flow — wiring, the outbox delivery seam, and the
+token-handling caveats — is the [password-reset recipe](password-reset.md).
 
 ## Multiple organizations
 

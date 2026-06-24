@@ -130,11 +130,3 @@ Skim it, or search for a single word.
 
 **Saga**
 :   A sequence of operations across aggregates or services, with compensation logic for rollback.
-
----
-
-## See also
-
-- [Overview](../core-concepts/overview.md) — the mental model and vocabulary
-- [Architecture](../core-concepts/architecture.md) — the four-layer structure
-- [Contracts reference](contracts.md) — capability index by contract type

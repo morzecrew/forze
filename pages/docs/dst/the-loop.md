@@ -118,29 +118,14 @@ report = replay_bundle(FailureBundle.load("bug.json"))   # reproduces, from one 
 
 ## Extending it
 
-DST is built from small, documented seams, so you extend it without forking. Everything plugs in as a plain callable or protocol:
-
-<div class="grid cards" markdown>
-
--   :lucide-shield-check: **Invariants**
-
-    An `Invariant` is any `Callable[[History], list[Violation]]` — write a function, pass it in `invariants=`. The [built-ins](invariants.md) are just factories returning one.
-
--   :lucide-shuffle: **Schedulers**
-
-    `Scheduler` is a `Protocol`; supply a `scheduler_factory` to the low-level run path to drive interleavings your own way — the engines call it per run.
-
--   :lucide-bug: **Environment**
-
-    Faults and latency are declarative data (`FaultPolicy`, `LatencyProfile`); for anything custom, the `interceptors` factory adds a seeded `PortInterceptor` chain at the port seam.
-
--   :lucide-boxes: **Engines**
-
-    Each strategy is a free function under `forze_dst.engines` (op_case, scenario, crash_restart, guided) taking the `Simulation` as its context — call one directly, or compose your own search over the engine substrate.
-
-</div>
-
-The `Simulation` class is a thin facade: `run` / `coverage` / `coverage_guided` bind the config and delegate to an engine. The trace seam is deliberately layered — the engine `RuntimeTrace` is the production tracer (id-only, PII-free), and the DST `History` is the oracle's richer view that folds it in *and* adds DST-only events (op-start anchors, `reached` markers, observe facts, crash and partition markers). They stay separate by design: keeping DST concerns out of the production trace is what lets the same tracer run in production untouched.
+DST is built from small seams, so you extend it without forking — each plugs in as a
+plain callable or protocol. An `Invariant` is any `Callable[[History], list[Violation]]`
+(the [built-ins](invariants.md) are factories returning one); `Scheduler` is a protocol
+you supply via `scheduler_factory`; faults and latency are declarative data
+(`FaultPolicy`, `LatencyProfile`), with an `interceptors` factory for anything custom;
+and each search strategy is a free function under `forze_dst.engines` you can call
+directly or compose. The `Simulation` class is a thin facade that binds the config and
+delegates to an engine.
 
 ## See also
 

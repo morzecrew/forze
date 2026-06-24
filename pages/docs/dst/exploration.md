@@ -6,6 +6,9 @@ summary: How DST searches the interleaving space — the schedulers that order c
 
 A bug lives in a specific interleaving, fault timing, and input. The space of all three is astronomically large, so `run`'s job is not to enumerate it but to *search* it well — bias toward the rare orderings that break things, know when to stop, and spend the next run where the last one found something new. This page is the dial behind `run`: the scheduler that orders concurrent work, the sweep that knows when coverage has saturated, and the fuzzer that steers toward unexplored behaviour.
 
+![Three strategies search the interleaving × fault-timing × input space: a scheduler biases rare orderings, a coverage sweep samples until saturated, and a guided fuzzer follows the frontier of new behaviour](../_diagrams/light/dst-exploration.svg#only-light){ data-src="../_diagrams/light/dst-exploration.svg#only-light" }
+![Three strategies search the interleaving × fault-timing × input space: a scheduler biases rare orderings, a coverage sweep samples until saturated, and a guided fuzzer follows the frontier of new behaviour](../_diagrams/dark/dst-exploration.svg#only-dark){ data-src="../_diagrams/dark/dst-exploration.svg#only-dark" }
+
 ## Presets — dial intensity in one call
 
 `SimulationConfig` has many knobs, but most of the time you want one of a few intensity tiers, not a hand-tuned config. The presets name them:
