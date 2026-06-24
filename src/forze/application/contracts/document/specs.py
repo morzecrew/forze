@@ -131,6 +131,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 read_fields=read_fields,
                 spec_name=str(self.name),
                 model=self.read,
+                client_facing=False,
             )
 
         if self.query_policy is not None:

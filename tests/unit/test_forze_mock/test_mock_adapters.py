@@ -183,7 +183,9 @@ async def test_find_with_unknown_sort_field_fails_loud() -> None:
     doc = _document_adapter(MockState())
     with pytest.raises(CoreException, match="not on the mock read model") as ei:
         await doc.find_many(sorts={"nonexistent_field": "asc"})
-    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    # A caller-supplied sort on an unknown field is a precondition (HTTP 400).
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert ei.value.code == "field_not_on_read_model"
 
 
 @pytest.mark.asyncio
@@ -193,7 +195,9 @@ async def test_find_with_unknown_filter_field_fails_loud() -> None:
     doc = _document_adapter(MockState())
     with pytest.raises(CoreException, match="not on the read model") as ei:
         await doc.find_many(filters={"$values": {"nonexistent_field": "x"}})
-    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    # A caller-supplied filter on an unknown field is a precondition (HTTP 400).
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert ei.value.code == "field_not_on_read_model"
 
 
 @pytest.mark.asyncio

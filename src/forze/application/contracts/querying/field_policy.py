@@ -132,9 +132,10 @@ def validate_runtime_filter_fields(
     )
 
     if unknown:
-        raise exc.configuration(
+        raise exc.precondition(
             f"Filter field(s) {unknown} are not on the read model "
             f"({model.__name__}).",
+            code="field_not_on_read_model",
         )
 
 

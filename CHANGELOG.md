@@ -133,7 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Keyring fill-lock stripe is now cross-process stable** — the per-`key_id` crypto fill-lock stripe used Python's `hash()` (PYTHONHASHSEED-randomized), so it varied per process and broke deterministic-simulation replay. It now uses a stable hash, and the guard bans the `hash(x) % n` pattern.
 
-- **Runtime sorts and filters on unknown fields fail loud across backends** — a query-time sort or filter on a field absent from the read model raises `exc.configuration` on Mongo, Firestore, and the mock (matching Postgres). This covers computed fields, which were silently mishandled before.
+- **Bad query fields are a client error (400), not a server error (500)** — a query-time sort, filter, or sort-direction value that names a field absent from the read model (or an invalid direction/null placement) now raises a `precondition` (HTTP 400, `code="field_not_on_read_model"` / `"invalid_sort_value"`) instead of a `configuration` error masked as a 500. This is caller-supplied input, so the status now reflects who's at fault, and the detail reaches the client. A spec's own `default_sort` naming an unknown field stays a `configuration` error (500) — that's the author's misconfiguration. Behavior is uniform across Postgres, Mongo, Firestore, and the mock, and still covers computed (never-stored) fields.
 
 - **FastAPI API-key `prefix:key` parsing fixed** — the `X-API-Key` resolver now splits on the first colon so `prefix:secret` yields the bare secret, matching `forze_mcp`; previously it split on whitespace and passed the whole value, failing verification. Bare keys still authenticate.
 
