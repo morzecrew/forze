@@ -155,3 +155,44 @@ async def test_bound_source_rows_are_tenant_scoped() -> None:
     # get_many draws from the same filtered source: the other tenant's row is not found.
     with pytest.raises(CoreException, match="not found"):
         await adapter.get_many([theirs])
+
+
+@pytest.mark.asyncio
+async def test_bound_get_and_get_many_draw_from_source() -> None:
+    one, two = uuid4(), uuid4()
+
+    def _src(params: BaseModel, state: MockState) -> list[dict]:
+        return [
+            {"id": str(one), "region": "eu", "total": 10},
+            {"id": str(two), "region": "us", "total": 20},
+        ]
+
+    adapter: MockDocumentAdapter = MockDocumentAdapter(
+        spec=_spec(),
+        state=MockState(),
+        namespace="sales",
+        read_model=_Sale,
+        query_params_source=_src,
+    ).with_parameters(_Window())
+
+    got = await adapter.get(one)
+    assert (got.region, got.total) == ("eu", 10)  # get() -> _param_doc_by_pk
+
+    many = await adapter.get_many([two, one])
+    assert [(r.region, r.total) for r in many] == [("us", 20), ("eu", 10)]  # order preserved
+
+    with pytest.raises(CoreException, match="not found"):
+        await adapter.get(uuid4())  # unknown pk in the source
+
+
+def test_param_source_rows_requires_bound_params() -> None:
+    # Defensive guard: the helper is only reached with params bound, but it fails closed anyway.
+    adapter: MockDocumentAdapter = MockDocumentAdapter(
+        spec=_spec(),
+        state=MockState(),
+        namespace="sales",
+        read_model=_Sale,
+        query_params_source=_source,
+    )
+    with pytest.raises(CoreException, match="query_parameters_unbound"):
+        adapter._param_source_rows()  # type: ignore[attr-defined]
