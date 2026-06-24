@@ -161,8 +161,10 @@ nav = [
         { "Contracts" = [
             "reference/contracts.md",
             "reference/contracts/document.md",
-            "reference/contracts/stores.md",
             "reference/contracts/search.md",
+            "reference/contracts/analytics.md",
+            "reference/contracts/procedure.md",
+            "reference/contracts/stores.md",
             "reference/contracts/messaging.md",
         ] },
         { "Matrices" = [

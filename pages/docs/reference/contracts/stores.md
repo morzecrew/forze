@@ -1,12 +1,13 @@
 ---
-title: Cache, counter & storage ports
+title: Cache, counter & storage
 icon: lucide/database
-summary: Methods on the cache, counter, and object-storage contracts
+summary: The cache, counter, and object-storage contracts — their specs and methods
 ---
 
-Method-level reference for the cache, counter, and object-storage contracts. See
-[Contracts](../../core-concepts/contracts.md) for the ports-and-adapters model
-behind them.
+Three small key-addressed contracts. The **cache** is read-through key/value with TTLs
+([Caching](../../data-events/caching.md)); the **counter** is an atomic monotonic
+sequence; **object storage** holds blobs by key. The ports-and-adapters model behind them
+is in [Contracts](../../core-concepts/contracts.md).
 
 ## Cache
 
@@ -14,6 +15,20 @@ behind them.
 within the spec's namespace. **Values must be JSON-serializable, or
 pre-encoded `bytes`** (stored verbatim, returned for the caller to decode) —
 don't rely on key ordering or non-JSON types surviving a round trip.
+
+`CacheSpec` — most fields tune document read-through; the deep behavior is in
+[Caching](../../data-events/caching.md):
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `name` | `str \| StrEnum` | required | namespace for the keys |
+| `ttl` | `timedelta` | `300s` | default entry lifetime |
+| `ttl_pointer` | `timedelta` | `60s` | TTL for versioned-cache pointers |
+| `early_refresh_beta` | `float \| None` | `None` | probabilistic [early refresh](../../data-events/caching.md#stampede-protection) (XFetch) |
+| `early_refresh_background` | `bool` | `False` | run elected refreshes detached, off the read path |
+| `l1` | `L1Spec \| None` | `None` | opt-in [in-process L1](../../data-events/caching.md) ahead of the backend |
+| `sliding_ttl` | `timedelta \| None` | `None` | expire-after-access for versioned entries (capped by `ttl`) |
+| `age_ttl` | `AgeBasedTtl \| None` | `None` | age-proportional [per-entry lifetime](../../data-events/caching.md#adaptive-lifetimes) |
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
@@ -36,7 +51,8 @@ write through). See
 ## Counter
 
 `ctx.counter(spec)` returns a `CounterPort` — an atomic, monotonic sequence within
-the spec's namespace. `suffix` partitions counters under one spec.
+the spec's namespace (`CounterSpec` carries only a name). `suffix` partitions counters
+under one spec.
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
@@ -48,8 +64,8 @@ the spec's namespace. `suffix` partitions counters under one spec.
 ## Storage
 
 Object storage splits into query and command ports —
-`ctx.storage.query(spec)` / `ctx.storage.command(spec)`. Objects are addressed by
-string `key`.
+`ctx.storage.query(spec)` / `ctx.storage.command(spec)` (`StorageSpec` carries only a
+name). Objects are addressed by string `key`.
 
 | Port | Method | Signature | Notes |
 |------|--------|-----------|-------|
@@ -58,5 +74,14 @@ string `key`.
 | command | `upload` | `upload(obj)` | takes an `UploadedObject`, returns `StoredObject` metadata |
 | command | `delete` | `delete(key)` | remove by key |
 
-The core port has no presigned-URL method — that's backend-specific. See the
-[S3](../../integrations/s3.md) / [GCS](../../integrations/gcs.md) integrations.
+The core port has no presigned-URL method — that's backend-specific.
+
+## Implemented by
+
+| Contract | Backend | Integration |
+|----------|---------|-------------|
+| Cache | Redis | [Redis](../../integrations/redis.md) |
+| Counter | Redis | [Redis](../../integrations/redis.md) |
+| Object storage | S3, GCS | [S3](../../integrations/s3.md) · [GCS](../../integrations/gcs.md) |
+
+The in-memory mock implements all three for tests.

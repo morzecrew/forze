@@ -1,11 +1,15 @@
 ---
-title: Document ports
+title: Document
 icon: lucide/file-text
-summary: Every method on the document query and command ports
+summary: The document contract — its spec, the query/command ports, and every method
 ---
 
-The document contract splits into a **query** port and a **command** port,
-resolved from the context by spec:
+The document contract is Forze's CRUD aggregate store: a `DocumentSpec` binds a read
+model (and optional write models) to a logical name, and the context resolves a **query**
+port (reads) and a **command** port (writes) for it. The conceptual model is in
+[Reading data](../../data-events/reading-data.md) and the
+[writing-operation](../../writing-operation/wiring.md) chapter; this is the exhaustive
+surface.
 
 ```python
 q = ctx.document.query(spec)    # reads
@@ -18,6 +22,29 @@ into a caller-supplied `return_type`. The suffix sets the result container —
 none → `CountlessPage` (no total), `_page` → `Page` (with `.count`), `_cursor` →
 `CursorPage` (keyset), `_stream` → an async generator of batches. The `filters`,
 `sorts`, and `aggregates` arguments follow the [query DSL](../query-syntax.md).
+
+## Spec
+
+`DocumentSpec[R, D, C, U]` — binds the read model and optional write types to a name,
+plus per-aggregate policy:
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `name` | `str \| StrEnum` | required | logical name; the default namespace and route key |
+| `read` | `type[R]` | required | the read model returned from queries |
+| `write` | `DocumentWriteTypes \| None` | `None` | `{domain, create_cmd, update_cmd?}`; **omit for a read-only document** (no command port) |
+| `history_enabled` | `bool` | `False` | keep an audit trail of every revision |
+| `materialized` | `frozenset[str]` | `∅` | `@computed_field` names persisted as columns, so they're filterable/sortable |
+| `default_sort` | `QuerySortExpression \| None` | `None` | sort applied when a caller omits `sorts` (required if the read model has no `id`) |
+| `query_policy` | `QueryFieldPolicy \| None` | `None` | allow-sets restricting which fields a governed caller may filter / sort / aggregate |
+| `query_params` | `type[BaseModel] \| None` | `None` | typed [query-parameter](../../data-events/query-parameters.md) contract, bound via `with_parameters` |
+| `encryption` | `FieldEncryption \| None` | `None` | field-level [encryption](../../identity-tenancy-enc/encryption.md) policy (share the same object with the table's `SearchSpec`) |
+| `cache` | `CacheSpec \| None` | `None` | read-through [cache](../../data-events/caching.md) for `get` |
+| `sensitive` | `bool` | `False` | read model carries secrets; generated HTTP/MCP surfaces refuse to project it |
+| `codecs` | `DocumentCodecs \| None` | `None` | codec overrides (auto-derived from the model types by default) |
+
+`write` is a `DocumentWriteTypes` TypedDict — `domain` (the `Document` subclass),
+`create_cmd`, and an optional `update_cmd`.
 
 ## Query port
 
@@ -92,3 +119,14 @@ model(s), or `None` when you don't need them back.
 `kill(pk)` and `kill_many(pks)` **hard-delete** — there is no soft-delete or
 `restore` on the port (model soft-delete is a domain concern, applied via
 `update`).
+
+## Implemented by
+
+| Backend | Tenancy ceiling | Integration |
+|---------|-----------------|-------------|
+| Postgres | `dedicated` | [Postgres](../../integrations/postgres.md) |
+| Mongo | `dedicated` | [Mongo](../../integrations/mongo.md) |
+| Firestore | `dedicated` | [Firestore](../../integrations/firestore.md) |
+
+The in-memory mock implements the full surface, so an aggregate is testable without a
+backend — see [Testing](../../testing/overview.md).

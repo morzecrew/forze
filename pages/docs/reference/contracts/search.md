@@ -1,19 +1,38 @@
 ---
-title: Search ports
+title: Search
 icon: lucide/search
-summary: Methods on the search query and command (index-maintenance) ports
+summary: The search contract — its spec, the query and command (index-maintenance) ports
 ---
 
-Search splits into a **query** port (run searches) and a **command** port
-(maintain the index):
+Full-text and vector search over a `SearchSpec`. It splits into a **query** port (run
+ranked searches) and a **command** port (maintain the index); the conceptual surface is
+[Reading data → Searching](../../data-events/reading-data.md#searching).
 
 ```python
 q = ctx.search.query(spec)    # search
 c = ctx.search.command(spec)  # index maintenance
 ```
 
-`ctx.search` also exposes `.hub(spec)` and `.federated(spec)` (both return a
-query port over composed indexes) and `.snapshot(spec)` for result-set snapshots.
+`ctx.search` also exposes `.hub(spec)` and `.federated(spec)` (a query port over composed
+indexes, declared with `HubSearchSpec` / `FederatedSearchSpec`) and `.snapshot(spec)` for
+result-set snapshots.
+
+## Spec
+
+`SearchSpec[M]` — the searchable model, its indexed fields, and ranking/encryption policy:
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `name` | `str \| StrEnum` | required | logical name / index route |
+| `model_type` | `type[M]` | required | the searchable Pydantic model |
+| `fields` | `Sequence[str]` | required | indexed fields (non-empty, unique) |
+| `default_weights` | `Mapping[str, float] \| None` | `None` | per-field relevance weights |
+| `fuzzy` | `SearchFuzzySpec \| None` | `None` | fuzzy-matching configuration |
+| `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts` (required if the model has no `id`) |
+| `snapshot` | `SearchResultSnapshotSpec \| None` | `None` | result-ID snapshotting defaults (stable re-pagination) |
+| `encryption` | `FieldEncryption \| None` | `None` | field [encryption](../../identity-tenancy-enc/encryption.md) — **the same policy** as the document table's, so in-place search reproduces its AAD |
+| `sensitive` | `bool` | `False` | model carries secrets; generated surfaces refuse to project it |
+| `read_codec` | `ModelCodec \| None` | `None` | row codec override (auto-derived otherwise) |
 
 ## Query port
 
@@ -43,4 +62,14 @@ highlighting, etc.
 | `delete` | `delete(ids)` | remove by id |
 | `delete_all` | `delete_all()` | empty the index |
 
-See the [Meilisearch](../../integrations/meilisearch.md) integration.
+## Implemented by
+
+| Backend | Mode | Integration |
+|---------|------|-------------|
+| Meilisearch | external index | [Meilisearch](../../integrations/meilisearch.md) |
+| Postgres | in-place (FTS + pgvector) over the document table | [Postgres](../../integrations/postgres.md) |
+| Mongo | in-place over the document collection | [Mongo](../../integrations/mongo.md) |
+
+An **external index** seals encrypted fields in the index document; **in-place** search
+decrypts out of the document table's results — which is why the `encryption` policy must be
+shared with the `DocumentSpec`.
