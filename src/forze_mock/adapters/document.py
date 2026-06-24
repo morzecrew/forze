@@ -161,7 +161,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self._require_params_bound()
 
         if self.bound_params is not None:
-            return self._param_source_rows()
+            return [
+                doc for doc in self._param_source_rows() if self._doc_visible(doc)
+            ]
 
         with self.state.lock:
             return [

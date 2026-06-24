@@ -6,6 +6,7 @@ require_psycopg()
 
 # ....................... #
 
+import json
 from typing import (
     Any,
     AsyncGenerator,
@@ -70,6 +71,23 @@ def _for_update_sql(mode: RowLockMode) -> sql.SQL | None:
 
 # ----------------------- #
 
+
+def _param_text(value: Any) -> str:
+    """Serialize a bound query-parameter value to GUC text.
+
+    Containers are JSON-encoded (so a view can ``current_setting(...)::jsonb``); other values —
+    already JSON-normalized by ``model_dump(mode="json")`` — use their plain string form so typed
+    casts like ``::date``/``::int`` see the bare value rather than a quoted/repr'd one.
+    """
+
+    if isinstance(value, (list, dict)):
+        return json.dumps(value)
+
+    return str(value)
+
+
+# ----------------------- #
+
 T = TypeVar("T", bound=BaseModel)
 M = TypeVar("M", bound=BaseModel)
 
@@ -124,6 +142,10 @@ class PostgresReadGateway[M: BaseModel](
         with ``current_setting('<namespace>.<field>', true)`` then yields SQL ``NULL`` (castable to
         any type) instead of ``''`` (which fails a typed cast like ``::date``). A view reading an
         optional parameter must use the ``missing_ok`` form ``current_setting(name, true)``.
+
+        Container values (lists/dicts) are JSON-encoded so a view can read them with
+        ``current_setting(...)::jsonb``; scalars (already JSON-normalized by ``model_dump``) pass
+        through as their plain string form for casts like ``::date`` or ``::int``.
         """
 
         if self.bound_params is None:
@@ -134,7 +156,7 @@ class PostgresReadGateway[M: BaseModel](
         calls = [
             sql.SQL("set_config({name}, {val}, true)").format(
                 name=sql.Literal(f"{self.param_namespace}.{field}"),
-                val=sql.Literal(str(value)),
+                val=sql.Literal(_param_text(value)),
             )
             for field, value in data.items()
             if value is not None
@@ -261,6 +283,8 @@ class PostgresReadGateway[M: BaseModel](
     # ....................... #
 
     async def get_many(self, pks: Sequence[UUID]) -> list[M]:
+        self._require_params_bound()
+
         if not pks:
             return []
 

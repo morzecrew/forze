@@ -31,6 +31,11 @@ class _OptionalParams(BaseModel):
     region: str | None = None
 
 
+class _StructuredParams(BaseModel):
+    ids: list[int] = [1, 2]
+    flags: dict[str, bool] = {"on": True}
+
+
 def _client() -> MagicMock:
     client = MagicMock(spec=PostgresClient)
     client.fetch_all = AsyncMock(return_value=[])
@@ -125,6 +130,22 @@ async def test_all_none_params_emit_no_set_config() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_params_are_json_encoded() -> None:
+    client = _client()
+    gw = _gw(
+        client,
+        params_required=True,
+        bound_params=_StructuredParams(ids=[1, 2], flags={"on": True}),
+    )
+
+    await gw.find_many(None)
+
+    rendered = _rendered(client.execute.await_args[0][0])
+    assert "[1, 2]" in rendered  # JSON array, not a Python repr
+    assert '{"on": true}' in rendered  # JSON object with lowercase bool
+
+
+@pytest.mark.asyncio
 async def test_unbound_required_fails_closed() -> None:
     client = _client()
     gw = _gw(client, params_required=True, bound_params=None)
@@ -133,6 +154,15 @@ async def test_unbound_required_fails_closed() -> None:
         await gw.find_many(None)
 
     assert not client.fetch_all.called  # never reached the fetch
+
+
+@pytest.mark.asyncio
+async def test_get_many_empty_still_fails_closed_when_unbound() -> None:
+    client = _client()
+    gw = _gw(client, params_required=True, bound_params=None)
+
+    with pytest.raises(CoreException, match="query_parameters_unbound"):
+        await gw.get_many([])  # empty input must not bypass the guard
 
 
 @pytest.mark.asyncio
