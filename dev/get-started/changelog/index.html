@@ -2245,6 +2245,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/query-parameters/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sliders-horizontal" viewBox="0 0 24 24"><path d="M10 5H3M12 19H3M14 3v4M16 17v4M21 12h-9M21 19h-5M21 5h-7M8 10v4M8 12H3"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Query parameters
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/procedures/" class="md-nav__link">
         
   
@@ -6645,6 +6674,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>
 <p><strong>Procedures port — governed parametrized commands/compute</strong> — <code>ctx.procedure.command(spec).run(params)</code> runs a spec-named, parametrized statement (a function/<code>CALL</code>, set-based recompute, or <code>REFRESH MATERIALIZED VIEW</code>): analytics' write/compute twin, for recomputing over an ingested batch in one statement instead of per-row triggers. One <code>ProcedureSpec[In, Out]</code> per procedure, command-only (refused in a read-only operation), on Postgres plus a programmable mock. Tenant-aware routes fail closed at wiring unless the SQL binds <code>%(tenant)s</code>.</p>
+</li>
+<li>
+<p><strong>Query parameters — bound session settings for read sources</strong> — a read resource declares a typed <code>query_params</code> contract and a handler binds values with <code>ctx.document.query(spec).with_parameters(P(...))</code>, which the backend applies as query-scoped session settings the relation reads internally (Postgres documents plus a programmable mock), so the full read DSL still composes on top. Capability-gated and fail-closed: unsupported backends and declared-but-unbound reads raise.</p>
 </li>
 <li>
 <p><strong>Nested-field sorting</strong> — sort keys may now be dotted paths into nested Pydantic sub-models and <code>str</code>-keyed mappings (<code>sorts={"addr.city": "asc"}</code>), resolved the same way nested filters already are, across offset and keyset-cursor reads and every backend. <code>default_sort</code> on document/search specs accepts nested paths too. Tightening: sorting on a nested path whose <strong>root</strong> column is field-encrypted is now rejected (it was silently allowed and could leak the value in a cursor token).</p>
