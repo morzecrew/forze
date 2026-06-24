@@ -129,6 +129,10 @@ nav = [
             "recipes/crud-fastapi-postgres.md",
             "recipes/read-only-document-api.md",
             "recipes/cache-reads-with-redis.md",
+            "recipes/analytics-over-a-data-lake.md",
+            "recipes/expose-an-aggregate-over-mcp.md",
+        ] },
+        { "Writing an operation" = [
             "recipes/add-idempotency.md",
             "recipes/two-phase-handler.md",
             "recipes/offload-cpu-work.md",
@@ -151,12 +155,6 @@ nav = [
             "recipes/background-workflow.md",
             "recipes/scheduled-queue-jobs.md",
         ] },
-        { "Analytics" = [
-            "recipes/analytics-over-a-data-lake.md",
-        ] },
-        { "Interfaces" = [
-            "recipes/expose-an-aggregate-over-mcp.md",
-        ] },
     ] },
     { "Reference" = [
         "reference/glossary.md",
@@ -167,14 +165,20 @@ nav = [
             "reference/contracts/search.md",
             "reference/contracts/messaging.md",
         ] },
-        "reference/tenancy-matrix.md",
-        "reference/encryption-matrix.md",
-        "reference/query-syntax.md",
-        "reference/resilience-tuning.md",
-        "reference/mapping.md",
-        "reference/fastapi-routes.md",
-        "reference/outbox-schema.md",
-        "reference/errors.md",
+        { "Matrices" = [
+            "reference/tenancy-matrix.md",
+            "reference/encryption-matrix.md",
+        ] },
+        { "Schemas & syntax" = [
+            "reference/query-syntax.md",
+            "reference/mapping.md",
+            "reference/outbox-schema.md",
+            "reference/fastapi-routes.md",
+        ] },
+        { "Operations" = [
+            "reference/errors.md",
+            "reference/resilience-tuning.md",
+        ] },
     ] },
 ]
 

@@ -23,7 +23,11 @@ open_orders = await ctx.document.query(order_spec).find_many(
 
 The same expression drives search filters and authorization scope filters, so
 it's worth learning once. The full operator set (`$gt`, `$like`, `$overlaps`, …)
-is a reference table.
+is in the [query syntax reference](../reference/query-syntax.md).
+
+When a value must drive logic *inside* the source — a window function or a view's
+own `WHERE` that a result filter can't reach — declare a typed
+[query parameter](query-parameters.md) instead.
 
 ## Shape — the method prefix
 
@@ -71,5 +75,7 @@ querying and index maintenance never mix.
 Search is wired like any other capability: a `SearchSpec` resolved from the
 context, with per-engine setup living in each integration.
 
-Reading is one half of the story; writes that change state also emit domain
-events — how those propagate is [Events & sagas](events-sagas.md).
+For a query-only service with no write side, see the
+[read-only document API](../recipes/read-only-document-api.md) recipe. Reading is one
+half of the story; writes that change state also emit domain events — how those
+propagate is [Events & sagas](events-sagas.md).

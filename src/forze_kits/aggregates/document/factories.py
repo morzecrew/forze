@@ -7,18 +7,13 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.querying import QueryFieldGuard, build_query_discovery
-from forze.application.execution.operations import OperationDescriptor, OperationRegistry
-from .handlers import (
-    AggregatedListDocuments,
-    CreateDocument,
-    CursorListDocuments,
-    GetDocument,
-    KillDocument,
-    ListDocuments,
-    ProjectedCursorListDocuments,
-    ProjectedListDocuments,
-    UpdateDocument,
+from forze.application.execution.operations import (
+    OperationDescriptor,
+    OperationRegistry,
 )
+from forze.base.exceptions import exc
+from forze.base.primitives import StrKey, StrKeyNamespace
+from forze.domain.models import BaseDTO, Document
 from forze_kits.dto.paginated import (
     CursorPaginated,
     Paginated,
@@ -26,9 +21,6 @@ from forze_kits.dto.paginated import (
     ProjectedPaginated,
 )
 from forze_kits.mapping import PydanticPipelineMapperFactory
-from forze.base.exceptions import exc
-from forze.base.primitives import StrKey, StrKeyNamespace
-from forze.domain.models import BaseDTO, Document
 
 from .dto import (
     AggregatedListRequestDTO,
@@ -39,6 +31,17 @@ from .dto import (
     ListRequestDTO,
     ProjectedCursorListRequestDTO,
     ProjectedListRequestDTO,
+)
+from .handlers import (
+    AggregatedListDocuments,
+    CreateDocument,
+    CursorListDocuments,
+    GetDocument,
+    KillDocument,
+    ListDocuments,
+    ProjectedCursorListDocuments,
+    ProjectedListDocuments,
+    UpdateDocument,
 )
 from .operations import DocumentKernelOp
 from .value_objects import DocumentDTOs, DocumentMappers
@@ -83,6 +86,7 @@ def _parametrized(generic: Any, arg: Any) -> Any:
     """
 
     return generic[arg]
+
 
 # ----------------------- #
 
@@ -254,7 +258,12 @@ def build_document_registry(
     dtos = (
         dtos
         if dtos is not None
-        else cast("DocumentDTOs[R, C, U]", DocumentDTOs.from_spec(spec))
+        else cast(
+            "DocumentDTOs[R, C, U]",
+            DocumentDTOs.from_spec(  # pyright: ignore[reportUnknownMemberType]
+                spec  # pyright: ignore[reportArgumentType]
+            ),
+        )
     )
 
     ns = ns or spec.default_namespace

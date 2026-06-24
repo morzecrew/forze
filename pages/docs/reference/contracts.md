@@ -39,6 +39,7 @@ from the `ExecutionContext`. For the **method signatures** on each port, see
 | Outbox | `OutboxSpec` | `ctx.outbox.command(spec)` / `ctx.outbox.query(spec)` |
 | Inbox | `InboxSpec` | `ctx.inbox` |
 | Domain events | — | `ctx.domain` (dispatch) |
+| Saga | `SagaDefinition` | `SagaExecutorDepKey` |
 
 ## Reliability & coordination
 

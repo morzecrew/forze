@@ -52,8 +52,9 @@ CryptoDepsModule(
 
 That registers the key manager, the AEAD, the directory, and the composed
 `Keyring` under their dep keys. Integrations that opt into encryption resolve the
-keyring from here — they never construct one. For per-tenant keys, swap the
-directory (see [Per-tenant keys](#per-tenant-keys-byok) below).
+keyring from here — they never construct one. The shipped KMS backend is
+[Vault Transit](../integrations/vault.md). For per-tenant keys, swap the directory
+(see [Per-tenant keys](#per-tenant-keys-byok) below).
 
 !!! warning "`MockKeyManagement` is dev/test only"
 

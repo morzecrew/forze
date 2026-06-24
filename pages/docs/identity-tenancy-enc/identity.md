@@ -61,6 +61,11 @@ api_authn = AuthnSpec(
 )
 ```
 
+Providers ship as integrations — see [OIDC](../integrations/oidc.md) and
+[authentication](../integrations/authn.md). The
+[external IdP recipe](../recipes/external-idp-oidc.md) wires a third-party identity
+provider end to end.
+
 ## Authorization: may they?
 
 Once a request carries an `AuthnIdentity`, authorization decides what it may do.

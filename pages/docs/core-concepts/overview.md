@@ -60,7 +60,8 @@ pages — this is the map:
 | **Adapter** | A concrete implementation of a port for one backend | Infrastructure |
 
 The **execution context** is the runtime object that resolves a port to its
-adapter on demand — the seam in the diagram above.
+adapter on demand — the seam in the diagram above. Every term here, and the rest of
+Forze's vocabulary, is defined in the [glossary](../reference/glossary.md).
 
 ## How a request flows
 

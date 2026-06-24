@@ -29,6 +29,9 @@ frozen, purpose-built types that carry data across boundaries.
 | **Update command** | Frozen partial-update payload (all fields optional) | `BaseDTO` |
 | **Read model** | Frozen projection returned from queries | `ReadDocument` |
 
+How a create command becomes the domain model and is projected back to the read model —
+the codecs that carry it — is the [mapping reference](../reference/mapping.md).
+
 !!! note "CreateDocumentCmd is deprecated"
 
     `CreateDocumentCmd` still works as an alias for `BaseDTO` but is deprecated.

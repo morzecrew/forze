@@ -76,9 +76,9 @@ class PortPolicy:
                     "methods tuple (use None to wrap all coroutine methods)",
                 )
 
-            non_public = sorted(m for m in self.methods if not m or m.startswith("_"))
-
-            if non_public:
+            if non_public := sorted(
+                m for m in self.methods if not m or m.startswith("_")
+            ):
                 raise exc.configuration(
                     f"Port policy for {self.key.name!r} may only wrap public "
                     "methods: " + ", ".join(repr(m) for m in non_public),

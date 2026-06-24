@@ -75,7 +75,9 @@ registry.bind("quote").two_phase().bind_tx().set_route("orders").finish()
 
 The engine runs `prepare` in the outer scope — **before** the transaction opens —
 and threads its return value into `apply`, which runs inside the transaction. So
-the transaction wraps only the writes, never the external call.
+the transaction wraps only the writes, never the external call. Worked end to end in
+the [two-phase handler](../recipes/two-phase-handler.md) recipe; for CPU-heavy `prepare`
+work, [offload it off the event loop](../recipes/offload-cpu-work.md).
 
 !!! note "What `prepare` can and can't do"
 
