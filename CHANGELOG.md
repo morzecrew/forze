@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Top-level front door** — the most-used names are now re-exported from the package roots, so `from forze import DocumentSpec, Document, build_runtime` and `from forze_kits import DocumentFacade, build_document_registry` work without memorising deep paths. Re-exports resolve lazily (PEP 562), so `import forze` stays cheap (~no execution kernel until you touch a symbol) and pulls in no integration packages; the full canonical paths keep working unchanged. `forze` (core) and `forze_kits` (batteries) stay separate doors — the core never imports kits.
+
 - **Procedures port — governed parametrized commands/compute** — `ctx.procedure.command(spec).run(params)` runs a spec-named, parametrized statement (a function/`CALL`, set-based recompute, or `REFRESH MATERIALIZED VIEW`): analytics' write/compute twin, for recomputing over an ingested batch in one statement instead of per-row triggers. One `ProcedureSpec[In, Out]` per procedure, command-only (refused in a read-only operation), on Postgres plus a programmable mock. Tenant-aware routes fail closed at wiring unless the SQL binds `%(tenant)s`.
 
 - **Query parameters — bound session settings for read sources** — a read resource declares a typed `query_params` contract and a handler binds values with `ctx.document.query(spec).with_parameters(P(...))`, which the backend applies as query-scoped session settings the relation reads internally (Postgres documents plus a programmable mock), so the full read DSL still composes on top. Capability-gated and fail-closed: unsupported backends and declared-but-unbound reads raise.
