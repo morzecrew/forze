@@ -18,7 +18,7 @@ fields, the method surface, and the integrations that implement it).
 | [Counter](contracts/stores.md#counter) | `CounterSpec` | `ctx.counter(spec)` |
 | [Object storage](contracts/stores.md#storage) | `StorageSpec` | `ctx.storage.query(spec)` / `ctx.storage.command(spec)` |
 | [Graph](contracts/graph.md) | `GraphModuleSpec` | `ctx.graph` |
-| Embeddings | `EmbeddingsSpec` | `ctx.embeddings` |
+| Embeddings | `EmbeddingsSpec` | `ctx.embeddings.provider(spec)` |
 
 ## Search & analytics
 
