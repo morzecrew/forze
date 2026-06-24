@@ -147,6 +147,7 @@ nav = [
             "recipes/transactional-outbox.md",
             "recipes/transactional-notifications.md",
             "recipes/realtime-offline-delivery.md",
+            "recipes/tenant-sharded-realtime.md",
             "recipes/background-workflow.md",
             "recipes/scheduled-queue-jobs.md",
         ] },
