@@ -176,9 +176,12 @@ map order is sort priority:
 sorts = {"created_at": "desc", "id": "asc"}
 ```
 
-The DSL has **no null-ordering control** (no `NULLS FIRST/LAST`). For
-[cursor pagination](../data-events/reading-data.md) all keys must share one
-direction, and an `id` tie-breaker is appended automatically.
+A key may instead be an object to control null placement —
+`{"dir": "asc", "nulls": "first"}` (`"first"` / `"last"`). Omitted, nulls sort as
+the smallest value (`asc` → first, `desc` → last); some backends (Mongo, Firestore)
+support only that default and reject an explicit override. For
+[cursor pagination](../data-events/reading-data.md) directions may be mixed — each
+key seeks in its own direction — and an `id` tie-breaker is appended automatically.
 
 ## Aggregates
 
@@ -252,8 +255,8 @@ Defaults (override per gateway via `filter_limits`):
 | `max_pattern_or_branches` | 32 | patterns when a text operand is a sequence |
 
 A violation — or an empty operator map, an unknown operator, a type mismatch, or a
-regex with unsafe nesting/repetition — raises a validation `CoreException` before
-the query runs.
+regex with unsafe nesting/repetition — raises a `precondition` `CoreException`
+(HTTP 400; the caller supplied a bad query) before the query runs.
 
 ## Backend notes
 

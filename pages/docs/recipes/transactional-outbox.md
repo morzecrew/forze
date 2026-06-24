@@ -62,7 +62,7 @@ lifecycle = LifecyclePlan.from_steps(
 
 ## Consuming on the other side
 
-`run_consumer` is the consumer-side counterpart — it replaces the hand-rolled
+`QueueConsumer` is the consumer-side counterpart — it replaces the hand-rolled
 `consume → dedupe → ack/nack` loop with the decisions already made correctly.
 Per message it: **parks** handler-poison (opt-in `max_deliveries`), runs the
 handler exactly-once through the [inbox](../data-events/events-sagas.md)
@@ -73,17 +73,19 @@ handler failures back (`requeue=True`) for redelivery. One message's failure
 never kills the consumer.
 
 ```python
-from forze_kits.integrations.consumer import run_consumer
+from datetime import timedelta
 
-result = await run_consumer(
-    ctx,
+from forze_kits.integrations.consumer import QueueConsumer
+
+consumer = QueueConsumer(
     queue="orders",                # the channel the relay published to
     queue_spec=ORDERS_QUEUE,
     handler=handle_order_event,    # async def (message: QueueMessage[OrderEvent]) -> None
     inbox_spec=ORDERS_INBOX,
     tx_route="postgres",           # dedup mark + handler commit together here
-    timeout=timedelta(seconds=5),  # idle timeout; None = consume forever
 )
+
+result = await consumer.run(ctx, timeout=timedelta(seconds=5))  # idle timeout; None = forever
 # result.processed / result.duplicates / result.parked / result.failed
 ```
 

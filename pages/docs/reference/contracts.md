@@ -27,6 +27,7 @@ from the `ExecutionContext`. For the **method signatures** on each port, see
 |------------|------|-------------|
 | Search (query / index) | `SearchSpec` | `ctx.search.query(spec)` / `ctx.search.command(spec)` |
 | Analytics | `AnalyticsSpec` | `ctx.analytics.query(spec)` (+ ingest) |
+| Procedures (command / compute) | `ProcedureSpec` | `ctx.procedure.command(spec)` |
 
 ## Messaging & events
 
