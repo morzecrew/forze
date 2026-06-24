@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
@@ -10,9 +11,19 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    FieldEncryption,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.procedure import ProcedureSpec
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.procedure import resolve_procedure_codecs_spec
+from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException
+from forze_mock import MockKeyManagement
 from forze_postgres.adapters.procedure import PostgresProcedureAdapter
 from forze_postgres.execution.deps.configs import PostgresProcedureConfig
 
@@ -125,6 +136,19 @@ async def test_scalar_coerces_text_to_declared_type() -> None:
     result = await adapter.run(_Params())
     assert result.value == 42
     assert isinstance(result.value, int)
+
+
+@pytest.mark.asyncio
+async def test_scalar_null_passes_through() -> None:
+    # A scalar function returning SQL NULL surfaces as value=None (no coercion attempt).
+    mock = _MockClient(value=None)
+    adapter = _adapter(
+        mock,
+        spec=ProcedureSpec(name="compute", params=_Params, result=int),
+        config=PostgresProcedureConfig(sql="SELECT compute(%(window)s)"),
+    )
+    result = await adapter.run(_Params())
+    assert result.value is None
 
 
 @pytest.mark.asyncio
@@ -262,6 +286,121 @@ async def test_query_schema_sets_search_path() -> None:
     assert expected in search_path
     assert "public" in search_path
     assert search_path.index(expected) < search_path.index("public")
+
+
+@pytest.mark.asyncio
+async def test_tenant_aware_query_schema_resolves_with_bound_tenant() -> None:
+    # tenant_aware + a per-tenant query_schema resolves the schema off the bound tenant.
+    tid = uuid4()
+    mock = _MockClient(rowcount=1)
+    adapter = _adapter(
+        mock,
+        spec=ProcedureSpec(name="recompute", params=_Params),
+        config=PostgresProcedureConfig(
+            tenant_aware=True,
+            sql="REFRESH MATERIALIZED VIEW region_totals",
+            query_schema=lambda t: f"tenant_{t.hex}",
+        ),
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+    )
+    await adapter.run(_Params())
+    rendered = [
+        q.as_string(None) if hasattr(q, "as_string") else str(q)
+        for q, _ in mock.executes
+    ]
+    assert any(f"tenant_{tid.hex}" in s for s in rendered if "search_path" in s)
+
+
+@pytest.mark.asyncio
+async def test_tenant_aware_missing_provider_fails_closed() -> None:
+    mock = _MockClient(rowcount=1)
+    adapter = _adapter(
+        mock,
+        spec=ProcedureSpec(name="recompute", params=_Params),
+        config=_tenant_config(),
+        tenant_provider=None,
+    )
+    with pytest.raises(CoreException, match="procedures_tenant_provider_missing"):
+        await adapter.run(_Params())
+
+
+def test_tenant_id_for_resolve_missing_provider() -> None:
+    adapter = _adapter(
+        _MockClient(rowcount=1),
+        spec=ProcedureSpec(name="recompute", params=_Params),
+        config=_tenant_config(query_schema=lambda t: f"tenant_{t.hex}"),
+        tenant_provider=None,
+    )
+    with pytest.raises(CoreException, match="procedures_tenant_provider_missing"):
+        adapter._tenant_id_for_resolve()
+
+
+def test_tenant_id_for_resolve_unbound_tenant() -> None:
+    adapter = _adapter(
+        _MockClient(rowcount=1),
+        spec=ProcedureSpec(name="recompute", params=_Params),
+        config=_tenant_config(query_schema=lambda t: f"tenant_{t.hex}"),
+        tenant_provider=lambda: None,
+    )
+    with pytest.raises(CoreException, match="tenant_required"):
+        adapter._tenant_id_for_resolve()
+
+
+# ----------------------- #
+# statement timeout + encrypted params
+
+
+@pytest.mark.asyncio
+async def test_statement_timeout_sets_local() -> None:
+    mock = _MockClient(rowcount=1)
+    adapter = _adapter(
+        mock,
+        spec=ProcedureSpec(name="recompute", params=_Params),
+        config=PostgresProcedureConfig(
+            sql="SELECT recompute(%(window)s)",
+            statement_timeout=timedelta(seconds=5),
+        ),
+    )
+    await adapter.run(_Params())
+    rendered = [
+        q.as_string(None) if hasattr(q, "as_string") else str(q)
+        for q, _ in mock.executes
+    ]
+    assert any("statement_timeout" in s for s in rendered)
+
+
+class _EncParams(BaseModel):
+    secret: str = "x"
+    window: str = "2026-01-01"
+
+
+@pytest.mark.asyncio
+async def test_encrypted_params_sealed_before_bind() -> None:
+    keyring = Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+    spec = resolve_procedure_codecs_spec(
+        ProcedureSpec(
+            name="recompute",
+            params=_EncParams,
+            encryption=FieldEncryption(encrypted=frozenset({"secret"})),
+        ),
+        keyring=keyring,
+        deterministic=None,
+        tenant_provider=lambda: None,
+    )
+    mock = _MockClient(rowcount=1)
+    adapter = PostgresProcedureAdapter(
+        client=mock,
+        spec=spec,
+        config=PostgresProcedureConfig(sql="SELECT recompute(%(secret)s)"),
+    )
+    await adapter.run(_EncParams(secret="ssn"))
+    _, params = mock.executes[-1]
+    assert is_envelope(base64.b64decode(params["secret"]))  # sealed before bind
+    assert params["window"] == "2026-01-01"
 
 
 # ----------------------- #

@@ -191,6 +191,14 @@ async def test_scalar_spec_coerces_value() -> None:
 
 
 @pytest.mark.asyncio
+async def test_handler_must_return_exec_result() -> None:
+    registry = MockProcedureRegistry().on("recompute", lambda p, s: 42)  # not an ExecResult
+    ctx = context_from_deps(MockDepsModule(procedures=registry)())
+    with pytest.raises(CoreException, match="must return an ExecResult"):
+        await ctx.procedure.command(_spec()).run(_Params())
+
+
+@pytest.mark.asyncio
 async def test_row_spec_rejects_stray_affected_count() -> None:
     registry = MockProcedureRegistry().on(
         "recompute", lambda p, s: ExecResult(value=_RowOut(total=1), affected_count=5)
