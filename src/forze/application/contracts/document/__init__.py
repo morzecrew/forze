@@ -12,7 +12,7 @@ from .codecs import (
     document_codecs_for_spec,
     document_codecs_for_write_types,
 )
-from .specs import DocumentSpec
+from .specs import DocumentSpec, validate_query_parameters
 from .value_objects import KeyedCreate, UpsertItem
 from .write_types import DocumentWriteTypes
 from .types import RowLockMode
@@ -32,6 +32,7 @@ __all__ = [
     "document_codecs_for_spec",
     "document_codecs_for_write_types",
     "DocumentSpec",
+    "validate_query_parameters",
     "DocumentWriteTypes",
     "DocumentQueryDepKey",
     "DocumentCommandDepKey",

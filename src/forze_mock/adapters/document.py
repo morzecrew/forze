@@ -31,6 +31,7 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
     RowLockMode,
+    validate_query_parameters,
 )
 from forze.application.contracts.querying import (
     AggregatesExpression,
@@ -101,6 +102,18 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     dispatcher_provider: Callable[[], DomainEventDispatcherPort | None] = attrs.field(
         default=lambda: None
     )
+
+    # ....................... #
+
+    def with_parameters(self, params: BaseModel) -> "MockDocumentAdapter[R, D, C, U]":
+        # Validates the contract now; modelling query parameters over MockState (so the mock stays
+        # the DST oracle) is a later phase, so it fails closed rather than ignoring them.
+        validate_query_parameters(self.spec, params)
+        raise exc.precondition(
+            f"Document route {str(self.spec.name)!r}: the mock backend does not execute query "
+            "parameters yet.",
+            code="query_parameters_unsupported",
+        )
 
     # ....................... #
 

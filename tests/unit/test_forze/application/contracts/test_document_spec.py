@@ -2,9 +2,13 @@
 
 import msgspec
 import pytest
-from pydantic import computed_field
+from pydantic import BaseModel, computed_field
 
-from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.document import (
+    DocumentSpec,
+    DocumentWriteTypes,
+    validate_query_parameters,
+)
 from forze.application.contracts.querying import QueryFieldPolicy
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -267,3 +271,47 @@ def test_sensitive_flag_round_trips() -> None:
     spec = DocumentSpec(name="doc", read=_Read, sensitive=True)
 
     assert spec.sensitive is True
+
+
+# ----------------------- #
+# Query parameters
+
+
+class _Window(BaseModel):
+    window: str = "2026-01-01"
+
+
+def test_query_params_accepts_model() -> None:
+    spec = DocumentSpec(name="sales", read=_Read, query_params=_Window)
+    assert spec.query_params is _Window
+
+
+def test_query_params_defaults_none() -> None:
+    assert DocumentSpec(name="doc", read=_Read).query_params is None
+
+
+def test_query_params_rejects_non_model() -> None:
+    with pytest.raises(CoreException, match="BaseModel"):
+        DocumentSpec(name="sales", read=_Read, query_params=str)  # type: ignore[arg-type]
+
+
+def test_validate_query_parameters_undeclared() -> None:
+    spec = DocumentSpec(name="doc", read=_Read)
+    with pytest.raises(CoreException, match="query_parameters_undeclared"):
+        validate_query_parameters(spec, _Window())
+
+
+def test_validate_query_parameters_type_mismatch() -> None:
+    spec = DocumentSpec(name="sales", read=_Read, query_params=_Window)
+
+    class _Other(BaseModel):
+        x: int = 1
+
+    with pytest.raises(CoreException, match="query_parameters_type_mismatch"):
+        validate_query_parameters(spec, _Other())
+
+
+def test_validate_query_parameters_valid() -> None:
+    spec = DocumentSpec(name="sales", read=_Read, query_params=_Window)
+    p = _Window()
+    assert validate_query_parameters(spec, p) is p

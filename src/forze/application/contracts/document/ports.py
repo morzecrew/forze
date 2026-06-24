@@ -293,6 +293,17 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         """Count documents by filters."""
         ...  # pragma: no cover
 
+    def with_parameters(self, params: BaseModel) -> "DocumentQueryPort[R]":
+        """Bind typed query parameters, returning a param-bound clone of this port.
+
+        The spec must declare a :attr:`~forze.application.contracts.document.DocumentSpec.query_params`
+        contract; *params* must be an instance of it. A supporting backend applies the values as
+        query-scoped session settings the underlying relation reads internally, and the read DSL
+        composes on top unchanged. Raises if the spec declares no contract, *params* is the wrong
+        type, or the backend does not support query parameters.
+        """
+        ...  # pragma: no cover
+
 
 # ....................... #
 
