@@ -8,7 +8,8 @@ Durable execution runs **crash-resumable** work on an external engine: a long-ru
 workflow that survives process restarts, a schedule that fires it on a cron, or an
 event-driven function. These contracts are **resolved by dep key** — there is no short
 `ctx.*` accessor — and the engine integration ([Temporal](../../integrations/temporal.md) /
-[Inngest](../../integrations/inngest.md)) provides the adapter. Worked flows: the
+[Inngest](../../integrations/inngest.md)) provides the adapter. The concept is
+[Durable execution](../../data-events/durable-execution.md); worked flows are the
 [background workflow](../../recipes/background-workflow.md) and
 [scheduled queue jobs](../../recipes/scheduled-queue-jobs.md) recipes.
 

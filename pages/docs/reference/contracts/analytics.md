@@ -8,7 +8,7 @@ The analytics contract runs **registered, parametrized queries** against a wareh
 or view and returns typed rows, with an optional append-only **ingest** side. Unlike the
 [document](document.md) port it has no per-row CRUD and no live query DSL — you register
 named queries up front and pass typed params; unlike [procedures](procedure.md) it only
-reads. The worked flow is the
+reads. The concept is [Analytics](../../data-events/analytics.md); the worked flow is the
 [analytics-over-a-data-lake](../../recipes/analytics-over-a-data-lake.md) recipe.
 
 ```python

@@ -40,6 +40,9 @@ Skim it, or search for a single word.
 **SearchSpec**
 :   Declares a search index for full-text or structured queries over documents.
 
+**EmbeddingsSpec**
+:   Declares an embeddings provider (`ctx.embeddings`) that turns text into vectors, for similarity (vector) search.
+
 **CacheSpec**
 :   Declares a cache layer for read-through or write-through caching.
 

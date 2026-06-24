@@ -57,9 +57,11 @@ nav = [
             "data-events/reading-data.md",
             "data-events/query-parameters.md",
             "data-events/procedures.md",
+            "data-events/analytics.md",
             "data-events/caching.md",
             "data-events/events-sagas.md",
             "data-events/realtime.md",
+            "data-events/durable-execution.md",
         ] },
         { "Identity, tenancy & encryption" = [
             "identity-tenancy-enc/identity.md",

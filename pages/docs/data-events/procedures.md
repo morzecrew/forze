@@ -10,8 +10,8 @@ materialized view. You can always reach for the raw client — but then you own
 correctness, with no parameter validation, no tenancy, no portability. The
 **procedures** port is the governed middle ground: a spec-named, parametrized
 command or compute step. It is the write-and-compute twin of the governed,
-parametrized *reads* you run through [analytics](../recipes/analytics-over-a-data-lake.md),
-sharing the same machinery and differing only in intent.
+parametrized *reads* you run through [analytics](analytics.md), sharing the same
+machinery and differing only in intent.
 
 ## Where it sits
 

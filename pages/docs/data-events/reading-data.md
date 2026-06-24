@@ -68,7 +68,9 @@ hits = await ctx.search.query(order_search).search("blue widget")
 
 `search` / `search_page` / `search_cursor` (with `project_` and `select_`
 variants) mirror the document methods. Engines cover full-text, vector
-similarity, and **hub / federated** search that spans several relations. Keeping
+similarity, and **hub / federated** search that spans several relations. Vector
+search ranks by **embeddings** — vectors produced by an embeddings provider
+(`ctx.embeddings`) — so semantically similar text scores together. Keeping
 the index current — upsert and delete — is the separate **search command port**;
 querying and index maintenance never mix.
 
