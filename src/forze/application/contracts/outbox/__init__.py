@@ -7,6 +7,7 @@ from .deps import (
     OutboxQueryDepKey,
     OutboxQueryDepPort,
 )
+from ..base import EncryptionReach
 from .integration_config import OutboxIntegrationConfig
 from .ports import OutboxCommandPort, OutboxQueryPort, OutboxRowPersistPort
 from .specs import (
@@ -27,6 +28,7 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "EncryptionReach",
     "IntegrationEvent",
     "OutboxClaim",
     "OutboxCommandDepKey",

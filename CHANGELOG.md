@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Encryption *reach* vocabulary** — the outbox/messaging encryption setting is now named for what it is: a *reach* ladder (where the payload is decrypted: `none < at_rest < end_to_end`), distinct from coverage (how much is encrypted — a storage concern). New canonical `EncryptionReach` type; `OutboxEncryptionTier` is now a back-compat alias for it, and `MessageEncryptionTier` is documented as its transport subset (no `at_rest` — a transport has no store). No behavior or value change — `OutboxSpec.encryption` keeps the same field name and `none`/`at_rest`/`end_to_end` values.
+
 - **Fencing-token capability for distributed locks** — a `DistributedLockSpec` can now declare `requires_fencing_token=True`, and a backend reports support via the opt-in `FencingAware` protocol (`capabilities() -> DistributedLockCapabilities`). Resolving the command port fails closed (`exc.configuration`) against a backend that can't issue monotonic tokens, so a fencing-dependent consumer is never silently wired onto best-effort exclusion. Default stays `False` (tokens best-effort, `AcquiredLock.token` may be `None`); Redis and mock report fencing support.
 
 - **Less CRUD boilerplate** — `build_document_registry(spec)` derives its `DocumentDTOs` from the spec when `dtos` is omitted (override, or `create=None`/`update=None` to disable an op), and new `document_facade(runtime, registry, spec)` returns a per-call typed `DocumentFacade` factory. Both additive — the explicit `DocumentDTOs` and `DocumentFacade(...)` forms keep working.
