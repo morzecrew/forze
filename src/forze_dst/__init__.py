@@ -34,6 +34,7 @@ from .scheduler import FIFOScheduler, PCTScheduler, RandomScheduler
 from . import (  # noqa: F401  (re-exported namespaces)
     artifacts,
     cluster,
+    conformance,
     derive,
     explore_guided,
     faults,
@@ -69,6 +70,7 @@ __all__ = [
     "latency",
     "scheduler",
     "cluster",
+    "conformance",
     "artifacts",
     "runtime",
     "oracle",

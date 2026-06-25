@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Adapter conformance — isolation anomaly battery** — new `forze_dst.conformance`: a backend-agnostic battery of classic isolation anomalies (non-repeatable read, read skew, write skew, lost update) as deterministic forced interleavings (over the shipped `Conductor`) with a known verdict per `IsolationLevel`, run against any `ConformanceBackend`. Verdicts normalize to permitted/prevented so a differential compares the anomaly *outcome* at the declared level — never the mechanism, error code, or victim — and a reviewed allowed-divergence catalog (`CONTRACT_STRENGTHENINGS` / `MECHANISM_DIVERGENCES`) records expected differences (e.g. Forze's rev-OCC prevents lost update at every level). Mock-only first leg; the real-backend (testcontainers) differential that turns "passed on the mock" into "matches the real engine" follows.
+
 - **Redis stream & pub-sub transports** — `RedisDepsModule` wires the generic `StreamSpec` / `PubSubSpec` transports (`streams` / `stream_groups` / `pubsub` route maps → the six stream/pub-sub dep keys) via new `RedisStreamConfig` / `RedisStreamGroupConfig` / `RedisPubSubConfig`, so realtime-over-Redis and outbox→stream/pub-sub relay work in production. No namespace (the stream/topic is per-call; `tenant_aware` adds a `tenant:{id}:` key prefix).
 
 - **End-to-end encryption + reach floor on Redis transports** — `encryption="end_to_end"` on a `StreamSpec` / `PubSubSpec` seals payloads through the broker, and the deployment `required_reach` floor is enforced at every resolve point (publish *and* subscribe/consume).
