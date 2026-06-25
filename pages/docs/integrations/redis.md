@@ -1,12 +1,13 @@
 ---
 title: Redis / Valkey
 icon: lucide/zap
-summary: Cache, counters, idempotency, search snapshots, and distributed locks
+summary: Cache, counters, idempotency, search snapshots, distributed locks, streams, and pub-sub
 ---
 
 `forze[redis]` implements fast, ephemeral, and coordination-oriented state on
 Redis or Valkey: caching, atomic counters, idempotency records, search-result
-snapshots, and distributed locks — all behind Forze contracts.
+snapshots, distributed locks, and the messaging transports (Redis Streams and
+pub-sub) — all behind Forze contracts.
 
 ## Install
 
@@ -63,6 +64,34 @@ lifecycle = LifecyclePlan.from_steps(
 | Idempotency | `IdempotencySpec.name` (`idempotency`, plain or routed) |
 | Search-result snapshots | `SearchResultSnapshotSpec.name` (`search_snapshots`) |
 | Distributed locks | `DistributedLockSpec.name` (`dlocks`) |
+| Stream (read/append) | `StreamSpec.name` (`streams`) |
+| Stream consumer group (read/ack/claim + provisioning) | `StreamSpec.name` (`stream_groups`) |
+| Pub-sub (publish/subscribe) | `PubSubSpec.name` (`pubsub`) |
+
+## Streams & pub-sub
+
+Redis Streams back the `StreamSpec` transport (append/read + consumer groups, the
+outbox relay's `to_stream`, and the realtime gateway); Redis Pub/Sub backs the
+`PubSubSpec` transport (publish/subscribe, the relay's `to_pubsub`). Register routes
+with `RedisStreamConfig`, `RedisStreamGroupConfig`, and `RedisPubSubConfig`:
+
+```python
+from forze_redis import RedisPubSubConfig, RedisStreamConfig, RedisStreamGroupConfig
+
+RedisDepsModule(
+    client=redis,
+    streams={"events": RedisStreamConfig(tenant_aware=True)},
+    stream_groups={"events": RedisStreamGroupConfig(tenant_aware=True)},
+    pubsub={"presence": RedisPubSubConfig()},
+)
+```
+
+Unlike the keyed resources above, these carry **no namespace** — the stream/topic
+name is supplied per call, and `tenant_aware=True` isolates it with a
+`tenant:{id}:` key prefix. Set `encryption="end_to_end"` on the `StreamSpec` /
+`PubSubSpec` to seal payloads through the broker (the consumer decrypts); a wired
+`CryptoDepsModule` is required, and a deployment `required_reach` floor is
+enforced here. Pub-sub is at-most-once past the broker.
 
 ## L1 push invalidation
 

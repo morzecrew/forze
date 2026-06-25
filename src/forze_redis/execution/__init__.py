@@ -8,6 +8,9 @@ from .deps import (
     RedisDepsModule,
     RedisDistributedLockConfig,
     RedisIdempotencyConfig,
+    RedisPubSubConfig,
+    RedisStreamConfig,
+    RedisStreamGroupConfig,
     RedisUniversalConfig,
 )
 from .lifecycle import redis_lifecycle_step, routed_redis_lifecycle_step
@@ -24,5 +27,8 @@ __all__ = [
     "RedisCounterConfig",
     "RedisDistributedLockConfig",
     "RedisIdempotencyConfig",
+    "RedisPubSubConfig",
+    "RedisStreamConfig",
+    "RedisStreamGroupConfig",
     "RedisUniversalConfig",
 ]

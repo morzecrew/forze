@@ -22,7 +22,12 @@ from forze.application.contracts.stream import (
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.serialization import PydanticModelCodec
-from forze_redis.adapters import RedisStreamAdapter, RedisStreamCodec, RedisStreamGroupAdapter
+from forze_redis.adapters import (
+    RedisStreamAdapter,
+    RedisStreamCodec,
+    RedisStreamGroupAdapter,
+    RedisStreamGroupAdminAdapter,
+)
 from forze_redis.kernel.client import RedisClient
 from forze_socketio import RealtimeGateway, StreamGroupSignalSource
 
@@ -42,12 +47,13 @@ def _redis_module(redis_client: RedisClient):  # type: ignore[no-untyped-def]
     codec = RedisStreamCodec(payload_codec=PydanticModelCodec(RealtimeSignal))
     writer = RedisStreamAdapter(client=redis_client, codec=codec)
     group = RedisStreamGroupAdapter(client=redis_client, codec=codec)
+    admin = RedisStreamGroupAdminAdapter(client=redis_client)
 
     def module() -> Deps:
         return Deps.plain({
             StreamCommandDepKey: lambda _ctx, _spec: writer,
             StreamGroupQueryDepKey: lambda _ctx, _spec: group,
-            StreamGroupAdminDepKey: lambda _ctx, _spec: group,  # same adapter, admin port
+            StreamGroupAdminDepKey: lambda _ctx, _spec: admin,
         })
 
     return module

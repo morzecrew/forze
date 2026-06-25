@@ -33,6 +33,7 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
+from forze.application.contracts.stream import StreamQueryDepKey, StreamSpec
 from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
@@ -44,6 +45,12 @@ from forze_mock.execution.module import ConfigurableMockQueue, MockDepsModule
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
 from forze_postgres.kernel.client import PostgresClient
+from forze_redis import (
+    RedisDepsModule,
+    RedisStreamConfig,
+    RedisStreamGroupConfig,
+)
+from forze_redis.kernel.client import RedisClient
 
 
 class _OutboxPayload(BaseModel):
@@ -872,3 +879,62 @@ async def test_hlc_ordering_persists_and_claims_in_causal_order(
     packed = [c.hlc.pack() for c in claims]  # type: ignore[union-attr]
     assert packed == sorted(packed)
     assert len(set(packed)) == 3
+
+
+@pytest.mark.asyncio
+async def test_outbox_relays_to_module_wired_redis_stream(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    outbox_table: str,
+) -> None:
+    """Production shape: a Postgres outbox relays to a Redis stream wired via RedisDepsModule."""
+
+    codec = PydanticModelCodec(_OutboxPayload)
+    channel = f"it:outbox:stream:{uuid4().hex[:8]}"
+    outbox_spec = OutboxSpec(
+        name="integration",
+        codec=codec,
+        destination=OutboxDestination.stream(route=channel, channel=channel),
+    )
+    stream_spec = StreamSpec(name=channel, codec=codec)
+
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(
+            PostgresDepsModule(
+                client=pg_client,
+                tx={"default"},
+                outboxes={
+                    "integration": PostgresOutboxConfig(relation=("public", outbox_table)),
+                },
+            ),
+            RedisDepsModule(
+                client=redis_client,
+                streams={channel: RedisStreamConfig(tenant_aware=False)},
+                stream_groups={channel: RedisStreamGroupConfig(tenant_aware=False)},
+            ),
+        ).freeze()
+    )
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        async with ctx.tx_ctx.scope("default"):
+            await ctx.outbox.command(outbox_spec).stage(
+                "demo.created", _OutboxPayload(label="from-pg-outbox")
+            )
+            await ctx.outbox.command(outbox_spec).flush()
+
+        result = await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=None
+        ).to_stream(ctx, stream_spec)
+        assert result.published == 1
+
+        # The event landed in the real Redis stream, read back via the module's query port.
+        query = ctx.deps.resolve_configurable(
+            ctx, StreamQueryDepKey, stream_spec, route=stream_spec.name
+        )
+        messages = await query.read({channel: "0"}, limit=10)
+
+        assert len(messages) == 1
+        assert messages[0].payload.label == "from-pg-outbox"
+        assert messages[0].type == "demo.created"

@@ -63,3 +63,34 @@ class RedisSearchResultSnapshotConfig(RedisUniversalConfig):
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisDistributedLockConfig(RedisUniversalConfig):
     """Configuration for Redis-backed distributed locks."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RedisStreamConfig(TenantAwareIntegrationConfig):
+    """Configuration for a Redis stream route (``StreamSpec``).
+
+    No namespace: the stream name is supplied per call (``append`` / ``read``) and, when
+    ``tenant_aware``, isolated by the ``tenant:{id}:stream:`` key prefix — there is no
+    per-route key namespace to declare."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RedisStreamGroupConfig(TenantAwareIntegrationConfig):
+    """Configuration for a Redis stream consumer-group route."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RedisPubSubConfig(TenantAwareIntegrationConfig):
+    """Configuration for a Redis pub-sub route (``PubSubSpec``).
+
+    No namespace: the topic is supplied per ``publish`` / ``subscribe`` and, when
+    ``tenant_aware``, isolated by the ``tenant:{id}:`` key prefix."""

@@ -18,6 +18,7 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 from forze.application.contracts.stream import (
     PendingEntry,
     StreamCommandPort,
+    StreamGroupAdminPort,
     StreamGroupQueryPort,
     StreamMessage,
     StreamQueryPort,
@@ -259,18 +260,6 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M], TenancyMixi
 
     # ....................... #
 
-    async def ensure_group(self, group: str, stream: str, *, start_id: str = "$") -> None:
-        try:
-            await self.client.xgroup_create(
-                _stream_physical(self, stream), group, id=start_id, mkstream=True
-            )
-
-        except Exception as error:  # noqa: BLE001 - idempotent: ignore an existing group
-            if "BUSYGROUP" not in str(error):
-                raise
-
-    # ....................... #
-
     async def claim(
         self,
         group: str,
@@ -363,3 +352,31 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M], TenancyMixi
             cursor = f"({rows[-1][0]}"
 
         return out
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RedisStreamGroupAdminAdapter(StreamGroupAdminPort, TenancyMixin):
+    """Redis implementation of :class:`~forze.application.contracts.stream.StreamGroupAdminPort`.
+
+    Control-plane only: idempotent consumer-group creation (``XGROUP CREATE …
+    MKSTREAM``). Kept separate from the data-plane :class:`RedisStreamGroupAdapter`
+    so a read/ack/claim reference cannot reach group provisioning.
+    """
+
+    client: RedisClientPort
+
+    # ....................... #
+
+    async def ensure_group(self, group: str, stream: str, *, start_id: str = "$") -> None:
+        try:
+            await self.client.xgroup_create(
+                _stream_physical(self, stream), group, id=start_id, mkstream=True
+            )
+
+        except Exception as error:  # noqa: BLE001 - idempotent: ignore an existing group
+            if "BUSYGROUP" not in str(error):
+                raise

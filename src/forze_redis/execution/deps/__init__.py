@@ -5,7 +5,10 @@ from .configs import (
     RedisCounterConfig,
     RedisDistributedLockConfig,
     RedisIdempotencyConfig,
+    RedisPubSubConfig,
     RedisSearchResultSnapshotConfig,
+    RedisStreamConfig,
+    RedisStreamGroupConfig,
     RedisUniversalConfig,
 )
 from .factories import (
@@ -13,7 +16,13 @@ from .factories import (
     ConfigurableRedisCounter,
     ConfigurableRedisDistributedLock,
     ConfigurableRedisIdempotency,
+    ConfigurableRedisPubSubCommand,
+    ConfigurableRedisPubSubQuery,
     ConfigurableRedisSearchResultSnapshot,
+    ConfigurableRedisStreamCommand,
+    ConfigurableRedisStreamGroup,
+    ConfigurableRedisStreamGroupAdmin,
+    ConfigurableRedisStreamQuery,
 )
 from .keys import RedisBlockingClientDepKey, RedisClientDepKey
 from .module import RedisDepsModule
@@ -28,11 +37,20 @@ __all__ = [
     "RedisCounterConfig",
     "RedisDistributedLockConfig",
     "RedisIdempotencyConfig",
+    "RedisPubSubConfig",
     "RedisSearchResultSnapshotConfig",
+    "RedisStreamConfig",
+    "RedisStreamGroupConfig",
     "RedisUniversalConfig",
     "ConfigurableRedisCache",
     "ConfigurableRedisCounter",
     "ConfigurableRedisDistributedLock",
     "ConfigurableRedisIdempotency",
+    "ConfigurableRedisPubSubCommand",
+    "ConfigurableRedisPubSubQuery",
     "ConfigurableRedisSearchResultSnapshot",
+    "ConfigurableRedisStreamCommand",
+    "ConfigurableRedisStreamGroup",
+    "ConfigurableRedisStreamGroupAdmin",
+    "ConfigurableRedisStreamQuery",
 ]
