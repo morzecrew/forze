@@ -15,7 +15,7 @@ from forze_neo4j.kernel.client.errors import _neo4j_eh, exc_interceptor
 class TestNeo4jErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("x")
-        assert _neo4j_eh(original, site="op") is original
+        assert exc_interceptor.mapper(original, site="op") is original
 
     def test_transient_error_maps_to_concurrency(self) -> None:
         out = _neo4j_eh(TransientError("deadlock"), site="run")

@@ -7,8 +7,8 @@ pytest.importorskip("aiohttp")
 from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_gcs.kernel.client.errors import _gcs_eh
+from forze.base.exceptions import ExceptionKind, exc
+from forze_gcs.kernel.client.errors import _gcs_eh, exc_interceptor
 
 # ----------------------- #
 
@@ -32,7 +32,7 @@ def _client_error(status: int) -> ClientResponseError:
 class TestGCSErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("x")
-        assert _gcs_eh(original, site="op") is original
+        assert exc_interceptor.mapper(original, site="op") is original
 
     def test_not_found(self) -> None:
         r = _gcs_eh(_client_error(404), site="get")
@@ -69,7 +69,7 @@ class TestGCSErrorHandler:
         assert "418" in r.summary
 
     def test_generic_fallback(self) -> None:
-        r = _gcs_eh(ValueError("nope"), site="gcs_op")
+        r = exc_interceptor.mapper(ValueError("nope"), site="gcs_op")
         assert r is not None
         assert "gcs_op" in r.summary
         # raw driver text must not leak into the summary, only into details

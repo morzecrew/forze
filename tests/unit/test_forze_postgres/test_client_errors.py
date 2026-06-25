@@ -77,7 +77,7 @@ class TestPsycopgErrorHandlerBranches:
 
     def test_core_error_returned_unchanged(self) -> None:
         original = exc.internal("boundary", code="x")
-        out = client_errors._psycopg_eh(original, site="op")
+        out = client_errors.exc_interceptor.mapper(original, site="op")
         assert out is original
 
     @pytest.mark.parametrize(
@@ -154,7 +154,7 @@ class TestPsycopgErrorHandlerBranches:
         assert out.kind == ExceptionKind.CONCURRENCY
 
     def test_unknown_exception_becomes_infrastructure_error(self) -> None:
-        out = client_errors._psycopg_eh(RuntimeError("weird"), site="my_op")
+        out = client_errors.exc_interceptor.mapper(RuntimeError("weird"), site="my_op")
         assert out is not None
         assert out.kind == ExceptionKind.INFRASTRUCTURE
         assert "my_op" in out.summary

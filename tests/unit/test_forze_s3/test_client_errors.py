@@ -7,7 +7,8 @@ pytest.importorskip("botocore")
 
 from botocore import exceptions as s3_errors
 
-from forze_s3.kernel.client.errors import _s3_eh
+from forze_s3.kernel.client.errors import _s3_eh, exc_interceptor
+
 
 def _client_error(code: str) -> s3_errors.ClientError:
     return s3_errors.ClientError(
@@ -15,13 +16,16 @@ def _client_error(code: str) -> s3_errors.ClientError:
         operation_name="Test",
     )
 
+
 class TestS3ErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("x")
-        assert _s3_eh(original, site="op") is original
+        assert exc_interceptor.mapper(original, site="op") is original
 
     def test_endpoint_connection_error(self) -> None:
-        r = _s3_eh(s3_errors.EndpointConnectionError(endpoint_url="http://x"), site="put")
+        r = _s3_eh(
+            s3_errors.EndpointConnectionError(endpoint_url="http://x"), site="put"
+        )
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "connection" in r.summary.lower()
 
@@ -66,7 +70,7 @@ class TestS3ErrorHandler:
 
     def test_botocore_fallback(self) -> None:
         raised = s3_errors.BotoCoreError()
-        r = _s3_eh(raised, site="op")
+        r = exc_interceptor.mapper(raised, site="op")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "core error" in r.summary.lower()
         assert str(raised) not in r.summary
@@ -74,7 +78,7 @@ class TestS3ErrorHandler:
         assert r.details["error"] == str(raised)
 
     def test_generic_fallback(self) -> None:
-        r = _s3_eh(ValueError("nope"), site="s3_op")
+        r = exc_interceptor.mapper(ValueError("nope"), site="s3_op")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "s3_op" in r.summary.lower()
         # raw driver text must not leak into the summary, only into details

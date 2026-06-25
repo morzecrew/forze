@@ -22,7 +22,7 @@ from forze.base.scrubbing import sanitize_pydantic_errors
 from forze_http.adapters._logger import logger
 from forze_http.execution.deps.configs import HttpServiceConfig
 from forze_http.kernel.client import HttpClientPort
-from forze_http.kernel.client.errors import httpx_chain_mapper
+from forze_http.kernel.client.errors import exc_interceptor
 
 # ----------------------- #
 
@@ -92,7 +92,7 @@ class HttpServiceAdapter(HttpServicePort):
                 op=str(operation.name),
                 method=operation.method,
             )
-            reraise_mapped(httpx_chain_mapper, error, site=site, details=details)
+            reraise_mapped(exc_interceptor.mapper, error, site=site, details=details)
 
     # ....................... #
 

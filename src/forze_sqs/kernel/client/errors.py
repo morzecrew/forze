@@ -11,17 +11,11 @@ from botocore import exceptions as sqs_errors
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
-    fallback_exception_mapper,
+    build_exc_interceptor,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("SQS")
-
-# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -33,10 +27,9 @@ def _sqs_eh(  # skipcq: PY-R1000
 ) -> CoreException | None:
     """Normalize low-level SQS/botocore errors into exc.internal hierarchy."""
 
-    match exc:
-        case CoreException():
-            return exc
+    _ = site
 
+    match exc:
         case sqs_errors.EndpointConnectionError():
             return CoreException.infrastructure(
                 "SQS endpoint connection error.",
@@ -111,10 +104,9 @@ def _sqs_eh(  # skipcq: PY-R1000
             )
 
         case _:
-            return _fallback(exc, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-_sqs_chain = default_chain_exc_mapper.chain(_sqs_eh)
-exc_interceptor = ExceptionInterceptor(mapper=_sqs_chain)
+exc_interceptor = build_exc_interceptor("SQS", _sqs_eh)

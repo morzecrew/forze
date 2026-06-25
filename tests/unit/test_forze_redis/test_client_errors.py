@@ -7,12 +7,12 @@ pytest.importorskip("redis")
 
 from redis import exceptions as redis_errors
 
-from forze_redis.kernel.client.errors import _redis_eh
+from forze_redis.kernel.client.errors import _redis_eh, exc_interceptor
 
 class TestRedisErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("x")
-        assert _redis_eh(original, site="op") is original
+        assert exc_interceptor.mapper(original, site="op") is original
 
     @pytest.mark.parametrize(
         ("error", "needle"),
@@ -49,7 +49,7 @@ class TestRedisErrorHandler:
         assert needle in r.summary
 
     def test_unknown_exception_fallback(self) -> None:
-        r = _redis_eh(RuntimeError("boom"), site="my_op")
+        r = exc_interceptor.mapper(RuntimeError("boom"), site="my_op")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "my_op" in r.summary
 

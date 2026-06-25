@@ -9,8 +9,8 @@ from botocore.exceptions import (
     NoCredentialsError,
 )
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_sqs.kernel.client.errors import _sqs_eh
+from forze.base.exceptions import ExceptionKind, exc
+from forze_sqs.kernel.client.errors import _sqs_eh, exc_interceptor
 
 # ----------------------- #
 
@@ -25,7 +25,7 @@ def _client_error(code: str) -> sqs_errors.ClientError:
 class TestSqsErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("x")
-        assert _sqs_eh(original, site="op") is original
+        assert exc_interceptor.mapper(original, site="op") is original
 
     @pytest.mark.parametrize(
         ("raised", "needle"),
@@ -57,7 +57,7 @@ class TestSqsErrorHandler:
         assert needle in r.summary.lower()
 
     def test_unknown_exception_fallback(self) -> None:
-        r = _sqs_eh(RuntimeError("boom"), site="sqs.test")
+        r = exc_interceptor.mapper(RuntimeError("boom"), site="sqs.test")
         assert r is not None
         assert "sqs.test" in r.summary.lower()
         # raw driver text must not leak into the summary, only into details
@@ -113,7 +113,7 @@ class TestSqsErrorHandler:
 
     def test_botocore_fallback(self) -> None:
         raised = sqs_errors.BotoCoreError()
-        r = _sqs_eh(raised, site="op")
+        r = exc_interceptor.mapper(raised, site="op")
         assert r is not None
         assert "core error" in r.summary.lower()
         assert str(raised) not in r.summary

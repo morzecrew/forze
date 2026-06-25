@@ -3,7 +3,7 @@
 from aio_pika import exceptions as aio_pika_errors
 
 from forze.base.exceptions import ExceptionKind, exc
-from forze_rabbitmq.kernel.client.errors import _rabbitmq_eh
+from forze_rabbitmq.kernel.client.errors import _rabbitmq_eh, exc_interceptor
 
 # ----------------------- #
 
@@ -11,7 +11,7 @@ from forze_rabbitmq.kernel.client.errors import _rabbitmq_eh
 class TestRabbitmqErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("x")
-        assert _rabbitmq_eh(original, site="op") is original
+        assert exc_interceptor.mapper(original, site="op") is original
 
     def test_authentication_error(self) -> None:
         r = _rabbitmq_eh(aio_pika_errors.AuthenticationError("auth"), site="connect")
@@ -51,7 +51,7 @@ class TestRabbitmqErrorHandler:
         assert "timed out" in r.summary.lower()
 
     def test_unknown_exception_fallback(self) -> None:
-        r = _rabbitmq_eh(RuntimeError("boom"), site="rabbitmq.test")
+        r = exc_interceptor.mapper(RuntimeError("boom"), site="rabbitmq.test")
         assert r is not None
         assert "rabbitmq.test" in r.summary.lower()
         # raw driver text must not leak into the summary, only into details

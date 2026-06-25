@@ -11,13 +11,13 @@ from meilisearch_python_sdk.errors import (
 )
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_meilisearch.kernel.client.errors import _meilisearch_eh
+from forze_meilisearch.kernel.client.errors import _meilisearch_eh, exc_interceptor
 
 
 class TestMeilisearchErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("x")
-        assert _meilisearch_eh(original, site="search") is original
+        assert exc_interceptor.mapper(original, site="search") is original
 
     @pytest.mark.parametrize(
         ("error", "needle"),
@@ -34,7 +34,7 @@ class TestMeilisearchErrorHandler:
         assert needle in mapped.summary
 
     def test_unknown_exception_fallback(self) -> None:
-        mapped = _meilisearch_eh(RuntimeError("boom"), site="op")
+        mapped = exc_interceptor.mapper(RuntimeError("boom"), site="op")
         assert isinstance(mapped, CoreException)
         assert mapped.kind == ExceptionKind.INFRASTRUCTURE
         assert "op" in mapped.summary

@@ -26,17 +26,11 @@ from pymongo.errors import (
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
-    fallback_exception_mapper,
+    build_exc_interceptor,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("Mongo")
-
-# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -48,10 +42,9 @@ def _mongo_eh(  # skipcq: PY-R1000
 ) -> CoreException | None:
     """Convert a PyMongo exception into an :class:`~forze.base.exceptions.CoreException`."""
 
-    match exc:
-        case CoreException():
-            return exc
+    _ = site
 
+    match exc:
         # --- write conflicts (must precede OperationFailure/WriteError) ---
 
         case DuplicateKeyError():
@@ -176,13 +169,10 @@ def _mongo_eh(  # skipcq: PY-R1000
                 details=details,
             )
 
-        # --- fallback ---
-
         case _:
-            return _fallback(exc, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-_mongo_chain = default_chain_exc_mapper.chain(_mongo_eh)
-exc_interceptor = ExceptionInterceptor(mapper=_mongo_chain)
+exc_interceptor = build_exc_interceptor("Mongo", _mongo_eh)

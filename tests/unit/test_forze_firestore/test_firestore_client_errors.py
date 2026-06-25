@@ -9,13 +9,15 @@ pytest.importorskip("google.cloud.firestore")
 from google.api_core import exceptions as gax_exceptions
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_firestore.kernel.client.errors import _firestore_eh, _fs_chain
+from forze_firestore.kernel.client.errors import _firestore_eh, exc_interceptor
+
+_fs_chain = exc_interceptor.mapper
 
 
 class TestFirestoreErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("boom")
-        assert _firestore_eh(original, site="op") is original
+        assert exc_interceptor.mapper(original, site="op") is original
 
     def test_not_found(self) -> None:
         err = gax_exceptions.NotFound("missing")
@@ -66,7 +68,7 @@ class TestFirestoreErrorHandler:
         assert mapped.kind == ExceptionKind.AUTHENTICATION
 
     def test_unknown_maps_to_infrastructure(self) -> None:
-        mapped = _firestore_eh(RuntimeError("weird"), site="op")
+        mapped = exc_interceptor.mapper(RuntimeError("weird"), site="op")
         assert isinstance(mapped, CoreException)
         assert mapped.kind == ExceptionKind.INFRASTRUCTURE
 

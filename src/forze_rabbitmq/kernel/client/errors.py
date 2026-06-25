@@ -11,17 +11,11 @@ from aio_pika import exceptions as aio_pika_errors
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
-    fallback_exception_mapper,
+    build_exc_interceptor,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("RabbitMQ")
-
-# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -31,10 +25,9 @@ def _rabbitmq_eh(  # skipcq: PY-R1000
     site: str,
     details: Mapping[str, Any] | None = None,
 ) -> CoreException | None:
-    match exc:
-        case CoreException():
-            return exc
+    _ = site
 
+    match exc:
         case aio_pika_errors.AuthenticationError():
             return CoreException.infrastructure(
                 "RabbitMQ authentication failed.",
@@ -84,10 +77,9 @@ def _rabbitmq_eh(  # skipcq: PY-R1000
             )
 
         case _:
-            return _fallback(exc, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-_rabbitmq_chain = default_chain_exc_mapper.chain(_rabbitmq_eh)
-exc_interceptor = ExceptionInterceptor(mapper=_rabbitmq_chain)
+exc_interceptor = build_exc_interceptor("RabbitMQ", _rabbitmq_eh)

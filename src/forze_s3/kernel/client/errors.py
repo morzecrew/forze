@@ -11,17 +11,11 @@ from botocore import exceptions as s3_errors
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
-    fallback_exception_mapper,
+    build_exc_interceptor,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("S3")
-
-# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -33,10 +27,9 @@ def _s3_eh(  # skipcq: PY-R1000
 ) -> CoreException | None:
     """Normalize low-level S3 / botocore errors into exc.internal hierarchy."""
 
-    match exc:
-        case CoreException():
-            return exc
+    _ = site
 
+    match exc:
         # --- connectivity / availability ---
         case s3_errors.EndpointConnectionError():
             return CoreException.infrastructure(
@@ -109,12 +102,10 @@ def _s3_eh(  # skipcq: PY-R1000
                 details={**(details or {}), "error": str(be)},
             )
 
-        # --- ultimate fallback ---
         case _:
-            return _fallback(exc, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-_s3_chain = default_chain_exc_mapper.chain(_s3_eh)
-exc_interceptor = ExceptionInterceptor(mapper=_s3_chain)
+exc_interceptor = build_exc_interceptor("S3", _s3_eh)

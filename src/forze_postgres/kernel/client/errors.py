@@ -12,17 +12,11 @@ from psycopg import errors
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
-    fallback_exception_mapper,
+    build_exc_interceptor,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("Postgres")
-
-# ....................... #
 
 FK_pattern = re.compile(
     r'Key \((?P<column>[^)]+)\)=\((?P<value>[0-9a-fA-F-]+)\) is not present in table "(?P<table>[^"]+)"'
@@ -40,10 +34,9 @@ def _psycopg_eh(  # skipcq: PY-R1000
 ) -> CoreException | None:
     """Translate psycopg exceptions into domain :class:`~forze.base.errors.exc.internal` subtypes."""
 
-    match exc:
-        case CoreException():
-            return exc
+    _ = site
 
+    match exc:
         # Integrity / constraints
 
         case errors.ForeignKeyViolation():
@@ -258,10 +251,9 @@ def _psycopg_eh(  # skipcq: PY-R1000
             )
 
         case _:
-            return _fallback(exc, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-_pg_chain = default_chain_exc_mapper.chain(_psycopg_eh)
-exc_interceptor = ExceptionInterceptor(mapper=_pg_chain)
+exc_interceptor = build_exc_interceptor("Postgres", _psycopg_eh)
