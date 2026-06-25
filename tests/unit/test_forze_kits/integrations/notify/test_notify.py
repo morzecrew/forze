@@ -308,6 +308,63 @@ def test_integration_event_id_no_key_no_id_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_notification_consumer_dedupes_redelivery() -> None:
+    """Routed through QueueConsumer, a redelivered message is processed once, not re-sent."""
+
+    from datetime import timedelta
+
+    from forze.application.contracts.inbox import InboxSpec
+    from forze.application.contracts.queue import QueueSpec
+    from forze.base.serialization import PydanticModelCodec
+    from forze_kits.integrations.consumer import QueueConsumer
+    from forze_kits.integrations.notify import notification_queue_consumer_handler
+    from forze_mock import MockDepsModule
+    from forze_mock.adapters import MockQueueAdapter, MockState
+    from tests.support.execution_context import context_from_modules
+
+    codec = PydanticModelCodec(_ProjectCreated)
+    spec = QueueSpec(name="notifications", codec=codec)
+
+    state = MockState()
+    ctx = context_from_modules(MockDepsModule(state=state, strict_tx=True))
+    adapter = MockQueueAdapter(state=state, namespace="notifications", codec=codec)
+
+    router = NotificationRouter()
+    router.register(
+        "project.created",
+        lambda e: [
+            EmailNotification(
+                to="ops@example.com", subject="New", body=e.payload.project_id
+            )
+        ],
+    )
+    senders = RecordingNotificationSenders()
+
+    # At-least-once: the SAME event delivered twice (same forze_event_id header).
+    event_id = str(uuid4())
+    for _ in range(2):
+        await adapter.enqueue(
+            "notifications",
+            _ProjectCreated(project_id="p-1"),
+            type="project.created",
+            headers={HEADER_EVENT_ID: event_id},
+        )
+
+    consumer = QueueConsumer(
+        queue="notifications",
+        queue_spec=spec,
+        handler=notification_queue_consumer_handler(router=router, senders=senders),
+        inbox_spec=InboxSpec(name="notify-inbox"),
+        tx_route="mock",
+    )
+    result = await consumer.run(ctx, timeout=timedelta(milliseconds=250))
+
+    assert result.processed == 1
+    assert result.duplicates == 1
+    assert len(senders.emails) == 1  # handler ran once despite two deliveries
+
+
+@pytest.mark.asyncio
 async def test_process_notification_message_skips_unmapped() -> None:
     senders = RecordingNotificationSenders()
     message = QueueMessage(

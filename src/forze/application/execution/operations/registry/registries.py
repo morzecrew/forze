@@ -19,7 +19,7 @@ from forze.base.primitives import (
 )
 
 from ..descriptors import OperationCatalogEntry, OperationDescriptor
-from ..planning import FrozenOperationPlan, OperationPlan
+from ..planning import FrozenOperationPlan, OperationKind, OperationPlan
 from ..run import DispatchedOperation, ResolvedOperation
 from .binder import OperationRegistryBinder
 from .merge import RegistryMerge
@@ -745,7 +745,19 @@ class FrozenOperationRegistry:
 
         resolved_plan = plan.resolve(ctx, self._dispatch)
 
-        built = handler(ctx)
+        # Build the handler under the read-only flag for a QUERY operation, so a factory
+        # that *eagerly* acquires a command (write) port — the common kit pattern,
+        # ``lambda ctx: Handler(port=ctx.document.command(spec))`` — hits the same
+        # write-port guard that a call-time acquisition would. QUERY-ness is a static
+        # property of the operation, so this is consistent with the resolve-once cache
+        # (a QUERY op's handler is always built read-only). Without it the guard was
+        # inert for eager acquisition, since the read-only flag is otherwise only set
+        # later, inside ``ResolvedOperation.__call__``.
+        if resolved_plan.kind is OperationKind.QUERY:
+            with ctx.inv_ctx.bind_read_only():
+                built = handler(ctx)
+        else:
+            built = handler(ctx)
 
         # A two-phase plan needs a two-phase handler (prepare/apply). The two
         # factory protocols are structurally identical (both ``__call__(ctx)``), so

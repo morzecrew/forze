@@ -138,8 +138,25 @@ class VkPublicInfoTokenVerifier(TokenVerifierPort):
             issuer=self.issuer,
             subject=subject,
             audience=self.client_id,
-            claims=dict(payload),
+            claims=self._safe_claims(payload),
         )
+
+    # ....................... #
+
+    @staticmethod
+    def _safe_claims(payload: JsonDict) -> JsonDict:
+        """Only the masked ``user`` object VK returns — never the top-level envelope.
+
+        VK wraps the user data in a ``user`` object alongside protocol/envelope fields
+        (``error``, ``state``, ...) and replies HTTP 200 even on failure. Only that
+        object is identity data — the same data the subject is derived from. Copying the
+        whole payload would surface attacker-influenceable envelope fields to downstream
+        claim/tenant mappers, so the claims keep just the user object (empty when VK
+        returns the id at the top level only).
+        """
+
+        user = payload.get("user")
+        return {"user": dict(cast(JsonDict, user))} if isinstance(user, dict) else {}
 
     # ....................... #
 

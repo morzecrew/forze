@@ -25,10 +25,17 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     search_options_for_simple_adapter,
 )
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    reject_encrypted_sort_fields,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell
-from forze_postgres.kernel.relation import RelationSpec, is_static_relation, resolve_postgres_qname
+from forze_postgres.kernel.relation import (
+    RelationSpec,
+    is_static_relation,
+    resolve_postgres_qname,
+)
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ._cursor_run import (
@@ -341,6 +348,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        reject_encrypted_sort_fields(
+            sorts, encryption=self.spec.encryption, spec_name=self.spec.name
+        )
         options = search_options_for_simple_adapter(options)
         lim, _, _ = parse_search_cursor(cursor)
         terms = tuple(normalize_search_queries(query))

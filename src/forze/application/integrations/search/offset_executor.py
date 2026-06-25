@@ -15,7 +15,10 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
 )
-from forze.application.integrations.search.encryption import decrypt_search_rows
+from forze.application.integrations.search.encryption import (
+    decrypt_search_rows,
+    reject_encrypted_sort_fields,
+)
 from forze.application.integrations.search.snapshot import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, materialize_mapping_rows
@@ -120,6 +123,11 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
     trust_source: bool = False,
 ) -> Any:
     """Run fingerprint, snapshot read, count, fetch, materialize, and page wrapping."""
+
+    # Fail closed on a sort over a field-encrypted column for every backend at the shared
+    # seam: encrypted/searchable ciphertext has no order at rest and would otherwise leak
+    # the raw value into a keyset cursor token.
+    reject_encrypted_sort_fields(sorts, encryption=spec.encryption, spec_name=spec.name)
 
     rs_spec = spec.snapshot
 

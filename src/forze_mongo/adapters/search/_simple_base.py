@@ -88,9 +88,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        reject_encrypted_sort_fields(
-            sorts, encryption=self.spec.encryption, spec_name=self.spec.name
-        )
+        # The encrypted-sort guard runs in the shared offset executor below.
         options = search_options_for_simple_adapter(options)
         terms = tuple(normalize_search_queries(query))
         combine = effective_phrase_combine(options)

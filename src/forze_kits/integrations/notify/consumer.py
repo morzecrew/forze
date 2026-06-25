@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
+from typing import Any
 from uuid import UUID
 
 from forze.application.contracts.envelope import HEADER_EVENT_ID
+from forze.application.contracts.execution import LifecycleStep
+from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import IntegrationEvent
-from forze.application.contracts.queue import QueueMessage
+from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.base.exceptions import exc
-from forze.base.primitives import uuid4
+from forze.base.primitives import StrKey, uuid4
 from .dispatch import dispatch_notification
 from .routing import NotificationRouter
 from .senders import NotificationSenders
@@ -112,3 +117,80 @@ async def process_notification_message[M](
         await dispatch_notification(command, senders)
 
     return len(commands)
+
+
+# ....................... #
+
+
+def notification_queue_consumer_handler[M](
+    *,
+    router: NotificationRouter,
+    senders: NotificationSenders,
+    skip_unmapped: bool = True,
+) -> Callable[[QueueMessage[M]], Awaitable[None]]:
+    """Adapt :func:`process_notification_message` to a ``QueueConsumer`` handler.
+
+    The consumer's handler returns ``None``; ``process_notification_message`` returns the
+    dispatch count, so this discards it. Running notifications through the consumer (rather
+    than a bespoke receive/ack loop) gives them inbox dedup — a redelivered message no
+    longer re-sends — and the poison-parking ladder for free.
+    """
+
+    async def _handle(message: QueueMessage[M]) -> None:
+        await process_notification_message(
+            message, router=router, senders=senders, skip_unmapped=skip_unmapped
+        )
+
+    return _handle
+
+
+# ....................... #
+
+
+def notification_consumer_lifecycle_step(
+    *,
+    queue: str,
+    queue_spec: QueueSpec[Any],
+    inbox_spec: InboxSpec,
+    tx_route: StrKey,
+    router: NotificationRouter,
+    senders: NotificationSenders,
+    skip_unmapped: bool = True,
+    bind_tenant_from_headers: bool = False,
+    max_deliveries: int | None = None,
+    retry_policy: StrKey | None = None,
+    restart_backoff: timedelta = timedelta(seconds=5),
+    step_id: StrKey | None = None,
+) -> LifecycleStep:
+    """Background lifecycle step that consumes a notification queue via ``QueueConsumer``.
+
+    Notifications inherit the consumer's inbox dedup and poison parking. The dedup key is
+    the same deterministic event id :func:`integration_event_from_queue_message` derives
+    (the ``forze_event_id`` header the relay sets, else ``message.key``, else
+    ``"<queue>:<message.id>"``), so an at-least-once redelivery cannot double-send.
+
+    All ``QueueConsumer`` knobs (*max_deliveries*, *retry_policy*,
+    *bind_tenant_from_headers*, ...) pass through with the same defaults and caveats.
+    """
+
+    # Local import: the consumer integration imports broadly; importing it at module load
+    # would widen this module's import graph (and risk a cycle) for a rarely-hot path.
+    from forze_kits.integrations.consumer import (
+        queue_consumer_background_lifecycle_step,
+    )
+
+    return queue_consumer_background_lifecycle_step(
+        queue=queue,
+        queue_spec=queue_spec,
+        handler=notification_queue_consumer_handler(
+            router=router, senders=senders, skip_unmapped=skip_unmapped
+        ),
+        inbox_spec=inbox_spec,
+        tx_route=tx_route,
+        message_id=lambda m: str(integration_event_from_queue_message(m).event_id),
+        bind_tenant_from_headers=bind_tenant_from_headers,
+        max_deliveries=max_deliveries,
+        retry_policy=retry_policy,
+        restart_backoff=restart_backoff,
+        step_id=step_id if step_id is not None else f"notification_consumer:{queue}",
+    )

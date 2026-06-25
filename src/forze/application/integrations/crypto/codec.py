@@ -395,14 +395,21 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         searchable field with its deterministic ciphertext; rejects any other
         operator on a searchable field (deterministic encryption supports equality
         only).
+
+        A predicate on a randomized :attr:`fields` member is rejected outright:
+        its stored ciphertext is non-deterministic, so comparing it against any
+        literal would silently match nothing. The walk therefore runs whenever
+        *either* field set is non-empty.
         """
 
-        if not self.searchable_fields:
+        if not self.searchable_fields and not self.fields:
             return expr
 
         return self._rewrite_node(expr, self.tenant_provider())
 
-    def _rewrite_node(self, node: QueryExpr, tenant: TenantIdentity | None) -> QueryExpr:
+    def _rewrite_node(
+        self, node: QueryExpr, tenant: TenantIdentity | None
+    ) -> QueryExpr:
         match node:
             case QueryAnd(items):
                 return QueryAnd(tuple(self._rewrite_node(i, tenant) for i in items))
@@ -416,6 +423,9 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             case QueryField(name, op, value) if name in self.searchable_fields:
                 return self._rewrite_field(name, op, value, tenant)
 
+            case QueryField(name, _op, _value) if name in self.fields:
+                raise self._reject_randomized(name)
+
             case QueryCompare(left, _op, right) if (
                 left in self.searchable_fields or right in self.searchable_fields
             ):
@@ -426,6 +436,11 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
                     code="core.crypto.searchable_op_unsupported",
                 )
 
+            case QueryCompare(left, _op, right) if (
+                left in self.fields or right in self.fields
+            ):
+                raise self._reject_randomized(left if left in self.fields else right)
+
             case QueryElem(path, quantifier, inner):
                 if path in self.searchable_fields:
                     raise exc.precondition(
@@ -434,6 +449,9 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
                         code="core.crypto.searchable_op_unsupported",
                     )
 
+                if path in self.fields:
+                    raise self._reject_randomized(path)
+
                 # Recurse the element predicate to catch (and reject) any searchable
                 # field referenced inside it.
                 return QueryElem(path, quantifier, self._rewrite_node(inner, tenant))
@@ -441,7 +459,26 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             case _:
                 return node
 
-    def _det_search(self, tenant: TenantIdentity | None, field: str, value: Any) -> tuple[str, ...]:
+    @staticmethod
+    def _reject_randomized(name: str) -> CoreException:
+        """Build the error for a filter that references a randomized-encrypted field.
+
+        Randomized ciphertext is non-deterministic, so any predicate against it
+        would silently match nothing. Fail closed instead — the read-path twin of
+        the ``searchable_op_unsupported`` guard above.
+        """
+
+        return exc.precondition(
+            f"Cannot filter on randomized-encrypted field {name!r}: its stored "
+            "ciphertext is non-deterministic, so the predicate would never match. "
+            "Mark the field searchable (deterministic) to query it by equality, or "
+            "filter on a plaintext field.",
+            code="core.crypto.encrypted_field_not_filterable",
+        )
+
+    def _det_search(
+        self, tenant: TenantIdentity | None, field: str, value: Any
+    ) -> tuple[str, ...]:
         """Base64 ciphertext(s) a stored value could match — both keys during rotation."""
 
         return tuple(

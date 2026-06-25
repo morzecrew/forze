@@ -263,6 +263,11 @@ class QueueConsumer[M]:
         parked = 0
         failed = 0
 
+        # Warn once if a poison ceiling was requested but this backend cannot report a
+        # delivery count — the parking branch below can then never fire, so the broker's
+        # dead-letter / redrive policy is the only ceiling.
+        warned_no_delivery_count = False
+
         async with aclosing(port.consume(queue, timeout=timeout)) as messages:
             async for message in messages:
                 # -- Decrypt: end-to-end ciphertext → typed model before the ladder. -- #
@@ -298,6 +303,22 @@ class QueueConsumer[M]:
                     await _dispose(port, queue, message.id, requeue=False)
                     parked += 1
                     continue
+
+                # -- Warn once: poison ceiling requested but unsupported by backend. - #
+                if (
+                    self.max_deliveries is not None
+                    and message.delivery_count is None
+                    and not warned_no_delivery_count
+                ):
+                    warned_no_delivery_count = True
+                    logger.warning(
+                        "Queue consumer for %s: max_deliveries=%s is set but the "
+                        "backend does not report a delivery count, so in-app poison "
+                        "parking cannot trigger; rely on the broker's dead-letter / "
+                        "redrive policy instead.",
+                        queue,
+                        self.max_deliveries,
+                    )
 
                 # -- Park: handler-poison detected via the delivery count. ----- #
                 if (

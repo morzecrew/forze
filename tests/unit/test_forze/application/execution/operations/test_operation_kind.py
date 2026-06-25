@@ -185,6 +185,16 @@ class _PresignDownloadInQuery(Handler[None, str]):
         return vo.method
 
 
+@attrs.define(slots=True)
+class _HoldsEagerPort(Handler[None, str]):
+    # Holds a port acquired in the factory (eager), the common kit pattern; the
+    # constructor never touches it, mirroring real handlers.
+    port: object
+
+    async def __call__(self, _args: None) -> str:
+        return "built"
+
+
 def _frozen(op: str, factory, *, query: bool):
     binder = OperationRegistry(handlers={op: factory}).bind(op)
     if query:
@@ -216,6 +226,45 @@ class TestOperationKind:
         reg = _frozen("c", lambda c: _AcquireDocumentCommand(ctx=c), query=False)
 
         assert await run_operation(reg, "c", None, ctx) == "wrote"
+
+    async def test_query_op_cannot_eagerly_acquire_a_command_port_in_its_factory(
+        self,
+    ) -> None:
+        # Eager (factory-time) acquisition is the common kit pattern and previously
+        # bypassed the guard: the handler is built before __call__ sets the read-only
+        # flag. The build now runs under the flag for a QUERY op, so it is caught at
+        # resolve time instead of slipping through.
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen(
+            "q", lambda c: _HoldsEagerPort(port=c.document.command(SPEC)), query=True
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await run_operation(reg, "q", None, ctx)
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    async def test_query_op_can_eagerly_acquire_a_query_port_in_its_factory(
+        self,
+    ) -> None:
+        # The build-time read-only flag must not disturb eager read-port acquisition,
+        # which is the correct, common case for a QUERY handler.
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen(
+            "q", lambda c: _HoldsEagerPort(port=c.document.query(SPEC)), query=True
+        )
+
+        assert await run_operation(reg, "q", None, ctx) == "built"
+
+    async def test_command_op_can_eagerly_acquire_a_command_port_in_its_factory(
+        self,
+    ) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen(
+            "c", lambda c: _HoldsEagerPort(port=c.document.command(SPEC)), query=False
+        )
+
+        assert await run_operation(reg, "c", None, ctx) == "built"
 
     async def test_guard_is_not_document_specific(self) -> None:
         # The guard lives at the shared ConvenientDeps layer — outbox command too.
