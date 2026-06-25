@@ -42,6 +42,12 @@ class TracingEvent:
     tx_route: str | None = None
     """Transaction route name when inside or entering a scope."""
 
+    tx_id: int | None = None
+    """Run-global id of the root transaction this event belongs to, when one is active. Stamped
+    only under simulation (a per-run counter is bound; ``None`` in production), it gives the oracle
+    a sound way to group port calls into the transaction that issued them — which operation spans
+    cannot, since concurrent transactions interleave. An ``int``, so the trace stays PII-free."""
+
     key: str | None = None
     """Entity / correlation key the call targets (e.g. a document primary key), when one is
     cheaply available. Recorded id-only (UUID / int) — never free-form values — so the trace
@@ -155,6 +161,7 @@ class RuntimeTrace:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        tx_id: int | None = None,
         at: float = 0.0,
         key: str | None = None,
         outcome: str | None = None,
@@ -176,6 +183,7 @@ class RuntimeTrace:
             phase=phase,
             tx_depth=tx_depth,
             tx_route=tx_route,
+            tx_id=tx_id,
             key=key,
             outcome=outcome,
             error=error,

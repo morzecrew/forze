@@ -50,6 +50,10 @@ def _default_tx_depth() -> int:
     return 0
 
 
+def _default_tx_id() -> int | None:
+    return None
+
+
 # ....................... #
 
 
@@ -63,6 +67,9 @@ class TracingPortProxy(PortProxy):
     route: str | None
     phase: str | None
     tx_depth_getter: Callable[[], int] = attrs.field(default=_default_tx_depth)
+    tx_id_getter: Callable[[], int | None] = attrs.field(default=_default_tx_id)
+    """Returns the active root transaction's run-global id (``None`` outside a tx / in production) —
+    lets the oracle group a port call into the transaction that issued it (RFC 0004 C.1)."""
     capture: bool = False
     """Capture redaction-applied call values (payload/result) onto the trace — DST only; off in
     production so the trace stays id-only and PII-free."""
@@ -161,6 +168,7 @@ class TracingPortProxy(PortProxy):
             route=self.route,
             phase=self.phase,
             tx_depth=self.tx_depth_getter(),
+            tx_id=self.tx_id_getter(),
             key=self._key_of(args),
             payload=(self._payload_of(args, kwargs or {}) if self.capture else None),
             deps=self.deps,
@@ -185,6 +193,7 @@ class TracingPortProxy(PortProxy):
             route=self.route,
             phase=self.phase,
             tx_depth=self.tx_depth_getter(),
+            tx_id=self.tx_id_getter(),
             key=self._key_of(args),
             result=self._redact(data),
             deps=self.deps,
@@ -238,6 +247,7 @@ def wrap_port[T](
     route: str | None,
     phase: str | None,
     tx_depth_getter: Callable[[], int] | None = None,
+    tx_id_getter: Callable[[], int | None] | None = None,
     capture: bool = False,
     redact: frozenset[str] = frozenset(),
 ) -> T:
@@ -253,6 +263,7 @@ def wrap_port[T](
             route=route,
             phase=phase,
             tx_depth_getter=tx_depth_getter or _default_tx_depth,
+            tx_id_getter=tx_id_getter or _default_tx_id,
             capture=capture,
             redact=redact,
         ),

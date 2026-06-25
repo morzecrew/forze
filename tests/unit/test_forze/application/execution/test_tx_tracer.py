@@ -27,10 +27,12 @@ class RecordingTxTracer:
     def enabled(self) -> bool:
         return True
 
-    def on_scope_enter(self, *, route: str, depth: int) -> None:
+    def on_scope_enter(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
+        del tx_id
         self.events.append(("enter", route, depth))
 
-    def on_scope_exit(self, *, route: str, depth: int) -> None:
+    def on_scope_exit(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
+        del tx_id
         self.events.append(("exit", route, depth))
 
 

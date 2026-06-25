@@ -86,6 +86,7 @@ def maybe_wrap_configurable(
         route=route_name,
         phase=phase,
         tx_depth_getter=ctx.tx_ctx.depth,
+        tx_id_getter=ctx.tx_ctx.tx_id,
         capture=capture,
         redact=_sensitive_fields(spec) if capture else frozenset(),
     )

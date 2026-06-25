@@ -26,6 +26,14 @@ from forze_dst.oracle.invariants import (
     read_your_writes,
     single_key_per_operation,
 )
+from forze_dst.oracle.isolation import (
+    TxRecord,
+    find_serializable_violations,
+    find_snapshot_isolation_violations,
+    serializable,
+    snapshot_isolation,
+    transactions_from_history,
+)
 from forze_dst.oracle.linearizability import (
     RegisterSpec,
     SequentialSpec,
@@ -71,6 +79,13 @@ __all__ = [
     "RegisterSpec",
     "SequentialSpec",
     "record_operation",
+    # transactional isolation
+    "snapshot_isolation",
+    "serializable",
+    "transactions_from_history",
+    "find_snapshot_isolation_violations",
+    "find_serializable_violations",
+    "TxRecord",
     # reachability / liveness
     "sometimes",
     "reached_labels",

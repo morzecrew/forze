@@ -15,7 +15,7 @@ from forze.base.asyncio import run_to_completion
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from ..tracing import NOOP_TX_TRACER, TxTracer
+from ..tracing import NOOP_TX_TRACER, TxTracer, next_tx_id
 
 # ----------------------- #
 
@@ -51,6 +51,16 @@ class TransactionContext:
     )
     """Current transaction depth."""
 
+    __tx_id: ContextVar[int | None] = attrs.field(
+        factory=lambda: ContextVar("tx_id", default=None),
+        init=False,
+        repr=False,
+        on_setattr=attrs.setters.frozen,
+    )
+    """Run-global id of the active root transaction (``None`` outside one, and in production where
+    no run counter is bound). Minted at root entry, inherited by nested scopes, and stamped on the
+    trace so the oracle can group port calls by transaction — see :func:`tx_id`."""
+
     __cb_stack: ContextVar[list[Callable[[], Awaitable[None]]] | None] = attrs.field(
         factory=lambda: ContextVar("cb_stack", default=None),
         init=False,
@@ -82,6 +92,17 @@ class TransactionContext:
         """Return transaction nesting depth (``0`` outside any transaction)."""
 
         return self.__tx_depth.get()
+
+    # ....................... #
+
+    def tx_id(self) -> int | None:
+        """Return the active root transaction's run-global id (``None`` outside one).
+
+        Minted at root entry from the run counter (``None`` in production, where no counter is
+        bound), inherited by nested scopes. Read by the tracer to group port calls by transaction.
+        """
+
+        return self.__tx_id.get()
 
     # ....................... #
 
@@ -253,8 +274,14 @@ class TransactionContext:
         )
         token_d = self.__tx_depth.set(1)
         token_cb = self.__cb_stack.set([])
+        # A run-global id for this root transaction (``None`` in production). Stamped on the trace
+        # so the oracle groups port calls by transaction — operation spans cannot, since concurrent
+        # transactions interleave. A clean exit emits a tx ``exit`` event under this id (the commit
+        # signal); a rollback raises and emits none.
+        tx_id = next_tx_id()
+        token_id = self.__tx_id.set(tx_id)
 
-        self._tx_tracer.on_scope_enter(route=route_name, depth=1)
+        self._tx_tracer.on_scope_enter(route=route_name, depth=1, tx_id=tx_id)
 
         deferred: list[Callable[[], Awaitable[None]]] | None = None
 
@@ -271,10 +298,12 @@ class TransactionContext:
             self._tx_tracer.on_scope_exit(
                 route=route_name,
                 depth=self.__tx_depth.get(),
+                tx_id=tx_id,
             )
             self.__cb_stack.reset(token_cb)
             self.__tx_handle.reset(token_h)
             self.__tx_depth.reset(token_d)
+            self.__tx_id.reset(token_id)
 
         if deferred:
             # The transaction is committed: the drain is a critical section.

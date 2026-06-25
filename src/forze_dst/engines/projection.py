@@ -68,6 +68,7 @@ def fold_runtime_trace(ctx: ExecutionContext) -> None:
             route=event.route,
             phase=event.phase,
             tx_depth=event.tx_depth,
+            tx_id=event.tx_id,
             key=event.key,
             outcome=event.outcome,
             error=event.error,

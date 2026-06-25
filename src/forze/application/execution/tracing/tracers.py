@@ -48,6 +48,7 @@ class RuntimeTracer(Protocol):
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        tx_id: int | None = None,
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
@@ -93,6 +94,7 @@ class NoopRuntimeTracer:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        tx_id: int | None = None,
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
@@ -101,8 +103,8 @@ class NoopRuntimeTracer:
         payload: Mapping[str, Any] | None = None,
         result: Mapping[str, Any] | None = None,
     ) -> int | None:
-        del domain, op, surface, route, phase, tx_depth, tx_route, key, outcome, error
-        del corr, nested, payload, result
+        del domain, op, surface, route, phase, tx_depth, tx_route, tx_id, key, outcome
+        del error, corr, nested, payload, result
         return None
 
     def snapshot(self) -> RuntimeTrace | None:
@@ -158,6 +160,7 @@ class RecordingRuntimeTracer:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        tx_id: int | None = None,
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
@@ -174,6 +177,7 @@ class RecordingRuntimeTracer:
             phase=phase,
             tx_depth=tx_depth,
             tx_route=tx_route,
+            tx_id=tx_id,
             at=monotonic(),
             key=key,
             outcome=outcome,
@@ -217,11 +221,11 @@ class TxTracer(Protocol):
         """Whether event recording is active."""
         ...
 
-    def on_scope_enter(self, *, route: str, depth: int) -> None:
+    def on_scope_enter(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
         """Record root transaction scope entry."""
         ...
 
-    def on_scope_exit(self, *, route: str, depth: int) -> None:
+    def on_scope_exit(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
         """Record root transaction scope exit."""
         ...
 
@@ -238,12 +242,12 @@ class NoopTxTracer:
     def enabled(self) -> bool:
         return False
 
-    def on_scope_enter(self, *, route: str, depth: int) -> None:
-        del route, depth
+    def on_scope_enter(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
+        del route, depth, tx_id
         return
 
-    def on_scope_exit(self, *, route: str, depth: int) -> None:
-        del route, depth
+    def on_scope_exit(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
+        del route, depth, tx_id
         return
 
 
@@ -272,24 +276,26 @@ class RuntimeBackedTxTracer:
 
     # ....................... #
 
-    def on_scope_enter(self, *, route: str, depth: int) -> None:
+    def on_scope_enter(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
         self.runtime.record(
             domain="tx",
             op="enter",
             route=route,
             tx_route=route,
             tx_depth=depth,
+            tx_id=tx_id,
         )
 
     # ....................... #
 
-    def on_scope_exit(self, *, route: str, depth: int) -> None:
+    def on_scope_exit(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
         self.runtime.record(
             domain="tx",
             op="exit",
             route=route,
             tx_route=route,
             tx_depth=depth,
+            tx_id=tx_id,
         )
 
 

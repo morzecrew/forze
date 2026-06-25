@@ -16,7 +16,9 @@ from .emit import (
     active_deps,
     active_runtime_tracer,
     bind_active_deps,
+    bind_tx_sequence,
     init_runtime_tracing,
+    next_tx_id,
     record,
 )
 from .harness import TracedOperationResult, run_traced_operation
@@ -56,6 +58,8 @@ __all__ = [
     "assert_trace_contains",
     "assert_trace_equals",
     "bind_active_deps",
+    "bind_tx_sequence",
+    "next_tx_id",
     "format_runtime_trace_report",
     "format_violation",
     "format_violations",
