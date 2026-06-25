@@ -39,5 +39,11 @@ class OutboxIntegrationConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.max_flush_rows <= 0:
+            raise exc.configuration("max_flush_rows must be positive")
+
+        if self.max_claim_rows <= 0:
+            raise exc.configuration("max_claim_rows must be positive")
+
         if self.default_processing_lease.total_seconds() <= 0:
             raise exc.configuration("Default processing lease must be positive")

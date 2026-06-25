@@ -33,8 +33,7 @@ def make_http_exception_mapper(
     label: str,
     response_error_type: type[BaseException],
     http_status_message: Callable[[int | None], str],
-    fallback: Callable[[BaseException, str, Mapping[str, Any] | None], CoreException]
-    | None = None,
+    fallback: ExceptionMapper | None = None,
 ) -> ExceptionMapper:
     """Build an :class:`ExceptionMapper` for aiohttp-style HTTP backends.
 
@@ -81,7 +80,7 @@ def make_http_exception_mapper(
             )
 
         if fallback is not None:
-            return fallback(exc, site, details)
+            return fallback(exc, site=site, details=details)
 
         return None
 

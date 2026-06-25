@@ -48,11 +48,12 @@ here it just records:
 
 ## Consume and dispatch
 
-A `QueueConsumer` relays the staged events to the queue and drains it, routing each
-message through the frozen router to the matching sender. Going through the consumer
-(rather than a hand-rolled receive/ack loop) gives **inbox dedup** — an at-least-once
-redelivery won't re-send — and poison parking, for free. In production wire it as a
-background step with `notification_consumer_lifecycle_step`; the example drains once:
+`OutboxRelay(...).to_queue(...)` publishes the staged events to the queue; a
+`QueueConsumer` then drains that queue, routing each message through the frozen router to
+the matching sender. Going through the consumer (rather than a hand-rolled receive/ack
+loop) gives **inbox dedup** — an at-least-once redelivery won't re-send — and poison
+parking, for free. In production wire the consumer as a background step with
+`notification_consumer_lifecycle_step`; the example drains once:
 
 ```python
 --8<-- "recipes/notifications/app.py:consume"

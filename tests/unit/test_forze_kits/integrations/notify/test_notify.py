@@ -305,6 +305,26 @@ def test_integration_event_id_no_key_no_id_raises() -> None:
         integration_event_from_queue_message(message)
 
 
+def test_integration_event_no_type_raises() -> None:
+    # A typeless message is malformed: fail closed rather than mapping it to an empty
+    # type that silently resolves to no notifications and acks as a success.
+    message = QueueMessage(
+        queue="jobs",
+        id="broker-msg-1",
+        payload=_ProjectCreated(project_id="abc"),
+    )
+
+    with pytest.raises(CoreException, match="no type"):
+        integration_event_from_queue_message(message)
+
+
+def test_frozen_router_mapping_is_read_only() -> None:
+    frozen = NotificationRouter().register("project.created", lambda _e: []).freeze()
+
+    with pytest.raises(TypeError):
+        frozen.mappers["other"] = lambda _e: []  # type: ignore[index]
+
+
 @pytest.mark.asyncio
 async def test_notification_consumer_dedupes_redelivery() -> None:
     """Routed through QueueConsumer, a redelivered message is processed once, not re-sent."""

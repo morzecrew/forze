@@ -10,6 +10,7 @@ The consumer holds the frozen resolver, so the routing table cannot change under
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import Any, Self, final
 
 import attrs
@@ -49,9 +50,13 @@ class NotificationRouter:
     # ....................... #
 
     def freeze(self) -> FrozenNotificationRouter:
-        """Snapshot the registered mappers into an immutable resolver."""
+        """Snapshot the registered mappers into an immutable resolver.
 
-        return FrozenNotificationRouter(mappers=dict(self._mappers))
+        The snapshot is wrapped in a :class:`~types.MappingProxyType` so the frozen
+        router's table is read-only at runtime, not just reassignment-frozen by attrs.
+        """
+
+        return FrozenNotificationRouter(mappers=MappingProxyType(dict(self._mappers)))
 
 
 # ....................... #

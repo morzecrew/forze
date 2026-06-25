@@ -117,8 +117,11 @@ async def deliver_notifications(
     )
 
     # A finite idle timeout ends the drain once the queue goes quiet.
-    result = await consumer.run(ctx, timeout=timedelta(milliseconds=250))
-    return result.processed
+    await consumer.run(ctx, timeout=timedelta(milliseconds=250))
+
+    # Report notifications actually dispatched (one message can map to several), not the
+    # number of queue messages processed.
+    return len(senders.emails)
 
 
 # --8<-- [end:consume]

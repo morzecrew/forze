@@ -57,8 +57,17 @@ def integration_event_from_queue_message[M](
         or _event_id_from_message_identity(message)
     )
 
+    if not message.type:
+        # A relayed event always carries its staged ``event_type``; a typeless message is
+        # malformed. Fail closed rather than mapping it to an empty type that silently
+        # resolves to no notifications and acks as a success.
+        raise exc.precondition(
+            "Cannot map a queue message with no type to a notification event",
+            details={"queue": message.queue},
+        )
+
     return IntegrationEvent(
-        event_type=message.type or "",
+        event_type=message.type,
         payload=message.payload,
         event_id=event_id,
     )

@@ -10,7 +10,8 @@ from forze.base.primitives import JsonDict
 
 
 class _NotificationCommand(BaseModel):
-    """Base for notification commands: a frozen value object (no mutation after build)."""
+    """Base for notification commands: frozen at the field level (fields cannot be
+    reassigned after construction; nested ``dict`` fields are not deep-frozen)."""
 
     model_config = ConfigDict(frozen=True)
 
