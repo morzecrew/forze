@@ -286,7 +286,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return
 
         if expected_rev != current_rev:
-            raise exc.concurrency("Revision conflict")
+            # Match the real adapters' rev-conflict contract exactly (the shared persistence
+            # gateway raises this): a stale-rev write is a retryable PRECONDITION, not a generic
+            # CONCURRENCY error — so an app's optimistic-concurrency handling behaves the same on
+            # the mock as on every real backend (verified by the conformance differential).
+            raise exc.precondition("Revision mismatch", code="revision_mismatch")
 
     # ....................... #
 

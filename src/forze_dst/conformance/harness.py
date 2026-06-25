@@ -57,17 +57,17 @@ _REVISION_MISMATCH_CODE = "revision_mismatch"
 
 
 def is_serialization_conflict(error: BaseException) -> bool:
-    """Whether *error* is the normalized "this transaction was aborted by an OCC/serialization conflict".
+    """Whether *error* is "this transaction was aborted by an OCC/serialization conflict".
 
-    True for any concurrency-kind :class:`CoreException` **or** the ``revision_mismatch`` code. This
-    normalizes a documented mock-vs-real divergence (see
-    :data:`~forze_dst.conformance.MECHANISM_DIVERGENCES`): a stale-rev (optimistic-concurrency)
-    write is rejected by every backend, but the mock raises it as ``CONCURRENCY`` while the real
-    adapters (the shared persistence gateway) raise it as a ``PRECONDITION`` with code
-    ``revision_mismatch``. Both mean "the conflicting write was rejected", which is the class the
-    differential compares — never the literal kind, code, victim, or abort-vs-block mechanism. The
-    snapshot/serializable serialization failure (mock) and Postgres ``SQLSTATE 40001`` both already
-    map to ``CONCURRENCY``.
+    Recognizes the two conflict signals every backend raises identically (mock and real):
+
+    - a **concurrency-kind** :class:`CoreException` — the snapshot/serializable serialization failure
+      (mock) and Postgres ``SQLSTATE 40001`` both map here;
+    - the **``revision_mismatch``** precondition — a stale-rev (optimistic-concurrency) write, raised
+      the same way by the mock and the real adapters' shared persistence gateway.
+
+    The differential compares this class ("the conflicting write was rejected"), never the literal
+    kind, code, victim, or abort-vs-block mechanism.
     """
 
     return isinstance(error, CoreException) and (

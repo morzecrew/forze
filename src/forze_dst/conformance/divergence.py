@@ -117,19 +117,6 @@ MECHANISM_DIVERGENCES: tuple[MechanismDivergence, ...] = (
         source="ept/hermitage",
     ),
     MechanismDivergence(
-        name="revision-conflict-kind",
-        reason=(
-            "A stale-rev (optimistic-concurrency) write is rejected by every backend, but the kind "
-            "differs: the mock raises CONCURRENCY ('Revision conflict') while the real adapters (the "
-            "shared persistence gateway) raise PRECONDITION with code 'revision_mismatch'. Both mean "
-            "'the conflicting write was rejected' (a retryable OCC conflict) — the class the "
-            "differential compares. NOTE: this is more than cosmetic — an app catching exc.concurrency "
-            "to retry would not catch the real adapters' precondition; surfaced by this differential "
-            "as a candidate for cross-adapter error-contract unification (likely: make the mock match)."
-        ),
-        source="forze_mock.adapters.document vs forze.application.integrations.persistence.gateway_mixins",
-    ),
-    MechanismDivergence(
         name="repeatable-read-class",
         reason=(
             "REPEATABLE READ is true snapshot isolation on some engines (Postgres: abort-based, "
