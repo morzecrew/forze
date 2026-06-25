@@ -34,6 +34,7 @@ from tests.support.dst_flagship import (
     DLOCK_TARGETS as _DLOCK_TARGETS,
     DLOCK_WIDE,
     HLC_INVARIANTS as _HLC_INVARIANTS,
+    HLC_TARGETS as _HLC_TARGETS,
     HLC_WIDE,
     _HLC_CAUSAL,
     _deps,
@@ -158,14 +159,24 @@ class TestFlagshipCorpus:
         assert result.runs == len(seeds)  # the whole band ran (not a vacuous pass)
         assert result.behaviors  # dlock is port-based → it exercised behaviours
 
+        # And the green safety result was tested against the dangerous states — the band drove lock
+        # contention and a mid-write partition, folded straight out of the sweep (§9.12a). Without
+        # this, a corpus that never raced would pass clean: the false-confidence failure mode.
+        reachability = result.reachability(_DLOCK_TARGETS)
+        assert reachability.satisfied, reachability.format()
+
     def test_hlc_corpus_is_clean(self) -> None:
         # The HLC scenario is register/event-based (no ports), so behavioral_coverage is empty by
-        # design — its non-vacuity signal is reachability ("hlc-merged-ahead"), asserted by the
-        # smoke test above; the corpus guards against a causal-monotonicity regression over the band.
+        # design — its non-vacuity signal is reachability ("hlc-merged-ahead"), now folded into the
+        # sweep itself (not only the smoke test): the corpus asserts both no causal-monotonicity
+        # regression AND that the causal merge path actually fired across the band.
         seeds = hlc_corpus_seeds()
         result = sweep(run_hlc_seed, seeds)
         assert result.violations == (), f"HLC regressed at seeds {result.violations}"
         assert result.runs == len(seeds)
+
+        reachability = result.reachability(_HLC_TARGETS)
+        assert reachability.satisfied, reachability.format()
 
 
 # ....................... #
@@ -178,8 +189,12 @@ class TestFlagshipFuzz:
     def test_dlock_wide_sweep(self) -> None:
         result = parallel_sweep(run_dlock_seed, tuple(DLOCK_WIDE))
         assert result.violations == (), result.format()
+        # A wide green sweep means nothing if the band never raced — assert the dangerous states
+        # fired across it (the reachability fold, §9.12a), not just that no invariant tripped.
+        assert result.reachability(_DLOCK_TARGETS).satisfied, result.reachability(_DLOCK_TARGETS).format()
 
     @pytest.mark.fuzz
     def test_hlc_wide_sweep(self) -> None:
         result = parallel_sweep(run_hlc_seed, tuple(HLC_WIDE))
         assert result.violations == (), result.format()
+        assert result.reachability(_HLC_TARGETS).satisfied, result.reachability(_HLC_TARGETS).format()

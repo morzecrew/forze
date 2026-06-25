@@ -33,7 +33,7 @@ from forze_dst.cluster import ClusterConfig, Partition, PartitionSchedule
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.invariants import check, expect, monotonic_per, mutual_exclusion
 from forze_dst.markers import reached, record_event
-from forze_dst.oracle import behavioral_coverage, run_recorded
+from forze_dst.oracle import behavioral_coverage, reached_labels, run_recorded
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
 
@@ -194,9 +194,10 @@ def run_dlock_seed(seed: int) -> SeedOutcome:
     behaviors = frozenset[tuple[object, ...]]().union(
         *(behavioral_coverage(history) for history in histories)
     )
+    reached = frozenset[str]().union(*(reached_labels(history) for history in histories))
     violated = any(bool(check(history, DLOCK_INVARIANTS)) for history in histories)
 
-    return SeedOutcome(seed=seed, violated=violated, behaviors=behaviors)
+    return SeedOutcome(seed=seed, violated=violated, behaviors=behaviors, reached=reached)
 
 
 # ----------------------- #
@@ -212,6 +213,10 @@ _HLC_CAUSAL = expect(
     message="merged HLC did not strictly exceed the cause it reacted to",
 )
 HLC_INVARIANTS = (_HLC_MONOTONIC, _HLC_CAUSAL)
+
+# The reachability target that makes a green HLC result meaningful: a merge actually carried a remote
+# stamp ahead of local time (the causal path the invariants guard was genuinely exercised).
+HLC_TARGETS = frozenset({"hlc-merged-ahead"})
 
 
 def hlc_scenario(*, causal: bool):  # type: ignore[no-untyped-def]
@@ -268,4 +273,5 @@ def run_hlc_seed(seed: int) -> SeedOutcome:
         seed=seed,
         violated=bool(check(history, HLC_INVARIANTS)),
         behaviors=behavioral_coverage(history),
+        reached=reached_labels(history),
     )
