@@ -11,6 +11,7 @@ from typing import Any, final
 
 import attrs
 
+from forze.application.contracts.base import EncryptionReach
 from forze.application.contracts.crypto import (
     AeadDepKey,
     AesGcmAead,
@@ -20,6 +21,7 @@ from forze.application.contracts.crypto import (
     KeyManagementDepKey,
     KeyManagementPort,
     KeyringDepKey,
+    RequiredReachDepKey,
 )
 from forze.application.contracts.deps import DepKey
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
@@ -62,6 +64,15 @@ class CryptoDepsModule:
     ``reencrypt_documents`` to re-index every searchable value under the new root,
     then drop this. Ignored unless :attr:`deterministic_root` is also set."""
 
+    required_reach: EncryptionReach | None = None
+    """Deployment-wide minimum encryption *reach* for messaging routes (``None`` = no floor).
+
+    When set (``at_rest`` or ``end_to_end``), every outbox and direct-transport
+    (queue/stream/pub-sub) route whose declared reach is weaker is refused at resolve, so a
+    payload can never travel through a store or broker more exposed than the deployment
+    allows. A transport has no ``at_rest`` level, so an ``at_rest`` floor forces it to
+    ``end_to_end``."""
+
     # ....................... #
 
     def __call__(self) -> Deps:
@@ -84,5 +95,8 @@ class CryptoDepsModule:
                 root=self.deterministic_root,
                 previous_root=self.deterministic_previous_root,
             )
+
+        if self.required_reach is not None:
+            deps[RequiredReachDepKey] = self.required_reach
 
         return Deps.plain(deps)

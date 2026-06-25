@@ -51,6 +51,7 @@ from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.contracts.tenancy import TenantProviderPort
 from forze.application.contracts.transaction import TransactionManagerPort
 from forze.application.execution import ExecutionContext
+from forze.application.execution.crypto import enforce_required_reach
 from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.execution.outbox import build_staging_outbox_command_for_store
 from forze.application.integrations.authn import (
@@ -531,6 +532,9 @@ class ConfigurableMockQueue(_MockFactoryBase):
         if not self.command:
             return adapter
 
+        enforce_required_reach(
+            context.deps, route=str(spec.name), declared=spec.encryption, kind="queue"
+        )
         cipher = (
             context.deps.provide(KeyringDepKey)
             if context.deps.exists(KeyringDepKey)
@@ -565,6 +569,9 @@ class ConfigurableMockPubSub(_MockFactoryBase):
         if not self.command:
             return adapter
 
+        enforce_required_reach(
+            context.deps, route=str(spec.name), declared=spec.encryption, kind="pubsub"
+        )
         cipher = (
             context.deps.provide(KeyringDepKey)
             if context.deps.exists(KeyringDepKey)
@@ -604,6 +611,9 @@ class ConfigurableMockStream(_MockFactoryBase):
         if not self.command:
             return adapter
 
+        enforce_required_reach(
+            context.deps, route=str(spec.name), declared=spec.encryption, kind="stream"
+        )
         cipher = (
             context.deps.provide(KeyringDepKey)
             if context.deps.exists(KeyringDepKey)

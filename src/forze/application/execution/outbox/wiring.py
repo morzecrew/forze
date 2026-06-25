@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from forze.application.contracts.crypto import BytesCipherPort, KeyringDepKey
 from forze.application.contracts.outbox import OutboxRowPersistPort, OutboxSpec
 from forze.application.execution.context import ExecutionContext
+from forze.application.execution.crypto import enforce_required_reach
 from forze.application.integrations.outbox import OutboxStaging, StagingOutboxCommand
 from forze.application.integrations.outbox.staging import FlushRowsFn
 from forze.base.exceptions import exc
@@ -22,8 +23,13 @@ def _resolve_payload_cipher(
     """The keyring for whole-payload encryption, or ``None`` when the route is plaintext.
 
     Fails closed when a route declares ``encrypt=True`` but no keyring is wired — the
-    same posture as document field encryption.
+    same posture as document field encryption. Enforces the deployment ``required_reach``
+    floor first, before the plaintext early-out, so a ``none`` route is rejected under a floor.
     """
+
+    enforce_required_reach(
+        ctx.deps, route=str(spec.name), declared=spec.encryption, kind="outbox"
+    )
 
     if not spec.encrypts:
         return None

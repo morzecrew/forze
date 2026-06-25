@@ -22,6 +22,7 @@ from .deps import (
     KeyDirectoryDepKey,
     KeyManagementDepKey,
     KeyringDepKey,
+    RequiredReachDepKey,
 )
 from .directory import (
     KeyDirectoryPort,
@@ -48,6 +49,7 @@ from .wiring import (
     EncryptionTier,
     encryption_satisfies,
     validate_required_encryption,
+    validate_required_reach,
 )
 
 # ----------------------- #
@@ -83,10 +85,12 @@ __all__ = [
     "KeyDirectoryDepKey",
     "KeyringDepKey",
     "DeterministicCipherDepKey",
+    "RequiredReachDepKey",
     # wiring policy
     "EncryptionTier",
     "encryption_satisfies",
     "validate_required_encryption",
+    "validate_required_reach",
     # whole-payload encrypted-message marker
     "ENCRYPTED_PAYLOAD_KEY",
     "wrap_encrypted_payload",

@@ -2,6 +2,7 @@
 
 from forze.base.crypto import Aead
 
+from ..base import EncryptionReach
 from ..deps import DepKey
 from .directory import KeyDirectoryPort
 from .ports import DeterministicFieldCipherPort, KeyManagementPort, KeyringPort
@@ -30,3 +31,11 @@ KeyringDepKey = DepKey[KeyringPort]("crypto.keyring")
 
 DeterministicCipherDepKey = DepKey[DeterministicFieldCipherPort]("crypto.deterministic")
 """Key used to register the deterministic (searchable) field cipher."""
+
+# ....................... #
+
+RequiredReachDepKey = DepKey[EncryptionReach]("crypto.required_reach")
+"""Key registering a deployment-wide minimum encryption *reach* (the ``required_reach``
+floor). Present only when a deployment declares it (via ``CryptoDepsModule``); absent
+means no floor. Read at messaging-encryption resolve points to fail closed against any
+outbox/transport route whose declared reach is weaker."""
