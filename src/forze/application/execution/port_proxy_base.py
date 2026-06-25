@@ -29,6 +29,13 @@ class PortProxy:
     inner: Any
     """The wrapped port."""
 
+    _wrapped_cache: dict[str, Any] = attrs.field(
+        factory=dict, init=False, repr=False, eq=False
+    )
+    """Per-attribute memo of wrapped methods. The inner port and the wrap decision are
+    fixed for a proxy's lifetime, so each method is classified and wrapped once instead
+    of on every access (every ``ctx.x.method(...)`` goes through :meth:`__getattr__`)."""
+
     # ....................... #
 
     def _should_wrap(self, name: str, attr: Any) -> bool:
@@ -64,15 +71,29 @@ class PortProxy:
     # ....................... #
 
     def __getattr__(self, name: str) -> Any:
+        # Guard the cache slot itself: if it is read before ``__init__`` set it (an
+        # unset slot routes here), raise rather than recursing on ``self._wrapped_cache``.
+        if name == "_wrapped_cache":
+            raise AttributeError(name)
+
+        cache = self._wrapped_cache
+
+        if name in cache:
+            return cache[name]
+
         attr = getattr(self.inner, name)
 
+        # Non-callables and not-wrapped methods stay live (uncached): a non-callable may
+        # read mutable inner state, and a bare bound method is already cheap.
         if not callable(attr) or not self._should_wrap(name, attr):
             return attr
 
         if inspect.isasyncgenfunction(attr):
-            return self._wrap_async_gen(name, attr)
+            wrapped = self._wrap_async_gen(name, attr)
+        elif inspect.iscoroutinefunction(attr):
+            wrapped = self._wrap_async(name, attr)
+        else:
+            wrapped = self._wrap_sync(name, attr)
 
-        if inspect.iscoroutinefunction(attr):
-            return self._wrap_async(name, attr)
-
-        return self._wrap_sync(name, attr)
+        cache[name] = wrapped
+        return wrapped
