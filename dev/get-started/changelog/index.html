@@ -7137,6 +7137,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Redis stream &amp; pub-sub transports</strong> — <code>RedisDepsModule</code> wires the generic <code>StreamSpec</code> / <code>PubSubSpec</code> transports (<code>streams</code> / <code>stream_groups</code> / <code>pubsub</code> route maps → the six stream/pub-sub dep keys) via new <code>RedisStreamConfig</code> / <code>RedisStreamGroupConfig</code> / <code>RedisPubSubConfig</code>, so realtime-over-Redis and outbox→stream/pub-sub relay work in production. No namespace (the stream/topic is per-call; <code>tenant_aware</code> adds a <code>tenant:{id}:</code> key prefix).</p>
+</li>
+<li>
+<p><strong>End-to-end encryption + reach floor on Redis transports</strong> — <code>encryption="end_to_end"</code> on a <code>StreamSpec</code> / <code>PubSubSpec</code> seals payloads through the broker, and the deployment <code>required_reach</code> floor is enforced at every resolve point (publish <em>and</em> subscribe/consume).</p>
+</li>
+<li>
+<p><strong>Stream consumer-group query/admin split</strong> — the stream consumer-group adapter is split into a data-plane query adapter (read/ack/claim/pending) and a control-plane <code>*StreamGroupAdminAdapter</code> (<code>ensure_group</code>), for both Redis and the mock, so a <code>StreamGroupQueryPort</code> reference can't reach group provisioning.</p>
+</li>
+<li>
 <p><strong>Encryption <em>reach</em> vocabulary</strong> — new canonical <code>EncryptionReach</code> type names the outbox/messaging setting as a <em>reach</em> ladder (<code>none &lt; at_rest &lt; end_to_end</code>), distinct from storage coverage. <code>OutboxEncryptionTier</code> is now a back-compat alias and <code>MessageEncryptionTier</code> its transport subset (no <code>at_rest</code>); field name and values unchanged.</p>
 </li>
 <li>

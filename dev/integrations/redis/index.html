@@ -2495,6 +2495,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#streams-pub-sub" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streams &amp; pub-sub
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#l1-push-invalidation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5327,6 +5338,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#streams-pub-sub" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streams &amp; pub-sub
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#l1-push-invalidation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5467,7 +5489,8 @@
 
 <p><code>forze[redis]</code> implements fast, ephemeral, and coordination-oriented state on
 Redis or Valkey: caching, atomic counters, idempotency records, search-result
-snapshots, and distributed locks — all behind Forze contracts.</p>
+snapshots, distributed locks, and the messaging transports (Redis Streams and
+pub-sub) — all behind Forze contracts.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[redis]&#39;</span>
 </code></pre></div>
@@ -5531,8 +5554,40 @@ resources on the deps module, open the pool from the lifecycle plan:</p>
 <td>Distributed locks</td>
 <td><code>DistributedLockSpec.name</code> (<code>dlocks</code>)</td>
 </tr>
+<tr>
+<td>Stream (read/append)</td>
+<td><code>StreamSpec.name</code> (<code>streams</code>)</td>
+</tr>
+<tr>
+<td>Stream consumer group (read/ack/claim + provisioning)</td>
+<td><code>StreamSpec.name</code> (<code>stream_groups</code>)</td>
+</tr>
+<tr>
+<td>Pub-sub (publish/subscribe)</td>
+<td><code>PubSubSpec.name</code> (<code>pubsub</code>)</td>
+</tr>
 </tbody>
 </table>
+<h2 id="streams-pub-sub">Streams &amp; pub-sub<a class="headerlink" href="#streams-pub-sub" title="Permanent link">&para;</a></h2>
+<p>Redis Streams back the <code>StreamSpec</code> transport (append/read + consumer groups, the
+outbox relay's <code>to_stream</code>, and the realtime gateway); Redis Pub/Sub backs the
+<code>PubSubSpec</code> transport (publish/subscribe, the relay's <code>to_pubsub</code>). Register routes
+with <code>RedisStreamConfig</code>, <code>RedisStreamGroupConfig</code>, and <code>RedisPubSubConfig</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="n">RedisPubSubConfig</span><span class="p">,</span> <span class="n">RedisStreamConfig</span><span class="p">,</span> <span class="n">RedisStreamGroupConfig</span>
+
+<span class="n">RedisDepsModule</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">redis</span><span class="p">,</span>
+    <span class="n">streams</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;events&quot;</span><span class="p">:</span> <span class="n">RedisStreamConfig</span><span class="p">(</span><span class="n">tenant_aware</span><span class="o">=</span><span class="kc">True</span><span class="p">)},</span>
+    <span class="n">stream_groups</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;events&quot;</span><span class="p">:</span> <span class="n">RedisStreamGroupConfig</span><span class="p">(</span><span class="n">tenant_aware</span><span class="o">=</span><span class="kc">True</span><span class="p">)},</span>
+    <span class="n">pubsub</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;presence&quot;</span><span class="p">:</span> <span class="n">RedisPubSubConfig</span><span class="p">()},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Unlike the keyed resources above, these carry <strong>no namespace</strong> — the stream/topic
+name is supplied per call, and <code>tenant_aware=True</code> isolates it with a
+<code>tenant:{id}:</code> key prefix. Set <code>encryption="end_to_end"</code> on the <code>StreamSpec</code> /
+<code>PubSubSpec</code> to seal payloads through the broker (the consumer decrypts); a wired
+<code>CryptoDepsModule</code> is required, and a deployment <code>required_reach</code> floor is
+enforced here. Pub-sub is at-most-once past the broker.</p>
 <h2 id="l1-push-invalidation">L1 push invalidation<a class="headerlink" href="#l1-push-invalidation" title="Permanent link">&para;</a></h2>
 <p><code>RedisCacheConfig(invalidation_push=True)</code> enables Redis 6+ <strong>client-side
 caching</strong> (<code>CLIENT TRACKING</code>, RESP3 push) for caches backing the
