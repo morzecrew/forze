@@ -151,12 +151,20 @@ class VkPublicInfoTokenVerifier(TokenVerifierPort):
         (``error``, ``state``, ...) and replies HTTP 200 even on failure. Only that
         object is identity data — the same data the subject is derived from. Copying the
         whole payload would surface attacker-influenceable envelope fields to downstream
-        claim/tenant mappers, so the claims keep just the user object (empty when VK
-        returns the id at the top level only).
+        claim/tenant mappers, so the claims keep just the user object. For the accepted
+        top-level ``user_id`` shape (no ``user`` object), normalize that one field into
+        the ``user`` claim rather than dropping the only identity value.
         """
 
         user = payload.get("user")
-        return {"user": dict(cast(JsonDict, user))} if isinstance(user, dict) else {}
+
+        if isinstance(user, dict):
+            return {"user": dict(cast(JsonDict, user))}
+
+        if "user_id" in payload:
+            return {"user": {"user_id": payload["user_id"]}}
+
+        return {}
 
     # ....................... #
 

@@ -124,11 +124,6 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
 ) -> Any:
     """Run fingerprint, snapshot read, count, fetch, materialize, and page wrapping."""
 
-    # Fail closed on a sort over a field-encrypted column for every backend at the shared
-    # seam: encrypted/searchable ciphertext has no order at rest and would otherwise leak
-    # the raw value into a keyset cursor token.
-    reject_encrypted_sort_fields(sorts, encryption=spec.encryption, spec_name=spec.name)
-
     rs_spec = spec.snapshot
 
     # The fingerprint is only consumed on the snapshot read/write paths below, which
@@ -170,6 +165,13 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
 
         if maybe_snap is not None:
             return maybe_snap
+
+    # Fall-through to a real backend fetch (replay above did not serve the page). Only now
+    # fail closed on a sort over a field-encrypted column: encrypted/searchable ciphertext
+    # has no order at rest and would leak the raw value into a keyset cursor token. Deferred
+    # to here so paging an existing snapshot by id (which never re-sorts rows) still works —
+    # including snapshots created before this guard existed.
+    reject_encrypted_sort_fields(sorts, encryption=spec.encryption, spec_name=spec.name)
 
     total: int | None = None
 

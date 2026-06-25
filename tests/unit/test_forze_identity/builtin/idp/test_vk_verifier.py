@@ -120,6 +120,8 @@ async def test_success_with_integer_or_top_level_user_id() -> None:
         AccessTokenCredentials(token="t"),
     )
     assert assertion.subject == "77"
+    # The accepted top-level id is normalized into claims, not dropped.
+    assert assertion.claims == {"user": {"user_id": "77"}}
 
 
 @pytest.mark.asyncio
