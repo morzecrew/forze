@@ -44,7 +44,11 @@ from forze_mock.adapters.search import (
     MockSearchResultSnapshotAdapter,
 )
 from forze_mock.adapters.storage import MockStorageAdapter
-from forze_mock.adapters.stream import MockStreamAdapter, MockStreamGroupAdapter
+from forze_mock.adapters.stream import (
+    MockStreamAdapter,
+    MockStreamGroupAdapter,
+    MockStreamGroupAdminAdapter,
+)
 from forze_mock.adapters.tx import (
     MockJournalTxManagerAdapter,
     MockStrictTxManagerAdapter,
@@ -78,6 +82,7 @@ __all__ = [
     "MockPubSubAdapter",
     "MockStreamAdapter",
     "MockStreamGroupAdapter",
+    "MockStreamGroupAdminAdapter",
     "MockAnalyticsAdapter",
     "MockProcedureAdapter",
     "MockProcedureRegistry",

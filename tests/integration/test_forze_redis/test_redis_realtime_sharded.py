@@ -28,6 +28,7 @@ from forze_redis.adapters import (
     RedisStreamAdapter,
     RedisStreamCodec,
     RedisStreamGroupAdapter,
+    RedisStreamGroupAdminAdapter,
 )
 from forze_redis.kernel.client import RedisClient
 
@@ -43,7 +44,8 @@ def _for_tenant(client: RedisClient, codec: RedisStreamCodec[RealtimeSignal], te
     provider = lambda: TenantIdentity(tenant_id=tenant)  # noqa: E731
     writer = RedisStreamAdapter(client=client, codec=codec, tenant_aware=True, tenant_provider=provider)
     group = RedisStreamGroupAdapter(client=client, codec=codec, tenant_aware=True, tenant_provider=provider)
-    return writer, group
+    admin = RedisStreamGroupAdminAdapter(client=client, tenant_aware=True, tenant_provider=provider)
+    return writer, group, admin
 
 
 @pytest.mark.asyncio
@@ -52,12 +54,12 @@ async def test_tenant_aware_consumer_group_isolates_realtime_signals(redis_clien
     stream = f"it:rt:{uuid4().hex[:12]}"  # one logical name; the prefix makes the keys distinct
     group, consumer = DEFAULT_REALTIME_GROUP, "gw-1"
 
-    writer_a, group_a = _for_tenant(redis_client, codec, _T1)
-    writer_b, group_b = _for_tenant(redis_client, codec, _T2)
+    writer_a, group_a, admin_a = _for_tenant(redis_client, codec, _T1)
+    writer_b, group_b, admin_b = _for_tenant(redis_client, codec, _T2)
 
     # each shard ensures its group on its own per-tenant key
-    await group_a.ensure_group(group, stream, start_id="$")
-    await group_b.ensure_group(group, stream, start_id="$")
+    await admin_a.ensure_group(group, stream, start_id="$")
+    await admin_b.ensure_group(group, stream, start_id="$")
 
     sig_a = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", {"text": "a"})
     sig_b = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", {"text": "b"})  # same principal

@@ -91,6 +91,7 @@ from forze_mock.adapters import (
     MockSearchAdapter,
     MockSearchCommandAdapter,
     MockSearchManagementAdapter,
+    MockStreamGroupAdminAdapter,
     MockSearchResultSnapshotAdapter,
     MockState,
     MockStorageAdapter,
@@ -675,6 +676,22 @@ class ConfigurableMockStreamGroup(_MockFactoryBase):
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
         )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockStreamGroupAdmin(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: StreamSpec[Any],
+    ) -> MockStreamGroupAdminAdapter[Any]:
+        stream = ConfigurableMockStream(
+            module=self.module
+        )._adapter(  # pyright: ignore[reportPrivateUsage]
+            context, spec
+        )
+        return MockStreamGroupAdminAdapter(stream=stream, state=self._state(context))
 
 
 @final

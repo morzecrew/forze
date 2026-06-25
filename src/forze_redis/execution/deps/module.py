@@ -12,7 +12,17 @@ from forze.application.contracts.dlock import (
     DistributedLockQueryDepKey,
 )
 from forze.application.contracts.idempotency import IdempotencyDepKey
+from forze.application.contracts.pubsub import (
+    PubSubCommandDepKey,
+    PubSubQueryDepKey,
+)
 from forze.application.contracts.search import SearchResultSnapshotDepKey
+from forze.application.contracts.stream import (
+    StreamCommandDepKey,
+    StreamGroupAdminDepKey,
+    StreamGroupQueryDepKey,
+    StreamQueryDepKey,
+)
 from forze.application.contracts.tenancy import (
     TenancyRouteGroup,
     TenantIsolationMode,
@@ -41,7 +51,10 @@ from .configs import (
     RedisCounterConfig,
     RedisDistributedLockConfig,
     RedisIdempotencyConfig,
+    RedisPubSubConfig,
     RedisSearchResultSnapshotConfig,
+    RedisStreamConfig,
+    RedisStreamGroupConfig,
     RedisUniversalConfig,
 )
 from .factories import (
@@ -49,7 +62,13 @@ from .factories import (
     ConfigurableRedisCounter,
     ConfigurableRedisDistributedLock,
     ConfigurableRedisIdempotency,
+    ConfigurableRedisPubSubCommand,
+    ConfigurableRedisPubSubQuery,
     ConfigurableRedisSearchResultSnapshot,
+    ConfigurableRedisStreamCommand,
+    ConfigurableRedisStreamGroup,
+    ConfigurableRedisStreamGroupAdmin,
+    ConfigurableRedisStreamQuery,
 )
 from .keys import RedisBlockingClientDepKey, RedisClientDepKey
 
@@ -180,16 +199,32 @@ class RedisDepsModule(DepsModule):
     per-tenant ``namespace`` resolver), ``dedicated`` (a routed per-tenant client).
     """
 
-    #! read and write separately?
+    streams: StrKeyMapping[RedisStreamConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from stream route names to their Redis stream configurations.
 
-    # pubsub: dict[str, RedisPubSubConfig] = attrs.field(factory=dict)
-    # """Mapping from pubsub names to their Redis-specific configurations."""
+    Registered under both ``StreamQueryDepKey`` (raw reads) and ``StreamCommandDepKey``
+    (append, encryption-wrapped per ``StreamSpec.encryption``)."""
 
-    # streams: dict[str, RedisStreamConfig] = attrs.field(factory=dict)
-    # """Mapping from stream names to their Redis-specific configurations."""
+    stream_groups: StrKeyMapping[RedisStreamGroupConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from stream consumer-group route names to their configurations.
 
-    # stream_groups: dict[str, RedisStreamGroupConfig] = attrs.field(factory=dict)
-    # """Mapping from stream group names to their Redis-specific configurations."""
+    Registered under ``StreamGroupQueryDepKey`` (read/ack/claim/pending) and
+    ``StreamGroupAdminDepKey`` (group provisioning)."""
+
+    pubsub: StrKeyMapping[RedisPubSubConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from pub-sub route names to their Redis pub-sub configurations.
+
+    Registered under ``PubSubQueryDepKey`` (subscribe) and ``PubSubCommandDepKey``
+    (publish, encryption-wrapped). Pub-sub is at-most-once past the broker."""
 
     # ....................... #
 
@@ -262,6 +297,21 @@ class RedisDepsModule(DepsModule):
                     ("search_snapshot", self.search_snapshots),
                     ("dlock", self.dlocks),
                 )
+            ]
+            + [
+                # Streams / pub-sub have no per-route key namespace — tenant isolation is
+                # the ``tenant:{id}:`` key prefix (tagged tier) only, never namespace tier.
+                TenancyRouteGroup(
+                    kind=kind,
+                    configs=configs,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda _cfg: None,
+                )
+                for kind, configs in (
+                    ("stream", self.streams),
+                    ("stream_group", self.stream_groups),
+                    ("pubsub", self.pubsub),
+                )
             ],
             required_isolation=self.required_tenant_isolation,
             max_supported_isolation="dedicated",
@@ -319,6 +369,27 @@ class RedisDepsModule(DepsModule):
                     DistributedLockCommandDepKey,
                 ],
                 factory=ConfigurableRedisDistributedLock,
+            ),
+            routed_from_mapping(
+                self.streams,
+                bindings=[
+                    (StreamQueryDepKey, ConfigurableRedisStreamQuery),
+                    (StreamCommandDepKey, ConfigurableRedisStreamCommand),
+                ],
+            ),
+            routed_from_mapping(
+                self.stream_groups,
+                bindings=[
+                    (StreamGroupQueryDepKey, ConfigurableRedisStreamGroup),
+                    (StreamGroupAdminDepKey, ConfigurableRedisStreamGroupAdmin),
+                ],
+            ),
+            routed_from_mapping(
+                self.pubsub,
+                bindings=[
+                    (PubSubQueryDepKey, ConfigurableRedisPubSubQuery),
+                    (PubSubCommandDepKey, ConfigurableRedisPubSubCommand),
+                ],
             ),
             plain=plain,
         )

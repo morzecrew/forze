@@ -6,7 +6,11 @@ from .idempotency import RedisIdempotencyAdapter
 from .pubsub import RedisPubSubAdapter
 from .realtime_presence import RedisRealtimePresence
 from .search_result_snapshot import RedisSearchResultSnapshotAdapter
-from .stream import RedisStreamAdapter, RedisStreamGroupAdapter
+from .stream import (
+    RedisStreamAdapter,
+    RedisStreamGroupAdapter,
+    RedisStreamGroupAdminAdapter,
+)
 
 # ----------------------- #
 
@@ -21,6 +25,7 @@ __all__ = [
     "RedisStreamAdapter",
     "RedisStreamCodec",
     "RedisStreamGroupAdapter",
+    "RedisStreamGroupAdminAdapter",
     "RedisKeyCodec",
     "RedisDistributedLockAdapter",
 ]
