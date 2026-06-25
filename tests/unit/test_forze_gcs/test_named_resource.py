@@ -57,7 +57,7 @@ def test_gcs_deps_module_warns_dynamic_bucket_with_tenant_aware() -> None:
         return "tenant-bucket"
 
     with patch(
-        "forze_gcs.execution.deps.module.warn_integration_routes",
+        "forze.application.integrations.storage.deps_module.warn_integration_routes",
     ) as mock_warn:
         GCSDepsModule(
             client=MagicMock(),

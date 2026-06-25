@@ -13,6 +13,7 @@ from .client import (
     validate_range,
 )
 from .codec import ObjectStoragePathCodec, default_path_codec
+from .deps_module import ObjectStorageDepsModule
 from .encryption import validate_storage_encryption_wiring
 from .metadata import object_metadata_from_user_metadata
 from .provisioning import ObjectStorageTenantProvisioner
@@ -33,6 +34,7 @@ __all__ = [
     "build_range_header",
     "unsatisfiable_range",
     "validate_range",
+    "ObjectStorageDepsModule",
     "ObjectStoragePathCodec",
     "ObjectStorageTenantProvisioner",
     "RoutedObjectStorageClientBase",

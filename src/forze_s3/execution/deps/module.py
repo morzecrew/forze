@@ -4,23 +4,7 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.storage import (
-    StorageCommandDepKey,
-    StorageQueryDepKey,
-    StorageUploadSessionDepKey,
-)
-from forze.application.contracts.crypto import EncryptionTier
-from forze.application.contracts.tenancy import (
-    TenantIsolationMode,
-    warn_integration_routes,
-)
-from forze.application.contracts.deps import Deps, DepsModule
-from forze.application.contracts.deps import merge_deps, routed_from_mapping
-from forze.application.integrations.storage import (
-    validate_storage_encryption_wiring,
-    validate_storage_tenancy_wiring,
-)
-from forze.base.primitives import MappingConverter, StrKeyMapping
+from forze.application.integrations.storage import ObjectStorageDepsModule
 
 from ...kernel._logger import logger
 from ...kernel.client import RoutedS3Client, S3ClientPort
@@ -38,79 +22,20 @@ from .keys import S3ClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class S3DepsModule(DepsModule):
-    """Dependency module that registers S3 client and storage port.
+class S3DepsModule(ObjectStorageDepsModule[S3ClientPort, S3StorageConfig]):
+    """Dependency module that registers the S3 client and storage ports.
 
-    Invoke to produce a :class:`Deps` container with S3-backed storage
-    dependencies. The client must be initialized separately (e.g. via
-    :func:`s3_lifecycle_step`) before usecases run.
+    Invoke to produce a :class:`Deps` container with S3-backed storage dependencies. The
+    client must be initialized separately (e.g. via :func:`s3_lifecycle_step`) before
+    usecases run. Shared wiring/validation lives in
+    :class:`~forze.application.integrations.storage.ObjectStorageDepsModule`.
     """
 
-    client: S3ClientPort
-    """Pre-constructed S3 client (single endpoint or routed, session not initialized until lifecycle)."""
-
-    storages: StrKeyMapping[S3StorageConfig] | None = attrs.field(
-        default=None,
-        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
-    )
-    """Mapping from storage names to their S3-specific configurations."""
-
-    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
-    """Declared minimum tenant isolation (``None`` = no floor).
-
-    Object storage spans the full ladder: ``tagged`` (per-tenant path prefix via
-    ``tenant_aware``), ``namespace`` (a per-tenant ``bucket`` resolver), ``dedicated`` (a
-    routed per-tenant client / credentials). Wiring fails closed if the derived tier is
-    weaker than the declared floor.
-    """
-
-    required_encryption: EncryptionTier | None = attrs.field(default=None)
-    """Declared minimum encryption coverage (``None`` = no floor).
-
-    Object storage does whole-object ``envelope`` encryption when a route sets
-    ``encrypt=True``; wiring fails closed if a route's coverage is weaker than the
-    declared floor. Requires a ``KeyringDepKey`` (e.g. via ``CryptoDepsModule``)."""
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        warn_integration_routes(
-            integration="S3",
-            routes=self.storages,
-            warning=S3_STORAGE_WARNING,
-            log_warning=logger.warning,
-        )
-        validate_storage_tenancy_wiring(
-            integration="S3",
-            client_is_routed=isinstance(self.client, RoutedS3Client),
-            storages=self.storages,
-            required_isolation=self.required_tenant_isolation,
-            validation_failed_code="s3_storage_tenancy_validation_failed",
-            log_warning=logger.warning,
-        )
-        validate_storage_encryption_wiring(
-            integration="S3",
-            storages=self.storages,
-            required_encryption=self.required_encryption,
-            validation_failed_code="s3_storage_encryption_validation_failed",
-        )
-
-    # ....................... #
-
-    def __call__(self) -> Deps:
-        """Build a dependency container with S3-backed storage port.
-
-        :returns: Deps with client and storage port factory.
-        """
-
-        return merge_deps(
-            routed_from_mapping(
-                self.storages,
-                bindings=[
-                    (StorageQueryDepKey, ConfigurableS3StorageQuery),
-                    (StorageCommandDepKey, ConfigurableS3StorageCommand),
-                    (StorageUploadSessionDepKey, ConfigurableS3StorageUploads),
-                ],
-            ),
-            plain={S3ClientDepKey: self.client},
-        )
+    integration_label = "S3"
+    client_dep_key = S3ClientDepKey
+    routed_client_type = RoutedS3Client
+    route_warning = S3_STORAGE_WARNING
+    log_warning = logger.warning
+    storage_query_factory = ConfigurableS3StorageQuery
+    storage_command_factory = ConfigurableS3StorageCommand
+    storage_uploads_factory = ConfigurableS3StorageUploads

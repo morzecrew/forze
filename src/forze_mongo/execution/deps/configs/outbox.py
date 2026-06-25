@@ -1,43 +1,22 @@
 """Mongo outbox integration configuration."""
 
-from datetime import timedelta
-
 import attrs
 
+from forze.application.contracts.outbox import OutboxIntegrationConfig
 from forze.application.contracts.resolution import RelationSpec, coerce_relation_spec
-from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
-from forze.base.exceptions import exc
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoOutboxConfig(TenantAwareIntegrationConfig):
-    """Mongo configuration for :class:`~forze_mongo.adapters.outbox.MongoOutboxStore`."""
+class MongoOutboxConfig(OutboxIntegrationConfig):
+    """Mongo configuration for :class:`~forze_mongo.adapters.outbox.MongoOutboxStore`.
+
+    With ``hlc_ordering`` enabled, claims sort ``[(hlc, 1), (created_at, 1), (id, 1)]``
+    (``hlc`` packed int64). During migration Mongo sorts legacy missing-``hlc`` rows
+    *first* (oldest drain first) — the inverse of Postgres ``NULLS LAST``; both are
+    best-effort. Shared tuning (flush/claim batch sizes, lease) is inherited.
+    """
 
     collection: RelationSpec = attrs.field(converter=coerce_relation_spec)
     """Database and collection for outbox documents."""
-
-    max_flush_rows: int = 500
-    """Maximum rows per :meth:`~forze.application.contracts.outbox.OutboxCommandPort.flush`."""
-
-    max_claim_rows: int = 100
-    """Default batch size for :meth:`~forze.application.contracts.outbox.OutboxQueryPort.claim_pending`."""
-
-    hlc_ordering: bool = False
-    """Persist each event's Hybrid Logical Clock (`hlc`, packed int64) and claim
-    in causal order (`sort [(hlc, 1), (created_at, 1), (id, 1)]`) instead of
-    `created_at` only. Off by default — the field is absent unless enabled. Note
-    that during migration Mongo sorts legacy missing-`hlc` rows *first* (oldest
-    drain first), the inverse of Postgres `NULLS LAST`; both are best-effort."""
-
-    default_processing_lease: timedelta = attrs.field(
-        factory=lambda: timedelta(minutes=5)
-    )
-    """Suggested lease for :meth:`~forze_kits.integrations.outbox.OutboxRelay.to_queue` ``reclaim_stale_after`` (documentation default)."""
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        if self.default_processing_lease.total_seconds() <= 0:
-            raise exc.configuration("Default processing lease must be positive")
