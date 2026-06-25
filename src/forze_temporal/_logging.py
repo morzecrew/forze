@@ -10,9 +10,9 @@ from typing import Final, final
 class ForzeTemporalLogger(StrEnum):
     """Forze Temporal logger names."""
 
-    ADAPTERS = "temporal.adapters"
-    EXECUTION = "temporal.execution"
-    KERNEL = "temporal.kernel"
+    ADAPTERS = "forze_temporal.adapters"
+    EXECUTION = "forze_temporal.execution"
+    KERNEL = "forze_temporal.kernel"
 
 
 # ....................... #

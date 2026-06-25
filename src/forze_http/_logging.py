@@ -10,9 +10,9 @@ from typing import Final, final
 class ForzeHttpLogger(StrEnum):
     """Forze HTTP logger names."""
 
-    KERNEL = "http.kernel"
-    ADAPTERS = "http.adapters"
-    EXECUTION = "http.execution"
+    KERNEL = "forze_http.kernel"
+    ADAPTERS = "forze_http.adapters"
+    EXECUTION = "forze_http.execution"
 
 
 # ....................... #
