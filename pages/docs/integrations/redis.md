@@ -70,10 +70,10 @@ lifecycle = LifecyclePlan.from_steps(
 
 ## Streams & pub-sub
 
-Redis Streams back the generic `StreamSpec` / `PubSubSpec` transports — the same
-contracts the outbox relay (`to_stream` / `to_pubsub`) and the realtime gateway
-consume. Register routes with `RedisStreamConfig`, `RedisStreamGroupConfig`, and
-`RedisPubSubConfig`:
+Redis Streams back the `StreamSpec` transport (append/read + consumer groups, the
+outbox relay's `to_stream`, and the realtime gateway); Redis Pub/Sub backs the
+`PubSubSpec` transport (publish/subscribe, the relay's `to_pubsub`). Register routes
+with `RedisStreamConfig`, `RedisStreamGroupConfig`, and `RedisPubSubConfig`:
 
 ```python
 from forze_redis import RedisPubSubConfig, RedisStreamConfig, RedisStreamGroupConfig
