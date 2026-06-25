@@ -2,7 +2,7 @@ from datetime import timedelta
 from typing import Awaitable, Protocol, runtime_checkable
 
 from .specs import DistributedLockSpec
-from .value_objects import AcquiredLock
+from .value_objects import AcquiredLock, DistributedLockCapabilities
 
 # ----------------------- #
 
@@ -80,4 +80,22 @@ class DistributedLockCommandPort(Protocol):  # pragma: no cover
         Extends the current lock generation: the fencing token does not change.
         """
 
+        ...
+
+
+# ....................... #
+
+
+@runtime_checkable
+class FencingAware(Protocol):
+    """Opt-in extension for lock command ports that report their fencing capability.
+
+    Kept separate from :class:`DistributedLockCommandPort` so a backend opts in only when
+    it can report — the kernel checks a spec's ``requires_fencing_token`` against
+    :meth:`capabilities` at first resolve (fail-closed). Mirrors transaction
+    :class:`~forze.application.contracts.transaction.IsolationAware`.
+    """
+
+    def capabilities(self) -> DistributedLockCapabilities:
+        """Report the lock features (fencing tokens, ...) this backend supports."""
         ...

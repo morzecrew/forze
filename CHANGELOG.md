@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fencing-token capability for distributed locks** — a `DistributedLockSpec` can now declare `requires_fencing_token=True`, and a backend reports support via the opt-in `FencingAware` protocol (`capabilities() -> DistributedLockCapabilities`). Resolving the command port fails closed (`exc.configuration`) against a backend that can't issue monotonic tokens, so a fencing-dependent consumer is never silently wired onto best-effort exclusion. Default stays `False` (tokens best-effort, `AcquiredLock.token` may be `None`); Redis and mock report fencing support.
+
 - **Less CRUD boilerplate** — `build_document_registry(spec)` derives its `DocumentDTOs` from the spec when `dtos` is omitted (override, or `create=None`/`update=None` to disable an op), and new `document_facade(runtime, registry, spec)` returns a per-call typed `DocumentFacade` factory. Both additive — the explicit `DocumentDTOs` and `DocumentFacade(...)` forms keep working.
 
 - **Top-level front door** — the most-used names re-export from `forze` and `forze_kits` (`from forze import DocumentSpec, build_runtime`; `from forze_kits import DocumentFacade, build_document_registry`), resolved lazily (PEP 562) so `import forze` stays cheap. Deep paths keep working; the core never imports kits.

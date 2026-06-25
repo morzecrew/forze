@@ -9,9 +9,11 @@ import attrs
 
 from forze.application.contracts.dlock import (
     AcquiredLock,
+    DistributedLockCapabilities,
     DistributedLockCommandPort,
     DistributedLockQueryPort,
     DistributedLockSpec,
+    FencingAware,
 )
 from forze.base.primitives import monotonic
 from forze_mock.state import MockState
@@ -26,12 +28,19 @@ class MockDistributedLockAdapter(
     MockTenancyMixin,
     DistributedLockQueryPort,
     DistributedLockCommandPort,
+    FencingAware,
 ):
     """Process-local lock simulation with TTL semantics."""
 
     spec: DistributedLockSpec
     state: MockState
     namespace: str
+
+    # ....................... #
+
+    def capabilities(self) -> DistributedLockCapabilities:
+        # The mock issues monotonic fencing tokens via a per-key in-memory counter.
+        return DistributedLockCapabilities(fencing_tokens=True)
 
     # ....................... #
 

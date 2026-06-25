@@ -12,9 +12,11 @@ from typing import Final, final
 
 from forze.application.contracts.dlock import (
     AcquiredLock,
+    DistributedLockCapabilities,
     DistributedLockCommandPort,
     DistributedLockQueryPort,
     DistributedLockSpec,
+    FencingAware,
 )
 
 from ..kernel.scripts import ACQUIRE_DLOCK, RELEASE_DLOCK, RESET_DLOCK
@@ -34,10 +36,17 @@ _FENCE_SUFFIX: Final[str] = "fence"
 class RedisDistributedLockAdapter(
     DistributedLockCommandPort,
     DistributedLockQueryPort,
+    FencingAware,
     RedisBaseAdapter,
 ):
     spec: DistributedLockSpec
     """Specification for the distributed lock."""
+
+    # ....................... #
+
+    def capabilities(self) -> DistributedLockCapabilities:
+        # Redis issues monotonic fencing tokens via an INCR'd per-key counter.
+        return DistributedLockCapabilities(fencing_tokens=True)
 
     # ....................... #
 
