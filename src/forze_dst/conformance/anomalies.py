@@ -8,8 +8,10 @@ the differential asserts the observed verdict equals the contract overlaid with 
 :data:`~forze_dst.conformance.divergence.CONTRACT_STRENGTHENINGS` — so the only way an adapter may
 deviate from the textbook is a reviewed, justified strengthening.
 
-The four cases span every level boundary Forze models:
+The cases span every level boundary Forze models:
 
+- ``dirty_read`` must be prevented at every level (no transaction observes an uncommitted write) —
+  the case that drove the mock's faithful read-committed (RFC 0004 E.1);
 - ``non_repeatable_read`` and ``read_skew`` discriminate READ_COMMITTED from SNAPSHOT;
 - ``write_skew`` discriminates SNAPSHOT from SERIALIZABLE (the headline SI↔serializable gap);
 - ``lost_update`` documents the rev-OCC strengthening (prevented at every level, vs the textbook
@@ -267,7 +269,53 @@ async def _run_lost_update(backend: ConformanceBackend, level: IsolationLevel) -
 # ....................... #
 
 
+class _Rollback(Exception):
+    """Sentinel used to force a writer's transaction to roll back in the dirty-read case."""
+
+
+async def _run_dirty_read(backend: ConformanceBackend, level: IsolationLevel) -> Verdict:
+    sessions = backend.contexts(2)
+    writer, reader = sessions[0], sessions[1]
+    scope = backend.scope_name
+
+    async with writer.tx_ctx.scope(scope):
+        cid = (await writer.document.command(CELL).create(CellCreate(value=1))).id
+
+    seen: dict[str, int] = {}
+
+    async def roll_back_writer(gate: Gate) -> None:
+        try:
+            async with writer.tx_ctx.scope(scope, isolation=level):
+                current = await writer.document.query(CELL).get(cid)
+                await writer.document.command(CELL).update(cid, current.rev, CellUpdate(value=99))
+                await gate.checkpoint()  # 99 is written but not committed
+                raise _Rollback()
+        except _Rollback:
+            pass
+
+    async def read_during_window(gate: Gate) -> None:
+        await gate.checkpoint()
+        async with reader.tx_ctx.scope(scope, isolation=level):
+            seen["value"] = (await reader.document.query(CELL).get(cid)).value
+
+    await Conductor(schedule=("reader", "writer")).run(
+        {"writer": roll_back_writer, "reader": read_during_window}
+    )
+
+    # A dirty read = the reader observed the writer's uncommitted, later-rolled-back value (99).
+    return _PERMIT if seen.get("value") == 99 else _PREVENT
+
+
+# ....................... #
+
+
 BATTERY: tuple[AnomalyCase, ...] = (
+    AnomalyCase(
+        name="dirty_read",
+        summary="A transaction reads another transaction's uncommitted (later rolled-back) write.",
+        contract={_RC: _PREVENT, _SI: _PREVENT, _SER: _PREVENT},
+        run=_run_dirty_read,
+    ),
     AnomalyCase(
         name="non_repeatable_read",
         summary="A transaction reads a row twice and sees a concurrent commit between the reads.",

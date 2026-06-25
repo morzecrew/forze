@@ -61,6 +61,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         def _to_domain(self, doc: JsonDict) -> D: ...
         def _ensure_exists(self, pk: UUID) -> JsonDict: ...
         def _check_rev(self, current_rev: int, expected_rev: int | None) -> None: ...
+        def _mark_rev_guarded(self, pk: UUID) -> None: ...
         def _create_codec(self) -> ModelCodec[D, Any]: ...
         def _domain_codec(self) -> ModelCodec[D, Any]: ...
         def _patch_codec(self) -> ModelCodec[Any, Any]: ...
@@ -470,6 +471,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(updated))
             self._store()[pk] = serialized
 
+            # A rev-guarded write (caller supplied a rev) is the one read-committed must fail on a
+            # concurrent same-row commit; a blind write (rev is None) is left to lose silently.
+            if rev is not None:
+                self._mark_rev_guarded(pk)
+
             write_diff = {**dict(diff), REV_FIELD: updated.rev} if diff else {}
 
         await self._dispatch_domain_events([updated])
@@ -860,6 +866,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(updated))
                 self._store()[pk] = serialized
 
+            self._mark_rev_guarded(pk)  # delete is rev-guarded
+
         return self._to_read(serialized) if return_new else None
 
     # ....................... #
@@ -946,6 +954,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 )
                 serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(updated))
                 self._store()[pk] = serialized
+
+            self._mark_rev_guarded(pk)  # restore is rev-guarded
 
         return self._to_read(serialized) if return_new else None
 

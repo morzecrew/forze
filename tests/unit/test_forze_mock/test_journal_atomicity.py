@@ -93,7 +93,12 @@ async def test_read_committed_rollback_reverts_document_outbox_and_inbox() -> No
     with pytest.raises(_Boom):
         async with ctx.tx_ctx.scope("mock"):
             await _write_all(ctx)
-            assert _counts(state) == (1, 1, 1)  # visible inside the tx
+            # The document write is BUFFERED (read-committed routes documents through the MVCC
+            # overlay), so it is not yet in the live store — a concurrent transaction can't observe
+            # it (no dirty read). Outbox/inbox still write through and are journalled.
+            assert _counts(state) == (0, 1, 1)
+            # …but the writer sees its own buffered write via the adapter (read-your-writes).
+            assert await ctx.document.query(SPEC).count() == 1
             raise _Boom()
 
     # All three participating stores rolled back — not just documents.

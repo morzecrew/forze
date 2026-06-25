@@ -198,6 +198,22 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
+    def _mark_rev_guarded(self, pk: UUID) -> None:
+        """Record a rev-guarded write of *pk* on the active MVCC transaction (a no-op outside one).
+
+        Lets read-committed surface a write-write conflict for rev-guarded updates only — a blind
+        (rev-less) write does not mark, so it silently loses as read-committed permits. See
+        :attr:`~forze_mock.adapters._mvcc.MvccTx.rev_guarded`.
+        """
+
+        mvcc = current_mvcc_tx()
+
+        if mvcc is not None:
+            ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+            mvcc.mark_rev_guarded(ns, pk)
+
+    # ....................... #
+
     def _doc_visible(self, doc: JsonDict) -> bool:
         if not self.tenant_aware:
             return True

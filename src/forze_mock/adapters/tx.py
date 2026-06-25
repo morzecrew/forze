@@ -246,24 +246,26 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockJournalTxManagerAdapter(TransactionManagerPort):
-    """Concurrency-preserving atomicity via a per-transaction undo journal — the default.
+    """Concurrency-preserving atomicity + faithful isolation — the default.
 
-    Writes to participating stores go through immediately (write-through), but each records an
-    undo thunk in a per-task journal (see :mod:`forze_mock.adapters._journal`); an escaping
-    exception replays the journal in reverse, undoing **only this transaction's** writes — so
-    a failed operation leaves no partial writes, while concurrent transactions interleave
-    freely (no global serialization, unlike :class:`MockStrictTxManagerAdapter`). Coverage
-    spans every participating store: documents and the outbox/inbox per-entry, identity via a
-    coarse deep snapshot (it is mutated in place). Write-write conflicts on documents are
-    caught by the row ``rev`` (optimistic concurrency). A read-only root rejects writes to
+    The DOCUMENT store routes through the MVCC buffered overlay at **every** level (see
+    :mod:`forze_mock.adapters._mvcc`): writes buffer and publish at commit, so a concurrent
+    transaction never observes an uncommitted write — no dirty reads, while concurrent transactions
+    still interleave freely (no global serialization, unlike :class:`MockStrictTxManagerAdapter`).
+    Read-committed reads through to the latest committed state per statement; snapshot / serializable
+    read an as-of-begin snapshot. Write-write conflicts on documents are caught at every level — by
+    the row ``rev`` OCC and by overlay first-committer-wins validation — so two concurrent updates to
+    a row never both commit (matching a rev-guarded update under Postgres read-committed).
+
+    The other participating stores (outbox ``list``, inbox ``set``) still go through immediately and
+    record an undo thunk in a per-task journal (see :mod:`forze_mock.adapters._journal`); an escaping
+    exception replays it in reverse, undoing **only this transaction's** writes. Identity is reverted
+    by a coarse deep snapshot (it is mutated in place). A read-only root rejects writes to
     participating stores (``QUERY`` operations), like Postgres ``BEGIN ... READ ONLY``.
 
-    Read-committed by default (write-through, so a concurrent transaction can observe a
-    not-yet-committed row — a rollback then undoes it). Snapshot / serializable isolation is
-    honored for the document store via the MVCC overlay (see :mod:`forze_mock.adapters._mvcc`).
-
     Faithful enough to make DST findings trustworthy: it rolls back partial writes (no false
-    "double effect" from an aborted transaction) yet preserves the interleavings DST explores.
+    "double effect" from an aborted transaction), gives read-committed real isolation (no dirty
+    reads), yet preserves the interleavings DST explores.
     """
 
     state: "MockState"
@@ -304,25 +306,22 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
         is_root = depth == 0
         token_depth = _journal_tx_depth.set(depth + 1)
 
-        # Snapshot / serializable additionally use the MVCC buffered overlay for the DOCUMENT
-        # store (reads from an as-of-begin snapshot, writes buffered, validated + published at
-        # commit). The undo journal is ALWAYS active at the root: under read-committed it
-        # covers document writes too (write-through JournalingStore); under MVCC, documents go
-        # through the overlay instead, so the journal then covers only the non-document
-        # participating stores (outbox `list`, inbox `set`, via `record_undo`). Identity is
-        # mutated in place, so it is reverted by a coarse deep-snapshot rather than the
-        # journal. Only the root sets these up; nested scopes (savepoints) share them —
-        # savepoint-level partial rollback is not modelled.
-        mvcc_enabled = isolation in (
-            IsolationLevel.SNAPSHOT,
-            IsolationLevel.SERIALIZABLE,
-        )
-
+        # Every level routes the DOCUMENT store through the MVCC buffered overlay (writes buffered,
+        # published at commit), so a concurrent transaction never observes an uncommitted write — no
+        # dirty reads at any level. Read-committed reads through to the live store (latest committed)
+        # and validates nothing; snapshot / serializable read an as-of-begin snapshot and validate at
+        # commit. The undo journal is still active at the root, but now covers ONLY the non-document
+        # participating stores (outbox `list`, inbox `set`, via `record_undo`) — documents go through
+        # the overlay. Identity is mutated in place, so it is reverted by a coarse deep-snapshot.
+        # Only the root sets these up; nested scopes (savepoints) share them — savepoint-level
+        # partial rollback is not modelled.
         mvcc = (
             MvccTx.begin(
-                self.state, serializable=isolation is IsolationLevel.SERIALIZABLE
+                self.state,
+                serializable=isolation is IsolationLevel.SERIALIZABLE,
+                read_committed=isolation in (None, IsolationLevel.READ_COMMITTED),
             )
-            if is_root and mvcc_enabled
+            if is_root
             else None
         )
         token_mvcc = _mvcc_tx.set(mvcc) if mvcc is not None else None
