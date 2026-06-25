@@ -10,6 +10,7 @@ subset from here.
 
 from __future__ import annotations
 
+from forze_dst.oracle.commutativity import commutative_convergence
 from forze_dst.oracle.confidence import ConfidenceReport, assess_confidence
 from forze_dst.oracle.coverage import (
     CoverageStats,
@@ -121,6 +122,8 @@ __all__ = [
     "find_snapshot_isolation_violations",
     "find_serializable_violations",
     "TxRecord",
+    # commutativity (cross-history)
+    "commutative_convergence",
     # reachability
     "sometimes",
     "reached",

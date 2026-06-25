@@ -2,13 +2,16 @@
 
 A namespace over the oracle's assertion vocabulary: always-properties (``no_duplicate_effect``,
 ``monotonic_per``, ``mutual_exclusion``, …), value-level checks (``expect``, ``expect_value``,
-``read_your_writes``), linearizability (``linearizable`` + its specs), and reachability /
-"sometimes" liveness (``sometimes``, ``reached``). Import the namespace and reach for what you
-need: ``from forze_dst import invariants as inv`` → ``inv.no_duplicate_effect(...)``.
+``read_your_writes``), transactional isolation (``snapshot_isolation``, ``serializable``),
+linearizability (``linearizable`` + its specs), commutativity (``commutative_convergence`` — the one
+*cross-history* checker, not a single-history :data:`Invariant`), and reachability / "sometimes"
+liveness (``sometimes``, ``reached``). Import the namespace and reach for what you need:
+``from forze_dst import invariants as inv`` → ``inv.no_duplicate_effect(...)``.
 """
 
 from __future__ import annotations
 
+from forze_dst.oracle.commutativity import commutative_convergence
 from forze_dst.oracle.invariants import (
     Invariant,
     Violation,
@@ -86,6 +89,8 @@ __all__ = [
     "find_snapshot_isolation_violations",
     "find_serializable_violations",
     "TxRecord",
+    # commutativity (cross-history)
+    "commutative_convergence",
     # reachability / liveness
     "sometimes",
     "reached_labels",
