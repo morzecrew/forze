@@ -7316,9 +7316,33 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>forze_dst</code> internal restructure</strong> <em>(breaking: imports)</em> — the harness splits into a thin <code>Simulation</code> facade over <code>engines/</code>, <code>oracle/</code>, and <code>artifacts/</code> subpackages, dropping top-level modules from 29 to 15. Top-level symbols now live in submodule namespaces, and <code>SchedulerKind</code> is removed.</p>
 </li>
+<li>
+<p><strong>Integration logger namespaces unified to <code>forze_&lt;pkg&gt;.*</code></strong> <em>(behavior change: log filters)</em> — <code>forze_redis</code>/<code>forze_postgres</code>/<code>forze_http</code>/<code>forze_firestore</code>/<code>forze_temporal</code> previously logged under bare prefixes (<code>redis.*</code>, <code>postgres.*</code>, …), matching the rest of the integrations now. Besides consistency this stops <code>redis.*</code> from inheriting the <code>redis</code> driver's own logger configuration. Update any log filters keyed on the old prefixes.</p>
+</li>
+<li>
+<p><strong>Notify kit: registration split from resolution</strong> <em>(breaking: <code>forze_kits</code>)</em> — <code>NotificationRouter</code> is now a mutable builder (<code>register()</code> returns self, then <code>freeze()</code>); resolution (<code>resolve</code>/<code>resolve_or_raise</code>) moves to the immutable <code>FrozenNotificationRouter</code> the consumer holds, so the routing table can't change under a running consumer. Notification command models are frozen, and the package is reorganized into <code>routing</code> / <code>events</code> / <code>consumer</code> / <code>lifecycle</code> (public imports from <code>forze_kits.integrations.notify</code> unchanged except the new <code>FrozenNotificationRouter</code>).</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Notifications can run through the queue consumer (dedup + poison parking)</strong> — <code>notification_consumer_lifecycle_step(...)</code> and <code>notification_queue_consumer_handler(...)</code> route notifications through <code>QueueConsumer</code>, so an at-least-once redelivery no longer re-sends (inbox dedup on the deterministic event id) and poison messages are parked. The transactional-notifications recipe now drains via the consumer instead of a hand-rolled receive/ack loop.</p>
+</li>
+<li>
+<p><strong>Queue consumer warns when a poison ceiling can't be enforced</strong> — when <code>max_deliveries</code> is set but the backend does not report a delivery count (so in-app parking can never trigger), the consumer logs one warning per run pointing at the broker's dead-letter/redrive policy, instead of silently looping a poison message forever.</p>
+</li>
+<li>
+<p><strong><abbr title="Command Query Responsibility Segregation">CQRS</abbr> read-only guard now covers eager (factory-time) port acquisition</strong> — a QUERY operation whose handler factory acquired a command (write) port at build time — <code>lambda ctx: Handler(port=ctx.document.command(spec))</code>, the common kit pattern — previously slipped past the read-only guard, which was only set later inside the call. The handler is now built under the read-only flag for any QUERY operation, so eager acquisition hits the same guard as a call-time one (raised at first resolve). Read-port acquisition and COMMAND operations are unaffected.</p>
+</li>
+<li>
+<p><strong>Filtering a randomized-encrypted field now fails closed</strong> — a query predicate on a field encrypted with randomized (non-searchable) encryption silently matched nothing (plaintext literal compared against ciphertext at rest); it now raises <code>precondition</code> (<code>code="core.crypto.encrypted_field_not_filterable"</code>) at the shared codec seam, so every document/search backend inherits it. Query by equality using a deterministic searchable field instead.</p>
+</li>
+<li>
+<p><strong>Encrypted-sort rejection now covers every search backend</strong> — refusing a sort on a field-encrypted column (no usable order at rest, and the raw value leaks into the keyset cursor token) was wired only on Mongo. The guard now runs once in the shared offset executor — so Postgres, Mongo, and Meilisearch all inherit it — plus the Postgres cursor path (Mongo's cursor guard stays inline). Raises <code>core.search.encrypted_sort_field</code>.</p>
+</li>
+<li>
+<p><strong>VK login no longer copies the untrusted introspection envelope into claims</strong> — the <code>public_info</code> verifier emitted the full unverified response (including top-level protocol/envelope fields) as identity claims; it now keeps only the masked <code>user</code> object the subject is derived from, so attacker-influenceable envelope fields cannot reach downstream claim/tenant mappers.</p>
+</li>
 <li>
 <p><strong>A missing dependency now reports as a legible configuration error</strong> — looking up an unregistered port (a forgotten <code>DepsModule</code> entry) raised an opaque <code>internal</code> error; it now raises <code>configuration</code> and names what <em>is</em> registered (the plain dependency or route inventory) with a "did you forget a DepsModule entry?" hint. It stays a server-side 500 (a wiring fault is the server's, and the detail is never exposed to clients) — the win is an actionable message in logs instead of a generic internal error indistinguishable from a crash.</p>
 </li>
