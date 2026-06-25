@@ -14,6 +14,7 @@ from forze.base.primitives import derive_seed
 from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.oracle.invariants import check
 from forze_dst.oracle.recorder import History
+from forze_dst.scheduler import Reorderer
 
 if TYPE_CHECKING:
     from forze_dst.harness import Simulation
@@ -40,8 +41,8 @@ def explore_seeds(
 
 
 def scheduler_for(
-    seed: int, factory: Callable[[int], object] | None
-) -> object | None:
+    seed: int, factory: Callable[[int], Reorderer | None] | None
+) -> Reorderer | None:
     """A fresh per-seed scheduler from *factory* (seeded with the schedule sub-seed), or ``None``.
 
     Stateful schedulers (PCT) must be rebuilt per run so the initial run, every minimization

@@ -13,6 +13,7 @@ from __future__ import annotations
 from forze_dst.oracle.commutativity import commutative_convergence
 from forze_dst.oracle.confidence import ConfidenceReport, assess_confidence
 from forze_dst.oracle.coverage import (
+    Behavior,
     CoverageStats,
     behavioral_coverage,
     behavioral_fingerprint,
@@ -131,6 +132,7 @@ __all__ = [
     "assess_reachability",
     "ReachabilityReport",
     # coverage
+    "Behavior",
     "behavioral_coverage",
     "behavioral_fingerprint",
     "CoverageStats",

@@ -25,6 +25,7 @@ from forze.base.primitives import (
 
 from .cpu import CpuCostModel, SimulationCpuExecutor
 from .loop import RealIOForbidden, SimulationDeadlock, SimulationEventLoop
+from .scheduler import Reorderer
 from .time_source import DEFAULT_EPOCH, SimulationTimeSource
 
 # ----------------------- #
@@ -36,7 +37,7 @@ def run_simulation[T](
     seed: int = 0,
     epoch: datetime = DEFAULT_EPOCH,
     schedule_seed: int | None = None,
-    scheduler: object | None = None,
+    scheduler: Reorderer | None = None,
     latency: LatencyModel | None = None,
     cpu_cost: CpuCostModel | None = None,
 ) -> T:

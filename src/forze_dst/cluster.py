@@ -52,6 +52,7 @@ from forze_dst.oracle import ViolationReport, minimize
 from forze_dst.oracle.invariants import Invariant, check
 from forze_dst.oracle.recorder import History, Recorder, record_event
 from forze_dst.runtime import run_simulation
+from forze_dst.scheduler import Reorderer
 
 # ----------------------- #
 
@@ -356,7 +357,7 @@ class Cluster:
     def _interleaving(
         seed: int,
         config: SimulationConfig,
-    ) -> tuple[object | None, int | None]:
+    ) -> tuple[Reorderer | None, int | None]:
         """The (scheduler, schedule_seed) for a run, mirroring the single-process harness."""
 
         factory = config.scheduler.factory()

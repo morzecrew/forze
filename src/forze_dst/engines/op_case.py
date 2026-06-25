@@ -18,6 +18,7 @@ from forze_dst.engines.cases import OperationCase, Call
 from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.recorder import History, Recorder
 from forze_dst.runtime import run_simulation
+from forze_dst.scheduler import Reorderer
 from forze_dst.time_source import DEFAULT_EPOCH
 
 if TYPE_CHECKING:
@@ -34,7 +35,7 @@ def run_workload(
     seed: int,
     schedule_seed: int | None,
     epoch: datetime,
-    scheduler: object | None = None,
+    scheduler: Reorderer | None = None,
 ) -> History:
     """Run *workload* concurrently on the deterministic loop; return the recorded history."""
 
@@ -87,7 +88,7 @@ def attempt(
     seed: int,
     perturb: bool,
     epoch: datetime,
-    scheduler_factory: Callable[[int], object] | None = None,
+    scheduler_factory: Callable[[int], Reorderer | None] | None = None,
 ) -> ViolationReport | None:
     """Run one seed's workload; on a violation, minimize and report (else ``None``)."""
 
@@ -131,7 +132,7 @@ def explore(
     seeds: Sequence[int],
     perturb: bool = True,
     epoch: datetime = DEFAULT_EPOCH,
-    scheduler_factory: Callable[[int], object] | None = None,
+    scheduler_factory: Callable[[int], Reorderer | None] | None = None,
 ) -> ViolationReport | None:
     """Generate + run a seeded workload per seed; on a violation, minimize and report.
 

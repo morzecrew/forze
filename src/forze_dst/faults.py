@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import random
 from datetime import timedelta
-from typing import final
+from typing import Any, final
 
 import attrs
 
@@ -114,7 +114,7 @@ class PortFaultInterceptor(PortSelector):
 
     # ....................... #
 
-    async def around(self, call: PortCall, nxt: PortNext) -> object:
+    async def around(self, call: PortCall, nxt: PortNext) -> Any:
         if (
             self.matches(call)
             and self.probability > 0.0
@@ -159,7 +159,7 @@ class CrashInterceptor(PortSelector):
 
     # ....................... #
 
-    async def around(self, call: PortCall, nxt: PortNext) -> object:
+    async def around(self, call: PortCall, nxt: PortNext) -> Any:
         if (
             self.matches(call)
             and self.probability > 0.0
@@ -307,7 +307,7 @@ class _FaultPolicyInterceptor:
 
     # ....................... #
 
-    def _dropped(self, call: PortCall) -> object:
+    def _dropped(self, call: PortCall) -> Any:
         """A synthetic result for a silently-dropped call (so the caller still gets an id).
 
         Shaped for queue enqueue (returns a message id / list of ids); ``None`` otherwise.
@@ -323,7 +323,7 @@ class _FaultPolicyInterceptor:
 
     # ....................... #
 
-    async def around(self, call: PortCall, nxt: PortNext) -> object:
+    async def around(self, call: PortCall, nxt: PortNext) -> Any:
         rule = self._match(call)
 
         if rule is None:

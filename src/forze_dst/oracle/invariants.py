@@ -188,14 +188,17 @@ def monotonic_per(kind: str, value: str, *, actor: str) -> Invariant:
     """
 
     def _check(history: History) -> list[Violation]:
-        last: dict[object, object] = {}
+        # Values are recorded fields (dynamically typed), compared with ``<`` for monotonicity;
+        # the key is the actor field. Both are opaque to the type system, hence ``Any`` for the
+        # compared value rather than a suppressed operator error.
+        last: dict[object, Any] = {}
         violations: list[Violation] = []
 
         for event in history.of_kind(kind):
             who = event.fields.get(actor)
             current = event.fields[value]
 
-            if who in last and current < last[who]:  # type: ignore[operator]
+            if who in last and current < last[who]:
                 violations.append(
                     Violation(
                         invariant="monotonic_per",

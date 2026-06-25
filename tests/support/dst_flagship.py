@@ -33,7 +33,7 @@ from forze_dst.cluster import ClusterConfig, Partition, PartitionSchedule
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.invariants import check, expect, monotonic_per, mutual_exclusion
 from forze_dst.markers import reached, record_event
-from forze_dst.oracle import behavioral_coverage, reached_labels, run_recorded
+from forze_dst.oracle import Behavior, behavioral_coverage, reached_labels, run_recorded
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
 
@@ -191,7 +191,7 @@ def run_dlock_seed(seed: int) -> SeedOutcome:
     cluster = guarded_cluster(counter)
     histories = cluster.histories(dlock_config([seed]))
 
-    behaviors = frozenset[tuple[object, ...]]().union(
+    behaviors = frozenset[Behavior]().union(
         *(behavioral_coverage(history) for history in histories)
     )
     reached = frozenset[str]().union(*(reached_labels(history) for history in histories))

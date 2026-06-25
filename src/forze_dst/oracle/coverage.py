@@ -29,9 +29,10 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-Behavior = tuple[object, ...]
+Behavior = tuple[str | None, ...]
 """One distinct, PII-free behavioral feature exercised by a run (an operation outcome, a port
-edge, or an injected fault/partition kind)."""
+edge, or an injected fault/partition kind). A tag string followed by the structural tokens of the
+feature — each a recorded field that is a string or ``None``, never an id, key, or payload."""
 
 
 def behavioral_coverage(history: History) -> frozenset[Behavior]:
@@ -93,7 +94,7 @@ def behavioral_fingerprint(history: History) -> str:
     digest would be brittle; this captures observed behavior, not source.
     """
 
-    shape: list[tuple[object, ...]] = []
+    shape: list[Behavior] = []
 
     for event in history.events:
         fields = event.fields

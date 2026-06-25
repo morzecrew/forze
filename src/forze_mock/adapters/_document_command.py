@@ -171,7 +171,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> R | None:
         self._ensure_writable()
         domain = self._build_domain(payload, id)
-        serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(domain))
+        serialized = self._apply_tenant(
+            self._domain_codec().encode_persistence_mapping(domain)
+        )
 
         with self.state.lock:
             store = self._store()
@@ -254,7 +256,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             if domain.id in store:
                 raw = dict(store[domain.id])
             else:
-                serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(domain))
+                serialized = self._apply_tenant(
+                    self._domain_codec().encode_persistence_mapping(domain)
+                )
                 store[domain.id] = serialized
                 raw = serialized
         if not return_new:
@@ -468,12 +472,14 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             if diff:
                 updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
 
-            serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(updated))
+            serialized = self._apply_tenant(
+                self._domain_codec().encode_persistence_mapping(updated)
+            )
             self._store()[pk] = serialized
 
             # A rev-guarded write (caller supplied a rev) is the one read-committed must fail on a
             # concurrent same-row commit; a blind write (rev is None) is left to lose silently.
-            if rev is not None:
+            if rev is not None:  # pyright: ignore[reportUnnecessaryComparison]
                 self._mark_rev_guarded(pk)
 
             write_diff = {**dict(diff), REV_FIELD: updated.rev} if diff else {}
@@ -632,13 +638,17 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     continue
 
                 current = self._to_domain(dict(raw))
-                updated, diff = current.update(patch, materialized=self.spec.materialized)
+                updated, diff = current.update(
+                    patch, materialized=self.spec.materialized
+                )
 
                 if not diff:
                     continue
 
                 updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
-                serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(updated))
+                serialized = self._apply_tenant(
+                    self._domain_codec().encode_persistence_mapping(updated)
+                )
                 store[pk] = serialized
                 mutated.append(updated)
                 n += 1
@@ -750,7 +760,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             current = self._to_domain(current_raw)
             updated, _ = current.touch()
             updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
-            serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(updated))
+            serialized = self._apply_tenant(
+                self._domain_codec().encode_persistence_mapping(updated)
+            )
             self._store()[pk] = serialized
 
         return self._to_read(serialized) if return_new else None
@@ -851,7 +863,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             self._check_rev(current.rev, rev)
 
             if cast(Any, current).is_deleted:
-                serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(current))
+                serialized = self._apply_tenant(
+                    self._domain_codec().encode_persistence_mapping(current)
+                )
                 self._store()[pk] = serialized
 
             else:
@@ -863,7 +877,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     },
                     deep=True,
                 )
-                serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(updated))
+                serialized = self._apply_tenant(
+                    self._domain_codec().encode_persistence_mapping(updated)
+                )
                 self._store()[pk] = serialized
 
             self._mark_rev_guarded(pk)  # delete is rev-guarded
@@ -940,7 +956,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             self._check_rev(current.rev, rev)
 
             if not cast(Any, current).is_deleted:
-                serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(current))
+                serialized = self._apply_tenant(
+                    self._domain_codec().encode_persistence_mapping(current)
+                )
                 self._store()[pk] = serialized
 
             else:
@@ -952,7 +970,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     },
                     deep=True,
                 )
-                serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(updated))
+                serialized = self._apply_tenant(
+                    self._domain_codec().encode_persistence_mapping(updated)
+                )
                 self._store()[pk] = serialized
 
             self._mark_rev_guarded(pk)  # restore is rev-guarded

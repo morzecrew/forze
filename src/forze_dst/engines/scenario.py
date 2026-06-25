@@ -24,7 +24,7 @@ from forze_dst.oracle.invariants import check
 from forze_dst.oracle.recorder import History, Recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
-from forze_dst.scheduler import SystematicReorderer
+from forze_dst.scheduler import Reorderer, SystematicReorderer
 from forze_dst.time_source import DEFAULT_EPOCH
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ def run_scenario(
     schedule_seed: int | None,
     epoch: datetime,
     act_plan: Sequence[int] | None = None,
-    scheduler: object | None = None,
+    scheduler: Reorderer | None = None,
 ) -> tuple[History, list[tuple[str, Any]]]:
     """Run a scenario: arrange serially, then act concurrently.
 
@@ -168,7 +168,7 @@ def attempt(
     seed: int,
     perturb: bool,
     epoch: datetime,
-    scheduler_factory: Callable[[int], object] | None = None,
+    scheduler_factory: Callable[[int], Reorderer | None] | None = None,
 ) -> ViolationReport | None:
     """Run one seed's scenario; on a violation, minimize the act phase and report."""
 
@@ -229,7 +229,7 @@ def explore(
     seeds: Sequence[int],
     perturb: bool = True,
     epoch: datetime = DEFAULT_EPOCH,
-    scheduler_factory: Callable[[int], object] | None = None,
+    scheduler_factory: Callable[[int], Reorderer | None] | None = None,
 ) -> ViolationReport | None:
     """Drive a generative :class:`Scenario` per seed; on a violation, minimize + report.
 
@@ -270,7 +270,7 @@ def explore_hypothesis(
     perturb: bool = True,
     epoch: datetime = DEFAULT_EPOCH,
     max_examples: int = 200,
-    scheduler_factory: Callable[[int], object] | None = None,
+    scheduler_factory: Callable[[int], Reorderer | None] | None = None,
 ) -> ViolationReport | None:
     """Drive a scenario with Hypothesis as the generate + shrink engine.
 
@@ -300,7 +300,7 @@ def explore_hypothesis(
 
     # Fresh PCT scheduler per example (it is stateful), keyed by the example's seed so the found
     # counterexample reproduces under the same interleaving.
-    def make_scheduler(seed: int) -> object | None:
+    def make_scheduler(seed: int) -> Reorderer | None:
         if scheduler_factory is None:
             return None
 

@@ -24,10 +24,12 @@ predicate scans / a third session); the harness already supports them.
 from __future__ import annotations
 
 from typing import Awaitable, Callable, Mapping
+from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.transaction import IsolationLevel
+from forze.application.execution import ExecutionContext
 from forze.testing import Conductor, Gate
 
 from ._models import (
@@ -156,11 +158,11 @@ async def _run_read_skew(backend: ConformanceBackend, level: IsolationLevel) -> 
 
 
 def _writeskew_session(
-    ctx: object,
+    ctx: ExecutionContext,
     *,
-    id1: object,
-    id2: object,
-    mine: object,
+    id1: UUID,
+    id2: UUID,
+    mine: UUID,
     level: IsolationLevel,
     scope: str,
     outcomes: dict[str, str],
@@ -168,15 +170,17 @@ def _writeskew_session(
 ) -> Callable[[Gate], Awaitable[None]]:
     async def session(gate: Gate) -> None:
         async with record_outcome(outcomes, name):
-            async with ctx.tx_ctx.scope(scope, isolation=level):  # type: ignore[attr-defined]
-                query = ctx.document.query(ONCALL)  # type: ignore[attr-defined]
+            async with ctx.tx_ctx.scope(scope, isolation=level):
+                query = ctx.document.query(ONCALL)
                 d1 = await query.get(id1)
                 d2 = await query.get(id2)
                 await gate.checkpoint()  # both sessions have read before either writes
 
-                if d1.on_call and d2.on_call:  # "safe" to drop mine — both still on call
+                if (
+                    d1.on_call and d2.on_call
+                ):  # "safe" to drop mine — both still on call
                     target = d1 if mine == id1 else d2
-                    await ctx.document.command(ONCALL).update(  # type: ignore[attr-defined]
+                    await ctx.document.command(ONCALL).update(
                         mine, target.rev, OnCallUpdate(on_call=False)
                     )
 
@@ -185,7 +189,9 @@ def _writeskew_session(
     return session
 
 
-async def _run_write_skew(backend: ConformanceBackend, level: IsolationLevel) -> Verdict:
+async def _run_write_skew(
+    backend: ConformanceBackend, level: IsolationLevel
+) -> Verdict:
     sessions = backend.contexts(2)
     a, b = sessions[0], sessions[1]
     scope = backend.scope_name
@@ -199,17 +205,33 @@ async def _run_write_skew(backend: ConformanceBackend, level: IsolationLevel) ->
     await Conductor(schedule=("A", "A", "B", "B")).run(
         {
             "A": _writeskew_session(
-                a, id1=id1, id2=id2, mine=id1, level=level, scope=scope, outcomes=outcomes, name="A"
+                a,
+                id1=id1,
+                id2=id2,
+                mine=id1,
+                level=level,
+                scope=scope,
+                outcomes=outcomes,
+                name="A",
             ),
             "B": _writeskew_session(
-                b, id1=id1, id2=id2, mine=id2, level=level, scope=scope, outcomes=outcomes, name="B"
+                b,
+                id1=id1,
+                id2=id2,
+                mine=id2,
+                level=level,
+                scope=scope,
+                outcomes=outcomes,
+                name="B",
             ),
         }
     )
 
     async with a.tx_ctx.scope(scope):
         query = a.document.query(ONCALL)
-        still_on = int((await query.get(id1)).on_call) + int((await query.get(id2)).on_call)
+        still_on = int((await query.get(id1)).on_call) + int(
+            (await query.get(id2)).on_call
+        )
 
     # The invariant broke (nobody on call) only if both disjoint writes committed.
     return _PERMIT if still_on == 0 else _PREVENT
@@ -221,9 +243,9 @@ async def _run_write_skew(backend: ConformanceBackend, level: IsolationLevel) ->
 
 
 def _lost_update_session(
-    ctx: object,
+    ctx: ExecutionContext,
     *,
-    cid: object,
+    cid: UUID,
     new_value: int,
     level: IsolationLevel,
     scope: str,
@@ -232,17 +254,19 @@ def _lost_update_session(
 ) -> Callable[[Gate], Awaitable[None]]:
     async def session(gate: Gate) -> None:
         async with record_outcome(outcomes, name):
-            async with ctx.tx_ctx.scope(scope, isolation=level):  # type: ignore[attr-defined]
-                current = await ctx.document.query(CELL).get(cid)  # type: ignore[attr-defined]
+            async with ctx.tx_ctx.scope(scope, isolation=level):
+                current = await ctx.document.query(CELL).get(cid)
                 await gate.checkpoint()  # both read before either writes
-                await ctx.document.command(CELL).update(  # type: ignore[attr-defined]
+                await ctx.document.command(CELL).update(
                     cid, current.rev, CellUpdate(value=new_value)
                 )
 
     return session
 
 
-async def _run_lost_update(backend: ConformanceBackend, level: IsolationLevel) -> Verdict:
+async def _run_lost_update(
+    backend: ConformanceBackend, level: IsolationLevel
+) -> Verdict:
     sessions = backend.contexts(2)
     a, b = sessions[0], sessions[1]
     scope = backend.scope_name
@@ -254,10 +278,22 @@ async def _run_lost_update(backend: ConformanceBackend, level: IsolationLevel) -
     await Conductor(schedule=("A", "B")).run(
         {
             "A": _lost_update_session(
-                a, cid=cid, new_value=1, level=level, scope=scope, outcomes=outcomes, name="A"
+                a,
+                cid=cid,
+                new_value=1,
+                level=level,
+                scope=scope,
+                outcomes=outcomes,
+                name="A",
             ),
             "B": _lost_update_session(
-                b, cid=cid, new_value=2, level=level, scope=scope, outcomes=outcomes, name="B"
+                b,
+                cid=cid,
+                new_value=2,
+                level=level,
+                scope=scope,
+                outcomes=outcomes,
+                name="B",
             ),
         }
     )
@@ -273,7 +309,9 @@ class _Rollback(Exception):
     """Sentinel used to force a writer's transaction to roll back in the dirty-read case."""
 
 
-async def _run_dirty_read(backend: ConformanceBackend, level: IsolationLevel) -> Verdict:
+async def _run_dirty_read(
+    backend: ConformanceBackend, level: IsolationLevel
+) -> Verdict:
     sessions = backend.contexts(2)
     writer, reader = sessions[0], sessions[1]
     scope = backend.scope_name
@@ -287,7 +325,9 @@ async def _run_dirty_read(backend: ConformanceBackend, level: IsolationLevel) ->
         try:
             async with writer.tx_ctx.scope(scope, isolation=level):
                 current = await writer.document.query(CELL).get(cid)
-                await writer.document.command(CELL).update(cid, current.rev, CellUpdate(value=99))
+                await writer.document.command(CELL).update(
+                    cid, current.rev, CellUpdate(value=99)
+                )
                 await gate.checkpoint()  # 99 is written but not committed
                 raise _Rollback()
         except _Rollback:

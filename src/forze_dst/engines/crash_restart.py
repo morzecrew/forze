@@ -23,6 +23,7 @@ from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.recorder import History, Recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scenario import Scenario
+from forze_dst.scheduler import Reorderer
 
 if TYPE_CHECKING:
     from forze_dst.harness import Simulation
@@ -40,7 +41,7 @@ def run_crash_restart(
     seed: int,
     schedule_seed: int | None,
     epoch: datetime,
-    scheduler: object | None = None,
+    scheduler: Reorderer | None = None,
 ) -> tuple[History, list[tuple[str, Any]]]:
     """Run one crash → restart → recovery attempt over a single persisted store.
 
@@ -152,7 +153,7 @@ def attempt(
     seed: int,
     perturb: bool,
     epoch: datetime,
-    scheduler_factory: Callable[[int], object] | None = None,
+    scheduler_factory: Callable[[int], Reorderer | None] | None = None,
 ) -> ViolationReport | None:
     """Run one seed's crash/restart attempt; on a violation, minimize the act phase and report."""
 
@@ -212,7 +213,7 @@ def explore(
     seeds: Sequence[int],
     perturb: bool,
     epoch: datetime,
-    scheduler_factory: Callable[[int], object] | None = None,
+    scheduler_factory: Callable[[int], Reorderer | None] | None = None,
 ) -> ViolationReport | None:
     """Sweep seeds running the crash → restart → recovery scenario; report the first bug.
 
