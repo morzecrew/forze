@@ -21,17 +21,11 @@ from neo4j.exceptions import (
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
-    fallback_exception_mapper,
+    build_exc_interceptor,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("Neo4j")
-
-# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -43,10 +37,9 @@ def _neo4j_eh(  # skipcq: PY-R1000
 ) -> CoreException | None:
     """Convert a neo4j driver exception into a :class:`CoreException`."""
 
-    match exc:
-        case CoreException():
-            return exc
+    _ = site
 
+    match exc:
         case ConstraintError():
             return CoreException.conflict(
                 "Neo4j constraint violation.",
@@ -84,11 +77,10 @@ def _neo4j_eh(  # skipcq: PY-R1000
             )
 
         case _:
-            return _fallback(exc, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-_neo4j_chain = default_chain_exc_mapper.chain(_neo4j_eh)
-exc_interceptor = ExceptionInterceptor(mapper=_neo4j_chain)
+exc_interceptor = build_exc_interceptor("Neo4j", _neo4j_eh)
 """Context manager / decorator that maps neo4j errors to ``CoreException``."""

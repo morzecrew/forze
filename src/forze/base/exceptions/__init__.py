@@ -14,6 +14,7 @@ from .envelope import (
     is_server_error_kind,
     unhandled_error_envelope,
 )
+from .factory import build_exc_interceptor
 from .fallback import fallback_exception_mapper
 from .http_mapper import make_http_exception_mapper, response_status
 from .interceptor import ExceptionInterceptor
@@ -48,6 +49,7 @@ __all__ = [
     "ServerErrorHook",
     "guard_frame",
     "ExceptionInterceptor",
+    "build_exc_interceptor",
     "fallback_exception_mapper",
     "make_http_exception_mapper",
     "map_pydantic",

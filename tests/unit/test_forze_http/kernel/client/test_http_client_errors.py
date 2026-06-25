@@ -2,7 +2,7 @@
 
 import httpx
 
-from forze_http.kernel.client.errors import _httpx_eh
+from forze_http.kernel.client.errors import _httpx_eh, exc_interceptor
 
 # ----------------------- #
 
@@ -19,7 +19,7 @@ def test_maps_404_to_not_found() -> None:
 
 
 def test_catch_all_keeps_driver_error_out_of_summary() -> None:
-    mapped = _httpx_eh(
+    mapped = exc_interceptor.mapper(
         RuntimeError("driver internals: token=hunter2"),
         site="http.test",
     )
@@ -32,7 +32,7 @@ def test_catch_all_keeps_driver_error_out_of_summary() -> None:
 
 
 def test_catch_all_preserves_existing_details() -> None:
-    mapped = _httpx_eh(
+    mapped = exc_interceptor.mapper(
         RuntimeError("boom"),
         site="http.test",
         details={"endpoint": "billing"},

@@ -10,6 +10,6 @@ from typing import final
 class ForzeFirestoreLogger(StrEnum):
     """Forze Firestore logger names."""
 
-    ADAPTERS = "firestore.adapters"
-    EXECUTION = "firestore.execution"
-    KERNEL = "firestore.kernel"
+    ADAPTERS = "forze_firestore.adapters"
+    EXECUTION = "forze_firestore.execution"
+    KERNEL = "forze_firestore.kernel"

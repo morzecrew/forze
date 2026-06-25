@@ -15,7 +15,10 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
 )
-from forze.application.integrations.search.encryption import decrypt_search_rows
+from forze.application.integrations.search.encryption import (
+    decrypt_search_rows,
+    reject_encrypted_sort_fields,
+)
 from forze.application.integrations.search.snapshot import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, materialize_mapping_rows
@@ -162,6 +165,13 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
 
         if maybe_snap is not None:
             return maybe_snap
+
+    # Fall-through to a real backend fetch (replay above did not serve the page). Only now
+    # fail closed on a sort over a field-encrypted column: encrypted/searchable ciphertext
+    # has no order at rest and would leak the raw value into a keyset cursor token. Deferred
+    # to here so paging an existing snapshot by id (which never re-sorts rows) still works —
+    # including snapshots created before this guard existed.
+    reject_encrypted_sort_fields(sorts, encryption=spec.encryption, spec_name=spec.name)
 
     total: int | None = None
 

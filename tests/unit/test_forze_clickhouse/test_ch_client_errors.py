@@ -10,7 +10,7 @@ pytest.importorskip("aiohttp")
 from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
-from forze_clickhouse.kernel.client.errors import _clickhouse_eh
+from forze_clickhouse.kernel.client.errors import _clickhouse_eh, exc_interceptor
 
 def _client_error(status: int) -> ClientResponseError:
     request_info = RequestInfo(
@@ -30,7 +30,7 @@ def _client_error(status: int) -> ClientResponseError:
 class TestClickHouseErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("boom")
-        assert _clickhouse_eh(original, site="op") is original
+        assert exc_interceptor.mapper(original, site="op") is original
 
     def test_not_found(self) -> None:
         r = _clickhouse_eh(_client_error(404), site="get")
@@ -55,20 +55,20 @@ class TestClickHouseErrorHandler:
     def test_authentication_code_maps_to_access_denied(self) -> None:
         # Real ClickHouse auth errors carry a numeric code: 516 / 497.
         err = RuntimeError("Code: 516. DB::Exception: default: Authentication failed")
-        r = _clickhouse_eh(err, site="query")
+        r = exc_interceptor.mapper(err, site="query")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "access denied" in r.summary.lower()
 
     def test_access_denied_code_maps_to_access_denied(self) -> None:
         err = RuntimeError("Code: 497. DB::Exception: user is not allowed")
-        r = _clickhouse_eh(err, site="query")
+        r = exc_interceptor.mapper(err, site="query")
         assert "access denied" in r.summary.lower()
 
     def test_message_mentioning_password_without_code_does_not_misfire(self) -> None:
         # A non-auth error whose text merely contains "password" must not be
         # classified as access denied.
         err = RuntimeError("Code: 47. DB::Exception: Unknown column 'password'")
-        r = _clickhouse_eh(err, site="query")
+        r = exc_interceptor.mapper(err, site="query")
         assert "access denied" not in r.summary.lower()
 
 

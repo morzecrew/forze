@@ -60,7 +60,7 @@ def test_s3_deps_module_warns_dynamic_bucket_with_tenant_aware() -> None:
         return "tenant-bucket"
 
     with patch(
-        "forze_s3.execution.deps.module.warn_integration_routes",
+        "forze.application.integrations.storage.deps_module.warn_integration_routes",
     ) as mock_warn:
         S3DepsModule(
             client=MagicMock(),

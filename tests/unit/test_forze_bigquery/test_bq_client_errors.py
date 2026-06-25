@@ -10,7 +10,7 @@ pytest.importorskip("aiohttp")
 from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
-from forze_bigquery.kernel.client.errors import _bigquery_eh
+from forze_bigquery.kernel.client.errors import _bigquery_eh, exc_interceptor
 
 def _client_error(status: int) -> ClientResponseError:
     request_info = RequestInfo(
@@ -30,7 +30,7 @@ def _client_error(status: int) -> ClientResponseError:
 class TestBigQueryErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("boom")
-        assert _bigquery_eh(original, site="op") is original
+        assert exc_interceptor.mapper(original, site="op") is original
 
     def test_not_found(self) -> None:
         r = _bigquery_eh(_client_error(404), site="get")
@@ -47,7 +47,7 @@ class TestBigQueryErrorHandler:
         assert needle in r.summary.lower()
 
     def test_generic_exception_maps_to_infrastructure(self) -> None:
-        r = _bigquery_eh(RuntimeError("boom"), site="connect")
+        r = exc_interceptor.mapper(RuntimeError("boom"), site="connect")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "connect" in r.summary
 

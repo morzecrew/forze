@@ -13,17 +13,11 @@ from redis import exceptions as redis_errors
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
-    fallback_exception_mapper,
+    build_exc_interceptor,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("Redis")
-
-# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -36,14 +30,12 @@ def _redis_eh(  # skipcq: PY-R1000
     """Convert a ``redis-py`` exception into an :class:`~forze.base.exceptions.CoreException`.
 
     Connection, timeout, authentication, and data errors are mapped to specific
-    messages. Unrecognised exceptions fall back to a generic infrastructure error
-    that includes the operation name.
+    messages; unrecognised exceptions defer (``None``) to the chain's fallback.
     """
 
-    match exc:
-        case CoreException():
-            return exc
+    _ = site
 
+    match exc:
         # --- infra / availability ---
         # ``AuthenticationError`` and ``BusyLoadingError`` subclass
         # ``ConnectionError``; match them before the broad connection case.
@@ -110,12 +102,10 @@ def _redis_eh(  # skipcq: PY-R1000
                 details=details,
             )
 
-        # --- fallback ---
         case _:
-            return _fallback(exc, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-_redis_chain = default_chain_exc_mapper.chain(_redis_eh)
-exc_interceptor = ExceptionInterceptor(mapper=_redis_chain)
+exc_interceptor = build_exc_interceptor("Redis", _redis_eh)

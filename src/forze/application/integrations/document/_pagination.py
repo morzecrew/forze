@@ -182,17 +182,10 @@ class DocumentPaginationMixin(Generic[R]):
                 parsed=parsed_filters,
             )
 
-        if query.return_count:
-            return page_from_limit_offset(
-                list(res),  # type: ignore[arg-type]
-                pagination,
-                total=cnt,
-            )
-
         return page_from_limit_offset(
             list(res),  # type: ignore[arg-type]
             pagination,
-            total=None,
+            total=cnt if query.return_count else None,
         )
 
     async def _cursor_page(

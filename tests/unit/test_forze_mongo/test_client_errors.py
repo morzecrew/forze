@@ -1,12 +1,12 @@
 """Unit tests for the Mongo error handler."""
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_mongo.kernel.client.errors import _mongo_eh
+from forze_mongo.kernel.client.errors import _mongo_eh, exc_interceptor
 
 class TestMongoErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("original")
-        result = _mongo_eh(original, site="op")
+        result = exc_interceptor.mapper(original, site="op")
         assert result is original
 
     def test_duplicate_key_error(self) -> None:
@@ -63,7 +63,7 @@ class TestMongoErrorHandler:
 
     def test_unknown_exception_fallback(self) -> None:
         e = RuntimeError("unexpected")
-        result = _mongo_eh(e, site="some_op")
+        result = exc_interceptor.mapper(e, site="some_op")
         assert isinstance(result, CoreException) and result.kind == ExceptionKind.INFRASTRUCTURE
         assert "some_op" in result.summary
         # raw driver text must not leak into the summary, only into details

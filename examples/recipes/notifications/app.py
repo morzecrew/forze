@@ -11,18 +11,21 @@ Exercised by tests/unit/test_examples/test_notifications.py.
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from uuid import uuid4
 
 from pydantic import BaseModel
 
+from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
-from forze.application.contracts.queue import QueueQueryDepKey, QueueSpec
+from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionContext
 from forze.base.serialization import PydanticModelCodec
+from forze_kits.integrations.consumer import QueueConsumer
 from forze_kits.integrations.notify import (
     EmailNotification,
     NotificationRouter,
-    process_notification_message,
+    notification_queue_consumer_handler,
 )
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule
@@ -43,17 +46,25 @@ NOTIFICATIONS = QueueSpec(
 )
 # --8<-- [end:event]
 
+# Dedup store for the consumer: a redelivered message is marked seen and skipped,
+# so an at-least-once queue cannot send the same notification twice.
+NOTIFY_INBOX = InboxSpec(name="notify-inbox")
+
 
 # --8<-- [start:router]
-# Map each integration event type to the notifications it should produce.
-router = NotificationRouter()
-router.register(
-    "user.registered",
-    lambda event: [
-        EmailNotification(
-            to=event.payload.email, subject="Welcome", body="Thanks for joining!"
-        )
-    ],
+# Map each integration event type to the notifications it should produce, then freeze:
+# registration happens once at wiring time; the consumer holds an immutable resolver.
+router = (
+    NotificationRouter()
+    .register(
+        "user.registered",
+        lambda event: [
+            EmailNotification(
+                to=event.payload.email, subject="Welcome", body="Thanks for joining!"
+            )
+        ],
+    )
+    .freeze()
 )
 # --8<-- [end:router]
 
@@ -87,26 +98,30 @@ async def deliver_notifications(
     ctx: ExecutionContext,
     senders: RecordingSenders,
 ) -> int:
-    # Relay staged events to the queue, then route each queued message to a sender.
+    # Relay staged events to the queue, then let a QueueConsumer drain it. The consumer
+    # deduplicates redeliveries through the inbox (so an at-least-once queue cannot
+    # double-send) and parks poison messages — instead of a hand-rolled receive/ack loop
+    # that would re-send on every redelivery. In production this is a background
+    # lifecycle step (notification_consumer_lifecycle_step); here we drain once.
     await OutboxRelay(outbox_spec=NOTIFY_EVENTS).to_queue(ctx, NOTIFICATIONS)
 
-    queue = ctx.deps.resolve_configurable(
-        ctx,
-        QueueQueryDepKey,
-        NOTIFICATIONS,
-        route=NOTIFICATIONS.name,
-    )
-
-    sent = 0
-
-    for message in await queue.receive("notifications"):
-        sent += await process_notification_message(
-            message,
+    consumer = QueueConsumer(
+        queue="notifications",
+        queue_spec=NOTIFICATIONS,
+        handler=notification_queue_consumer_handler(
             router=router,
             senders=senders,  # pyright: ignore[reportArgumentType]
-        )
-        await queue.ack("notifications", [message.id])
-    return sent
+        ),
+        inbox_spec=NOTIFY_INBOX,
+        tx_route="mock",
+    )
+
+    # A finite idle timeout ends the drain once the queue goes quiet.
+    await consumer.run(ctx, timeout=timedelta(milliseconds=250))
+
+    # Report notifications actually dispatched (one message can map to several), not the
+    # number of queue messages processed.
+    return len(senders.emails)
 
 
 # --8<-- [end:consume]

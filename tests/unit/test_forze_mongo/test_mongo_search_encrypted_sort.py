@@ -4,8 +4,9 @@ A keyset cursor token carries the last row's raw sort value (ciphertext, base64'
 not sealed). Sorting on an ``encrypted`` (randomized) or ``searchable`` (deterministic)
 field would leak that field's value into the cursor token (and is meaningless, since
 neither has a usable order at rest), so the shared search seam rejects such sorts
-fail-closed. The Mongo simple-search adapter calls this guard at the top of both its
-offset and cursor implementations, before any pipeline build or DB access.
+fail-closed. Offset search guards once in the shared offset executor (so every
+backend inherits it); the cursor path has no shared executor, so each adapter guards
+inline at the top of its cursor implementation.
 """
 
 import inspect
@@ -71,15 +72,24 @@ def test_noop_without_sorts() -> None:
     )
 
 
-def test_mongo_offset_and_cursor_impls_invoke_the_guard() -> None:
-    """Both Mongo simple-search read paths wire the encrypted-sort guard."""
+def test_offset_guard_is_shared_and_mongo_cursor_guards_inline() -> None:
+    """Offset guards once in the shared executor; Mongo cursor guards inline."""
 
-    offset_src = inspect.getsource(
+    from forze.application.integrations.search import offset_executor
+
+    shared_offset_src = inspect.getsource(
+        offset_executor.execute_simple_offset_search_with_snapshot
+    )
+    mongo_offset_src = inspect.getsource(
         _simple_base.MongoSimpleSearchAdapter._offset_search_impl
     )
     cursor_src = inspect.getsource(
         _simple_base.MongoSimpleSearchAdapter._cursor_search_impl
     )
 
-    assert "reject_encrypted_sort_fields" in offset_src
+    # Offset: guarded once at the shared seam, so the Mongo adapter no longer guards
+    # inline (single source of truth, every backend inherits it).
+    assert "reject_encrypted_sort_fields" in shared_offset_src
+    assert "reject_encrypted_sort_fields" not in mongo_offset_src
+    # Cursor: no shared executor, so the adapter guards inline.
     assert "reject_encrypted_sort_fields" in cursor_src

@@ -54,6 +54,24 @@
       "skillPath": "skills/keep-a-changelog/SKILL.md",
       "computedHash": "ab914eaf08316316fbdd4ff1078e0f323b7c0e24254f2ece140c4c5157af6380"
     },
+    "measure-before-optimizing": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/measure-before-optimizing/SKILL.md",
+      "computedHash": "adcf4182e56dd8d728098901db98c658718be5118618b7ed100db3abf73b5a58"
+    },
+    "naming-things": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/naming-things/SKILL.md",
+      "computedHash": "20cf40d03d07e2831996f6b95b082571e03596943bf5f4c7ba7fade4c2e33987"
+    },
+    "never-nesting": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/never-nesting/SKILL.md",
+      "computedHash": "02d5e7c8e72a9bed511e0ef464eb622289145fcb6e571a60af0df8b77cdef8c9"
+    },
     "python-background-jobs": {
       "source": "wshobson/agents",
       "sourceType": "github",
@@ -94,6 +112,12 @@
       "source": "wshobson/agents",
       "sourceType": "github",
       "computedHash": "f011d9018935ae01209f30c0a0f9d2f15f3058867baeb7a8c820bc54c8394645"
+    },
+    "self-documenting-code": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/self-documenting-code/SKILL.md",
+      "computedHash": "f95a393eabb43aaa22a1a7312318b722f55638e1c86c3b7f15cee234d874565b"
     },
     "temporal-python-testing": {
       "source": "wshobson/agents",

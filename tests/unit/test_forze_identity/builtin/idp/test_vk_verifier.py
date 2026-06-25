@@ -83,6 +83,31 @@ async def test_success_emits_assertion_with_issuer_and_subject() -> None:
 
 
 @pytest.mark.asyncio
+async def test_claims_exclude_top_level_envelope_fields() -> None:
+    # VK replies HTTP 200 even on vendor errors and may carry protocol/envelope fields
+    # alongside the user object. Only the masked user object is identity data; the
+    # untrusted envelope must never leak into claims (downstream tenant/claim mappers
+    # read it).
+    transport = _json_transport(
+        {
+            "user": {"user_id": "123456", "first_name": "Ivan"},
+            "state": "attacker-controlled",
+            "type": "code_v2",
+            "is_admin": True,
+        }
+    )
+
+    assertion = await _verifier(transport).verify_token(
+        AccessTokenCredentials(token="t"),
+    )
+
+    assert assertion.claims == {"user": {"user_id": "123456", "first_name": "Ivan"}}
+    assert "state" not in assertion.claims
+    assert "type" not in assertion.claims
+    assert "is_admin" not in assertion.claims
+
+
+@pytest.mark.asyncio
 async def test_success_with_integer_or_top_level_user_id() -> None:
     transport = _json_transport({"user": {"user_id": 42}})
     assertion = await _verifier(transport).verify_token(
@@ -95,6 +120,8 @@ async def test_success_with_integer_or_top_level_user_id() -> None:
         AccessTokenCredentials(token="t"),
     )
     assert assertion.subject == "77"
+    # The accepted top-level id is normalized into claims, not dropped.
+    assert assertion.claims == {"user": {"user_id": "77"}}
 
 
 @pytest.mark.asyncio

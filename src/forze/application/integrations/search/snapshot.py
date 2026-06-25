@@ -62,6 +62,58 @@ _CIPHER_NOT_WARM = "core.crypto.cipher_not_warm"
 # ....................... #
 
 
+def _shape_snapshot_page(
+    items: Sequence[Any],
+    *,
+    pagination: Mapping[str, Any],
+    total: int | None,
+    snapshot: SearchSnapshotHandle,
+    return_type: type[BaseModel] | None,
+    to_return_rows: Callable[[Sequence[Any]], list[JsonDict]],
+    return_fields: Sequence[str] | None = None,
+) -> Any:
+    """Shape a hydrated snapshot page into the requested form, then paginate.
+
+    Collapses the ``return_type / return_fields / plain`` × ``return_count`` cascade both
+    snapshot read paths shared into one place. ``total`` is already resolved (``None`` when
+    no count was requested); ``to_return_rows`` builds the mapping rows for the
+    ``return_type`` case — the only thing the projection and federated paths differ on
+    (a hydrated model vs. a ``{hit, member}`` pair).
+    """
+
+    if return_type is not None:
+        decoded = default_model_codec(return_type).decode_mapping_many(
+            to_return_rows(items)
+        )
+
+        return page_from_limit_offset(
+            decoded,
+            pagination,
+            total=total,
+            snapshot=snapshot,
+        )
+
+    if return_fields is not None:
+        raw = [{k: getattr(it, k, None) for k in return_fields} for it in items]
+
+        return page_from_limit_offset(
+            raw,
+            pagination,
+            total=total,
+            snapshot=snapshot,
+        )
+
+    return page_from_limit_offset(
+        cast(list[Any], items),
+        pagination,
+        total=total,
+        snapshot=snapshot,
+    )
+
+
+# ....................... #
+
+
 def _sha256_fingerprint_payload(payload: dict[str, object]) -> str:
     return stable_payload_fingerprint(payload)
 
@@ -107,7 +159,8 @@ class SearchResultSnapshot:
     ``None`` keeps record keys plaintext (the default, unencrypted routes)."""
 
     cipher_tenant: Callable[[], TenantIdentity | None] | None = attrs.field(
-        default=None, repr=False
+        default=None,
+        repr=False,
     )
     """Resolver for the bound tenant, anchoring the per-record AAD to ``cipher``."""
 
@@ -603,96 +656,78 @@ class SearchResultSnapshot:
         | CountlessPage[JsonDict]
         | None
     ):
-        if snap_opt is None or "id" not in snap_opt:
+        return await self._read_snapshot_page(
+            snap_opt,
+            fp_computed=fp_computed,
+            pagination=pagination,
+            hydrate=lambda k: self.hydrate_result_record_key(k, hydrate_as),
+            to_return_rows=lambda items: [h.model_dump(mode="json") for h in items],
+            return_type=return_type,
+            return_fields=return_fields,
+            return_count=return_count,
+        )
+
+    # ....................... #
+
+    async def _read_snapshot_page(
+        self,
+        snapshot_opts: SearchResultSnapshotOptions | None,
+        *,
+        fp_computed: str,
+        pagination: Mapping[str, Any] | None,
+        hydrate: Callable[[str], BaseModel],
+        to_return_rows: Callable[[Sequence[Any]], list[JsonDict]],
+        return_type: type[BaseModel] | None,
+        return_fields: Sequence[str] | None,
+        return_count: bool,
+    ) -> Any:
+        """Read one snapshot page: window → open ids → meta → hydrate → shape.
+
+        The shared body behind the projection and federated snapshot reads; the two differ
+        only in how a record key hydrates (*hydrate*) and how a hydrated item becomes a
+        ``return_type`` row (*to_return_rows*). Returns ``None`` when the snapshot is absent
+        or its id range cannot be served (stale/expired run).
+        """
+
+        if snapshot_opts is None or "id" not in snapshot_opts:
             return None
 
-        sub_fp = str(snap_opt["fingerprint"]) if "fingerprint" in snap_opt else None
+        run_id = str(snapshot_opts["id"])
+        sub_fp = (
+            str(snapshot_opts["fingerprint"])
+            if "fingerprint" in snapshot_opts
+            else None
+        )
         pagination_d = dict(pagination or {})
         offset = int(pagination_d.get("offset") or 0)
         limit = pagination_d.get("limit")
         page_limit = max(1, int(limit)) if limit is not None else 20
 
         raw_keys = await self.store.get_id_range(
-            str(snap_opt["id"]),
-            offset,
-            page_limit,
-            expected_fingerprint=sub_fp,
+            run_id, offset, page_limit, expected_fingerprint=sub_fp
         )
 
         if raw_keys is None:
             return None
 
-        raw_keys = await self._open_ids(raw_keys, run_id=str(snap_opt["id"]))
+        raw_keys = await self._open_ids(raw_keys, run_id=run_id)
 
-        sm: SearchResultSnapshotMeta | None = await self.store.get_meta(
-            str(snap_opt["id"])
-        )
+        sm: SearchResultSnapshotMeta | None = await self.store.get_meta(run_id)
         total_snap = int(sm.total) if sm and sm.complete else offset + len(raw_keys)
         fp_h = (sm and sm.fingerprint) or fp_computed
 
         handle = SearchSnapshotHandle(
-            id=str(snap_opt["id"]),
-            fingerprint=fp_h,
-            total=total_snap,
-            capped=False,
+            id=run_id, fingerprint=fp_h, total=total_snap, capped=False
         )
-        hydrated: list[BaseModel] = [
-            self.hydrate_result_record_key(k, hydrate_as) for k in raw_keys
-        ]
 
-        if return_type is not None:
-            v = default_model_codec(return_type).decode_mapping_many(
-                [h.model_dump(mode="json") for h in hydrated]
-            )
-
-            if return_count:
-                return page_from_limit_offset(
-                    v,
-                    pagination_d,
-                    total=total_snap,
-                    snapshot=handle,
-                )
-
-            return page_from_limit_offset(
-                v,
-                pagination_d,
-                total=None,
-                snapshot=handle,
-            )
-
-        if return_fields is not None:
-            raw = [{k: getattr(h, k, None) for k in return_fields} for h in hydrated]
-
-            if return_count:
-
-                return page_from_limit_offset(
-                    raw,
-                    pagination_d,
-                    total=total_snap,
-                    snapshot=handle,
-                )
-
-            return page_from_limit_offset(
-                raw,
-                pagination_d,
-                total=None,
-                snapshot=handle,
-            )
-
-        if return_count:
-
-            return page_from_limit_offset(  # type: ignore[return-value]
-                hydrated,
-                pagination_d,
-                total=total_snap,
-                snapshot=handle,
-            )
-
-        return page_from_limit_offset(  # type: ignore[return-value]
-            hydrated,
-            pagination_d,
-            total=None,
+        return _shape_snapshot_page(
+            [hydrate(k) for k in raw_keys],
+            pagination=pagination_d,
+            total=total_snap if return_count else None,
             snapshot=handle,
+            return_type=return_type,
+            return_fields=return_fields,
+            to_return_rows=to_return_rows,
         )
 
     # ....................... #
@@ -782,82 +817,19 @@ class SearchResultSnapshot:
         | Page[T_co]
         | None
     ):
-        pagination_d = dict(pagination or {})
-        offset = int(pagination_d.get("offset") or 0)
-        limit = pagination_d.get("limit")
-        page_limit = max(1, int(limit)) if limit is not None else 20
-
-        if rs_spec is None or snapshot is None or "id" not in snapshot:
+        if rs_spec is None:
             return None
 
-        sub_fp = str(snapshot["fingerprint"]) if "fingerprint" in snapshot else None
-
-        raw_keys = await self.store.get_id_range(
-            str(snapshot["id"]),
-            offset,
-            page_limit,
-            expected_fingerprint=sub_fp,
-        )
-
-        if raw_keys is None:
-            return None
-
-        raw_keys = await self._open_ids(raw_keys, run_id=str(snapshot["id"]))
-
-        sm = await self.store.get_meta(str(snapshot["id"]))
-        total_snap = int(sm.total) if sm and sm.complete else offset + len(raw_keys)
-
-        fp_h = (sm and sm.fingerprint) or fp_computed
-
-        handle = SearchSnapshotHandle(
-            id=str(snapshot["id"]),
-            fingerprint=fp_h,
-            total=total_snap,
-            capped=False,
-        )
-
-        hydrated = [
-            self.hydrate_federated_record_key(k, federated_spec) for k in raw_keys
-        ]
-
-        if return_type is not None:
-            rows2 = [
-                {
-                    "hit": it.hit.model_dump(mode="json"),
-                    "member": it.member,
-                }
-                for it in hydrated
-            ]
-            v2 = default_model_codec(return_type).decode_mapping_many(rows2)
-
-            if return_count:
-
-                return page_from_limit_offset(
-                    v2,
-                    pagination_d,
-                    total=total_snap,
-                    snapshot=handle,
-                )
-
-            return page_from_limit_offset(
-                v2,
-                pagination_d,
-                total=None,
-                snapshot=handle,
-            )
-
-        if return_count:
-
-            return page_from_limit_offset(
-                hydrated,
-                pagination_d,
-                total=total_snap,
-                snapshot=handle,
-            )
-
-        return page_from_limit_offset(
-            hydrated,
-            pagination_d,
-            total=None,
-            snapshot=handle,
+        return await self._read_snapshot_page(
+            snapshot,
+            fp_computed=fp_computed,
+            pagination=pagination,
+            hydrate=lambda k: self.hydrate_federated_record_key(k, federated_spec),
+            to_return_rows=lambda items: [
+                {"hit": it.hit.model_dump(mode="json"), "member": it.member}
+                for it in items
+            ],
+            return_type=return_type,
+            return_fields=None,
+            return_count=return_count,
         )

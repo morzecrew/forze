@@ -400,6 +400,36 @@ async def test_delivery_count_none_never_parks() -> None:
     assert stub.acked == []
 
 
+async def test_warns_once_when_backend_cannot_report_delivery_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A poison ceiling is requested but the backend reports no count: parking can
+    # never fire, so the consumer warns — exactly once per run, not per message.
+    from forze_kits.integrations.consumer import runner as _runner
+
+    warnings: list[str] = []
+
+    class _Recorder:
+        def warning(self, msg: str, *args: object, **_kw: object) -> None:
+            warnings.append(msg % args if args else msg)
+
+        def exception(self, *_a: object, **_kw: object) -> None: ...
+
+    monkeypatch.setattr(_runner, "logger", _Recorder())
+
+    message = _message("m-1", "evt-1", delivery_count=None)
+    stub = _ScriptedQueue(script=[message, message, message])
+    ctx = _plain_ctx(state=MockState(), queue_port=stub)
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:
+        del msg
+
+    await _run(ctx, handler, max_deliveries=1)
+
+    no_count = [w for w in warnings if "does not report a delivery count" in w]
+    assert len(no_count) == 1  # warned once, not per message
+
+
 # ----------------------- #
 # Disposition failures never kill the loop
 

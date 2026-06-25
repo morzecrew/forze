@@ -17,18 +17,12 @@ from meilisearch_python_sdk.errors import (
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
+    build_exc_interceptor,
     exc,
-    fallback_exception_mapper,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("Meilisearch")
-
-# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract, arg-type]
@@ -38,10 +32,9 @@ def _meilisearch_eh(  # skipcq: PY-R1000
     site: str,
     details: Mapping[str, Any] | None = None,
 ) -> CoreException | None:
-    match exc_:
-        case CoreException():
-            return exc_
+    _ = site
 
+    match exc_:
         case MeilisearchTimeoutError():
             return exc.internal(f"Meilisearch timeout during {site}.")
 
@@ -54,10 +47,9 @@ def _meilisearch_eh(  # skipcq: PY-R1000
             )
 
         case _:
-            return _fallback(exc_, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-_meilisearch_chain = default_chain_exc_mapper.chain(_meilisearch_eh)
-exc_interceptor = ExceptionInterceptor(mapper=_meilisearch_chain)
+exc_interceptor = build_exc_interceptor("Meilisearch", _meilisearch_eh)

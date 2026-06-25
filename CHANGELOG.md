@@ -129,7 +129,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_dst` internal restructure** *(breaking: imports)* — the harness splits into a thin `Simulation` facade over `engines/`, `oracle/`, and `artifacts/` subpackages, dropping top-level modules from 29 to 15. Top-level symbols now live in submodule namespaces, and `SchedulerKind` is removed.
 
+- **Integration logger namespaces unified to `forze_<pkg>.*`** *(behavior change: log filters)* — `forze_redis`/`forze_postgres`/`forze_http`/`forze_firestore`/`forze_temporal` previously logged under bare prefixes (`redis.*`, `postgres.*`, …), matching the rest of the integrations now. Besides consistency this stops `redis.*` from inheriting the `redis` driver's own logger configuration. Update any log filters keyed on the old prefixes.
+
+- **Notify kit: registration split from resolution** *(breaking: `forze_kits`)* — `NotificationRouter` is now a mutable builder (`register()` returns self, then `freeze()`); resolution (`resolve`/`resolve_or_raise`) moves to the immutable `FrozenNotificationRouter` the consumer holds, so the routing table can't change under a running consumer. Notification command models are frozen, and the package is reorganized into `routing` / `events` / `consumer` / `lifecycle` (public imports from `forze_kits.integrations.notify` unchanged except the new `FrozenNotificationRouter`).
+
 ### Fixed
+
+- **Notifications can run through the queue consumer (dedup + poison parking)** — `notification_consumer_lifecycle_step(...)` and `notification_queue_consumer_handler(...)` route notifications through `QueueConsumer`, so an at-least-once redelivery no longer re-sends (inbox dedup on the deterministic event id) and poison messages are parked. The transactional-notifications recipe now drains via the consumer instead of a hand-rolled receive/ack loop.
+
+- **Queue consumer warns when a poison ceiling can't be enforced** — when `max_deliveries` is set but the backend does not report a delivery count (so in-app parking can never trigger), the consumer logs one warning per run pointing at the broker's dead-letter/redrive policy, instead of silently looping a poison message forever.
+
+- **CQRS read-only guard now covers eager (factory-time) port acquisition** — a QUERY operation whose handler factory acquired a command (write) port at build time — `lambda ctx: Handler(port=ctx.document.command(spec))`, the common kit pattern — previously slipped past the read-only guard, which was only set later inside the call. The handler is now built under the read-only flag for any QUERY operation, so eager acquisition hits the same guard as a call-time one (raised at first resolve). Read-port acquisition and COMMAND operations are unaffected.
+
+- **Filtering a randomized-encrypted field now fails closed** — a query predicate on a field encrypted with randomized (non-searchable) encryption silently matched nothing (plaintext literal compared against ciphertext at rest); it now raises `precondition` (`code="core.crypto.encrypted_field_not_filterable"`) at the shared codec seam, so every document/search backend inherits it. Query by equality using a deterministic searchable field instead.
+
+- **Encrypted-sort rejection now covers every search backend** — refusing a sort on a field-encrypted column (no usable order at rest, and the raw value leaks into the keyset cursor token) was wired only on Mongo. The guard now runs once in the shared offset executor — so Postgres, Mongo, and Meilisearch all inherit it — plus the Postgres cursor path (Mongo's cursor guard stays inline). Raises `core.search.encrypted_sort_field`.
+
+- **VK login no longer copies the untrusted introspection envelope into claims** — the `public_info` verifier emitted the full unverified response (including top-level protocol/envelope fields) as identity claims; it now keeps only the masked `user` object the subject is derived from, so attacker-influenceable envelope fields cannot reach downstream claim/tenant mappers.
 
 - **A missing dependency now reports as a legible configuration error** — looking up an unregistered port (a forgotten `DepsModule` entry) raised an opaque `internal` error; it now raises `configuration` and names what *is* registered (the plain dependency or route inventory) with a "did you forget a DepsModule entry?" hint. It stays a server-side 500 (a wiring fault is the server's, and the detail is never exposed to clients) — the win is an actionable message in logs instead of a generic internal error indistinguishable from a crash.
 

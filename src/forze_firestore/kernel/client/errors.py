@@ -12,19 +12,12 @@ from google.api_core import exceptions as gax_exceptions
 
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
-    ChainExceptionMapper,
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    fallback_exception_mapper,
-    map_pydantic,
+    build_exc_interceptor,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("Firestore")
-
-# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -36,10 +29,9 @@ def _firestore_eh(  # skipcq: PY-R1000
 ) -> CoreException | None:
     """Convert a Firestore/Google API exception into a :class:`~forze.base.errors.exc.internal`."""
 
-    match exc:
-        case CoreException():
-            return exc
+    _ = site
 
+    match exc:
         case gax_exceptions.NotFound():
             return CoreException.not_found(
                 str(exc),
@@ -74,17 +66,9 @@ def _firestore_eh(  # skipcq: PY-R1000
             )
 
         case _:
-            return _fallback(exc, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-# NOTE: build a flat chain instead of `default_chain_exc_mapper.chain(...)`.
-# Nesting the default chain as the first arm is a trap: a nested
-# ChainExceptionMapper never returns ``None`` (it falls through to
-# ``default_exception``), so ``_firestore_eh`` would be dead code and every
-# Firestore error — including ABORTED transaction contention — would surface
-# as a generic INTERNAL error instead of CONCURRENCY (which is what plugs
-# into forze's OCC retry machinery).
-_fs_chain = ChainExceptionMapper.chain(map_pydantic, _firestore_eh)
-exc_interceptor = ExceptionInterceptor(mapper=_fs_chain)
+exc_interceptor = build_exc_interceptor("Firestore", _firestore_eh)

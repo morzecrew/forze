@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from uuid import uuid4
 
 import pytest
@@ -41,7 +40,9 @@ def _det() -> DeterministicFieldCipher:
     return DeterministicFieldCipher(root=b"a-stable-root-secret-32-bytes!!!")
 
 
-def _codec(det: DeterministicFieldCipher, *, tenant=None) -> EncryptingModelCodec[_Profile]:
+def _codec(
+    det: DeterministicFieldCipher, *, tenant=None
+) -> EncryptingModelCodec[_Profile]:
     return EncryptingModelCodec(
         inner=default_model_codec(_Profile),
         cipher=Keyring(
@@ -109,7 +110,9 @@ def test_derived_key_cache_is_bounded_and_eviction_safe() -> None:
 
     # Flood with distinct tenants to evict the pinned key several times over.
     for _ in range(20):
-        det.encrypt(tenant=TenantIdentity(tenant_id=uuid4()), field="email", plaintext=b"v")
+        det.encrypt(
+            tenant=TenantIdentity(tenant_id=uuid4()), field="email", plaintext=b"v"
+        )
 
     assert len(det._keys) <= 4  # type: ignore[attr-defined]  # bounded
     # Re-deriving the evicted key yields the same deterministic ciphertext.
@@ -132,7 +135,9 @@ def test_searchable_encode_decode_round_trip() -> None:
 
 def test_filter_rewrite_matches_stored_ciphertext() -> None:
     codec = _codec(_det())
-    stored = codec.encode_persistence_mapping(_Profile(id="1", email="alice@example.com"))
+    stored = codec.encode_persistence_mapping(
+        _Profile(id="1", email="alice@example.com")
+    )
 
     rewritten = codec.rewrite_filter(QueryField("email", "$eq", "alice@example.com"))
 
@@ -200,6 +205,62 @@ def test_filter_rewrite_leaves_non_searchable_fields() -> None:
 
     node = QueryField("id", "$eq", "1")
     assert codec.rewrite_filter(node) is node
+
+
+# ----------------------- #
+# Randomized (non-searchable) fields are not filterable
+
+
+def _codec_randomized(*, tenant=None) -> EncryptingModelCodec[_Profile]:
+    # ``email`` is randomized-encrypted with NO searchable fields, so this also exercises
+    # the path where ``rewrite_filter`` must still walk despite an empty searchable set.
+    return EncryptingModelCodec(
+        inner=default_model_codec(_Profile),
+        cipher=Keyring(
+            kms=MockKeyManagement(),
+            aead=AesGcmAead(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        ),
+        fields=frozenset({"email"}),
+        searchable_fields=frozenset(),
+        tenant_provider=lambda: tenant,
+    )
+
+
+def test_filter_rewrite_rejects_predicate_on_randomized_field() -> None:
+    # A randomized ciphertext is non-deterministic, so a predicate against it would
+    # silently match nothing; fail closed instead of returning a wrong empty result.
+    codec = _codec_randomized()
+
+    with pytest.raises(CoreException) as excinfo:
+        codec.rewrite_filter(QueryField("email", "$eq", "alice@example.com"))
+
+    assert excinfo.value.code == "core.crypto.encrypted_field_not_filterable"
+    assert excinfo.value.kind is ExceptionKind.PRECONDITION
+
+
+def test_filter_rewrite_rejects_randomized_field_nested_in_and() -> None:
+    codec = _codec_randomized()
+    node = QueryAnd(
+        (QueryField("id", "$eq", "1"), QueryField("email", "$eq", "a@x.com"))
+    )
+
+    with pytest.raises(CoreException) as excinfo:
+        codec.rewrite_filter(node)
+
+    assert excinfo.value.code == "core.crypto.encrypted_field_not_filterable"
+
+
+def test_filter_rewrite_rejects_randomized_field_compare_and_element() -> None:
+    codec = _codec_randomized()
+
+    with pytest.raises(CoreException) as ei_cmp:
+        codec.rewrite_filter(QueryCompare("email", "$eq", "other"))
+    assert ei_cmp.value.code == "core.crypto.encrypted_field_not_filterable"
+
+    with pytest.raises(CoreException) as ei_elem:
+        codec.rewrite_filter(QueryElem("email", "$any", QueryField("$", "$eq", "x")))
+    assert ei_elem.value.code == "core.crypto.encrypted_field_not_filterable"
 
 
 def test_searchable_decode_tolerates_legacy_plaintext() -> None:

@@ -7,6 +7,7 @@ from .deps import (
     OutboxQueryDepKey,
     OutboxQueryDepPort,
 )
+from .integration_config import OutboxIntegrationConfig
 from .ports import OutboxCommandPort, OutboxQueryPort, OutboxRowPersistPort
 from .specs import (
     OutboxDestination,
@@ -33,6 +34,7 @@ __all__ = [
     "OutboxCommandPort",
     "OutboxDeps",
     "OutboxDestination",
+    "OutboxIntegrationConfig",
     "OutboxDestinationKind",
     "OutboxEncryptionTier",
     "OutboxQueryDepKey",

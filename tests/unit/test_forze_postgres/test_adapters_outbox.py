@@ -23,6 +23,19 @@ from forze_postgres.execution.deps.configs import PostgresOutboxConfig
 # ----------------------- #
 
 
+def test_outbox_config_rejects_nonpositive_batch_sizes() -> None:
+    from forze.base.exceptions import CoreException
+
+    with pytest.raises(CoreException, match="max_flush_rows"):
+        PostgresOutboxConfig(relation=("public", "outbox"), max_flush_rows=0)
+
+    with pytest.raises(CoreException, match="max_claim_rows"):
+        PostgresOutboxConfig(relation=("public", "outbox"), max_claim_rows=-1)
+
+
+# ....................... #
+
+
 class _Payload(BaseModel):
     label: str
 

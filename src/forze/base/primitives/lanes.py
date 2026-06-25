@@ -1,10 +1,11 @@
 import asyncio
-from time import monotonic
 from typing import Any, Callable, Coroutine, Hashable, final
 
 import attrs
 
 from forze.base.exceptions import exc
+
+from .datetime import monotonic
 
 # ----------------------- #
 
@@ -16,7 +17,9 @@ class CacheLane[K: Hashable, V]:
 
     :param max_entries: When set, evict oldest inserted keys when exceeded.
     :param ttl_seconds: When set, entries expire after this many seconds.
-    :param clock: Injectable time source (defaults to :func:`time.monotonic`).
+    :param clock: Injectable time source. Defaults to the seam ``monotonic`` (the active
+        :class:`TimeSource`), so a bound simulation clock controls TTL expiry; pass an
+        explicit clock to override.
     """
 
     max_entries: int | None = None

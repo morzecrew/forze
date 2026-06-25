@@ -11,20 +11,14 @@ import httpx
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
-    ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
-    fallback_exception_mapper,
+    build_exc_interceptor,
 )
 from forze.base.exceptions import (
     exc as forze_exc,
 )
 
 # ----------------------- #
-
-_fallback = fallback_exception_mapper("HTTP")
-
-# ....................... #
 
 
 def _response_status(exc: BaseException) -> int | None:
@@ -46,10 +40,9 @@ def _httpx_eh(  # skipcq: PY-R1000
 ) -> CoreException | None:
     """Normalize httpx errors into :class:`CoreException`."""
 
-    match exc:
-        case CoreException():
-            return exc
+    _ = site
 
+    match exc:
         case httpx.TimeoutException():
             return forze_exc.infrastructure(
                 "HTTP request timed out.",
@@ -95,10 +88,9 @@ def _httpx_eh(  # skipcq: PY-R1000
             )
 
         case _:
-            return _fallback(exc, site=site, details=details)
+            return None
 
 
 # ....................... #
 
-httpx_chain_mapper = default_chain_exc_mapper.chain(_httpx_eh)
-exc_interceptor = ExceptionInterceptor(mapper=httpx_chain_mapper)
+exc_interceptor = build_exc_interceptor("HTTP", _httpx_eh)
