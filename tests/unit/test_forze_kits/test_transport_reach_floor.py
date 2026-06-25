@@ -86,6 +86,28 @@ async def test_e2e_transport_satisfies_e2e_floor(key, spec_factory) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "key", "spec_factory"),
+    [
+        ("queue", QueueCommandDepKey, lambda enc: QueueSpec(name="t", codec=_CODEC, encryption=enc)),
+        ("pubsub", PubSubCommandDepKey, lambda enc: PubSubSpec(name="t", codec=_CODEC, encryption=enc)),
+        ("stream", StreamCommandDepKey, lambda enc: StreamSpec(name="t", codec=_CODEC, encryption=enc)),
+    ],
+)
+@pytest.mark.parametrize("floor", [None, "at_rest"])
+async def test_at_rest_transport_rejected_as_invalid(kind, key, spec_factory, floor) -> None:
+    # A transport has no store, so at_rest is invalid — rejected with or without a floor
+    # (the Literal is not enforced at runtime, so this can be built).
+    spec = spec_factory("at_rest")  # type: ignore[arg-type]
+    runtime = _runtime(floor=floor)
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with pytest.raises(CoreException) as ei:
+            ctx.deps.resolve_configurable(ctx, key, spec, route=spec.name)
+        assert ei.value.code == f"core.{kind}.invalid_reach"
+
+
+@pytest.mark.asyncio
 async def test_no_floor_allows_plaintext_transport() -> None:
     enc: MessageEncryptionTier = "none"
     spec = QueueSpec(name="t", codec=_CODEC, encryption=enc)

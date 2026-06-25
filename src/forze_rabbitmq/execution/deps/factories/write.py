@@ -39,7 +39,11 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
         spec: QueueSpec[Any],
     ) -> QueueCommandPort[Any]:
         enforce_required_reach(
-            ctx.deps, route=str(spec.name), declared=spec.encryption, kind="queue"
+            ctx.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="queue",
+            supports_at_rest=False,
         )
         client = ctx.deps.provide(RabbitMQClientDepKey)
         codec = RabbitMQQueueCodec(payload_codec=spec.codec)

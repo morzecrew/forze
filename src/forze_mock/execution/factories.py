@@ -533,7 +533,11 @@ class ConfigurableMockQueue(_MockFactoryBase):
             return adapter
 
         enforce_required_reach(
-            context.deps, route=str(spec.name), declared=spec.encryption, kind="queue"
+            context.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="queue",
+            supports_at_rest=False,
         )
         cipher = (
             context.deps.provide(KeyringDepKey)
@@ -570,7 +574,11 @@ class ConfigurableMockPubSub(_MockFactoryBase):
             return adapter
 
         enforce_required_reach(
-            context.deps, route=str(spec.name), declared=spec.encryption, kind="pubsub"
+            context.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="pubsub",
+            supports_at_rest=False,
         )
         cipher = (
             context.deps.provide(KeyringDepKey)
@@ -612,7 +620,11 @@ class ConfigurableMockStream(_MockFactoryBase):
             return adapter
 
         enforce_required_reach(
-            context.deps, route=str(spec.name), declared=spec.encryption, kind="stream"
+            context.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="stream",
+            supports_at_rest=False,
         )
         cipher = (
             context.deps.provide(KeyringDepKey)
