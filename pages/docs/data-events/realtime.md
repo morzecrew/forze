@@ -101,3 +101,6 @@ and an event can opt out of offline delivery when it isn't worth persisting.
   publisher, the gateway and its lifecycle, presence, the device-identity
   handshake, the delivery envelope, and the production hardening knobs.
 - [Events & sagas](events-sagas.md) — the outbox and relay the durable path rides on.
+- Recipes: [offline delivery](../recipes/realtime-offline-delivery.md) (store-and-forward
+  per device) and [tenant-sharded realtime](../recipes/tenant-sharded-realtime.md)
+  (trusted per-tenant isolation).

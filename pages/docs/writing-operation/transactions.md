@@ -30,15 +30,10 @@ resolve a transaction manager.
 !!! tip "A scope holds a connection only from the first query"
 
     With `lazy_transaction` enabled (the default) on the Postgres, Mongo, and
-    Firestore clients, opening a scope acquires no pooled connection (and issues
-    no `BEGIN` / `startTransaction` / `_begin`) until the **first query** inside
-    it. Parsing, computing, or calling an
-    external service before you touch the database no longer parks a connection
-    idle-in-transaction — so keep cheap-but-slow work *before* the first query and
-    the transaction stays short. A scope that runs no query holds nothing and
-    commits nothing. One consequence: a connection-acquire or connect failure now
-    surfaces at the first query rather than at scope entry (retries that wrap the
-    whole operation are unaffected).
+    Firestore clients, opening a scope acquires no pooled connection until the
+    **first query** inside it — so parsing or calling an external service before you
+    touch the database doesn't park a connection idle-in-transaction, and a scope
+    that runs no query holds and commits nothing.
 
 ## What commits together
 
@@ -80,7 +75,9 @@ registry.bind("quote").two_phase().bind_tx().set_route("orders").finish()
 
 The engine runs `prepare` in the outer scope — **before** the transaction opens —
 and threads its return value into `apply`, which runs inside the transaction. So
-the transaction wraps only the writes, never the external call.
+the transaction wraps only the writes, never the external call. Worked end to end in
+the [two-phase handler](../recipes/two-phase-handler.md) recipe; for CPU-heavy `prepare`
+work, [offload it off the event loop](../recipes/offload-cpu-work.md).
 
 !!! note "What `prepare` can and can't do"
 
@@ -168,47 +165,22 @@ re-raises. A committed transaction is never left half-announced.
 
 ## Transactions under the mock
 
-The mock transaction manager is **faithful by default** (`transactions="journal"`).
-Each write records an undo, and an aborted transaction replays its journal in
-reverse — undoing *only its own* writes. So a "forgot to run it in the same
-transaction" bug fails in tests exactly as it would in production, and because
-nothing restores a global snapshot, concurrent transactions still interleave
-freely — the basis [simulation](../dst/overview.md) needs.
-
-Rollback covers exactly what a database transaction would:
-
-- **Rolls back** — documents, outbox rows, inbox marks, and the document-backed
-  identity stores. A handler that stages an outbox event and then fails leaves
-  *no* rows behind, same as Postgres.
-- **Survives rollback, on purpose** — queues, streams, storage blobs, caches,
-  counters, idempotency keys, locks, search and analytics state. Those backends
-  are not transactional in production; rolling them back would hide the very
-  cross-system consistency gaps the [outbox pattern](#after-the-commit) exists to
-  close.
-
-Nested scopes behave as savepoints (an inner rollback reverts only the inner
-writes); a `QUERY` root enforces `read_only` (a write to a participating store
-raises a precondition error, `code="read_only_tx"`); and the manager honors the
+The mock transaction manager is **faithful by default** (`transactions="journal"`):
+an aborted transaction undoes *only its own* writes, so a "forgot to run it in the
+same transaction" bug fails in tests exactly as it would in production, and
+concurrent transactions still interleave — the basis [simulation](../dst/overview.md)
+needs. It rolls back what a database would — documents, outbox rows, inbox marks, the
+document-backed identity stores — and deliberately **not** the non-transactional
+backends (queues, streams, storage, caches, counters, locks, search/analytics):
+rolling those back would hide the cross-system gaps the [outbox](#after-the-commit)
+exists to close. Nested scopes act as savepoints, a `QUERY` root enforces `read_only`
+(a participating write raises `code="read_only_tx"`), and the manager honors the
 declared [isolation](#isolation) level through its MVCC overlay.
 
-Two other modes are opt-in when wiring `MockDepsModule`:
+Two other modes are opt-in when wiring `MockDepsModule`: `transactions="strict"`
+restores a global snapshot on rollback, so concurrent root transactions serialize;
+`transactions="none"` is the legacy no-op (writes persist through a rollback) kept
+only for comparison.
 
-=== "Strict (serializing)"
-
-    `transactions="strict"` (or `strict_tx=True`) restores a global snapshot on
-    rollback — simpler, but concurrent root transactions on one `MockState`
-    **serialize** (real databases serialize conflicting writers anyway). Reach
-    for it only when you specifically want that behavior.
-
-=== "None (legacy)"
-
-    `transactions="none"` is the old no-op: writes persist through a rollback. It
-    hides transaction bugs — kept only for comparison.
-
-!!! note "Only mock stores roll back"
-
-    Rollback reverts the mock stores, not arbitrary in-process side effects — a
-    handler that mutates a Python object it captured cannot be rolled back.
-
-A transaction rolls back when an operation raises; what those failures are, and
-how a raised error becomes a response, is [Errors](errors.md).
+A transaction rolls back when an operation raises; what those failures are, and how a
+raised error becomes a response, is [Errors](errors.md).

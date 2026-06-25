@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Less CRUD boilerplate** — `build_document_registry(spec)` derives its `DocumentDTOs` from the spec when `dtos` is omitted (override, or `create=None`/`update=None` to disable an op), and new `document_facade(runtime, registry, spec)` returns a per-call typed `DocumentFacade` factory. Both additive — the explicit `DocumentDTOs` and `DocumentFacade(...)` forms keep working.
+
+- **Top-level front door** — the most-used names re-export from `forze` and `forze_kits` (`from forze import DocumentSpec, build_runtime`; `from forze_kits import DocumentFacade, build_document_registry`), resolved lazily (PEP 562) so `import forze` stays cheap. Deep paths keep working; the core never imports kits.
+
 - **Procedures port — governed parametrized commands/compute** — `ctx.procedure.command(spec).run(params)` runs a spec-named, parametrized statement (a function/`CALL`, set-based recompute, or `REFRESH MATERIALIZED VIEW`): analytics' write/compute twin, for recomputing over an ingested batch in one statement instead of per-row triggers. One `ProcedureSpec[In, Out]` per procedure, command-only (refused in a read-only operation), on Postgres plus a programmable mock. Tenant-aware routes fail closed at wiring unless the SQL binds `%(tenant)s`.
 
 - **Query parameters — bound session settings for read sources** — a read resource declares a typed `query_params` contract and a handler binds values with `ctx.document.query(spec).with_parameters(P(...))`, which the backend applies as query-scoped session settings the relation reads internally (Postgres documents plus a programmable mock), so the full read DSL still composes on top. Capability-gated and fail-closed: unsupported backends and declared-but-unbound reads raise.
@@ -127,13 +131,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A missing dependency now reports as a legible configuration error** — looking up an unregistered port (a forgotten `DepsModule` entry) raised an opaque `internal` error; it now raises `configuration` and names what *is* registered (the plain dependency or route inventory) with a "did you forget a DepsModule entry?" hint. It stays a server-side 500 (a wiring fault is the server's, and the detail is never exposed to clients) — the win is an actionable message in logs instead of a generic internal error indistinguishable from a crash.
+
 - **Log scrubbing no longer corrupts ordinary text** — sensitive-word scrubbing of log string values now requires a secret-bearing shape (`session=…`), not a bare word, so paths like `/v1/authn/login` survive intact while the value after a sensitive key is fully masked. Key-name masking of structured fields is unchanged.
 
 - **Outbox relay tenancy** — the background relay now binds each claim's tenant before publishing, so a tenant-aware destination routes per-tenant instead of the global key. A tenant-aware outbox on the plain (non-sharded) relay fails closed with a clear `outbox_relay_tenant_unbound` error.
 
 - **Keyring fill-lock stripe is now cross-process stable** — the per-`key_id` crypto fill-lock stripe used Python's `hash()` (PYTHONHASHSEED-randomized), so it varied per process and broke deterministic-simulation replay. It now uses a stable hash, and the guard bans the `hash(x) % n` pattern.
 
-- **Runtime sorts and filters on unknown fields fail loud across backends** — a query-time sort or filter on a field absent from the read model raises `exc.configuration` on Mongo, Firestore, and the mock (matching Postgres). This covers computed fields, which were silently mishandled before.
+- **Bad query fields are a client error (400), not a server error (500)** — a query-time sort, filter, or sort-direction value that names a field absent from the read model (or an invalid direction/null placement) now raises a `precondition` (HTTP 400, `code="field_not_on_read_model"` / `"invalid_sort_value"`) instead of a `configuration` error masked as a 500. This is caller-supplied input, so the status now reflects who's at fault, and the detail reaches the client. A spec's own `default_sort` naming an unknown field stays a `configuration` error (500) — that's the author's misconfiguration. Behavior is uniform across Postgres, Mongo, Firestore, and the mock, and still covers computed (never-stored) fields.
 
 - **FastAPI API-key `prefix:key` parsing fixed** — the `X-API-Key` resolver now splits on the first colon so `prefix:secret` yields the bare secret, matching `forze_mcp`; previously it split on whitespace and passed the whole value, failing verification. Bare keys still authenticate.
 

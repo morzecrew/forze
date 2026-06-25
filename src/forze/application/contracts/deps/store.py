@@ -53,16 +53,20 @@ class ProviderStore:
         """Look up a registered provider or instance without cycle checks."""
 
         if route is None:
-            dep = self.plain_deps.get(key)
-
-            if not dep:
-                msg = (
-                    f"Plain dependency '{key.name}' not found"
+            if key not in self.plain_deps:
+                where = (
+                    ""
                     if fallback_from_route is None
-                    else f"Plain dependency '{key.name}' not found (fallback from route '{fallback_from_route}')"
+                    else f" (fallback from route '{fallback_from_route}')"
                 )
 
-                raise exc.internal(msg)
+                raise exc.configuration(
+                    f"Plain dependency '{key.name}' not found{where}; "
+                    f"{self._registered_hint(key, None)}. "
+                    "Did you forget to register it in a DepsModule?"
+                )
+
+            dep = self.plain_deps[key]
 
         else:
             routes = self.routed_deps.get(key)
@@ -76,8 +80,10 @@ class ProviderStore:
                         fallback_from_route=route,
                     )
 
-                raise exc.internal(
-                    f"Routed dependency '{key.name}' not found for route '{route}'"
+                raise exc.configuration(
+                    f"Routed dependency '{key.name}' not found for route '{route}'; "
+                    f"{self._registered_hint(key, route)}. "
+                    "Did you forget a DepsModule entry for this route?"
                 )
 
             dep = routes.get(route)
@@ -91,11 +97,29 @@ class ProviderStore:
                         fallback_from_route=route,
                     )
 
-                raise exc.internal(
-                    f"Dependency '{key.name}' not found for route '{route}'"
+                raise exc.configuration(
+                    f"Dependency '{key.name}' not found for route '{route}'; "
+                    f"{self._registered_hint(key, route)}."
                 )
 
         return cast(T, dep)
+
+    # ....................... #
+
+    def _registered_hint(self, key: DepKey[Any], route: StrKey | None) -> str:
+        """A diagnostic naming what *is* registered, to make a missing-dep error actionable.
+
+        A missing dependency is a server-side wiring mistake (a forgotten ``DepsModule``
+        entry), so the error is a ``configuration`` error and this detail is logged
+        server-side, not exposed to clients.
+        """
+
+        if route is None:
+            names = sorted(k.name for k in self.plain_deps)
+            return f"registered plain dependencies: {', '.join(names) or '<none>'}"
+
+        routes = sorted(str(r) for r in (self.routed_deps.get(key) or {}))
+        return f"registered routes for '{key.name}': {', '.join(routes) or '<none>'}"
 
     # ....................... #
 

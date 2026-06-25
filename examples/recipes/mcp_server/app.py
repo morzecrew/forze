@@ -44,7 +44,6 @@ from forze.application.execution.operations.registry import FrozenOperationRegis
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.aggregates.document.factories import build_document_registry
 from forze_kits.aggregates.document.operations import DocumentKernelOp
-from forze_kits.aggregates.document.value_objects import DocumentDTOs
 from forze.base.logging import attach_foreign_loggers, configure_logging
 from forze_mcp import (
     LoggingMiddleware,
@@ -90,7 +89,6 @@ SPEC = DocumentSpec(
     read=NoteRead,
     write=DocumentWriteTypes(domain=Note, create_cmd=NoteInput, update_cmd=NoteUpdate),
 )
-DTOS = DocumentDTOs(read=NoteRead, create=NoteInput, update=NoteUpdate)
 NS = SPEC.default_namespace
 # --8<-- [end:aggregate]
 
@@ -100,7 +98,7 @@ NS = SPEC.default_namespace
 def build_registry() -> FrozenOperationRegistry:
     """Build the (frozen) Notes operation registry."""
 
-    return build_document_registry(SPEC, DTOS).freeze()
+    return build_document_registry(SPEC).freeze()
 
 
 def build_context_factory() -> tuple[ExecutionContextFactory, MockState]:

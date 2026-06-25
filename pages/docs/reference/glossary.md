@@ -40,6 +40,9 @@ Skim it, or search for a single word.
 **SearchSpec**
 :   Declares a search index for full-text or structured queries over documents.
 
+**EmbeddingsSpec**
+:   Declares an embeddings provider (resolved via `ctx.embeddings.provider(spec)`) that turns text into vectors, for similarity (vector) search.
+
 **CacheSpec**
 :   Declares a cache layer for read-through or write-through caching.
 
@@ -110,7 +113,7 @@ Skim it, or search for a single word.
 :   The tenant context bound to a request. Determines data isolation strategy.
 
 **Tenant tier**
-:   The isolation level for a tenant: `tagged` (marker column), `namespace` (schema/prefix), or `dedicated` (separate instance).
+:   The isolation level for a resource: `none` (not tenant-scoped), `tagged` (marker column), `namespace` (schema/prefix), or `dedicated` (separate instance).
 
 ---
 
@@ -130,11 +133,3 @@ Skim it, or search for a single word.
 
 **Saga**
 :   A sequence of operations across aggregates or services, with compensation logic for rollback.
-
----
-
-## See also
-
-- [Overview](../core-concepts/overview.md) — the mental model and vocabulary
-- [Architecture](../core-concepts/architecture.md) — the four-layer structure
-- [Contracts reference](contracts.md) — capability index by contract type

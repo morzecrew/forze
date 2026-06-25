@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping as MappingABC
 from types import UnionType
-from typing import Any, Mapping, Union, cast, get_args, get_origin
+from typing import Any, Mapping, NoReturn, Union, cast, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -17,6 +17,24 @@ _DIRECTIONS = ("asc", "desc")
 _NULLS = ("first", "last")
 
 _MISSING: Any = object()
+
+
+# ....................... #
+
+
+def _raise_invalid_sort(message: str, *, client_facing: bool, code: str) -> NoReturn:
+    """Raise the right kind for a bad sort field/value.
+
+    A malformed sort coming from a request is the *caller's* fault — a clean precondition
+    (HTTP 400). The same defect in a spec's ``default_sort`` is the *author's* fault, a
+    configuration error (HTTP 500). Callers thread ``client_facing`` so a runtime read path
+    surfaces 400 while spec validation stays 500.
+    """
+
+    if client_facing:
+        raise exc.precondition(message, code=code)
+
+    raise exc.configuration(message)
 
 # ....................... #
 
@@ -39,12 +57,14 @@ def parse_sort_value(
     *,
     field: str | None = None,
     spec_name: str | None = None,
+    client_facing: bool = True,
 ) -> tuple[str, str]:
     """Resolve a sort value (string shorthand or ``{"dir","nulls"}``) to ``(dir, nulls)``.
 
-    Applies the canonical null default when *nulls* is omitted. Raises
-    :func:`~forze.base.exceptions.exc.configuration` for an invalid direction or
-    placement.
+    Applies the canonical null default when *nulls* is omitted. An invalid direction or
+    placement raises a precondition (a caller-supplied value, HTTP 400) by default; pass
+    ``client_facing=False`` for spec ``default_sort`` validation, where it is the author's
+    configuration error.
     """
 
     where = f" for field {field!r}" if field is not None else ""
@@ -64,10 +84,18 @@ def parse_sort_value(
         direction = str(value).lower()
 
     if direction not in _DIRECTIONS:
-        raise exc.configuration(f"Invalid sort direction {value!r}{where}.")
+        _raise_invalid_sort(
+            f"Invalid sort direction {value!r}{where}.",
+            client_facing=client_facing,
+            code="invalid_sort_value",
+        )
 
     if nulls is not None and nulls not in _NULLS:
-        raise exc.configuration(f"Invalid null placement {nulls!r}{where}.")
+        _raise_invalid_sort(
+            f"Invalid null placement {nulls!r}{where}.",
+            client_facing=client_facing,
+            code="invalid_sort_value",
+        )
 
     return direction, nulls if nulls is not None else default_nulls(direction)
 
@@ -120,12 +148,14 @@ def resolve_sort_keys(
     read_fields: frozenset[str] | None = None,
     spec_name: str = "<sort>",
     model: type[BaseModel] | None = None,
+    client_facing: bool = True,
 ) -> list[tuple[str, str, str]]:
     """Resolve a sort map to ``(field, direction, nulls)`` triples (no tie-breaker).
 
     For offset ORDER BY and in-memory sort, where a total order isn't required. Validates
     field membership when *read_fields* is given; pass *model* to allow nested/dotted sort
-    paths (validated the same way filters are — see :func:`field_path_resolves`).
+    paths (validated the same way filters are — see :func:`field_path_resolves`). An unknown
+    field raises a precondition (caller-supplied sort, HTTP 400) by default.
     """
 
     if not sorts:
@@ -137,11 +167,15 @@ def resolve_sort_keys(
         if read_fields is not None and not _sort_field_resolves(
             field, read_fields=read_fields, model=model
         ):
-            raise exc.configuration(
+            _raise_invalid_sort(
                 f"Sort field {field!r} is not on read model for spec {spec_name!r}.",
+                client_facing=client_facing,
+                code="field_not_on_read_model",
             )
 
-        direction, nulls = parse_sort_value(value, field=field, spec_name=spec_name)
+        direction, nulls = parse_sort_value(
+            value, field=field, spec_name=spec_name, client_facing=client_facing
+        )
         out.append((field, direction, nulls))
 
     return out
@@ -165,21 +199,28 @@ def validate_sort_fields(
     read_fields: frozenset[str],
     spec_name: str,
     model: type[BaseModel] | None = None,
+    client_facing: bool = True,
 ) -> None:
-    """Raise :class:`~forze.base.exceptions.exc.configuration` when sorts are invalid.
+    """Raise when sorts are invalid.
 
     Pass *model* to permit nested/dotted sort paths, validated the same way filters are
     (via :func:`field_path_resolves`); without it, only flat *read_fields* membership is
-    accepted (legacy behavior).
+    accepted (legacy behavior). An invalid sort raises a precondition (caller-supplied,
+    HTTP 400) by default; pass ``client_facing=False`` to validate a spec's ``default_sort``,
+    where it is the author's configuration error.
     """
 
     for field, value in sorts.items():
         if not _sort_field_resolves(field, read_fields=read_fields, model=model):
-            raise exc.configuration(
+            _raise_invalid_sort(
                 f"Sort field {field!r} is not on read model for spec {spec_name!r}.",
+                client_facing=client_facing,
+                code="field_not_on_read_model",
             )
 
-        parse_sort_value(value, field=field, spec_name=spec_name)
+        parse_sort_value(
+            value, field=field, spec_name=spec_name, client_facing=client_facing
+        )
 
 
 # ....................... #
@@ -325,9 +366,10 @@ def validate_runtime_sort_fields(
 
     for field in sorts:
         if not field_path_resolves(model, field, materialized=materialized):
-            raise exc.configuration(
+            raise exc.precondition(
                 f"Sort field {field!r} is not on the {backend} read model "
                 f"({model.__name__}).",
+                code="field_not_on_read_model",
             )
 
 
@@ -351,13 +393,23 @@ def resolve_effective_sorts(
 
     if sorts:
         validate_sort_fields(
-            sorts, read_fields=read_fields, spec_name=spec_name, model=model
+            sorts,
+            read_fields=read_fields,
+            spec_name=spec_name,
+            model=model,
+            client_facing=True,
         )
         return sorts
 
     if default_sort:
+        # An invalid ``default_sort`` is the spec author's configuration error, not the
+        # caller's — keep it a 500, unlike the caller-supplied ``sorts`` above.
         validate_sort_fields(
-            default_sort, read_fields=read_fields, spec_name=spec_name, model=model
+            default_sort,
+            read_fields=read_fields,
+            spec_name=spec_name,
+            model=model,
+            client_facing=False,
         )
         return default_sort
 

@@ -127,80 +127,23 @@ AdaptiveBulkheadStrategy(
 )
 ```
 
-It starts at `max_concurrency` and behaves exactly like a fixed bulkhead while
-calls complete inside the threshold. A completion *over* the threshold backs
-the limit off multiplicatively (`backoff_ratio`, at most once per `cooldown` —
-a burst of slow completions backs off once, not to the floor); in-budget
-completions recover it additively, about one slot per `limit` successes. This
-is AIMD — the TCP congestion algorithm — and that's exactly why it suits a
-fleet: N replicas' process-local limits sharing one downstream converge like N
-TCP flows sharing a link, with no distributed state.
+It starts at `max_concurrency` and backs the limit off when a completion exceeds
+the threshold, recovering it as calls return in budget — AIMD, the TCP-congestion
+algorithm, so uncoordinated replicas sharing one downstream converge with no shared
+state. A **`GradientBulkheadStrategy`** goes one further and needs no threshold at
+all: it learns the no-load latency baseline and tracks the gradient between it and
+recent latency, finding the load/latency knee on its own.
 
-Two things it deliberately does *not* do. Errors don't shrink the limit —
-fast failures are the circuit breaker's signal, and a fast-failing downstream
-must not crater concurrency exactly when failures are cheap. And shrinking
-never evicts in-flight work — the limit only gates admission.
+Both feed *only* on latency — errors are the circuit breaker's signal, and a
+fast-failing downstream must not crater concurrency when failures are cheap — and
+shrinking only gates admission, never evicting in-flight work. The three kinds are
+mutually exclusive within a policy.
 
-By default any *single* completion over the threshold is a breach — instant
-reaction, but one GC pause or cold query halves your concurrency.
-`latency_quantile=0.95` makes the signal distributional instead: breach only
-when the **observed p95** of recent completions (a windowed streaming P²
-estimate, the same machinery as [adaptive hedging](#hedging-the-tail))
-exceeds the threshold. The contract becomes "the p95 must stay under the
-threshold" — outliers can't move a quantile, only a genuinely shifted
-distribution can. Each backoff opens a fresh measurement epoch, so the
-decision to shrink again is made from the *new* concurrency's latencies, not
-the stale history that justified the last one.
-
-A third kind, **`GradientBulkheadStrategy`**, drops the threshold entirely.
-Where AIMD reacts once latency crosses a number you have to pick, the Gradient2
-controller (from Netflix's `concurrency-limits`) *learns* the no-load latency
-baseline and tracks the gradient between it and recent latency — finding the
-load/latency knee on its own:
-
-```python
-GradientBulkheadStrategy(max_concurrency=16)   # no latency_threshold to tune
-```
-
-It probes the limit up gently while latency sits near baseline and contracts it
-as latency inflates (bounded so one spike can't more than roughly halve it),
-with a no-load guard so a lightly-loaded service never ratchets the limit up on
-noise. Only successful completions feed it — like AIMD, failures are the
-breaker's job. The three bulkhead kinds are mutually exclusive within a policy.
-
-### Managing the queue
-
-When a bulkhead has a queue (`max_queue >= 1`), a size bound alone isn't
-enough under sustained overload — a short queue that never empties still adds
-its full length of latency to every call. Every bulkhead kind takes three
-opt-in controls for that — the first two from Facebook's *Fail at Scale*, the
-last Netflix-style prioritized shedding:
-
-- **`queue_target=`** (CoDel) — bound queueing by the *time* a waiter
-  experiences. While the queue has recently been empty, a waiter may sojourn
-  up to `queue_interval` (default 100 ms); under sustained congestion,
-  anything parked longer than the target is shed at dequeue
-  (`code="bulkhead_queue_shed"`).
-- **`queue_adaptive_lifo=True`** — while congested, serve the *newest* waiter
-  first: its client is the one most likely still listening. FIFO otherwise.
-  LIFO starves the old tail under overload by design, so pair it with
-  `queue_target` to shed that tail instead of parking it forever.
-- **`prioritized=True`** — make shedding *criticality-aware*. Under a full
-  queue a higher-criticality arrival displaces the lowest-criticality waiter
-  instead of being rejected, and lower tiers get a tighter CoDel allowance so
-  they shed first. Tiers come from the task-scoped `Criticality`
-  (`BEST_EFFORT < DEGRADED < NORMAL < CRITICAL`, default `NORMAL`), bound at the
-  boundary like a deadline — so a background prefetch sheds before a user's
-  interactive call:
-
-  ```python
-  with bind_criticality(Criticality.BEST_EFFORT):
-      await prefetch(...)
-  ```
-
-A parked waiter whose [invocation deadline](deadlines.md) has already expired
-is failed at wake instead of being granted a slot it can no longer use — no
-knob needed.
+A queued bulkhead can additionally bound waiting by *time* (CoDel) and shed by
+criticality rather than length. Every parameter — the AIMD and Gradient2
+mechanics, the distributional `latency_quantile` signal, and the CoDel /
+adaptive-LIFO / prioritized queue controls — is in
+[resilience tuning](../reference/resilience-tuning.md#bulkheads).
 
 ## Hedging the tail
 
@@ -209,59 +152,30 @@ primary attempt hasn't completed after `delay`, fire a concurrent copy and
 take whichever finishes first (losers are cancelled). Only safe on idempotent
 reads — and `budget` caps the extra load it may add.
 
-The textbook delay is "about the p95 latency" — but a fixed number is always
-either too eager (wasted duplicate load) or too late (no tail rescue) as the
-downstream's distribution moves. Let it track the observed tail instead:
-
-```python
-HedgeStrategy(
-    delay=timedelta(milliseconds=200),   # fallback until the estimator warms
-    max_attempts=2,
-    adaptive_delay_quantile=0.95,        # hedge after the *observed* p95
-    delay_min=timedelta(milliseconds=10),
-)
-```
-
-The executor keeps a streaming quantile estimate (P² — five floats, no sample
-storage) of primary-attempt latencies per `(policy, route)`, windowed so a
-shifted distribution is picked up quickly, and hedges after *that* instead of
-the fixed delay. `delay_min` / `delay_max` clamp it: the floor guards against
-over-eager hedging when every call is fast, the cap against a degraded
-downstream pushing the trigger past usefulness. The effective delay is
-visible as the `forze.resilience.hedge.delay` gauge once
+A fixed delay is always either too eager (wasted duplicate load) or too late (no
+tail rescue) as the downstream's distribution moves. Set `adaptive_delay_quantile`
+and the hedge fires after the *observed* p95 of recent primary latencies instead,
+tracking the downstream as it shifts. The parameters and the streaming estimator
+are in [resilience tuning](../reference/resilience-tuning.md#hedge); the effective
+delay shows up as the `forze.resilience.hedge.delay` gauge once
 [`instrument_resilience`](observability.md#resilience-metrics) is attached.
 
 ## Shedding for a degraded downstream
 
 The circuit breaker is **binary**: full traffic, or a half-open trickle. At
-50% downstream failure both answers are wrong — the right one is to send
-roughly the traffic the downstream is still absorbing. That's the **adaptive
-client throttle** (Google's SRE book): track `requests` and `accepts` per
-window, and reject locally with probability
+50% downstream failure both answers are wrong — the right one is to send roughly
+the traffic the downstream is still absorbing. That's the **adaptive client
+throttle** (`AdaptiveThrottleStrategy`, Google's SRE book): it sheds
+*proportionally* to the observed accept ratio, rising as the downstream degrades
+and decaying to zero on its own as it recovers — a continuous probe with no
+half-open ceremony. Shed calls fail with a retryable `throttled`
+(`code="adaptive_throttle"`, 429 at the edge).
 
-```
-max(0, (requests − k·accepts) / (requests + 1))
-```
-
-```python
-AdaptiveThrottleStrategy()   # k=2.0, window=2min, min_throughput=10
-```
-
-A healthy downstream (`accepts ≈ requests`, `k=2`) computes a negative number
-— nothing is shed, ever. As the accept ratio degrades, shedding rises
-*proportionally*, and the steady state is self-limiting: shed calls count as
-requests but not accepts, so the client converges on roughly `k ×` the
-downstream's current capacity, leaving a continuous probe stream that detects
-recovery on its own (no half-open ceremony). Shed calls fail with a
-**retryable** `throttled` (`code="adaptive_throttle"`, 429 at the edge) and a
-`throttle_reject` resilience event. "Accepted" uses the breaker's outcome
-classification inverted — a domain rejection is the downstream doing its job,
-not buckling, so it never triggers shedding.
-
-The throttle and the breaker are **mutually exclusive in one policy** (they
-occupy the same outcome-observing slot, and composed, the throttle would read
-the breaker's own local rejections as overload). Pick per dependency: the
-throttle for downstreams that degrade, the breaker for ones that die outright.
+The throttle and the breaker are **mutually exclusive in one policy** (composed,
+the throttle would read the breaker's own local rejections as overload). Pick per
+dependency: the throttle for downstreams that degrade, the breaker for ones that
+die outright. The shedding formula and its self-limiting steady state are in
+[resilience tuning](../reference/resilience-tuning.md#adaptive-throttle).
 
 ## Port-level policies
 

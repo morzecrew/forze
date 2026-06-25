@@ -41,13 +41,12 @@ Testing. A bare `asyncio.to_thread` would raise `RealIOForbidden` under the simu
 For mapping a function over a large collection, `run_cpu_map(items, fn, chunk_size=…)`
 offloads in chunks and checkpoints cancellation at each boundary.
 
-## What a thread actually buys you
+## What a thread buys you
 
-A worker thread keeps the loop **responsive** — the GIL is released periodically, so the
-runtime keeps interleaving instead of freezing for the whole call. It is *not* a speedup
-for pure-Python work, which holds the GIL; you get real parallelism only for
-GIL-releasing C extensions (database drivers, `orjson`, `numpy`). Reach for `run_cpu`
-to stop one long call from monopolizing the loop — not to parse faster.
+A worker thread keeps the event loop **responsive**, not faster: pure-Python work holds
+the GIL, so `run_cpu` won't speed it up — you get real parallelism only for GIL-releasing
+C extensions (database drivers, `orjson`, `numpy`). Reach for it to stop one long
+synchronous call from monopolizing the loop, not to parse faster.
 
 ## When to use it
 

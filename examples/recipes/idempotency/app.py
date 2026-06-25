@@ -20,7 +20,6 @@ from forze.application.execution import DepsRegistry, ExecutionContext, Executio
 from forze.application.hooks.idempotency import IdempotencyWrap
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.aggregates.document import (
-    DocumentDTOs,
     DocumentFacade,
     build_document_registry,
 )
@@ -58,7 +57,7 @@ CREATE = ORDER_SPEC.default_namespace.key(DocumentKernelOp.CREATE)
 # Wrap that operation with idempotency. The wrap sits outermost, so a replay
 # skips the handler (and its transaction); `before` hooks (authn/authz) still run.
 REGISTRY = (
-    build_document_registry(ORDER_SPEC, DocumentDTOs(read=ReadOrder, create=CreateOrder))
+    build_document_registry(ORDER_SPEC)
     .bind(CREATE)
     .bind_outer()
     .wrap(IdempotencyWrap(op=CREATE, spec=IDEM, result_type=ReadOrder).to_step())

@@ -27,7 +27,6 @@ from forze.base.primitives import RuntimeVar
 from forze.domain.models import BaseDTO, ReadDocument
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_kits.aggregates.document import (
-    DocumentDTOs,
     DocumentFacade,
     DocumentIdDTO,
     ListRequestDTO,
@@ -103,9 +102,8 @@ def ctx() -> ExecutionContext:
 
 
 # --8<-- [start:routes]
-registry = build_document_registry(
-    article_spec, DocumentDTOs(read=ArticleRead)
-).freeze()
+# A read-only spec (write=None) derives a read-only DTO mapping.
+registry = build_document_registry(article_spec).freeze()
 
 
 @asynccontextmanager

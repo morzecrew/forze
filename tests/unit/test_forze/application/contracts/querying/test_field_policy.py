@@ -14,7 +14,7 @@ from forze.application.contracts.querying import (
     validate_filterable_fields,
     validate_sortable_fields,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 
 pytestmark = pytest.mark.unit
 
@@ -231,8 +231,10 @@ class TestValidateRuntimeFilterFields:
                 {"$values": {"display": "x"}}, model=_Doc
             )
 
-        # unknown field → rejected
-        with pytest.raises(CoreException, match="not on the read model"):
+        # unknown field → rejected as a caller precondition (HTTP 400), not a server error
+        with pytest.raises(CoreException, match="not on the read model") as ei:
             validate_runtime_filter_fields(
                 {"$values": {"nmae": "x"}}, model=_Doc
             )
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert ei.value.code == "field_not_on_read_model"

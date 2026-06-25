@@ -1,12 +1,13 @@
 ---
-title: Queue, outbox & inbox ports
+title: Queue, outbox & inbox
 icon: lucide/inbox
-summary: Methods on the queue, outbox, and inbox contracts
+summary: The queue, outbox, and inbox contracts — their specs and methods
 ---
 
-Method-level reference for the three messaging contracts — queue, outbox, and
-inbox. See [Events & sagas](../../data-events/events-sagas.md) for how they work
-together.
+The three messaging contracts that carry events between services: the **queue**
+(produce / consume), the **outbox** (stage events in a transaction, relay them
+at-least-once), and the **inbox** (consumer-side exactly-once dedup). How they compose is
+[Events & sagas](../../data-events/events-sagas.md).
 
 ## Queue
 
@@ -18,6 +19,9 @@ from forze.application.contracts.queue import QueueQueryDepKey, QueueCommandDepK
 w = ctx.deps.resolve_configurable(ctx, QueueCommandDepKey, spec, route=spec.name)
 r = ctx.deps.resolve_configurable(ctx, QueueQueryDepKey, spec, route=spec.name)
 ```
+
+`QueueSpec` carries the payload `codec` and an `encryption` tier (`none` / `end_to_end`,
+where `end_to_end` seals the payload through the broker).
 
 ### Command port
 
@@ -42,6 +46,15 @@ exclusive — see [Scheduled & delayed jobs](../../recipes/scheduled-queue-jobs.
 
 `ctx.outbox.command(spec)` stages and flushes; `ctx.outbox.query(spec)` drives the
 relay. See [Transactional outbox](../../recipes/transactional-outbox.md).
+
+`OutboxSpec` fields:
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `name` | `str \| StrEnum` | required | route name |
+| `codec` | `ModelCodec` | required | staged integration-event payload codec |
+| `destination` | `OutboxDestination \| None` | `None` | default relay target — `.queue` / `.stream` / `.pubsub(route, channel)` |
+| `encryption` | `OutboxEncryptionTier` | `"none"` | whole-payload tier: `none` · `at_rest` (relay decrypts before publish) · `end_to_end` (consumer decrypts) — see [encryption](../../identity-tenancy-enc/encryption.md) |
 
 ### Command port
 
@@ -74,7 +87,7 @@ together (SQS FIFO `MessageGroupId`, stream partition key) and relay in
 ## Inbox
 
 `ctx.inbox(spec)` returns an `InboxPort` with a single method — the consumer-side
-exactly-once primitive:
+exactly-once primitive (`InboxSpec` carries a dedup-window `ttl`, default 7 days):
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
@@ -83,3 +96,14 @@ exactly-once primitive:
 Call it inside the handler's transaction so the dedup mark and the handler's
 writes commit together. In practice use the `process_with_inbox` kit, which does
 exactly that — see [Events & sagas](../../data-events/events-sagas.md).
+
+## Implemented by
+
+| Contract | Backend | Integration |
+|----------|---------|-------------|
+| Queue | RabbitMQ, SQS | [RabbitMQ](../../integrations/rabbitmq.md) · [SQS](../../integrations/sqs.md) |
+| Outbox | Postgres, Mongo (store) → any transport | [Postgres](../../integrations/postgres.md) · [Mongo](../../integrations/mongo.md) |
+| Inbox | Postgres, Mongo | [Postgres](../../integrations/postgres.md) · [Mongo](../../integrations/mongo.md) |
+
+The table layout (with the optional HLC ordering column) is the
+[outbox schema](../outbox-schema.md).

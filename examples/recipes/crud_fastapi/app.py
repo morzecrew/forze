@@ -31,7 +31,6 @@ from forze.base.primitives import RuntimeVar
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_kits.aggregates.document import (
-    DocumentDTOs,
     DocumentFacade,
     DocumentIdDTO,
     DocumentUpdateDTO,
@@ -120,10 +119,8 @@ def ctx() -> ExecutionContext:
 
 
 # --8<-- [start:routes]
-registry = build_document_registry(
-    product_spec,
-    DocumentDTOs(read=ProductRead, create=ProductCreate, update=ProductUpdate),
-).freeze()
+# DTOs are derived from the spec's read + write models.
+registry = build_document_registry(product_spec).freeze()
 
 
 @asynccontextmanager

@@ -248,11 +248,14 @@ class TestValidateRuntimeSortFields:
         validate_runtime_sort_fields(None, model=_Doc, backend="firestore")
 
     def test_unknown_field_raises(self) -> None:
+        # A caller-supplied runtime sort on an unknown field is a precondition (HTTP 400),
+        # not a server configuration error.
         with pytest.raises(CoreException, match="not on the mongo read model") as ei:
             validate_runtime_sort_fields(
                 {"name": "asc", "nmae": "desc"}, model=_Doc, backend="mongo"
             )
-        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert ei.value.code == "field_not_on_read_model"
 
 
 class TestSharedValidatorsNestedPaths:

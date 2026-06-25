@@ -31,21 +31,21 @@ safe to return to a caller?) and `retryable` (is the failure transient?). Only
 the retryable kinds may appear in a [resilience](../running-in-prod/resilience.md) retry
 policy.
 
-| Kind | Meaning | Exposes details | Retryable | Default code |
-|------|---------|:---:|:---:|--------------|
-| `validation` | malformed input | ✅ | — | `core.validation` |
-| `domain` | a business rule was violated | ✅ | — | `core.domain` |
-| `precondition` | a required state wasn't met (e.g. stale revision) | ✅ | — | `core.precondition` |
-| `conflict` | the change collides with current state | ✅ | — | `core.conflict` |
-| `concurrency` | transient contention | ✅ | ✅ | `core.concurrency` |
-| `not_found` | the target doesn't exist | ✅ | — | `core.not_found` |
-| `authentication` | who is calling | — | — | `core.authentication` |
-| `authorization` | what they may do | — | — | `core.authorization` |
-| `configuration` | the app is wired wrong | — | — | `core.configuration` |
-| `infrastructure` | a backing system failed | — | ✅ | `core.infrastructure` |
-| `throttled` | a rate limit rejected the call | — | ✅ | `core.throttled` |
-| `timeout` | the invocation's [time budget](../running-in-prod/deadlines.md) ran out | — | — | `core.timeout` |
-| `internal` | an unexpected bug | — | — | `core.internal` |
+| Kind | Meaning | Exposes details | Retryable | HTTP status | Default code |
+|------|---------|:---:|:---:|:---:|--------------|
+| `validation` | malformed input | ✅ | — | 422 | `core.validation` |
+| `domain` | a business rule was violated | ✅ | — | 400 | `core.domain` |
+| `precondition` | a required state wasn't met (e.g. stale revision, a bad query field) | ✅ | — | 400 | `core.precondition` |
+| `conflict` | the change collides with current state | ✅ | — | 409 | `core.conflict` |
+| `concurrency` | transient contention | ✅ | ✅ | 409 | `core.concurrency` |
+| `not_found` | the target doesn't exist | ✅ | — | 404 | `core.not_found` |
+| `authentication` | who is calling | — | — | 401 | `core.authentication` |
+| `authorization` | what they may do | — | — | 403 | `core.authorization` |
+| `configuration` | the app is wired wrong | — | — | 500 | `core.configuration` |
+| `infrastructure` | a backing system failed | — | ✅ | 500 | `core.infrastructure` |
+| `throttled` | a rate limit rejected the call | — | ✅ | 429 | `core.throttled` |
+| `timeout` | the invocation's [time budget](../running-in-prod/deadlines.md) ran out | — | — | 504 | `core.timeout` |
+| `internal` | an unexpected bug | — | — | 500 | `core.internal` |
 
 ## Outcomes
 
@@ -55,7 +55,9 @@ raise — a `finally_` stage hook — it receives an `Outcome`: `Success(value)`
 
 ## At the edge
 
-Core never picks an HTTP status. The [FastAPI](../integrations/fastapi.md)
-exception handlers map a `CoreException` to a response — the status from the kind,
-the `code` on an error-code header, and details exposed only when
-`expose_details` is set.
+Core owns the canonical kind→status mapping (the column above, via
+`http_status_for_kind`), but applies it at no transport itself. The
+[FastAPI](../integrations/fastapi.md) exception handlers turn a `CoreException`
+into a response — the status from the kind, the `code` on an error-code header,
+and details exposed only when `expose_details` is set; kinds with no status of
+their own (`configuration`, `infrastructure`, `internal`) map to `500`.

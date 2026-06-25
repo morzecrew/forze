@@ -12,7 +12,7 @@ from .dto import (
     ProjectedCursorListRequestDTO,
     ProjectedListRequestDTO,
 )
-from .facades import DocumentFacade
+from .facades import DocumentFacade, document_facade
 from .factories import build_document_registry
 from .handlers import (
     AggregatedListDocuments,
@@ -37,6 +37,7 @@ __all__ = [
     "DocumentKernelOp",
     "DocumentMappers",
     "build_document_registry",
+    "document_facade",
     "DocumentIdDTO",
     "DocumentIdRevDTO",
     "DocumentNumberIdDTO",

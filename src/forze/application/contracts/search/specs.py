@@ -61,6 +61,7 @@ def _validate_search_default_sort(
         read_fields=read_fields_for_model(model_type),
         spec_name=spec_name,
         model=model_type,
+        client_facing=False,
     )
 
 # ----------------------- #

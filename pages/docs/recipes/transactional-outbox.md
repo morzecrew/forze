@@ -62,7 +62,7 @@ lifecycle = LifecyclePlan.from_steps(
 
 ## Consuming on the other side
 
-`run_consumer` is the consumer-side counterpart — it replaces the hand-rolled
+`QueueConsumer` is the consumer-side counterpart — it replaces the hand-rolled
 `consume → dedupe → ack/nack` loop with the decisions already made correctly.
 Per message it: **parks** handler-poison (opt-in `max_deliveries`), runs the
 handler exactly-once through the [inbox](../data-events/events-sagas.md)
@@ -73,17 +73,19 @@ handler failures back (`requeue=True`) for redelivery. One message's failure
 never kills the consumer.
 
 ```python
-from forze_kits.integrations.consumer import run_consumer
+from datetime import timedelta
 
-result = await run_consumer(
-    ctx,
+from forze_kits.integrations.consumer import QueueConsumer
+
+consumer = QueueConsumer(
     queue="orders",                # the channel the relay published to
     queue_spec=ORDERS_QUEUE,
     handler=handle_order_event,    # async def (message: QueueMessage[OrderEvent]) -> None
     inbox_spec=ORDERS_INBOX,
     tx_route="postgres",           # dedup mark + handler commit together here
-    timeout=timedelta(seconds=5),  # idle timeout; None = consume forever
 )
+
+result = await consumer.run(ctx, timeout=timedelta(seconds=5))  # idle timeout; None = forever
 # result.processed / result.duplicates / result.parked / result.failed
 ```
 
@@ -133,25 +135,17 @@ step (dedup mark + handler, one fresh transaction per attempt) in
 
 ## Failures and retries
 
-The relay classifies errors by **where** they arise:
-
-- **Poison** — the payload can't be decoded into the codec model. The row can
-  never publish, so it's marked `failed` immediately. Fix the cause, then
-  re-drive with `ctx.outbox.query(spec).requeue_failed([id])` (this resets the
-  retry counter).
-- **Transient** — the broker publish call raised. The row is rescheduled with
-  exponential backoff plus jitter (`retry_base_delay * 2**attempts`, capped at
-  `retry_max_backoff`) and stays invisible to claims until its `available_at`.
-  After `max_attempts` publish attempts it's marked `failed` (terminal).
-
-Defaults: `max_attempts=5`, `retry_base_delay=1s`, `retry_max_backoff=5min` —
-kw-only on every relay function and on the lifecycle step. One row's failure
+The relay classifies a failed row by where it arose. A **poison** row (the payload
+can't decode) can never publish, so it's marked `failed` immediately — fix the cause
+and re-drive with `ctx.outbox.query(spec).requeue_failed([id])`. A **transient**
+failure (the publish call raised) is rescheduled with exponential backoff + jitter and
+retried, becoming `failed` only after `max_attempts` (default 5). One row's failure
 never blocks the rest of the batch.
 
 ## Per-aggregate ordering
 
-Stage with an `ordering_key` (typically the aggregate id) and the relay
-publishes it as the transport `key` instead of the event id:
+Stage with an `ordering_key` (typically the aggregate id) and the relay publishes it
+as the transport `key` instead of the event id:
 
 ```python
 await ctx.outbox.command(ORDER_EVENTS).stage(
@@ -159,20 +153,14 @@ await ctx.outbox.command(ORDER_EVENTS).stage(
 )
 ```
 
-On transports that honor `key` for partitioning — SQS FIFO (`MessageGroupId`),
-stream partition keys — same-key events deliver in staged (`created_at`) order
-on the happy path. Events staged without an `ordering_key` keep
-`key=str(event_id)` as before. Either way the event id rides the
-`forze_event_id` header, which is what consumers dedupe on.
+On transports that honor `key` for partitioning (SQS FIFO `MessageGroupId`, stream
+partition keys), same-key events deliver in staged order on the happy path.
 
 !!! warning "Ordering is expressible, not guaranteed"
-    Delivery is at-least-once and ordering is **not** guaranteed across
-    failures/retries: a row rescheduled for retry (or parked as `failed`) does
-    **not** stall later rows of the same `ordering_key` — deliberately, so one
-    poison event never head-of-line blocks its aggregate. Consumers must
-    dedupe on `event_id` (the `forze_event_id` header) and tolerate
-    reordering as well as redelivery (dedupe with the
-    [inbox](../data-events/events-sagas.md)).
+    Delivery is at-least-once and ordering is **not** guaranteed across retries — a
+    rescheduled or `failed` row deliberately does not stall later rows of the same key,
+    so one poison event never head-of-line blocks its aggregate. Consumers dedupe on
+    `event_id` and tolerate reordering, via the [inbox](../data-events/events-sagas.md).
 
 ## Table schema
 

@@ -1,0 +1,53 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: right
+
+strategies: {
+    label: "How run searches it"
+    grid-rows: 3
+
+    scheduler: {
+        label: |md
+            **Scheduler**
+            orders concurrent work
+            (shuffle · PCT)
+        |
+    }
+    coverage: {
+        label: |md
+            **Coverage sweep**
+            stops when saturated
+        |
+    }
+    fuzzer: {
+        label: |md
+            **Guided fuzzer**
+            steers toward new behaviour
+        |
+    }
+}
+
+space: {
+    shape: rectangle
+    style: {
+        stroke: "#1565c0"
+        stroke-width: 2
+    }
+    label: |md
+        ### The search space
+        interleavings × fault timing × inputs
+        — astronomically large
+    |
+}
+
+strategies.scheduler -> space: bias rare orderings
+strategies.coverage -> space: sample until dry
+strategies.fuzzer -> space: follow the frontier

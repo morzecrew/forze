@@ -5,7 +5,7 @@ import pytest
 from forze.application.contracts.deps import DepKey
 from forze.application.execution.deps.resolution import frame_for
 from forze.application.contracts.deps import ProviderStore
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 
 _A = DepKey[str]("a")
 _R = DepKey[str]("r")
@@ -21,6 +21,27 @@ class TestProviderStoreGetProvider:
     def test_plain_not_found_raises(self) -> None:
         with pytest.raises(CoreException, match="Plain dependency"):
             ProviderStore().get_provider(_A)
+
+    def test_plain_not_found_is_configuration_with_registered_hint(self) -> None:
+        # A missing dependency is a server-side wiring (configuration) mistake, not an
+        # internal crash, and the error names what *is* registered to make it actionable.
+        store = ProviderStore(plain_deps={DepKey[int]("already_here"): 1})
+
+        with pytest.raises(CoreException) as ei:
+            store.get_provider(_A)
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert "already_here" in str(ei.value)
+        assert "DepsModule" in str(ei.value)
+
+    def test_routed_not_found_is_configuration_with_route_hint(self) -> None:
+        store = ProviderStore(routed_deps={_R: {"known": "v"}})
+
+        with pytest.raises(CoreException) as ei:
+            store.get_provider(_R, route="missing", fallback_to_plain=False)
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert "known" in str(ei.value)
 
     def test_routed_fallback_to_plain(self) -> None:
         store = ProviderStore(plain_deps={_A: "plain"}, routed_deps={_R: {"z": "z"}})

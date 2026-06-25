@@ -61,6 +61,11 @@ api_authn = AuthnSpec(
 )
 ```
 
+Providers ship as integrations — see [OIDC](../integrations/oidc.md) and
+[authentication](../integrations/authn.md). The
+[external IdP recipe](../recipes/external-idp-oidc.md) wires a third-party identity
+provider end to end.
+
 ## Authorization: may they?
 
 Once a request carries an `AuthnIdentity`, authorization decides what it may do.
@@ -110,31 +115,17 @@ authn_module = AuthnDepsModule(
 )
 ```
 
-Emission is **best-effort by contract**: a sink failure (or no sink at all)
-never fails the auth flow, and the failed-login event is emitted *after* the
-verifier has produced its uniform error, so the Argon2 timing parity between
-unknown-login and wrong-password failures is untouched. The shipped
-`LoggingAuthnEventSink` logs failures, lockouts, and refresh reuse at WARNING
-and everything else at INFO; in tests, `MockDepsModule(authn_events=True)`
-records events onto `state.authn_events` for inspection.
+Emission is **best-effort by contract**: a sink failure (or no sink at all) never
+fails the auth flow, and a failed-login event is emitted *after* the verifier's uniform
+error, so the Argon2 timing parity between unknown-login and wrong-password failures is
+untouched. Events carry `login_digest` (a SHA-256 of the login), never the raw login —
+pseudonymization to keep logins out of logs and counter key spaces, not secrecy.
 
-**Privacy: events carry a digest, never the login.** `AuthnEvent.login_digest`
-is `sha256("lockout:" + login.lower())` — unpeppered *pseudonymization, not
-secrecy*: it keeps raw logins out of logs and counter key spaces, while anyone
-who can already read those stores could brute-force a known login anyway. The
-same digest keys the lockout counters, so a locked login correlates with its
-events.
-
-**Lockout is a fixed window over `CounterPort`.** After `threshold` failed
-attempts within the current window, further attempts raise a `throttled` error
-(`code="login_locked"`, HTTP 429 — retryable by kind) *before* password
-verification, and unlock when the window rolls over. The window is fixed —
-bucketed by `floor(unix_now / window_seconds)` — because `CounterPort` has no
-TTL surface: without key expiry there is nothing to hang a sliding window or a
-`lock_for` duration on (both are noted as future counter-port capabilities, as
-is backend-side expiry of stale buckets, which today remain as dead value-only
-keys). Lockout counts **login strings, not accounts**: a nonexistent login
-locks exactly like a real one, preserving the no-enumeration posture.
+**Lockout** is a fixed window over `CounterPort`: after `threshold` failed attempts
+within the window, further attempts raise `throttled` (`code="login_locked"`, HTTP 429)
+*before* password verification, and unlock when the window rolls over. It counts
+**login strings, not accounts**, so a nonexistent login locks exactly like a real one —
+preserving the no-enumeration posture.
 
 ## The identity plane
 

@@ -67,6 +67,10 @@ to a broker; here it claims the pending rows and passes them along in-process:
 --8<-- "recipes/order_fulfillment/app.py:relay"
 ```
 
+The outbox/inbox port surface is the [messaging reference](../reference/contracts/messaging.md),
+and the table layout (with the optional HLC ordering column) is the
+[outbox schema](../reference/outbox-schema.md).
+
 ## Exactly-once on the way in: the inbox
 
 Brokers redeliver. The consumer dedupes by event id through the **inbox**, so

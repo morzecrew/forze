@@ -31,7 +31,12 @@ cd forze-quickstart
 uv add 'forze[fastapi]'
 ```
 
-Everything below goes into a single `main.py`.
+Everything below goes into a single `main.py`, starting with the imports — the
+essentials come from the `forze` and `forze_kits` top-level packages:
+
+```python
+--8<-- "quickstart/app.py:imports"
+```
 
 ## Step 2 — Define the domain models
 
@@ -63,7 +68,9 @@ The [specification](../core-concepts/application-layer.md) is the logical name �
 ## Step 4 — Build the operation registry
 
 `build_document_registry` assembles the standard CRUD operations; `freeze()`
-makes the registry immutable and shareable.
+makes the registry immutable and shareable. The request/response DTOs are derived
+from the spec, so you don't restate them — pass an explicit `DocumentDTOs` only to
+override or to disable an operation.
 
 ```python
 --8<-- "quickstart/app.py:registry"
@@ -72,9 +79,10 @@ makes the registry immutable and shareable.
 ## Step 5 — Wire the runtime
 
 `MockDepsModule` provides in-memory adapters for every contract. `build_runtime`
-assembles an [`ExecutionRuntime`](../core-concepts/runtime.md) around it — the
-runtime builds the context on startup, and `runtime.get_context()` reaches it
-per request.
+assembles an [`ExecutionRuntime`](../core-concepts/runtime.md) around it. Then
+`document_facade(...)` returns a small factory: call `users()` to get a fully-typed
+[`DocumentFacade`](../core-concepts/application-layer.md) bound to the runtime's
+current scope context — fresh each call, never cached across requests.
 
 ```python
 --8<-- "quickstart/app.py:runtime"
@@ -82,9 +90,8 @@ per request.
 
 ## Step 6 — Attach the routes
 
-`runtime_lifespan` runs the runtime inside the app's lifespan. Each route resolves a
-[`DocumentFacade`](../core-concepts/application-layer.md) from the context and
-calls an operation — the handlers never touch HTTP:
+`runtime_lifespan` runs the runtime inside the app's lifespan. Each route calls
+`users()` for the facade and runs an operation — the handlers never touch HTTP:
 
 ```python
 --8<-- "quickstart/app.py:routes"

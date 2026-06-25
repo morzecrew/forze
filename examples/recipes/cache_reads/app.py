@@ -27,7 +27,6 @@ from forze.application.execution import (
 )
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.aggregates.document import (
-    DocumentDTOs,
     DocumentFacade,
     DocumentIdDTO,
     DocumentUpdateDTO,
@@ -143,10 +142,7 @@ def build_runtime(
 
 
 # --8<-- [start:read-through]
-registry = build_document_registry(
-    product_spec,
-    DocumentDTOs(read=ProductRead, create=ProductCreate, update=ProductUpdate),
-).freeze()
+registry = build_document_registry(product_spec).freeze()
 
 
 def products(
