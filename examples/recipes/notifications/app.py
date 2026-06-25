@@ -52,15 +52,19 @@ NOTIFY_INBOX = InboxSpec(name="notify-inbox")
 
 
 # --8<-- [start:router]
-# Map each integration event type to the notifications it should produce.
-router = NotificationRouter()
-router.register(
-    "user.registered",
-    lambda event: [
-        EmailNotification(
-            to=event.payload.email, subject="Welcome", body="Thanks for joining!"
-        )
-    ],
+# Map each integration event type to the notifications it should produce, then freeze:
+# registration happens once at wiring time; the consumer holds an immutable resolver.
+router = (
+    NotificationRouter()
+    .register(
+        "user.registered",
+        lambda event: [
+            EmailNotification(
+                to=event.payload.email, subject="Welcome", body="Thanks for joining!"
+            )
+        ],
+    )
+    .freeze()
 )
 # --8<-- [end:router]
 

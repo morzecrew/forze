@@ -23,8 +23,11 @@ just the integration event's purpose:
 
 ## Route events to notifications
 
-A `NotificationRouter` maps each event type to the notifications it should
-produce. The mapper receives the integration event, so it reads the payload:
+A `NotificationRouter` registers a mapper per event type, then `freeze()`s into an
+immutable `FrozenNotificationRouter` the consumer resolves against. Registration and
+resolution are separate — the routing table is fixed once frozen, so it can't change
+under a running consumer. The mapper receives the integration event, so it reads the
+payload:
 
 ```python
 --8<-- "recipes/notifications/app.py:router"
@@ -45,9 +48,11 @@ here it just records:
 
 ## Consume and dispatch
 
-The consumer relays the staged events to the queue, then feeds each message to
-`process_notification_message`, which resolves it through the router and calls the
-matching sender:
+A `QueueConsumer` relays the staged events to the queue and drains it, routing each
+message through the frozen router to the matching sender. Going through the consumer
+(rather than a hand-rolled receive/ack loop) gives **inbox dedup** — an at-least-once
+redelivery won't re-send — and poison parking, for free. In production wire it as a
+background step with `notification_consumer_lifecycle_step`; the example drains once:
 
 ```python
 --8<-- "recipes/notifications/app.py:consume"
@@ -55,8 +60,11 @@ matching sender:
 
 ## Notes
 
-- `process_notification_message` takes a **`QueueMessage`** (not a raw payload) —
-  the event type and id come from the relayed message's `type` and `key`.
+- The dedup key is the relayed event's deterministic id (`forze_event_id` header,
+  else `key`, else `<queue>:<message.id>`), so a redelivered message is processed
+  once even though delivery is at-least-once.
+- `notification_queue_consumer_handler` adapts `process_notification_message` (which
+  takes a **`QueueMessage`**, not a raw payload) to the consumer's handler signature.
 - Unmapped event types are skipped by default (`skip_unmapped=True`).
 - The producer and consumer are decoupled: they can be different processes, and
   the consumer is just a queue worker.

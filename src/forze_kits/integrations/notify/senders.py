@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol, final, runtime_checkable
 
+import attrs
+
 from .payloads import (
     EmailNotification,
     NotificationCommand,
@@ -36,6 +38,7 @@ class NotificationSenders(Protocol):
 
 
 @final
+@attrs.define(slots=True, eq=False)
 class RecordingNotificationSenders:
     """Test double: a :class:`NotificationSenders` that records instead of sending.
 
@@ -45,25 +48,17 @@ class RecordingNotificationSenders:
     hand-rolling a recorder.
     """
 
-    sent: list[tuple[str, NotificationCommand]]
+    sent: list[tuple[str, NotificationCommand]] = attrs.field(factory=list)
     """All recorded deliveries as ``(kind, payload)`` tuples, in call order."""
 
-    emails: list[EmailNotification]
+    emails: list[EmailNotification] = attrs.field(factory=list)
     """Recorded email notifications."""
 
-    pushes: list[PushNotification]
+    pushes: list[PushNotification] = attrs.field(factory=list)
     """Recorded push notifications."""
 
-    webhooks: list[WebhookNotification]
+    webhooks: list[WebhookNotification] = attrs.field(factory=list)
     """Recorded webhook notifications."""
-
-    # ....................... #
-
-    def __init__(self) -> None:
-        self.sent = []
-        self.emails = []
-        self.pushes = []
-        self.webhooks = []
 
     # ....................... #
 

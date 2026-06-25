@@ -2,14 +2,23 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
 
 
-class EmailNotification(BaseModel):
+class _NotificationCommand(BaseModel):
+    """Base for notification commands: a frozen value object (no mutation after build)."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+# ....................... #
+
+
+class EmailNotification(_NotificationCommand):
     """Send an email via app-provided mailer."""
 
     kind: Literal["email"] = "email"
@@ -22,7 +31,7 @@ class EmailNotification(BaseModel):
 # ....................... #
 
 
-class PushNotification(BaseModel):
+class PushNotification(_NotificationCommand):
     """Send a mobile or web push notification."""
 
     kind: Literal["push"] = "push"
@@ -35,7 +44,7 @@ class PushNotification(BaseModel):
 # ....................... #
 
 
-class WebhookNotification(BaseModel):
+class WebhookNotification(_NotificationCommand):
     """POST a JSON payload to an HTTPS endpoint."""
 
     kind: Literal["webhook"] = "webhook"

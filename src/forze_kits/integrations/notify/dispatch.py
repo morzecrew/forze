@@ -29,9 +29,7 @@ async def dispatch_notification(
         await senders.send_push(command)
         return
 
-    if isinstance(
-        command, WebhookNotification
-    ):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if isinstance(command, WebhookNotification):  # pyright: ignore[reportUnnecessaryIsInstance]
         await senders.send_webhook(command)
         return
 

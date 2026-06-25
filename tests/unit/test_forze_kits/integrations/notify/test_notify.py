@@ -32,8 +32,7 @@ class _ProjectCreated(BaseModel):
 
 @pytest.mark.asyncio
 async def test_router_maps_event_to_commands() -> None:
-    router = NotificationRouter()
-    router.register(
+    router = NotificationRouter().register(
         "project.created",
         lambda event: [
             EmailNotification(
@@ -48,7 +47,7 @@ async def test_router_maps_event_to_commands() -> None:
         payload=_ProjectCreated(project_id="p-1"),
         event_id=uuid4(),
     )
-    commands = router.resolve(event)
+    commands = router.freeze().resolve(event)
     assert len(commands) == 1
     assert commands[0].kind == "email"
 
@@ -126,8 +125,7 @@ async def test_dispatch_notification_rejects_unsupported_command() -> None:
 @pytest.mark.asyncio
 async def test_process_notification_message_uses_queue_type_and_key() -> None:
     event_id = uuid4()
-    router = NotificationRouter()
-    router.register(
+    router = NotificationRouter().register(
         "project.created",
         lambda event: [
             EmailNotification(
@@ -149,7 +147,7 @@ async def test_process_notification_message_uses_queue_type_and_key() -> None:
 
     count = await process_notification_message(
         message,
-        router=router,
+        router=router.freeze(),
         senders=senders,
     )
 
@@ -329,14 +327,17 @@ async def test_notification_consumer_dedupes_redelivery() -> None:
     ctx = context_from_modules(MockDepsModule(state=state, strict_tx=True))
     adapter = MockQueueAdapter(state=state, namespace="notifications", codec=codec)
 
-    router = NotificationRouter()
-    router.register(
-        "project.created",
-        lambda e: [
-            EmailNotification(
-                to="ops@example.com", subject="New", body=e.payload.project_id
-            )
-        ],
+    router = (
+        NotificationRouter()
+        .register(
+            "project.created",
+            lambda e: [
+                EmailNotification(
+                    to="ops@example.com", subject="New", body=e.payload.project_id
+                )
+            ],
+        )
+        .freeze()
     )
     senders = RecordingNotificationSenders()
 
@@ -376,7 +377,7 @@ async def test_process_notification_message_skips_unmapped() -> None:
 
     count = await process_notification_message(
         message,
-        router=NotificationRouter(),
+        router=NotificationRouter().freeze(),
         senders=senders,
     )
 

@@ -129,6 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_dst` internal restructure** *(breaking: imports)* — the harness splits into a thin `Simulation` facade over `engines/`, `oracle/`, and `artifacts/` subpackages, dropping top-level modules from 29 to 15. Top-level symbols now live in submodule namespaces, and `SchedulerKind` is removed.
 
+- **Notify kit: registration split from resolution** *(breaking: `forze_kits`)* — `NotificationRouter` is now a mutable builder (`register()` returns self, then `freeze()`); resolution (`resolve`/`resolve_or_raise`) moves to the immutable `FrozenNotificationRouter` the consumer holds, so the routing table can't change under a running consumer. Notification command models are frozen, and the package is reorganized into `routing` / `events` / `consumer` / `lifecycle` (public imports from `forze_kits.integrations.notify` unchanged except the new `FrozenNotificationRouter`).
+
 ### Fixed
 
 - **Notifications can run through the queue consumer (dedup + poison parking)** — `notification_consumer_lifecycle_step(...)` and `notification_queue_consumer_handler(...)` route notifications through `QueueConsumer`, so an at-least-once redelivery no longer re-sends (inbox dedup on the deterministic event id) and poison messages are parked. The transactional-notifications recipe now drains via the consumer instead of a hand-rolled receive/ack loop.
