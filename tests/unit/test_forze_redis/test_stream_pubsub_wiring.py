@@ -17,7 +17,11 @@ from forze.application.contracts.crypto import (
     RequiredReachDepKey,
     StaticKeyDirectory,
 )
-from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubSpec
+from forze.application.contracts.pubsub import (
+    PubSubCommandDepKey,
+    PubSubQueryDepKey,
+    PubSubSpec,
+)
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
     StreamGroupAdminDepKey,
@@ -175,6 +179,39 @@ async def test_stream_group_query_admin_split() -> None:
         # The data-plane query reference cannot reach group provisioning.
         assert not hasattr(query, "ensure_group")
         assert hasattr(admin, "ensure_group")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [StreamQueryDepKey, StreamGroupQueryDepKey])
+async def test_stream_read_rejected_under_e2e_floor(key) -> None:
+    # The floor gates reads too, not just publishes (defense-in-depth, mirrors the mock).
+    runtime = _runtime(floor="end_to_end")
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with pytest.raises(CoreException) as ei:
+            ctx.deps.resolve_configurable(ctx, key, _stream("none"), route="s")
+        assert ei.value.code == "core.stream.reach_floor"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [StreamQueryDepKey, StreamGroupQueryDepKey])
+async def test_stream_read_at_rest_rejected(key) -> None:
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with pytest.raises(CoreException) as ei:
+            ctx.deps.resolve_configurable(ctx, key, _stream("at_rest"), route="s")
+        assert ei.value.code == "core.stream.invalid_reach"
+
+
+@pytest.mark.asyncio
+async def test_pubsub_subscribe_rejected_under_e2e_floor() -> None:
+    runtime = _runtime(floor="end_to_end")
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with pytest.raises(CoreException) as ei:
+            ctx.deps.resolve_configurable(ctx, PubSubQueryDepKey, _pubsub("none"), route="p")
+        assert ei.value.code == "core.pubsub.reach_floor"
 
 
 @pytest.mark.asyncio

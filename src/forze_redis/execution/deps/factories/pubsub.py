@@ -56,6 +56,13 @@ class ConfigurableRedisPubSubQuery(PubSubQueryDepPort):
     def __call__(
         self, ctx: ExecutionContext, spec: PubSubSpec[Any]
     ) -> PubSubQueryPort[Any]:
+        enforce_required_reach(
+            ctx.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="pubsub",
+            supports_at_rest=False,
+        )
         return _pubsub_adapter(ctx, spec, self.config)
 
 

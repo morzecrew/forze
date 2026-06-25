@@ -65,6 +65,13 @@ class ConfigurableRedisStreamQuery(StreamQueryDepPort):
     def __call__(
         self, ctx: ExecutionContext, spec: StreamSpec[Any]
     ) -> StreamQueryPort[Any]:
+        enforce_required_reach(
+            ctx.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="stream",
+            supports_at_rest=False,
+        )
         return _stream_adapter(ctx, spec, self.config)
 
 
@@ -116,6 +123,13 @@ class ConfigurableRedisStreamGroup(StreamGroupQueryDepPort):
     def __call__(
         self, ctx: ExecutionContext, spec: StreamSpec[Any]
     ) -> StreamGroupQueryPort[Any]:
+        enforce_required_reach(
+            ctx.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="stream",
+            supports_at_rest=False,
+        )
         return RedisStreamGroupAdapter(
             client=ctx.deps.provide(RedisClientDepKey),
             codec=RedisStreamCodec(payload_codec=spec.codec),

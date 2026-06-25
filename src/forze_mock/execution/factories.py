@@ -666,6 +666,13 @@ class ConfigurableMockStreamGroup(_MockFactoryBase):
         context: ExecutionContext,
         spec: StreamSpec[Any],
     ) -> MockStreamGroupAdapter[Any]:
+        enforce_required_reach(
+            context.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="stream",
+            supports_at_rest=False,
+        )
         stream = ConfigurableMockStream(
             module=self.module
         )._adapter(  # pyright: ignore[reportPrivateUsage]
