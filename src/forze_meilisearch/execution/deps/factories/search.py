@@ -27,7 +27,10 @@ from forze.application.integrations.search import (
     resolve_snapshot_cipher,
     search_spec_encrypts,
 )
-from forze_meilisearch.adapters.search._command import MeilisearchSearchCommandAdapter
+from forze_meilisearch.adapters.search._command import (
+    MeilisearchSearchCommandAdapter,
+    MeilisearchSearchManagementAdapter,
+)
 from forze_meilisearch.adapters.search._simple_base import (
     MeilisearchSimpleSearchAdapter,
 )
@@ -195,7 +198,7 @@ class ConfigurableMeilisearchSearchManagement(SearchManagementDepPort):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> SearchManagementPort:
-        return MeilisearchSearchCommandAdapter(
+        return MeilisearchSearchManagementAdapter(
             spec=_encrypting_spec(context, spec),
             config=self.config,
             client=context.deps.provide(MeilisearchClientDepKey),

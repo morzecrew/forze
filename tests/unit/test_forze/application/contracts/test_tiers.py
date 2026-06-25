@@ -48,6 +48,7 @@ def test_floor_failure_carries_required_and_derived_details() -> None:
             integration="svc", derived="low", required="high", code="x.floor"
         )
 
+    assert ei.value.code == "x.floor"
     assert ei.value.details["required_thing"] == "high"
     assert ei.value.details["derived_thing"] == "low"
     assert "validation failed" in str(ei.value)
@@ -64,6 +65,7 @@ def test_ceiling_failure_reports_capability_mismatch() -> None:
             max_supported="low",
         )
 
+    assert ei.value.code == "x.floor"
     assert ei.value.details["required_thing"] == "high"
     assert ei.value.details["max_supported_thing"] == "low"
     assert "supports at most" in str(ei.value)

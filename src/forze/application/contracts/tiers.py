@@ -3,9 +3,11 @@
 Several wiring concerns share one shape: an ordered ladder of tiers (weakest →
 strongest), a deployment-declared *minimum* it accepts, and a boot-time refusal
 to wire any combination weaker than that floor — failing closed rather than
-degrading silently at runtime. Tenant isolation (``none < tagged < namespace <
-dedicated``) and encryption coverage (``none < field < envelope``) are two
-instances of it; a future reach floor would be a third.
+degrading silently at runtime. Three concerns are instances of it: tenant
+isolation (``none < tagged < namespace < dedicated``), encryption coverage
+(``none < field < envelope``), and messaging encryption reach (``none < at_rest <
+end_to_end``, via ``_REACH_LATTICE`` / ``validate_required_reach`` in
+:mod:`forze.application.contracts.crypto.wiring`).
 
 :class:`TierLattice` captures that mechanism once. Each concern constructs one
 instance with its own ranks and remediation wording; the per-concern

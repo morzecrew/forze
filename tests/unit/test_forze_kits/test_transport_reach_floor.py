@@ -108,13 +108,18 @@ async def test_at_rest_transport_rejected_as_invalid(kind, key, spec_factory, fl
 
 
 @pytest.mark.asyncio
-async def test_no_floor_allows_plaintext_transport() -> None:
+@pytest.mark.parametrize(
+    ("key", "spec_factory"),
+    [
+        (QueueCommandDepKey, lambda enc: QueueSpec(name="t", codec=_CODEC, encryption=enc)),
+        (PubSubCommandDepKey, lambda enc: PubSubSpec(name="t", codec=_CODEC, encryption=enc)),
+        (StreamCommandDepKey, lambda enc: StreamSpec(name="t", codec=_CODEC, encryption=enc)),
+    ],
+)
+async def test_no_floor_allows_plaintext_transport(key, spec_factory) -> None:
     enc: MessageEncryptionTier = "none"
-    spec = QueueSpec(name="t", codec=_CODEC, encryption=enc)
+    spec = spec_factory(enc)
     runtime = _runtime(floor=None)
     async with runtime.scope():
         ctx = runtime.get_context()
-        assert (
-            ctx.deps.resolve_configurable(ctx, QueueCommandDepKey, spec, route=spec.name)
-            is not None
-        )
+        assert ctx.deps.resolve_configurable(ctx, key, spec, route=spec.name) is not None

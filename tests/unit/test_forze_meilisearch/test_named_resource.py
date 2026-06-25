@@ -10,7 +10,9 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TenantIdentity
-from forze_meilisearch.adapters.search._command import MeilisearchSearchCommandAdapter
+from forze_meilisearch.adapters.search._command import (
+    MeilisearchSearchManagementAdapter,
+)
 from forze_meilisearch.execution.deps.module import MeilisearchDepsModule
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
@@ -36,7 +38,7 @@ async def test_resolve_callable_index_uid() -> None:
 
 
 @pytest.mark.asyncio
-async def test_command_adapter_resolves_dynamic_index_uid() -> None:
+async def test_management_adapter_resolves_dynamic_index_uid() -> None:
     class _Row(BaseModel):
         id: str
         title: str
@@ -52,7 +54,7 @@ async def test_command_adapter_resolves_dynamic_index_uid() -> None:
     client.get_or_create_index = AsyncMock(return_value=index)
     client.wait_for_task = AsyncMock()
 
-    adapter = MeilisearchSearchCommandAdapter(
+    adapter = MeilisearchSearchManagementAdapter(
         spec=spec,
         config=config,
         client=client,

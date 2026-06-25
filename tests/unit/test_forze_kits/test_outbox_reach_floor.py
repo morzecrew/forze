@@ -7,12 +7,21 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.base import EncryptionReach
-from forze.application.contracts.crypto import RequiredReachDepKey
+from forze.application.contracts.crypto import (
+    KeyRef,
+    RequiredReachDepKey,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.outbox import OutboxSpec
-from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
+from forze.application.execution import (
+    CryptoDepsModule,
+    Deps,
+    DepsRegistry,
+    ExecutionRuntime,
+)
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockKeyManagement
 
 # ----------------------- #
 
@@ -42,6 +51,27 @@ def _runtime(*, floor: EncryptionReach | None) -> ExecutionRuntime:
     if floor is not None:
         modules.append(_ReachFloorModule(reach=floor))
     return ExecutionRuntime(deps=DepsRegistry.from_modules(*modules).freeze())
+
+
+# ....................... #
+
+
+def _crypto_module(reach: EncryptionReach | None) -> CryptoDepsModule:
+    return CryptoDepsModule(
+        kms=MockKeyManagement(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        required_reach=reach,
+    )
+
+
+def test_crypto_deps_module_registers_required_reach() -> None:
+    deps = _crypto_module("end_to_end")()
+    assert deps.exists(RequiredReachDepKey)
+
+
+def test_crypto_deps_module_no_floor_by_default() -> None:
+    deps = _crypto_module(None)()
+    assert not deps.exists(RequiredReachDepKey)
 
 
 # ....................... #

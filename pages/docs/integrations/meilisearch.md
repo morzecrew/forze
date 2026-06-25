@@ -57,8 +57,10 @@ lifecycle = LifecyclePlan.from_steps(meilisearch_lifecycle_step(url="http://loca
 
 - **The index is yours to maintain.** There's no auto-sync from
   `DocumentCommandPort` — call `ctx.search.command(spec).upsert(...)` (e.g. via
-  the outbox) when documents change. `ensure_index` applies the
-  searchable/filterable/sortable attributes.
+  the outbox) when documents change. Provisioning lives on the separate
+  management surface: `ctx.search.management(spec).ensure_index()` applies the
+  searchable/filterable/sortable attributes, and `delete_all()` wipes the index —
+  neither is reachable from the command port.
 - Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the [Query DSL](../reference/query-syntax.md).
 - Federated routes merge ≥2 member indexes (`federation` or in-process RRF).

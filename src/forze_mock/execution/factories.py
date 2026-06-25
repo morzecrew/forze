@@ -90,6 +90,7 @@ from forze_mock.adapters import (
     MockQueueAdapter,
     MockSearchAdapter,
     MockSearchCommandAdapter,
+    MockSearchManagementAdapter,
     MockSearchResultSnapshotAdapter,
     MockState,
     MockStorageAdapter,
@@ -304,6 +305,23 @@ class ConfigurableMockSearchCommand(_MockFactoryBase):
     ) -> MockSearchCommandAdapter:
         cfg = self._route(spec.name)
         return MockSearchCommandAdapter(
+            state=self._state(context),
+            spec=spec,
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockSearchManagement(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: SearchSpec[Any],
+    ) -> MockSearchManagementAdapter:
+        cfg = self._route(spec.name)
+        return MockSearchManagementAdapter(
             state=self._state(context),
             spec=spec,
             tenant_aware=cfg.tenant_aware if cfg else False,
@@ -529,9 +547,6 @@ class ConfigurableMockQueue(_MockFactoryBase):
             tenant_provider=_tenant_provider(context),
         )
 
-        if not self.command:
-            return adapter
-
         enforce_required_reach(
             context.deps,
             route=str(spec.name),
@@ -539,6 +554,10 @@ class ConfigurableMockQueue(_MockFactoryBase):
             kind="queue",
             supports_at_rest=False,
         )
+
+        if not self.command:
+            return adapter
+
         cipher = (
             context.deps.provide(KeyringDepKey)
             if context.deps.exists(KeyringDepKey)
@@ -570,9 +589,6 @@ class ConfigurableMockPubSub(_MockFactoryBase):
             tenant_provider=_tenant_provider(context),
         )
 
-        if not self.command:
-            return adapter
-
         enforce_required_reach(
             context.deps,
             route=str(spec.name),
@@ -580,6 +596,10 @@ class ConfigurableMockPubSub(_MockFactoryBase):
             kind="pubsub",
             supports_at_rest=False,
         )
+
+        if not self.command:
+            return adapter
+
         cipher = (
             context.deps.provide(KeyringDepKey)
             if context.deps.exists(KeyringDepKey)
@@ -616,9 +636,6 @@ class ConfigurableMockStream(_MockFactoryBase):
     ) -> MockStreamAdapter[Any] | StreamCommandPort[Any]:
         adapter = self._adapter(context, spec)
 
-        if not self.command:
-            return adapter
-
         enforce_required_reach(
             context.deps,
             route=str(spec.name),
@@ -626,6 +643,10 @@ class ConfigurableMockStream(_MockFactoryBase):
             kind="stream",
             supports_at_rest=False,
         )
+
+        if not self.command:
+            return adapter
+
         cipher = (
             context.deps.provide(KeyringDepKey)
             if context.deps.exists(KeyringDepKey)

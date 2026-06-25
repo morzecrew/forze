@@ -46,10 +46,27 @@ class _StubSearchManagement:
         self.delete_all_calls += 1
 
 
-def test_ports_are_structurally_distinct() -> None:
+def test_command_surface_excludes_management_methods() -> None:
+    # Stub shapes satisfy their respective ports without overlap.
     cmd: SearchCommandPort[_Doc] = _StubSearchCommand()
     mgmt: SearchManagementPort = _StubSearchManagement()
     assert cmd is not None and mgmt is not None
+
+    # The wired adapters must keep the planes split: a command reference cannot reach
+    # ensure_index / delete_all, and a management reference cannot reach upsert / delete.
+    from forze_mock.adapters.search import (
+        MockSearchCommandAdapter,
+        MockSearchManagementAdapter,
+    )
+
+    assert not hasattr(MockSearchCommandAdapter, "ensure_index")
+    assert not hasattr(MockSearchCommandAdapter, "delete_all")
+    assert hasattr(MockSearchCommandAdapter, "upsert")
+
+    assert hasattr(MockSearchManagementAdapter, "ensure_index")
+    assert hasattr(MockSearchManagementAdapter, "delete_all")
+    assert not hasattr(MockSearchManagementAdapter, "upsert")
+    assert not hasattr(MockSearchManagementAdapter, "delete")
 
 
 @pytest.mark.asyncio

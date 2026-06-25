@@ -40,6 +40,7 @@ from forze_mock.adapters.search import (
     MockHubSearchAdapter,
     MockSearchAdapter,
     MockSearchCommandAdapter,
+    MockSearchManagementAdapter,
     MockSearchResultSnapshotAdapter,
 )
 from forze_mock.adapters.storage import MockStorageAdapter
@@ -57,6 +58,7 @@ __all__ = [
     "MockDocumentAdapter",
     "MockSearchAdapter",
     "MockSearchCommandAdapter",
+    "MockSearchManagementAdapter",
     "MockSearchResultSnapshotAdapter",
     "MockHubSearchAdapter",
     "MockFederatedSearchAdapter",

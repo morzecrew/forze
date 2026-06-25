@@ -1,4 +1,4 @@
-"""In-memory search index command adapter (document store)."""
+"""In-memory search index command and management adapters (document store)."""
 
 from __future__ import annotations
 
@@ -20,17 +20,9 @@ from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 # ----------------------- #
 
 
-@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockSearchCommandAdapter(
-    MockTenancyMixin,
-    SearchCommandPort[BaseModel],
-    SearchManagementPort,
-):
-    """Mutate the same in-memory document bucket as :class:`MockSearchAdapter`.
-
-    Implements both the data-plane ``SearchCommandPort`` and the control-plane
-    ``SearchManagementPort`` (``ensure_index`` / ``delete_all``)."""
+class _MockSearchBase(MockTenancyMixin):
+    """Shared in-memory bucket resolution for the search command/management adapters."""
 
     state: MockState
     spec: SearchSpec[BaseModel]
@@ -46,11 +38,14 @@ class MockSearchCommandAdapter(
         with self.state.lock:
             return self.state.documents.setdefault(self._resolved_namespace(), {})
 
-    # ....................... #
 
-    async def ensure_index(self) -> None:
-        with self.state.lock:
-            self.state.documents.setdefault(self._resolved_namespace(), {})
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockSearchCommandAdapter(_MockSearchBase, SearchCommandPort[BaseModel]):
+    """Mutate the same in-memory document bucket as :class:`MockSearchAdapter`.
+
+    Data-plane only (``SearchCommandPort``); index provisioning lives on
+    :class:`MockSearchManagementAdapter`."""
 
     async def upsert(self, documents: Sequence[BaseModel]) -> None:
         await self.upsert_many(documents)
@@ -74,6 +69,19 @@ class MockSearchCommandAdapter(
                 except ValueError:
                     continue
                 store.pop(uid, None)
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockSearchManagementAdapter(_MockSearchBase, SearchManagementPort):
+    """Index provisioning (``SearchManagementPort``) over the in-memory bucket.
+
+    Control-plane only (``ensure_index`` / ``delete_all``); document writes live on
+    :class:`MockSearchCommandAdapter`."""
+
+    async def ensure_index(self) -> None:
+        with self.state.lock:
+            self.state.documents.setdefault(self._resolved_namespace(), {})
 
     async def delete_all(self) -> None:
         with self.state.lock:
