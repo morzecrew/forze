@@ -7137,6 +7137,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Encryption <em>reach</em> vocabulary</strong> — new canonical <code>EncryptionReach</code> type names the outbox/messaging setting as a <em>reach</em> ladder (<code>none &lt; at_rest &lt; end_to_end</code>), distinct from storage coverage. <code>OutboxEncryptionTier</code> is now a back-compat alias and <code>MessageEncryptionTier</code> its transport subset (no <code>at_rest</code>); field name and values unchanged.</p>
+</li>
+<li>
+<p><strong><code>required_reach</code> floor</strong> — <code>CryptoDepsModule(required_reach="end_to_end"|"at_rest")</code> refuses, at resolve, any outbox or transport route whose declared reach is weaker (<code>exc.configuration</code>). Opt-in (default <code>None</code>); a transport meets an <code>at_rest</code> floor only via <code>end_to_end</code>.</p>
+</li>
+<li>
+<p><strong>Fencing-token capability for distributed locks</strong> — <code>DistributedLockSpec(requires_fencing_token=True)</code> fails closed at resolve against a backend not reporting <code>FencingAware</code>/<code>fencing_tokens</code>. Default <code>False</code>; Redis and mock report support.</p>
+</li>
+<li>
 <p><strong>Less CRUD boilerplate</strong> — <code>build_document_registry(spec)</code> derives its <code>DocumentDTOs</code> from the spec when <code>dtos</code> is omitted (override, or <code>create=None</code>/<code>update=None</code> to disable an op), and new <code>document_facade(runtime, registry, spec)</code> returns a per-call typed <code>DocumentFacade</code> factory. Both additive — the explicit <code>DocumentDTOs</code> and <code>DocumentFacade(...)</code> forms keep working.</p>
 </li>
 <li>
@@ -7295,6 +7304,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Search index provisioning split into a <code>SearchManagementPort</code></strong> <em>(breaking: <code>forze_meilisearch</code>)</em> — <code>ensure_index</code> and <code>delete_all</code> move off <code>SearchCommandPort</code> (now document writes only: <code>upsert</code>/<code>delete</code>) onto a new control-plane <code>SearchManagementPort</code>, acquired via <code>ctx.search.management(spec)</code> (registered under <code>SearchManagementDepKey</code>). Mirrors the <code>StreamGroupAdminPort</code> split — provisioning/wipe runs outside the request path and a read-only operation can't reach it. Move <code>ensure_index</code>/<code>delete_all</code> calls from <code>ctx.search.command(...)</code> to <code>ctx.search.management(...)</code>.</p>
+</li>
 <li>
 <p><strong>Search engine config as typed value objects</strong> <em>(breaking: <code>forze_postgres</code>, <code>forze_mongo</code>)</em> — search <code>engine</code> now takes a tagged-union value object instead of a flat string plus parallel engine kwargs, so illegal combinations are unrepresentable. Bare engine strings remain shorthands; existing reads are unchanged.</p>
 </li>

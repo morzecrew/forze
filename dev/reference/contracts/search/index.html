@@ -4483,6 +4483,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#management-port" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Management port
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#implemented-by" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5263,6 +5274,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#management-port" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Management port
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#implemented-by" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5489,6 +5511,7 @@ argument; everything else mirrors the document side:</p>
 <a href="../../query-syntax/">query DSL</a>. <code>options: SearchOptions</code> tunes relevance,
 highlighting, etc.</p>
 <h2 id="command-port">Command port<a class="headerlink" href="#command-port" title="Permanent link">&para;</a></h2>
+<p>Data-plane document writes — <code>ctx.search.command(spec)</code>.</p>
 <table>
 <thead>
 <tr>
@@ -5498,11 +5521,6 @@ highlighting, etc.</p>
 </tr>
 </thead>
 <tbody>
-<tr>
-<td><code>ensure_index</code></td>
-<td><code>ensure_index()</code></td>
-<td>create / update the index settings</td>
-</tr>
 <tr>
 <td><code>upsert</code></td>
 <td><code>upsert(documents)</code></td>
@@ -5517,6 +5535,27 @@ highlighting, etc.</p>
 <td><code>delete</code></td>
 <td><code>delete(ids)</code></td>
 <td>remove by id</td>
+</tr>
+</tbody>
+</table>
+<h2 id="management-port">Management port<a class="headerlink" href="#management-port" title="Permanent link">&para;</a></h2>
+<p>Control-plane index provisioning — <code>ctx.search.management(spec)</code>. Kept separate from
+the command port (provisioning mutates shared topology / wipes are destructive admin,
+run outside the request path); acquired via the command path, so a read-only operation
+cannot provision or wipe an index.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ensure_index</code></td>
+<td><code>ensure_index()</code></td>
+<td>create / update the index settings</td>
 </tr>
 <tr>
 <td><code>delete_all</code></td>

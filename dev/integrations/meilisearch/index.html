@@ -5440,7 +5440,11 @@ model</strong>, maintained explicitly (not auto-synced from your document store)
 <td><code>SearchSpec.name</code> (<code>searches</code>)</td>
 </tr>
 <tr>
-<td>Search command (index maintenance: <code>ensure_index</code>, <code>upsert</code>, <code>delete</code>)</td>
+<td>Search command (document writes: <code>upsert</code>, <code>delete</code>)</td>
+<td><code>SearchSpec.name</code></td>
+</tr>
+<tr>
+<td>Search management (index provisioning: <code>ensure_index</code>, <code>delete_all</code>)</td>
 <td><code>SearchSpec.name</code></td>
 </tr>
 <tr>
@@ -5453,8 +5457,10 @@ model</strong>, maintained explicitly (not auto-synced from your document store)
 <ul>
 <li><strong>The index is yours to maintain.</strong> There's no auto-sync from
   <code>DocumentCommandPort</code> — call <code>ctx.search.command(spec).upsert(...)</code> (e.g. via
-  the outbox) when documents change. <code>ensure_index</code> applies the
-  searchable/filterable/sortable attributes.</li>
+  the outbox) when documents change. Provisioning lives on the separate
+  management surface: <code>ctx.search.management(spec).ensure_index()</code> applies the
+  searchable/filterable/sortable attributes, and <code>delete_all()</code> wipes the index —
+  neither is reachable from the command port.</li>
 <li>Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the <a href="../../reference/query-syntax/">Query DSL</a>.</li>
 <li>Federated routes merge ≥2 member indexes (<code>federation</code> or in-process <abbr title="Reciprocal Rank Fusion">RRF</abbr>).</li>
