@@ -14,6 +14,8 @@ from forze.application.contracts.resolution import (
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyMapping
 
+from ..tiers import TierLattice
+
 # ----------------------- #
 
 TenantIsolationMode = Literal["none", "tagged", "namespace", "dedicated"]
@@ -39,13 +41,18 @@ Derived from the config an integration already carries (it is not configured dir
 
 # ....................... #
 
-_ISOLATION_RANK: dict[TenantIsolationMode, int] = {
-    "none": 0,
-    "tagged": 1,
-    "namespace": 2,
-    "dedicated": 3,
-}
-"""Strength ordering for isolation modes (weakest → strongest).
+_ISOLATION_LATTICE: TierLattice[TenantIsolationMode] = TierLattice(
+    field="isolation",
+    validation_label="tenancy",
+    wired_noun="isolation",
+    ceiling_noun="tenant isolation",
+    floor_remediation=(
+        "Strengthen the wiring (mark routes tenant_aware, route a per-tenant namespace, or "
+        "route the client per tenant) or lower the declared requirement."
+    ),
+    ranks={"none": 0, "tagged": 1, "namespace": 2, "dedicated": 3},
+)
+"""Strength ordering for isolation modes (weakest → strongest), with its floor check.
 
 ``tagged`` is shared-store isolation (every item carries an embedded tenant marker that
 operations filter on). ``namespace`` (a separate per-tenant container on a shared instance,
@@ -64,7 +71,7 @@ def isolation_satisfies(
 ) -> bool:
     """Return whether *derived* isolation is at least as strong as *required*."""
 
-    return _ISOLATION_RANK[derived] >= _ISOLATION_RANK[required]
+    return _ISOLATION_LATTICE.satisfies(derived=derived, required=required)
 
 
 # ....................... #
@@ -90,33 +97,12 @@ def validate_required_isolation(
     mismatch (the floor is unreachable by configuration) rather than a wiring gap.
     """
 
-    if required is None:
-        return
-
-    if max_supported is not None and not isolation_satisfies(
-        derived=max_supported, required=required
-    ):
-        raise exc.configuration(
-            f"{integration} supports at most {max_supported!r} tenant isolation, but the "
-            f"deployment declares required_isolation={required!r}, which it cannot provide. "
-            "Lower the declared requirement or use a backend that supports it.",
-            code=code,
-            details={
-                "required_isolation": required,
-                "max_supported_isolation": max_supported,
-            },
-        )
-
-    if isolation_satisfies(derived=derived, required=required):
-        return
-
-    raise exc.configuration(
-        f"{integration} tenancy validation failed: deployment declares "
-        f"required_isolation={required!r} but the wired isolation is {derived!r}, which "
-        "is weaker. Strengthen the wiring (mark routes tenant_aware, route a per-tenant "
-        "namespace, or route the client per tenant) or lower the declared requirement.",
+    _ISOLATION_LATTICE.validate(
+        integration=integration,
+        derived=derived,
+        required=required,
         code=code,
-        details={"required_isolation": required, "derived_isolation": derived},
+        max_supported=max_supported,
     )
 
 

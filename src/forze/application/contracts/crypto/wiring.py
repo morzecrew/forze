@@ -9,7 +9,7 @@ runtime.
 
 from typing import Literal
 
-from forze.base.exceptions import exc
+from ..tiers import TierLattice
 
 # ----------------------- #
 
@@ -34,12 +34,18 @@ configuration, not expressible here.
 
 # ....................... #
 
-_ENCRYPTION_RANK: dict[EncryptionTier, int] = {
-    "none": 0,
-    "field": 1,
-    "envelope": 2,
-}
-"""Coverage ordering for encryption tiers (weakest → strongest)."""
+_ENCRYPTION_LATTICE: TierLattice[EncryptionTier] = TierLattice(
+    field="encryption",
+    validation_label="encryption",
+    wired_noun="coverage",
+    ceiling_noun="encryption",
+    floor_remediation=(
+        "Wire a key manager and mark the value (or its sensitive fields) for "
+        "encryption, or lower the declared requirement."
+    ),
+    ranks={"none": 0, "field": 1, "envelope": 2},
+)
+"""Coverage ordering for encryption tiers (weakest → strongest), with its floor check."""
 
 # ....................... #
 
@@ -51,7 +57,7 @@ def encryption_satisfies(
 ) -> bool:
     """Return whether *derived* coverage is at least as strong as *required*."""
 
-    return _ENCRYPTION_RANK[derived] >= _ENCRYPTION_RANK[required]
+    return _ENCRYPTION_LATTICE.satisfies(derived=derived, required=required)
 
 
 # ....................... #
@@ -78,31 +84,10 @@ def validate_required_encryption(
     configuration) rather than a wiring gap.
     """
 
-    if required is None:
-        return
-
-    if max_supported is not None and not encryption_satisfies(
-        derived=max_supported, required=required
-    ):
-        raise exc.configuration(
-            f"{integration} supports at most {max_supported!r} encryption, but the "
-            f"deployment declares required_encryption={required!r}, which it cannot "
-            "provide. Lower the declared requirement or use a backend that supports it.",
-            code=code,
-            details={
-                "required_encryption": required,
-                "max_supported_encryption": max_supported,
-            },
-        )
-
-    if encryption_satisfies(derived=derived, required=required):
-        return
-
-    raise exc.configuration(
-        f"{integration} encryption validation failed: deployment declares "
-        f"required_encryption={required!r} but the wired coverage is {derived!r}, "
-        "which is weaker. Wire a key manager and mark the value (or its sensitive "
-        "fields) for encryption, or lower the declared requirement.",
+    _ENCRYPTION_LATTICE.validate(
+        integration=integration,
+        derived=derived,
+        required=required,
         code=code,
-        details={"required_encryption": required, "derived_encryption": derived},
+        max_supported=max_supported,
     )
