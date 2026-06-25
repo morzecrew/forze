@@ -9,6 +9,7 @@ from .factories import (
     ConfigurableMeilisearchFederatedSearch,
     ConfigurableMeilisearchSearch,
     ConfigurableMeilisearchSearchCommand,
+    ConfigurableMeilisearchSearchManagement,
 )
 from .keys import MeilisearchClientDepKey
 from .module import MeilisearchDepsModule
@@ -23,5 +24,6 @@ __all__ = [
     "MeilisearchFederation",
     "ConfigurableMeilisearchSearch",
     "ConfigurableMeilisearchSearchCommand",
+    "ConfigurableMeilisearchSearchManagement",
     "ConfigurableMeilisearchFederatedSearch",
 ]

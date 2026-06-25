@@ -5,11 +5,18 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchCommandDepKey, SearchSpec
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.contracts.search import (
+    SearchCommandDepKey,
+    SearchManagementDepKey,
+    SearchSpec,
+)
+from forze.application.execution import Deps
 from forze_meilisearch.execution.deps import MeilisearchClientDepKey
 from forze_meilisearch.execution.deps import MeilisearchSearchConfig
 from forze_meilisearch.execution.deps import ConfigurableMeilisearchSearchCommand
+from forze_meilisearch.execution.deps.factories import (
+    ConfigurableMeilisearchSearchManagement,
+)
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
@@ -31,13 +38,17 @@ async def test_command_delete_round_trip(meilisearch_client) -> None:
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
                     config=MeilisearchSearchConfig(index_uid=index_uid),
                 ),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=MeilisearchSearchConfig(index_uid=index_uid),
+                ),
             }
         )
     )
 
     cmd = ctx.search.command(spec)
-    await cmd.ensure_index()
-    await cmd.delete_all()
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
     await cmd.upsert([Item(id="a", title="one"), Item(id="b", title="two")])
     await cmd.delete(["a"])
-    await cmd.delete_all()
+    await mgmt.delete_all()

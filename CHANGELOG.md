@@ -115,6 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Search index provisioning split into a `SearchManagementPort`** *(breaking: `forze_meilisearch`)* — `ensure_index` and `delete_all` move off `SearchCommandPort` (now document writes only: `upsert`/`delete`) onto a new control-plane `SearchManagementPort`, acquired via `ctx.search.management(spec)` (registered under `SearchManagementDepKey`). Mirrors the `StreamGroupAdminPort` split — provisioning/wipe runs outside the request path and a read-only operation can't reach it. Move `ensure_index`/`delete_all` calls from `ctx.search.command(...)` to `ctx.search.management(...)`.
+
 - **Search engine config as typed value objects** *(breaking: `forze_postgres`, `forze_mongo`)* — search `engine` now takes a tagged-union value object instead of a flat string plus parallel engine kwargs, so illegal combinations are unrepresentable. Bare engine strings remain shorthands; existing reads are unchanged.
 
 - **Shared analytics ingest target** *(breaking: `forze_postgres`, `forze_bigquery`, `forze_clickhouse`)* — warehouse analytics configs take a single shared `IngestSpec` value object instead of per-backend flat `ingest_relation` and legacy `ingest_table` fields. Postgres also drops its legacy `schema` field.

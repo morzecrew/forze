@@ -9,9 +9,10 @@ from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     FederatedSearchSpec,
     SearchCommandDepKey,
+    SearchManagementDepKey,
     SearchSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze_meilisearch.execution.deps import (
     ConfigurableMeilisearchFederatedSearch,
@@ -19,6 +20,9 @@ from forze_meilisearch.execution.deps import (
     MeilisearchClientDepKey,
     MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,
+)
+from forze_meilisearch.execution.deps.factories import (
+    ConfigurableMeilisearchSearchManagement,
 )
 from tests.support.execution_context import context_from_deps
 
@@ -53,6 +57,9 @@ async def test_federated_federation_merge(meilisearch_client) -> None:
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
                     config=MeilisearchSearchConfig(index_uid="unused"),
                 ),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=MeilisearchSearchConfig(index_uid="unused"),
+                ),
             }
         )
     )
@@ -61,8 +68,11 @@ async def test_federated_federation_merge(meilisearch_client) -> None:
         cmd = ConfigurableMeilisearchSearchCommand(
             config=MeilisearchSearchConfig(index_uid=uid),
         )(ctx, _mem(member))
-        await cmd.ensure_index()
-        await cmd.delete_all()
+        mgmt = ConfigurableMeilisearchSearchManagement(
+            config=MeilisearchSearchConfig(index_uid=uid),
+        )(ctx, _mem(member))
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
         await cmd.upsert([Hit(id="1", label=f"{member}-alpha")])
 
     page = await ctx.search.federated(spec).search_page("alpha")
@@ -90,6 +100,9 @@ async def test_federated_rrf_merge(meilisearch_client) -> None:
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
                     config=MeilisearchSearchConfig(index_uid="unused"),
                 ),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=MeilisearchSearchConfig(index_uid="unused"),
+                ),
             }
         )
     )
@@ -98,8 +111,11 @@ async def test_federated_rrf_merge(meilisearch_client) -> None:
         cmd = ConfigurableMeilisearchSearchCommand(
             config=MeilisearchSearchConfig(index_uid=uid),
         )(ctx, _mem(member))
-        await cmd.ensure_index()
-        await cmd.delete_all()
+        mgmt = ConfigurableMeilisearchSearchManagement(
+            config=MeilisearchSearchConfig(index_uid=uid),
+        )(ctx, _mem(member))
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
         await cmd.upsert([Hit(id="1", label=f"{member}-beta")])
 
     page = await ctx.search.federated(spec).search_page("beta")
@@ -135,6 +151,9 @@ async def test_federated_with_filters_and_cursor(meilisearch_client) -> None:
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
                     config=MeilisearchSearchConfig(index_uid="unused"),
                 ),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=MeilisearchSearchConfig(index_uid="unused"),
+                ),
             },
         ),
     )
@@ -144,8 +163,12 @@ async def test_federated_with_filters_and_cursor(meilisearch_client) -> None:
             ctx,
             _mem(member),
         )
-        await cmd.ensure_index()
-        await cmd.delete_all()
+        mgmt = ConfigurableMeilisearchSearchManagement(config=member_cfg[member])(
+            ctx,
+            _mem(member),
+        )
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
         await cmd.upsert(
             [
                 Hit(id="1", label=f"{member}-match"),

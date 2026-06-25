@@ -49,7 +49,8 @@ lifecycle = LifecyclePlan.from_steps(meilisearch_lifecycle_step(url="http://loca
 | Contract | Keyed by |
 |----------|----------|
 | Search query | `SearchSpec.name` (`searches`) |
-| Search command (index maintenance: `ensure_index`, `upsert`, `delete`) | `SearchSpec.name` |
+| Search command (document writes: `upsert`, `delete`) | `SearchSpec.name` |
+| Search management (index provisioning: `ensure_index`, `delete_all`) | `SearchSpec.name` |
 | Federated search | federated route (`federated_searches`) |
 
 ## Notes

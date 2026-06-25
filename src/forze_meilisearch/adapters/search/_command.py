@@ -7,7 +7,11 @@ from typing import Any, Sequence, cast, final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchCommandPort, SearchSpec
+from forze.application.contracts.search import (
+    SearchCommandPort,
+    SearchManagementPort,
+    SearchSpec,
+)
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze_meilisearch.adapters.search.base import MeilisearchSearchGateway
 from forze_meilisearch.kernel.client.port import MeilisearchClientPort
@@ -22,8 +26,10 @@ _BATCH_SIZE = 1000
 class MeilisearchSearchCommandAdapter[M: BaseModel](
     MeilisearchSearchGateway[M],
     SearchCommandPort[M],
+    SearchManagementPort,
 ):
-    """Index maintenance for one Meilisearch search surface."""
+    """Document writes (``SearchCommandPort``) and index provisioning
+    (``SearchManagementPort``) for one Meilisearch search surface."""
 
     client: MeilisearchClientPort
     spec: SearchSpec[M]

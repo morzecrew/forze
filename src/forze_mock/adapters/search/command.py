@@ -8,7 +8,11 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchCommandPort, SearchSpec
+from forze.application.contracts.search import (
+    SearchCommandPort,
+    SearchManagementPort,
+    SearchSpec,
+)
 from forze.base.primitives import JsonDict
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
@@ -18,8 +22,15 @@ from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockSearchCommandAdapter(MockTenancyMixin, SearchCommandPort[BaseModel]):
-    """Mutate the same in-memory document bucket as :class:`MockSearchAdapter`."""
+class MockSearchCommandAdapter(
+    MockTenancyMixin,
+    SearchCommandPort[BaseModel],
+    SearchManagementPort,
+):
+    """Mutate the same in-memory document bucket as :class:`MockSearchAdapter`.
+
+    Implements both the data-plane ``SearchCommandPort`` and the control-plane
+    ``SearchManagementPort`` (``ensure_index`` / ``delete_all``)."""
 
     state: MockState
     spec: SearchSpec[BaseModel]

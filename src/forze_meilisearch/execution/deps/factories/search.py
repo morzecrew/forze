@@ -12,6 +12,8 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.search import (
     SearchCommandDepPort,
     SearchCommandPort,
+    SearchManagementDepPort,
+    SearchManagementPort,
     SearchQueryDepPort,
     SearchQueryPort,
     SearchResultSnapshotDepKey,
@@ -173,4 +175,30 @@ class ConfigurableMeilisearchSearchCommand(SearchCommandDepPort):
             client=client,
             tenant_provider=context.inv_ctx.get_tenant,
             tenant_aware=tenant_aware,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurableMeilisearchSearchManagement(SearchManagementDepPort):
+    """Build the Meilisearch index-provisioning (``SearchManagementPort``) adapter."""
+
+    config: MeilisearchSearchConfig = attrs.field(
+        validator=attrs.validators.instance_of(MeilisearchSearchConfig),
+    )
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: SearchSpec[Any],
+    ) -> SearchManagementPort:
+        return MeilisearchSearchCommandAdapter(
+            spec=_encrypting_spec(context, spec),
+            config=self.config,
+            client=context.deps.provide(MeilisearchClientDepKey),
+            tenant_provider=context.inv_ctx.get_tenant,
+            tenant_aware=self.config.tenant_aware,
         )

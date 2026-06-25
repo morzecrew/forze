@@ -6,7 +6,12 @@ from pydantic import BaseModel
 
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
 from .models import FederatedSearchReadModel
-from .ports import SearchCommandPort, SearchQueryPort, SearchResultSnapshotPort
+from .ports import (
+    SearchCommandPort,
+    SearchManagementPort,
+    SearchQueryPort,
+    SearchResultSnapshotPort,
+)
 from .specs import (
     FederatedSearchSpec,
     HubSearchSpec,
@@ -27,6 +32,12 @@ SearchCommandDepPort = ConfigurableDepPort[
     SearchCommandPort[Any],
 ]
 """Search command dependency port."""
+
+SearchManagementDepPort = ConfigurableDepPort[
+    SearchSpec[Any],
+    SearchManagementPort,
+]
+"""Search management (control-plane) dependency port."""
 
 HubSearchQueryDepPort = ConfigurableDepPort[
     HubSearchSpec[Any],
@@ -53,6 +64,9 @@ SearchQueryDepKey = DepKey[SearchQueryDepPort]("search_query")
 
 SearchCommandDepKey = DepKey[SearchCommandDepPort]("search_command")
 """Key used to register the :class:`SearchCommandPort` builder implementation."""
+
+SearchManagementDepKey = DepKey[SearchManagementDepPort]("search_management")
+"""Key used to register the :class:`SearchManagementPort` builder implementation."""
 
 HubSearchQueryDepKey = DepKey[HubSearchQueryDepPort]("hub_search_query")
 """Key used to register the hub :class:`SearchQueryPort` builder implementation."""
@@ -87,6 +101,21 @@ class SearchDeps(ConvenientDeps):
 
         return self._resolve_command(
             SearchCommandDepKey,
+            spec,
+            route=spec.name,
+        )
+
+    # ....................... #
+
+    def management(self, spec: SearchSpec[T]) -> SearchManagementPort:
+        """Resolve a search management (provisioning) port for the given spec.
+
+        Control-plane: ``ensure_index`` / ``delete_all``. Acquired via the command
+        path, so a read-only (``QUERY``) operation cannot provision or wipe an index.
+        """
+
+        return self._resolve_command(
+            SearchManagementDepKey,
             spec,
             route=spec.name,
         )
