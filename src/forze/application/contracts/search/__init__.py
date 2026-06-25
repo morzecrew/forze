@@ -10,13 +10,20 @@ from .deps import (
     SearchCommandDepKey,
     SearchCommandDepPort,
     SearchDeps,
+    SearchManagementDepKey,
+    SearchManagementDepPort,
     SearchQueryDepKey,
     SearchQueryDepPort,
     SearchResultSnapshotDepKey,
     SearchResultSnapshotDepPort,
 )
 from .models import FederatedSearchReadModel
-from .ports import SearchCommandPort, SearchQueryPort, SearchResultSnapshotPort
+from .ports import (
+    SearchCommandPort,
+    SearchManagementPort,
+    SearchQueryPort,
+    SearchResultSnapshotPort,
+)
 from .search_options import (
     prepare_federated_search_options,
     prepare_hub_search_options,
@@ -65,10 +72,13 @@ __all__ = [
     "effective_phrase_combine",
     "SearchQueryPort",
     "SearchCommandPort",
+    "SearchManagementPort",
     "SearchQueryDepKey",
     "HubSearchQueryDepKey",
     "SearchCommandDepKey",
     "SearchCommandDepPort",
+    "SearchManagementDepKey",
+    "SearchManagementDepPort",
     "SearchQueryDepPort",
     "HubSearchQueryDepPort",
     "FederatedSearchQueryDepKey",

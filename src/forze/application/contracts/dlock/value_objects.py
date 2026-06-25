@@ -8,6 +8,25 @@ import attrs
 
 
 @final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class DistributedLockCapabilities:
+    """What a distributed-lock backend supports — its reported, fail-closed contract.
+
+    A spec that sets ``requires_fencing_token`` is rejected at first resolve against a
+    backend that reports ``fencing_tokens=False`` or does not report capabilities at all
+    (not :class:`~forze.application.contracts.dlock.FencingAware`). Mirrors transaction
+    :class:`~forze.application.contracts.transaction.TxCapabilities`.
+    """
+
+    fencing_tokens: bool
+    """Whether ``acquire`` issues monotonic fencing tokens (vs best-effort exclusion with
+    ``AcquiredLock.token=None``)."""
+
+
+# ....................... #
+
+
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AcquiredLock:
     """Result of a successful distributed lock acquisition.

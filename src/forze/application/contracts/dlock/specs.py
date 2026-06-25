@@ -24,6 +24,16 @@ class DistributedLockSpec(BaseSpec):
     ``extend_interval`` for long-held sections.
     """
 
+    requires_fencing_token: bool = False
+    """Require the backend to issue monotonic fencing tokens.
+
+    When ``True``, acquiring the command port fails closed (``exc.configuration``) against a
+    backend that cannot issue them (not ``FencingAware``, or ``fencing_tokens=False``), so a
+    consumer relying on fencing for write-safety is never silently wired onto best-effort
+    exclusion. Default ``False`` leaves tokens best-effort (``AcquiredLock.token`` may be
+    ``None``).
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

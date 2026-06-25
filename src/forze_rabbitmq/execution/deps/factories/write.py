@@ -11,6 +11,7 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.execution import ExecutionContext
+from forze.application.execution.crypto import enforce_required_reach
 from forze.application.integrations.queue import encrypting_queue_command
 
 from ....adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
@@ -37,6 +38,13 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
         ctx: ExecutionContext,
         spec: QueueSpec[Any],
     ) -> QueueCommandPort[Any]:
+        enforce_required_reach(
+            ctx.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="queue",
+            supports_at_rest=False,
+        )
         client = ctx.deps.provide(RabbitMQClientDepKey)
         codec = RabbitMQQueueCodec(payload_codec=spec.codec)
 

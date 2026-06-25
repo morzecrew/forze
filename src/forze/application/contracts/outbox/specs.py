@@ -7,25 +7,18 @@ import attrs
 from forze.base.primitives import StrKey
 from forze.base.serialization import ModelCodec
 
-from ..base import BaseSpec
+from ..base import BaseSpec, EncryptionReach
 
 # ----------------------- #
 
 OutboxDestinationKind = Literal["queue", "stream", "pubsub"]
 
-OutboxEncryptionTier = Literal["none", "at_rest", "end_to_end"]
-"""Outbox payload encryption coverage, declared per route (like a tenancy isolation tier).
+OutboxEncryptionTier = EncryptionReach
+"""Deprecated alias for :data:`~forze.application.contracts.base.EncryptionReach`.
 
-Reach, weakest → strongest:
-
-- ``none`` (default) — payloads are stored and relayed in plaintext.
-- ``at_rest`` — the payload is encrypted in the outbox store and **decrypted by the
-  relay** before publish, so transports and consumers see plaintext. Protects the
-  outbox table against a database compromise.
-- ``end_to_end`` — the payload stays encrypted from staging all the way to the
-  **consumer**, which decrypts it. Protects the payload in the broker too; the consumer
-  service must have a keyring wired.
-"""
+The outbox encryption setting is a *reach* ladder (where the payload is decrypted), not a
+*coverage* tier (how much is encrypted) — an encrypted outbox payload is always a
+whole-payload envelope. Kept for back-compat; prefer ``EncryptionReach``."""
 
 
 @final
@@ -86,13 +79,13 @@ class OutboxSpec[M](BaseSpec):
     destination: OutboxDestination | None = None
     """Optional default relay target honored by relay workers."""
 
-    encryption: OutboxEncryptionTier = "none"
-    """Whole-payload encryption tier for this route (default ``"none"``).
+    encryption: EncryptionReach = "none"
+    """Whole-payload encryption *reach* for this route (default ``"none"``).
 
     ``at_rest`` encrypts the payload in the outbox store and decrypts it in the relay;
     ``end_to_end`` keeps it encrypted through the broker to the consumer. Both require a
     keyring (``CryptoDepsModule``) wired wherever decryption happens — the relay for
-    ``at_rest``, the consumer for ``end_to_end``. See :data:`OutboxEncryptionTier`."""
+    ``at_rest``, the consumer for ``end_to_end``. See :data:`EncryptionReach`."""
 
     # ....................... #
 

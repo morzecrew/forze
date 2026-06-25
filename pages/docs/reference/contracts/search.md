@@ -54,12 +54,24 @@ highlighting, etc.
 
 ## Command port
 
+Data-plane document writes — `ctx.search.command(spec)`.
+
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `ensure_index` | `ensure_index()` | create / update the index settings |
 | `upsert` | `upsert(documents)` | add or update documents |
 | `upsert_many` | `upsert_many(documents)` | batch add / update |
 | `delete` | `delete(ids)` | remove by id |
+
+## Management port
+
+Control-plane index provisioning — `ctx.search.management(spec)`. Kept separate from
+the command port (provisioning mutates shared topology / wipes are destructive admin,
+run outside the request path); acquired via the command path, so a read-only operation
+cannot provision or wipe an index.
+
+| Method | Signature | Notes |
+|--------|-----------|-------|
+| `ensure_index` | `ensure_index()` | create / update the index settings |
 | `delete_all` | `delete_all()` | empty the index |
 
 ## Implemented by

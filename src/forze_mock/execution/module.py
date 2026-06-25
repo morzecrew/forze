@@ -97,6 +97,7 @@ from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     HubSearchQueryDepKey,
     SearchCommandDepKey,
+    SearchManagementDepKey,
     SearchQueryDepKey,
     SearchResultSnapshotDepKey,
 )
@@ -191,6 +192,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockQueue,
     ConfigurableMockSearch,
     ConfigurableMockSearchCommand,
+    ConfigurableMockSearchManagement,
     ConfigurableMockSearchSnapshot,
     ConfigurableMockStorageCommand,
     ConfigurableMockStorageQuery,
@@ -337,6 +339,7 @@ class MockDepsModule(DepsModule):
             DocumentCommandDepKey: document,
             SearchQueryDepKey: ConfigurableMockSearch(module=self),
             SearchCommandDepKey: ConfigurableMockSearchCommand(module=self),
+            SearchManagementDepKey: ConfigurableMockSearchManagement(module=self),
             SearchResultSnapshotDepKey: ConfigurableMockSearchSnapshot(module=self),
             HubSearchQueryDepKey: ConfigurableMockHubSearch(module=self),
             FederatedSearchQueryDepKey: ConfigurableMockFederatedSearch(module=self),

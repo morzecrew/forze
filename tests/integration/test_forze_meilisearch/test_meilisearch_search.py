@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import (
     SearchCommandDepKey,
+    SearchManagementDepKey,
     SearchQueryDepKey,
     SearchSpec,
 )
@@ -18,6 +19,9 @@ from forze_meilisearch.execution.deps import (
     ConfigurableMeilisearchSearchCommand,
     MeilisearchClientDepKey,
     MeilisearchSearchConfig,
+)
+from forze_meilisearch.execution.deps.factories import (
+    ConfigurableMeilisearchSearchManagement,
 )
 from tests.support.execution_context import context_from_deps
 
@@ -40,6 +44,9 @@ def _ctx(meilisearch_client, *, index_uid: str) -> ExecutionContext:
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
                     config=MeilisearchSearchConfig(index_uid=index_uid),
                 ),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=MeilisearchSearchConfig(index_uid=index_uid),
+                ),
             }
         )
     )
@@ -53,8 +60,9 @@ async def test_meilisearch_search_upsert_and_query(meilisearch_client) -> None:
     spec = SearchSpec(name="articles", model_type=Article, fields=["title", "body"])
 
     cmd = ctx.search.command(spec)
-    await cmd.ensure_index()
-    await cmd.delete_all()
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
     await cmd.upsert(
         [
             Article(id="1", title="Meilisearch integration", body="search engine"),
@@ -93,13 +101,17 @@ async def test_meilisearch_search_with_filters_sorts_and_cursor(
                 MeilisearchClientDepKey: meilisearch_client,
                 SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=cfg,
+                ),
             },
         ),
     )
 
     cmd = ctx.search.command(spec)
-    await cmd.ensure_index()
-    await cmd.delete_all()
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
     await cmd.upsert(
         [
             Article(id="1", title="alpha-z", body="first"),

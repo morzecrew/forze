@@ -619,8 +619,14 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
-    async def set_many(self, docs: Sequence[R]) -> None:
-        """Bulk versioned writes for cache warm."""
+    async def set_many(self, docs: Sequence[R], *, delta: float = 0.0) -> None:
+        """Bulk versioned writes for cache warm.
+
+        *delta* is the per-entry recompute cost in seconds; a read-through miss warm
+        passes the amortized batch fetch time so each entry becomes early-refresh
+        eligible (the single-get path does the same). Write-path warms keep the default
+        ``0.0`` and never early-refresh.
+        """
 
         if self.cache is None or not docs:
             return
@@ -647,7 +653,7 @@ class DocumentCache[R: BaseModel]:
                 ttl = self._entry_ttl(cast(R, casted))
                 groups.setdefault(ttl, {})[(str(casted.id), str(casted.rev))] = (
                     await self._encode_cache_value(
-                        cast(R, casted), pk=casted.id, ttl=ttl
+                        cast(R, casted), pk=casted.id, delta=delta, ttl=ttl
                     )
                 )
 
@@ -896,9 +902,16 @@ class DocumentCache[R: BaseModel]:
                 self.document_name,
             )
 
+            start = monotonic()
             miss_res = list(await fetch_misses_many(misses))
+            # Amortize the batch fetch cost across the warmed entries so each is
+            # early-refresh eligible (parity with the single-get miss path); a coarse
+            # per-entry estimate is enough for XFetch election.
+            delta = (monotonic() - start) / len(miss_res) if miss_res else 0.0
 
-            await self.after_commit_or_now(lambda: self.set_many(miss_res))
+            await self.after_commit_or_now(
+                lambda: self.set_many(miss_res, delta=delta)
+            )
 
         hits_validated = [
             (await self._decode_cached(value, pk=key))[0] for key, value in hits.items()

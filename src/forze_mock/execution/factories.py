@@ -51,6 +51,7 @@ from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.contracts.tenancy import TenantProviderPort
 from forze.application.contracts.transaction import TransactionManagerPort
 from forze.application.execution import ExecutionContext
+from forze.application.execution.crypto import enforce_required_reach
 from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.execution.outbox import build_staging_outbox_command_for_store
 from forze.application.integrations.authn import (
@@ -89,6 +90,7 @@ from forze_mock.adapters import (
     MockQueueAdapter,
     MockSearchAdapter,
     MockSearchCommandAdapter,
+    MockSearchManagementAdapter,
     MockSearchResultSnapshotAdapter,
     MockState,
     MockStorageAdapter,
@@ -303,6 +305,23 @@ class ConfigurableMockSearchCommand(_MockFactoryBase):
     ) -> MockSearchCommandAdapter:
         cfg = self._route(spec.name)
         return MockSearchCommandAdapter(
+            state=self._state(context),
+            spec=spec,
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockSearchManagement(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: SearchSpec[Any],
+    ) -> MockSearchManagementAdapter:
+        cfg = self._route(spec.name)
+        return MockSearchManagementAdapter(
             state=self._state(context),
             spec=spec,
             tenant_aware=cfg.tenant_aware if cfg else False,
@@ -528,6 +547,14 @@ class ConfigurableMockQueue(_MockFactoryBase):
             tenant_provider=_tenant_provider(context),
         )
 
+        enforce_required_reach(
+            context.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="queue",
+            supports_at_rest=False,
+        )
+
         if not self.command:
             return adapter
 
@@ -560,6 +587,14 @@ class ConfigurableMockPubSub(_MockFactoryBase):
             codec=spec.codec,
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
+        )
+
+        enforce_required_reach(
+            context.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="pubsub",
+            supports_at_rest=False,
         )
 
         if not self.command:
@@ -600,6 +635,14 @@ class ConfigurableMockStream(_MockFactoryBase):
         spec: StreamSpec[Any],
     ) -> MockStreamAdapter[Any] | StreamCommandPort[Any]:
         adapter = self._adapter(context, spec)
+
+        enforce_required_reach(
+            context.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="stream",
+            supports_at_rest=False,
+        )
 
         if not self.command:
             return adapter

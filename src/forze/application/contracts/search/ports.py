@@ -159,12 +159,36 @@ class SearchQueryPort[R: BaseModel](Protocol):
 
 
 @runtime_checkable
-class SearchCommandPort[M: BaseModel](Protocol):
-    """Maintain external search indexes (e.g. Meilisearch) outside the system of record."""
+class SearchManagementPort(Protocol):
+    """Control-plane provisioning for an external search index.
+
+    Kept **separate** from the data-plane :class:`SearchCommandPort`
+    (upsert / delete): index creation mutates shared topology and a full wipe is
+    destructive admin — both run outside the request path (typically once at
+    startup or in tooling), so a request-path writer never sees them. Mirrors the
+    framework's management/data split (e.g. ``StreamGroupAdminPort`` vs
+    ``StreamGroupQueryPort``).
+    """
 
     def ensure_index(self) -> Awaitable[None]:
         """Create or update the backing index settings for the configured search surface."""
         ...  # pragma: no cover
+
+    def delete_all(self) -> Awaitable[None]:
+        """Remove all documents from the search index."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class SearchCommandPort[M: BaseModel](Protocol):
+    """Maintain documents in an external search index (e.g. Meilisearch).
+
+    Data-plane only — index provisioning (``ensure_index``) and the full wipe
+    (``delete_all``) live on :class:`SearchManagementPort`.
+    """
 
     def upsert(self, documents: Sequence[M]) -> Awaitable[None]:
         """Add or update documents in the search index."""
@@ -176,10 +200,6 @@ class SearchCommandPort[M: BaseModel](Protocol):
 
     def delete(self, ids: Sequence[str]) -> Awaitable[None]:
         """Remove documents from the search index by primary key."""
-        ...  # pragma: no cover
-
-    def delete_all(self) -> Awaitable[None]:
-        """Remove all documents from the search index."""
         ...  # pragma: no cover
 
 

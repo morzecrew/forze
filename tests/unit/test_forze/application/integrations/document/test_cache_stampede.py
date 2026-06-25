@@ -171,6 +171,42 @@ class TestEarlyRefresh:
         ((_, _, payload), _) = cache.set_versioned.await_args
         assert isinstance(payload, bytes)
 
+    async def test_batch_warm_is_early_refresh_eligible(self) -> None:
+        # A read-through miss batch carries an amortized recompute cost, so each
+        # warmed entry is early-refresh eligible like the single-get path (delta>0).
+        cache = AsyncMock()
+        cache.get_many.return_value = ({}, [str(_PK)])
+        coord = _coord(cache=cache, spec=_xf_spec())
+
+        async def fetch_misses(_keys: list[str]) -> list[DocModel]:
+            await asyncio.sleep(0.001)  # guarantee a positive measured delta
+            return [_DOC]
+
+        async def fetch_all() -> list[DocModel]:
+            return [_DOC]
+
+        await coord.get_many_read_through(
+            [_PK],
+            fetch_many_on_cache_fault=fetch_all,
+            fetch_misses_many=fetch_misses,
+        )
+
+        cache.set_many_versioned.assert_awaited_once()
+        versioned_mapping = cache.set_many_versioned.await_args.args[0]
+        payload = next(iter(versioned_mapping.values()))
+        assert payload["_xf"]["d"] > 0
+
+    async def test_batch_write_warm_keeps_default_delta(self) -> None:
+        # A direct (write-path) set_many keeps delta=0 — never early-refresh.
+        cache = AsyncMock()
+        coord = _coord(cache=cache, spec=_xf_spec())
+
+        await coord.set_many([_DOC])
+
+        versioned_mapping = cache.set_many_versioned.await_args.args[0]
+        payload = next(iter(versioned_mapping.values()))
+        assert payload["_xf"]["d"] == 0
+
     async def test_expired_envelope_elects_refresh(self) -> None:
         cache = AsyncMock()
         # Written far past expiry with a real recompute cost: election certain.

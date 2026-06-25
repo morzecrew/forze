@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Encryption *reach* vocabulary** — new canonical `EncryptionReach` type names the outbox/messaging setting as a *reach* ladder (`none < at_rest < end_to_end`), distinct from storage coverage. `OutboxEncryptionTier` is now a back-compat alias and `MessageEncryptionTier` its transport subset (no `at_rest`); field name and values unchanged.
+
+- **`required_reach` floor** — `CryptoDepsModule(required_reach="end_to_end"|"at_rest")` refuses, at resolve, any outbox or transport route whose declared reach is weaker (`exc.configuration`). Opt-in (default `None`); a transport meets an `at_rest` floor only via `end_to_end`.
+
+- **Fencing-token capability for distributed locks** — `DistributedLockSpec(requires_fencing_token=True)` fails closed at resolve against a backend not reporting `FencingAware`/`fencing_tokens`. Default `False`; Redis and mock report support.
+
 - **Less CRUD boilerplate** — `build_document_registry(spec)` derives its `DocumentDTOs` from the spec when `dtos` is omitted (override, or `create=None`/`update=None` to disable an op), and new `document_facade(runtime, registry, spec)` returns a per-call typed `DocumentFacade` factory. Both additive — the explicit `DocumentDTOs` and `DocumentFacade(...)` forms keep working.
 
 - **Top-level front door** — the most-used names re-export from `forze` and `forze_kits` (`from forze import DocumentSpec, build_runtime`; `from forze_kits import DocumentFacade, build_document_registry`), resolved lazily (PEP 562) so `import forze` stays cheap. Deep paths keep working; the core never imports kits.
@@ -114,6 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Time-travel timeline** — `ViolationReport.timeline()` / `build_timeline(history)` flatten a counterexample into a virtual-time-ordered stream of `TimelineEntry` steps covering operations, port calls with value flow, injected environment, and recorded facts. `render_timeline` prints it and each entry is JSON.
 
 ### Changed
+
+- **Search index provisioning split into a `SearchManagementPort`** *(breaking: `forze_meilisearch`)* — `ensure_index` and `delete_all` move off `SearchCommandPort` (now document writes only: `upsert`/`delete`) onto a new control-plane `SearchManagementPort`, acquired via `ctx.search.management(spec)` (registered under `SearchManagementDepKey`). Mirrors the `StreamGroupAdminPort` split — provisioning/wipe runs outside the request path and a read-only operation can't reach it. Move `ensure_index`/`delete_all` calls from `ctx.search.command(...)` to `ctx.search.management(...)`.
 
 - **Search engine config as typed value objects** *(breaking: `forze_postgres`, `forze_mongo`)* — search `engine` now takes a tagged-union value object instead of a flat string plus parallel engine kwargs, so illegal combinations are unrepresentable. Bare engine strings remain shorthands; existing reads are unchanged.
 

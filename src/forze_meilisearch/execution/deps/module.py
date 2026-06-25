@@ -7,6 +7,7 @@ import attrs
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     SearchCommandDepKey,
+    SearchManagementDepKey,
     SearchQueryDepKey,
 )
 from forze.application.contracts.tenancy import (
@@ -27,6 +28,7 @@ from forze_meilisearch.execution.deps.factories import (
     ConfigurableMeilisearchFederatedSearch,
     ConfigurableMeilisearchSearch,
     ConfigurableMeilisearchSearchCommand,
+    ConfigurableMeilisearchSearchManagement,
 )
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 from forze_meilisearch.kernel._logger import logger
@@ -119,6 +121,10 @@ class MeilisearchDepsModule(DepsModule):
                 bindings=[
                     (SearchQueryDepKey, ConfigurableMeilisearchSearch),
                     (SearchCommandDepKey, ConfigurableMeilisearchSearchCommand),
+                    (
+                        SearchManagementDepKey,
+                        ConfigurableMeilisearchSearchManagement,
+                    ),
                 ],
             ),
             routed_from_mapping(

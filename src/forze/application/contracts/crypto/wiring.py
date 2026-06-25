@@ -1,15 +1,21 @@
 """Shared encryption wiring validation for integration deps modules.
 
 The encryption analog of :mod:`forze.application.contracts.tenancy.wiring`: a
-deployment declares the *minimum* encryption coverage it accepts
-(``required_encryption``) and this refuses to wire any combination whose derived
-coverage is weaker — failing closed at boot rather than leaking plaintext at
-runtime.
+deployment declares the *minimum* encryption it accepts and this refuses to wire
+any weaker combination — failing closed at boot rather than leaking plaintext at
+runtime. Two orthogonal floors live here:
+
+- ``required_encryption`` — the storage *coverage* floor (how much of a stored
+  value is protected: ``none < field < envelope``).
+- ``required_reach`` — the messaging *reach* floor (where a whole-payload envelope
+  is decrypted: ``none < at_rest < end_to_end``), applied to outbox and transport
+  routes.
 """
 
 from typing import Literal
 
-from forze.base.exceptions import exc
+from ..base import EncryptionReach
+from ..tiers import TierLattice
 
 # ----------------------- #
 
@@ -34,12 +40,18 @@ configuration, not expressible here.
 
 # ....................... #
 
-_ENCRYPTION_RANK: dict[EncryptionTier, int] = {
-    "none": 0,
-    "field": 1,
-    "envelope": 2,
-}
-"""Coverage ordering for encryption tiers (weakest → strongest)."""
+_ENCRYPTION_LATTICE: TierLattice[EncryptionTier] = TierLattice(
+    field="encryption",
+    validation_label="encryption",
+    wired_noun="coverage",
+    ceiling_noun="encryption",
+    floor_remediation=(
+        "Wire a key manager and mark the value (or its sensitive fields) for "
+        "encryption, or lower the declared requirement."
+    ),
+    ranks={"none": 0, "field": 1, "envelope": 2},
+)
+"""Coverage ordering for encryption tiers (weakest → strongest), with its floor check."""
 
 # ....................... #
 
@@ -51,7 +63,7 @@ def encryption_satisfies(
 ) -> bool:
     """Return whether *derived* coverage is at least as strong as *required*."""
 
-    return _ENCRYPTION_RANK[derived] >= _ENCRYPTION_RANK[required]
+    return _ENCRYPTION_LATTICE.satisfies(derived=derived, required=required)
 
 
 # ....................... #
@@ -78,31 +90,58 @@ def validate_required_encryption(
     configuration) rather than a wiring gap.
     """
 
-    if required is None:
-        return
-
-    if max_supported is not None and not encryption_satisfies(
-        derived=max_supported, required=required
-    ):
-        raise exc.configuration(
-            f"{integration} supports at most {max_supported!r} encryption, but the "
-            f"deployment declares required_encryption={required!r}, which it cannot "
-            "provide. Lower the declared requirement or use a backend that supports it.",
-            code=code,
-            details={
-                "required_encryption": required,
-                "max_supported_encryption": max_supported,
-            },
-        )
-
-    if encryption_satisfies(derived=derived, required=required):
-        return
-
-    raise exc.configuration(
-        f"{integration} encryption validation failed: deployment declares "
-        f"required_encryption={required!r} but the wired coverage is {derived!r}, "
-        "which is weaker. Wire a key manager and mark the value (or its sensitive "
-        "fields) for encryption, or lower the declared requirement.",
+    _ENCRYPTION_LATTICE.validate(
+        integration=integration,
+        derived=derived,
+        required=required,
         code=code,
-        details={"required_encryption": required, "derived_encryption": derived},
+        max_supported=max_supported,
+    )
+
+
+# ----------------------- #
+# Reach floor (messaging: outbox + direct transports)
+
+
+_REACH_LATTICE: TierLattice[EncryptionReach] = TierLattice(
+    field="reach",
+    validation_label="encryption reach",
+    wired_noun="reach",
+    ceiling_noun="reach",
+    floor_remediation=(
+        "Raise the route's encryption (a transport with no store reaches the floor only by "
+        "'end_to_end'; the outbox can also use 'at_rest') or lower the declared requirement."
+    ),
+    ranks={"none": 0, "at_rest": 1, "end_to_end": 2},
+)
+"""Reach ordering for messaging encryption (weakest → strongest), with its floor check.
+
+No capability ceiling: every messaging backend can reach ``end_to_end`` (forwarding a
+sealed payload is strictly less work than decrypting it), so the floor compares two
+*declared* reaches — the deployment's minimum against the route's."""
+
+# ....................... #
+
+
+def validate_required_reach(
+    *,
+    integration: str,
+    declared: EncryptionReach,
+    required: EncryptionReach | None,
+    code: str,
+) -> None:
+    """Fail closed when a route's declared reach is weaker than the required floor.
+
+    A deployment declares the *minimum* reach it accepts (``required``); this refuses any
+    outbox/transport route whose own ``declared`` reach is weaker. Pass ``required=None`` to
+    opt out (no declared floor — the historical behavior). A floor of ``at_rest`` is
+    satisfied by an ``end_to_end`` route; a transport (no ``at_rest`` level) satisfies an
+    ``at_rest`` floor only by being ``end_to_end``.
+    """
+
+    _REACH_LATTICE.validate(
+        integration=integration,
+        derived=declared,
+        required=required,
+        code=code,
     )

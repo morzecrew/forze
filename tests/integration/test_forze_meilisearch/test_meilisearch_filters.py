@@ -7,15 +7,19 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import (
     SearchCommandDepKey,
+    SearchManagementDepKey,
     SearchQueryDepKey,
     SearchSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze_meilisearch.execution.deps import (
     ConfigurableMeilisearchSearch,
     ConfigurableMeilisearchSearchCommand,
     MeilisearchClientDepKey,
     MeilisearchSearchConfig,
+)
+from forze_meilisearch.execution.deps.factories import (
+    ConfigurableMeilisearchSearchManagement,
 )
 from tests.support.execution_context import context_from_deps
 
@@ -51,13 +55,20 @@ async def test_filter_eq_narrows_hits(meilisearch_client) -> None:
                         filterable_attributes=["category"],
                     ),
                 ),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=MeilisearchSearchConfig(
+                        index_uid=index_uid,
+                        filterable_attributes=["category"],
+                    ),
+                ),
             }
         )
     )
 
     cmd = ctx.search.command(spec)
-    await cmd.ensure_index()
-    await cmd.delete_all()
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
     await cmd.upsert(
         [
             Product(id="1", title="Apple pie", category="food"),
@@ -100,13 +111,20 @@ async def test_filter_in_and_or_narrows_hits(meilisearch_client) -> None:
                         filterable_attributes=["category", "title"],
                     ),
                 ),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=MeilisearchSearchConfig(
+                        index_uid=index_uid,
+                        filterable_attributes=["category", "title"],
+                    ),
+                ),
             },
         ),
     )
 
     cmd = ctx.search.command(spec)
-    await cmd.ensure_index()
-    await cmd.delete_all()
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
     await cmd.upsert(
         [
             Product(id="1", title="Red apple", category="food"),
@@ -155,13 +173,17 @@ async def test_filter_comparison_and_null(meilisearch_client) -> None:
                 MeilisearchClientDepKey: meilisearch_client,
                 SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=cfg,
+                ),
             },
         ),
     )
 
     cmd = ctx.search.command(spec)
-    await cmd.ensure_index()
-    await cmd.delete_all()
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
     await cmd.upsert(
         [
             Product(id="1", title="Apple", category="food"),
