@@ -12,8 +12,8 @@ reads. The concept is [Analytics](../../data-events/analytics.md); the worked fl
 [analytics-over-a-data-lake](../../recipes/analytics-over-a-data-lake.md) recipe.
 
 ```python
-q = ctx.analytics.query(spec)     # run a registered query
-i = ctx.analytics.ingest(spec)    # append rows (when ingest is set)
+rows = await ctx.analytics.query(spec).run("by_region", params)   # registered query → typed rows
+await ctx.analytics.ingest(spec).append(new_rows)                 # append-only bulk load
 ```
 
 ## Spec

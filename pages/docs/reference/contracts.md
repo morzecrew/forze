@@ -6,8 +6,8 @@ summary: Every capability the application can resolve from the execution context
 
 The narrative is in [Contracts & adapters](../core-concepts/contracts.md); this is
 the index — each capability, the spec it's keyed by, and how a handler reaches it
-from the `ExecutionContext`. Each capability links to its reference page (the spec
-fields, the method surface, and the integrations that implement it).
+from the `ExecutionContext`. Capabilities with a dedicated reference page are linked
+(the spec fields, the method surface, and the integrations that implement it).
 
 ## Data & storage
 

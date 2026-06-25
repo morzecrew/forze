@@ -43,17 +43,19 @@ def test_unknown_attribute_raises(module) -> None:
 
 
 def test_import_forze_is_lazy_and_pulls_no_heavy_deps() -> None:
-    # A fresh interpreter: importing the namespace must not eagerly load the execution
+    # A fresh interpreter: importing either front door must not eagerly load the execution
     # kernel or any integration package — the cost is deferred to first symbol access.
     code = (
-        "import sys, forze\n"
+        "import sys, forze, forze_kits\n"
         "kernel = 'forze.application.execution' in sys.modules\n"
         "integrations = [m for m in sys.modules if m.startswith('forze_') "
-        "and m not in ('forze_kits',)]\n"
+        "and not m.startswith('forze_kits')]\n"
         "assert not kernel, 'execution kernel imported eagerly'\n"
         "assert not integrations, f'integration pkgs imported: {integrations}'\n"
-        "forze.DocumentSpec  # touching a symbol resolves it\n"
+        "forze.DocumentSpec  # touching a core symbol resolves it\n"
         "assert 'forze.application.contracts.document' in sys.modules\n"
+        "forze_kits.DocumentFacade  # the kits door is lazy too\n"
+        "assert 'forze_kits.aggregates.document' in sys.modules\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True

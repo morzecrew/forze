@@ -153,8 +153,10 @@ for every messaging resource are in the
 
 A durable, principal-addressed signal is also stored in a per-recipient **mailbox**, so
 a device offline at emit time receives it on reconnect: give the gateway a
-`mailbox_factory` and the connect layer `mailbox_factory` + `cursors_factory` (each
-device has its own cursor, so it never re-receives what it acked). For multi-node, use
+`mailbox_factory`, and pass `attach_realtime_connection` a `mailbox_factory`, a
+`cursors_factory`, **and** a `runtime`. Replay opens a scope, so all three are required —
+the two factories alone won't enable it (each device has its own cursor, so it never
+re-receives what it acked). For multi-node, use
 `RedisRealtimePresence` (TTL-backed, so a crashed node's rooms lapse) with
 `realtime_presence_heartbeat_lifecycle_step`, and drop connections whose credential has
 lapsed with `realtime_identity_expiry_lifecycle_step`. The full store-and-forward flow —

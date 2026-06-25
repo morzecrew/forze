@@ -53,9 +53,7 @@ class ProviderStore:
         """Look up a registered provider or instance without cycle checks."""
 
         if route is None:
-            dep = self.plain_deps.get(key)
-
-            if not dep:
+            if key not in self.plain_deps:
                 where = (
                     ""
                     if fallback_from_route is None
@@ -67,6 +65,8 @@ class ProviderStore:
                     f"{self._registered_hint(key, None)}. "
                     "Did you forget to register it in a DepsModule?"
                 )
+
+            dep = self.plain_deps[key]
 
         else:
             routes = self.routed_deps.get(key)

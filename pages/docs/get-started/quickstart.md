@@ -82,7 +82,7 @@ override or to disable an operation.
 assembles an [`ExecutionRuntime`](../core-concepts/runtime.md) around it. Then
 `document_facade(...)` returns a small factory: call `users()` to get a fully-typed
 [`DocumentFacade`](../core-concepts/application-layer.md) bound to the runtime's
-current request context — fresh each call, never cached across requests.
+current scope context — fresh each call, never cached across requests.
 
 ```python
 --8<-- "quickstart/app.py:runtime"
