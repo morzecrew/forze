@@ -125,8 +125,8 @@ def _enter(seq: int, tx_id: int) -> Event:
     return _ev(seq, trace_domain="tx", op="enter", tx_id=tx_id)
 
 
-def _exit(seq: int, tx_id: int) -> Event:
-    return _ev(seq, trace_domain="tx", op="exit", tx_id=tx_id)
+def _exit(seq: int, tx_id: int, *, outcome: str = "commit") -> Event:
+    return _ev(seq, trace_domain="tx", op="exit", tx_id=tx_id, outcome=outcome)
 
 
 class TestDerivation:
@@ -168,6 +168,24 @@ class TestDerivation:
         by = {tx.name: tx for tx in transactions_from_history(history)}
         assert by["tx1"].committed and not by["tx2"].committed
         assert serializable()(history) == []  # only one committed → no conflict
+
+    def test_a_rollback_outcome_exit_is_not_committed(self) -> None:
+        # The exit fires from a finally on rollback too, so tx 2 DOES emit an exit — but with a
+        # rollback outcome, so it must not be counted as committed (no false write-write conflict).
+        history = History(
+            seed=0,
+            events=(
+                _enter(0, 1),
+                _wrt(1, 1, "x"),
+                _exit(2, 1),  # committed
+                _enter(3, 2),
+                _wrt(4, 2, "x"),
+                _exit(5, 2, outcome="rollback"),  # rolled back, yet emits an exit
+            ),
+        )
+        by = {tx.name: tx for tx in transactions_from_history(history)}
+        assert by["tx1"].committed and not by["tx2"].committed
+        assert serializable()(history) == []  # the rolled-back writer is not a conflicting committer
 
     def test_events_without_tx_id_are_ignored(self) -> None:
         history = History(seed=0, events=(_ev(0, phase="command", key="x", op="update"),))

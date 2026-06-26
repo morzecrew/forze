@@ -177,27 +177,37 @@ class TracingPortProxy(PortProxy):
     # ....................... #
 
     def _record_return(self, name: str, args: tuple[Any, ...], result: Any) -> None:
-        """Record a read's returned value on a return event (capture mode only)."""
+        """Record a call's returned value(s) on return event(s) (capture mode only).
+
+        A batch operation returns a ``list`` of entities (``create_many``/``update_many``); each is
+        recorded as its own return event, so the value-trace — and the per-commit cross-aggregate
+        oracle, which reconstructs state from these results — sees every written entity, not just
+        single-entity writes. A non-list (a single read model, or a ``(model, diff)`` tuple that
+        ``_dump`` treats as unstructured) is recorded as one event as before.
+        """
 
         if not self.capture:
             return
 
-        data = self._dump(result)
-        if data is None:
-            return
+        items: list[Any] = result if isinstance(result, list) else [result]
 
-        record(
-            domain=self.domain,
-            op=name,
-            surface=self.surface,
-            route=self.route,
-            phase=self.phase,
-            tx_depth=self.tx_depth_getter(),
-            tx_id=self.tx_id_getter(),
-            key=self._key_of(args),
-            result=self._redact(data),
-            deps=self.deps,
-        )
+        for item in items:
+            data = self._dump(item)
+            if data is None:
+                continue
+
+            record(
+                domain=self.domain,
+                op=name,
+                surface=self.surface,
+                route=self.route,
+                phase=self.phase,
+                tx_depth=self.tx_depth_getter(),
+                tx_id=self.tx_id_getter(),
+                key=self._key_of(args),
+                result=self._redact(data),
+                deps=self.deps,
+            )
 
     # ....................... #
 

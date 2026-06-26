@@ -65,3 +65,51 @@ class TestDstPaymentsCompiledOracle:
 
         assert report is not None
         assert report.violations[0].invariant == "single_payment_per_order"
+
+
+# ....................... #
+# The v1 per-commit oracle over a REAL simulation trace (capture_values on) — proving the trace fold
+# reads an actual run end to end, not only synthesized histories.
+
+
+def _per_commit_simulation(transactions: str) -> Simulation:
+    oracle = compile_oracle(SINGLE_PAYMENT_PER_ORDER, per_commit=True)
+    return Simulation(
+        operations=registry,
+        deps=lambda: MockDepsModule(domain_events=_EVENTS, transactions=transactions),
+        observe=oracle.observe,  # a no-op for v1; the invariants read the folded trace
+        invariants=[*oracle.invariants],
+    )
+
+
+def _capture_config(seeds: range) -> SimulationConfig:
+    return SimulationConfig(
+        strategy=Strategy.SCENARIO,
+        act_count=4,
+        concurrency=4,
+        seeds=seeds,
+        capture_values=True,  # v1 reconstructs entities from captured write results
+    )
+
+
+class TestDstPaymentsPerCommitOracle:
+    def test_faithful_tx_holds_per_commit(self) -> None:
+        # The loser's payment rolls back (its transaction never commits), so no committed point ever
+        # has two payments for an order — the per-commit fold reports nothing.
+        sim = _per_commit_simulation(transactions="journal")
+        report = sim.run(_capture_config(range(8)), scenario=sim.derive_scenario())
+
+        assert report is None
+
+    def test_per_commit_reconstructs_the_faithful_view_not_the_unfaithful_state(self) -> None:
+        # The trust boundary, made concrete (RFC 0012 §4.D). The per-commit fold reconstructs the
+        # FAITHFUL world — a rolled-back transaction undoes its writes. The no-op manager is the
+        # deliberately-*unfaithful* one: the loser's transaction raises (its scope records a
+        # rollback) yet its payment is NOT actually undone, so the real state double-charges. v1
+        # trusts the trace's rollback signal and reports the faithful answer (one payment, no
+        # violation); catching an unfaithful backend is v0's + conformance's job, not v1's. So the
+        # per-commit fold here reports nothing — it is only as sound as the backend's conformance.
+        sim = _per_commit_simulation(transactions="none")
+        report = sim.run(_capture_config(range(5)), scenario=sim.derive_scenario())
+
+        assert report is None

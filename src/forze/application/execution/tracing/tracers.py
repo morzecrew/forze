@@ -225,8 +225,10 @@ class TxTracer(Protocol):
         """Record root transaction scope entry."""
         ...
 
-    def on_scope_exit(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
-        """Record root transaction scope exit."""
+    def on_scope_exit(
+        self, *, route: str, depth: int, tx_id: int | None = None, committed: bool = True
+    ) -> None:
+        """Record root transaction scope exit (``committed`` distinguishes commit from rollback)."""
         ...
 
 
@@ -246,8 +248,10 @@ class NoopTxTracer:
         del route, depth, tx_id
         return
 
-    def on_scope_exit(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
-        del route, depth, tx_id
+    def on_scope_exit(
+        self, *, route: str, depth: int, tx_id: int | None = None, committed: bool = True
+    ) -> None:
+        del route, depth, tx_id, committed
         return
 
 
@@ -288,7 +292,9 @@ class RuntimeBackedTxTracer:
 
     # ....................... #
 
-    def on_scope_exit(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
+    def on_scope_exit(
+        self, *, route: str, depth: int, tx_id: int | None = None, committed: bool = True
+    ) -> None:
         self.runtime.record(
             domain="tx",
             op="exit",
@@ -296,6 +302,9 @@ class RuntimeBackedTxTracer:
             tx_route=route,
             tx_depth=depth,
             tx_id=tx_id,
+            # The exit fires from a ``finally`` — it marks scope teardown on commit AND rollback; the
+            # outcome distinguishes them so a rolled-back scope is never read as committed.
+            outcome="commit" if committed else "rollback",
         )
 
 

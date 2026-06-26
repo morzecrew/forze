@@ -25,8 +25,9 @@ interleave at every ``await`` and a span-based attribution misattributes an oute
 inside an inner span. So the trace stamps a run-global ``tx_id`` on every event (RFC 0004 C.1):
 :func:`transactions_from_history` groups by it (sound, exact), and :func:`snapshot_isolation` /
 :func:`serializable` wrap the kernel as ``History``-reading :data:`Invariant`s for a sweep. A
-transaction **committed** iff its scope emitted a ``tx`` ``exit`` event (a clean commit; a rollback
-raises and emits none); its concurrency window is the span of trace sequences carrying its ``tx_id``.
+transaction **committed** iff its scope emitted a ``tx`` ``exit`` event with ``outcome == "commit"``
+— the exit fires from a ``finally`` on commit *and* rollback, so the outcome (not the bare event)
+is the commit signal; its concurrency window is the span of trace sequences carrying its ``tx_id``.
 """
 
 from __future__ import annotations
@@ -200,7 +201,11 @@ def transactions_from_history(
             builder.start = min(builder.start, seq)
             builder.end = max(builder.end, seq)
 
-        if fields.get("trace_domain") == "tx" and fields.get("op") == "exit":
+        if (
+            fields.get("trace_domain") == "tx"
+            and fields.get("op") == "exit"
+            and fields.get("outcome") == "commit"
+        ):
             builder.committed = True
 
         key = fields.get("key")

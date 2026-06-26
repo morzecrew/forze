@@ -292,29 +292,34 @@ class TransactionContext:
         token_cb = self.__cb_stack.set([])
         # A run-global id for this root transaction (``None`` in production). Stamped on the trace
         # so the oracle groups port calls by transaction — operation spans cannot, since concurrent
-        # transactions interleave. A clean exit emits a tx ``exit`` event under this id (the commit
-        # signal); a rollback raises and emits none.
+        # transactions interleave. The scope always emits a tx ``exit`` event under this id (from the
+        # ``finally`` below); its ``outcome`` is ``commit`` on a clean exit and ``rollback`` when an
+        # exception escaped, so a rolled-back scope is never mistaken for a commit.
         tx_id = next_tx_id()
         token_id = self.__tx_id.set(tx_id)
 
         self._tx_tracer.on_scope_enter(route=route_name, depth=1, tx_id=tx_id)
 
         deferred: list[Callable[[], Awaitable[None]]] | None = None
+        committed = False
 
         try:
             async with self._open_root(tx, read_only=root_read_only, isolation=isolation):
                 yield
 
             # Reached only on a clean exit (no exception thrown into the scope) — capture the
-            # after-commit callbacks to drain below. An escaping exception skips this, leaving
-            # ``deferred`` as ``None`` so nothing is run after a rollback.
+            # after-commit callbacks to drain below, and mark the transaction committed. An escaping
+            # exception skips this, leaving ``deferred`` as ``None`` (nothing runs after a rollback)
+            # and ``committed`` False, so the exit event records a rollback, not a commit.
             deferred = self.__cb_stack.get()
+            committed = True
 
         finally:
             self._tx_tracer.on_scope_exit(
                 route=route_name,
                 depth=self.__tx_depth.get(),
                 tx_id=tx_id,
+                committed=committed,
             )
             self.__cb_stack.reset(token_cb)
             self.__tx_handle.reset(token_h)

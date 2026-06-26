@@ -13,11 +13,19 @@ so a generated workload of many orders/ledgers is checked exhaustively, not at a
 invariant then flags any recorded scope whose aggregate failed the predicate.
 
 Two honest bounds. (1) It sees the *end* state only, so a violation created mid-run and later healed
-is missed (the per-commit trace fold is v1, RFC 0012 §4.D). (2) It checks the scopes **present in the
+is missed (that is what v1 below catches). (2) It checks the scopes **present in the
 data** — a scope with no matching records produces no group and is not checked; for the
 zero-anchored laws this primitive targets (a sum that must be ``0``, a count that must be ``<= 1``)
 an absent scope holds trivially, so this is benign, but a *minimum*-style predicate (e.g. a sum that
 must be ``>= 100``) would not be caught for a scope that vanished. Within those bounds it is sound.
+
+**v1 — per-commit trace fold** (``compile_oracle(per_commit=True)``). Instead of querying final
+state, it reads the value-trace (needs ``SimulationConfig.capture_values``), reconstructs the
+read-set's aggregate AS-OF EACH committed transaction, and asserts the predicate after every commit —
+so a violation a later transaction heals is caught at the commit where it existed. See
+:func:`_per_commit_invariant` for the mechanism and its bounds. It reconstructs the *faithful* world
+(a rolled-back transaction undoes its writes), which sharpens the trust boundary below: against an
+unfaithful backend it reports the faithful answer, not the actual state.
 
 **Trust boundary (RFC 0004 / RFC 0012 §4.D).** The verdict is only as strong as the conformance
 behind the read-set's backend: over the conformance-verified mock (≡ Postgres/Mongo for the isolation
@@ -28,16 +36,21 @@ that equivalence.
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, final
+from collections import defaultdict
+from typing import Any, Awaitable, Callable, Iterable, Mapping, cast, final
 
 import attrs
 
 from forze.application.contracts.invariants import (
     AGGREGATE_FIELD,
+    Count,
     SystemInvariant,
     computed_aggregate,
 )
-from forze.application.contracts.querying import AggregatesExpression
+from forze.application.contracts.querying import (
+    AggregatesExpression,
+    QueryFilterExpression,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 from forze_dst.oracle.invariants import Invariant, Violation
@@ -128,13 +141,168 @@ def _invariant_for(law: SystemInvariant) -> Invariant:
     return _check
 
 
-def compile_oracle(*laws: SystemInvariant) -> CompiledOracle:
-    """Compile *laws* into a :class:`CompiledOracle` (final-state, grouped — v0).
+# ....................... #
+# v1 — per-commit trace fold. Reconstructs the read-set's aggregate AS-OF EACH committed transaction
+# from the value-trace (requires SimulationConfig.capture_values) and checks the predicate after every
+# commit, so a violation a concurrent interleaving creates and a later transaction heals is caught at
+# the commit where it existed. A pure History-reading Invariant (no observe-time work) — it reads the
+# folded trace, which lands AFTER the observe hook runs. Bounds (see the module docstring): it folds
+# create/update *result* events (the full post-write entity, so no partial-update gotcha) keyed by id,
+# which assumes writes return their entity (the default ``return_new=True``) — a ``return_diff`` result
+# is not a full entity and is not folded; it does not yet fold deletes; the where is scalar-equality
+# only; a redacted field can't be summed. In a ``Cluster``, only node + observe traces are folded —
+# not the ``setup`` hook — so establish any state the fold must see in the node (or use run_recorded).
 
-    The returned ``observe`` hook records, per law and per scope, the aggregate and whether the
-    predicate held; the returned invariants flag the failures. Pass several laws to check them in one
-    pass. With no laws it is an inert oracle (empty observe, no invariants). Law names must be unique
-    — events are attributed by name, so a duplicate would cross-contaminate violation reporting.
+_TX_DOMAIN = "tx"
+_COMMAND_PHASE = "command"
+
+
+def _matches_where(
+    entity: Mapping[str, Any],
+    where: QueryFilterExpression | None,
+) -> bool:
+    """Whether a reconstructed *entity* satisfies the read-set's constant ``where``.
+
+    v1 supports scalar ``{"$values": {field: value}}`` equality — the shape the cross-aggregate laws
+    use. A richer filter raises (a documented v1 limit; wire the query matcher when one is needed).
+    """
+
+    if where is None:
+        return True
+
+    where_map = cast("Mapping[str, Any]", where)
+    values = where_map.get("$values")
+    if (
+        set(where_map) != {"$values"}
+        or not isinstance(values, Mapping)
+        or any(isinstance(value, Mapping) for value in values.values())
+    ):
+        raise exc.configuration(
+            "per-commit oracle supports only scalar {$values: {...}} equality in a read-set "
+            "'where'; richer filters are a v1 limit",
+            code="unsupported_where_in_per_commit_oracle",
+        )
+
+    return all(entity.get(field) == value for field, value in values.items())
+
+
+def _aggregate_by_scope(
+    law: SystemInvariant, entities: Iterable[Mapping[str, Any]]
+) -> dict[tuple[Any, ...], float]:
+    """The aggregate per scope over the where-matched materialized *entities*."""
+
+    groups: dict[tuple[Any, ...], list[Mapping[str, Any]]] = defaultdict(list)
+    for entity in entities:
+        if _matches_where(entity, law.read_set.where):
+            groups[tuple(entity.get(key) for key in law.read_set.scope_keys)].append(
+                entity
+            )
+
+    aggregate = law.aggregate
+    if isinstance(aggregate, Count):
+        return {scope: float(len(members)) for scope, members in groups.items()}
+
+    # Sum — the fold bypasses the backend's numeric validation, so guard non-numeric values with a
+    # clear configuration error rather than a bare TypeError mid-fold (a missing field is treated 0).
+    field = aggregate.field
+    totals: dict[tuple[Any, ...], float] = {}
+    for scope, members in groups.items():
+        total = 0.0
+        for member in members:
+            value = member.get(field)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise exc.configuration(
+                    f"per-commit oracle: read-set field {field!r} must be numeric to Sum, but an "
+                    f"entity in scope holds {type(value).__name__} {value!r}",
+                    code="non_numeric_sum_field",
+                )
+            total += float(value)
+        totals[scope] = total
+    return totals
+
+
+def _per_commit_invariant(law: SystemInvariant) -> Invariant:
+    """Check *law* after every committed transaction by folding the value-trace (v1)."""
+
+    route = law.read_set.spec.name
+
+    def _check(history: History) -> list[Violation]:
+        traces = history.of_kind("trace")
+
+        # Full post-write entities (create/update result events) per transaction, in trace order.
+        writes: dict[int, list[Mapping[str, Any]]] = defaultdict(list)
+        saw_command_write = False
+        for event in traces:
+            fields = event.fields
+            if fields.get("route") != route or fields.get("phase") != _COMMAND_PHASE:
+                continue
+            saw_command_write = True
+            result = fields.get("result")
+            tx_id = fields.get("tx_id")
+            if isinstance(result, Mapping) and "id" in result and tx_id is not None:
+                writes[int(tx_id)].append(result)
+
+        # Committed roots only, in commit order (the exit's trace_seq). The exit event fires from a
+        # ``finally`` on commit AND rollback, so a rolled-back transaction is excluded by requiring
+        # outcome == "commit"; only root scopes emit exits (depth 1), checked for good measure.
+        commits = sorted(
+            (int(fields["tx_id"]), int(fields.get("trace_seq", -1)))
+            for event in traces
+            for fields in (event.fields,)
+            if fields.get("trace_domain") == _TX_DOMAIN
+            and fields.get("op") == "exit"
+            and fields.get("outcome") == "commit"
+            and fields.get("tx_depth") == 1
+            and fields.get("tx_id") is not None
+        )
+        commits.sort(key=lambda pair: pair[1])
+
+        if saw_command_write and not any(writes.values()):
+            raise exc.configuration(
+                f"per-commit oracle for {law.name!r}: writes to {route!r} are on the trace but no "
+                "entity values were captured — enable SimulationConfig.capture_values (and keep "
+                "return_new=True on the writes)",
+                code="per_commit_oracle_needs_capture_values",
+            )
+
+        materialized: dict[Any, Mapping[str, Any]] = {}
+        first_failure: dict[tuple[Any, ...], tuple[int, float]] = {}
+        for tx_id, _seq in commits:
+            for entity in writes.get(tx_id, []):
+                materialized[entity["id"]] = entity
+            for scope, observed in _aggregate_by_scope(
+                law, materialized.values()
+            ).items():
+                if scope not in first_failure and not law.holds(observed):
+                    first_failure[scope] = (tx_id, observed)
+
+        return [
+            Violation(
+                invariant=law.name,
+                message=(
+                    f"system invariant {law.name!r} was violated at a committed point (tx{tx_id}) "
+                    f"— scope {dict(zip(law.read_set.scope_keys, scope))}: aggregate observed "
+                    f"{observed}"
+                ),
+            )
+            for scope, (tx_id, observed) in first_failure.items()
+        ]
+
+    return _check
+
+
+def compile_oracle(*laws: SystemInvariant, per_commit: bool = False) -> CompiledOracle:
+    """Compile *laws* into a :class:`CompiledOracle`.
+
+    Default (**v0, final-state**): the returned ``observe`` hook records, per law and per scope, the
+    aggregate and whether the predicate held; the invariants flag the failures. With ``per_commit``
+    (**v1, the per-commit trace fold**): the invariants instead read the value-trace and check the law
+    after *every committed transaction*, catching a violation that a later transaction heals (the
+    ``observe`` hook is then a no-op — v1 reads the folded trace directly). v1 needs
+    ``SimulationConfig.capture_values`` on. Pass several laws to check them in one pass; with no laws
+    it is inert. Law names must be unique — the oracle attributes results by name.
     """
 
     names = [law.name for law in laws]
@@ -144,6 +312,16 @@ def compile_oracle(*laws: SystemInvariant) -> CompiledOracle:
             f"compile_oracle: duplicate law name(s) {duplicates}; each SystemInvariant needs a "
             "unique name (the oracle attributes recorded events by name)",
             code="duplicate_system_invariant_name",
+        )
+
+    if per_commit:
+
+        async def per_commit_observe(_ctx: ExecutionContext) -> None:
+            return None  # v1 reads the folded trace directly; no observe-time work
+
+        return CompiledOracle(
+            observe=per_commit_observe,
+            invariants=tuple(_per_commit_invariant(law) for law in laws),
         )
 
     async def observe(ctx: ExecutionContext) -> None:
