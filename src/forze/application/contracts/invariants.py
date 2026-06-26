@@ -14,11 +14,11 @@ two consumers): the runtime helper in ``forze_kits`` enforces it, and the DST co
 the intersection of "pushes down to the query port" (``count`` / ``aggregate_many``) and
 "reconstructible from a recorded trace at each committed point" (the simulation oracle).
 
-**Honesty (see RFC 0012 §4.B / §7).** A cross-aggregate law is *not* free distributed atomicity.
-Enforcement is **preventive** only when the read-set co-locates with the write in one transaction
-under a sufficient (capability-verified) isolation level; otherwise it is **detective** — evaluated
-after commit, so a violation is *reported*, not prevented. This module only declares the law; the
-enforcement mode is chosen at the call site, and the distinction is named there, never blurred.
+**Honesty.** A cross-aggregate law is *not* free distributed atomicity. Enforcement is **preventive**
+only when the read-set co-locates with the write in one transaction under a sufficient
+(capability-verified) isolation level; otherwise it is **detective** — evaluated after commit, so a
+violation is *reported*, not prevented. This module only declares the law; the enforcement mode is
+chosen at the call site, and the distinction is named there, never blurred.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ in the same result row (a scope key named ``"value"`` would have)."""
 
 # ----------------------- #
 # Aggregates — the closed set of reducers that collapse a read-set to one comparable number. Closed
-# on purpose: each both pushes down to the query port and folds from a recorded trace (RFC 0012 §4.A).
+# on purpose: each both pushes down to the query port and folds from a recorded trace at each commit.
 
 
 @final

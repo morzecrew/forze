@@ -11,7 +11,7 @@ deviate from the textbook is a reviewed, justified strengthening.
 The cases span every level boundary Forze models:
 
 - ``dirty_read`` must be prevented at every level (no transaction observes an uncommitted write) —
-  the case that drove the mock's faithful read-committed (RFC 0004 E.1);
+  the case that drove the mock's faithful read-committed isolation;
 - ``non_repeatable_read`` and ``read_skew`` discriminate READ_COMMITTED from SNAPSHOT;
 - ``write_skew`` discriminates SNAPSHOT from SERIALIZABLE (the headline SI↔serializable gap);
 - ``lost_update`` documents the rev-OCC strengthening (prevented at every level, vs the textbook

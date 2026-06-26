@@ -1,4 +1,4 @@
-"""The dst_payments double-charge, caught by a *compiled* SystemInvariant oracle (RFC 0012 P3).
+"""The dst_payments double-charge, caught by a *compiled* SystemInvariant oracle.
 
 The hand-written ``expect("payments", total <= 1)`` in the dst_payments example is exactly the kind of
 oracle ``compile_oracle`` generates from a declaration. Here the same scenario (the real registry +
@@ -102,7 +102,7 @@ class TestDstPaymentsPerCommitOracle:
         assert report is None
 
     def test_per_commit_reconstructs_the_faithful_view_not_the_unfaithful_state(self) -> None:
-        # The trust boundary, made concrete (RFC 0012 §4.D). The per-commit fold reconstructs the
+        # The trust boundary, made concrete. The per-commit fold reconstructs the
         # FAITHFUL world — a rolled-back transaction undoes its writes. The no-op manager is the
         # deliberately-*unfaithful* one: the loser's transaction raises (its scope records a
         # rollback) yet its payment is NOT actually undone, so the real state double-charges. v1

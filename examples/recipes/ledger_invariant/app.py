@@ -10,7 +10,7 @@ The law is enforced **detectively**: after a balance-changing operation commits,
 the ledger's sum and raises if it drifted. *Detective* is the honest word — the check runs
 post-commit, so it **reports** a breach, it does not prevent it (the offending write is already
 durable). Preventive enforcement, and verifying the law under simulated concurrency with a DST
-oracle, are later phases of the same declaration (RFC 0012).
+oracle, are later phases of the same declaration.
 
 Double-entry bookkeeping keeps the sum at zero: a ledger opens with balancing entries (an asset of
 ``+100`` against a liability of ``-100``) and a :func:`transfer` moves value between accounts without

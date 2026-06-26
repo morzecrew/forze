@@ -1,4 +1,4 @@
-"""The isolation anomaly battery, run against the mock — the mock-only first leg of RFC 0004 §4.A.
+"""The isolation anomaly battery, run against the mock — the mock-only first leg of conformance.
 
 Asserts the mock produces the verdict a correct Forze adapter should at each level, and — the
 integrity guard — that any deviation from the textbook contract is a registered, justified

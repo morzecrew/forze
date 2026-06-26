@@ -1,4 +1,4 @@
-"""Tenant-sharded gateway source — namespace-tier per-tenant realtime streams (RFC 0007).
+"""Tenant-sharded gateway source — namespace-tier per-tenant realtime streams.
 
 The gateway is a cross-tenant consumer with no ambient tenant. :class:`TenantShardedSignalSource`
 runs one consume loop per assigned tenant, each **bound** to that tenant, so the tenant a signal
@@ -229,7 +229,7 @@ async def test_empty_shard_idles_until_cancelled() -> None:
 
 
 async def test_tenant_aware_mailbox_scopes_by_trusted_tenant_without_header_binding() -> None:
-    # The RFC 0007 payoff: a tenant-aware mailbox + sharded source + bind_tenant_from_headers
+    # The payoff: a tenant-aware mailbox + sharded source + bind_tenant_from_headers
     # OFF (default). The store must NOT fail closed — the tenant is the (trusted) stream's.
     spec = realtime_stream_spec()
     sio = _StubSio()

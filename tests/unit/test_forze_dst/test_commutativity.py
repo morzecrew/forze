@@ -1,4 +1,4 @@
-"""Commutativity assertions (RFC 0004 D) — verify a declared-commutative workload actually commutes.
+"""Commutativity assertions — verify a declared-commutative workload actually commutes.
 
 ``commutative_convergence`` rebuilds the same workload under a band of schedule seeds (the scheduler
 permuting the interleaving, fresh state per run) and asserts every run reaches the same final state.

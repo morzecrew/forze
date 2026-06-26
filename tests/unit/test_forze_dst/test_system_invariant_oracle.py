@@ -1,4 +1,4 @@
-"""compile_oracle (RFC 0012 P3) — a SystemInvariant compiled into a DST oracle, checked over final state.
+"""compile_oracle — a SystemInvariant compiled into a DST oracle, checked over final state.
 
 The oracle's observe hook issues ONE grouped aggregate per law and records the outcome for *every*
 scope the run produced; the compiled invariant flags only the scopes whose aggregate failed the

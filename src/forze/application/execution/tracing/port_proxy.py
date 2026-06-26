@@ -69,7 +69,7 @@ class TracingPortProxy(PortProxy):
     tx_depth_getter: Callable[[], int] = attrs.field(default=_default_tx_depth)
     tx_id_getter: Callable[[], int | None] = attrs.field(default=_default_tx_id)
     """Returns the active root transaction's run-global id (``None`` outside a tx / in production) —
-    lets the oracle group a port call into the transaction that issued it (RFC 0004 C.1)."""
+    lets the oracle group a port call into the transaction that issued it."""
     capture: bool = False
     """Capture redaction-applied call values (payload/result) onto the trace — DST only; off in
     production so the trace stays id-only and PII-free."""

@@ -1,6 +1,6 @@
 """The isolation conformance battery, run against real Postgres — the mock↔real differential.
 
-RFC 0004 P4: the keystone. The same `forze_dst.conformance` battery and the same `expected_verdict`
+The keystone. The same `forze_dst.conformance` battery and the same `expected_verdict`
 oracle that pass against the in-memory mock are run here against a real Postgres (testcontainers),
 over a pooled client so each session is an independent connection — a genuinely concurrent
 transaction, forced into an exact interleaving by the shipped `Conductor`. Because both backends are

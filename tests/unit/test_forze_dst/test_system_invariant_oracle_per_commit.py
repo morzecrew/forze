@@ -1,4 +1,4 @@
-"""compile_oracle(per_commit=True) (RFC 0012 P4) — the per-commit trace fold.
+"""compile_oracle(per_commit=True) — the per-commit trace fold.
 
 The v0 oracle checks final state; v1 reconstructs the read-set's aggregate AS-OF EACH committed
 transaction from the value-trace and asserts the predicate after every commit — so a violation a

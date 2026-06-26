@@ -109,7 +109,7 @@ class TestTransactionContextTxTracer:
     @pytest.mark.asyncio
     async def test_a_rollback_records_a_non_commit(self) -> None:
         # The exit fires from a finally on rollback too, but is marked not-committed so a rolled-back
-        # scope is never read as a commit (RFC 0012 P4 — the per-commit oracle relies on this).
+        # scope is never read as a commit (the per-commit oracle relies on this).
         recording = RecordingTxTracer()
         tx = TransactionContext()
         tx.lock(_mock_tx_resolver, tx_tracer=recording)

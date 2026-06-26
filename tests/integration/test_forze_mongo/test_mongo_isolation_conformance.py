@@ -1,6 +1,6 @@
-"""The isolation conformance battery, run against real MongoDB — the SI-only differential (P6).
+"""The isolation conformance battery, run against real MongoDB — the SI-only differential.
 
-The Mongo leg of RFC 0004 A.5, parallel to the Postgres one. MongoDB multi-document transactions
+The Mongo leg of the isolation battery, parallel to the Postgres one. MongoDB multi-document transactions
 provide **snapshot isolation** (and no serializable level — its `TxCapabilities` advertises only
 `{READ_COMMITTED, SNAPSHOT}`), so the battery runs at `SNAPSHOT` and asserts the same
 `expected_verdict` the mock passes — green = **mock ≡ real Mongo** for snapshot isolation. Write

@@ -1,8 +1,8 @@
 """Compile a :class:`~forze.application.contracts.invariants.SystemInvariant` into a DST oracle.
 
-A cross-aggregate law (a conservation or cardinality predicate over a read-set, RFC 0012) is declared
-once and gets two consumers: ``forze_kits`` *enforces* it at runtime, and this module *verifies* it
-under simulation. :func:`compile_oracle` turns one or more laws into a :class:`CompiledOracle` — an
+A cross-aggregate law (a conservation or cardinality predicate over a read-set) is declared once and
+gets two consumers: ``forze_kits`` *enforces* it at runtime, and this module *verifies* it under
+simulation. :func:`compile_oracle` turns one or more laws into a :class:`CompiledOracle` — an
 ``observe`` hook plus the matching DST :data:`~forze_dst.oracle.invariants.Invariant`\\ s — that a
 ``Simulation``/``Cluster`` runs like any other oracle.
 
@@ -27,11 +27,10 @@ so a violation a later transaction heals is caught at the commit where it existe
 (a rolled-back transaction undoes its writes), which sharpens the trust boundary below: against an
 unfaithful backend it reports the faithful answer, not the actual state.
 
-**Trust boundary (RFC 0004 / RFC 0012 §4.D).** The verdict is only as strong as the conformance
-behind the read-set's backend: over the conformance-verified mock (≡ Postgres/Mongo for the isolation
-family) a green result refers to the real engine; over an unverified port it is a model tautology for
-the concurrency-dependent part. The oracle reads simulated state — it does not itself re-establish
-that equivalence.
+**Trust boundary.** The verdict is only as strong as the conformance behind the read-set's backend:
+over the conformance-verified mock (≡ Postgres/Mongo for the isolation family) a green result refers
+to the real engine; over an unverified port it is a model tautology for the concurrency-dependent
+part. The oracle reads simulated state — it does not itself re-establish that equivalence.
 """
 
 from __future__ import annotations

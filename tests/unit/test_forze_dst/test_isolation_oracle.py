@@ -1,4 +1,4 @@
-"""Transactional-isolation oracle (RFC 0004 C.2 + C.1) — snapshot isolation + serializability.
+"""Transactional-isolation oracle — snapshot isolation + serializability.
 
 Three layers:
 

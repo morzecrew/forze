@@ -22,7 +22,7 @@ the sound-incomplete posture of :func:`~forze_dst.oracle.linearizability.monoton
 **Feeding the kernel.** A correct per-transaction read/write set requires attributing each port call
 to the *transaction* that issued it — which operation spans cannot give, since concurrent operations
 interleave at every ``await`` and a span-based attribution misattributes an outer call that lands
-inside an inner span. So the trace stamps a run-global ``tx_id`` on every event (RFC 0004 C.1):
+inside an inner span. So the trace stamps a run-global ``tx_id`` on every event:
 :func:`transactions_from_history` groups by it (sound, exact), and :func:`snapshot_isolation` /
 :func:`serializable` wrap the kernel as ``History``-reading :data:`Invariant`s for a sweep. A
 transaction **committed** iff its scope emitted a ``tx`` ``exit`` event with ``outcome == "commit"``
