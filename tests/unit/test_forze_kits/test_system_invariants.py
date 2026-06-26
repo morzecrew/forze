@@ -163,6 +163,13 @@ class TestEvaluateCardinality:
         assert not result.held
         assert result.observed == 2.0
 
+    async def test_a_missing_scope_key_fails_closed(self) -> None:
+        # An unbound scope key is a clear configuration error, not a cryptic KeyError.
+        ctx = _ctx()
+
+        with pytest.raises(exc, match="missing scope key"):
+            await evaluate(SINGLE_CAPTURED_PAYMENT, ctx, {})  # order_id not bound
+
 
 # ....................... #
 

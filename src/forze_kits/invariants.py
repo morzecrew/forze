@@ -18,6 +18,7 @@ from typing import Any, Mapping, final
 import attrs
 
 from forze.application.contracts.invariants import (
+    AGGREGATE_FIELD,
     Count,
     SystemInvariant,
     computed_aggregate,
@@ -71,7 +72,7 @@ async def evaluate(
         page = await query.aggregate_many(
             {"$computed": computed_aggregate(aggregate)}, filters=filters
         )
-        raw = page.hits[0].get("value") if page.hits else 0
+        raw = page.hits[0].get(AGGREGATE_FIELD) if page.hits else 0
         observed = float(raw if raw is not None else 0)
 
     return InvariantResult(

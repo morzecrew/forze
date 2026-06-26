@@ -33,6 +33,14 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
 )
 from forze.application.contracts.transaction import IsolationLevel
+from forze.base.exceptions import exc
+
+# ----------------------- #
+
+AGGREGATE_FIELD = "__forze_aggregate__"
+"""The output alias :func:`computed_aggregate` reduces into. Internal and deliberately unlikely as a
+real document field, so it never collides with a grouped query's :attr:`~ReadSet.scope_keys` aliases
+in the same result row (a scope key named ``"value"`` would have)."""
 
 # ----------------------- #
 # Aggregates — the closed set of reducers that collapse a read-set to one comparable number. Closed
@@ -93,9 +101,9 @@ def computed_aggregate(reducer: Reducer) -> AggregateComputedFieldExpression:
     """
 
     if isinstance(reducer, Count):
-        return {"value": {"$count": None}}
+        return {AGGREGATE_FIELD: {"$count": None}}
 
-    return {"value": {"$sum": reducer.field}}
+    return {AGGREGATE_FIELD: {"$sum": reducer.field}}
 
 
 def scope_filter(
@@ -108,6 +116,14 @@ def scope_filter(
     oracle's group-by-:attr:`~ReadSet.scope_keys` query — both derive from the same declaration, so a
     binding the runtime checks and a group the oracle checks select the same records.
     """
+
+    missing = [key for key in read_set.scope_keys if key not in params]
+    if missing:
+        raise exc.configuration(
+            f"scope_filter: params is missing scope key(s) {missing} — the read-set is scoped by "
+            f"{list(read_set.scope_keys)}, so every one must be bound",
+            code="missing_scope_key",
+        )
 
     scope_values = {key: params[key] for key in read_set.scope_keys}
     scope_pred: QueryFilterExpression | None = (

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.invariants import (
     Count,
@@ -20,6 +22,7 @@ from forze.application.contracts.invariants import (
     SystemInvariant,
 )
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import exc
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst.invariants import check, compile_oracle
 from forze_dst.oracle import run_recorded
@@ -242,3 +245,122 @@ class TestConservationUnderSimulation:
         assert len(violations) == 1
         assert violations[0].invariant == "conservation"
         assert "L1" in violations[0].message
+
+
+# ....................... #
+# Review-driven coverage: multi-scope violations, global laws, the v0 final-state bound, and the
+# regressions for the confirmed correctness fixes (scope-key named "value", duplicate law names).
+
+
+class _Tagged(Document):
+    value: str  # a scope field literally named "value" — the old computed-alias collision case
+    n: int = 0
+
+
+class _TaggedCreate(CreateDocumentCmd):
+    value: str
+    n: int = 0
+
+
+class _TaggedRead(ReadDocument):
+    value: str
+    n: int = 0
+
+
+TAGGED = DocumentSpec(
+    name="oracle_tagged",
+    read=_TaggedRead,
+    write={"domain": _Tagged, "create_cmd": _TaggedCreate, "update_cmd": _TaggedCreate},
+)
+
+GLOBAL_CONSERVATION = SystemInvariant(
+    name="global_conservation",
+    read_set=ReadSet(spec=ENTRIES, scope_keys=()),  # no scope_keys → one whole-collection check
+    aggregate=Sum("amount"),
+    holds=lambda total: total == 0,
+)
+
+VALUE_SCOPED = SystemInvariant(
+    name="value_scoped",
+    read_set=ReadSet(spec=TAGGED, scope_keys=("value",)),  # scope key collides with the old alias
+    aggregate=Count(),
+    holds=lambda n: n <= 1,
+)
+
+
+class TestReviewDrivenCoverage:
+    async def test_a_single_law_flags_every_unbalanced_scope(self) -> None:
+        ctx = _ctx()
+        await _add(ctx, "L1", amount=50)  # unbalanced
+        await _add(ctx, "L2", amount=-20)  # unbalanced
+        await _add(ctx, "L3", amount=10)
+        await _add(ctx, "L3", amount=-10)  # balanced
+
+        _, violations = await _run(compile_oracle(CONSERVATION), ctx)
+
+        assert {v.invariant for v in violations} == {"conservation"}
+        flagged = {
+            scope
+            for v in violations
+            for scope in ("L1", "L2", "L3")
+            if scope in v.message
+        }
+        assert flagged == {"L1", "L2"}  # both bad scopes, not L3
+
+    async def test_global_law_checks_the_whole_collection(self) -> None:
+        ctx = _ctx()
+        await _add(ctx, "L1", amount=100)
+        await _add(ctx, "L2", amount=-100)  # cross-ledger sum is 0
+
+        history, violations = await _run(compile_oracle(GLOBAL_CONSERVATION), ctx)
+
+        assert violations == []
+        events = history.of_kind(SYSTEM_INVARIANT_KIND)
+        assert len(events) == 1  # one whole-collection check
+        assert events[0].fields["scope"] == {}  # global → empty scope
+
+    async def test_global_law_catches_a_whole_collection_breach(self) -> None:
+        ctx = _ctx()
+        await _add(ctx, "L1", amount=100)
+        await _add(ctx, "L2", amount=-40)  # total +60
+
+        _, violations = await _run(compile_oracle(GLOBAL_CONSERVATION), ctx)
+
+        assert len(violations) == 1
+        assert "60" in violations[0].message
+
+    async def test_final_state_only_misses_a_healed_transient(self) -> None:
+        # The honest v0 bound: a violation that exists mid-run but is gone by the end is NOT caught.
+        ctx = _ctx()
+        await _add(ctx, "L1", amount=50)  # transiently +50 — would fail if checked here
+        await _add(ctx, "L1", amount=-50)  # healed to 0 before the oracle observes
+
+        _, violations = await _run(compile_oracle(CONSERVATION), ctx)
+
+        assert violations == []  # final state holds; the transient is missed (per-commit fold is v1)
+
+    async def test_scope_key_named_value_is_not_corrupted_by_the_aggregate(self) -> None:
+        # Regression: the computed alias must not collide with a scope key named "value".
+        ctx = _ctx()
+        await ctx.document.command(TAGGED).create(_TaggedCreate(value="dup"))
+        await ctx.document.command(TAGGED).create(_TaggedCreate(value="dup"))  # count 2 → breach
+
+        history, violations = await _run(compile_oracle(VALUE_SCOPED), ctx)
+
+        event = next(
+            e for e in history.of_kind(SYSTEM_INVARIANT_KIND) if e.fields["scope"]
+        )
+        assert event.fields["scope"] == {"value": "dup"}  # the real scope value, not the count
+        assert event.fields["observed"] == 2.0
+        assert len(violations) == 1
+
+    def test_duplicate_law_names_are_rejected(self) -> None:
+        clash = SystemInvariant(
+            name="conservation",  # same name as CONSERVATION
+            read_set=ReadSet(spec=ENTRIES, scope_keys=("group",)),
+            aggregate=Count(),
+            holds=lambda n: n >= 0,
+        )
+
+        with pytest.raises(exc, match="duplicate law name"):
+            compile_oracle(CONSERVATION, clash)
