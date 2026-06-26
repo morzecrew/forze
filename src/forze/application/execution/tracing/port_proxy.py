@@ -6,6 +6,7 @@ from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.base.value_objects import CountlessPage, CursorPage
 from forze.application.contracts.deps import DepKey
 from forze.base.primitives import JsonDict, StrKey
 
@@ -46,6 +47,11 @@ def infer_port_metadata(
 
 
 # ----------------------- #
+
+REDACTED = "<redacted>"
+"""The mask a captured value's declared-sensitive fields are replaced with. A single source so a
+trace consumer (e.g. the isolation oracle's predicate matcher) can detect a redacted value and
+refuse to reason over it rather than treat the mask as a real value."""
 
 
 def _default_tx_depth() -> int:
@@ -152,7 +158,7 @@ class TracingPortProxy(PortProxy):
             return data
 
         return {
-            key: ("<redacted>" if key in self.redact else value)
+            key: (REDACTED if key in self.redact else value)
             for key, value in data.items()
         }
 
@@ -174,6 +180,30 @@ class TracingPortProxy(PortProxy):
 
     # ....................... #
 
+    def _captured_in(
+        self,
+        args: tuple[Any, ...],
+        kwargs: JsonDict,
+    ) -> Mapping[str, Any] | None:
+        """The captured input for a call — the scan predicate for a query, else the write payload.
+
+        For a query the predicate is specifically the leading positional (or the ``filters`` kwarg),
+        so a *following* positional — pagination, sorts — is never mistaken for the filter, and a
+        match-all scan or a point ``get`` (a key dumps to nothing) captures ``None``. This precision
+        matters downstream: the isolation oracle re-evaluates the captured filter against concurrent
+        writes, so a pagination dict standing in for the filter would be a wrong predicate. A command
+        keeps the first-structured-argument rule (the write DTO).
+        """
+
+        if self.phase == "query":
+            candidate = args[0] if args else kwargs.get("filters")
+            data = self._dump(candidate)
+            return self._redact(data) if data is not None else None
+
+        return self._payload_of(args, kwargs)
+
+    # ....................... #
+
     def _record_call(
         self,
         name: str,
@@ -189,7 +219,7 @@ class TracingPortProxy(PortProxy):
             tx_depth=self.tx_depth_getter(),
             tx_id=self.tx_id_getter(),
             key=self._key_of(args),
-            payload=(self._payload_of(args, kwargs or {}) if self.capture else None),
+            payload=(self._captured_in(args, kwargs or {}) if self.capture else None),
             deps=self.deps,
         )
 
@@ -201,14 +231,23 @@ class TracingPortProxy(PortProxy):
         A batch operation returns a ``list`` of entities (``create_many``/``update_many``); each is
         recorded as its own return event, so the value-trace — and the per-commit cross-aggregate
         oracle, which reconstructs state from these results — sees every written entity, not just
-        single-entity writes. A non-list (a single read model, or a ``(model, diff)`` tuple that
-        ``_dump`` treats as unstructured) is recorded as one event as before.
+        single-entity writes. A scan **page** (``find_many``/``find_page``/``find_cursor``) is unwrapped
+        the same way — each hit becomes its own return event — so the isolation oracle sees the
+        individual rows a predicate read returned (``_dump`` would otherwise ``attrs.asdict`` the page
+        wrapper and leave the nested pydantic hits un-dumped). A non-list, non-page (a single read
+        model, or a ``(model, diff)`` tuple that ``_dump`` treats as unstructured) is recorded as one
+        event as before.
         """
 
         if not self.capture:
             return
 
-        items = cast(list[Any], result if isinstance(result, list) else [result])  # type: ignore[redundant-cast]
+        if isinstance(result, list):
+            items = cast("list[Any]", result)  # type: ignore[redundant-cast]
+        elif isinstance(result, (CountlessPage, CursorPage)):
+            items = cast("list[Any]", result.hits)  # type: ignore[redundant-cast]
+        else:
+            items = [result]
 
         for item in items:
             data = self._dump(item)

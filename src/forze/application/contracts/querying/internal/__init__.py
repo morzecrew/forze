@@ -9,6 +9,7 @@ from .aggregate import (
     ParsedAggregates,
 )
 from .cast import QueryValueCaster
+from .matching import evaluate_filter
 from .nodes import (
     ELEM_SCALAR_FIELD,
     QueryAnd,
@@ -35,6 +36,7 @@ __all__ = [
     "QueryFilterExpressionParser",
     "QueryFilterLimits",
     "QueryValueCaster",
+    "evaluate_filter",
     "ELEM_SCALAR_FIELD",
     "QueryAnd",
     "QueryCompare",

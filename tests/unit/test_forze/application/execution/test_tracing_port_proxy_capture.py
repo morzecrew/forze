@@ -7,8 +7,10 @@ from typing import Any, AsyncIterator
 import attrs
 import pytest
 
+from forze.application.contracts.base.value_objects import CountlessPage
 from forze.application.execution import DepsRegistry
 from forze.application.execution.tracing.port_proxy import TracingPortProxy, wrap_port
+from forze.domain.models import Document
 from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
@@ -21,6 +23,10 @@ def _tracing_deps() -> Any:
         .freeze()
         .resolve()
     )
+
+
+class _Cell(Document):
+    value: int
 
 
 @attrs.define
@@ -97,6 +103,79 @@ class TestPayloadAndReturn:
 
         # A scalar result dumps to ``None`` → the record is skipped (no raise, no event).
         proxy._record_return("get", (), 42)
+
+
+# ....................... #
+# Phase-2 capture for the predicate (phantom) oracle: the scan filter on a query call event, and a
+# scan page's hits unwrapped into per-row return events.
+
+
+class TestQueryPredicateCapture:
+    def _query_proxy(self) -> TracingPortProxy:
+        return TracingPortProxy(
+            inner=object(),
+            deps=_tracing_deps(),
+            domain="document",
+            surface="document_query",
+            route="cells",
+            phase="query",
+            capture=True,
+        )
+
+    def test_query_capture_is_the_leading_filter(self) -> None:
+        # count(filter) / find_many(filter): the filter is the leading positional → the captured input.
+        proxy = self._query_proxy()
+        assert proxy._captured_in(({"$values": {"value": 7}},), {}) == {
+            "$values": {"value": 7}
+        }
+
+    def test_query_capture_ignores_a_trailing_pagination(self) -> None:
+        # find_many(None, pagination): a match-all filter must NOT pull the pagination dict instead.
+        proxy = self._query_proxy()
+        assert proxy._captured_in((None, {"limit": 10, "offset": 0}), {}) is None
+
+    def test_query_capture_reads_a_filters_kwarg(self) -> None:
+        proxy = self._query_proxy()
+        assert proxy._captured_in((), {"filters": {"$values": {"value": 9}}}) == {
+            "$values": {"value": 9}
+        }
+
+    def test_command_capture_is_unchanged_first_structured_arg(self) -> None:
+        # A command keeps the original rule: the first structured argument is the write payload.
+        proxy = TracingPortProxy(
+            inner=object(),
+            deps=_tracing_deps(),
+            domain="document",
+            surface="document_command",
+            route="cells",
+            phase="command",
+            capture=True,
+        )
+        assert proxy._captured_in(({"value": 5},), {}) == {"value": 5}
+
+    def test_record_return_unwraps_page_hits_into_per_row_events(self) -> None:
+        # find_many returns a CountlessPage; attrs.asdict would leave the nested pydantic hits
+        # un-dumped, so each hit is recorded as its own return event carrying id + rev + fields.
+        deps = _tracing_deps()
+        proxy = TracingPortProxy(
+            inner=object(),
+            deps=deps,
+            domain="document",
+            surface="document_query",
+            route="cells",
+            phase="query",
+            capture=True,
+        )
+        page = CountlessPage(hits=[_Cell(value=1), _Cell(value=2)], page=1, size=2)
+
+        proxy._record_return("find_many", ({"$values": {"value": 1}},), page)
+
+        trace = deps.runtime_trace()
+        assert trace is not None
+        hits = [event.result for event in trace.events if event.result is not None]
+        assert len(hits) == 2
+        assert {hit["value"] for hit in hits} == {1, 2}
+        assert all("id" in hit and "rev" in hit for hit in hits)
 
 
 # ....................... #

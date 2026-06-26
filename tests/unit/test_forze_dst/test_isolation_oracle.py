@@ -21,12 +21,15 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.execution.tracing.port_proxy import REDACTED
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig
 from forze_dst.invariants import (
+    ScanRead,
     TxRecord,
     VersionedTxRecord,
+    WriteVersion,
     find_serializability_cycle,
     find_serializable_violations,
     find_snapshot_isolation_violations,
@@ -323,6 +326,160 @@ class TestSerializabilityGraph:
 
 
 # ....................... #
+# The COMPLETE kernel — predicate (phantom) anti-dependency edges (Phase 2).
+
+
+def _scanner(
+    name: str,
+    *,
+    ns: str,
+    predicate: dict[str, object] | None,
+    scan_seq: int,
+    commit_seq: int,
+    reads: tuple[tuple[tuple[str, str], int], ...] = (),
+) -> VersionedTxRecord:
+    return VersionedTxRecord(
+        name=name,
+        start=0,
+        end=commit_seq,
+        committed=True,
+        commit_seq=commit_seq,
+        reads=frozenset(reads),
+        writes=frozenset(),
+        scans=(ScanRead(namespace=ns, predicate=predicate, seq=scan_seq),),
+    )
+
+
+def _writer(
+    name: str,
+    *,
+    key: tuple[str, str],
+    rev: int,
+    row: dict[str, object],
+    commit_seq: int,
+) -> VersionedTxRecord:
+    return VersionedTxRecord(
+        name=name,
+        start=0,
+        end=commit_seq,
+        committed=True,
+        commit_seq=commit_seq,
+        reads=frozenset(),
+        writes=frozenset({(key, rev)}),
+        write_rows=(WriteVersion(key=key, rev=rev, row=row),),
+    )
+
+
+class TestPhantomEdges:
+    def test_appearance_phantom_is_a_two_cycle(self) -> None:
+        # Scanner read predicate {value: 7} at seq 1 (saw nothing); writer inserted a matching row
+        # committed at seq 5 (> 1) → rw scanner→writer; the scanner's re-scan saw it as a hit
+        # (read x@1) → wr writer→scanner. Together a 2-cycle the keyed checker cannot see.
+        x = ("cells", "x")
+        scanner = _scanner(
+            "t1",
+            ns="cells",
+            predicate={"$values": {"value": 7}},
+            scan_seq=1,
+            commit_seq=12,
+            reads=((x, 1),),
+        )
+        writer = _writer(
+            "t2", key=x, rev=1, row={"id": "x", "rev": 1, "value": 7}, commit_seq=5
+        )
+        violations = find_serializability_cycle([scanner, writer])
+        assert len(violations) == 1 and "predicate" in violations[0].message
+
+    def test_writer_committed_before_scan_is_not_a_phantom(self) -> None:
+        # commit_seq (5) <= scan_seq (9): the scan could have seen the write → no forward edge.
+        x = ("cells", "x")
+        scanner = _scanner(
+            "t1",
+            ns="cells",
+            predicate={"$values": {"value": 7}},
+            scan_seq=9,
+            commit_seq=12,
+        )
+        writer = _writer(
+            "t2", key=x, rev=1, row={"id": "x", "rev": 1, "value": 7}, commit_seq=5
+        )
+        assert find_serializability_cycle([scanner, writer]) == []
+
+    def test_non_matching_row_adds_no_edge(self) -> None:
+        # Predicate {value: 99} vs produced row value 7 — predicate-precise: no spurious edge.
+        x = ("cells", "x")
+        scanner = _scanner(
+            "t1",
+            ns="cells",
+            predicate={"$values": {"value": 99}},
+            scan_seq=1,
+            commit_seq=12,
+            reads=((x, 1),),
+        )
+        writer = _writer(
+            "t2", key=x, rev=1, row={"id": "x", "rev": 1, "value": 7}, commit_seq=5
+        )
+        assert find_serializability_cycle([scanner, writer]) == []
+
+    def test_match_all_scan_matches_any_namespace_writer(self) -> None:
+        # A None predicate is match-all → a concurrent insert in the scanned namespace is a phantom.
+        x = ("cells", "x")
+        scanner = _scanner(
+            "t1", ns="cells", predicate=None, scan_seq=1, commit_seq=12, reads=((x, 1),)
+        )
+        writer = _writer("t2", key=x, rev=1, row={"id": "x", "rev": 1}, commit_seq=5)
+        assert len(find_serializability_cycle([scanner, writer])) == 1
+
+    def test_other_namespace_write_is_ignored(self) -> None:
+        # The matching write lands in a DIFFERENT namespace than the scan → no predicate edge.
+        other = ("orders", "x")
+        scanner = _scanner(
+            "t1",
+            ns="cells",
+            predicate=None,
+            scan_seq=1,
+            commit_seq=12,
+            reads=((other, 1),),
+        )
+        writer = _writer("t2", key=other, rev=1, row={"id": "x", "rev": 1}, commit_seq=5)
+        assert find_serializability_cycle([scanner, writer]) == []
+
+    def test_predicate_over_redacted_field_is_skipped(self) -> None:
+        # Both the filter and the row carry the mask, so a naive match would be spurious — the oracle
+        # refuses to reason over a redacted predicate (a false-negative, never a false-positive).
+        x = ("cells", "x")
+        scanner = _scanner(
+            "t1",
+            ns="cells",
+            predicate={"$values": {"ssn": REDACTED}},
+            scan_seq=1,
+            commit_seq=12,
+            reads=((x, 1),),
+        )
+        writer = _writer(
+            "t2", key=x, rev=1, row={"id": "x", "rev": 1, "ssn": REDACTED}, commit_seq=5
+        )
+        assert find_serializability_cycle([scanner, writer]) == []
+
+    def test_scanner_self_insert_is_not_a_phantom(self) -> None:
+        # A transaction that scans then inserts its own matching row sees its own write — no self
+        # anti-dependency (the writer-is-scanner case is excluded).
+        x = ("cells", "x")
+        tx = VersionedTxRecord(
+            name="t1",
+            start=0,
+            end=10,
+            committed=True,
+            commit_seq=10,
+            reads=frozenset(),
+            writes=frozenset({(x, 1)}),
+            scans=(ScanRead(namespace="cells", predicate=None, seq=1),),
+            write_rows=(WriteVersion(key=x, rev=1, row={"id": "x", "rev": 1}),),
+        )
+        assert find_serializability_cycle([tx]) == []
+
+
+# ....................... #
 # The versioned derivation — version-aware read/write sets from capture-mode result events.
 
 
@@ -364,6 +521,56 @@ def _create_v(
         route=route,
         tx_id=tx_id,
         result={"id": new_id, "rev": rev},
+    )
+
+
+def _scan_call(
+    seq: int,
+    tx_id: int,
+    predicate: dict[str, object] | None,
+    *,
+    op: str = "count",
+    route: str = "mock",
+) -> Event:
+    # A predicate-read CALL event: the captured filter rides on `payload`; no single-entity `result`.
+    return _ev(
+        seq,
+        trace_domain="document",
+        op=op,
+        phase="query",
+        route=route,
+        tx_id=tx_id,
+        payload=predicate,
+    )
+
+
+def _find_hit(
+    seq: int, tx_id: int, key: str, rev: int, *, route: str = "mock", **row: object
+) -> Event:
+    # A find_many HIT: a query-phase result event carrying the row → folds into the keyed read set.
+    return _ev(
+        seq,
+        trace_domain="document",
+        op="find_many",
+        phase="query",
+        route=route,
+        tx_id=tx_id,
+        result={"id": key, "rev": rev, **row},
+    )
+
+
+def _create_row(
+    seq: int, tx_id: int, new_id: str, rev: int, *, route: str = "mock", **row: object
+) -> Event:
+    # A create whose result carries the full produced row (the fields a predicate is matched against).
+    return _ev(
+        seq,
+        trace_domain="document",
+        op="create",
+        phase="command",
+        route=route,
+        tx_id=tx_id,
+        result={"id": new_id, "rev": rev, **row},
     )
 
 
@@ -462,6 +669,94 @@ class TestVersionedDerivation:
         assert serializable(complete=True)(history) == []  # no false-positive cycle
 
 
+class TestPredicatePhantomDerivation:
+    def test_a_scan_call_becomes_a_predicate_read(self) -> None:
+        # A scan op's call event (filter on payload, no single-entity result) is recorded as a scan.
+        history = History(
+            seed=0,
+            events=(
+                _enter(0, 1),
+                _scan_call(1, 1, {"$values": {"value": 7}}, op="count"),
+                _exit(2, 1),
+            ),
+        )
+        [tx] = versioned_transactions_from_history(history)
+        assert len(tx.scans) == 1
+        scan = tx.scans[0]
+        assert scan.namespace == "mock" and scan.predicate == {"$values": {"value": 7}}
+        assert scan.seq == 1
+
+    def test_find_many_hit_folds_into_the_read_set(self) -> None:
+        # A find_many hit (a query-phase result event) is a keyed read, plus a scan from its call.
+        history = History(
+            seed=0,
+            events=(
+                _enter(0, 1),
+                _scan_call(1, 1, {"$values": {"value": 7}}, op="find_many"),
+                _find_hit(2, 1, "x", 3, value=7),
+                _exit(3, 1),
+            ),
+        )
+        [tx] = versioned_transactions_from_history(history)
+        assert (("mock", "x"), 3) in tx.reads  # the hit is a versioned read
+        assert len(tx.scans) == 1  # and the call is the scan predicate
+
+    def test_predicate_phantom_cycle_from_capture(self) -> None:
+        # The headline P2: tx1 scans value==7 (sees nothing), tx2 inserts a matching row + commits,
+        # tx1 re-scans (find_many) and now sees it (a hit). The captured filter directs rw tx1→tx2,
+        # the hit directs wr tx2→tx1 → a 2-cycle the pairwise (and keyed-only complete) check misses.
+        history = History(
+            seed=0,
+            events=(
+                _enter(0, 1),
+                _scan_call(1, 1, {"$values": {"value": 7}}, op="count"),
+                _enter(2, 2),
+                _create_row(3, 2, "x", 1, value=7),
+                _exit(4, 2),  # tx2 commits at seq 4 (> tx1's scan seq 1)
+                _scan_call(5, 1, {"$values": {"value": 7}}, op="find_many"),
+                _find_hit(6, 1, "x", 1, value=7),  # the re-scan sees tx2's row
+                _exit(7, 1),
+            ),
+        )
+        assert serializable()(history) == []  # pairwise: no two-txn keyed anomaly → missed
+        violations = serializable(complete=True)(history)
+        assert len(violations) == 1 and "predicate" in violations[0].message
+
+    def test_non_matching_concurrent_insert_is_serializable(self) -> None:
+        # tx1 scans value==7; tx2 concurrently inserts value==1 (no match). No phantom → serializable.
+        history = History(
+            seed=0,
+            events=(
+                _enter(0, 1),
+                _scan_call(1, 1, {"$values": {"value": 7}}, op="find_many"),
+                _enter(2, 2),
+                _create_row(3, 2, "x", 1, value=1),
+                _exit(4, 2),
+                _exit(5, 1),
+            ),
+        )
+        assert serializable(complete=True)(history) == []
+
+    def test_count_only_phantom_is_a_documented_false_negative(self) -> None:
+        # A pure count predicate read contributes the forward rw edge but, capturing no rows, cannot
+        # supply the reverse wr edge → the 2-transaction count phantom is a documented false-negative
+        # (sound: a missing edge never manufactures a cycle). find_many — which captures hits — does
+        # close it (see test_predicate_phantom_cycle_from_capture).
+        history = History(
+            seed=0,
+            events=(
+                _enter(0, 1),
+                _scan_call(1, 1, {"$values": {"value": 7}}, op="count"),
+                _enter(2, 2),
+                _create_row(3, 2, "x", 1, value=7),
+                _exit(4, 2),
+                _scan_call(5, 1, {"$values": {"value": 7}}, op="count"),  # re-count, no hits
+                _exit(6, 1),
+            ),
+        )
+        assert serializable(complete=True)(history) == []
+
+
 # ....................... #
 # Layer 3 — end-to-end: tx_id flows from a real DST run into the history.
 
@@ -549,6 +844,58 @@ _SCENARIO = Scenario(
 )
 
 
+@attrs.define(slots=True, kw_only=True)
+class _Scan(Handler[None, None]):
+    """Scan ``value == 1`` inside a transaction — matches the opened rows, so hits are captured."""
+
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> None:
+        await self.ctx.document.query(ROW).find_many({"$values": {"value": 1}})
+
+
+@attrs.define(slots=True, kw_only=True)
+class _ScanMiss(Handler[None, None]):
+    """Scan ``value == 0`` — which no opened row (``value == 1``) matches, so no phantom can form."""
+
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> None:
+        await self.ctx.document.query(ROW).find_many({"$values": {"value": 0}})
+
+
+_SCAN_PLAN = OperationPlan().bind_tx().set_route("mock").finish(deep=False)
+
+
+def _scan_registry() -> OperationRegistry:
+    return OperationRegistry(
+        handlers={
+            "open": lambda ctx: _Open(ctx=ctx),
+            "scan": lambda ctx: _Scan(ctx=ctx),
+            "scan_miss": lambda ctx: _ScanMiss(ctx=ctx),
+        },
+        plans={"scan": _SCAN_PLAN, "scan_miss": _SCAN_PLAN},
+        descriptors={
+            "open": OperationDescriptor(
+                input_type=None, output_type=None, description="x"
+            ),
+            "scan": OperationDescriptor(
+                input_type=None, output_type=None, description="x"
+            ),
+            "scan_miss": OperationDescriptor(
+                input_type=None, output_type=None, description="x"
+            ),
+        },
+    ).freeze()
+
+
+_SCAN_SCENARIO = Scenario(
+    state=ModelState,
+    arrange=(Rule(op="open", produces="row"),),
+    act=(Rule(op="scan"),),
+)
+
+
 class TestEndToEnd:
     def test_tx_id_flows_from_a_real_run_into_the_history(self) -> None:
         captured: list[History] = []
@@ -595,6 +942,60 @@ class TestEndToEnd:
                 seeds=range(8), act_count=4, concurrency=4, capture_values=True
             ),
             scenario=_SCENARIO,
+        )
+
+        assert report is None
+
+    def test_scan_filter_and_hits_are_captured_into_history(self) -> None:
+        # The Phase-2 capture path end-to-end: a real run records a scan's filter (a ScanRead over the
+        # spec namespace) and its returned rows (versioned reads), so the predicate oracle has both the
+        # predicate and the rows it needs — the derivation tests then turn these into phantom edges.
+        captured: list[History] = []
+
+        def _grab(history: History) -> list:  # type: ignore[type-arg]
+            captured.append(history)
+            return []
+
+        Simulation(
+            operations=_scan_registry(),
+            deps=lambda: MockDepsModule(),
+            invariants=[_grab],
+        ).run(
+            SimulationConfig(
+                seeds=range(1), act_count=1, concurrency=1, capture_values=True
+            ),
+            scenario=_SCAN_SCENARIO,
+        )
+
+        assert captured, "the simulation produced no history"
+        txns = versioned_transactions_from_history(captured[0])
+
+        scans = [scan for tx in txns for scan in tx.scans]
+        assert any(
+            scan.predicate == {"$values": {"value": 1}} and scan.namespace == "iso_rows"
+            for scan in scans
+        ), "the scan's filter was not captured as a predicate read"
+        # the matching row the scan returned was captured as a versioned read (a find_many hit)
+        assert any(tx.reads for tx in txns), "the scan's hit was not captured as a read"
+
+    def test_complete_mode_has_no_false_positive_on_a_scan_workload(self) -> None:
+        # The complete oracle on a real concurrent scan+create workload: ops interleave a scan
+        # (``value == 0``) with opens (``value == 1``). The scan predicate matches none of the
+        # concurrently-created rows, so no phantom is possible — yet the matcher still runs over every
+        # captured row. A clean run proves the predicate path adds no false positive on real traces.
+        report = Simulation(
+            operations=_scan_registry(),
+            deps=lambda: MockDepsModule(),
+            invariants=[serializable(complete=True)],
+        ).run(
+            SimulationConfig(
+                seeds=range(8), act_count=4, concurrency=4, capture_values=True
+            ),
+            scenario=Scenario(
+                state=ModelState,
+                arrange=(Rule(op="open", produces="row"),),
+                act=(Rule(op="scan_miss"), Rule(op="open", produces="row")),
+            ),
         )
 
         assert report is None

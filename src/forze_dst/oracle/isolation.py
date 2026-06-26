@@ -20,8 +20,11 @@ three or more transactions. For serializability, :func:`find_serializability_cyc
 **complete** check (sound *and* complete for conflict-serializability): it builds the dependency
 serialization graph — edges directed by the entity ``rev`` version order — and reports a cycle,
 catching the ≥3-transaction anti-dependency cycles (e.g. the read-only anomaly) the pairwise check
-cannot. It needs the value-trace (``rev`` per call), so it runs only under ``capture_values``;
-predicate phantoms (which additionally need the scan filter on the trace) remain future work.
+cannot. It needs the value-trace (``rev`` per call), so it runs only under ``capture_values``. It also
+adds **predicate (phantom) edges**: a scan records its captured filter, and a concurrent committed
+write whose produced row satisfies that filter — but which the scan provably did not see (it committed
+later in trace order) — is a predicate anti-dependency, evaluated with the one shared DSL matcher so
+the oracle's predicate semantics match the backend's exactly.
 
 **Feeding the kernel.** A correct per-transaction read/write set requires attributing each port call
 to the *transaction* that issued it — which operation spans cannot give, since concurrent operations
@@ -41,7 +44,9 @@ from typing import Any, Mapping, Sequence, cast, final
 
 import attrs
 
-from forze.base.exceptions import exc
+from forze.application.contracts.querying import evaluate_filter
+from forze.application.execution.tracing.port_proxy import REDACTED
+from forze.base.exceptions import CoreException, exc
 from forze_dst.oracle.invariants import Invariant, Violation
 from forze_dst.oracle.recorder import History
 
@@ -169,11 +174,50 @@ def find_serializable_violations(txns: Sequence[TxRecord]) -> list[Violation]:
 
 @final
 @attrs.define(frozen=True, kw_only=True)
+class ScanRead:
+    """One predicate (scan) read — the unit of the phantom-edge construction (Phase 2).
+
+    A scan reads *the set of rows matching a predicate over a namespace* rather than a single keyed
+    version, so it carries no ``(key, rev)``. ``namespace`` is the scanned route (the spec name);
+    ``predicate`` is the captured filter (``None`` = match-all); ``seq`` is the scan call event's
+    trace sequence — the happened-before reference that directs the anti-dependency exactly: a writer
+    that committed *after* ``seq`` provably could not have been seen by this scan. ``predicate`` is
+    excluded from equality/hash (a mapping is unhashable, and the record is never hashed by value).
+    """
+
+    namespace: Any
+    predicate: Mapping[str, Any] | None = attrs.field(eq=False)
+    seq: int
+
+
+@final
+@attrs.define(frozen=True, kw_only=True)
+class WriteVersion:
+    """One produced row version — carried so a concurrent scan's predicate can be tested against it.
+
+    ``key`` is the ``(namespace, id)`` pair and ``rev`` the produced revision (as in the keyed write
+    set); ``row`` is the redaction-applied dump of the written entity, evaluated against a scanner's
+    filter to decide a *predicate-precise* phantom edge (a namespace-coarse rule would false-positive).
+    ``row`` is excluded from equality/hash (it is a mapping and the record is never hashed by value).
+    """
+
+    key: Any
+    rev: int
+    row: Mapping[str, Any] = attrs.field(eq=False)
+
+
+@final
+@attrs.define(frozen=True, kw_only=True)
 class VersionedTxRecord:
     """A transaction's *version-aware* read/write sets — the unit of the DSG.
 
-    Each entry is ``(key, rev)``: the entity revision the call observed (reads) or produced (writes).
-    The ``rev`` makes the dependency edges between transactions directable exactly by version order.
+    Each ``reads``/``writes`` entry is ``(key, rev)``: the entity revision the call observed (reads)
+    or produced (writes). The ``rev`` makes the dependency edges between transactions directable
+    exactly by version order. ``scans`` are this transaction's predicate reads and ``write_rows`` its
+    produced rows — together they let the graph add predicate (phantom) anti-dependency edges
+    (Phase 2): a scan whose predicate a concurrent committed write satisfies, where the write was not
+    visible to the scan. Both default empty, so a capture without scan data builds the item-level
+    graph exactly as before.
     """
 
     name: str
@@ -183,6 +227,8 @@ class VersionedTxRecord:
     commit_seq: int | None
     reads: frozenset[tuple[Any, int]]
     writes: frozenset[tuple[Any, int]]
+    scans: tuple[ScanRead, ...] = ()
+    write_rows: tuple[WriteVersion, ...] = ()
 
 
 def _find_cycle(
@@ -235,22 +281,110 @@ def _find_cycle(
     return None
 
 
+def _has_redaction(value: Any) -> bool:
+    """Whether a captured value (a predicate, recursively) contains the redaction mask.
+
+    A predicate over a declared-sensitive field captures the masked value on both sides, so evaluating
+    it would compare ``"<redacted>"`` to ``"<redacted>"`` and *manufacture* a match — a false-positive
+    edge. The oracle refuses to reason over such a predicate (a false-negative, which is sound).
+    """
+
+    if isinstance(value, str):
+        return value == REDACTED
+
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[Any, Any]", value)  # type: ignore[redundant-cast]
+        return any(_has_redaction(item) for item in mapping.values())
+
+    if isinstance(value, (list, tuple)):
+        return any(_has_redaction(item) for item in cast("Sequence[Any]", value))
+
+    return False
+
+
+def _row_matches(predicate: Mapping[str, Any] | None, row: Mapping[str, Any]) -> bool:
+    """Whether *row* satisfies *predicate*, via the one shared DSL evaluator (so oracle ≡ backend).
+
+    A ``None`` predicate is match-all (a scan with no filter). A predicate the evaluator cannot parse
+    (it should always be a valid captured filter, but defend anyway) yields ``False`` — no edge — so a
+    malformed predicate is a false-negative, never a false-positive.
+    """
+
+    try:
+        return evaluate_filter(dict(row), cast("Any", predicate))
+
+    except CoreException:
+        return False
+
+
+def _predicate_edges(
+    committed: Sequence[VersionedTxRecord],
+) -> list[tuple[str, str, str]]:
+    """The predicate (phantom) anti-dependency edges over the committed transactions (Phase 2).
+
+    For each scanner ``S`` of predicate ``P`` over namespace ``N`` at scan sequence ``s``, and each
+    *other* committed writer ``W`` whose commit sequence is **after** ``s`` (so ``S`` provably did not
+    see ``W``'s write — no dirty reads, per the conformance horizon), emit ``S → W`` (``rw``) when ``W``
+    produced a row in ``N`` that satisfies ``P``. Directed by trace order (``commit_seq`` vs ``seq``)
+    rather than a per-key ``rev``, because a predicate read spans a set, not one version — and that
+    order is exact. Predicate-precise (the captured row is matched against ``P``): a namespace-coarse
+    rule would false-positive on a write that does not match. A scan whose predicate touches a redacted
+    field is skipped (sound). The *disappearance* phantom (a write moves a row out of ``P``) needs no
+    rule here — the scan captured the old matching row as a hit, so it is already a keyed ``rw`` edge.
+    Iteration is sorted so the reported counterexample is deterministic across hash seeds.
+    """
+
+    edges: list[tuple[str, str, str]] = []
+
+    for scanner in sorted(committed, key=lambda tx: tx.name):
+        for scan in sorted(scanner.scans, key=lambda sc: sc.seq):
+            if _has_redaction(scan.predicate):
+                continue
+
+            for writer in sorted(committed, key=lambda tx: tx.name):
+                if writer.name == scanner.name or writer.commit_seq is None:
+                    continue
+
+                if writer.commit_seq <= scan.seq:
+                    continue  # committed at/before the scan → may have been seen → skip (false-neg)
+
+                for wv in writer.write_rows:
+                    if wv.key[0] == scan.namespace and _row_matches(
+                        scan.predicate, wv.row
+                    ):
+                        edges.append(
+                            (
+                                scanner.name,
+                                writer.name,
+                                f"rw predicate {scan.namespace}@{scan.seq} matched "
+                                f"{wv.key[1]}@{wv.rev}",
+                            )
+                        )
+                        break  # one matching row establishes the S→W edge
+
+    return edges
+
+
 def find_serializability_cycle(txns: Sequence[VersionedTxRecord]) -> list[Violation]:
     """A dependency cycle over the committed transactions — a complete conflict-serializability check.
 
     Builds the DSG from the version-aware read/write sets — ``ww`` along each key's committed version
     chain, ``wr`` from a version's writer to its reader, ``rw`` from a reader to the writer of the
-    next version (the direct anti-dependency, per Adya's MVSG) — and reports the first cycle. Sound
-    and **complete for conflict-serializability over the captured item-level history**: it catches
-    write skew (a 2-cycle of anti-dependencies), the three-transaction read-only anomaly (a 3-cycle),
-    and read-modify-write lost update — anything the pairwise checker misses beyond two transactions.
-    A ``key`` is the ``(namespace, id)`` pair, so distinct documents that share an id across specs do
-    not conflate. Two honest bounds, both **false-negative only** (a missing read removes edges, never
-    adds one, so soundness is preserved): (1) only point reads (``get``) and writes are in the
-    version-aware set — scan/predicate reads (``find_many``/``count``) and the rows a scan returned are
-    not (a value-trace capture limit, addressed with predicate edges in a later phase); (2) hard
-    deletes and ``return_diff`` writes are not captured as versions. Only as sound as the backend's
-    ``rev`` fidelity (the conformance horizon RFC 0004 verifies).
+    next version (the direct anti-dependency, per Adya's MVSG) — plus **predicate (phantom) edges**
+    (:func:`_predicate_edges`): a scan whose captured filter a concurrent committed write satisfies,
+    where the write committed after the scan (so the scan could not have seen it) — and reports the
+    first cycle. Sound and **complete for conflict-serializability over the captured history**: it
+    catches write skew (a 2-cycle of anti-dependencies), the three-transaction read-only anomaly (a
+    3-cycle), read-modify-write lost update, and predicate phantoms — anything the pairwise checker
+    misses beyond two transactions. A ``key`` is the ``(namespace, id)`` pair, so distinct documents
+    that share an id across specs do not conflate. Honest bounds, all **false-negative only** (a missing
+    edge never adds a false cycle, so soundness is preserved): (1) only point reads (``get``) and
+    ``find_many``-family *hits* are versioned reads; a ``count``/``exists`` predicate read contributes a
+    forward phantom edge but, returning no rows, cannot supply the reverse ``wr`` edge that would close
+    a two-transaction count-phantom cycle, and ``find_stream`` captures no hits; (2) a predicate over a
+    declared-sensitive (redacted) field is skipped (it cannot be soundly evaluated); (3) hard deletes
+    and ``return_diff`` writes are not captured as versions. Only as sound as the backend's ``rev`` /
+    isolation fidelity — the conformance horizon the adapter differential verifies.
     """
 
     committed = [tx for tx in txns if tx.committed]
@@ -293,6 +427,11 @@ def find_serializability_cycle(txns: Sequence[VersionedTxRecord]) -> list[Violat
                 add_edge(
                     tx.name, writer_of[(key, following)], f"rw {key}@{rev}→{following}"
                 )
+
+    # Predicate (phantom) anti-dependency edges (Phase 2): a scan whose predicate a concurrent
+    # committed write satisfies, where the write was not visible to the scan (committed after it).
+    for source, target, label in _predicate_edges(committed):
+        add_edge(source, target, label)
 
     cycle = _find_cycle({tx.name for tx in committed}, edges)
 
@@ -394,6 +533,15 @@ def transactions_from_history(
     ]
 
 
+# Query-port ops that read by *predicate* (a scanned set), not by a single key — so the call carries
+# a filter (the captured ``payload``) and a phantom edge may run against it. ``get``/``get_many`` are
+# point reads and excluded; ``find_stream`` records only its call (an async generator), so it captures
+# the predicate but no hits.
+_PREDICATE_READ_OPS = frozenset(
+    {"find", "find_many", "find_page", "find_cursor", "find_stream", "count", "exists"}
+)
+
+
 @final
 @attrs.define
 class _VersionedTxBuilder:
@@ -405,6 +553,8 @@ class _VersionedTxBuilder:
     commit_seq: int | None = None
     reads: set[tuple[Any, int]] = attrs.field(factory=set)
     writes: set[tuple[Any, int]] = attrs.field(factory=set)
+    scans: list[ScanRead] = attrs.field(factory=list)
+    write_rows: list[WriteVersion] = attrs.field(factory=list)
 
 
 def versioned_transactions_from_history(
@@ -419,9 +569,12 @@ def versioned_transactions_from_history(
     trace's ``route`` = the spec name), so documents that share an id across specs never conflate.
     Requires ``SimulationConfig.capture_values``; **fails closed** (``exc.configuration``) if the run
     issued document writes but captured none, so running the complete check without the value-trace
-    raises instead of passing vacuously (an empty graph is trivially acyclic). Only point reads and
-    writes land here — scan/predicate reads (``find_many``/``count``) are not captured as item-level
-    reads (a false-negative-only bound; see :func:`find_serializability_cycle`).
+    raises instead of passing vacuously (an empty graph is trivially acyclic). Predicate reads (a scan
+    op's call event) are recorded as ``scans`` — the captured filter + the scan sequence — for phantom
+    edges, and each produced write keeps its full row (``write_rows``) so a scan's filter can be tested
+    against it; ``find_many``-family hits arrive as their own result events and fold into the keyed read
+    set (a re-scan that sees a concurrent insert thus also yields the keyed ``wr``). See
+    :func:`find_serializability_cycle` for the bounds.
     """
 
     builders: dict[int, _VersionedTxBuilder] = {}
@@ -453,13 +606,35 @@ def versioned_transactions_from_history(
             builder.commit_seq = seq
 
         phase = fields.get("phase")
+        op = fields.get("op")
+        raw_result = fields.get("result")
+
+        # A predicate-read CALL event (a scan op, query phase, no single-entity result on this event):
+        # record the captured filter as a scan over its namespace for phantom edges. ``find_many``'s
+        # hits arrive as their own result events below and fold into the keyed read set as usual.
+        if (
+            phase == read_phase
+            and op in _PREDICATE_READ_OPS
+            and not isinstance(raw_result, Mapping)
+        ):
+            predicate = fields.get("payload")
+            builder.scans.append(
+                ScanRead(
+                    namespace=fields.get("route"),
+                    predicate=(
+                        cast("Mapping[str, Any]", predicate)
+                        if isinstance(predicate, Mapping)
+                        else None
+                    ),
+                    seq=seq,
+                )
+            )
+            continue
 
         # A document write was *issued* (capture-on additionally emits a result event below); used to
         # tell "capture off" (writes issued, none captured) from "no writes" (read-only → serializable).
         if phase == write_phase and fields.get("trace_domain") == "document":
             saw_document_write = True
-
-        raw_result = fields.get("result")
 
         if not isinstance(raw_result, Mapping):
             continue
@@ -481,6 +656,7 @@ def versioned_transactions_from_history(
             builder.reads.add((key, int(rev)))
         elif phase == write_phase:
             builder.writes.add((key, int(rev)))
+            builder.write_rows.append(WriteVersion(key=key, rev=int(rev), row=result))
             captured_writes += 1
 
     if saw_document_write and captured_writes == 0:
@@ -500,6 +676,8 @@ def versioned_transactions_from_history(
             commit_seq=builder.commit_seq,
             reads=frozenset(builder.reads),
             writes=frozenset(builder.writes),
+            scans=tuple(builder.scans),
+            write_rows=tuple(builder.write_rows),
         )
         for tx_id, builder in sorted(builders.items())
     ]
@@ -533,11 +711,11 @@ def serializable(
     (:func:`find_serializable_violations`) — capture-free, sound but incomplete: it flags lost update
     and write skew (two-transaction anomalies). ``complete=True`` is the **dependency-graph** check
     (:func:`find_serializability_cycle`) — sound *and* complete for conflict-serializability over the
-    captured item-level history, catching anti-dependency cycles spanning three or more transactions
-    (e.g. the read-only anomaly) via the entity ``rev`` version order. The complete mode reads the
-    value-trace, so it requires ``SimulationConfig.capture_values`` (and fails closed without it);
-    scan/predicate reads are not yet captured (a false-negative-only bound — see
-    :func:`find_serializability_cycle`).
+    captured history, catching anti-dependency cycles spanning three or more transactions (e.g. the
+    read-only anomaly) via the entity ``rev`` version order, and predicate **phantoms** via the
+    captured scan filter. The complete mode reads the value-trace, so it requires
+    ``SimulationConfig.capture_values`` (and fails closed without it); see
+    :func:`find_serializability_cycle` for the false-negative-only bounds.
     """
 
     def _check(history: History) -> list[Violation]:

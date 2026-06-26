@@ -31,8 +31,10 @@ from forze_dst.oracle.invariants import (
     single_key_per_operation,
 )
 from forze_dst.oracle.isolation import (
+    ScanRead,
     TxRecord,
     VersionedTxRecord,
+    WriteVersion,
     find_serializability_cycle,
     find_serializable_violations,
     find_snapshot_isolation_violations,
@@ -96,6 +98,8 @@ __all__ = [
     "find_serializability_cycle",
     "TxRecord",
     "VersionedTxRecord",
+    "ScanRead",
+    "WriteVersion",
     # commutativity (cross-history)
     "commutative_convergence",
     # cross-aggregate system-invariant oracle

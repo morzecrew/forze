@@ -95,6 +95,7 @@ from .internal import (
     QueryOr,
     QueryValueCaster,
     elem_inner_is_scalar,
+    evaluate_filter,
 )
 from .pagination import (
     assemble_keyset_cursor_page,
@@ -203,6 +204,7 @@ __all__ = [
     "QueryFilterExpressionParser",
     "QueryFilterLimits",
     "QueryValueCaster",
+    "evaluate_filter",
     "QueryAnd",
     "QueryCompare",
     "QueryElem",
