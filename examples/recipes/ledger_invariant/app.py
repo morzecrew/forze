@@ -24,14 +24,27 @@ Run it (from the repo root)::
 
 from uuid import UUID
 
+import structlog
+
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.invariants import ReadSet, Sum, SystemInvariant
 from forze.application.execution import ExecutionContext
 from forze.application.execution.deps import DepsRegistry
 from forze.base.exceptions import CoreException
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.invariants import InvariantResult, enforce, enforce_preventive, evaluate
 from forze_mock import MockDepsModule
+
+_LOGGER_NAME = "ledger_invariant"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
 
 # ----------------------- #
 # Domain — a ledger account, persisted through the document port.
@@ -187,15 +200,21 @@ async def main() -> None:
 
     await transfer(ctx, "L1", asset, liability, 30)  # preserves the sum
 
-    print("after transfer (balanced):", await ledger_balance(ctx, "L1"))
+    balanced = await ledger_balance(ctx, "L1")
+    log.info("after transfer", observed=balanced.observed, held=balanced.held)
 
     try:
         await mint(ctx, "L1", asset, 50)  # single-sided → caught post-commit
 
     except CoreException as error:
-        print("detective — mint reported:", error)
+        log.info("detective: mint breach reported post-commit", error=str(error))
 
-    print("  …but durable:", await ledger_balance(ctx, "L1"))  # held=False, observed=50
+    durable = await ledger_balance(ctx, "L1")  # held=False, observed=50
+    log.info(
+        "…but the bad write is already durable",
+        observed=durable.observed,
+        held=durable.held,
+    )
 
     # Preventive: the same bad write, checked *inside* a SERIALIZABLE transaction, is rolled back —
     # never durable. (And under real concurrency that isolation serializes away a write-skew.)
@@ -210,11 +229,14 @@ async def main() -> None:
         )  # single-sided → caught before commit
 
     except CoreException as error:
-        print("preventive — mint_guarded rejected:", error)
+        log.info("preventive: mint_guarded rejected before commit", error=str(error))
 
-    print(
-        "  …and rolled back:", await ledger_balance(ctx2, "L2")
-    )  # held=True, observed=0
+    rolled = await ledger_balance(ctx2, "L2")  # held=True, observed=0
+    log.info(
+        "…and rolled back — the ledger stays balanced",
+        observed=rolled.observed,
+        held=rolled.held,
+    )
 
 
 # ....................... #
@@ -222,4 +244,5 @@ async def main() -> None:
 if __name__ == "__main__":
     import asyncio
 
+    _setup_logging("info")
     asyncio.run(main())

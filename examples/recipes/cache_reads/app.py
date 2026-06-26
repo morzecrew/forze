@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import os
 
+import structlog
+
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.execution import (
@@ -25,6 +27,8 @@ from forze.application.execution import (
     ExecutionRuntime,
     LifecyclePlan,
 )
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.aggregates.document import (
     DocumentFacade,
@@ -44,6 +48,16 @@ from forze_redis import (
     RedisDepsModule,
     redis_lifecycle_step,
 )
+
+_LOGGER_NAME = "cache_reads"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
+
 
 # ----------------------- #
 # Domain
@@ -193,8 +207,9 @@ async def main() -> None:
     async with runtime.scope():
         await pg.execute(SCHEMA)  # demo bootstrap (real apps migrate instead)
         result = await cache_scenario(runtime.get_context())
-        print(f"product cached and refreshed: price={result.price}")
+        log.info("product cached and refreshed", price=result.price)
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())

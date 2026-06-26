@@ -22,9 +22,13 @@ from __future__ import annotations
 import asyncio
 from uuid import UUID
 
+import structlog
+
 from forze.application.contracts.realtime import Audience, MailboxEntry, RealtimeSignal
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze.base.primitives import HlcTimestamp, uuid7
 from forze_kits.integrations.realtime import (
     DocumentMailboxCursors,
@@ -37,6 +41,16 @@ from forze_kits.integrations.realtime import (
 from forze_mock import MockDepsModule
 from forze_mock.execution import MockRouteConfig
 
+_LOGGER_NAME = "realtime_offline"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
+
+
 # --8<-- [start:setup]
 TENANT = UUID("11111111-1111-1111-1111-111111111111")
 BOB = "bob"  # the recipient principal (Audience.principal id form)
@@ -44,6 +58,8 @@ BOB = "bob"  # the recipient principal (Audience.principal id form)
 
 def _signal(text: str) -> RealtimeSignal:
     return RealtimeSignal.of(Audience.principal(BOB), "order.shipped", {"text": text})
+
+
 # --8<-- [end:setup]
 
 
@@ -62,6 +78,8 @@ async def emit_while_offline(
     """
 
     await mailbox.store(principal=BOB, event_id=event_id, hlc=hlc, signal=signal)
+
+
 # --8<-- [end:emit]
 
 
@@ -96,6 +114,8 @@ async def ack(
 
         if floor is not None:
             await mailbox.trim(principal=BOB, before=floor)
+
+
 # --8<-- [end:reconnect]
 
 
@@ -121,20 +141,31 @@ async def main() -> None:
         # Two durable signals arrive while Bob's phone is offline (ids are the durable
         # forze_event_id — UUIDs).
         e_shipped, e_delivered = str(uuid7()), str(uuid7())
-        await emit_while_offline(mailbox, event_id=e_shipped, hlc=HlcTimestamp(physical_ms=1, logical=0), signal=_signal("shipped"))
-        await emit_while_offline(mailbox, event_id=e_delivered, hlc=HlcTimestamp(physical_ms=2, logical=0), signal=_signal("delivered"))
+        await emit_while_offline(
+            mailbox,
+            event_id=e_shipped,
+            hlc=HlcTimestamp(physical_ms=1, logical=0),
+            signal=_signal("shipped"),
+        )
+        await emit_while_offline(
+            mailbox,
+            event_id=e_delivered,
+            hlc=HlcTimestamp(physical_ms=2, logical=0),
+            signal=_signal("delivered"),
+        )
 
         # Bob's phone reconnects → it receives both, in order.
         first = await reconnect(mailbox, cursors, device="phone")
-        print(f"phone reconnect: {[e.payload['text'] for e in first]}")
+        log.info("phone reconnect", entries=[e.payload["text"] for e in first])
 
         # The client acks the last one it processed.
         await ack(mailbox, cursors, device="phone", event_id=e_delivered)
 
         # A later reconnect of the same device replays nothing — it's caught up.
         second = await reconnect(mailbox, cursors, device="phone")
-        print(f"phone reconnect again: {[e.payload['text'] for e in second]}")
+        log.info("phone reconnect again", entries=[e.payload["text"] for e in second])
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())

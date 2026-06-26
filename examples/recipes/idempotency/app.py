@@ -14,10 +14,14 @@ from __future__ import annotations
 
 import asyncio
 
+import structlog
+
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.application.hooks.idempotency import IdempotencyWrap
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.aggregates.document import (
     DocumentFacade,
@@ -25,6 +29,16 @@ from forze_kits.aggregates.document import (
 )
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_mock import MockDepsModule
+
+_LOGGER_NAME = "idempotency"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
+
 
 # --8<-- [start:domain]
 class Order(Document):
@@ -37,6 +51,8 @@ class CreateOrder(CreateDocumentCmd):
 
 class ReadOrder(ReadDocument):
     item: str
+
+
 # --8<-- [end:domain]
 
 
@@ -68,7 +84,9 @@ REGISTRY = (
 
 
 def orders(ctx: ExecutionContext) -> DocumentFacade[ReadOrder, CreateOrder, BaseDTO]:
-    return DocumentFacade(ctx=ctx, registry=REGISTRY, namespace=ORDER_SPEC.default_namespace)
+    return DocumentFacade(
+        ctx=ctx, registry=REGISTRY, namespace=ORDER_SPEC.default_namespace
+    )
 
 
 # --8<-- [start:scenario]
@@ -84,15 +102,20 @@ async def idempotent_create(ctx: ExecutionContext) -> tuple[ReadOrder, ReadOrder
 
     assert first.id == second.id  # created once, returned twice
     return first, second
+
+
 # --8<-- [end:scenario]
 
 
 async def main() -> None:
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
+    )
     async with runtime.scope():
         first, second = await idempotent_create(runtime.get_context())
-        print(f"created once, returned twice: {first.id == second.id}")
+        log.info("created once, returned twice", same_result=first.id == second.id)
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())

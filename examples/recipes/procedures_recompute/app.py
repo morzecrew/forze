@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 
+import structlog
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -25,7 +26,18 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.contracts.procedure import ExecResult, ProcedureSpec
 from forze.application.execution import DepsRegistry, ExecutionContext
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze_mock import MockDepsModule, MockProcedureRegistry, MockState
+
+_LOGGER_NAME = "procedures_recompute"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
 
 
 # --8<-- [start:spec]
@@ -158,11 +170,12 @@ async def main() -> None:
     )
 
     written = await recompute(ctx)
-    print(f"recomputed {written} regions in one statement")
+    log.info("recomputed regions in one statement", regions=written)
 
     for row in await region_totals(ctx):
-        print(f"{row.region}: {row.total}")
+        log.info("region total", region=row.region, total=row.total)
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())

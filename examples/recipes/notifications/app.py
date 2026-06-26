@@ -14,12 +14,15 @@ import asyncio
 from datetime import timedelta
 from uuid import uuid4
 
+import structlog
 from pydantic import BaseModel
 
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionContext
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.consumer import QueueConsumer
 from forze_kits.integrations.notify import (
@@ -29,6 +32,15 @@ from forze_kits.integrations.notify import (
 )
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule
+
+_LOGGER_NAME = "notifications"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
 
 
 # --8<-- [start:event]
@@ -134,8 +146,9 @@ async def main() -> None:
     senders = RecordingSenders()
     await stage_welcome(ctx, "ada@example.com")
     sent = await deliver_notifications(ctx, senders)
-    print(f"sent {sent} notification(s) to {[e.to for e in senders.emails]}")
+    log.info("notifications sent", sent=sent, recipients=[e.to for e in senders.emails])
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())

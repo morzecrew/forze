@@ -13,14 +13,27 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
+import structlog
 from pydantic import BaseModel
 
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionContext
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule
+
+_LOGGER_NAME = "outbox"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
+
 
 # --8<-- [start:event]
 class OrderPlaced(BaseModel):
@@ -44,6 +57,8 @@ async def place_order(ctx: ExecutionContext, order_id: str) -> None:
     outbox = ctx.outbox.command(ORDER_EVENTS)
     await outbox.stage("order.placed", OrderPlaced(order_id=order_id), event_id=uuid4())
     await outbox.flush()
+
+
 # --8<-- [end:stage]
 
 
@@ -53,15 +68,20 @@ async def relay(ctx: ExecutionContext) -> int:
     # here we drive one pass. It claims staged rows and publishes them to the queue.
     result = await OutboxRelay(outbox_spec=ORDER_EVENTS).to_queue(ctx, ORDERS_QUEUE)
     return result.published
+
+
 # --8<-- [end:relay]
 
 
 async def main() -> None:
-    ctx = ExecutionContext(deps=DepsRegistry.from_modules(MockDepsModule()).freeze().resolve())
+    ctx = ExecutionContext(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze().resolve()
+    )
     await place_order(ctx, str(uuid4()))
     published = await relay(ctx)
-    print(f"published {published} event(s) to the orders queue")
+    log.info("published events to the orders queue", published=published)
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())

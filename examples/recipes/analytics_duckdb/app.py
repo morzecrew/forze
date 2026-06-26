@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 
 import duckdb
+import structlog
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -28,6 +29,8 @@ from forze.application.execution import (
     ExecutionRuntime,
     LifecyclePlan,
 )
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze_duckdb import (
     DuckDbAnalyticsConfig,
     DuckDbClient,
@@ -36,6 +39,15 @@ from forze_duckdb import (
     ParquetSource,
     duckdb_lifecycle_step,
 )
+
+_LOGGER_NAME = "analytics_duckdb"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
 
 
 # --8<-- [start:spec]
@@ -131,8 +143,9 @@ async def main() -> None:
             rows = await top_regions(runtime.get_context(), min_total=20)
 
         for row in rows:
-            print(f"{row.region}: {row.total}")
+            log.info("region total", region=row.region, total=row.total)
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())
