@@ -12,7 +12,6 @@ from .resolution import (
     ResolutionTracer,
     resolution_tracer_from_flag,
 )
-from forze.application.contracts.deps import PlainDepsMap, RoutedDeps
 
 # ----------------------- #
 
@@ -25,11 +24,9 @@ __all__ = [
     "FrozenDepsRegistry",
     "NOOP_RESOLUTION_TRACER",
     "NoopResolutionTracer",
-    "PlainDepsMap",
     "RecordingResolutionTracer",
     "ResolutionContext",
     "ResolutionFrame",
     "ResolutionTracer",
-    "RoutedDeps",
     "resolution_tracer_from_flag",
 ]

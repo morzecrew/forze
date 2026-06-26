@@ -1,16 +1,9 @@
-"""Built-in in-process resilience executor and registration module."""
+"""Built-in in-process resilience executor and registration module.
 
-# The store seams (protocols, keys, ``Transition``) are contracts; this package
-# re-exports them next to the in-process default impls it ships, for back-compat.
-from forze.application.contracts.resilience import (
-    BreakerKey,
-    CircuitBreakerStore,
-    LatencyDigestKey,
-    LatencyDigestStore,
-    RateLimitKey,
-    RateLimitStore,
-    Transition,
-)
+The store *contracts* (protocols, keys, ``Transition``) live in
+:mod:`forze.application.contracts.resilience` — import them from there. This package
+ships only the in-process default implementations.
+"""
 
 from .executor import InProcessResilienceExecutor
 from .module import ResilienceDepsModule
@@ -27,16 +20,9 @@ from .store import (
 # ----------------------- #
 
 __all__ = [
-    "BreakerKey",
-    "CircuitBreakerStore",
     "InMemoryCircuitBreakerStore",
     "InMemoryLatencyDigestStore",
     "InMemoryRateLimitStore",
-    "LatencyDigestKey",
-    "LatencyDigestStore",
-    "RateLimitKey",
-    "RateLimitStore",
-    "Transition",
     "InProcessResilienceExecutor",
     "OCC_POLICY",
     "ResilienceDepsModule",

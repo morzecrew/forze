@@ -1,5 +1,5 @@
-# re-export contract seam + step
-from forze.application.contracts.execution import LifecycleModule, LifecycleStep
+# re-export the lifecycle step contract next to the plan impls
+from forze.application.contracts.execution import LifecycleStep
 
 from .plans import FrozenLifecyclePlan, LifecyclePlan
 
@@ -7,7 +7,6 @@ from .plans import FrozenLifecyclePlan, LifecyclePlan
 
 __all__ = [
     "FrozenLifecyclePlan",
-    "LifecycleModule",
     "LifecyclePlan",
     "LifecycleStep",
 ]

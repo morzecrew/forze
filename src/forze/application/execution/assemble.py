@@ -5,8 +5,10 @@ from datetime import timedelta
 
 from forze.base.primitives import CpuExecutor
 
+from forze.application.contracts.execution import LifecycleModule
+
 from .deps import Deps, DepsModule, DepsRegistry
-from .lifecycle import LifecycleModule, LifecyclePlan, LifecycleStep
+from .lifecycle import LifecyclePlan, LifecycleStep
 from .runtime import DeploymentProfile, ExecutionRuntime
 
 # ----------------------- #

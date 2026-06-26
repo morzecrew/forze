@@ -25,10 +25,7 @@ from .deps import (
     ResolutionTracer,
     resolution_tracer_from_flag,
 )
-from .lifecycle import (
-    LifecycleModule,
-    LifecyclePlan,
-)
+from .lifecycle import LifecyclePlan
 from .operations import (
     OperationCatalogEntry,
     OperationDescriptor,
@@ -37,7 +34,6 @@ from .operations import (
 )
 from .operations.registry import FrozenOperationRegistry, OperationRegistry
 from .resilience import (
-    CircuitBreakerStore,
     InMemoryCircuitBreakerStore,
     InProcessResilienceExecutor,
     ResilienceDepsModule,
@@ -116,12 +112,10 @@ __all__ = [
     "ExecutionContext",
     "ExecutionRuntime",
     "DeploymentProfile",
-    "CircuitBreakerStore",
     "FrozenOperationRegistry",
     "InMemoryCircuitBreakerStore",
     "InProcessDomainEventDispatcher",
     "InProcessResilienceExecutor",
-    "LifecycleModule",
     "outbox_event_handler",
     "LifecyclePlan",
     "OperationCatalogEntry",
