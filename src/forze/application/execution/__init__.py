@@ -15,9 +15,9 @@ from .domain import (
     InProcessDomainEventDispatcher,
     outbox_event_handler,
 )
+from forze.application.contracts.deps import Deps, DepsModule
+
 from .deps import (
-    Deps,
-    DepsModule,
     DepsRegistry,
     FrozenDeps,
     FrozenDepsRegistry,

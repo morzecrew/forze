@@ -16,7 +16,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from forze.application.execution import InvocationMetadata
-from forze.application.execution.deps import Deps
+from forze.application.execution import Deps
 from forze.base.primitives import uuid7
 from tests.support.execution_context import context_from_deps
 

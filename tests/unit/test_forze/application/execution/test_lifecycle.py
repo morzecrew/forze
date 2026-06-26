@@ -4,12 +4,11 @@ import asyncio
 
 import pytest
 
-from forze.application.contracts.execution import noop_lifecycle_hook
+from forze.application.contracts.execution import LifecycleStep, noop_lifecycle_hook
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle import (
     FrozenLifecyclePlan,
     LifecyclePlan,
-    LifecycleStep,
 )
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_mock import MockDepsModule, MockState

@@ -17,7 +17,7 @@ from temporalio.worker import (
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
-from forze.application.execution.deps import Deps
+from forze.application.execution import Deps
 from forze.base.primitives import uuid7
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_temporal.interceptors.codecs import TemporalContextCodec
