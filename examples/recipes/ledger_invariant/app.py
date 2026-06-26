@@ -32,7 +32,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.deps import DepsRegistry
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_kits.invariants import InvariantResult, enforce, evaluate
+from forze_kits.invariants import InvariantResult, enforce, enforce_preventive, evaluate
 from forze_mock import MockDepsModule
 
 # ----------------------- #
@@ -140,6 +140,26 @@ async def mint(ctx: ExecutionContext, ledger_id: str, account: UUID, amount: int
         await enforce(LEDGER_BALANCED, ctx, {"ledger_id": ledger_id})
 
 
+async def mint_guarded(
+    ctx: ExecutionContext, ledger_id: str, account: UUID, amount: int
+) -> None:
+    """The same single-sided credit as :func:`mint`, enforced **preventively**.
+
+    The check runs *inside* a ``SERIALIZABLE`` transaction (the law's ``required_isolation``) and
+    raises before commit, so the bad write is **rolled back** — never durable. ``enforce_preventive``
+    fails closed unless the transaction meets that floor and the backend's conformance-verified
+    capabilities report it; that isolation is exactly what serializes away a concurrent write-skew
+    instead of letting two innocent-looking writes jointly break the law.
+    """
+
+    async with ctx.tx_ctx.scope(_ROUTE, isolation=LEDGER_BALANCED.required_isolation):
+        current = await ctx.document.query(ACCOUNT_SPEC).get(account)
+        await ctx.document.command(ACCOUNT_SPEC).update(
+            account, current.rev, AccountUpdate(balance=current.balance + amount)
+        )
+        await enforce_preventive(LEDGER_BALANCED, ctx, {"ledger_id": ledger_id})
+
+
 async def ledger_balance(ctx: ExecutionContext, ledger_id: str) -> InvariantResult:
     """Evaluate the conservation law without enforcing it — a read, for inspection."""
 
@@ -150,21 +170,29 @@ async def ledger_balance(ctx: ExecutionContext, ledger_id: str) -> InvariantResu
 
 
 async def main() -> None:
+    # Detective: a correct transfer preserves the law; a single-sided mint is reported *after* commit
+    # — so the bad write is already durable when the breach surfaces.
     ctx = build_context()
-
     asset = await open_account(ctx, "L1", 100)  # an asset of +100 …
     liability = await open_account(ctx, "L1", -100)  # … against a liability of -100 → balanced
-    print("opened:", await ledger_balance(ctx, "L1"))
-
     await transfer(ctx, "L1", asset, liability, 30)  # preserves the sum
-    print("after transfer:", await ledger_balance(ctx, "L1"))
-
+    print("after transfer (balanced):", await ledger_balance(ctx, "L1"))
     try:
-        await mint(ctx, "L1", asset, 50)  # single-sided → the conservation law catches it
+        await mint(ctx, "L1", asset, 50)  # single-sided → caught post-commit
     except CoreException as error:
-        print("mint rejected by the conservation law:", error)
+        print("detective — mint reported:", error)
+    print("  …but durable:", await ledger_balance(ctx, "L1"))  # held=False, observed=50
 
-    print("final (durable, unbalanced — detective ≠ preventive):", await ledger_balance(ctx, "L1"))
+    # Preventive: the same bad write, checked *inside* a SERIALIZABLE transaction, is rolled back —
+    # never durable. (And under real concurrency that isolation serializes away a write-skew.)
+    ctx2 = build_context()
+    funded = await open_account(ctx2, "L2", 100)
+    await open_account(ctx2, "L2", -100)  # balanced
+    try:
+        await mint_guarded(ctx2, "L2", funded, 50)  # single-sided → caught before commit
+    except CoreException as error:
+        print("preventive — mint_guarded rejected:", error)
+    print("  …and rolled back:", await ledger_balance(ctx2, "L2"))  # held=True, observed=0
 
 
 if __name__ == "__main__":

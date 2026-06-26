@@ -17,6 +17,7 @@ from examples.recipes.ledger_invariant.app import (
     build_context,
     ledger_balance,
     mint,
+    mint_guarded,
     open_account,
     transfer,
 )
@@ -51,6 +52,20 @@ class TestLedgerInvariantExample:
         broken = await ledger_balance(ctx, "L1")
         assert not broken.held
         assert broken.observed == 50.0
+
+    async def test_preventive_mint_is_rolled_back_not_durable(self) -> None:
+        # The contrast with the detective case above: the same single-sided write, checked inside a
+        # SERIALIZABLE transaction, raises before commit and is rolled back — the ledger stays balanced.
+        ctx = build_context()
+        funded = await open_account(ctx, "L1", 100)
+        await open_account(ctx, "L1", -100)
+
+        with pytest.raises(CoreException):
+            await mint_guarded(ctx, "L1", funded, 50)
+
+        result = await ledger_balance(ctx, "L1")
+        assert result.held  # rolled back, not durable
+        assert result.observed == 0.0
 
     async def test_the_law_is_scoped_per_ledger(self) -> None:
         ctx = build_context()

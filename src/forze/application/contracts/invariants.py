@@ -29,6 +29,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.transaction import IsolationLevel
 
 # ----------------------- #
 # Aggregates — the closed set of reducers that collapse a read-set to one comparable number. Closed
@@ -90,3 +91,12 @@ class SystemInvariant:
     read_set: ReadSet
     aggregate: Reducer
     holds: Callable[[float], bool]
+
+    required_isolation: IsolationLevel = IsolationLevel.SERIALIZABLE
+    """The minimum isolation a *preventive* check needs to be correct under concurrency. Most
+    predicate-over-read-set laws are **write-skew prone** — two transactions each read the set, each
+    write disjoint rows, and the combination breaks the law though neither alone does — which only
+    ``SERIALIZABLE`` prevents; hence the default. Lower it (e.g. ``SNAPSHOT``) only for a law whose
+    sole conflict mode is a lost update (two writers clobbering the *same* row). Ignored by detective
+    enforcement; the preventive path fails closed unless the writing transaction runs at least here
+    (and the backend's conformance-verified ``TxCapabilities`` reports the level)."""

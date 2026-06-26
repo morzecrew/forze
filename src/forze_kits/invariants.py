@@ -101,3 +101,53 @@ async def enforce(
             )
 
     await ctx.tx_ctx.run_or_defer(_check)
+
+
+# ....................... #
+
+
+async def enforce_preventive(
+    invariant: SystemInvariant,
+    ctx: ExecutionContext,
+    params: Mapping[str, Any],
+) -> None:
+    """Preventive enforcement: evaluate the law *inside* the writing transaction and raise before commit.
+
+    Unlike :func:`enforce` (detective, post-commit), this runs immediately, so a violation propagates
+    out of the transaction scope and **rolls the write back** — the bad state never becomes durable.
+    Call it inside the writing transaction, after the writes::
+
+        async with ctx.tx_ctx.scope(route, isolation=inv.required_isolation):
+            ...writes...
+            await enforce_preventive(inv, ctx, params)
+
+    It is correct only at or above the law's
+    :attr:`~forze.application.contracts.invariants.SystemInvariant.required_isolation`, so it **fails
+    closed** (``exc.configuration``) if the active transaction is weaker (or absent) — a caller cannot
+    silently get preventive enforcement that a write-skew interleaving would defeat. The
+    *backend*-capability half of the gate is already paid when the handler opens
+    ``scope(route, isolation=required)`` (that fail-closes against the manager's ``TxCapabilities``);
+    under RFC 0004 the reported level is verified to match the real engine, which is what makes this
+    prevention trustworthy under real concurrency, not just within one transaction.
+    """
+
+    active = ctx.tx_ctx.current_isolation()
+    required = invariant.required_isolation
+
+    if active is None or active < required:
+        raise exc.configuration(
+            f"preventive enforcement of system invariant {invariant.name!r} requires the writing "
+            f"transaction to run at isolation >= {required.name}, but it is at "
+            f"{active.name if active is not None else 'no explicit isolation (or no transaction)'} — "
+            f"open it with scope(route, isolation={required.name})",
+            code="system_invariant_isolation_floor",
+        )
+
+    result = await evaluate(invariant, ctx, params)
+
+    if not result.held:
+        raise exc.domain(
+            f"system invariant {invariant.name!r} would be violated: "
+            f"aggregate observed {result.observed}",
+            code="system_invariant_violated",
+        )

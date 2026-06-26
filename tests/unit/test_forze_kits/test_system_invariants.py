@@ -10,19 +10,22 @@ preventive.
 
 from __future__ import annotations
 
+import attrs
+import pytest
+
 from forze.application.contracts.invariants import (
     Count,
     ReadSet,
     Sum,
     SystemInvariant,
 )
+from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze.application.contracts.document import DocumentSpec
-from forze_kits.invariants import enforce, evaluate
+from forze_kits.invariants import enforce, enforce_preventive, evaluate
 from forze_mock import MockDepsModule
-import pytest
 
 from tests.support.execution_context import context_from_deps
 
@@ -193,3 +196,62 @@ class TestEnforce:
                 )
                 await enforce(LEDGER_BALANCED, ctx, {"ledger_id": "L1"})
             # violation raises here, at post-commit, not before
+
+
+# ....................... #
+# P2 — preventive enforcement: evaluate inside the writing tx, raise before commit (rolls back),
+# fail closed below the law's isolation floor.
+
+_SER = IsolationLevel.SERIALIZABLE
+_SNAPSHOT_LAW = attrs.evolve(
+    SINGLE_CAPTURED_PAYMENT, name="payment_snapshot", required_isolation=IsolationLevel.SNAPSHOT
+)
+
+
+class TestEnforcePreventive:
+    async def test_held_commits_the_write(self) -> None:
+        ctx = _ctx()
+        async with ctx.tx_ctx.scope("mock", isolation=_SER):
+            await ctx.document.command(PAYMENTS).create(PaymentCreate(order_id="O1"))
+            await enforce_preventive(SINGLE_CAPTURED_PAYMENT, ctx, {"order_id": "O1"})
+
+        assert (await evaluate(SINGLE_CAPTURED_PAYMENT, ctx, {"order_id": "O1"})).observed == 1.0
+
+    async def test_violation_rolls_the_write_back(self) -> None:
+        # The point of preventive mode: the violating write is UNDONE (unlike detective enforcement,
+        # where it stays durable). Two captured payments would break the cardinality law, so the
+        # whole transaction rolls back and neither payment persists.
+        ctx = _ctx()
+
+        with pytest.raises(exc, match="would be violated"):
+            async with ctx.tx_ctx.scope("mock", isolation=_SER):
+                await ctx.document.command(PAYMENTS).create(PaymentCreate(order_id="O1"))
+                await ctx.document.command(PAYMENTS).create(PaymentCreate(order_id="O1"))
+                await enforce_preventive(SINGLE_CAPTURED_PAYMENT, ctx, {"order_id": "O1"})
+
+        assert (await evaluate(SINGLE_CAPTURED_PAYMENT, ctx, {"order_id": "O1"})).observed == 0.0
+
+    async def test_too_weak_isolation_fails_closed(self) -> None:
+        # The law needs SERIALIZABLE; running the check in a SNAPSHOT tx is rejected (a write-skew
+        # interleaving would defeat it), so it can't silently give weak "prevention".
+        ctx = _ctx()
+
+        with pytest.raises(exc, match="isolation"):
+            async with ctx.tx_ctx.scope("mock", isolation=IsolationLevel.SNAPSHOT):
+                await ctx.document.command(PAYMENTS).create(PaymentCreate(order_id="O1"))
+                await enforce_preventive(SINGLE_CAPTURED_PAYMENT, ctx, {"order_id": "O1"})
+
+    async def test_no_transaction_fails_closed(self) -> None:
+        ctx = _ctx()
+
+        with pytest.raises(exc, match="isolation"):
+            await enforce_preventive(SINGLE_CAPTURED_PAYMENT, ctx, {"order_id": "O1"})
+
+    async def test_a_stronger_transaction_satisfies_a_lower_floor(self) -> None:
+        # `>=`, not `==`: a SNAPSHOT-floor law is fine inside a SERIALIZABLE transaction.
+        ctx = _ctx()
+        async with ctx.tx_ctx.scope("mock", isolation=_SER):
+            await ctx.document.command(PAYMENTS).create(PaymentCreate(order_id="O1"))
+            await enforce_preventive(_SNAPSHOT_LAW, ctx, {"order_id": "O1"})  # must not raise
+
+        assert (await evaluate(_SNAPSHOT_LAW, ctx, {"order_id": "O1"})).observed == 1.0

@@ -106,6 +106,22 @@ class TransactionContext:
 
     # ....................... #
 
+    def current_isolation(self) -> IsolationLevel | None:
+        """The active root transaction's declared :class:`IsolationLevel`, inherited by nested scopes.
+
+        ``None`` outside any transaction, or when the root scope left the manager's default (no
+        explicit level requested). Lets a caller verify it is running under a sufficient isolation
+        *floor* before relying on it — e.g. preventive cross-aggregate invariant enforcement, which
+        is only correct at or above the level its conflict mode needs. An explicit non-``None`` level
+        here also implies the fail-closed capability check at root entry already passed for it.
+        """
+
+        handle = self.__tx_handle.get()
+
+        return handle.isolation if handle is not None else None
+
+    # ....................... #
+
     def _defer(self, cb: Callable[[], Awaitable[None]]) -> None:
         """Defer a callback to run after the current root transaction commits successfully.
 
