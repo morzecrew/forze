@@ -47,6 +47,7 @@ from typing import Any, Callable, Mapping, Sequence, cast, final
 import attrs
 
 from forze.application.contracts.querying import compile_filter
+from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution.tracing.port_proxy import REDACTED
 from forze.base.exceptions import CoreException, exc
 from forze_dst.oracle.invariants import Invariant, Violation
@@ -772,3 +773,102 @@ def serializable(
         )
 
     return _check
+
+
+# ....................... #
+# Non-vacuity + declared-level wiring — so an isolation sweep's *green* is trustworthy, not vacuous.
+
+
+def had_isolation_conflict(
+    history: History, *, read_phase: str = "query", write_phase: str = "command"
+) -> bool:
+    """Whether the run produced a real serialization-conflict **opportunity** — the teeth the oracle
+    needs to mean anything.
+
+    A clean :func:`serializable` / :func:`snapshot_isolation` result over a run where no two concurrent
+    committed transactions ever conflicted is **vacuous** (nothing *could* have violated). Fold this
+    across a sweep — ``any(had_isolation_conflict(h) for h in histories)`` — to assert the sweep
+    actually stressed isolation, the same non-vacuity discipline a reachability target enforces for a
+    fault. Returns ``True`` when either: two **concurrent** (overlapping-window) committed transactions
+    accessed a common key with at least one write (a ww/wr/rw opportunity, capture-free, key-level); or
+    — when the value-trace captured scans — a committed scanner overlapped a committed writer in the
+    scanned namespace (a predicate/phantom opportunity, namespace-coarse: it does not re-check the
+    predicate, so it may over-report "stressed" on a non-matching write — the harmless direction for an
+    OR-fold).
+
+    Scope of the guarantee: it gates on **concurrency**, matching the pairwise checks and what "stressed
+    isolation" means, so it is a sound superset of any conflict the *pairwise* oracles flag and of the
+    concurrency opportunity behind any *realizable* cycle. (:func:`find_serializability_cycle` builds its
+    graph over all committed transactions with no concurrency gate; a cycle among non-overlapping
+    committed transactions would be a snapshot-freshness violation — a *backend conformance* failure the
+    differential polices — not the concurrency stress this signal measures, and it is unreachable on a
+    conformant backend.)
+    """
+
+    txns = transactions_from_history(
+        history, read_phase=read_phase, write_phase=write_phase
+    )
+
+    for a, b in _committed_concurrent_pairs(txns):
+        if (a.writes & (b.reads | b.writes)) or (b.writes & (a.reads | a.writes)):
+            return True
+
+    # Predicate/phantom opportunity — only when capture recorded scans (else the key-level check above
+    # is the whole signal; capture-off makes the versioned derivation fail closed, caught here).
+    try:
+        versioned = versioned_transactions_from_history(
+            history, read_phase=read_phase, write_phase=write_phase
+        )
+    except CoreException:
+        return False
+
+    committed = [tx for tx in versioned if tx.committed]
+
+    for scanner in committed:
+        for scan in scanner.scans:
+            for writer in committed:
+                overlap = scanner.start <= writer.end and writer.start <= scanner.end
+                if (
+                    writer.name != scanner.name
+                    and overlap
+                    and any(wv.key[0] == scan.namespace for wv in writer.write_rows)
+                ):
+                    return True
+
+    return False
+
+
+def isolation_oracle_for(
+    level: IsolationLevel,
+    *,
+    complete: bool = True,
+    read_phase: str = "query",
+    write_phase: str = "command",
+) -> Invariant:
+    """The serialization-anomaly :data:`Invariant` matching a *declared* isolation level — so a run is
+    checked at the level it claims to provide.
+
+    ``SERIALIZABLE`` → :func:`serializable` (``complete`` selects the dependency-graph mode);
+    ``SNAPSHOT`` → :func:`snapshot_isolation` (no lost update; write skew is *permitted* under SI, so it
+    is not flagged). ``READ_COMMITTED`` has no serialization-graph oracle — its only guarantee, no dirty
+    reads, every conforming backend enforces at *every* level and it is not a graph property — so it
+    raises, rather than hand back a vacuous check that would pass on anything. Pair with
+    :func:`had_isolation_conflict` to assert the declared level holds *and* was actually exercised.
+    """
+
+    match level:
+        case IsolationLevel.SERIALIZABLE:
+            return serializable(
+                complete=complete, read_phase=read_phase, write_phase=write_phase
+            )
+
+        case IsolationLevel.SNAPSHOT:
+            return snapshot_isolation(read_phase=read_phase, write_phase=write_phase)
+
+        case _:
+            raise exc.configuration(
+                f"no serialization-graph oracle for {level} — READ_COMMITTED's guarantee "
+                "(no dirty reads) is enforced at every level and is not a graph property; "
+                "assert the stronger level you actually want checked",
+                code="no_isolation_oracle_for_level",
+            )
