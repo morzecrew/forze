@@ -86,6 +86,14 @@ class TracingEvent:
     *return* event under value capture (``None`` otherwise). Lets ``read_your_writes`` assert on
     what a read actually observed."""
 
+    result_native: Mapping[str, Any] | None = None
+    """A redaction-applied **native-typed** view of a *write*'s returned row (``mode="python"``: UUID
+    / IP / Decimal / datetime kept as objects), captured alongside :attr:`result` only on command
+    return events under value capture. The isolation oracle matches a captured scan predicate against
+    this — the same native representation the backend's in-memory scan matches — so its predicate
+    evaluation agrees with the live scan instead of comparing a JSON string to a native value. Not
+    serialized to the portable timeline/bundle (those use :attr:`result`)."""
+
 
 # ....................... #
 
@@ -170,6 +178,7 @@ class RuntimeTrace:
         nested: bool = False,
         payload: Mapping[str, Any] | None = None,
         result: Mapping[str, Any] | None = None,
+        result_native: Mapping[str, Any] | None = None,
     ) -> TracingEvent:
         """Build and record an event with the next sequence number."""
 
@@ -191,6 +200,7 @@ class RuntimeTrace:
             nested=nested,
             payload=payload,
             result=result,
+            result_native=result_native,
         )
         self._next_seq += 1
         self.record(event)

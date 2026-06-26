@@ -40,6 +40,7 @@ from forze_dst.invariants import (
 )
 from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule
+from ipaddress import IPv4Address
 from uuid import UUID
 
 # ----------------------- #
@@ -478,6 +479,57 @@ class TestPhantomEdges:
         )
         assert find_serializability_cycle([tx]) == []
 
+    def test_native_typed_row_does_not_falsely_match_a_string_filter(self) -> None:
+        # The cardinal-sin regression: the backend scans the NATIVE row, so a string filter must be
+        # matched against the native value (``IPv4Address('10.0.0.1') != '10.0.0.1'``), not a JSON
+        # string copy. S scans ip==str and writes y@2; W reads y@1 (→ a real rw W→S) and inserts a
+        # device whose ip is the NATIVE address. The live scan would not return it, so the history is
+        # serializable — a JSON-string row would spuriously match and close a false S→W→S cycle.
+        y, dev = ("mock", "y"), ("devices", "x")
+        scanner = VersionedTxRecord(
+            name="S",
+            start=0,
+            end=10,
+            committed=True,
+            commit_seq=10,
+            reads=frozenset({(y, 1)}),
+            writes=frozenset({(y, 2)}),
+            scans=(
+                ScanRead(
+                    namespace="devices",
+                    predicate={"$values": {"ip": {"$eq": "10.0.0.1"}}},
+                    seq=1,
+                ),
+            ),
+        )
+        writer = VersionedTxRecord(
+            name="W",
+            start=0,
+            end=5,
+            committed=True,
+            commit_seq=5,
+            reads=frozenset({(y, 1)}),
+            writes=frozenset({(dev, 1)}),
+            write_rows=(
+                WriteVersion(
+                    key=dev,
+                    rev=1,
+                    row={"id": "x", "rev": 1, "ip": IPv4Address("10.0.0.1")},
+                ),
+            ),
+        )
+        assert find_serializability_cycle([scanner, writer]) == []  # native ip ≠ str → no FP
+
+        # Contrast: a genuine string ip field DOES match → the real phantom cycle is still caught,
+        # proving the test discriminates (the fix narrows to the representation gap, not all matches).
+        writer_str = attrs.evolve(
+            writer,
+            write_rows=(
+                WriteVersion(key=dev, rev=1, row={"id": "x", "rev": 1, "ip": "10.0.0.1"}),
+            ),
+        )
+        assert len(find_serializability_cycle([scanner, writer_str])) == 1
+
 
 # ....................... #
 # The versioned derivation — version-aware read/write sets from capture-mode result events.
@@ -497,6 +549,8 @@ def _read_v(seq: int, tx_id: int, key: str, rev: int, route: str = "mock") -> Ev
 
 
 def _write_v(seq: int, tx_id: int, key: str, rev: int, route: str = "mock") -> Event:
+    # A command result carries both the JSON `result` and the NATIVE `result_native` (here identical,
+    # since id/rev are JSON-stable) — the oracle reads the native form for predicate matching.
     return _ev(
         seq,
         trace_domain="document",
@@ -506,6 +560,7 @@ def _write_v(seq: int, tx_id: int, key: str, rev: int, route: str = "mock") -> E
         route=route,
         tx_id=tx_id,
         result={"id": key, "rev": rev},
+        result_native={"id": key, "rev": rev},
     )
 
 
@@ -521,6 +576,7 @@ def _create_v(
         route=route,
         tx_id=tx_id,
         result={"id": new_id, "rev": rev},
+        result_native={"id": new_id, "rev": rev},
     )
 
 
@@ -560,9 +616,22 @@ def _find_hit(
 
 
 def _create_row(
-    seq: int, tx_id: int, new_id: str, rev: int, *, route: str = "mock", **row: object
+    seq: int,
+    tx_id: int,
+    new_id: str,
+    rev: int,
+    *,
+    route: str = "mock",
+    native: dict[str, object] | None = None,
+    **row: object,
 ) -> Event:
     # A create whose result carries the full produced row (the fields a predicate is matched against).
+    # ``result`` is the JSON form (timeline/bundle); ``result_native`` is the native-typed form the
+    # oracle matches predicates against — identical here unless ``native`` overrides with object types.
+    json_row = {"id": new_id, "rev": rev, **row}
+    native_row = (
+        {"id": new_id, "rev": rev, **native} if native is not None else dict(json_row)
+    )
     return _ev(
         seq,
         trace_domain="document",
@@ -570,7 +639,8 @@ def _create_row(
         phase="command",
         route=route,
         tx_id=tx_id,
-        result={"id": new_id, "rev": rev, **row},
+        result=json_row,
+        result_native=native_row,
     )
 
 
@@ -755,6 +825,54 @@ class TestPredicatePhantomDerivation:
             ),
         )
         assert serializable(complete=True)(history) == []
+
+    def test_native_write_row_prevents_a_json_string_false_positive(self) -> None:
+        # Full pipeline regression for the JSON-vs-native gap: the capture records the device ip as a
+        # JSON string in ``result`` but the native IPv4Address in ``result_native``; the oracle matches
+        # the string filter against the native form → no match → no phantom edge. The only real edge is
+        # W→S on key y, so the history is serializable. (Were the oracle to match the JSON string row,
+        # ip=="10.0.0.1" would spuriously match and close a false S→W→S cycle.)
+        history = History(
+            seed=0,
+            events=(
+                _enter(0, 1),  # S
+                _scan_call(
+                    1, 1, {"$values": {"ip": {"$eq": "10.0.0.1"}}}, op="find_many", route="devices"
+                ),
+                _read_v(2, 1, "y", 1),
+                _enter(3, 2),  # W
+                _read_v(4, 2, "y", 1),
+                _create_row(
+                    5, 2, "x", 1, route="devices", ip="10.0.0.1", native={"ip": IPv4Address("10.0.0.1")}
+                ),
+                _exit(6, 2),  # commit_seq 6 > scan seq 1 (so the predicate edge IS considered)
+                _write_v(7, 1, "y", 2),
+                _exit(8, 1),
+            ),
+        )
+        # the captured write row is the NATIVE address (the form the backend scans), not the JSON str
+        rows = [
+            wv.row
+            for tx in versioned_transactions_from_history(history)
+            for wv in tx.write_rows
+        ]
+        assert any(isinstance(row.get("ip"), IPv4Address) for row in rows)
+        assert serializable(complete=True)(history) == []  # no JSON-vs-native false positive
+
+    def test_find_stream_is_not_recorded_as_a_predicate_read(self) -> None:
+        # find_stream is a lazy generator (its rows are read during iteration, after the call seq), so
+        # commit_seq > scan.seq is not a sound "did not see" bound for it — it is excluded from the
+        # predicate path, contributing no ScanRead (a forward edge from it could be wrong-direction).
+        history = History(
+            seed=0,
+            events=(
+                _enter(0, 1),
+                _scan_call(1, 1, {"$values": {"value": 7}}, op="find_stream"),
+                _exit(2, 1),
+            ),
+        )
+        [tx] = versioned_transactions_from_history(history)
+        assert tx.scans == ()
 
 
 # ....................... #
@@ -999,3 +1117,33 @@ class TestEndToEnd:
         )
 
         assert report is None
+
+    def test_trace_seq_is_globally_monotonic_across_concurrent_txns(self) -> None:
+        # The predicate-edge direction (commit_seq vs scan.seq) compares sequences ACROSS transactions,
+        # which is sound only if trace_seq is one globally-monotonic counter over a single shared trace
+        # buffer. Pin that runtime invariant: a real concurrent capture run's folded trace has strictly
+        # increasing, unique trace_seq — so a per-task buffer regression would fail here, not silently.
+        captured: list[History] = []
+
+        def _grab(history: History) -> list:  # type: ignore[type-arg]
+            captured.append(history)
+            return []
+
+        Simulation(
+            operations=_scan_registry(),
+            deps=lambda: MockDepsModule(),
+            invariants=[_grab],
+        ).run(
+            SimulationConfig(
+                seeds=range(1), act_count=4, concurrency=4, capture_values=True
+            ),
+            scenario=Scenario(
+                state=ModelState,
+                arrange=(Rule(op="open", produces="row"),),
+                act=(Rule(op="scan"), Rule(op="open", produces="row")),
+            ),
+        )
+
+        seqs = [int(e.fields["trace_seq"]) for e in captured[0].of_kind("trace")]
+        assert seqs == sorted(seqs), "trace_seq is not globally monotonic"
+        assert len(seqs) == len(set(seqs)), "trace_seq is not unique across transactions"

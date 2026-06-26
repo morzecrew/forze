@@ -9,11 +9,8 @@ liveness (``sometimes``, ``reached``). Import the namespace and reach for what y
 ``from forze_dst import invariants as inv`` → ``inv.no_duplicate_effect(...)``.
 """
 
-from __future__ import annotations
-
-from forze_dst.oracle.commutativity import commutative_convergence
-from forze_dst.oracle.system_invariants import CompiledOracle, compile_oracle
-from forze_dst.oracle.invariants import (
+from .oracle.commutativity import commutative_convergence
+from .oracle.invariants import (
     Invariant,
     Violation,
     check,
@@ -30,7 +27,7 @@ from forze_dst.oracle.invariants import (
     read_your_writes,
     single_key_per_operation,
 )
-from forze_dst.oracle.isolation import (
+from .oracle.isolation import (
     ScanRead,
     TxRecord,
     VersionedTxRecord,
@@ -43,7 +40,7 @@ from forze_dst.oracle.isolation import (
     transactions_from_history,
     versioned_transactions_from_history,
 )
-from forze_dst.oracle.linearizability import (
+from .oracle.linearizability import (
     RegisterSpec,
     SequentialSpec,
     is_linearizable,
@@ -52,12 +49,13 @@ from forze_dst.oracle.linearizability import (
     record_operation,
     sequential,
 )
-from forze_dst.oracle.reachability import (
+from .oracle.reachability import (
     ReachabilityReport,
     assess_reachability,
     reached_labels,
     sometimes,
 )
+from .oracle.system_invariants import CompiledOracle, compile_oracle
 
 # ....................... #
 

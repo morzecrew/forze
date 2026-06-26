@@ -15,7 +15,7 @@ distinct from a present ``None``, so ``$null`` / ``$neq`` behave correctly on ab
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, Sequence, cast
 from uuid import UUID
 
 from forze.base.exceptions import exc
@@ -410,3 +410,21 @@ def evaluate_filter(row: JsonDict, filters: "QueryFilterExpression | None") -> b
     """
 
     return _match_filters(row, filters)
+
+
+def compile_filter(
+    filters: "QueryFilterExpression | None",
+) -> Callable[[JsonDict], bool]:
+    """Parse *filters* **once** into a reusable ``row -> bool`` predicate (``None`` ⇒ match-all).
+
+    Same semantics as :func:`evaluate_filter`, but the (re-usable) parse happens up front rather than
+    per call — for a caller that tests one filter against many rows (the DST predicate oracle matching
+    a scan's filter against every concurrent write), this avoids re-parsing the expression each time.
+    May raise at parse time on a malformed filter; the returned matcher itself does not parse.
+    """
+
+    if filters is None:
+        return lambda _row: True
+
+    expr = QueryFilterExpressionParser.parse(filters)
+    return lambda row: _match_expr(row, expr)

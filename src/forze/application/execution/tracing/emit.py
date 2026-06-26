@@ -124,6 +124,7 @@ def record(
     nested: bool = False,
     payload: "Mapping[str, Any] | None" = None,
     result: "Mapping[str, Any] | None" = None,
+    result_native: "Mapping[str, Any] | None" = None,
     deps: "FrozenDeps | None" = None,
 ) -> int | None:
     """Append a runtime event when tracing is enabled; return its ``seq`` (``None`` if disabled).
@@ -159,4 +160,5 @@ def record(
         nested=nested,
         payload=payload,
         result=result,
+        result_native=result_native,
     )

@@ -7,6 +7,8 @@ from typing import Any, AsyncIterator
 import attrs
 import pytest
 
+from ipaddress import IPv4Address
+
 from forze.application.contracts.base.value_objects import CountlessPage
 from forze.application.execution import DepsRegistry
 from forze.application.execution.tracing.port_proxy import TracingPortProxy, wrap_port
@@ -27,6 +29,10 @@ def _tracing_deps() -> Any:
 
 class _Cell(Document):
     value: int
+
+
+class _Device(Document):
+    ip: IPv4Address
 
 
 @attrs.define
@@ -176,6 +182,46 @@ class TestQueryPredicateCapture:
         assert len(hits) == 2
         assert {hit["value"] for hit in hits} == {1, 2}
         assert all("id" in hit and "rev" in hit for hit in hits)
+
+    def test_command_result_keeps_a_native_typed_copy_for_the_oracle(self) -> None:
+        # A write result carries BOTH the JSON ``result`` (portable: IP → str) and the native
+        # ``result_native`` (IPv4Address kept) — the isolation oracle matches predicates against the
+        # native form so its match agrees with the backend's in-memory scan rather than a JSON string.
+        deps = _tracing_deps()
+        proxy = TracingPortProxy(
+            inner=object(),
+            deps=deps,
+            domain="document",
+            surface="document_command",
+            route="devices",
+            phase="command",
+            capture=True,
+        )
+
+        proxy._record_return("create", (), _Device(ip=IPv4Address("10.0.0.1")))
+
+        event = next(e for e in deps.runtime_trace().events if e.result is not None)
+        assert event.result["ip"] == "10.0.0.1" and isinstance(event.result["ip"], str)
+        assert event.result_native is not None
+        assert event.result_native["ip"] == IPv4Address("10.0.0.1")
+
+    def test_query_result_has_no_native_copy(self) -> None:
+        # Reads keep only the JSON ``result`` (the native copy is a write-only concern for the oracle).
+        deps = _tracing_deps()
+        proxy = TracingPortProxy(
+            inner=object(),
+            deps=deps,
+            domain="document",
+            surface="document_query",
+            route="devices",
+            phase="query",
+            capture=True,
+        )
+
+        proxy._record_return("get", (), _Device(ip=IPv4Address("10.0.0.1")))
+
+        event = next(e for e in deps.runtime_trace().events if e.result is not None)
+        assert event.result_native is None
 
 
 # ....................... #

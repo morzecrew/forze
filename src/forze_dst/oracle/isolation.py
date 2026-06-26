@@ -17,14 +17,16 @@ transaction **committed** when its outcome is success. Over the concurrent, comm
 Both pairwise checks are **sound** (a flagged set genuinely violates the level) but **incomplete**:
 they catch the canonical two-transaction key-level anomalies, not anti-dependency cycles spanning
 three or more transactions. For serializability, :func:`find_serializability_cycle` is the
-**complete** check (sound *and* complete for conflict-serializability): it builds the dependency
-serialization graph — edges directed by the entity ``rev`` version order — and reports a cycle,
-catching the ≥3-transaction anti-dependency cycles (e.g. the read-only anomaly) the pairwise check
-cannot. It needs the value-trace (``rev`` per call), so it runs only under ``capture_values``. It also
-adds **predicate (phantom) edges**: a scan records its captured filter, and a concurrent committed
-write whose produced row satisfies that filter — but which the scan provably did not see (it committed
-later in trace order) — is a predicate anti-dependency, evaluated with the one shared DSL matcher so
-the oracle's predicate semantics match the backend's exactly.
+**complete** check (sound *and* complete for conflict-serializability **over the captured history**):
+it builds the dependency serialization graph — edges directed by the entity ``rev`` version order —
+and reports a cycle, catching the ≥3-transaction anti-dependency cycles (e.g. the read-only anomaly)
+the pairwise check cannot. It needs the value-trace (``rev`` per call), so it runs only under
+``capture_values``. It also adds **predicate (phantom) edges**: a scan records its captured filter, and
+a concurrent committed write whose produced row satisfies that filter — but which the scan provably did
+not see (it committed later in trace order) — is a predicate anti-dependency, evaluated with the one
+shared DSL matcher against the row's native representation so the oracle's predicate semantics match
+the backend's exactly. "Complete" is scoped to conflict-serializability over what the capture records
+(see :func:`find_serializability_cycle` for the false-negative-only bounds).
 
 **Feeding the kernel.** A correct per-transaction read/write set requires attributing each port call
 to the *transaction* that issued it — which operation spans cannot give, since concurrent operations
@@ -40,11 +42,11 @@ is the commit signal; its concurrency window is the span of trace sequences carr
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Mapping, Sequence, cast, final
+from typing import Any, Callable, Mapping, Sequence, cast, final
 
 import attrs
 
-from forze.application.contracts.querying import evaluate_filter
+from forze.application.contracts.querying import compile_filter
 from forze.application.execution.tracing.port_proxy import REDACTED
 from forze.base.exceptions import CoreException, exc
 from forze_dst.oracle.invariants import Invariant, Violation
@@ -167,7 +169,8 @@ def find_serializable_violations(txns: Sequence[TxRecord]) -> list[Violation]:
 # The COMPLETE kernel — conflict-serializability via the dependency serialization graph (DSG).
 # Nodes are committed transactions; a directed edge a→b means a must precede b in any equivalent
 # serial order (ww/wr/rw conflicts). A history is conflict-serializable IFF the graph is acyclic, so
-# a cycle is the violation — sound AND complete (the pairwise checker above is the 2-cycle case).
+# a cycle is the violation — sound AND complete for conflict-serializability over the captured history
+# (the pairwise checker above is the 2-cycle case).
 # Edges are directed by the entity ``rev`` each call observed/produced: ``rev`` IS the per-key
 # version order, so wr/rw directions are exact, not guessed from commit timing.
 
@@ -175,7 +178,7 @@ def find_serializable_violations(txns: Sequence[TxRecord]) -> list[Violation]:
 @final
 @attrs.define(frozen=True, kw_only=True)
 class ScanRead:
-    """One predicate (scan) read — the unit of the phantom-edge construction (Phase 2).
+    """One predicate (scan) read — the unit of the phantom-edge construction.
 
     A scan reads *the set of rows matching a predicate over a namespace* rather than a single keyed
     version, so it carries no ``(key, rev)``. ``namespace`` is the scanned route (the spec name);
@@ -214,10 +217,10 @@ class VersionedTxRecord:
     Each ``reads``/``writes`` entry is ``(key, rev)``: the entity revision the call observed (reads)
     or produced (writes). The ``rev`` makes the dependency edges between transactions directable
     exactly by version order. ``scans`` are this transaction's predicate reads and ``write_rows`` its
-    produced rows — together they let the graph add predicate (phantom) anti-dependency edges
-    (Phase 2): a scan whose predicate a concurrent committed write satisfies, where the write was not
-    visible to the scan. Both default empty, so a capture without scan data builds the item-level
-    graph exactly as before.
+    produced rows — together they let the graph add predicate (phantom) anti-dependency edges: a scan
+    whose predicate a concurrent committed write satisfies, where the write was not visible to the
+    scan. Both default empty, so a capture without scan data builds the item-level graph exactly as
+    before.
     """
 
     name: str
@@ -282,11 +285,16 @@ def _find_cycle(
 
 
 def _has_redaction(value: Any) -> bool:
-    """Whether a captured value (a predicate, recursively) contains the redaction mask.
+    """Whether a captured filter (recursively) literally contains the redaction mask string.
 
-    A predicate over a declared-sensitive field captures the masked value on both sides, so evaluating
-    it would compare ``"<redacted>"`` to ``"<redacted>"`` and *manufacture* a match — a false-positive
-    edge. The oracle refuses to reason over such a predicate (a false-negative, which is sound).
+    Redaction protects soundness mainly on the **row** side: a write's declared-sensitive fields are
+    masked to ``"<redacted>"`` (sensitive fields are top-level on an entity), so a *plaintext* predicate
+    over such a field can never match the redacted row — the phantom edge is simply missed (a sound
+    false-negative; a missing edge cannot manufacture a cycle). The captured filter itself keeps its
+    plaintext literal (``_redact`` is shallow and a filter nests field names under ``$values``/``$and``/…
+    operators, so the filter side is never masked). This guard covers the one residual false-positive
+    path: a filter that *literally* contains the mask string would self-match a redacted row, so such a
+    scan is skipped.
     """
 
     if isinstance(value, str):
@@ -302,16 +310,14 @@ def _has_redaction(value: Any) -> bool:
     return False
 
 
-def _row_matches(predicate: Mapping[str, Any] | None, row: Mapping[str, Any]) -> bool:
-    """Whether *row* satisfies *predicate*, via the one shared DSL evaluator (so oracle ≡ backend).
-
-    A ``None`` predicate is match-all (a scan with no filter). A predicate the evaluator cannot parse
-    (it should always be a valid captured filter, but defend anyway) yields ``False`` — no edge — so a
-    malformed predicate is a false-negative, never a false-positive.
+def _row_matches(matcher: "Callable[[dict[str, Any]], bool]", row: Mapping[str, Any]) -> bool:
+    """Whether *row* satisfies a pre-compiled predicate *matcher*. A matcher that raises mid-match
+    (it should not — the filter parsed cleanly) yields ``False`` — no edge — so a malformed predicate
+    is a false-negative, never a false-positive.
     """
 
     try:
-        return evaluate_filter(dict(row), cast("Any", predicate))
+        return matcher(dict(row))
 
     except CoreException:
         return False
@@ -320,18 +326,22 @@ def _row_matches(predicate: Mapping[str, Any] | None, row: Mapping[str, Any]) ->
 def _predicate_edges(
     committed: Sequence[VersionedTxRecord],
 ) -> list[tuple[str, str, str]]:
-    """The predicate (phantom) anti-dependency edges over the committed transactions (Phase 2).
+    """The predicate (phantom) anti-dependency edges over the committed transactions.
 
     For each scanner ``S`` of predicate ``P`` over namespace ``N`` at scan sequence ``s``, and each
     *other* committed writer ``W`` whose commit sequence is **after** ``s`` (so ``S`` provably did not
     see ``W``'s write — no dirty reads, per the conformance horizon), emit ``S → W`` (``rw``) when ``W``
     produced a row in ``N`` that satisfies ``P``. Directed by trace order (``commit_seq`` vs ``seq``)
     rather than a per-key ``rev``, because a predicate read spans a set, not one version — and that
-    order is exact. Predicate-precise (the captured row is matched against ``P``): a namespace-coarse
-    rule would false-positive on a write that does not match. A scan whose predicate touches a redacted
-    field is skipped (sound). The *disappearance* phantom (a write moves a row out of ``P``) needs no
-    rule here — the scan captured the old matching row as a hit, so it is already a keyed ``rw`` edge.
-    Iteration is sorted so the reported counterexample is deterministic across hash seeds.
+    order is exact *for an eager scan that reads inline at* ``s`` (the only scans recorded; a lazy
+    streaming read is excluded — see ``_PREDICATE_READ_OPS``). Predicate-precise (the captured row is
+    matched against ``P`` via the one shared matcher, on the row's **native** representation — the form
+    the backend scans): a namespace-coarse rule, or a JSON-vs-native representation gap, would
+    false-positive on a write the live scan would not have matched. A scan whose predicate touches a
+    redacted field is skipped (sound). The *disappearance* phantom (a write moves a row out of ``P``)
+    needs no rule here — the scan captured the old matching row as a hit, so it is already a keyed
+    ``rw`` edge. Each scan's filter is parsed once (then matched against many rows). Iteration is
+    sorted so the reported counterexample is deterministic across hash seeds.
     """
 
     edges: list[tuple[str, str, str]] = []
@@ -341,6 +351,11 @@ def _predicate_edges(
             if _has_redaction(scan.predicate):
                 continue
 
+            try:
+                matcher = compile_filter(cast("Any", scan.predicate))
+            except CoreException:
+                continue  # an unparseable predicate → no edges (false-negative, never false-pos)
+
             for writer in sorted(committed, key=lambda tx: tx.name):
                 if writer.name == scanner.name or writer.commit_seq is None:
                     continue
@@ -349,9 +364,7 @@ def _predicate_edges(
                     continue  # committed at/before the scan → may have been seen → skip (false-neg)
 
                 for wv in writer.write_rows:
-                    if wv.key[0] == scan.namespace and _row_matches(
-                        scan.predicate, wv.row
-                    ):
+                    if wv.key[0] == scan.namespace and _row_matches(matcher, wv.row):
                         edges.append(
                             (
                                 scanner.name,
@@ -377,14 +390,22 @@ def find_serializability_cycle(txns: Sequence[VersionedTxRecord]) -> list[Violat
     catches write skew (a 2-cycle of anti-dependencies), the three-transaction read-only anomaly (a
     3-cycle), read-modify-write lost update, and predicate phantoms — anything the pairwise checker
     misses beyond two transactions. A ``key`` is the ``(namespace, id)`` pair, so distinct documents
-    that share an id across specs do not conflate. Honest bounds, all **false-negative only** (a missing
-    edge never adds a false cycle, so soundness is preserved): (1) only point reads (``get``) and
-    ``find_many``-family *hits* are versioned reads; a ``count``/``exists`` predicate read contributes a
-    forward phantom edge but, returning no rows, cannot supply the reverse ``wr`` edge that would close
-    a two-transaction count-phantom cycle, and ``find_stream`` captures no hits; (2) a predicate over a
-    declared-sensitive (redacted) field is skipped (it cannot be soundly evaluated); (3) hard deletes
-    and ``return_diff`` writes are not captured as versions. Only as sound as the backend's ``rev`` /
-    isolation fidelity — the conformance horizon the adapter differential verifies.
+    that share an id across specs do not conflate. The predicate match runs on the write row's *native*
+    representation (the form the backend scans), so it agrees with the live scan rather than comparing a
+    JSON string to a native value. Honest bounds, all **false-negative only** (a missing edge never adds
+    a false cycle, so soundness is preserved): (1) only point reads (``get``) and ``find_many``-family
+    *hits* are versioned reads; a ``count``/``exists`` predicate read contributes a forward phantom edge
+    but, returning no rows, cannot supply the reverse ``wr`` edge that would close a two-transaction
+    count-phantom cycle; (2) only the eager filter-scans
+    (``find``/``find_many``/``find_page``/``find_cursor``/``count``/``exists``) generate forward phantom
+    edges — ``find_stream`` (a lazy generator, whose read does not happen at the recorded call seq) is
+    excluded to keep the direction sound, and ``project_*``/``select_*``/``aggregate_*`` scans generate
+    none (their hits still fold into keyed reads); (3) a predicate that touches a declared-sensitive
+    (redacted) field cannot match the redacted row, so its phantom edge is missed; (4) hard deletes and
+    ``return_diff`` writes are not captured as versions. The ``commit_seq`` vs ``scan.seq`` direction
+    assumes one globally-monotonic trace sequence across the run (one shared trace buffer — the runtime
+    invariant). Only as sound as the backend's ``rev`` / isolation fidelity — the conformance horizon
+    the adapter differential verifies.
     """
 
     committed = [tx for tx in txns if tx.committed]
@@ -428,8 +449,8 @@ def find_serializability_cycle(txns: Sequence[VersionedTxRecord]) -> list[Violat
                     tx.name, writer_of[(key, following)], f"rw {key}@{rev}→{following}"
                 )
 
-    # Predicate (phantom) anti-dependency edges (Phase 2): a scan whose predicate a concurrent
-    # committed write satisfies, where the write was not visible to the scan (committed after it).
+    # Predicate (phantom) anti-dependency edges: a scan whose predicate a concurrent committed write
+    # satisfies, where the write was not visible to the scan (committed after it in trace order).
     for source, target, label in _predicate_edges(committed):
         add_edge(source, target, label)
 
@@ -535,10 +556,16 @@ def transactions_from_history(
 
 # Query-port ops that read by *predicate* (a scanned set), not by a single key — so the call carries
 # a filter (the captured ``payload``) and a phantom edge may run against it. ``get``/``get_many`` are
-# point reads and excluded; ``find_stream`` records only its call (an async generator), so it captures
-# the predicate but no hits.
+# point reads and excluded. ``find_stream`` is also excluded ON PURPOSE: it is a lazy async generator
+# whose pages are read *after* the recorded call event (during iteration), so its scan sequence is not
+# a sound "read before" bound — a writer that commits after the call but before a later page would be
+# observed, yet the forward-edge rule would still add S→W (a false positive). Eager scans
+# (``find``/``find_many``/``find_page``/``find_cursor``/``count``/``exists``) read inline at the call,
+# so the ``commit_seq > scan.seq`` direction is sound for them. ``project_*``/``select_*``/
+# ``aggregate_*`` scans are a known false-negative gap (no forward predicate edge), documented in
+# :func:`find_serializability_cycle`.
 _PREDICATE_READ_OPS = frozenset(
-    {"find", "find_many", "find_page", "find_cursor", "find_stream", "count", "exists"}
+    {"find", "find_many", "find_page", "find_cursor", "count", "exists"}
 )
 
 
@@ -656,7 +683,19 @@ def versioned_transactions_from_history(
             builder.reads.add((key, int(rev)))
         elif phase == write_phase:
             builder.writes.add((key, int(rev)))
-            builder.write_rows.append(WriteVersion(key=key, rev=int(rev), row=result))
+            # The predicate matcher needs the NATIVE row (the form the backend scans); the JSON
+            # ``result`` would compare a string to a native value and diverge. Use ``result_native``
+            # (populated for command results under capture); absent → no write_row (a sound
+            # false-negative — the keyed (key, rev) write is still recorded above).
+            native_row = fields.get("result_native")
+            if isinstance(native_row, Mapping):
+                builder.write_rows.append(
+                    WriteVersion(
+                        key=key,
+                        rev=int(rev),
+                        row=cast("Mapping[str, Any]", native_row),
+                    )
+                )
             captured_writes += 1
 
     if saw_document_write and captured_writes == 0:

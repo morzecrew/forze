@@ -115,9 +115,14 @@ class TracingPortProxy(PortProxy):
     # ....................... #
 
     @staticmethod
-    def _dump(value: Any) -> JsonDict | None:
+    def _dump(value: Any, *, mode: str = "json") -> JsonDict | None:
         """A structural ``dict`` view of *value* (a write DTO / read model), or ``None`` for a
         scalar / id / unstructured value — so capture only records the meaningful payloads.
+
+        ``mode="json"`` (default) keeps values portable (UUID → str, datetime → ISO-8601) for the
+        timeline/bundle; ``mode="python"`` keeps them native (the form the backend's in-memory scan
+        matches a filter against), which the isolation oracle needs so its predicate evaluation agrees
+        with the live scan rather than comparing a JSON string to a native value.
         """
 
         if value is None or isinstance(value, (str, bytes, int, float, bool, UUID)):
@@ -126,10 +131,8 @@ class TracingPortProxy(PortProxy):
         dump = getattr(value, "model_dump", None)
 
         if callable(dump):
-            # ``mode="json"`` keeps the captured value JSON-native (UUID → str, datetime →
-            # ISO-8601), so the trace / timeline / bundle stay portable and deterministic.
             try:
-                data = dump(mode="json")
+                data = dump(mode=mode)
 
             except TypeError:  # a model_dump without the mode kwarg
                 data = dump()
@@ -187,16 +190,22 @@ class TracingPortProxy(PortProxy):
     ) -> Mapping[str, Any] | None:
         """The captured input for a call — the scan predicate for a query, else the write payload.
 
-        For a query the predicate is specifically the leading positional (or the ``filters`` kwarg),
-        so a *following* positional — pagination, sorts — is never mistaken for the filter, and a
-        match-all scan or a point ``get`` (a key dumps to nothing) captures ``None``. This precision
-        matters downstream: the isolation oracle re-evaluates the captured filter against concurrent
-        writes, so a pagination dict standing in for the filter would be a wrong predicate. A command
-        keeps the first-structured-argument rule (the write DTO).
+        For a query the predicate is the ``filters`` argument specifically — the explicit ``filters``
+        kwarg when present, else the leading positional (filters is first on every filter-led scan:
+        ``find_many``/``count``/…). Preferring the named kwarg keeps the right argument even for ops
+        whose first positional is not the filter (``aggregate_many(aggregates, filters=…)``), and a
+        *following* positional — pagination, sorts — is never mistaken for it; a match-all scan or a
+        point ``get`` captures ``None``. This precision matters downstream: the isolation oracle
+        re-evaluates the captured filter against concurrent writes, so a wrong argument standing in for
+        the filter would be a wrong predicate. A command keeps the first-structured-argument rule.
         """
 
         if self.phase == "query":
-            candidate = args[0] if args else kwargs.get("filters")
+            candidate = (
+                kwargs["filters"]
+                if "filters" in kwargs
+                else (args[0] if args else None)
+            )
             data = self._dump(candidate)
             return self._redact(data) if data is not None else None
 
@@ -255,6 +264,16 @@ class TracingPortProxy(PortProxy):
             if data is None:
                 continue
 
+            # A write result also keeps a NATIVE-typed copy (``result_native``): the isolation oracle
+            # matches a captured scan predicate against it, and the backend scans the native row — so a
+            # JSON copy (UUID/IP/Decimal/datetime → str) would make the oracle's match diverge from the
+            # live scan and manufacture a false phantom edge. Reads keep only the JSON ``result``.
+            native = (
+                self._redact(self._dump(item, mode="python") or data)
+                if self.phase == "command"
+                else None
+            )
+
             record(
                 domain=self.domain,
                 op=name,
@@ -265,6 +284,7 @@ class TracingPortProxy(PortProxy):
                 tx_id=self.tx_id_getter(),
                 key=self._key_of(args),
                 result=self._redact(data),
+                result_native=native,
                 deps=self.deps,
             )
 

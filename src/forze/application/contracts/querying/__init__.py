@@ -94,6 +94,7 @@ from .internal import (
     QueryNot,
     QueryOr,
     QueryValueCaster,
+    compile_filter,
     elem_inner_is_scalar,
     evaluate_filter,
 )
@@ -205,6 +206,7 @@ __all__ = [
     "QueryFilterLimits",
     "QueryValueCaster",
     "evaluate_filter",
+    "compile_filter",
     "QueryAnd",
     "QueryCompare",
     "QueryElem",
