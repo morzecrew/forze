@@ -78,10 +78,7 @@ PAYMENTS = DocumentSpec(
 
 LEDGER_BALANCED = SystemInvariant(
     name="ledger_balanced",
-    read_set=ReadSet(
-        spec=ACCOUNTS,
-        scope=lambda p: {"$values": {"ledger_id": p["ledger_id"]}},
-    ),
+    read_set=ReadSet(spec=ACCOUNTS, scope_keys=("ledger_id",)),
     aggregate=Sum("balance"),
     holds=lambda total: total == 0,
 )
@@ -90,7 +87,8 @@ SINGLE_CAPTURED_PAYMENT = SystemInvariant(
     name="single_captured_payment",
     read_set=ReadSet(
         spec=PAYMENTS,
-        scope=lambda p: {"$values": {"order_id": p["order_id"], "status": "captured"}},
+        scope_keys=("order_id",),
+        where={"$values": {"status": "captured"}},
     ),
     aggregate=Count(),
     holds=lambda n: n <= 1,

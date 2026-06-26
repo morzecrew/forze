@@ -28,7 +28,10 @@ from typing import Any, Callable, Mapping, final
 import attrs
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.querying import (
+    AggregateComputedFieldExpression,
+    QueryFilterExpression,
+)
 from forze.application.contracts.transaction import IsolationLevel
 
 # ----------------------- #
@@ -60,16 +63,61 @@ Reducer = Sum | Count
 @final
 @attrs.define(frozen=True, kw_only=True, slots=True)
 class ReadSet:
-    """The records a law ranges over: a document spec plus a scope filter built from the law's params.
+    """The records a law ranges over: a document spec, the fields it is *scoped by*, and a constant filter.
 
-    *scope* turns the law's binding parameters (which ledger, which order — a small mapping the call
-    site supplies) into the :data:`~forze.application.contracts.querying.QueryFilterExpression` that
-    selects the set. Reuse the ordinary filter DSL (and ``tenant_aware`` for per-tenant scoping); the
-    set is "the records this law is about, for these parameters, right now".
+    A law holds **per distinct value of its scope** — at most one captured payment *per order*, a zero
+    sum *per ledger*. :attr:`scope_keys` names those scope fields (``("order_id",)``, ``("ledger_id",)``);
+    :attr:`where` is the constant predicate every record in scope must also match (e.g. ``status ==
+    "captured"``), or ``None``. Empty ``scope_keys`` declares a *global* law (one check over the whole
+    ``where``-filtered collection).
+
+    Declaring the scope as *fields* rather than an opaque filter-builder is what lets the DST oracle
+    **group by them and check every scope the run produced** (not a hand-listed few), while runtime
+    enforcement derives the single-binding filter via :func:`scope_filter`. Reuse ``tenant_aware`` in
+    ``where`` for per-tenant scoping.
     """
 
     spec: DocumentSpec[Any, Any, Any, Any]
-    scope: Callable[[Mapping[str, Any]], QueryFilterExpression]
+    scope_keys: tuple[str, ...] = ()
+    where: QueryFilterExpression | None = None
+
+
+# ....................... #
+
+
+def computed_aggregate(reducer: Reducer) -> AggregateComputedFieldExpression:
+    """The ``$computed`` clause reducing a (grouped or whole) read-set to a single ``"value"`` field.
+
+    Shared by runtime evaluation and the DST oracle so both speak the same aggregate — a ``Count``
+    becomes ``$count``, a ``Sum`` becomes ``$sum`` of its field.
+    """
+
+    if isinstance(reducer, Count):
+        return {"value": {"$count": None}}
+
+    return {"value": {"$sum": reducer.field}}
+
+
+def scope_filter(
+    read_set: ReadSet, params: Mapping[str, Any]
+) -> QueryFilterExpression | None:
+    """The filter selecting **one binding's** records: the scope-key equalities (from *params*) AND
+    the constant :attr:`~ReadSet.where`.
+
+    ``None`` when the law is global with no constant filter. The single-binding counterpart of the
+    oracle's group-by-:attr:`~ReadSet.scope_keys` query — both derive from the same declaration, so a
+    binding the runtime checks and a group the oracle checks select the same records.
+    """
+
+    scope_values = {key: params[key] for key in read_set.scope_keys}
+    scope_pred: QueryFilterExpression | None = (
+        {"$values": scope_values} if scope_values else None
+    )
+
+    if read_set.where is not None and scope_pred is not None:
+        return {"$and": [read_set.where, scope_pred]}
+
+    return read_set.where if scope_pred is None else scope_pred
 
 
 # ....................... #

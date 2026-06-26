@@ -17,7 +17,12 @@ from typing import Any, Mapping, final
 
 import attrs
 
-from forze.application.contracts.invariants import Count, SystemInvariant
+from forze.application.contracts.invariants import (
+    Count,
+    SystemInvariant,
+    computed_aggregate,
+    scope_filter,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 
@@ -56,15 +61,15 @@ async def evaluate(
     """
 
     read_set = invariant.read_set
-    filters = read_set.scope(params)
+    filters = scope_filter(read_set, params)
     query = ctx.document.query(read_set.spec)
     aggregate = invariant.aggregate
 
     if isinstance(aggregate, Count):
         observed = float(await query.count(filters))
-    else:  # Sum — a no-group aggregate is the global total over the scoped set (one row).
+    else:  # Sum — a no-group aggregate is the total over the scoped set (one row).
         page = await query.aggregate_many(
-            {"$computed": {"value": {"$sum": aggregate.field}}}, filters=filters
+            {"$computed": computed_aggregate(aggregate)}, filters=filters
         )
         raw = page.hits[0].get("value") if page.hits else 0
         observed = float(raw if raw is not None else 0)

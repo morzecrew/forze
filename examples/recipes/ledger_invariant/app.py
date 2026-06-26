@@ -70,10 +70,7 @@ ACCOUNT_SPEC = DocumentSpec(
 # over an aggregate of a scoped read-set — what `@invariant` cannot express.
 LEDGER_BALANCED = SystemInvariant(
     name="ledger_balanced",
-    read_set=ReadSet(
-        spec=ACCOUNT_SPEC,
-        scope=lambda p: {"$values": {"ledger_id": p["ledger_id"]}},
-    ),
+    read_set=ReadSet(spec=ACCOUNT_SPEC, scope_keys=("ledger_id",)),
     aggregate=Sum("balance"),
     holds=lambda total: total == 0,
 )

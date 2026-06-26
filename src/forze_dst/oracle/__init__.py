@@ -11,6 +11,10 @@ subset from here.
 from __future__ import annotations
 
 from forze_dst.oracle.commutativity import commutative_convergence
+from forze_dst.oracle.system_invariants import (
+    CompiledOracle,
+    compile_oracle,
+)
 from forze_dst.oracle.confidence import ConfidenceReport, assess_confidence
 from forze_dst.oracle.coverage import (
     Behavior,
@@ -125,6 +129,9 @@ __all__ = [
     "TxRecord",
     # commutativity (cross-history)
     "commutative_convergence",
+    # cross-aggregate system-invariant oracle
+    "compile_oracle",
+    "CompiledOracle",
     # reachability
     "sometimes",
     "reached",
