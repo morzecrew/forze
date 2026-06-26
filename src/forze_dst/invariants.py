@@ -32,11 +32,14 @@ from forze_dst.oracle.invariants import (
 )
 from forze_dst.oracle.isolation import (
     TxRecord,
+    VersionedTxRecord,
+    find_serializability_cycle,
     find_serializable_violations,
     find_snapshot_isolation_violations,
     serializable,
     snapshot_isolation,
     transactions_from_history,
+    versioned_transactions_from_history,
 )
 from forze_dst.oracle.linearizability import (
     RegisterSpec,
@@ -87,9 +90,12 @@ __all__ = [
     "snapshot_isolation",
     "serializable",
     "transactions_from_history",
+    "versioned_transactions_from_history",
     "find_snapshot_isolation_violations",
     "find_serializable_violations",
+    "find_serializability_cycle",
     "TxRecord",
+    "VersionedTxRecord",
     # commutativity (cross-history)
     "commutative_convergence",
     # cross-aggregate system-invariant oracle

@@ -14,10 +14,14 @@ transaction **committed** when its outcome is success. Over the concurrent, comm
 - :func:`find_serializable_violations` additionally flags a **write-skew** anti-dependency (each
   read a key the other wrote) — so its violations are a superset (``serializable ⊋ snapshot``).
 
-Both are **sound** (a flagged set genuinely violates the level) and **incomplete**: they catch the
-canonical two-transaction key-level anomalies, not predicate phantoms (which need scan tracking) or
-anti-dependency cycles spanning three or more transactions (which need version order) — mirroring
-the sound-incomplete posture of :func:`~forze_dst.oracle.linearizability.monotonic_reads`.
+Both pairwise checks are **sound** (a flagged set genuinely violates the level) but **incomplete**:
+they catch the canonical two-transaction key-level anomalies, not anti-dependency cycles spanning
+three or more transactions. For serializability, :func:`find_serializability_cycle` is the
+**complete** check (sound *and* complete for conflict-serializability): it builds the dependency
+serialization graph — edges directed by the entity ``rev`` version order — and reports a cycle,
+catching the ≥3-transaction anti-dependency cycles (e.g. the read-only anomaly) the pairwise check
+cannot. It needs the value-trace (``rev`` per call), so it runs only under ``capture_values``;
+predicate phantoms (which additionally need the scan filter on the trace) remain future work.
 
 **Feeding the kernel.** A correct per-transaction read/write set requires attributing each port call
 to the *transaction* that issued it — which operation spans cannot give, since concurrent operations
@@ -32,10 +36,12 @@ is the commit signal; its concurrency window is the span of trace sequences carr
 
 from __future__ import annotations
 
-from typing import Any, Sequence, final
+from collections import defaultdict
+from typing import Any, Mapping, Sequence, cast, final
 
 import attrs
 
+from forze.base.exceptions import exc
 from forze_dst.oracle.invariants import Invariant, Violation
 from forze_dst.oracle.recorder import History
 
@@ -153,6 +159,163 @@ def find_serializable_violations(txns: Sequence[TxRecord]) -> list[Violation]:
 
 
 # ....................... #
+# The COMPLETE kernel — conflict-serializability via the dependency serialization graph (DSG).
+# Nodes are committed transactions; a directed edge a→b means a must precede b in any equivalent
+# serial order (ww/wr/rw conflicts). A history is conflict-serializable IFF the graph is acyclic, so
+# a cycle is the violation — sound AND complete (the pairwise checker above is the 2-cycle case).
+# Edges are directed by the entity ``rev`` each call observed/produced: ``rev`` IS the per-key
+# version order, so wr/rw directions are exact, not guessed from commit timing.
+
+
+@final
+@attrs.define(frozen=True, kw_only=True)
+class VersionedTxRecord:
+    """A transaction's *version-aware* read/write sets — the unit of the DSG.
+
+    Each entry is ``(key, rev)``: the entity revision the call observed (reads) or produced (writes).
+    The ``rev`` makes the dependency edges between transactions directable exactly by version order.
+    """
+
+    name: str
+    start: int
+    end: int
+    committed: bool
+    commit_seq: int | None
+    reads: frozenset[tuple[Any, int]]
+    writes: frozenset[tuple[Any, int]]
+
+
+def _find_cycle(
+    nodes: set[str], edges: Mapping[tuple[str, str], str]
+) -> list[str] | None:
+    """Return one directed cycle (a node ring) in the graph, or ``None`` if acyclic.
+
+    Iterative DFS (an explicit stack, so a long dependency chain can't hit Python's recursion limit),
+    with both the start order (``sorted(nodes)``) and each node's out-edges sorted, so the reported
+    cycle is deterministic regardless of hash seed.
+    """
+
+    adjacency: dict[str, list[str]] = defaultdict(list)
+    for source, target in edges:
+        adjacency[source].append(target)
+    for out_edges in adjacency.values():
+        out_edges.sort()
+
+    white, gray, black = 0, 1, 2
+    color: dict[str, int] = dict.fromkeys(nodes, white)
+
+    for root in sorted(nodes):
+        if color[root] != white:
+            continue
+
+        path: list[str] = [root]
+        stack: list[tuple[str, int]] = [(root, 0)]
+        color[root] = gray
+
+        while stack:
+            node, index = stack[-1]
+
+            if index >= len(adjacency[node]):
+                stack.pop()
+                path.pop()
+                color[node] = black
+                continue
+
+            stack[-1] = (node, index + 1)
+            nxt = adjacency[node][index]
+
+            if color.get(nxt, white) == gray:  # back edge → cycle from nxt..node
+                return path[path.index(nxt) :]
+
+            if color.get(nxt, white) == white:
+                color[nxt] = gray
+                path.append(nxt)
+                stack.append((nxt, 0))
+
+    return None
+
+
+def find_serializability_cycle(txns: Sequence[VersionedTxRecord]) -> list[Violation]:
+    """A dependency cycle over the committed transactions — a complete conflict-serializability check.
+
+    Builds the DSG from the version-aware read/write sets — ``ww`` along each key's committed version
+    chain, ``wr`` from a version's writer to its reader, ``rw`` from a reader to the writer of the
+    next version (the direct anti-dependency, per Adya's MVSG) — and reports the first cycle. Sound
+    and **complete for conflict-serializability over the captured item-level history**: it catches
+    write skew (a 2-cycle of anti-dependencies), the three-transaction read-only anomaly (a 3-cycle),
+    and read-modify-write lost update — anything the pairwise checker misses beyond two transactions.
+    A ``key`` is the ``(namespace, id)`` pair, so distinct documents that share an id across specs do
+    not conflate. Two honest bounds, both **false-negative only** (a missing read removes edges, never
+    adds one, so soundness is preserved): (1) only point reads (``get``) and writes are in the
+    version-aware set — scan/predicate reads (``find_many``/``count``) and the rows a scan returned are
+    not (a value-trace capture limit, addressed with predicate edges in a later phase); (2) hard
+    deletes and ``return_diff`` writes are not captured as versions. Only as sound as the backend's
+    ``rev`` fidelity (the conformance horizon RFC 0004 verifies).
+    """
+
+    committed = [tx for tx in txns if tx.committed]
+
+    writer_of: dict[tuple[Any, int], str] = {}
+    revs_by_key: dict[Any, set[int]] = defaultdict(set)
+
+    for tx in committed:
+        for key, rev in tx.writes:
+            writer_of[(key, rev)] = tx.name
+            revs_by_key[key].add(rev)
+
+    ordered_revs = {key: sorted(revs) for key, revs in revs_by_key.items()}
+    edges: dict[tuple[str, str], str] = {}
+
+    def add_edge(source: str, target: str, label: str) -> None:
+        if source != target:
+            edges.setdefault((source, target), label)
+
+    # Sorted iteration keeps the reported counterexample deterministic across hash seeds.
+    for key, revs in sorted(ordered_revs.items(), key=lambda item: repr(item[0])):
+        for earlier, later in zip(revs, revs[1:]):  # ww: along the version chain
+            add_edge(
+                writer_of[(key, earlier)],
+                writer_of[(key, later)],
+                f"ww {key}@{earlier}→{later}",
+            )
+
+    for tx in committed:
+        for key, rev in sorted(tx.reads, key=repr):
+            if (writer := writer_of.get((key, rev))) is not None:
+                add_edge(
+                    writer, tx.name, f"wr {key}@{rev}"
+                )  # read this writer's version
+
+            following = next((r for r in ordered_revs.get(key, ()) if r > rev), None)
+            if (
+                following is not None
+            ):  # rw: anti-depend on whoever overwrote what we read
+                add_edge(
+                    tx.name, writer_of[(key, following)], f"rw {key}@{rev}→{following}"
+                )
+
+    cycle = _find_cycle({tx.name for tx in committed}, edges)
+
+    if cycle is None:
+        return []
+
+    ring = " → ".join([*cycle, cycle[0]])
+    labels = ", ".join(
+        edges[(cycle[i], cycle[(i + 1) % len(cycle)])] for i in range(len(cycle))
+    )
+
+    return [
+        Violation(
+            invariant="serializable",
+            message=(
+                f"non-serializable: committed transactions form a dependency cycle "
+                f"{ring} ({labels})"
+            ),
+        )
+    ]
+
+
+# ....................... #
 # Feeding the kernel from a recorded DST history (sound, via the per-event tx_id seam).
 
 
@@ -211,10 +374,12 @@ def transactions_from_history(
         key = fields.get("key")
         phase = fields.get("phase")
 
+        # Key on (namespace, id): two documents sharing an id across specs must not conflate into one
+        # version chain (which would manufacture a spurious cross-spec conflict).
         if key is not None and phase == read_phase:
-            builder.reads.add(key)
+            builder.reads.add((fields.get("route"), key))
         elif key is not None and phase == write_phase:
-            builder.writes.add(key)
+            builder.writes.add((fields.get("route"), key))
 
     return [
         TxRecord(
@@ -222,6 +387,117 @@ def transactions_from_history(
             start=builder.start,
             end=builder.end,
             committed=builder.committed,
+            reads=frozenset(builder.reads),
+            writes=frozenset(builder.writes),
+        )
+        for tx_id, builder in sorted(builders.items())
+    ]
+
+
+@final
+@attrs.define
+class _VersionedTxBuilder:
+    """Mutable accumulator for one transaction's version-aware facts (see :class:`VersionedTxRecord`)."""
+
+    start: int
+    end: int
+    committed: bool = False
+    commit_seq: int | None = None
+    reads: set[tuple[Any, int]] = attrs.field(factory=set)
+    writes: set[tuple[Any, int]] = attrs.field(factory=set)
+
+
+def versioned_transactions_from_history(
+    history: History, *, read_phase: str = "query", write_phase: str = "command"
+) -> list[VersionedTxRecord]:
+    """Derive version-aware per-transaction read/write sets from the value-trace, grouped by ``tx_id``.
+
+    Reads the capture-mode *result* events: each carries the entity ``id`` + ``rev``, so a write's
+    produced version and a read's observed version are exact — and a ``create`` (whose call has no
+    leading-id ``key``) is recorded from its result like any other write, unlike the key-only
+    :func:`transactions_from_history`. A key is the ``(namespace, id)`` pair (the namespace is the
+    trace's ``route`` = the spec name), so documents that share an id across specs never conflate.
+    Requires ``SimulationConfig.capture_values``; **fails closed** (``exc.configuration``) if the run
+    issued document writes but captured none, so running the complete check without the value-trace
+    raises instead of passing vacuously (an empty graph is trivially acyclic). Only point reads and
+    writes land here — scan/predicate reads (``find_many``/``count``) are not captured as item-level
+    reads (a false-negative-only bound; see :func:`find_serializability_cycle`).
+    """
+
+    builders: dict[int, _VersionedTxBuilder] = {}
+    saw_document_write = False
+    captured_writes = 0
+
+    for event in history.of_kind("trace"):
+        fields = event.fields
+        tx_id = fields.get("tx_id")
+
+        if tx_id is None:
+            continue
+
+        seq = int(fields.get("trace_seq", -1))
+        builder = builders.get(tx_id)
+
+        if builder is None:
+            builders[tx_id] = builder = _VersionedTxBuilder(start=seq, end=seq)
+        else:
+            builder.start = min(builder.start, seq)
+            builder.end = max(builder.end, seq)
+
+        if (
+            fields.get("trace_domain") == "tx"
+            and fields.get("op") == "exit"
+            and fields.get("outcome") == "commit"
+        ):
+            builder.committed = True
+            builder.commit_seq = seq
+
+        phase = fields.get("phase")
+
+        # A document write was *issued* (capture-on additionally emits a result event below); used to
+        # tell "capture off" (writes issued, none captured) from "no writes" (read-only → serializable).
+        if phase == write_phase and fields.get("trace_domain") == "document":
+            saw_document_write = True
+
+        raw_result = fields.get("result")
+
+        if not isinstance(raw_result, Mapping):
+            continue
+
+        result = cast("Mapping[str, Any]", raw_result)
+        rid, rev = result.get("id"), result.get("rev")
+
+        if (
+            rid is None or rev is None
+        ):  # not a single-entity result (e.g. a scan page / count) — skip
+            continue
+
+        key = (
+            fields.get("route"),
+            rid,
+        )  # (namespace, id): never conflate ids across specs
+
+        if phase == read_phase:
+            builder.reads.add((key, int(rev)))
+        elif phase == write_phase:
+            builder.writes.add((key, int(rev)))
+            captured_writes += 1
+
+    if saw_document_write and captured_writes == 0:
+        raise exc.configuration(
+            "serializable(complete=True) needs the value-trace to read entity revisions — run with "
+            "SimulationConfig(capture_values=True). The history issued document writes but captured "
+            "none, so the dependency graph would be vacuously empty.",
+            code="serializability_graph_requires_capture",
+        )
+
+    return [
+        VersionedTxRecord(
+            name=f"tx{tx_id}",
+            start=builder.start,
+            end=builder.end,
+            committed=builder.committed,
+            commit_seq=builder.commit_seq,
             reads=frozenset(builder.reads),
             writes=frozenset(builder.writes),
         )
@@ -249,15 +525,29 @@ def snapshot_isolation(
 
 
 def serializable(
-    *, read_phase: str = "query", write_phase: str = "command"
+    *, complete: bool = False, read_phase: str = "query", write_phase: str = "command"
 ) -> Invariant:
-    """An :data:`Invariant`: the run's committed transactions are serializable (no lost update / write skew).
+    """An :data:`Invariant`: the run's committed transactions are serializable.
 
-    Derives per-transaction read/write sets from the trace (by ``tx_id``) and applies
-    :func:`find_serializable_violations`. Declarable in any sweep config.
+    Two modes. The default (``complete=False``) is the lightweight **pairwise** check
+    (:func:`find_serializable_violations`) — capture-free, sound but incomplete: it flags lost update
+    and write skew (two-transaction anomalies). ``complete=True`` is the **dependency-graph** check
+    (:func:`find_serializability_cycle`) — sound *and* complete for conflict-serializability over the
+    captured item-level history, catching anti-dependency cycles spanning three or more transactions
+    (e.g. the read-only anomaly) via the entity ``rev`` version order. The complete mode reads the
+    value-trace, so it requires ``SimulationConfig.capture_values`` (and fails closed without it);
+    scan/predicate reads are not yet captured (a false-negative-only bound — see
+    :func:`find_serializability_cycle`).
     """
 
     def _check(history: History) -> list[Violation]:
+        if complete:
+            return find_serializability_cycle(
+                versioned_transactions_from_history(
+                    history, read_phase=read_phase, write_phase=write_phase
+                )
+            )
+
         return find_serializable_violations(
             transactions_from_history(
                 history, read_phase=read_phase, write_phase=write_phase
