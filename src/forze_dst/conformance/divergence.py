@@ -126,5 +126,17 @@ MECHANISM_DIVERGENCES: tuple[MechanismDivergence, ...] = (
         ),
         source="Kleppmann, Hermitage: Testing the 'I' in ACID",
     ),
+    MechanismDivergence(
+        name="read-only-abort-vs-safe-snapshot",
+        reason=(
+            "On a phantom under serializable, the mock's coarse namespace-level read-set aborts even "
+            "a read-only transaction that scanned a namespace a concurrent transaction then wrote, "
+            "whereas an SSI engine (Postgres) commits it via the read-only safe-snapshot optimization "
+            "(no dangerous cycle runs through a read-only pivot). Both PREVENT the phantom — the "
+            "reader observes its frozen snapshot either way — so the differential compares the frozen "
+            "scan result, never whether the read-only transaction aborted."
+        ),
+        source="Cahill/Fekete, Serializable Snapshot Isolation (read-only safe-retry optimization)",
+    ),
 )
 """Mock-vs-real surface differences the differential leg must normalize, not flag (forward-looking)."""
