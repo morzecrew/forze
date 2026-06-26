@@ -22,7 +22,7 @@ from forze.application.contracts.querying import (
     AggregatesExpression,
     AggregatesExpressionParser,
     GroupKey,
-    GroupRef,
+    GroupField,
     GroupTrunc,
     ParsedAggregates,
     QueryAnd,
@@ -250,7 +250,7 @@ class PsycopgQueryRenderer:
     ) -> tuple[sql.Composable, sql.Composable]:
         ident = sql.Identifier(group.alias)
 
-        if isinstance(group.expr, GroupRef):
+        if isinstance(group.expr, GroupField):
             expr = self._render_source_expr(group.expr.field)
 
         else:

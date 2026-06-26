@@ -33,9 +33,8 @@ to the real engine; over an unverified port it is a model tautology for the conc
 part. The oracle reads simulated state — it does not itself re-establish that equivalence.
 """
 
-from __future__ import annotations
-
 from collections import defaultdict
+from collections.abc import Mapping as MappingABC
 from typing import Any, Awaitable, Callable, Iterable, Mapping, cast, final
 
 import attrs
@@ -52,13 +51,17 @@ from forze.application.contracts.querying import (
 )
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
-from forze_dst.oracle.invariants import Invariant, Violation
-from forze_dst.oracle.recorder import History, record_event
+from forze.base.primitives import JsonDict
+
+from .invariants import Invariant, Violation
+from .recorder import History, record_event
 
 # ----------------------- #
 
 SYSTEM_INVARIANT_KIND = "system_invariant"
 """The recorder event kind the observe hook stamps for each checked scope."""
+
+# ....................... #
 
 
 @final
@@ -79,8 +82,9 @@ class CompiledOracle:
 
 
 async def _grouped(
-    law: SystemInvariant, ctx: ExecutionContext
-) -> list[tuple[dict[str, Any], float]]:
+    law: SystemInvariant,
+    ctx: ExecutionContext,
+) -> list[tuple[JsonDict, float]]:
     """One grouped aggregate over the law's read-set in final state: ``(scope, aggregate)`` per group.
 
     Groups by the law's ``scope_keys`` (a global law — empty keys — yields one whole-collection row),
@@ -93,6 +97,7 @@ async def _grouped(
     computed = computed_aggregate(law.aggregate)
 
     aggregates: AggregatesExpression = {"$computed": computed}
+
     if read_set.scope_keys:
         aggregates = {
             "$groups": {key: key for key in read_set.scope_keys},
@@ -103,10 +108,10 @@ async def _grouped(
         aggregates, filters=read_set.where
     )
 
-    rows: list[tuple[dict[str, Any], float]] = []
+    rows: list[tuple[JsonDict, float]] = []
+
     for row in page.hits:
-        missing = [key for key in read_set.scope_keys if key not in row]
-        if missing:
+        if missing := [key for key in read_set.scope_keys if key not in row]:
             raise exc.internal(
                 f"system invariant {law.name!r}: grouped aggregate returned a row missing "
                 f"scope key(s) {missing} — {row!r}"
@@ -173,8 +178,11 @@ def _matches_where(
     values = where_map.get("$values")
     if (
         set(where_map) != {"$values"}
-        or not isinstance(values, Mapping)
-        or any(isinstance(value, Mapping) for value in values.values())
+        or not isinstance(values, MappingABC)
+        or any(
+            isinstance(value, MappingABC)
+            for value in values.values()  # pyright: ignore[reportUnknownVariableType]
+        )
     ):
         raise exc.configuration(
             "per-commit oracle supports only scalar {$values: {...}} equality in a read-set "
@@ -182,15 +190,23 @@ def _matches_where(
             code="unsupported_where_in_per_commit_oracle",
         )
 
-    return all(entity.get(field) == value for field, value in values.items())
+    return all(
+        entity.get(field) == value  # pyright: ignore[reportUnknownArgumentType]
+        for field, value in values.items()  # pyright: ignore[reportUnknownVariableType]
+    )
+
+
+# ....................... #
 
 
 def _aggregate_by_scope(
-    law: SystemInvariant, entities: Iterable[Mapping[str, Any]]
+    law: SystemInvariant,
+    entities: Iterable[Mapping[str, Any]],
 ) -> dict[tuple[Any, ...], float]:
     """The aggregate per scope over the where-matched materialized *entities*."""
 
     groups: dict[tuple[Any, ...], list[Mapping[str, Any]]] = defaultdict(list)
+
     for entity in entities:
         if _matches_where(entity, law.read_set.where):
             groups[tuple(entity.get(key) for key in law.read_set.scope_keys)].append(
@@ -198,6 +214,7 @@ def _aggregate_by_scope(
             )
 
     aggregate = law.aggregate
+
     if isinstance(aggregate, Count):
         return {scope: float(len(members)) for scope, members in groups.items()}
 
@@ -205,21 +222,31 @@ def _aggregate_by_scope(
     # clear configuration error rather than a bare TypeError mid-fold (a missing field is treated 0).
     field = aggregate.field
     totals: dict[tuple[Any, ...], float] = {}
+
     for scope, members in groups.items():
         total = 0.0
+
         for member in members:
             value = member.get(field)
+
             if value is None:
                 continue
+
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise exc.configuration(
                     f"per-commit oracle: read-set field {field!r} must be numeric to Sum, but an "
                     f"entity in scope holds {type(value).__name__} {value!r}",
                     code="non_numeric_sum_field",
                 )
+
             total += float(value)
+
         totals[scope] = total
+
     return totals
+
+
+# ....................... #
 
 
 def _per_commit_invariant(law: SystemInvariant) -> Invariant:
@@ -233,15 +260,21 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
         # Full post-write entities (create/update result events) per transaction, in trace order.
         writes: dict[int, list[Mapping[str, Any]]] = defaultdict(list)
         saw_command_write = False
+
         for event in traces:
             fields = event.fields
+
             if fields.get("route") != route or fields.get("phase") != _COMMAND_PHASE:
                 continue
+
             saw_command_write = True
             result = fields.get("result")
             tx_id = fields.get("tx_id")
-            if isinstance(result, Mapping) and "id" in result and tx_id is not None:
-                writes[int(tx_id)].append(result)
+
+            if isinstance(result, MappingABC) and "id" in result and tx_id is not None:
+                writes[int(tx_id)].append(
+                    result  # pyright: ignore[reportUnknownArgumentType]
+                )
 
         # Committed roots only, in commit order (the exit's trace_seq). The exit event fires from a
         # ``finally`` on commit AND rollback, so a rolled-back transaction is excluded by requiring
@@ -256,6 +289,7 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
             and fields.get("tx_depth") == 1
             and fields.get("tx_id") is not None
         )
+
         commits.sort(key=lambda pair: pair[1])
 
         if saw_command_write and not any(writes.values()):
@@ -268,11 +302,14 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
 
         materialized: dict[Any, Mapping[str, Any]] = {}
         first_failure: dict[tuple[Any, ...], tuple[int, float]] = {}
+
         for tx_id, _seq in commits:
             for entity in writes.get(tx_id, []):
                 materialized[entity["id"]] = entity
+
             for scope, observed in _aggregate_by_scope(
-                law, materialized.values()
+                law,
+                entities=materialized.values(),
             ).items():
                 if scope not in first_failure and not law.holds(observed):
                     first_failure[scope] = (tx_id, observed)
@@ -290,6 +327,9 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
         ]
 
     return _check
+
+
+# ....................... #
 
 
 def compile_oracle(*laws: SystemInvariant, per_commit: bool = False) -> CompiledOracle:

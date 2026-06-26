@@ -510,10 +510,10 @@ def _coerce_datetime_for_bucket(raw: Any) -> datetime:
 
 
 def _group_key_part(doc: JsonDict, expr: object) -> Any:
-    from forze.application.contracts.querying import GroupRef, GroupTrunc
+    from forze.application.contracts.querying import GroupField, GroupTrunc
 
     match expr:
-        case GroupRef(field=field):
+        case GroupField(field=field):
             value = _path_get(doc, field)
             return None if value is _MISSING else value
         case GroupTrunc(field=field, unit=unit, timezone=tz):

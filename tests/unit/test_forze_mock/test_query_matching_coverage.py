@@ -19,7 +19,7 @@ from forze.application.contracts.querying import (
 )
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze.application.contracts.querying import (
-    GroupRef,
+    GroupField,
     GroupTrunc,
 )
 from forze.base.exceptions import CoreException
@@ -515,8 +515,8 @@ def test_group_key_part_ref_trunc_and_unsupported() -> None:
         parse_aggregate_timezone,
     )
 
-    assert _group_key_part({"g": "x"}, GroupRef(field="g")) == "x"
-    assert _group_key_part({}, GroupRef(field="g")) is None  # missing → None
+    assert _group_key_part({"g": "x"}, GroupField(field="g")) == "x"
+    assert _group_key_part({}, GroupField(field="g")) is None  # missing → None
 
     trunc = GroupTrunc(
         field="ts", unit="day", timezone=parse_aggregate_timezone("UTC")

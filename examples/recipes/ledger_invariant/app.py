@@ -22,8 +22,6 @@ Run it (from the repo root)::
     python -m examples.recipes.ledger_invariant.app
 """
 
-from __future__ import annotations
-
 from uuid import UUID
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -92,7 +90,8 @@ def build_context() -> ExecutionContext:
 
 async def open_account(ctx: ExecutionContext, ledger_id: str, balance: int) -> UUID:
     """Open an account. Setup only — a single open need not balance; a ledger opens with balancing
-    entries (e.g. ``+100`` and ``-100``), and the law is checked once a complete operation lands."""
+    entries (e.g. ``+100`` and ``-100``), and the law is checked once a complete operation lands.
+    """
 
     account = await ctx.document.command(ACCOUNT_SPEC).create(
         AccountCreate(ledger_id=ledger_id, balance=balance)
@@ -121,7 +120,9 @@ async def transfer(
         await enforce(LEDGER_BALANCED, ctx, {"ledger_id": ledger_id})
 
 
-async def mint(ctx: ExecutionContext, ledger_id: str, account: UUID, amount: int) -> None:
+async def mint(
+    ctx: ExecutionContext, ledger_id: str, account: UUID, amount: int
+) -> None:
     """BUG: credit an account with **no balancing debit** — a single-sided write.
 
     The transaction commits the credit, then the deferred conservation check finds the ledger no
@@ -138,7 +139,10 @@ async def mint(ctx: ExecutionContext, ledger_id: str, account: UUID, amount: int
 
 
 async def mint_guarded(
-    ctx: ExecutionContext, ledger_id: str, account: UUID, amount: int
+    ctx: ExecutionContext,
+    ledger_id: str,
+    account: UUID,
+    amount: int,
 ) -> None:
     """The same single-sided credit as :func:`mint`, enforced **preventively**.
 
@@ -151,8 +155,11 @@ async def mint_guarded(
 
     async with ctx.tx_ctx.scope(_ROUTE, isolation=LEDGER_BALANCED.required_isolation):
         current = await ctx.document.query(ACCOUNT_SPEC).get(account)
+
         await ctx.document.command(ACCOUNT_SPEC).update(
-            account, current.rev, AccountUpdate(balance=current.balance + amount)
+            account,
+            current.rev,
+            AccountUpdate(balance=current.balance + amount),
         )
         await enforce_preventive(LEDGER_BALANCED, ctx, {"ledger_id": ledger_id})
 
@@ -171,26 +178,46 @@ async def main() -> None:
     # — so the bad write is already durable when the breach surfaces.
     ctx = build_context()
     asset = await open_account(ctx, "L1", 100)  # an asset of +100 …
-    liability = await open_account(ctx, "L1", -100)  # … against a liability of -100 → balanced
+
+    liability = await open_account(
+        ctx,
+        "L1",
+        -100,
+    )  # … against a liability of -100 → balanced
+
     await transfer(ctx, "L1", asset, liability, 30)  # preserves the sum
+
     print("after transfer (balanced):", await ledger_balance(ctx, "L1"))
+
     try:
         await mint(ctx, "L1", asset, 50)  # single-sided → caught post-commit
+
     except CoreException as error:
         print("detective — mint reported:", error)
+
     print("  …but durable:", await ledger_balance(ctx, "L1"))  # held=False, observed=50
 
     # Preventive: the same bad write, checked *inside* a SERIALIZABLE transaction, is rolled back —
     # never durable. (And under real concurrency that isolation serializes away a write-skew.)
     ctx2 = build_context()
     funded = await open_account(ctx2, "L2", 100)
+
     await open_account(ctx2, "L2", -100)  # balanced
+
     try:
-        await mint_guarded(ctx2, "L2", funded, 50)  # single-sided → caught before commit
+        await mint_guarded(
+            ctx2, "L2", funded, 50
+        )  # single-sided → caught before commit
+
     except CoreException as error:
         print("preventive — mint_guarded rejected:", error)
-    print("  …and rolled back:", await ledger_balance(ctx2, "L2"))  # held=True, observed=0
 
+    print(
+        "  …and rolled back:", await ledger_balance(ctx2, "L2")
+    )  # held=True, observed=0
+
+
+# ....................... #
 
 if __name__ == "__main__":
     import asyncio

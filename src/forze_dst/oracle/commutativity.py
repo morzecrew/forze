@@ -15,15 +15,13 @@ one history is one interleaving and proves nothing on its own, so the check need
 compares their end states — it cannot be expressed as an assertion over a single history.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Callable, Hashable, Iterable
 
-from forze_dst.oracle.invariants import Violation
-from forze_dst.oracle.recorder import History
-from forze_dst.oracle.replay import Scenario, run_recorded
-from forze_dst.time_source import DEFAULT_EPOCH
+from ..time_source import DEFAULT_EPOCH
+from .invariants import Violation
+from .recorder import History
+from .replay import Scenario, run_recorded
 
 # ----------------------- #
 

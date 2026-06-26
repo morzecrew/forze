@@ -7,7 +7,7 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.deps import DepKey
-from forze.base.primitives import StrKey
+from forze.base.primitives import JsonDict, StrKey
 
 from ..port_proxy_base import PortProxy
 from .emit import record
@@ -32,6 +32,7 @@ def infer_port_metadata(
 
     if surface.endswith("_query"):
         phase = "query"
+
     elif surface.endswith("_command"):
         phase = "command"
 
@@ -42,6 +43,7 @@ def infer_port_metadata(
         route_name = str(getattr(route, "value", route))
 
     return domain, surface, route_name, phase
+
 
 # ----------------------- #
 
@@ -62,17 +64,31 @@ class TracingPortProxy(PortProxy):
     """Wrap a port and record sync and async method calls."""
 
     deps: "FrozenDeps"
+    """The frozen dependencies."""
+
     domain: str
+    """The domain of the port."""
+
     surface: str
+    """The surface of the port."""
+
     route: str | None
+    """The route of the port."""
+
     phase: str | None
+    """The phase of the port."""
+
     tx_depth_getter: Callable[[], int] = attrs.field(default=_default_tx_depth)
+    """Returns the active transaction nesting depth."""
+
     tx_id_getter: Callable[[], int | None] = attrs.field(default=_default_tx_id)
     """Returns the active root transaction's run-global id (``None`` outside a tx / in production) —
     lets the oracle group a port call into the transaction that issued it."""
+
     capture: bool = False
     """Capture redaction-applied call values (payload/result) onto the trace — DST only; off in
     production so the trace stays id-only and PII-free."""
+
     redact: frozenset[str] = frozenset()
     """Field names to mask to ``"<redacted>"`` when capturing — the spec's declared-sensitive
     fields (``encryption.encrypted`` ∪ ``encryption.searchable``)."""
@@ -93,7 +109,7 @@ class TracingPortProxy(PortProxy):
     # ....................... #
 
     @staticmethod
-    def _dump(value: Any) -> dict[str, Any] | None:
+    def _dump(value: Any) -> JsonDict | None:
         """A structural ``dict`` view of *value* (a write DTO / read model), or ``None`` for a
         scalar / id / unstructured value — so capture only records the meaningful payloads.
         """
@@ -108,6 +124,7 @@ class TracingPortProxy(PortProxy):
             # ISO-8601), so the trace / timeline / bundle stay portable and deterministic.
             try:
                 data = dump(mode="json")
+
             except TypeError:  # a model_dump without the mode kwarg
                 data = dump()
 
@@ -128,7 +145,7 @@ class TracingPortProxy(PortProxy):
 
     # ....................... #
 
-    def _redact(self, data: dict[str, Any]) -> dict[str, Any]:
+    def _redact(self, data: JsonDict) -> JsonDict:
         """Mask the spec's declared-sensitive fields to ``"<redacted>"`` (shallow, top-level)."""
 
         if not self.redact:
@@ -142,7 +159,9 @@ class TracingPortProxy(PortProxy):
     # ....................... #
 
     def _payload_of(
-        self, args: tuple[Any, ...], kwargs: dict[str, Any]
+        self,
+        args: tuple[Any, ...],
+        kwargs: JsonDict,
     ) -> Mapping[str, Any] | None:
         """The first structured argument as a redacted value map — the write payload."""
 
@@ -159,7 +178,7 @@ class TracingPortProxy(PortProxy):
         self,
         name: str,
         args: tuple[Any, ...] = (),
-        kwargs: dict[str, Any] | None = None,
+        kwargs: JsonDict | None = None,
     ) -> None:
         record(
             domain=self.domain,
@@ -189,10 +208,11 @@ class TracingPortProxy(PortProxy):
         if not self.capture:
             return
 
-        items: list[Any] = result if isinstance(result, list) else [result]
+        items = cast(list[Any], result if isinstance(result, list) else [result])  # type: ignore[redundant-cast]
 
         for item in items:
             data = self._dump(item)
+
             if data is None:
                 continue
 

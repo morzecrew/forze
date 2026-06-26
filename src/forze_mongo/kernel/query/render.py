@@ -12,7 +12,7 @@ from forze.application.contracts.querying import (
     AggregatesExpression,
     AggregatesExpressionParser,
     GroupKey,
-    GroupRef,
+    GroupField,
     GroupTrunc,
     ParsedAggregates,
     QueryAnd,
@@ -199,7 +199,7 @@ class MongoQueryRenderer:
     def _render_group_id_element(self, group_key: GroupKey) -> object:
         expr = group_key.expr
 
-        if isinstance(expr, GroupRef):
+        if isinstance(expr, GroupField):
             return self._field_ref(expr.field)
 
         trunc = expr

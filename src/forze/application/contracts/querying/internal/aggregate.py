@@ -66,7 +66,7 @@ def _having_field_roots(expr: QueryExpr) -> frozenset[str]:
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
-class GroupRef:
+class GroupField:
     """Group by a document field path."""
 
     field: str
@@ -100,7 +100,7 @@ class GroupKey:
     alias: str
     """Output field alias."""
 
-    expr: GroupRef | GroupTrunc
+    expr: GroupField | GroupTrunc
     """Group dimension expression."""
 
 
@@ -247,7 +247,7 @@ class AggregatesExpressionParser:
             return tuple(
                 GroupKey(
                     alias=cls._alias(name),
-                    expr=GroupRef(field=cls._field(name)),
+                    expr=GroupField(field=cls._field(name)),
                 )
                 for name in seq
             )
@@ -257,9 +257,9 @@ class AggregatesExpressionParser:
     # ....................... #
 
     @classmethod
-    def _parse_group_value(cls, raw: object) -> GroupRef | GroupTrunc:
+    def _parse_group_value(cls, raw: object) -> GroupField | GroupTrunc:
         if isinstance(raw, str):
-            return GroupRef(field=cls._field(raw))
+            return GroupField(field=cls._field(raw))
 
         if not isinstance(raw, Mapping):
             raise exc.internal(f"Invalid $groups map value: {raw!r}")

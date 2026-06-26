@@ -4,7 +4,7 @@ from .aggregate import (
     AggregateComputedField,
     AggregatesExpressionParser,
     GroupKey,
-    GroupRef,
+    GroupField,
     GroupTrunc,
     ParsedAggregates,
 )
@@ -29,7 +29,7 @@ __all__ = [
     "AggregateComputedField",
     "AggregatesExpressionParser",
     "GroupKey",
-    "GroupRef",
+    "GroupField",
     "GroupTrunc",
     "ParsedAggregates",
     "QueryFilterExpressionParser",
