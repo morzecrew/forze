@@ -95,6 +95,46 @@ def maybe_wrap_configurable(
 # ....................... #
 
 
+def maybe_wrap_otel_spans(
+    deps: "FrozenDeps",
+    ctx: "ExecutionContext",
+    key: DepKey[Any],
+    spec: BaseSpec,
+    route: StrKey | None,
+    result: Any,
+) -> Any:
+    """Wrap a configurable port to emit a per-call OpenTelemetry client span, when opted in.
+
+    Production observability, independent of the dev runtime-tracer gate: enabled by
+    ``DepsRegistry.with_otel_port_spans`` (``deps.otel_port_tracer`` is then the tracer; ``None`` ⇒
+    off, bare port, zero cost). Applied **inside** the resilience port policy, so a retried call yields
+    one span per attempt and a rejected call (breaker/bulkhead) emits none — mirroring the runtime
+    tracer's placement.
+    """
+
+    tracer = deps.otel_port_tracer
+
+    if tracer is None:
+        return result
+
+    from ..tracing.otel_port_proxy import wrap_port_otel_spans
+    from ..tracing.port_proxy import infer_port_metadata
+
+    domain, surface, route_name, phase = infer_port_metadata(key, spec, route=route)
+
+    return wrap_port_otel_spans(
+        result,
+        tracer=tracer,
+        domain=domain,
+        surface=surface,
+        route=route_name,
+        phase=phase,
+    )
+
+
+# ....................... #
+
+
 def _sensitive_fields(spec: BaseSpec) -> frozenset[str]:
     """The spec's declared-sensitive field names — what value capture redacts.
 

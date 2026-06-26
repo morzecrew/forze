@@ -20,6 +20,7 @@ from ..interception import PortInterceptorChain
 from .port_instrumentation import (
     maybe_wrap_configurable,
     maybe_wrap_interceptors,
+    maybe_wrap_otel_spans,
     maybe_wrap_port_policy,
     record_simple_resolve,
 )
@@ -56,6 +57,11 @@ class FrozenDepsRegistry:
     interceptors: PortInterceptorChain = attrs.field(factory=tuple)
     """Deps-scoped port interceptors applied to every resolved configurable port."""
 
+    otel_port_tracer: Any = None
+    """When set, every resolved configurable port emits a per-call OpenTelemetry client span through
+    this tracer (an OTel ``Tracer``; production observability, opt-in via
+    ``DepsRegistry.with_otel_port_spans``). ``None`` leaves ports bare (zero cost)."""
+
     # ....................... #
 
     def resolve(self) -> FrozenDeps:
@@ -66,6 +72,7 @@ class FrozenDepsRegistry:
             resolution_tracer=self.resolution_tracer,
             runtime_tracer=self.runtime_tracer,
             interceptors=self.interceptors,
+            otel_port_tracer=self.otel_port_tracer,
         )
 
 
@@ -88,6 +95,10 @@ class FrozenDeps:
 
     interceptors: PortInterceptorChain = attrs.field(factory=tuple)
     """Deps-scoped port interceptors applied to every resolved configurable port."""
+
+    otel_port_tracer: Any = None
+    """When set, each resolved configurable port emits a per-call OpenTelemetry client span through
+    this tracer (an OTel ``Tracer``); ``None`` leaves ports bare (zero cost)."""
 
     _resolution: ResolutionContext = attrs.field(
         default=attrs.Factory(
@@ -246,11 +257,13 @@ class FrozenDeps:
         try:
             factory = self.store.get_provider(key, route=route)
             result = factory(ctx, spec)
-            # Innermost (closest to the real port): interceptor chain, then runtime tracing,
-            # then the resilience port policy outermost (so a fault interceptor's transient
-            # error is retryable by the policy).
+            # Innermost (closest to the real port): interceptor chain, then runtime tracing, then the
+            # OTel client span, then the resilience port policy outermost (so a fault interceptor's
+            # transient error is retryable by the policy, and a retried call gets one OTel span per
+            # attempt while a rejected call emits none).
             port = maybe_wrap_interceptors(self, ctx, key, spec, route, result)
             port = maybe_wrap_configurable(self, ctx, key, spec, route, port)
+            port = maybe_wrap_otel_spans(self, ctx, key, spec, route, port)
             port = maybe_wrap_port_policy(self, ctx, key, route, port)
 
         finally:
