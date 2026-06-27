@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.45">
+      <meta name="generator" content="zensical-0.0.46">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.fba56155.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.19d3147f.min.css">
       
         
           
@@ -1171,6 +1171,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../writing-operation/system-invariants/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-scale" viewBox="0 0 24 24"><path d="M12 3v18M19 8l3 8a5 5 0 0 1-6 0zV7"/><path d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1M5 8l3 8a5 5 0 0 1-6 0zV7M7 21h10"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  System invariants
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2063,6 +2092,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Forze passes its own simulation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-mock-matches-the-real-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The mock matches the real engine
       </span>
     </span>
   </a>
@@ -5262,6 +5302,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#the-mock-matches-the-real-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The mock matches the real engine
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5514,6 +5565,18 @@ test against the real database, not <abbr title="Deterministic Simulation Testin
 </tbody>
 </table>
 <p>Each scenario also keeps a <em>broken</em> twin — drop the lock, ignore the remote stamp — that the oracle catches, minimises, and reproduces, so the test proves it can still fail. That is the bar: the framework's own concurrency code is continuously simulation-tested, and app authors inherit the same harness for free.</p>
+<h2 id="the-mock-matches-the-real-engine">The mock matches the real engine<a class="headerlink" href="#the-mock-matches-the-real-engine" title="Permanent link">&para;</a></h2>
+<p>Every invariant <abbr title="Deterministic Simulation Testing">DST</abbr> proves holds against the <strong>mock</strong> port, not against Postgres or Mongo — so a sweep is only as trustworthy as the mock's fidelity. For the property that worries people most, transactional isolation, Forze closes that gap with a <strong>differential conformance</strong> battery.</p>
+<p><code>forze_dst.conformance</code> ships the classic isolation anomalies — dirty read, read skew, write skew, the three-transaction read-only anomaly, predicate phantoms — as deterministic forced interleavings, each with a known verdict per isolation level. The same battery runs against the in-memory mock <em>and</em>, over testcontainers, against real Postgres (every level) and Mongo (snapshot):</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.transaction</span><span class="w"> </span><span class="kn">import</span> <span class="n">IsolationLevel</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.conformance</span><span class="w"> </span><span class="kn">import</span> <span class="n">BATTERY</span><span class="p">,</span> <span class="n">expected_verdict</span>
+
+<span class="c1"># `backend` is a ConformanceBackend — N independent sessions over one shared store</span>
+<span class="n">level</span> <span class="o">=</span> <span class="n">IsolationLevel</span><span class="o">.</span><span class="n">SERIALIZABLE</span>
+<span class="k">for</span> <span class="n">case</span> <span class="ow">in</span> <span class="n">BATTERY</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="k">await</span> <span class="n">case</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">backend</span><span class="p">,</span> <span class="n">level</span><span class="p">)</span> <span class="o">==</span> <span class="n">expected_verdict</span><span class="p">(</span><span class="n">case</span><span class="p">,</span> <span class="n">level</span><span class="p">)</span>
+</code></pre></div>
+<p>Each anomaly's outcome is normalised to <em>permitted</em> or <em>prevented</em>, so the differential compares the <strong>behaviour</strong> at the declared level — never the mechanism, the error code, or which transaction lost. The handful of expected differences (Forze's revision guard prevents lost update at <em>every</em> level, for one) live in a reviewed <code>CONTRACT_STRENGTHENINGS</code> / <code>MECHANISM_DIVERGENCES</code> catalog, so a real divergence stands out instead of drowning in noise. A green battery means the mock and the real engine agree on the anomaly — which is what lets "it passed on the mock" mean "it matches the real engine."</p>
 <p>Start with <a href="../invariants/">what must hold</a> — invariants are the lens through which every other capability reports a bug.</p>
 
 
@@ -5621,10 +5684,10 @@ test against the real database, not <abbr title="Deterministic Simulation Testin
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      <script src="../../assets/javascripts/bundle.ee611ef6.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.45">
+      <meta name="generator" content="zensical-0.0.46">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.fba56155.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.19d3147f.min.css">
       
         
           
@@ -1171,6 +1171,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../writing-operation/system-invariants/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-scale" viewBox="0 0 24 24"><path d="M12 3v18M19 8l3 8a5 5 0 0 1-6 0zV7"/><path d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1M5 8l3 8a5 5 0 0 1-6 0zV7M7 21h10"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  System invariants
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2082,6 +2111,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Consistency models
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#transactional-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Transactional isolation
       </span>
     </span>
   </a>
@@ -5258,6 +5298,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#transactional-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Transactional isolation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5434,8 +5485,22 @@
 <li><strong><code>sequential(spec)</code></strong> — drops the real-time constraint and keeps only per-session program order. A replica that serves a slightly stale but program-order-respecting read is <em>sequentially</em> consistent though not linearizable — <code>sequential</code> accepts it, <code>linearizable</code> flags it.</li>
 <li><strong><code>monotonic_reads()</code></strong> — a session guarantee: within one session, successive reads of a key never go backward in version (the lagging-replica bug). Sound and incomplete — it flags only a <em>definitive</em> regression, so it never cries wolf on concurrent writes.</li>
 </ul>
-<p>This is the spectrum from strongest to weakest, and it lines up with what an operation <em>declares</em>: a handler that runs at <code>IsolationLevel.SERIALIZABLE</code> should pass <code>linearizable</code>; a weaker level admits the weaker models. (Full snapshot-isolation and serializability checking — across a transaction's read and write <em>sets</em> — needs transaction-level recording, a step beyond the per-object history these read.)</p>
+<p>This is the spectrum from strongest to weakest, and it lines up with what an operation <em>declares</em>: a handler that runs at <code>IsolationLevel.SERIALIZABLE</code> should pass <code>linearizable</code>; a weaker level admits the weaker models. Snapshot isolation and serializability are checked separately — across a transaction's read and write <em>sets</em> rather than one object's history — in the next subsection.</p>
+<h3 id="transactional-isolation">Transactional isolation<a class="headerlink" href="#transactional-isolation" title="Permanent link">&para;</a></h3>
+<p>Consistency models read one object's history; the transactional oracles read <em>across</em> a transaction's read and write sets — grouped by transaction from the trace — to catch the multi-object anomalies isolation levels exist to prevent.</p>
+<ul>
+<li><strong><code>snapshot_isolation()</code></strong> flags a <strong>lost update</strong> among the committed transactions; write skew is permitted under SI, so it stays clean. Capture-free.</li>
+<li><strong><code>serializable()</code></strong> is, by default, a capture-free <strong>pairwise</strong> check — sound but incomplete, catching lost update and two-transaction write skew. <strong><code>serializable(complete=True)</code></strong> upgrades to a <strong>dependency-graph</strong> check that is sound <em>and</em> complete for conflict-serializability over the captured history: it catches anti-dependency cycles spanning three or more transactions (the read-only anomaly) and predicate <strong>phantoms</strong> — a scan that would have seen a concurrent insert. Complete mode reads the value trace, so it needs <code>capture_values</code> and fails closed without it.</li>
+</ul>
+<p>Let the level an operation <em>declares</em> pick the oracle. <code>isolation_oracle_for(level)</code> maps <code>SERIALIZABLE</code> → <code>serializable(complete=True)</code> and <code>SNAPSHOT</code> → <code>snapshot_isolation()</code>; <code>READ_COMMITTED</code> has no serialization-graph guarantee, so it raises rather than hand back a check that passes on anything — the run is judged at the level it claims:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.transaction</span><span class="w"> </span><span class="kn">import</span> <span class="n">IsolationLevel</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.invariants</span><span class="w"> </span><span class="kn">import</span> <span class="n">isolation_oracle_for</span>
+
+<span class="n">invariants</span> <span class="o">=</span> <span class="p">[</span><span class="n">isolation_oracle_for</span><span class="p">(</span><span class="n">IsolationLevel</span><span class="o">.</span><span class="n">SERIALIZABLE</span><span class="p">)]</span>
+</code></pre></div>
+<p>An isolation oracle has a trap the others don't: a green result is meaningless if the run never <strong>contended</strong>. <code>had_isolation_conflict(history)</code> answers the prerequisite — did two concurrent committed transactions actually touch the same key, the teeth the oracle needs? Assert <code>any(had_isolation_conflict(h) for h in histories)</code> across the sweep, the same way you assert <a href="#what-must-sometimes-happen">reachability</a>, so a clean isolation result rests on a run that genuinely stressed it.</p>
 <p>One failure needs no invariant at all: a <strong>deadlock</strong>. If an interleaving drives the workload to a standstill — every task blocked, with no ready work and no timer to advance — that is always a bug, so <abbr title="Deterministic Simulation Testing">DST</abbr> reports it on its own. It minimises to the smallest workload that still stalls and comes back as a <code>no_deadlock</code> violation, exactly like an asserted one, instead of aborting the sweep. You catch it for free, even with no invariants declared.</p>
+<p>A last cross-cutting claim is <strong>convergence</strong>. If an operation declares itself order-independent, <code>commutative_convergence(build, final_state=…, schedule_seeds=…)</code> reruns the workload across a band of schedules and flags a declared-commutative op whose interleavings reach <em>different</em> end states, naming the seed that diverged — a cross-history check, like reachability, not a per-run invariant.</p>
 <div class="admonition note">
 <p class="admonition-title">Value-level invariants need <code>capture_values</code></p>
 <p>By default the trace is <strong>id-only</strong> — it records <em>which</em> key and outcome, never the value (no
@@ -5568,10 +5633,10 @@ is masked to <code>&lt;redacted&gt;</code> even when captured.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      <script src="../../assets/javascripts/bundle.ee611ef6.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

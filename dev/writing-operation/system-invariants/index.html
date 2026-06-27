@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/identity-tenancy-enc/multi-tenancy/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/writing-operation/system-invariants/">
       
       
-        <link rel="prev" href="../identity/">
+        <link rel="prev" href="../idempotency/">
       
       
-        <link rel="next" href="../encryption/">
+        <link rel="next" href="../../data-events/reading-data/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Multi-tenancy - Forze</title>
+        <title>System invariants - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#binding-the-tenant-to-a-request" class="md-skip">
+        <a href="#a-law-over-a-read-set" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Multi-tenancy
+              System invariants
             
           </span>
         </div>
@@ -948,6 +948,8 @@
                 
   
   
+    
+  
   
   
     
@@ -963,11 +965,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" checked>
         
           
           <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
@@ -987,7 +989,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1004,7 +1006,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../writing-operation/wiring/" class="md-nav__link">
+      <a href="../wiring/" class="md-nav__link">
         
   
   
@@ -1033,7 +1035,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../writing-operation/capability-execution/" class="md-nav__link">
+      <a href="../capability-execution/" class="md-nav__link">
         
   
   
@@ -1062,7 +1064,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../writing-operation/transactions/" class="md-nav__link">
+      <a href="../transactions/" class="md-nav__link">
         
   
   
@@ -1091,7 +1093,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../writing-operation/errors/" class="md-nav__link">
+      <a href="../errors/" class="md-nav__link">
         
   
   
@@ -1120,7 +1122,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../writing-operation/concurrency-conflicts/" class="md-nav__link">
+      <a href="../concurrency-conflicts/" class="md-nav__link">
         
   
   
@@ -1149,7 +1151,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../writing-operation/idempotency/" class="md-nav__link">
+      <a href="../idempotency/" class="md-nav__link">
         
   
   
@@ -1175,10 +1177,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../writing-operation/system-invariants/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-scale" viewBox="0 0 24 24"><path d="M12 3v18M19 8l3 8a5 5 0 0 1-6 0zV7"/><path d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1M5 8l3 8a5 5 0 0 1-6 0zV7M7 21h10"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  System invariants
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1195,6 +1223,69 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#a-law-over-a-read-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A law over a read-set
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enforce-it-detective-or-preventive" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enforce it: detective or preventive
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ask-before-you-write-propose" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ask before you write: propose
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prove-it-under-simulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prove it under simulation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1505,8 +1596,6 @@
                 
   
   
-    
-  
   
   
     
@@ -1522,11 +1611,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
           <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
@@ -1546,7 +1635,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1563,7 +1652,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../identity/" class="md-nav__link">
+      <a href="../../identity-tenancy-enc/identity/" class="md-nav__link">
         
   
   
@@ -1589,36 +1678,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M16 3.128a4 4 0 0 1 0 7.744M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Multi-tenancy
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../identity-tenancy-enc/multi-tenancy/" class="md-nav__link">
         
   
   
@@ -1635,119 +1698,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#binding-the-tenant-to-a-request" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Binding the tenant to a request
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#where-to-draw-the-boundary" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Where to draw the boundary
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Where to draw the boundary">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-tenant-marker-tagged" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The tenant marker (<code>tagged</code>)
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#per-tenant-containers-namespace" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Per-tenant containers (<code>namespace</code>)
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#routed-clients-dedicated" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Routed clients (<code>dedicated</code>)
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#which-integration-reaches-which-tier" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Which integration reaches which tier
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#declaring-a-minimum" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Declaring a minimum
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#provisioning-per-tenant-infrastructure" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Provisioning per-tenant infrastructure
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1760,7 +1710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../encryption/" class="md-nav__link">
+      <a href="../../identity-tenancy-enc/encryption/" class="md-nav__link">
         
   
   
@@ -5320,10 +5270,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#binding-the-tenant-to-a-request" class="md-nav__link">
+  <a href="#a-law-over-a-read-set" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Binding the tenant to a request
+        A law over a read-set
       </span>
     </span>
   </a>
@@ -5331,71 +5281,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#where-to-draw-the-boundary" class="md-nav__link">
+  <a href="#enforce-it-detective-or-preventive" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Where to draw the boundary
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Where to draw the boundary">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-tenant-marker-tagged" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The tenant marker (<code>tagged</code>)
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#per-tenant-containers-namespace" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Per-tenant containers (<code>namespace</code>)
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#routed-clients-dedicated" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Routed clients (<code>dedicated</code>)
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#which-integration-reaches-which-tier" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Which integration reaches which tier
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#declaring-a-minimum" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Declaring a minimum
+        Enforce it: detective or preventive
       </span>
     </span>
   </a>
@@ -5403,10 +5292,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provisioning-per-tenant-infrastructure" class="md-nav__link">
+  <a href="#ask-before-you-write-propose" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Provisioning per-tenant infrastructure
+        Ask before you write: propose
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prove-it-under-simulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prove it under simulation
       </span>
     </span>
   </a>
@@ -5493,11 +5393,11 @@
     
     
       <li class="md-path__item">
-        <a href="../identity/" class="md-path__link">
+        <a href="../wiring/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Identity, tenancy & encryption
+    Writing an operation
   </span>
 
         </a>
@@ -5517,194 +5417,64 @@
   
 
 
-  <h1 id="__skip">Multi-tenancy</h1>
+  <h1 id="__skip">System invariants</h1>
 
-<p>When one deployment serves many customers, three questions that sound alike are
-actually distinct — and Forze keeps them apart:</p>
-<ul>
-<li><strong>Who</strong> is calling — the authenticated principal (<code>AuthnIdentity</code>).</li>
-<li><strong>Which tenant</strong> the request belongs to — <code>TenantIdentity</code>.</li>
-<li><strong>How</strong> that tenant's data stays isolated from everyone else's.</li>
-</ul>
-<p>Keeping these separate is what lets the <em>same</em> handler serve every tenant
-without a line of tenant-handling code in it.</p>
-<h2 id="binding-the-tenant-to-a-request">Binding the tenant to a request<a class="headerlink" href="#binding-the-tenant-to-a-request" title="Permanent link">&para;</a></h2>
-<p>At the boundary — HTTP middleware, typically — a request is authenticated, its
-tenant resolved, and both bound to the execution context:</p>
-<ol>
-<li><strong>Authenticate</strong> into an <code>AuthnIdentity</code> (plus an optional hint, such as a JWT
-   <code>tid</code> claim).</li>
-<li><strong>Resolve</strong> the <code>TenantIdentity</code>. A resolver validates any hints against the
-   principal's actual memberships — it is authoritative, so a hint can never
-   grant access the principal doesn't have.</li>
-<li><strong>Bind</strong> both with <code>ctx.inv_ctx.bind(...)</code>, so every adapter can call
-   <code>ctx.inv_ctx.get_tenant()</code> on its own.</li>
-</ol>
-<p>From there, adapters read the tenant themselves. A handler never threads a
-<code>tenant_id</code> through its arguments — it just asks for the <code>orders</code> port and gets
-<em>this</em> tenant's orders.</p>
-<div class="admonition warning">
-<p class="admonition-title">Don't authenticate against tenant-scoped data</p>
-<p>Credential checks run <em>before</em> the tenant is resolved. If an authentication
-route reads a tenant-scoped store, bootstrap can deadlock. Keep the
-document routes used during authentication tenant-unaware.</p>
-</div>
-<h2 id="where-to-draw-the-boundary">Where to draw the boundary<a class="headerlink" href="#where-to-draw-the-boundary" title="Permanent link">&para;</a></h2>
-<p>Isolation is <strong>layered</strong> — you choose where one tenant's data ends and the
-next's begins. The same <code>TenantIdentity</code> can decide a marker on each row, the
-namespace it lives in, or the whole connection. Forze names these three tiers,
-weakest to strongest, and every integration reports which one its wiring
-actually reaches:</p>
-<p><a class="glightbox" data-gallery="light" data-title="A bound TenantIdentity can isolate with a tenant marker, a per-tenant namespace, or a dedicated instance" data-type="image" href="../../_diagrams/light/tenancy-isolation.svg#only-light"><img alt="A bound TenantIdentity can isolate with a tenant marker, a per-tenant namespace, or a dedicated instance" src="../../_diagrams/light/tenancy-isolation.svg#only-light" /></a>
-<a class="glightbox" data-gallery="dark" data-title="A bound TenantIdentity can isolate with a tenant marker, a per-tenant namespace, or a dedicated instance" data-type="image" href="../../_diagrams/dark/tenancy-isolation.svg#only-dark"><img alt="A bound TenantIdentity can isolate with a tenant marker, a per-tenant namespace, or a dedicated instance" src="../../_diagrams/dark/tenancy-isolation.svg#only-dark" /></a></p>
-<table>
-<thead>
-<tr>
-<th>Tier</th>
-<th>What tenants share</th>
-<th>Reached by</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>tagged</code></td>
-<td>one container — every record carries its tenant, a <em>filter</em> a forgotten predicate can leak past</td>
-<td><code>tenant_aware=True</code> on a <strong>column</strong> store (a SQL <code>tenant_id</code> column, a graph property)</td>
-</tr>
-<tr>
-<td><code>namespace</code></td>
-<td>a separate container each on one instance — a <em>name boundary</em> a query can't cross</td>
-<td><code>tenant_aware=True</code> on a <strong>key/path</strong> store (a Redis key prefix, an object-store path prefix), <strong>or</strong> a per-tenant resolver (a Postgres schema, a Mongo collection, a dataset, a bucket, an index)</td>
-</tr>
-<tr>
-<td><code>dedicated</code></td>
-<td>nothing — a separate instance per tenant</td>
-<td>a routed client resolving per-tenant credentials</td>
-</tr>
-</tbody>
-</table>
-<p>The names are deliberately storage-agnostic — they classify by the <em>isolation
-you get</em>, not the switch you flip. The jump that matters is <code>tagged</code> →
-<code>namespace</code>: a <code>tagged</code> marker is a <em>filter</em> a forgotten predicate can leak past
-(a SQL <code>tenant_id</code> column, a graph property — table partitioning included, since
-pruning still relies on the marker), whereas a <code>namespace</code> is a separate
-container — a <em>name-resolution boundary</em> a query cannot cross.</p>
-<p>So <code>tenant_aware=True</code> lands on a <strong>different tier depending on the backend</strong>: a
-column store gains a filter (<code>tagged</code>), but a key/path store gains a separate key
-or path (<code>namespace</code>) — the prefix <em>is</em> the boundary. A per-tenant resolver, and
-routed clients, reach <code>namespace</code> and <code>dedicated</code> the same way everywhere.</p>
-<h3 id="the-tenant-marker-tagged">The tenant marker (<code>tagged</code>)<a class="headerlink" href="#the-tenant-marker-tagged" title="Permanent link">&para;</a></h3>
-<p>The lightest cut: one connection, one shared container, a tenant marker.
-<code>tenant_aware=True</code> on a <strong>column</strong> store makes the adapter filter every read and
-stamp every write with the bound tenant — a <code>tenant_id</code> column on Postgres or
-Mongo, a property on a graph node. Correctness rests on the marker: a forgotten
-predicate leaks. Combining it with a stronger cut is redundant — acceptable as
-defense-in-depth, and startup warns when it spots the overlap.</p>
-<h3 id="per-tenant-containers-namespace">Per-tenant containers (<code>namespace</code>)<a class="headerlink" href="#per-tenant-containers-namespace" title="Permanent link">&para;</a></h3>
-<p>A container per tenant — a name boundary a query can't cross. Two ways to reach
-it. On a <strong>key/path</strong> store, the <em>same</em> <code>tenant_aware=True</code> switch is already a
-namespace: the adapter prefixes each tenant's key or path (<code>tenant:{id}:…</code> on
-Redis, a path prefix on object storage, a per-tenant queue/stream key), so a read
-addresses a separate key, not a shared one with a filter. On a store with named
-containers, point a route's relation — or its named resource, a bucket / dataset
-/ index — at a <strong>resolver</strong> instead of a static value, evaluated per request
-against the bound tenant:</p>
-<div class="highlight"><pre><span></span><code><span class="n">PostgresDocumentConfig</span><span class="p">(</span>
-    <span class="n">read</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;tenant_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="s2">&quot;orders&quot;</span><span class="p">),</span>
-    <span class="n">write</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;tenant_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="s2">&quot;orders&quot;</span><span class="p">),</span>
-    <span class="n">bookkeeping_strategy</span><span class="o">=</span><span class="s2">&quot;application&quot;</span><span class="p">,</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>Because the name is only known per request, startup schema validation (which
-needs fixed names) skips these routes.</p>
-<h3 id="routed-clients-dedicated">Routed clients (<code>dedicated</code>)<a class="headerlink" href="#routed-clients-dedicated" title="Permanent link">&para;</a></h3>
-<p>A <strong>routed client</strong> resolves credentials per <code>TenantIdentity</code> and pools
-connections by fingerprint, so tenants that share an endpoint reuse pools. You
-swap it in at <a href="../../writing-operation/wiring/">wiring</a> time — <code>RoutedPostgresClient</code> for
-<code>PostgresClient</code> — and the specs and handlers don't change.</p>
-<div class="admonition note">
-<p class="admonition-title">Postgres routed clients</p>
-<p>Set <code>introspector_cache_partition_key</code> on the deps module so the schema
-catalog cache partitions by tenant — required when the client is routed.</p>
-</div>
-<h3 id="which-integration-reaches-which-tier">Which integration reaches which tier<a class="headerlink" href="#which-integration-reaches-which-tier" title="Permanent link">&para;</a></h3>
-<p>Each integration derives the tier its wiring reaches, and the <strong>backend sets the
-ceiling</strong> — an in-process store can't route a per-tenant connection. Three shapes
-cover it:</p>
-<ul>
-<li>A <strong>column store</strong> (Postgres / Mongo / Firestore documents, most analytics) spans
-  the whole ladder: <code>tagged</code> (column) → <code>namespace</code> (schema/collection resolver) →
-  <code>dedicated</code> (routed client).</li>
-<li>A <strong>key/path store</strong> (Redis, S3/GCS, queues) has no shared container to tag, so it
-  <em>starts</em> at <code>namespace</code> — the per-tenant key or prefix <strong>is</strong> <code>tenant_aware</code> — and
-  reaches <code>dedicated</code> with a routed client.</li>
-<li>An <strong>in-process</strong> backend caps low: DuckDB analytics at <code>tagged</code>, the mock at
-  <code>namespace</code>, with no routed-client equivalent.</li>
-</ul>
-<p>The exhaustive per-port breakdown — every integration, its mechanism, and its ceiling
-— is the <a href="../../reference/tenancy-matrix/">tenancy matrix</a>.</p>
-<div class="admonition warning">
-<p class="admonition-title">Isolating messaging you consume</p>
-<p>A store you <em>query</em> under the bound tenant scopes itself. A <strong>stream or queue you
-drain in the background</strong> does not: the consumer runs with no ambient tenant, so
-isolating it means binding the tenant on the <em>read</em> side — a <strong>sharded
-gateway/relay</strong> for realtime, or a per-tenant worker for a queue. The outbox stays
-<strong>tenant-global</strong> by default (rows carry their tenant for routing, not isolation;
-the relay binds each row's tenant as it forwards). The per-resource read-side rules
-are in the <a href="../../reference/tenancy-matrix/#messaging-you-consume-the-read-side-catch">tenancy matrix</a>.</p>
-</div>
-<h2 id="declaring-a-minimum">Declaring a minimum<a class="headerlink" href="#declaring-a-minimum" title="Permanent link">&para;</a></h2>
-<p>Deriving a tier is descriptive. You can also make it <em>prescriptive</em>: set
-<code>required_tenant_isolation</code> on any deps module and wiring refuses to assemble
-anything weaker — a fail-closed floor checked once, at startup, never per
-request.</p>
-<div class="highlight"><pre><span></span><code><span class="n">PostgresDepsModule</span><span class="p">(</span>
-    <span class="n">client</span><span class="o">=</span><span class="n">RoutedPostgresClient</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>
-    <span class="n">required_tenant_isolation</span><span class="o">=</span><span class="s2">&quot;dedicated&quot;</span><span class="p">,</span>  <span class="c1"># nothing short of a per-tenant connection</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>Each module derives the tier it actually reaches from the config it already
-carries — a routed client → <code>dedicated</code>, a per-tenant resolver → <code>namespace</code>,
-<code>tenant_aware</code> → <code>tagged</code> — and raises a clear configuration error when that's
-below the floor. A floor a backend can <em>never</em> reach (<code>dedicated</code> on in-process
-DuckDB, or on single-client Neo4j) fails as a <strong>capability mismatch</strong> rather
-than a silent misconfiguration, because each integration's ceiling is known.
-Leave it unset (the default) and nothing is enforced.</p>
-<div class="admonition tip">
-<p class="admonition-title">Where the floor earns its keep</p>
-<p>Untrusted or self-scoping query paths — a raw SQL hatch, an analytics query
-trusted to filter itself — are only as safe as the store underneath them.
-Declaring <code>required_tenant_isolation="dedicated"</code> refuses to wire them
-anywhere a shared store could leak.</p>
-</div>
-<h2 id="provisioning-per-tenant-infrastructure">Provisioning per-tenant infrastructure<a class="headerlink" href="#provisioning-per-tenant-infrastructure" title="Permanent link">&para;</a></h2>
-<p>The stronger tiers assume the per-tenant container already exists — a schema, a
-dataset, a bucket. Onboarding a tenant should create it; offboarding should tear
-it down. <code>TenantProvisionerPort</code> is that seam, wired through the tenancy module:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.integrations.storage</span><span class="w"> </span><span class="kn">import</span> <span class="n">ObjectStorageTenantProvisioner</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.tenancy.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenancyDepsModule</span>
+<p>An <a href="../../core-concepts/domain-layer/#rules-live-with-the-data"><code>@invariant</code></a> keeps a single entity correct: it sees one record and decides whether <em>that record</em> is valid. But some rules span records, and no single entity owns them — a ledger's entries must sum to zero, an order may have <strong>at most one</strong> captured payment, a tenant's seats in use must not exceed its plan. A check on one row cannot see the others. A <code>SystemInvariant</code> declares such a law, and Forze enforces it at the right isolation and proves it under simulation.</p>
+<h2 id="a-law-over-a-read-set">A law over a read-set<a class="headerlink" href="#a-law-over-a-read-set" title="Permanent link">&para;</a></h2>
+<p>A system invariant is a predicate over an <strong>aggregate of a scoped set of records</strong>. You declare three things: the records it ranges over (a <code>ReadSet</code>), how to collapse them to one number (<code>Sum</code> or <code>Count</code>), and what that number must satisfy (<code>holds</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.invariants</span><span class="w"> </span><span class="kn">import</span> <span class="n">SystemInvariant</span><span class="p">,</span> <span class="n">ReadSet</span><span class="p">,</span> <span class="n">Count</span>
 
-<span class="n">TenancyDepsModule</span><span class="p">(</span>
-    <span class="n">tenant_management</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;main&quot;</span><span class="p">},</span>
-    <span class="n">tenant_provisioner</span><span class="o">=</span><span class="n">ObjectStorageTenantProvisioner</span><span class="p">(</span>
-        <span class="n">client</span><span class="o">=</span><span class="n">s3_client</span><span class="p">,</span>
-        <span class="n">bucket</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;tenant-</span><span class="si">{</span><span class="n">tid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+<span class="n">one_capture_per_order</span> <span class="o">=</span> <span class="n">SystemInvariant</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;single-capture-per-order&quot;</span><span class="p">,</span>
+    <span class="n">read_set</span><span class="o">=</span><span class="n">ReadSet</span><span class="p">(</span>
+        <span class="n">spec</span><span class="o">=</span><span class="n">PAYMENT</span><span class="p">,</span>
+        <span class="n">scope_keys</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;order_id&quot;</span><span class="p">,),</span>
+        <span class="n">where</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;captured&quot;</span><span class="p">}},</span>
     <span class="p">),</span>
+    <span class="n">aggregate</span><span class="o">=</span><span class="n">Count</span><span class="p">(),</span>
+    <span class="n">holds</span><span class="o">=</span><span class="k">lambda</span> <span class="n">n</span><span class="p">:</span> <span class="n">n</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
-<p><code>TenantManagementPort.provision_tenant(...)</code> records the tenant first, then runs
-the provisioner — a failure leaves the record for an idempotent retry —
-and <code>deprovision_tenant(...)</code> runs the inverse. Provisioners are idempotent and
-receive the onboarded <code>TenantIdentity</code> <strong>explicitly</strong>: it is generally not the
-ambient bound tenant, since an admin onboards tenant X without acting as X.
-Compose one per integration with <code>CompositeTenantProvisioner</code>, wrap a callable
-with <code>FunctionTenantProvisioner</code>, or ship nothing (<code>NoopTenantProvisioner</code>, the
-default) and provision out of band. Forze includes
-<code>ObjectStorageTenantProvisioner</code> (ensures a bucket) and, from <code>forze_postgres</code>,
-<code>PostgresSchemaTenantProvisioner</code> (<code>CREATE SCHEMA IF NOT EXISTS</code>) — teardown is
-opt-in wherever it would destroy data.</p>
-<p>Isolating tenants by data boundary pairs naturally with isolating them by key —
-sealing each tenant's data under its own keys is <a href="../encryption/">Encryption</a>.</p>
+<p>The law holds <strong>per distinct scope value</strong> — once <em>per order</em> here, because <code>scope_keys=("order_id",)</code>. Empty <code>scope_keys</code> declares a <em>global</em> law (one check over the whole <code>where</code>-filtered collection); reuse <code>tenant_aware</code> in <code>where</code> for a per-tenant scope. <code>holds</code> is a pure function of the aggregate — a <code>Count</code>'s cardinality or a <code>Sum</code>'s total, as a <code>float</code> — and must be deterministic and side-effect-free, because the same predicate runs in production <em>and</em> inside the simulation.</p>
+<h2 id="enforce-it-detective-or-preventive">Enforce it: detective or preventive<a class="headerlink" href="#enforce-it-detective-or-preventive" title="Permanent link">&para;</a></h2>
+<p>Two enforcement modes, from <code>forze_kits.invariants</code>, trade timing against cost:</p>
+<ul>
+<li><strong><code>enforce(law, ctx, params)</code></strong> — <em>detective</em>. It schedules the check for <strong>after</strong> the writing transaction commits (via <code>run_or_defer</code>), so it observes committed state, and raises <code>exc.domain</code> if the law broke. The offending write is already durable — this <em>reports</em> the breach, it does not undo it. Cheap, and right when you can compensate after the fact.</li>
+<li><strong><code>enforce_preventive(law, ctx, params)</code></strong> — <em>preventive</em>. It evaluates the law <strong>inside</strong> the writing transaction, before commit, so a violation rolls the write back — the bad state never lands. Call it after the writes, inside the scope:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="n">route</span><span class="p">,</span> <span class="n">isolation</span><span class="o">=</span><span class="n">law</span><span class="o">.</span><span class="n">required_isolation</span><span class="p">):</span>
+    <span class="o">...</span><span class="n">writes</span><span class="o">...</span>
+    <span class="k">await</span> <span class="n">enforce_preventive</span><span class="p">(</span><span class="n">law</span><span class="p">,</span> <span class="n">ctx</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+</code></pre></div>
+<p>Prevention is only sound at or above the law's <code>required_isolation</code> (default <code>SERIALIZABLE</code>): a weaker level lets a write-skew interleaving slip two concurrent writes past the check, each blind to the other. So <code>enforce_preventive</code> <strong>fails closed</strong> — it raises <code>exc.configuration</code> if the active transaction is weaker than required (or absent) rather than hand back enforcement a race would defeat. Opening the scope at the required level already pays the backend half of the gate, since <code>scope(isolation=…)</code> fail-closes against the manager's <a href="../concurrency-conflicts/"><code>TxCapabilities</code></a>.</p>
+<h2 id="ask-before-you-write-propose">Ask before you write: propose<a class="headerlink" href="#ask-before-you-write-propose" title="Permanent link">&para;</a></h2>
+<p>For an agent or a UI that wants to know <em>"would this write be accepted?"</em> before committing to it, <code>propose</code> dry-runs the write:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.invariants</span><span class="w"> </span><span class="kn">import</span> <span class="n">propose</span>
+
+<span class="n">verdict</span> <span class="o">=</span> <span class="k">await</span> <span class="n">propose</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">do_the_write</span><span class="p">,</span> <span class="p">[(</span><span class="n">law</span><span class="p">,</span> <span class="n">params</span><span class="p">)],</span> <span class="n">route</span><span class="o">=</span><span class="n">route</span><span class="p">)</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">verdict</span><span class="o">.</span><span class="n">holds</span><span class="p">:</span>
+    <span class="n">handle</span><span class="p">(</span><span class="n">verdict</span><span class="o">.</span><span class="n">failed</span><span class="p">)</span>   <span class="c1"># the laws that would break</span>
+</code></pre></div>
+<p><code>propose</code> opens its own root transaction, applies the write through the governed ports (so tenancy, encryption, and domain guards all run), evaluates each law against the result, then <strong>rolls everything back</strong> — nothing persists. The <code>ProposalVerdict</code> is <code>holds=True</code> only if the write applied cleanly and every law held; <code>failed</code> names the laws that wouldn't, and <code>error</code> carries the rejection if the write itself was refused.</p>
+<div class="admonition warning">
+<p class="admonition-title"><code>propose</code> is a filter, not a proof</p>
+<p><code>holds=True</code> means "the write applied cleanly and the laws held <em>against the state the dry-run saw</em>". Under concurrency the answer can change between the dry-run and the real write (TOCTOU), and it is only as sound as the backend's rollback — so use it to filter and explain a proposed write, never to certify it safe. It also fails closed (<code>exc.precondition</code>) if called inside a transaction: a nested scope is only a savepoint, whose rollback isn't guaranteed across backends, so the dry-run's writes could ride the enclosing commit. The <em>proof</em> is the oracle below.</p>
+</div>
+<h2 id="prove-it-under-simulation">Prove it under simulation<a class="headerlink" href="#prove-it-under-simulation" title="Permanent link">&para;</a></h2>
+<p>Because a law is declared as data — scope <em>fields</em>, not an opaque filter-builder — <abbr title="Deterministic Simulation Testing">DST</abbr> can compile it into an oracle that checks <strong>every scope the run produced</strong>, not a hand-listed few:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">Simulation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.oracle</span><span class="w"> </span><span class="kn">import</span> <span class="n">compile_oracle</span>
+
+<span class="n">oracle</span> <span class="o">=</span> <span class="n">compile_oracle</span><span class="p">(</span><span class="n">one_capture_per_order</span><span class="p">)</span>
+<span class="n">simulation</span> <span class="o">=</span> <span class="n">Simulation</span><span class="p">(</span>
+    <span class="n">operations</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span>
+    <span class="n">deps</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">MockDepsModule</span><span class="p">(),</span>
+    <span class="n">observe</span><span class="o">=</span><span class="n">oracle</span><span class="o">.</span><span class="n">observe</span><span class="p">,</span>
+    <span class="n">invariants</span><span class="o">=</span><span class="p">[</span><span class="o">*</span><span class="n">oracle</span><span class="o">.</span><span class="n">invariants</span><span class="p">],</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>By default the oracle checks the law over <strong>final</strong> state. <code>compile_oracle(law, per_commit=True)</code> upgrades to a per-commit trace fold: it checks the law after <em>every</em> committed transaction, catching a violation that a later transaction heals — the transient a final-state check misses. Per-commit mode reads the value trace, so it needs <code>SimulationConfig(capture_values=True)</code>.</p>
+<p>This is the guarantee <code>propose</code> can't give. Where <code>propose</code> filters one write against the state it saw, the oracle drives the law through thousands of <a href="../../dst/overview/">hostile interleavings</a> and proves it holds across all of them — and because the same <code>holds</code> predicate runs in production enforcement, in the dry-run, and in the oracle, what you simulate is exactly what you ship.</p>
 
 
 
@@ -5745,7 +5515,7 @@ sealing each tenant's data under its own keys is <a href="../encryption/">Encryp
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../identity/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Identity &amp; access">
+          <a href="../idempotency/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Idempotency">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -5755,20 +5525,20 @@ sealing each tenant's data under its own keys is <a href="../encryption/">Encryp
                 Previous
               </span>
               <div class="md-ellipsis">
-                Identity & access
+                Idempotency
               </div>
             </div>
           </a>
         
         
           
-          <a href="../encryption/" class="md-footer__link md-footer__link--next" aria-label="Next: Encryption">
+          <a href="../../data-events/reading-data/" class="md-footer__link md-footer__link--next" aria-label="Next: Reading data">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Encryption
+                Reading data
               </div>
             </div>
             <div class="md-footer__button md-icon">

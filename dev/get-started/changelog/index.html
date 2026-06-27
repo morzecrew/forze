@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.45">
+      <meta name="generator" content="zensical-0.0.46">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.fba56155.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.19d3147f.min.css">
       
         
           
@@ -2139,6 +2139,35 @@
     
   
   Idempotency
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../writing-operation/system-invariants/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-scale" viewBox="0 0 24 24"><path d="M12 3v18M19 8l3 8a5 5 0 0 1-6 0zV7"/><path d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1M5 8l3 8a5 5 0 0 1-6 0zV7M7 21h10"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  System invariants
 
     
   </span>
@@ -7137,6 +7166,45 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Document aggregates fail closed on backends that can't compute them</strong> — <code>QueryCapabilities</code> gains a <code>supports_aggregates</code> axis (default on) plus a sibling <code>validate_aggregate_capabilities</code>, the aggregate counterpart to the filter-capability check. A backend that can't compile group-by / aggregate pipelines — the Firestore MVP adapter — declares <code>supports_aggregates=False</code> and now rejects <code>find_many(aggregates=…)</code> / <code>find_many_aggregates</code> / <code>count_aggregates</code> with a clean <code>precondition</code> (code <code>query_feature_unsupported</code>, naming the backend) at the renderer's aggregate entry, instead of an opaque <code>internal</code> (500) deep in the read gateway. The check runs in every backend's <code>render_aggregates</code> (a no-op for Mongo / Postgres, which support aggregates), and Firestore's <code>find_many</code> now delegates to <code>find_many_aggregates</code> like the other adapters, so all aggregate paths share the one gate.</p>
+</li>
+<li>
+<p><strong>W3C trace-context propagation across the async event flow</strong> — a published event now carries its publishing operation's span across the outbox→broker→inbox hop, so the consume side joins the <strong>same distributed trace</strong> — the gap OpenTelemetry's transport auto-instrumentation can't bridge for a custom envelope. Opt in per outbox backend with <code>OutboxIntegrationConfig.propagate_trace</code> (off by default; on a relational backend add a nullable <code>traceparent</code> column first, exactly like <code>hlc_ordering</code>): the staging enricher captures the active span's W3C <code>traceparent</code>, the relay forwards it as the standard <code>traceparent</code> header, and <code>process_with_inbox</code> rebuilds the context so the handler's spans link to the publish span. Outbound HTTP (<code>forze_http</code>) also injects the active trace context into requests (no-op without a span; honours the app's configured propagator). The header is plain broker metadata — it influences trace <em>parenting only</em>, never identity / tenancy / dedup. Inbound FastAPI extraction is left to standard <code>opentelemetry-instrumentation-fastapi</code>.</p>
+</li>
+<li>
+<p><strong>Per-port OpenTelemetry client spans</strong> — <code>DepsRegistry.with_otel_port_spans()</code> opts every resolved configurable port into a per-call <abbr title="OpenTelemetry">OTel</abbr> <code>CLIENT</code> span (a child of the operation span from <code>instrument_operations</code>), so in a hexagonal app — where every external call is a port — the port seam yields a complete outbound-I/O trace: each document / cache / queue / search / http call a span carrying <code>forze.port.{domain,surface,route,phase,op}</code> (the route a high-cardinality attribute, never the span name). The span sits <em>inside</em> the resilience policy (a retried call yields one span per attempt; a breaker/bulkhead-rejected call emits none), and error status follows the exception <em>kind</em> — an infrastructure / internal / configuration <code>CoreException</code> (a 5xx kind) or any non-<code>CoreException</code> sets <code>ERROR</code>, while a client-class domain failure (not-found / conflict / precondition — a 4xx kind the caller may handle) leaves the span clean, as a 404 does not red an HTTP client span. Opt-in and zero-cost when off; emits through the global <abbr title="OpenTelemetry">OTel</abbr> tracer (or one passed explicitly), independent of the dev <abbr title="Deterministic Simulation Testing">DST</abbr> trace. Streaming (async-generator) port methods are passed through un-spanned.</p>
+</li>
+<li>
+<p><strong>Cross-aggregate (system) invariants — declaration + detective &amp; preventive enforcement + dry-run proposal</strong> — a new <code>SystemInvariant</code> (with <code>ReadSet</code>, <code>Sum</code>, <code>Count</code>) in <code>forze.application.contracts</code> (front-doored from <code>forze</code>) declares a law that spans more than one record — a conservation law (a ledger's balances sum to zero), a cardinality law (≤1 captured payment per order) — as a predicate over an aggregate of a scoped read-set, which the entity-level <code>@invariant</code> structurally cannot express. <code>forze_kits.invariants.evaluate</code> reads the read-set aggregate (<code>count</code> / no-group <code>$sum</code>) and checks the predicate. Two enforcement modes: <code>enforce</code> schedules the check post-commit (<code>ctx.tx_ctx.run_or_defer</code>) and raises on a violation — <em>detective</em> (reports a breach, does not prevent it); <code>enforce_preventive</code> runs the check <em>inside</em> the writing transaction and raises before commit, so the violating write is <strong>rolled back</strong>. Preventive mode fails closed unless the transaction meets the law's <code>required_isolation</code> (default <code>SERIALIZABLE</code>), readable via the new <code>TransactionContext.current_isolation()</code>, with the backend-capability check reusing the existing <code>scope(isolation=…)</code> fail-closed against <code>TxCapabilities</code>. <code>forze_kits.invariants.propose</code> is a dry-run filter for agent-authoring: it applies a proposed write and checks laws inside a transaction, then rolls it back (nothing persists), returning a machine-checkable <code>ProposalVerdict</code> of whether the write would be accepted — a filter (TOCTOU under concurrency, conformance-bounded), never a proof. And <code>forze_dst.compile_oracle(*laws)</code> compiles a declared law into a <abbr title="Deterministic Simulation Testing">DST</abbr> oracle (an <code>observe</code> hook + invariants) that, over final simulated state, groups by the law's scope and checks <strong>every scope the run produced</strong> — catching e.g. the dst_payments double-charge under the seed sweep. (<code>ReadSet</code> declares <code>scope_keys</code> + a constant <code>where</code> rather than a filter callable, so runtime and oracle derive the same read-set.) <code>compile_oracle(*laws, per_commit=True)</code> is the per-commit variant: it folds the value-trace (<code>SimulationConfig.capture_values</code>) to reconstruct the read-set as-of each committed transaction and flags a violation at the commit where it existed — catching a transient a later transaction heals (one a final-state check misses). It reconstructs the <em>faithful</em> view, so it is only as sound as the backend's conformance.</p>
+</li>
+<li>
+<p><strong>Transaction-scope exit records its outcome</strong> — a <code>tx</code> <code>exit</code> trace event now carries <code>outcome</code> (<code>"commit"</code> vs <code>"rollback"</code>); the exit fires from a <code>finally</code>, so it marks scope teardown either way, and the outcome distinguishes a real commit from a rollback. <code>TransactionContext.scope</code> and the <code>TxTracer</code> protocol thread a <code>committed</code> flag. (Enables the per-commit cross-aggregate oracle to count only committed transactions; production tracing is unaffected.)</p>
+</li>
+<li>
+<p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> transactional-isolation oracles</strong> — <code>forze_dst</code> gains <code>snapshot_isolation()</code> / <code>serializable()</code> invariants (and the <code>TxRecord</code> kernel <code>find_snapshot_isolation_violations</code> / <code>find_serializable_violations</code>) that detect lost update and write skew across a run's committed transactions. They rest on a new per-event transaction-id seam on the runtime trace (a run-global counter minted at root transaction entry, threaded through the port proxy and folded into the <abbr title="Deterministic Simulation Testing">DST</abbr> history), so port calls are grouped into the transaction that issued them soundly — operation-span attribution is unsound under interleaving. Production trace stays id-only and unaffected (the id is <code>None</code> when no run counter is bound). <code>serializable(complete=True)</code> upgrades the default pairwise check to a <strong>complete</strong> conflict-serializability check via a dependency serialization graph (<code>find_serializability_cycle</code> over <code>VersionedTxRecord</code>), so anti-dependency cycles spanning <strong>three or more</strong> transactions — e.g. the snapshot-isolation read-only anomaly — are caught, not just two-transaction write skew. Edges are directed by the entity <code>rev</code> version order, so the complete mode reads the value-trace (requires <code>SimulationConfig.capture_values</code>, fails closed without it); keys are <code>(namespace, id)</code> so documents never conflate across specs. The complete check also adds <strong>predicate (phantom) edges</strong>: a scan's filter is captured on the trace and a concurrent committed write whose row satisfies it — but which the scan provably did not see (it committed later in trace order) — is a phantom anti-dependency, so generated workloads that produce a phantom cycle are caught, not just hand-scripted ones. To make the oracle's predicate semantics match the backend's exactly, the in-memory filter evaluator is now a single shared core primitive — <code>evaluate_filter</code> / <code>compile_filter</code> in <code>forze.application.contracts.querying</code> (the mock re-exports it) — matched against the write row's <strong>native</strong> representation (a new <code>result_native</code> capture field), so a JSON-vs-native gap can't manufacture a false match. Bounds are false-negative-only (documented on <code>find_serializability_cycle</code>): <code>count</code>/<code>exists</code> and <code>project_*</code>/<code>select_*</code>/<code>aggregate_*</code>/<code>find_stream</code> scans don't generate the forward phantom edge.</p>
+</li>
+<li>
+<p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> isolation oracle — make it fire, and trust the green</strong> — the serializability oracle can <em>detect</em> anti-dependency cycles + phantoms, but a random workload rarely <em>produces</em> them, leaving it latent. <code>forze_dst</code> now ships <code>had_isolation_conflict(history)</code> — a capture-free <strong>non-vacuity</strong> signal (did the run produce a real conflict <em>opportunity</em>: concurrent committed transactions sharing a key with a write, or — under capture — a scanner overlapping a writer in a scanned namespace?) so <code>any(had_isolation_conflict(h) for h in histories)</code> asserts a sweep actually stressed isolation (a green over a workload that never conflicted is meaningless). <code>isolation_oracle_for(level)</code> maps a <em>declared</em> <code>IsolationLevel</code> to the oracle that checks it (<code>SERIALIZABLE</code> → <code>serializable(complete=True)</code>, <code>SNAPSHOT</code> → <code>snapshot_isolation()</code>, <code>READ_COMMITTED</code> raises — no serialization-graph guarantee), so a run is checked at the level it claims. A reusable contended stress scenario (bounded key pool + read-modify-write / write-skew / scan-then-insert shapes) drives the structures: the oracle now catches a <em>generated</em> write-skew cycle and a <em>generated</em> predicate phantom at SNAPSHOT and stays clean at SERIALIZABLE (the mock's SSI), non-vacuously.</p>
+</li>
+<li>
+<p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> continuous sweep + regression corpus for the flagship scenarios</strong> — the distributed-lock and hybrid-logical-clock scenarios are now reusable picklable seed targets (<code>tests/support/dst_flagship.py</code>): a <code>fuzz</code>-marked wide sweep fans them across processes via <code>parallel_sweep</code> (the nightly substance), and a fast regression corpus runs them every build as a merge guard (<code>sweep</code> over a small band plus any seed that ever found a bug). Previously the only swept target was a toy in-memory counter; the flagship primitives now actually get fuzzed.</p>
+</li>
+<li>
+<p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> sweep reachability fold</strong> — a seed sweep now carries reachability: <code>SeedOutcome.reached</code> records each run's reached labels, the sweep folds per-label run counts into <code>SweepResult.reached_runs</code>, and <code>SweepResult.reachability(targets)</code> returns a <code>ReachabilityReport</code>. The flagship corpus and wide fuzz assert <code>result.reachability(TARGETS).satisfied</code> — that the dangerous interleaving actually fired across the band — so a green sweep that never drove the hard state is now caught (previously only the per-history smoke tests checked it).</p>
+</li>
+<li>
+<p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> commutativity assertion</strong> — an operation can declare itself order-independent (<code>OperationDescriptor.commutative</code>, a declaration <abbr title="Deterministic Simulation Testing">DST</abbr> verifies but execution never consumes), and <code>forze_dst.invariants.commutative_convergence(build, *, final_state, schedule_seeds)</code> checks it: it reruns the workload across a band of schedule seeds (fresh state per run) and flags a declared-commutative op whose interleavings reach different end states, naming the reproducing seed. A cross-history checker, not a single-history invariant.</p>
+</li>
+<li>
+<p><strong>Adapter conformance — real-Mongo differential (snapshot isolation)</strong> — the isolation battery also runs against a real MongoDB replica set over testcontainers (<code>tests/integration/test_forze_mongo/test_mongo_isolation_conformance.py</code>), asserting <code>mock ≡ real Mongo</code> at <code>SNAPSHOT</code> (write skew permitted — Mongo is SI-only, no SSI). Mongo advertises only <code>{READ_COMMITTED, SNAPSHOT}</code>; its in-transaction <code>READ_COMMITTED</code> is snapshot-isolated (a non-repeatable read is prevented even there), so the differential runs at <code>SNAPSHOT</code>.</p>
+</li>
+<li>
+<p><strong>Adapter conformance — real-Postgres differential</strong> — the isolation battery now runs against real Postgres over testcontainers (<code>tests/integration/test_forze_postgres/test_pg_isolation_conformance.py</code>), asserting the same <code>expected_verdict</code> the mock passes: a green run means <strong>mock ≡ real</strong> for the isolation family (<code>SNAPSHOT</code>→<code>REPEATABLE READ</code>, <code>SERIALIZABLE</code>→SSI), and verifies the Postgres tx manager's self-attested <code>TxCapabilities</code> against the real engine. This is what makes "<abbr title="Deterministic Simulation Testing">DST</abbr> passed on the mock" carry weight.</p>
+</li>
+<li>
+<p><strong>Adapter conformance — isolation anomaly battery</strong> — new <code>forze_dst.conformance</code>: a backend-agnostic battery of classic isolation anomalies (dirty read, non-repeatable read, read skew, phantom, write skew, predicate write skew, the three-transaction read-only anomaly, and lost update) as deterministic forced interleavings (over the shipped <code>Conductor</code>, including a third session for the read-only anomaly) with a known verdict per <code>IsolationLevel</code>, run against any <code>ConformanceBackend</code>. The predicate cases (<code>phantom</code>, <code>predicate_write_skew</code>) cover predicate/phantom (G2) anti-dependencies — a re-run scan seeing a concurrent insert, and two scans each inserting a matching row — and the <code>read_only_anomaly</code> shows snapshot isolation is non-serializable even for a read-only transaction; all verified <code>mock ≡ real Postgres</code> at every level and <code>mock ≡ real Mongo</code> at snapshot. Verdicts normalize to permitted/prevented so a differential compares the anomaly <em>outcome</em> at the declared level — never the mechanism, error code, or victim — and a reviewed allowed-divergence catalog (<code>CONTRACT_STRENGTHENINGS</code> / <code>MECHANISM_DIVERGENCES</code>) records expected differences (e.g. Forze's rev-<abbr title="Optimistic Concurrency Control">OCC</abbr> prevents lost update at every level). Mock-only first leg; the real-backend (testcontainers) differential that turns "passed on the mock" into "matches the real engine" follows.</p>
+</li>
+<li>
 <p><strong>Redis stream &amp; pub-sub transports</strong> — <code>RedisDepsModule</code> wires the generic <code>StreamSpec</code> / <code>PubSubSpec</code> transports (<code>streams</code> / <code>stream_groups</code> / <code>pubsub</code> route maps → the six stream/pub-sub dep keys) via new <code>RedisStreamConfig</code> / <code>RedisStreamGroupConfig</code> / <code>RedisPubSubConfig</code>, so realtime-over-Redis and outbox→stream/pub-sub relay work in production. No namespace (the stream/topic is per-call; <code>tenant_aware</code> adds a <code>tenant:{id}:</code> key prefix).</p>
 </li>
 <li>
@@ -7314,6 +7382,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Contract types are imported from their contracts home, not re-exported through the execution layer</strong> — vestigial back-compat re-exports of contract value types from <code>forze.application.execution</code> subpackages were removed, so each type has a single canonical import path. Removed: <code>BreakerKey</code>, <code>CircuitBreakerStore</code>, <code>RateLimitStore</code>, <code>RateLimitKey</code>, <code>LatencyDigestStore</code>, <code>LatencyDigestKey</code>, <code>Transition</code> from <code>forze.application.execution.resilience</code> (and <code>CircuitBreakerStore</code> from <code>forze.application.execution</code>) — import from <code>forze.application.contracts.resilience</code>; <code>LifecycleModule</code> from <code>forze.application.execution[.lifecycle]</code> — import from <code>forze.application.contracts.execution</code>; <code>RoutedDeps</code>/<code>PlainDepsMap</code> from <code>forze.application.execution.deps</code> — import from <code>forze.application.contracts.deps</code>; <code>OutboxStagingContext</code> from <code>forze.application.execution.context</code> — import from <code>forze.application.contracts.outbox</code>; <code>LifecycleStep</code> from <code>forze.application.execution.lifecycle</code> — import from <code>forze.application.contracts.execution</code>; and the redundant middle re-export of <code>Deps</code>/<code>DepsModule</code> from <code>forze.application.execution.deps</code> (import them from the kernel surface <code>forze.application.execution</code> — unchanged, still front-doored from <code>forze</code> — or from <code>forze.application.contracts.deps</code>). The in-process <em>implementations</em> (<code>InMemoryCircuitBreakerStore</code>, …) are unchanged.</p>
+</li>
+<li>
+<p><strong><code>GroupRef</code> (query grouping) renamed to <code>GroupField</code></strong> <em>(breaking: query DSL)</em> — the aggregate group-by dimension in <code>forze.application.contracts.querying</code> is now <code>GroupField</code>, resolving a name clash with the unrelated <code>GroupRef</code> (a group catalog reference) in <code>forze.application.contracts.authz</code> and pairing it accurately with its sibling <code>GroupTrunc</code> (it groups by a field path; it is a dimension, not a reference). Replace <code>GroupRef(field=…)</code> with <code>GroupField(field=…)</code> in aggregate group specs. The authz <code>GroupRef</code> is unchanged.</p>
+</li>
+<li>
 <p><strong>Search index provisioning split into a <code>SearchManagementPort</code></strong> <em>(breaking: <code>forze_meilisearch</code>)</em> — <code>ensure_index</code> and <code>delete_all</code> move off <code>SearchCommandPort</code> (now document writes only: <code>upsert</code>/<code>delete</code>) onto a new control-plane <code>SearchManagementPort</code>, acquired via <code>ctx.search.management(spec)</code> (registered under <code>SearchManagementDepKey</code>). Mirrors the <code>StreamGroupAdminPort</code> split — provisioning/wipe runs outside the request path and a read-only operation can't reach it. Move <code>ensure_index</code>/<code>delete_all</code> calls from <code>ctx.search.command(...)</code> to <code>ctx.search.management(...)</code>.</p>
 </li>
 <li>
@@ -7346,6 +7420,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Client-caused errors no longer masquerade as 500s</strong> — a sweep across the query / cursor / aggregate / storage / search paths reclassified the <code>exc.internal</code> raises a caller can trigger and fix into the right kind. An <strong>unsupported backend feature / capability limit</strong> — a backend that can't aggregate, sort-only-by-primary-key cursors, <code>search_cursor</code> on an offset-only engine, the neo4j adapter's not-yet-implemented methods, Postgres array/text/ltree column-shape gaps, a duplicate-id batch, <code>mset</code> with <code>nx</code>+<code>xx</code>, backward analytics cursors — now raises <code>precondition</code> (HTTP 400); a <strong>malformed / out-of-range value</strong> — cursor <code>after</code>+<code>before</code> together, a non-positive <code>limit</code>/<code>offset</code>, an invalid cursor token, an unknown projection field — now raises <code>validation</code> (HTTP 422); instead of an opaque <code>internal</code> (500) deep in an adapter. The same situation maps to the same kind across every backend (mock ≡ Postgres ≡ Mongo ≡ Firestore), the caller-supplied aggregate DSL now reports parse errors like the filter DSL already did, and newly client-visible messages were scrubbed of internal detail (SQL type tokens, internal package names). Genuine server-fault guards are unchanged (still <code>internal</code>/500).</p>
+</li>
+<li>
+<p><strong>Mock rev-conflict now matches the real adapters</strong> — a stale-revision write on the in-memory mock raised a generic <code>CONCURRENCY</code> error, while every real adapter (the shared persistence gateway) raises a <code>PRECONDITION</code> with code <code>revision_mismatch</code>. The mock — the outlier — now raises the identical <code>exc.precondition("Revision mismatch", code="revision_mismatch")</code>, so optimistic-concurrency handling (catch/retry on <code>revision_mismatch</code>) behaves the same in tests/<abbr title="Deterministic Simulation Testing">DST</abbr> as in production. Surfaced by the new real-Postgres conformance differential.</p>
+</li>
+<li>
+<p><strong>Faithful read-committed in the mock (no dirty reads)</strong> — the in-memory mock's default transaction manager no longer writes through: at every isolation level a transaction buffers its document writes and publishes them at commit, so a concurrent transaction can never observe an uncommitted (later rolled-back) write. Read-committed reads through to the latest committed state per statement (non-repeatable reads / read skew still permitted); snapshot/serializable keep their as-of-begin snapshot. Concurrent rev-guarded updates to a row still conflict (first-committer-wins, matching Postgres read-committed's row serialization) while a blind rev-less write still loses silently. This removes a class of <abbr title="Deterministic Simulation Testing">DST</abbr> false positives the old write-through behavior could produce. Mainly affects tests/<abbr title="Deterministic Simulation Testing">DST</abbr>; production adapters are unchanged.</p>
+</li>
 <li>
 <p><strong>Notifications can run through the queue consumer (dedup + poison parking)</strong> — <code>notification_consumer_lifecycle_step(...)</code> and <code>notification_queue_consumer_handler(...)</code> route notifications through <code>QueueConsumer</code>, so an at-least-once redelivery no longer re-sends (inbox dedup on the deterministic event id) and poison messages are parked. The transactional-notifications recipe now drains via the consumer instead of a hand-rolled receive/ack loop.</p>
 </li>
@@ -8916,10 +8999,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      <script src="../../assets/javascripts/bundle.ee611ef6.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

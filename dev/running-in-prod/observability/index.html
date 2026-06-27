@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.45">
+      <meta name="generator" content="zensical-0.0.46">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.fba56155.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.19d3147f.min.css">
       
         
           
@@ -1171,6 +1171,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../writing-operation/system-invariants/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-scale" viewBox="0 0 24 24"><path d="M12 3v18M19 8l3 8a5 5 0 0 1-6 0zV7"/><path d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1M5 8l3 8a5 5 0 0 1-6 0zV7M7 21h10"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  System invariants
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1843,6 +1872,28 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         What you get
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trace-every-outbound-call" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Trace every outbound call
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-the-trace-across-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Follow the trace across boundaries
       </span>
     </span>
   </a>
@@ -5296,6 +5347,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#trace-every-outbound-call" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Trace every outbound call
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-the-trace-across-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Follow the trace across boundaries
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#resilience-metrics" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5501,6 +5574,76 @@ unchanged. The span carries:</p>
 <p>Alongside each span, two <strong>metrics</strong> — <code>forze.operations</code> (a counter) and
 <code>forze.operation.duration</code> (a histogram, in ms) — labelled by operation, kind,
 and outcome.</p>
+<h2 id="trace-every-outbound-call">Trace every outbound call<a class="headerlink" href="#trace-every-outbound-call" title="Permanent link">&para;</a></h2>
+<p>The operation span tells you <em>that</em> an operation ran and how long it took; to see
+<em>where</em> the time went — which database read, which cache call, which outbound
+request — span the ports too. In a hexagonal app every external call is a port, so
+opting the resolved ports into a span turns that seam into a complete outbound-I/O
+trace under each operation. It rides on the dependency registry, alongside
+<code>instrument_operations</code> on the operation registry:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span>
+
+<span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">postgres_module</span><span class="p">,</span> <span class="n">redis_module</span><span class="p">)</span><span class="o">.</span><span class="n">with_otel_port_spans</span><span class="p">()</span>
+</code></pre></div>
+<p>Freeze <code>deps</code> into the runtime as usual. Every document / cache / queue / search /
+HTTP call now opens a <code>CLIENT</code> span named <code>surface.op</code> (<code>document_command.create</code>,
+<code>cache_query.get</code>), nested under the operation span:</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.port.domain</code> / <code>forze.port.surface</code></td>
+<td>the port family and its dependency surface</td>
+</tr>
+<tr>
+<td><code>forze.port.op</code></td>
+<td>the method called — <code>create</code>, <code>get</code>, <code>publish</code></td>
+</tr>
+<tr>
+<td><code>forze.port.route</code> / <code>forze.port.phase</code></td>
+<td>the specification name and phase, when present</td>
+</tr>
+</tbody>
+</table>
+<p>The name stays low-cardinality (<code>surface.op</code>); the specification name rides as the
+<code>route</code> attribute, never in the name. The span sits <strong>inside</strong> the resilience
+policy, so a retried call is one span per attempt and a call shed by an open breaker
+or a full bulkhead emits none — the trace shows the work that actually reached the
+backend. Failure status follows the exception <em>kind</em>: an infrastructure, internal,
+or configuration fault reds the span, while a domain failure the caller can handle —
+not-found, conflict, precondition — leaves it clean, exactly as a 404 does not red an
+HTTP client span. Streaming methods (a cursor, a consume loop, a subscription) pass
+through un-spanned — a lone span around a long-lived stream is the wrong shape;
+per-message spans belong in the consumer.</p>
+<h2 id="follow-the-trace-across-boundaries">Follow the trace across boundaries<a class="headerlink" href="#follow-the-trace-across-boundaries" title="Permanent link">&para;</a></h2>
+<p>Spans and port spans cover one operation inside one process. When the work crosses a
+boundary the trace would normally break — so Forze carries the W3C <code>traceparent</code>
+across the two crossings OpenTelemetry's transport instrumentation can't bridge on
+its own.</p>
+<p>An <strong>event published now and consumed later</strong> keeps its trace when you set
+<code>propagate_trace=True</code> on the <a href="../../data-events/events-sagas/">outbox integration</a>:
+the publishing operation's trace context is captured as the event is staged, travels
+with it through the broker, and the consumer rebuilds it so the handler's spans link
+back to the publish span. On a relational backend, add a nullable <code>traceparent</code>
+column first — exactly as you do for <code>hlc_ordering</code>.</p>
+<p>An <a href="../../integrations/http/"><strong>outbound HTTP request</strong></a> carries it automatically: the
+HTTP adapter injects the active trace context into every request (a no-op when no
+span is active), honouring your application's configured propagator. Nothing to
+enable.</p>
+<div class="admonition warning">
+<p class="admonition-title">The <code>traceparent</code> is untrusted metadata</p>
+<p>It arrives over the broker or the wire, so it influences trace <strong>parenting
+only</strong> — never identity, tenancy, or deduplication. Treat it as a hint for the
+tracing backend, nothing more.</p>
+</div>
+<p>Inbound HTTP runs the other way: a request <em>arriving</em> at FastAPI is picked up by the
+standard <code>opentelemetry-instrumentation-fastapi</code>, which creates the server span your
+operation span nests under — so Forze does not re-extract it.</p>
 <h2 id="resilience-metrics">Resilience metrics<a class="headerlink" href="#resilience-metrics" title="Permanent link">&para;</a></h2>
 <p>The <a href="../resilience/">resilience layer</a> makes decisions worth watching —
 retries, rejections, breaker trips, bulkhead backoff. <code>instrument_resilience</code>
@@ -5690,10 +5833,10 @@ shipping — see <a href="../../testing/overview/">Testing</a>.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      <script src="../../assets/javascripts/bundle.ee611ef6.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       
