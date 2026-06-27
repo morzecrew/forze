@@ -243,8 +243,20 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
 
             if fields.get("op") in _DELETE_OPS:
                 key = fields.get("key")
-                if key is not None:  # kill_many carries no per-row key — a documented v1 bound
-                    mutations[int(tx_id)].append((key, None))
+                if key is None:
+                    # A bulk delete (kill_many) records no per-row key, so the fold
+                    # cannot drop the removed rows — checking the law against rows
+                    # that no longer exist would be unsound. Fail closed; the
+                    # final-state oracle (compile_oracle without per_commit) handles
+                    # deletes by querying the real committed state.
+                    raise exc.configuration(
+                        f"per-commit oracle for {law.name!r}: a bulk delete to "
+                        f"{route!r} records no per-row key, so its removed rows "
+                        "cannot be folded — use the final-state oracle "
+                        "(compile_oracle without per_commit) for runs that bulk-delete",
+                        code="per_commit_oracle_cannot_fold_bulk_delete",
+                    )
+                mutations[int(tx_id)].append((key, None))
                 continue
 
             saw_upsert_op = True

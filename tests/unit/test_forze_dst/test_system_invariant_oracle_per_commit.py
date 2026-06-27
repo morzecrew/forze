@@ -150,6 +150,26 @@ def _delete(tx_id: int, eid: str) -> Event:
     )
 
 
+def _kill_many(tx_id: int) -> Event:
+    """A bulk delete: a command event with NO per-row key (kill_many takes a list of pks)."""
+
+    seq = next(_seq)
+    return Event(
+        seq=seq,
+        kind="trace",
+        at=float(seq),
+        fields={
+            "trace_domain": "document",
+            "op": "kill_many",
+            "surface": "document_command",
+            "route": ROUTE,
+            "phase": "command",
+            "tx_id": tx_id,
+            "trace_seq": seq,
+        },
+    )
+
+
 def _history(*events: Event) -> History:
     return History(seed=0, events=tuple(events))
 
@@ -291,6 +311,21 @@ class TestPerCommitConservation:
         )
 
         assert _violations(law, history) == []
+
+    def test_a_bulk_delete_fails_closed(self) -> None:
+        # kill_many records no per-row key, so the per-commit fold cannot drop the removed rows — it
+        # fails closed rather than check the law against stale state (the final-state oracle handles
+        # bulk deletes by querying real committed state).
+        history = _history(
+            _write(1, _entity("a", "L1", 100)),
+            _write(1, _entity("b", "L1", -100)),
+            _commit(1),
+            _kill_many(2),
+            _commit(2),
+        )
+
+        with pytest.raises(exc, match="bulk delete"):
+            _violations(CONSERVATION, history)
 
     def test_a_nested_savepoint_exit_is_not_a_commit(self) -> None:
         # The imbalanced debit and the balancing credit share tx1; a NESTED savepoint exits (depth 2)
