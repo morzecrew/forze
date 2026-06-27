@@ -54,6 +54,7 @@ from forze.domain.models import (
     ReadDocument,
     event_emitter,
 )
+from forze_kits.aggregates import aggregate_repository
 from forze_kits.integrations.inbox import process_with_inbox
 from forze_mock import MockDepsModule
 
@@ -83,6 +84,19 @@ class OrderConfirmed(DomainEvent):
 # --8<-- [start:order-aggregate]
 class Order(Document, AggregateRoot):
     status: str = "pending"
+
+    def confirm(self) -> "OrderUpdate":
+        """Decide the ``pending`` -> ``confirmed`` transition (illegal from any other status).
+
+        A pure decision method on the aggregate: it guards the transition and returns the merge-patch
+        the repository persists under the order's revision. The rule lives here once — the saga step
+        and the ``_on_confirm`` emitter both key on it instead of re-encoding it.
+        """
+
+        if self.status != "pending":
+            raise exc.domain(f"cannot confirm an order in status {self.status!r}")
+
+        return OrderUpdate(status="confirmed")
 
     @event_emitter(fields={"status"})
     def _on_confirm(before, after: Self, diff: JsonDict) -> DomainEvent | None:  # type: ignore[no-untyped-def]
@@ -241,12 +255,13 @@ async def _confirm(ctx: ExecutionContext, s: CheckoutCtx) -> CheckoutCtx:
         log.error("payment declined — failing the pivot step")
         raise exc.domain("payment declined")
 
-    order = await ctx.document.query(ORDER_SPEC).get(s.order_id)
-    # The status transition fires @event_emitter -> OrderConfirmed, dispatched in THIS
-    # step's transaction (the command flow), which the outbox bridge stages.
-    await ctx.document.command(ORDER_SPEC).update(
-        s.order_id, order.rev, OrderUpdate(status="confirmed")
-    )
+    # Load the aggregate, let it decide the transition, persist the patch under its rev (OCC).
+    # confirm() single-sources the pending->confirmed rule (+ guards it); the resulting status
+    # change fires @event_emitter -> OrderConfirmed, dispatched in THIS step's transaction (the
+    # command flow), which the outbox bridge stages.
+    orders = aggregate_repository(ctx, ORDER_SPEC)
+    order = await orders.load(s.order_id)
+    await orders.apply(order, order.confirm())
     # Transactional outbox: flush the staged event within the same transaction.
     await ctx.outbox.command(OUTBOX_SPEC).flush()
 

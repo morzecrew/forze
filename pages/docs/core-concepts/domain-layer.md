@@ -85,6 +85,10 @@ Updates are structured. `order.update({"total": 99})` returns a **new immutable
 instance** and a minimal diff, runs the validators, and bumps `last_update_at`.
 A patch that changes nothing returns the original and an empty diff.
 
+These validate a *single* write. A state **transition** — its guard plus the change
+it makes — belongs on the aggregate too, as a *decider* method that returns the patch
+to persist; see [Aggregate decisions](../writing-operation/aggregate-decisions.md).
+
 ## Reusable concerns: mixins
 
 Common domain concerns ship as composable mixins in `forze_kits` (included in the

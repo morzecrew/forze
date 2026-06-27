@@ -34,6 +34,7 @@ from forze.base.exceptions import CoreException
 from forze.base.logging import configure_logging
 from forze.base.logging.constants import LogLevel
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_kits.aggregates import aggregate_repository
 from forze_kits.invariants import InvariantResult, enforce, enforce_preventive, evaluate
 from forze_mock import MockDepsModule
 
@@ -53,6 +54,17 @@ def _setup_logging(level: LogLevel) -> None:
 class Account(Document):
     ledger_id: str
     balance: int = 0
+
+    def debit(self, amount: int) -> "AccountUpdate":
+        """Decide a debit — the balance decreases by *amount* (double-entry, so it may go negative;
+        the ledger-wide conservation law, not a per-account guard, keeps the books balanced)."""
+
+        return AccountUpdate(balance=self.balance - amount)
+
+    def credit(self, amount: int) -> "AccountUpdate":
+        """Decide a credit — the balance increases by *amount*."""
+
+        return AccountUpdate(balance=self.balance + amount)
 
 
 class AccountCreate(CreateDocumentCmd):
@@ -122,14 +134,11 @@ async def transfer(
     """
 
     async with ctx.tx_ctx.scope(_ROUTE):
-        source = await ctx.document.query(ACCOUNT_SPEC).get(src)
-        dest = await ctx.document.query(ACCOUNT_SPEC).get(dst)
-        await ctx.document.command(ACCOUNT_SPEC).update(
-            src, source.rev, AccountUpdate(balance=source.balance - amount)
-        )
-        await ctx.document.command(ACCOUNT_SPEC).update(
-            dst, dest.rev, AccountUpdate(balance=dest.balance + amount)
-        )
+        accounts = aggregate_repository(ctx, ACCOUNT_SPEC)
+        source = await accounts.load(src)
+        dest = await accounts.load(dst)
+        await accounts.apply(source, source.debit(amount))
+        await accounts.apply(dest, dest.credit(amount))
         await enforce(LEDGER_BALANCED, ctx, {"ledger_id": ledger_id})
 
 
@@ -144,10 +153,9 @@ async def mint(
     """
 
     async with ctx.tx_ctx.scope(_ROUTE):
-        current = await ctx.document.query(ACCOUNT_SPEC).get(account)
-        await ctx.document.command(ACCOUNT_SPEC).update(
-            account, current.rev, AccountUpdate(balance=current.balance + amount)
-        )
+        accounts = aggregate_repository(ctx, ACCOUNT_SPEC)
+        current = await accounts.load(account)
+        await accounts.apply(current, current.credit(amount))  # BUG: no balancing debit
         await enforce(LEDGER_BALANCED, ctx, {"ledger_id": ledger_id})
 
 
