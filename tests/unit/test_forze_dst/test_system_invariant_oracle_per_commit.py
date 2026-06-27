@@ -350,11 +350,12 @@ class TestPerCommitGuards:
     def test_no_writes_holds_vacuously(self) -> None:
         assert _violations(CONSERVATION, _history()) == []
 
-    def test_a_non_equality_where_fails_closed(self) -> None:
-        # v1 supports only scalar {$values: {...}} equality; a richer where must fail closed, not
-        # silently mis-match (a documented v1 limit).
-        nested = SystemInvariant(
-            name="nested_where",
+    def test_a_richer_where_is_evaluated(self) -> None:
+        # A non-scalar where (here ``$and``) is applied via the shared filter evaluator, not rejected:
+        # only the entities the where matches count toward the law (the per-commit fold now agrees
+        # with the runtime on the full filter DSL).
+        law = SystemInvariant(
+            name="one_active_per_group",
             read_set=ReadSet(
                 spec=ENTRIES,
                 scope_keys=("group",),
@@ -363,10 +364,23 @@ class TestPerCommitGuards:
             aggregate=Count(),
             holds=lambda n: n <= 1,
         )
-        history = _history(_write(1, _entity("p1", "O1")), _commit(1))
 
-        with pytest.raises(exc, match="scalar"):
-            _violations(nested, history)
+        # Two entries in one group, but the where excludes the inactive one — the active count is 1
+        # and the law holds. A match-all where would miscount 2 and wrongly flag a violation.
+        held = _history(
+            _write(1, _entity("p1", "O1", status="active")),
+            _write(1, _entity("p2", "O1", status="inactive")),
+            _commit(1),
+        )
+        assert _violations(law, held) == []
+
+        # Two ACTIVE entries in a group break it — the where also counts the rows it matches.
+        broken = _history(
+            _write(2, _entity("p3", "O2", status="active")),
+            _write(2, _entity("p4", "O2", status="active")),
+            _commit(2),
+        )
+        assert _violations(law, broken) != []
 
 
 # ....................... #

@@ -47,7 +47,8 @@ from forze.application.contracts.invariants import (
 )
 from forze.application.contracts.querying import (
     AggregatesExpression,
-    QueryFilterExpression,
+    evaluate_filter,
+    value_at_path,
 )
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
@@ -161,44 +162,6 @@ _TX_DOMAIN = "tx"
 _COMMAND_PHASE = "command"
 
 
-def _matches_where(
-    entity: Mapping[str, Any],
-    where: QueryFilterExpression | None,
-) -> bool:
-    """Whether a reconstructed *entity* satisfies the read-set's constant ``where``.
-
-    v1 supports scalar ``{"$values": {field: value}}`` equality — the shape the cross-aggregate laws
-    use. A richer filter raises (a documented v1 limit; wire the query matcher when one is needed).
-    """
-
-    if where is None:
-        return True
-
-    where_map = cast("Mapping[str, Any]", where)
-    values = where_map.get("$values")
-    if (
-        set(where_map) != {"$values"}
-        or not isinstance(values, MappingABC)
-        or any(
-            isinstance(value, MappingABC)
-            for value in values.values()  # pyright: ignore[reportUnknownVariableType]
-        )
-    ):
-        raise exc.configuration(
-            "per-commit oracle supports only scalar {$values: {...}} equality in a read-set "
-            "'where'; richer filters are a v1 limit",
-            code="unsupported_where_in_per_commit_oracle",
-        )
-
-    return all(
-        entity.get(field) == value  # pyright: ignore[reportUnknownArgumentType]
-        for field, value in values.items()  # pyright: ignore[reportUnknownVariableType]
-    )
-
-
-# ....................... #
-
-
 def _aggregate_by_scope(
     law: SystemInvariant,
     entities: Iterable[Mapping[str, Any]],
@@ -208,10 +171,13 @@ def _aggregate_by_scope(
     groups: dict[tuple[Any, ...], list[Mapping[str, Any]]] = defaultdict(list)
 
     for entity in entities:
-        if _matches_where(entity, law.read_set.where):
-            groups[tuple(entity.get(key) for key in law.read_set.scope_keys)].append(
-                entity
-            )
+        # Match the read-set's ``where`` with the SAME shared evaluator the mock adapter and the
+        # predicate oracle use (so the per-commit fold agrees with the runtime on the full filter DSL,
+        # incl. dotted paths) — not a second, restricted matcher.
+        if evaluate_filter(cast(JsonDict, entity), law.read_set.where):
+            groups[
+                tuple(value_at_path(entity, key) for key in law.read_set.scope_keys)
+            ].append(entity)
 
     aggregate = law.aggregate
 
@@ -227,7 +193,7 @@ def _aggregate_by_scope(
         total = 0.0
 
         for member in members:
-            value = member.get(field)
+            value = value_at_path(member, field)
 
             if value is None:
                 continue

@@ -9,6 +9,7 @@ import attrs
 from forze.application.contracts.base.value_objects import CountlessPage, CursorPage
 from forze.application.contracts.deps import DepKey
 from forze.base.primitives import JsonDict, StrKey
+from forze.domain.constants import ID_FIELD
 
 from ..port_proxy_base import PortProxy
 from .emit import record
@@ -274,6 +275,16 @@ class TracingPortProxy(PortProxy):
                 else None
             )
 
+            # A create / batch write has no leading id in its args (so ``_key_of`` is ``None``), but
+            # its result carries the assigned id. Backfill the key from it — id-only, like
+            # ``_key_of`` — so the pairwise isolation oracle, which attributes writes by key, sees
+            # create/batch writes too, not only single-key updates.
+            key = self._key_of(args)
+            if key is None and self.phase == "command":
+                rid = data.get(ID_FIELD)
+                if rid is not None:
+                    key = str(rid)
+
             record(
                 domain=self.domain,
                 op=name,
@@ -282,7 +293,7 @@ class TracingPortProxy(PortProxy):
                 phase=self.phase,
                 tx_depth=self.tx_depth_getter(),
                 tx_id=self.tx_id_getter(),
-                key=self._key_of(args),
+                key=key,
                 result=self._redact(data),
                 result_native=native,
                 deps=self.deps,

@@ -9,7 +9,7 @@ from .aggregate import (
     ParsedAggregates,
 )
 from .cast import QueryValueCaster
-from .matching import compile_filter, evaluate_filter
+from .matching import compile_filter, evaluate_filter, value_at_path
 from .nodes import (
     ELEM_SCALAR_FIELD,
     QueryAnd,
@@ -38,6 +38,7 @@ __all__ = [
     "QueryValueCaster",
     "evaluate_filter",
     "compile_filter",
+    "value_at_path",
     "ELEM_SCALAR_FIELD",
     "QueryAnd",
     "QueryCompare",

@@ -98,6 +98,7 @@ from .internal import (
     compile_filter,
     elem_inner_is_scalar,
     evaluate_filter,
+    value_at_path,
 )
 from .pagination import (
     assemble_keyset_cursor_page,
@@ -209,6 +210,7 @@ __all__ = [
     "QueryValueCaster",
     "evaluate_filter",
     "compile_filter",
+    "value_at_path",
     "QueryAnd",
     "QueryCompare",
     "QueryElem",

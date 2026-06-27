@@ -480,6 +480,19 @@ def find_serializability_cycle(txns: Sequence[VersionedTxRecord]) -> list[Violat
 # Feeding the kernel from a recorded DST history (sound, via the per-event tx_id seam).
 
 
+def _is_commit_exit(fields: Mapping[str, Any]) -> bool:
+    """A clean transaction commit: a ``tx`` ``exit`` event recorded with ``outcome == "commit"``.
+
+    Shared by both history derivations, which mark a transaction committed only on this event — it
+    fires from a ``finally`` on rollback too, so the ``outcome`` is what tells the two apart."""
+
+    return (
+        fields.get("trace_domain") == "tx"
+        and fields.get("op") == "exit"
+        and fields.get("outcome") == "commit"
+    )
+
+
 @final
 @attrs.define
 class _TxBuilder:
@@ -525,11 +538,7 @@ def transactions_from_history(
             builder.start = min(builder.start, seq)
             builder.end = max(builder.end, seq)
 
-        if (
-            fields.get("trace_domain") == "tx"
-            and fields.get("op") == "exit"
-            and fields.get("outcome") == "commit"
-        ):
+        if _is_commit_exit(fields):
             builder.committed = True
 
         key = fields.get("key")
@@ -625,11 +634,7 @@ def versioned_transactions_from_history(
             builder.start = min(builder.start, seq)
             builder.end = max(builder.end, seq)
 
-        if (
-            fields.get("trace_domain") == "tx"
-            and fields.get("op") == "exit"
-            and fields.get("outcome") == "commit"
-        ):
+        if _is_commit_exit(fields):
             builder.committed = True
             builder.commit_seq = seq
 

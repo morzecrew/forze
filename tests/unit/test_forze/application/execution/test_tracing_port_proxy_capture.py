@@ -205,6 +205,27 @@ class TestQueryPredicateCapture:
         assert event.result_native is not None
         assert event.result_native["ip"] == IPv4Address("10.0.0.1")
 
+    def test_create_result_backfills_the_write_key_for_the_oracle(self) -> None:
+        # A create has no leading id in its args, so the call key is ``None`` — but the result carries
+        # the assigned id; the return event backfills it (id-only) so the pairwise isolation oracle,
+        # which attributes writes by key, sees create/batch writes too, not only single-key updates.
+        deps = _tracing_deps()
+        proxy = TracingPortProxy(
+            inner=object(),
+            deps=deps,
+            domain="document",
+            surface="document_command",
+            route="cells",
+            phase="command",
+            capture=True,
+        )
+        cell = _Cell(value=7)
+
+        proxy._record_return("create", (), cell)  # no leading-id arg, like a real create
+
+        event = next(e for e in deps.runtime_trace().events if e.result is not None)
+        assert event.key == str(cell.id)
+
     def test_query_result_has_no_native_copy(self) -> None:
         # Reads keep only the JSON ``result`` (the native copy is a write-only concern for the oracle).
         deps = _tracing_deps()

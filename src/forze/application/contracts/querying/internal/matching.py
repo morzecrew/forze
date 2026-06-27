@@ -15,7 +15,7 @@ distinct from a present ``None``, so ``$null`` / ``$neq`` behave correctly on ab
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, Callable, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
 from uuid import UUID
 
 from forze.base.exceptions import exc
@@ -104,7 +104,10 @@ def _memb_contains(field_value: Any, values: Sequence[Any]) -> bool:
 
 
 def _match_text(value: Any, op: str, pattern: str) -> bool:
-    if value is _MISSING:
+    # A missing field — or a present ``None`` — never matches a text pattern: a backend's
+    # ``NULL LIKE``/regex yields no match, and the comparison ops above already guard ``None`` to
+    # ``False``. Without this, ``str(None)`` becomes ``"None"`` and spuriously matches e.g. ``%on%``.
+    if value is _MISSING or value is None:
         return False
     text = str(value)
     match op:
@@ -428,3 +431,16 @@ def compile_filter(
 
     expr = QueryFilterExpressionParser.parse(filters)
     return lambda row: _match_expr(row, expr)
+
+
+def value_at_path(row: Mapping[str, Any], path: str) -> Any:
+    """The value at a dotted *path* in *row*, or ``None`` if any segment is absent.
+
+    The value-extraction counterpart to :func:`evaluate_filter`'s path handling — for a caller that
+    needs a nested field's *value* (a grouped aggregate's group key or its sum field), not a match.
+    A present ``None`` and an absent field both read as ``None``; use :func:`evaluate_filter` with
+    ``$null`` when that distinction matters.
+    """
+
+    value = _path_get(row, path)
+    return None if value is _MISSING else value
