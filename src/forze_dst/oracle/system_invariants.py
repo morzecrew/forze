@@ -160,6 +160,7 @@ def _invariant_for(law: SystemInvariant) -> Invariant:
 
 _TX_DOMAIN = "tx"
 _COMMAND_PHASE = "command"
+_DELETE_OPS = frozenset({"kill", "kill_many"})
 
 
 def _aggregate_by_scope(
@@ -223,9 +224,12 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
     def _check(history: History) -> list[Violation]:
         traces = history.of_kind("trace")
 
-        # Full post-write entities (create/update result events) per transaction, in trace order.
-        writes: dict[int, list[Mapping[str, Any]]] = defaultdict(list)
-        saw_command_write = False
+        # Per-transaction mutations in trace order: an upsert (create/update result event) carries the
+        # full post-write entity; a delete (``kill``) carries only its key and removes the row — so the
+        # fold drops it rather than letting a deleted document linger and skew the aggregate.
+        mutations: dict[int, list[tuple[Any, Mapping[str, Any] | None]]] = defaultdict(list)
+        saw_upsert_op = False
+        captured_upsert = False
 
         for event in traces:
             fields = event.fields
@@ -233,13 +237,23 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
             if fields.get("route") != route or fields.get("phase") != _COMMAND_PHASE:
                 continue
 
-            saw_command_write = True
-            result = fields.get("result")
             tx_id = fields.get("tx_id")
+            if tx_id is None:
+                continue
 
-            if isinstance(result, MappingABC) and "id" in result and tx_id is not None:
-                writes[int(tx_id)].append(
-                    result  # pyright: ignore[reportUnknownArgumentType]
+            if fields.get("op") in _DELETE_OPS:
+                key = fields.get("key")
+                if key is not None:  # kill_many carries no per-row key — a documented v1 bound
+                    mutations[int(tx_id)].append((key, None))
+                continue
+
+            saw_upsert_op = True
+            result = fields.get("result")
+
+            if isinstance(result, MappingABC) and "id" in result:
+                captured_upsert = True
+                mutations[int(tx_id)].append(
+                    (result["id"], result)  # pyright: ignore[reportUnknownArgumentType]
                 )
 
         # Committed roots only, in commit order (the exit's trace_seq). The exit event fires from a
@@ -258,7 +272,7 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
 
         commits.sort(key=lambda pair: pair[1])
 
-        if saw_command_write and not any(writes.values()):
+        if saw_upsert_op and not captured_upsert:
             raise exc.configuration(
                 f"per-commit oracle for {law.name!r}: writes to {route!r} are on the trace but no "
                 "entity values were captured — enable SimulationConfig.capture_values (and keep "
@@ -270,8 +284,11 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
         first_failure: dict[tuple[Any, ...], tuple[int, float]] = {}
 
         for tx_id, _seq in commits:
-            for entity in writes.get(tx_id, []):
-                materialized[entity["id"]] = entity
+            for entity_id, entity in mutations.get(tx_id, []):
+                if entity is None:
+                    materialized.pop(entity_id, None)  # a committed delete drops the row
+                else:
+                    materialized[entity_id] = entity
 
             for scope, observed in _aggregate_by_scope(
                 law,

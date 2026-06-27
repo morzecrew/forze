@@ -278,6 +278,12 @@ class MvccTx:
                 if not self.serializable:
                     continue
 
+                # Deliberately coarse: a scan's read-set is the whole *namespace*,
+                # not the predicate — a conservative stand-in for a predicate /
+                # seq-scan SIReadLock that also catches a new matching key. It only
+                # OVER-prevents (never admits a non-serializable schedule), and the
+                # conformance differential normalizes the extra abort — see the
+                # "read-only-abort-vs-safe-snapshot" MECHANISM_DIVERGENCES entry.
                 if ns in self.scans:
                     raise exc.concurrency(
                         "Phantom conflict: a concurrent transaction wrote to a namespace "

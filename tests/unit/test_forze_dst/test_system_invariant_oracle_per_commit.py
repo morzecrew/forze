@@ -256,19 +256,41 @@ class TestPerCommitConservation:
         assert len(violations) == 1
         assert "tx2" in violations[0].message  # only the first failure, not tx4
 
-    def test_deletes_are_not_folded(self) -> None:
-        # A documented v1 bound: a delete has no captured entity result, so the entity lingers in the
-        # materialized view. Deleting A (which would make the sum -100) is therefore MISSED — the fold
-        # still sees A=+100 and reports no violation. (Delete-aware folding is a follow-up.)
+    def test_deletes_are_folded(self) -> None:
+        # A committed delete (``kill``) drops the row from the fold by its key. Deleting A leaves the
+        # sum at -100, breaking conservation — and the per-commit oracle now catches it at the commit
+        # where it happened, instead of letting A linger and miss (or, for a Count law, falsely flag).
         history = _history(
             _write(1, _entity("a", "L1", 100)),
             _write(1, _entity("b", "L1", -100)),
-            _commit(1),  # sum 0
-            _delete(2, "a"),  # remove A → reality: sum -100; but the fold does not drop it
+            _commit(1),  # sum 0 — holds
+            _delete(2, "a"),  # remove A → sum -100
             _commit(2),
         )
 
-        assert _violations(CONSERVATION, history) == []  # the delete-induced violation is missed
+        violations = _violations(CONSERVATION, history)
+        assert len(violations) == 1
+        assert "tx2" in violations[0].message
+
+    def test_a_delete_does_not_cause_a_false_count_violation(self) -> None:
+        # The issue: a Count<=1 law must not fire on a row deleted before the commit. tx2 adds p2 and
+        # removes p1 in the same group, so the live count is 1 and the law holds — a lingering p1 would
+        # wrongly make it 2 and flag a violation that never existed.
+        law = SystemInvariant(
+            name="one_per_group",
+            read_set=ReadSet(spec=ENTRIES, scope_keys=("group",)),
+            aggregate=Count(),
+            holds=lambda n: n <= 1,
+        )
+        history = _history(
+            _write(1, _entity("p1", "O1")),
+            _commit(1),  # count 1 — holds
+            _write(2, _entity("p2", "O1")),
+            _delete(2, "p1"),  # net live count in O1 is 1 (p2 only)
+            _commit(2),
+        )
+
+        assert _violations(law, history) == []
 
     def test_a_nested_savepoint_exit_is_not_a_commit(self) -> None:
         # The imbalanced debit and the balancing credit share tx1; a NESTED savepoint exits (depth 2)
