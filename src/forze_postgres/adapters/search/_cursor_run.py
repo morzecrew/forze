@@ -53,12 +53,12 @@ def parse_search_cursor(
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise exc.internal("Cursor pagination: pass at most one of 'after' or 'before'")
+        raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
     lim: int = 10 if c.get("limit") is None else int(c["limit"])  # type: ignore[arg-type, assignment, call-overload]
 
     if lim < 1:
-        raise exc.internal("Cursor pagination 'limit' must be positive")
+        raise exc.validation("Cursor pagination 'limit' must be positive")
 
     return lim, c.get("after") is not None, c.get("before") is not None
 

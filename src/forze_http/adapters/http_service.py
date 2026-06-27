@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, final
 
 import attrs
+from opentelemetry import propagate
 from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.envelope import HTTP_HEADER_DEADLINE_BUDGET
@@ -73,6 +74,15 @@ class HttpServiceAdapter(HttpServicePort):
                         **(headers or {}),
                         HTTP_HEADER_DEADLINE_BUDGET: f"{budget:.3f}",
                     }
+
+            # Continue the distributed trace into the downstream service: inject the active span's W3C
+            # context (traceparent + tracestate, via the global propagator so an app's choice is
+            # honoured) into the outgoing headers. A no-op when no span is active (uninstrumented app);
+            # if the app also instruments httpx, that instrumentation may overwrite with its own
+            # client-span id — the trace linkage is preserved either way. No flag needed (the messaging
+            # side gates on a column migration; HTTP carries no schema).
+            headers = dict(headers or {})
+            propagate.inject(headers)
 
             response = await self.client.request(
                 operation.method,

@@ -30,6 +30,12 @@ class OutboxIntegrationConfig(TenantAwareIntegrationConfig):
     ``created_at`` only. Off by default — opt in **after** migrating the store; the exact
     ordering/legacy-row semantics are documented on the backend config. """
 
+    propagate_trace: bool = False
+    """Persist each event's W3C ``traceparent`` so the relay forwards it as ``HEADER_TRACEPARENT``
+    and the consume side links its span to the publish span (one distributed trace across the async
+    hop). Off by default — opt in **after** adding a nullable ``traceparent`` text column to the store
+    (a relational backend; legacy/null rows simply carry no parent). Independent of ``hlc_ordering``."""
+
     default_processing_lease: timedelta = attrs.field(
         factory=lambda: timedelta(minutes=5)
     )

@@ -2,8 +2,7 @@
 
 from typing import Sequence
 
-from forze.application.contracts.querying import QuerySortExpression
-from forze.base.exceptions import exc
+from forze.application.contracts.querying import QuerySortExpression, parse_sort_value
 from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
@@ -55,13 +54,11 @@ def ranked_search_cursor_key_spec(
 
     if sorts:
         for field, direction in sorts.items():
-            d = str(direction).lower()
-
-            if d not in ("asc", "desc"):
-                raise exc.internal(
-                    f"Invalid sort direction in search cursor: {direction!r}"
-                )
-
+            # Route the caller-supplied direction through the canonical sort parser:
+            # it accepts both the ``"asc"``/``"desc"`` shorthand and the ``{"dir","nulls"}``
+            # form, and rejects a bad value with a clean precondition (``invalid_sort_value``)
+            # rather than an opaque internal.
+            d, _ = parse_sort_value(direction, field=str(field))
             spec.append((str(field), d))
 
     have = {k for k, _ in spec}

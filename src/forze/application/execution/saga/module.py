@@ -7,7 +7,7 @@ import attrs
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.saga import SagaExecutorDepKey, SagaExecutorPort
 
-from ..deps import Deps
+from forze.application.contracts.deps import Deps
 
 # ----------------------- #
 

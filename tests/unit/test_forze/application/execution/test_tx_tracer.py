@@ -22,16 +22,23 @@ class RecordingTxTracer:
     """In-memory transaction tracer for unit tests."""
 
     events: list[tuple[str, str, int]] = attrs.field(factory=list)
+    exit_outcomes: list[bool] = attrs.field(factory=list)
+    """The ``committed`` flag recorded for each scope exit (commit vs rollback)."""
 
     @property
     def enabled(self) -> bool:
         return True
 
-    def on_scope_enter(self, *, route: str, depth: int) -> None:
+    def on_scope_enter(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
+        del tx_id
         self.events.append(("enter", route, depth))
 
-    def on_scope_exit(self, *, route: str, depth: int) -> None:
+    def on_scope_exit(
+        self, *, route: str, depth: int, tx_id: int | None = None, committed: bool = True
+    ) -> None:
+        del tx_id
         self.events.append(("exit", route, depth))
+        self.exit_outcomes.append(committed)
 
 
 def _mock_tx_resolver(_route: str) -> MockTxManagerAdapter:
@@ -87,6 +94,32 @@ class TestTransactionContextTxTracer:
             ("enter", "mock", 1),
             ("exit", "mock", 1),
         ]
+
+    @pytest.mark.asyncio
+    async def test_clean_exit_records_a_commit(self) -> None:
+        recording = RecordingTxTracer()
+        tx = TransactionContext()
+        tx.lock(_mock_tx_resolver, tx_tracer=recording)
+
+        async with tx.scope("mock"):
+            pass
+
+        assert recording.exit_outcomes == [True]  # committed
+
+    @pytest.mark.asyncio
+    async def test_a_rollback_records_a_non_commit(self) -> None:
+        # The exit fires from a finally on rollback too, but is marked not-committed so a rolled-back
+        # scope is never read as a commit (the per-commit oracle relies on this).
+        recording = RecordingTxTracer()
+        tx = TransactionContext()
+        tx.lock(_mock_tx_resolver, tx_tracer=recording)
+
+        with pytest.raises(RuntimeError):
+            async with tx.scope("mock"):
+                raise RuntimeError("boom")
+
+        assert recording.events == [("enter", "mock", 1), ("exit", "mock", 1)]
+        assert recording.exit_outcomes == [False]  # rollback
 
     @pytest.mark.asyncio
     async def test_default_lock_uses_noop_tracer(self) -> None:

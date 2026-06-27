@@ -48,6 +48,7 @@ class RuntimeTracer(Protocol):
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        tx_id: int | None = None,
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
@@ -55,6 +56,7 @@ class RuntimeTracer(Protocol):
         nested: bool = False,
         payload: Mapping[str, Any] | None = None,
         result: Mapping[str, Any] | None = None,
+        result_native: Mapping[str, Any] | None = None,
     ) -> int | None:
         """Append a runtime event when enabled; return its ``seq`` (``None`` when disabled)."""
         ...
@@ -93,6 +95,7 @@ class NoopRuntimeTracer:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        tx_id: int | None = None,
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
@@ -100,9 +103,10 @@ class NoopRuntimeTracer:
         nested: bool = False,
         payload: Mapping[str, Any] | None = None,
         result: Mapping[str, Any] | None = None,
+        result_native: Mapping[str, Any] | None = None,
     ) -> int | None:
-        del domain, op, surface, route, phase, tx_depth, tx_route, key, outcome, error
-        del corr, nested, payload, result
+        del domain, op, surface, route, phase, tx_depth, tx_route, tx_id, key, outcome
+        del error, corr, nested, payload, result, result_native
         return None
 
     def snapshot(self) -> RuntimeTrace | None:
@@ -158,6 +162,7 @@ class RecordingRuntimeTracer:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        tx_id: int | None = None,
         key: str | None = None,
         outcome: str | None = None,
         error: str | None = None,
@@ -165,6 +170,7 @@ class RecordingRuntimeTracer:
         nested: bool = False,
         payload: Mapping[str, Any] | None = None,
         result: Mapping[str, Any] | None = None,
+        result_native: Mapping[str, Any] | None = None,
     ) -> int | None:
         event = self._trace.get_or_create().next_event(
             domain=domain,
@@ -174,6 +180,7 @@ class RecordingRuntimeTracer:
             phase=phase,
             tx_depth=tx_depth,
             tx_route=tx_route,
+            tx_id=tx_id,
             at=monotonic(),
             key=key,
             outcome=outcome,
@@ -182,6 +189,7 @@ class RecordingRuntimeTracer:
             nested=nested,
             payload=payload,
             result=result,
+            result_native=result_native,
         )
         return event.seq
 
@@ -217,12 +225,14 @@ class TxTracer(Protocol):
         """Whether event recording is active."""
         ...
 
-    def on_scope_enter(self, *, route: str, depth: int) -> None:
+    def on_scope_enter(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
         """Record root transaction scope entry."""
         ...
 
-    def on_scope_exit(self, *, route: str, depth: int) -> None:
-        """Record root transaction scope exit."""
+    def on_scope_exit(
+        self, *, route: str, depth: int, tx_id: int | None = None, committed: bool = True
+    ) -> None:
+        """Record root transaction scope exit (``committed`` distinguishes commit from rollback)."""
         ...
 
 
@@ -238,12 +248,14 @@ class NoopTxTracer:
     def enabled(self) -> bool:
         return False
 
-    def on_scope_enter(self, *, route: str, depth: int) -> None:
-        del route, depth
+    def on_scope_enter(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
+        del route, depth, tx_id
         return
 
-    def on_scope_exit(self, *, route: str, depth: int) -> None:
-        del route, depth
+    def on_scope_exit(
+        self, *, route: str, depth: int, tx_id: int | None = None, committed: bool = True
+    ) -> None:
+        del route, depth, tx_id, committed
         return
 
 
@@ -272,24 +284,31 @@ class RuntimeBackedTxTracer:
 
     # ....................... #
 
-    def on_scope_enter(self, *, route: str, depth: int) -> None:
+    def on_scope_enter(self, *, route: str, depth: int, tx_id: int | None = None) -> None:
         self.runtime.record(
             domain="tx",
             op="enter",
             route=route,
             tx_route=route,
             tx_depth=depth,
+            tx_id=tx_id,
         )
 
     # ....................... #
 
-    def on_scope_exit(self, *, route: str, depth: int) -> None:
+    def on_scope_exit(
+        self, *, route: str, depth: int, tx_id: int | None = None, committed: bool = True
+    ) -> None:
         self.runtime.record(
             domain="tx",
             op="exit",
             route=route,
             tx_route=route,
             tx_depth=depth,
+            tx_id=tx_id,
+            # The exit fires from a ``finally`` — it marks scope teardown on commit AND rollback; the
+            # outcome distinguishes them so a rolled-back scope is never read as committed.
+            outcome="commit" if committed else "rollback",
         )
 
 

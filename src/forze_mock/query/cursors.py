@@ -56,13 +56,13 @@ def _mock_cursor_start_and_limit(  # type: ignore[reportPrivateUsage]
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise exc.internal("Cursor pagination: pass at most one of 'after' or 'before'")
+        raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
     lim_raw = c.get("limit")
     lim: int = default_limit if lim_raw is None else int(cast(Any, lim_raw))
 
     if lim < 1:
-        raise exc.internal("Cursor pagination 'limit' must be positive")
+        raise exc.validation("Cursor pagination 'limit' must be positive")
 
     start = 0
 
@@ -71,7 +71,7 @@ def _mock_cursor_start_and_limit(  # type: ignore[reportPrivateUsage]
             payload = _b64url_json_loads_dict(str(c["after"]))
 
         except (ValueError, KeyError, json.JSONDecodeError) as e:
-            raise exc.internal("Invalid cursor token") from e
+            raise exc.validation("Invalid cursor token") from e
 
         start = int(payload["s"])
 
@@ -80,7 +80,7 @@ def _mock_cursor_start_and_limit(  # type: ignore[reportPrivateUsage]
             payload = _b64url_json_loads_dict(str(c["before"]))
 
         except (ValueError, KeyError, json.JSONDecodeError) as e:
-            raise exc.internal("Invalid cursor token") from e
+            raise exc.validation("Invalid cursor token") from e
 
         page_start = int(payload["s"])
         start = max(0, page_start - lim)
@@ -98,13 +98,13 @@ def _mock_keyset_parse(  # type: ignore[reportPrivateUsage]
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise exc.internal("Cursor pagination: pass at most one of 'after' or 'before'")
+        raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
     lim_raw = c.get("limit")
     lim: int = default_limit if lim_raw is None else int(cast(Any, lim_raw))
 
     if lim < 1:
-        raise exc.internal("Cursor pagination 'limit' must be positive")
+        raise exc.validation("Cursor pagination 'limit' must be positive")
 
     return lim, c.get("after") is not None, c.get("before") is not None
 

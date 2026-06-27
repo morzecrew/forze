@@ -23,6 +23,7 @@ from typing import (
 import attrs
 
 from forze_dst.oracle.invariants import Invariant, Violation, check
+from forze.application.execution.tracing import bind_tx_sequence
 from forze_dst.oracle.recorder import History, Recorder, bind_recorder
 from forze_dst.runtime import run_simulation
 from forze_dst.time_source import DEFAULT_EPOCH
@@ -55,7 +56,7 @@ def run_recorded(
 
     recorder = Recorder(seed=seed)
 
-    with bind_recorder(recorder):
+    with bind_recorder(recorder), bind_tx_sequence():
         run_simulation(scenario, seed=seed, schedule_seed=schedule_seed, epoch=epoch)
 
     return recorder.history

@@ -60,3 +60,6 @@ lifecycle = LifecyclePlan.from_steps(
 - Routed clients vary the project/database per tenant (using Application Default
   Credentials).
 - No graph support — Firestore is documents only.
+- No aggregations in the MVP adapter — an `aggregate_*` query (grouped or aggregate
+  rows) is rejected up front with a clean `precondition` naming the backend, not a
+  500 deep in the gateway. Use Postgres or Mongo where you need them.

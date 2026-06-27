@@ -154,7 +154,7 @@ def _apply_member_weight_overrides(
             w = float(v)
 
             if w < 0 or w > 1:
-                raise exc.internal(
+                raise exc.validation(
                     f"Member weight for {scope} member {k!r} must be between 0.0 and 1.0.",
                 )
 

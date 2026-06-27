@@ -20,10 +20,13 @@ from typing import IO, TYPE_CHECKING, Any, final
 
 import attrs
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - non-POSIX (e.g. Windows) has no fcntl
-    fcntl = None  # type: ignore[assignment]
+if TYPE_CHECKING:
+    import fcntl  # typed module for the checker; the runtime import is guarded just below
+else:
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - non-POSIX (e.g. Windows) has no fcntl
+        fcntl = None
 
 from forze_dst.oracle.coverage import behavioral_fingerprint
 

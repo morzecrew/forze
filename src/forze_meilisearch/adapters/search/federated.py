@@ -222,7 +222,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         if return_fields is not None:
-            raise exc.internal(
+            raise exc.precondition(
                 "Field projection is not supported for federated Meilisearch search.",
             )
 
@@ -595,9 +595,10 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
     # ....................... #
 
     def _raise_federated_cursor_not_supported(self) -> NoReturn:
-        raise exc.internal(
+        raise exc.precondition(
             "search_cursor is not implemented for Meilisearch federated search; use "
             "search or search_page with limit/offset.",
+            code="query_feature_unsupported",
         )
 
     # ....................... #

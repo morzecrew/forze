@@ -1,4 +1,4 @@
-"""Real-Redis namespace-tier realtime streams (RFC 0007) — the substrate the
+"""Real-Redis namespace-tier realtime streams — the substrate the
 ``TenantShardedSignalSource`` consumes.
 
 Proves a **tenant-aware** Redis consumer group isolates realtime signals per tenant by

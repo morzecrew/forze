@@ -24,6 +24,8 @@ import random
 import selectors
 from typing import Any, Mapping, cast
 
+from forze_dst.scheduler import Reorderer
+
 # ----------------------- #
 
 
@@ -131,7 +133,7 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         self,
         *,
         schedule_rng: random.Random | None = None,
-        scheduler: Any = None,
+        scheduler: Reorderer | None = None,
     ) -> None:
         super().__init__()
         self._sim_clock: float = 0.0

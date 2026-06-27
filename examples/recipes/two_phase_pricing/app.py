@@ -21,16 +21,29 @@ from __future__ import annotations
 import asyncio
 
 import attrs
+import structlog
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.aggregates.document import (
     TwoPhaseDocumentBuilder,
     TwoPhaseDocumentHandler,
 )
 from forze_mock import MockDepsModule
+
+_LOGGER_NAME = "two_phase_pricing"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
+
 
 # --8<-- [start:domain]
 class Order(Document):
@@ -50,6 +63,8 @@ class ReadOrder(ReadDocument):
 
 class QuoteRequest(BaseDTO):
     item: str
+
+
 # --8<-- [end:domain]
 
 
@@ -89,6 +104,8 @@ class PriceAndCreate(
     async def apply(self, args: QuoteRequest, payload: int) -> ReadOrder:
         # INSIDE the transaction — self.writer is the command port.
         return await self.writer.create(CreateOrder(item=args.item, price=payload))
+
+
 # --8<-- [end:handler]
 
 
@@ -128,15 +145,20 @@ async def place_priced_order(ctx: ExecutionContext) -> ReadOrder:
     assert stored is not None and stored.price == created.price
 
     return created
+
+
 # --8<-- [end:scenario]
 
 
 async def main() -> None:
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
+    )
     async with runtime.scope():
         order = await place_priced_order(runtime.get_context())
-        print(f"priced and created: item={order.item!r} price={order.price}")
+        log.info("priced and created", item=order.item, price=order.price)
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())

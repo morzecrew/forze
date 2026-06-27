@@ -55,6 +55,14 @@ class OperationDescriptor:
     external surfaces (HTTP route generators, MCP tools/resources) must refuse to
     project operations marked sensitive."""
 
+    commutative: bool = False
+    """The operation is declared **order-independent**: any interleaving of it against
+    its peers must converge to the same final state. A *declaration*, verified — not
+    consumed — by DST: the simulator asserts it (a declared-commutative operation whose
+    reorderings diverge is a first-class finding), but no execution path reads this flag,
+    so a wrong declaration costs nothing at runtime and is caught only under simulation.
+    Default ``False`` (no claim made)."""
+
     query_discovery: QueryDiscovery | None = None
     """For a filter-accepting operation, the read model's filter/sort/aggregate surface
     (which fields, and which operators per field). Lets a driving adapter advertise the

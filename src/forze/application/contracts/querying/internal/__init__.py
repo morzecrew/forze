@@ -4,11 +4,12 @@ from .aggregate import (
     AggregateComputedField,
     AggregatesExpressionParser,
     GroupKey,
-    GroupRef,
+    GroupField,
     GroupTrunc,
     ParsedAggregates,
 )
 from .cast import QueryValueCaster
+from .matching import compile_filter, evaluate_filter, value_at_path
 from .nodes import (
     ELEM_SCALAR_FIELD,
     QueryAnd,
@@ -29,12 +30,15 @@ __all__ = [
     "AggregateComputedField",
     "AggregatesExpressionParser",
     "GroupKey",
-    "GroupRef",
+    "GroupField",
     "GroupTrunc",
     "ParsedAggregates",
     "QueryFilterExpressionParser",
     "QueryFilterLimits",
     "QueryValueCaster",
+    "evaluate_filter",
+    "compile_filter",
+    "value_at_path",
     "ELEM_SCALAR_FIELD",
     "QueryAnd",
     "QueryCompare",

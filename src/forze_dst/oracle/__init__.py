@@ -10,8 +10,14 @@ subset from here.
 
 from __future__ import annotations
 
+from forze_dst.oracle.commutativity import commutative_convergence
+from forze_dst.oracle.system_invariants import (
+    CompiledOracle,
+    compile_oracle,
+)
 from forze_dst.oracle.confidence import ConfidenceReport, assess_confidence
 from forze_dst.oracle.coverage import (
+    Behavior,
     CoverageStats,
     behavioral_coverage,
     behavioral_fingerprint,
@@ -32,6 +38,21 @@ from forze_dst.oracle.invariants import (
     operation_succeeds,
     read_your_writes,
     single_key_per_operation,
+)
+from forze_dst.oracle.isolation import (
+    ScanRead,
+    TxRecord,
+    VersionedTxRecord,
+    WriteVersion,
+    find_serializability_cycle,
+    find_serializable_violations,
+    find_snapshot_isolation_violations,
+    had_isolation_conflict,
+    isolation_oracle_for,
+    serializable,
+    snapshot_isolation,
+    transactions_from_history,
+    versioned_transactions_from_history,
 )
 from forze_dst.oracle.linearizability import (
     RegisterSpec,
@@ -106,6 +127,25 @@ __all__ = [
     "RegisterSpec",
     "SequentialSpec",
     "record_operation",
+    # transactional isolation
+    "snapshot_isolation",
+    "serializable",
+    "transactions_from_history",
+    "versioned_transactions_from_history",
+    "find_snapshot_isolation_violations",
+    "find_serializable_violations",
+    "find_serializability_cycle",
+    "had_isolation_conflict",
+    "isolation_oracle_for",
+    "TxRecord",
+    "VersionedTxRecord",
+    "ScanRead",
+    "WriteVersion",
+    # commutativity (cross-history)
+    "commutative_convergence",
+    # cross-aggregate system-invariant oracle
+    "compile_oracle",
+    "CompiledOracle",
     # reachability
     "sometimes",
     "reached",
@@ -113,6 +153,7 @@ __all__ = [
     "assess_reachability",
     "ReachabilityReport",
     # coverage
+    "Behavior",
     "behavioral_coverage",
     "behavioral_fingerprint",
     "CoverageStats",

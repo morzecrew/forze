@@ -11,6 +11,7 @@ from forze.application.contracts.envelope import (
     HEADER_EVENT_ID,
     HEADER_HLC,
     HEADER_TENANT_ID,
+    HEADER_TRACEPARENT,
 )
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.tenancy import TenantIdentity
@@ -58,6 +59,33 @@ def _parse_uuid(value: object) -> UUID | None:
 
     except ValueError:
         return None
+
+
+# ----------------------- #
+
+
+def _attach_trace_context(headers: Mapping[str, object], stack: ExitStack) -> None:
+    """Attach the publish-side W3C trace context (from ``HEADER_TRACEPARENT``) for the handler's scope.
+
+    So the consume span links to the publishing operation's span — the async outbox→broker→inbox hop
+    becomes one distributed trace. Registered on *stack* (detaches on exit). No-op when the header is
+    absent/malformed. OpenTelemetry is imported lazily so a consumer that never carries a traceparent
+    keeps an OTel-free import path.
+    """
+
+    raw = headers.get(HEADER_TRACEPARENT)
+
+    if not isinstance(raw, str) or not raw:
+        return
+
+    from opentelemetry import context as otel_context
+
+    from forze.application.execution.tracing.propagation import (
+        context_from_traceparent,
+    )
+
+    token = otel_context.attach(context_from_traceparent(raw))
+    stack.callback(otel_context.detach, token)
 
 
 # ....................... #
@@ -150,6 +178,10 @@ async def process_with_inbox[M](
     correlation_id = _parse_uuid(headers.get(HEADER_CORRELATION_ID))
 
     with ExitStack() as stack:
+        # Outermost: link the handler's spans to the publishing operation's span (one distributed
+        # trace across the broker hop), wrapping the dedup mark, tx scope, and handler below.
+        _attach_trace_context(headers, stack)
+
         if correlation_id is not None:
             causation_id = _parse_uuid(header_event_id) or _parse_uuid(
                 getattr(message, "key", None)

@@ -20,10 +20,13 @@ from __future__ import annotations
 import asyncio
 
 import attrs
+import structlog
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze.base.primitives import run_cpu
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.aggregates.document import (
@@ -31,6 +34,16 @@ from forze_kits.aggregates.document import (
     TwoPhaseDocumentHandler,
 )
 from forze_mock import MockDepsModule
+
+_LOGGER_NAME = "cpu_offload"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
+
 
 # --8<-- [start:domain]
 class Article(Document):
@@ -50,6 +63,8 @@ class ReadArticle(ReadDocument):
 
 class ImportRequest(BaseDTO):
     raw: str  # a title line followed by the body
+
+
 # --8<-- [end:domain]
 
 
@@ -68,6 +83,8 @@ def parse_article(raw: str) -> CreateArticle:
     title, _, body = raw.partition("\n")
 
     return CreateArticle(title=title.strip(), word_count=len(body.split()))
+
+
 # --8<-- [end:parse]
 
 
@@ -86,6 +103,8 @@ class ImportArticle(
     async def apply(self, args: ImportRequest, payload: CreateArticle) -> ReadArticle:
         # INSIDE the transaction — only the write is wrapped.
         return await self.writer.create(payload)
+
+
 # --8<-- [end:handler]
 
 
@@ -97,7 +116,9 @@ REGISTRY = (
         handlers={
             IMPORT_ARTICLE: TwoPhaseDocumentBuilder(
                 spec=ARTICLE_SPEC,
-                build=lambda reader, writer: ImportArticle(reader=reader, writer=writer),
+                build=lambda reader, writer: ImportArticle(
+                    reader=reader, writer=writer
+                ),
             )
         }
     )
@@ -122,15 +143,20 @@ async def import_article(ctx: ExecutionContext) -> ReadArticle:
     assert stored is not None and stored.word_count == created.word_count
 
     return created
+
+
 # --8<-- [end:scenario]
 
 
 async def main() -> None:
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
+    )
     async with runtime.scope():
         article = await import_article(runtime.get_context())
-        print(f"imported: title={article.title!r} word_count={article.word_count}")
+        log.info("imported", title=article.title, word_count=article.word_count)
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())

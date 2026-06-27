@@ -1,6 +1,6 @@
-from forze.application.contracts.deps import Deps
+# Deps / DepsModule are defined in `forze.application.contracts.deps` (their home) and surfaced on
+# the kernel front door `forze.application.execution`; this subpackage exports only what it defines.
 from .frozen import FrozenDeps, FrozenDepsRegistry
-from forze.application.contracts.deps import DepsModule
 from .registry import DepsRegistry
 from .resolution import (
     NOOP_RESOLUTION_TRACER,
@@ -12,24 +12,19 @@ from .resolution import (
     ResolutionTracer,
     resolution_tracer_from_flag,
 )
-from forze.application.contracts.deps import PlainDepsMap, RoutedDeps
 
 # ----------------------- #
 
 __all__ = [
-    "Deps",
-    "DepsModule",
     "DepsRegistry",
     "DepsResolutionTrace",
     "FrozenDeps",
     "FrozenDepsRegistry",
     "NOOP_RESOLUTION_TRACER",
     "NoopResolutionTracer",
-    "PlainDepsMap",
     "RecordingResolutionTracer",
     "ResolutionContext",
     "ResolutionFrame",
     "ResolutionTracer",
-    "RoutedDeps",
     "resolution_tracer_from_flag",
 ]

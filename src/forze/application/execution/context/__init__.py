@@ -5,7 +5,6 @@ from .criticality import (
 )
 from .deadline import bind_deadline, current_deadline, remaining_time
 from .drain import OperationDrainGate
-from forze.application.contracts.outbox import OutboxStagingContext
 
 from .execution import ExecutionContext, ExecutionContextFactory
 from .invocation import InvocationMetadata
@@ -16,7 +15,6 @@ __all__ = [
     "ExecutionContext",
     "InvocationMetadata",
     "OperationDrainGate",
-    "OutboxStagingContext",
     "ExecutionContextFactory",
     "bind_deadline",
     "current_deadline",

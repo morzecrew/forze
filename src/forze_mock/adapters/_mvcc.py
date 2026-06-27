@@ -1,22 +1,23 @@
-"""MVCC overlay — snapshot & serializable isolation for the mock document store.
+"""MVCC overlay — buffered isolation for the mock document store, at every level.
 
-The default journal manager is read-committed (write-through + per-row ``rev`` OCC). Stronger
-isolation needs a transaction to read a *consistent snapshot* rather than the live store, so
-this layer gives snapshot / serializable transactions a **buffered overlay**:
+Every transaction on the document store gets a **buffered overlay**: writes go to the overlay,
+never write through, so the live store holds only committed rows and a concurrent transaction can
+never observe an uncommitted write (**no dirty reads, at any level**). The level differs only in
+what reads fall back to and what commit validates:
 
-* at begin, the transaction captures an as-of-begin snapshot of every document namespace
-  (committed state — buffered transactions never write through, so the live store holds only
-  committed rows);
-* reads come from the transaction's own buffered writes (the overlay) falling back to that
-  snapshot — so a concurrent transaction's writes are invisible (no non-repeatable reads /
-  phantoms);
+* at begin, snapshot / serializable capture an as-of-begin snapshot of every document namespace
+  (committed state); read-committed keeps no snapshot and reads through to the live store instead;
+* reads come from the transaction's own buffered writes (the overlay) falling back to that snapshot
+  (snapshot / serializable — so concurrent writes are invisible: no non-repeatable reads / phantoms)
+  or to the live store (read-committed — so each statement sees the latest committed state);
 * writes go to the overlay, not the live store;
-* at commit the overlay is validated against the write-sets of transactions that committed
-  after this one began, then published to the live store:
-  - **snapshot** rejects a *write-write* conflict (first-committer-wins — prevents lost
-    update), while permitting write-skew; and
-  - **serializable** additionally rejects a *read-write* conflict (a key this transaction
-    read was written by a concurrent committer — prevents write-skew).
+* at commit the overlay is validated, then published to the live store:
+  - **read-committed** and **snapshot** both reject a *write-write* conflict (first-committer-wins
+    — prevents lost update; read-committed needs it because every update is rev-guarded, so two
+    concurrent updates to a row must not both commit, matching Postgres read-committed's row
+    serialization), while permitting write-skew; they differ only in reads (live vs frozen); and
+  - **serializable** additionally rejects a *read-write* conflict (a key this transaction read was
+    written by a concurrent committer — prevents write-skew).
 
 Conflicts raise ``exc.concurrency(code="serialization_failure")``, which aborts the
 transaction (the overlay is discarded — nothing reached the live store). No global lock, so
@@ -145,29 +146,54 @@ class IsolatedStoreView:
 
 @attrs.define(slots=True)
 class MvccTx:
-    """One snapshot/serializable transaction's buffered overlay + read-set, by namespace."""
+    """One transaction's buffered document overlay + read-set, by namespace.
+
+    Buffering writes (never writing through) is what keeps an uncommitted write invisible to a
+    concurrent transaction — i.e. **no dirty reads**, at *every* level. The level differs only in
+    what reads fall back to and what commit validates:
+
+    - **read-committed** — reads fall through to the **live store** (latest committed, re-read per
+      statement); commit publishes with no conflict check (rev-OCC at the adapter still rejects a
+      stale-rev write, so lost update can't slip in).
+    - **snapshot / serializable** — reads fall back to a frozen as-of-begin snapshot; commit
+      rejects write-write (snapshot) and additionally read-write / phantom (serializable).
+    """
 
     begin_version: int
     serializable: bool
+    read_committed: bool = False
     snapshots: dict[str, dict[Any, Any]] = attrs.field(factory=dict)
     overlays: dict[str, dict[Any, Any]] = attrs.field(factory=dict)
     reads: dict[str, set[Any]] = attrs.field(factory=dict)
     scans: set[str] = attrs.field(factory=set)
     """Namespaces this transaction scanned (predicate reads) — for phantom detection."""
+    rev_guarded: dict[str, set[Any]] = attrs.field(factory=dict)
+    """Keys this transaction wrote under a row-``rev`` guard (optimistic concurrency). Read-committed
+    surfaces a write-write conflict only for these — a rev-guarded update is the one a concurrent
+    committer makes fail (Postgres serializes it by row lock), while a *blind* (rev-less) write
+    silently loses the update, as read-committed permits. Snapshot/serializable conflict on every
+    write regardless."""
 
     # ....................... #
 
     @classmethod
-    def begin(cls, state: Any, *, serializable: bool) -> MvccTx:
-        # Eager as-of-begin snapshot of every document namespace (shallow: rows are replaced,
-        # never mutated in place, so holding the prior row refs is a faithful snapshot).
-        snapshots = {ns: dict(store) for ns, store in state.documents.items()}
+    def begin(cls, state: Any, *, serializable: bool, read_committed: bool = False) -> MvccTx:
+        # Snapshot / serializable freeze an as-of-begin snapshot of every document namespace
+        # (shallow: rows are replaced, never mutated in place, so holding the prior row refs is a
+        # faithful snapshot). Read-committed reads through to the live store instead, so it needs
+        # no frozen snapshot.
+        snapshots = (
+            {}
+            if read_committed
+            else {ns: dict(store) for ns, store in state.documents.items()}
+        )
         begin_version = state.mvcc_version
         state.mvcc_active.append(begin_version)
 
         return cls(
             begin_version=begin_version,
             serializable=serializable,
+            read_committed=read_committed,
             snapshots=snapshots,
         )
 
@@ -190,11 +216,17 @@ class MvccTx:
 
     # ....................... #
 
-    def view(self, ns: str, _live_store: Any) -> IsolatedStoreView:
-        """Return the buffered view for namespace *ns* (shared per-namespace state)."""
+    def view(self, ns: str, live_store: Any) -> IsolatedStoreView:
+        """Return the buffered view for namespace *ns* (shared per-namespace state).
+
+        Read-committed reads fall through to *live_store* (latest committed); snapshot/serializable
+        fall back to the frozen as-of-begin snapshot. Writes always buffer to the overlay.
+        """
+
+        snapshot = live_store if self.read_committed else self.snapshots.setdefault(ns, {})
 
         return IsolatedStoreView(
-            snapshot=self.snapshots.setdefault(ns, {}),
+            snapshot=snapshot,
             overlay=self.overlays.setdefault(ns, {}),
             reads=self.reads.setdefault(ns, set()),
             ns=ns,
@@ -203,15 +235,32 @@ class MvccTx:
 
     # ....................... #
 
+    def mark_rev_guarded(self, ns: str, key: Any) -> None:
+        """Record that *key* in *ns* was written under a row-``rev`` guard (see :attr:`rev_guarded`)."""
+
+        self.rev_guarded.setdefault(ns, set()).add(key)
+
+    # ....................... #
+
     def _write_keys(self, ns: str) -> set[Any]:
         return set(self.overlays.get(ns, {}).keys())
+
+    def _conflict_keys(self, ns: str) -> set[Any]:
+        # Read-committed surfaces a write-write conflict only for rev-guarded writes (a blind write
+        # silently loses, as read-committed permits); snapshot/serializable conflict on every write.
+        return self.rev_guarded.get(ns, set()) if self.read_committed else self._write_keys(ns)
 
     def validate(self, state: Any) -> None:
         """Raise on a conflict with any transaction committed after this one began.
 
-        Snapshot rejects write-write (lost update); serializable also rejects read-write
-        (write skew) and, for any namespace this transaction *scanned*, a concurrent write to
-        that namespace — including the insert of a new matching key (phantom / write skew).
+        Snapshot rejects *write-write* on **every** write (first-committer-wins, preventing lost
+        update). Read-committed rejects it only for **rev-guarded** writes (see :attr:`rev_guarded`):
+        a rev-guarded update to a row a concurrent transaction also committed is exactly what
+        Postgres read-committed fails (it row-locks the second until the first commits, then its
+        stale-rev guard matches no rows); a *blind* (rev-less) write silently loses, which
+        read-committed permits. Serializable additionally rejects read-write (write skew) and, for
+        any namespace this transaction *scanned*, a concurrent write to that namespace — including
+        the insert of a new matching key (phantom / write skew).
         """
 
         for version, write_sets in state.mvcc_commit_log:
@@ -219,7 +268,7 @@ class MvccTx:
                 continue
 
             for ns, committed_keys in write_sets.items():
-                if self._write_keys(ns) & committed_keys:
+                if self._conflict_keys(ns) & committed_keys:
                     raise exc.concurrency(
                         "Write-write conflict: a concurrent transaction modified a row "
                         "this transaction also wrote (lost update prevented)",
@@ -229,6 +278,12 @@ class MvccTx:
                 if not self.serializable:
                     continue
 
+                # Deliberately coarse: a scan's read-set is the whole *namespace*,
+                # not the predicate — a conservative stand-in for a predicate /
+                # seq-scan SIReadLock that also catches a new matching key. It only
+                # OVER-prevents (never admits a non-serializable schedule), and the
+                # conformance differential normalizes the extra abort — see the
+                # "read-only-abort-vs-safe-snapshot" MECHANISM_DIVERGENCES entry.
                 if ns in self.scans:
                     raise exc.concurrency(
                         "Phantom conflict: a concurrent transaction wrote to a namespace "

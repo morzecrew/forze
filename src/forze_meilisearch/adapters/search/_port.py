@@ -27,7 +27,7 @@ class MeilisearchSearchPortMixin[M: BaseModel](SimpleSearchPortMixin[M]):
     """
 
     def _raise_cursor_not_supported(self) -> None:
-        raise exc.internal(
+        raise exc.precondition(
             "search_cursor is not implemented for Meilisearch search; use search or "
             "search_page with limit/offset, or result snapshots for deep paging.",
         )

@@ -1,4 +1,4 @@
-"""The two sharded lifecycle steps read the `RealtimeShard` correctly (RFC 0007, A).
+"""The two sharded lifecycle steps read the `RealtimeShard` correctly.
 
 `realtime_tenant_group_ensure_lifecycle_step` and `realtime_tenant_relay_lifecycle_step` are
 thin wrappers that pull `stream_spec` / `tenants` / `group` off the shard. These tests pin

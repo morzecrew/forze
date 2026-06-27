@@ -74,6 +74,12 @@ class IntegrationEvent[M]:
     ordering only on outbox backends with HLC ordering enabled; otherwise carried
     for downstream consumers that order on ``HEADER_HLC``."""
 
+    traceparent: str | None = None
+    """W3C ``traceparent`` of the publishing operation's span, captured at staging (inside that
+    operation's span). Persisted only on backends with trace propagation enabled; the relay forwards
+    it as ``HEADER_TRACEPARENT`` so the consume side links its span to the publish span — stitching the
+    async outbox→broker→inbox flow into one distributed trace. ``None`` when no span was active."""
+
 
 # ....................... #
 
@@ -148,6 +154,11 @@ class OutboxClaim:
     """Hybrid Logical Clock stamp reconstructed from the row (HLC-ordering
     backends only). The relay forwards it as ``HEADER_HLC`` so consumers can
     order causally; ``None`` when the backend does not persist it."""
+
+    traceparent: str | None = None
+    """W3C ``traceparent`` reconstructed from the row (trace-propagation backends only). The relay
+    forwards it as ``HEADER_TRACEPARENT`` so the consume span links to the publish span; ``None`` when
+    the backend does not persist it."""
 
 
 # ....................... #

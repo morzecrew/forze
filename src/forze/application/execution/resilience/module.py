@@ -16,7 +16,7 @@ from forze.application.contracts.resilience import (
 )
 from forze.base.exceptions import exc
 
-from ..deps import Deps
+from forze.application.contracts.deps import Deps
 from .executor import InProcessResilienceExecutor
 from .policies import builtin_default_policies
 

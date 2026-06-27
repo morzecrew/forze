@@ -414,8 +414,10 @@ class TestUpdate:
         state = MockState()
         adapter = _plain_adapter(state)
         created = await adapter.create(ThingCreate(name="a"))
-        with pytest.raises(CoreException, match="Revision conflict"):
+        # A stale-rev write raises the same revision_mismatch precondition the real adapters do.
+        with pytest.raises(CoreException) as excinfo:
             await adapter.update(created.id, created.rev + 99, ThingUpdate(name="b"))
+        assert excinfo.value.code == "revision_mismatch"
 
     async def test_no_diff_keeps_rev_and_returns_doc(self) -> None:
         state = MockState()

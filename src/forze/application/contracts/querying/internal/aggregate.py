@@ -66,7 +66,7 @@ def _having_field_roots(expr: QueryExpr) -> frozenset[str]:
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
-class GroupRef:
+class GroupField:
     """Group by a document field path."""
 
     field: str
@@ -100,7 +100,7 @@ class GroupKey:
     alias: str
     """Output field alias."""
 
-    expr: GroupRef | GroupTrunc
+    expr: GroupField | GroupTrunc
     """Group dimension expression."""
 
 
@@ -172,7 +172,7 @@ class AggregatesExpressionParser:
         raw_computed_obj: object = expr.get("$computed", {})
 
         if not isinstance(raw_computed_obj, Mapping):
-            raise exc.internal(f"Invalid aggregate $computed: {raw_computed_obj!r}")
+            raise exc.precondition(f"Invalid aggregate $computed: {raw_computed_obj!r}")
 
         raw_computed = cast(Mapping[Any, Any], raw_computed_obj)  # type: ignore[redundant-cast]
 
@@ -183,7 +183,7 @@ class AggregatesExpressionParser:
         )
 
         if not computed_fields:
-            raise exc.internal("Aggregates expression requires $computed")
+            raise exc.precondition("Aggregates expression requires $computed")
 
         aliases = [group.alias for group in groups] + [
             field.alias for field in computed_fields
@@ -191,7 +191,7 @@ class AggregatesExpressionParser:
         duplicates = sorted({alias for alias in aliases if aliases.count(alias) > 1})
 
         if duplicates:
-            raise exc.internal(f"Duplicate aggregate aliases: {duplicates}")
+            raise exc.precondition(f"Duplicate aggregate aliases: {duplicates}")
 
         having = cls._having(expr.get("$having"), frozenset(aliases))
 
@@ -219,7 +219,7 @@ class AggregatesExpressionParser:
         unknown = sorted(referenced - aliases)
 
         if unknown:
-            raise exc.internal(
+            raise exc.precondition(
                 f"$having may only reference aggregate output aliases "
                 f"({sorted(aliases)}); unknown: {unknown}.",
             )
@@ -247,38 +247,41 @@ class AggregatesExpressionParser:
             return tuple(
                 GroupKey(
                     alias=cls._alias(name),
-                    expr=GroupRef(field=cls._field(name)),
+                    expr=GroupField(field=cls._field(name)),
                 )
                 for name in seq
             )
 
-        raise exc.internal(f"Invalid aggregate $groups: {raw!r}")
+        raise exc.precondition(f"Invalid aggregate $groups: {raw!r}")
 
     # ....................... #
 
     @classmethod
-    def _parse_group_value(cls, raw: object) -> GroupRef | GroupTrunc:
+    def _parse_group_value(cls, raw: object) -> GroupField | GroupTrunc:
         if isinstance(raw, str):
-            return GroupRef(field=cls._field(raw))
+            return GroupField(field=cls._field(raw))
 
         if not isinstance(raw, Mapping):
-            raise exc.internal(f"Invalid $groups map value: {raw!r}")
+            raise exc.precondition(f"Invalid $groups map value: {raw!r}")
 
         spec = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
 
         if len(spec) != 1:
-            raise exc.internal(
+            raise exc.precondition(
                 f"$groups map value must declare exactly one operator, got {list(spec)!r}",
             )
 
         op, inner = next(iter(spec.items()))
 
         if op not in _GROUP_OPS:
-            raise exc.internal(f"Invalid $groups operator: {op!r}")
+            raise exc.precondition(f"Invalid $groups operator: {op!r}")
 
         if op == "$trunc":
             return cls._parse_trunc(inner)
 
+        # Unreachable: ``op`` is already validated against ``_GROUP_OPS`` above, so a
+        # caller can never reach this. A defensive guard over already-validated data —
+        # internal (a bug) if it ever fires, not a caller-facing precondition.
         raise exc.internal(f"Invalid $groups operator: {op!r}")
 
     # ....................... #
@@ -286,29 +289,29 @@ class AggregatesExpressionParser:
     @classmethod
     def _parse_trunc(cls, raw: object) -> GroupTrunc:
         if not isinstance(raw, Mapping):
-            raise exc.internal(f"Invalid $trunc spec: {raw!r}")
+            raise exc.precondition(f"Invalid $trunc spec: {raw!r}")
 
         spec = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
         allowed = {"field", "unit", "timezone"}
         extra = set(spec) - allowed
 
         if extra:
-            raise exc.internal(f"Invalid $trunc keys: {sorted(extra)}")
+            raise exc.precondition(f"Invalid $trunc keys: {sorted(extra)}")
 
         field = spec.get("field")
         unit = spec.get("unit")
 
         if not isinstance(field, str) or not field.strip():
-            raise exc.internal("$trunc.field must be a non-empty string")
+            raise exc.precondition("$trunc.field must be a non-empty string")
 
         if not isinstance(unit, str) or unit not in _UNITS:
-            raise exc.internal(
+            raise exc.precondition(
                 f"$trunc.unit must be one of {sorted(_UNITS)}",
             )
 
         tz_raw = spec.get("timezone")
         if tz_raw is not None and not isinstance(tz_raw, str):
-            raise exc.internal(f"$trunc.timezone must be a string, got {tz_raw!r}")
+            raise exc.precondition(f"$trunc.timezone must be a string, got {tz_raw!r}")
 
         resolved = parse_aggregate_timezone(tz_raw)
 
@@ -323,7 +326,7 @@ class AggregatesExpressionParser:
     @staticmethod
     def _alias(alias: object) -> str:
         if not isinstance(alias, str) or not _ALIAS_RE.fullmatch(alias):
-            raise exc.internal(f"Invalid aggregate alias: {alias!r}")
+            raise exc.precondition(f"Invalid aggregate alias: {alias!r}")
 
         return alias
 
@@ -332,7 +335,7 @@ class AggregatesExpressionParser:
     @staticmethod
     def _field(field: object) -> str:
         if not isinstance(field, str) or not field.strip():
-            raise exc.internal(f"Invalid aggregate field path: {field!r}")
+            raise exc.precondition(f"Invalid aggregate field path: {field!r}")
 
         return field
 
@@ -343,19 +346,19 @@ class AggregatesExpressionParser:
         alias = cls._alias(alias)
 
         if not isinstance(spec, Mapping):
-            raise exc.internal(f"Invalid aggregate computed field spec: {spec!r}")
+            raise exc.precondition(f"Invalid aggregate computed field spec: {spec!r}")
 
         raw_spec: Mapping[Any, Any] = spec  # type: ignore[assignment]
 
         if len(raw_spec) != 1:
-            raise exc.internal(
+            raise exc.precondition(
                 f"Aggregate computed field {alias!r} must declare exactly one function",
             )
 
         function, field = next(iter(raw_spec.items()))
 
         if function not in _FUNCTIONS:
-            raise exc.internal(f"Invalid aggregate function: {function!r}")
+            raise exc.precondition(f"Invalid aggregate function: {function!r}")
 
         field_path, filter_expr, parsed_filter, p = cls._function_arg(function, field)
 
@@ -381,7 +384,7 @@ class AggregatesExpressionParser:
 
         if not isinstance(raw, Mapping):
             if needs_p:
-                raise exc.internal(
+                raise exc.precondition(
                     "$percentile requires the {field, p} form; no scalar shorthand",
                 )
 
@@ -397,7 +400,7 @@ class AggregatesExpressionParser:
         extra = sorted(str(key) for key in set(raw_spec) - allowed)
 
         if extra:
-            raise exc.internal(f"Invalid aggregate function keys: {extra}")
+            raise exc.precondition(f"Invalid aggregate function keys: {extra}")
 
         cls._check_field_presence(function, field, fieldless=fieldless)
 
@@ -423,17 +426,17 @@ class AggregatesExpressionParser:
         fieldless: bool,
     ) -> None:
         if fieldless and field is not None:
-            raise exc.internal("$count aggregate expects no field")
+            raise exc.precondition("$count aggregate expects no field")
 
         if not fieldless and field is None:
-            raise exc.internal(f"{function} aggregate requires a field")
+            raise exc.precondition(f"{function} aggregate requires a field")
 
     @classmethod
     def _quantile(cls, p: object) -> float:
         if p is None:
-            raise exc.internal("$percentile requires a 'p' quantile")
+            raise exc.precondition("$percentile requires a 'p' quantile")
 
         if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0 <= p <= 1:
-            raise exc.internal(f"$percentile 'p' must be a number in [0, 1], got {p!r}")
+            raise exc.precondition(f"$percentile 'p' must be a number in [0, 1], got {p!r}")
 
         return float(p)

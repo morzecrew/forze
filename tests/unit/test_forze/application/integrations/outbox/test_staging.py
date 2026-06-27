@@ -108,6 +108,33 @@ async def test_stage_threads_ordering_key_onto_event() -> None:
     assert by_type["demo.updated"].ordering_key is None
 
 
+def test_enricher_captures_active_span_traceparent() -> None:
+    """The enricher stamps the publishing span's traceparent onto the event (``None`` without one)."""
+
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+    enricher = InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock)
+
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
+    tracer = provider.get_tracer("test")
+
+    # No active span → no parent captured.
+    assert enricher.enrich("e.happened", _Payload(value="a")).traceparent is None
+
+    # Inside the publishing span → captured, encoding that span's id.
+    with tracer.start_as_current_span("publish") as span:
+        event = enricher.enrich("e.happened", _Payload(value="b"))
+
+    assert event.traceparent is not None
+    assert format(span.get_span_context().span_id, "016x") in event.traceparent
+
+
 @pytest.mark.asyncio
 async def test_cannot_stage_after_flush() -> None:
     spec = OutboxSpec(

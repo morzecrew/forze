@@ -8,7 +8,7 @@ from forze.application.contracts.deps import DepKey
 from forze.application.contracts.domain import DomainEventDispatcherDepKey
 
 from ..context import ExecutionContext
-from ..deps import Deps
+from forze.application.contracts.deps import Deps
 from .dispatcher import InProcessDomainEventDispatcher
 from .handler import DomainEventRegistry
 

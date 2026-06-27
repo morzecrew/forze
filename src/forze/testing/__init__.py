@@ -13,8 +13,6 @@ For exhaustive, seed-driven exploration of those same concerns, reach past this 
 Simulation Testing (:mod:`forze_dst`).
 """
 
-from __future__ import annotations
-
 from forze.testing.context import (
     context_from_deps,
     context_from_modules,

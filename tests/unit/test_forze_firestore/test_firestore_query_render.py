@@ -5,10 +5,11 @@ from __future__ import annotations
 import attrs
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from google.cloud.firestore_v1.base_query import And, FieldFilter, Or
 
 from forze.application.contracts.querying import (
+    UNSUPPORTED_QUERY_FEATURE_CODE,
     QueryAnd,
     QueryCompare,
     QueryElem,
@@ -75,9 +76,15 @@ class TestFirestoreQueryRenderer:
             r.render(QueryElem("tags", "$any", QueryField("x", "$eq", 1)))
 
     def test_aggregates_raises(self) -> None:
+        # supports_aggregates=False -> a clean fail-closed precondition naming the backend,
+        # not the opaque render-time ``internal`` the MVP raised before.
         r = FirestoreQueryRenderer()
-        with pytest.raises(CoreException, match="aggregates"):
+        with pytest.raises(CoreException, match="aggregates") as ei:
             r.render_aggregates({"$computed": {"orders": {"$count": None}}})
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+        assert "firestore" in str(ei.value)
 
     def test_unknown_expression_raises(self) -> None:
         r = FirestoreQueryRenderer()

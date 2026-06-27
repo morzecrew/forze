@@ -378,10 +378,14 @@ class PostgresGateway[M: BaseModel](
     ) -> sql.Composable:
         bad = [f for f in use if f not in self.read_fields]
 
-        # Raising (rather than silently excluding) on unknown fields is
-        # deliberate: a bad field here is a caller bug, not user input.
+        # Projection fields come from the caller's request and are not validated
+        # upstream, so an unknown field is caller-fixable: reject it cleanly with the
+        # same precondition + code the filter/sort paths use for a field not on the
+        # read model, rather than failing deep in the renderer with a 500.
         if bad:
-            raise exc.internal(f"Invalid fields: {bad}")
+            raise exc.precondition(
+                f"Unknown projection field(s): {bad}.", code="field_not_on_read_model"
+            )
 
         return sql.SQL(", ").join(
             sql.Identifier(f) if table_alias is None else sql.Identifier(table_alias, f)

@@ -82,6 +82,13 @@ def test_match_text_patterns() -> None:
     assert _match_field({}, QueryField("t", "$ilike", "%road%")) is False
     assert _match_field({"t": "foo"}, QueryField("t", "$regex", "^f")) is True
 
+    # A present ``None`` (not just a missing field) never matches a text pattern: ``str(None)`` would
+    # otherwise become ``"None"`` and spuriously match — e.g. ``%on%`` or ``.*`` (a backend's NULL
+    # matches no pattern).
+    assert _match_field({"t": None}, QueryField("t", "$like", "%on%")) is False
+    assert _match_field({"t": None}, QueryField("t", "$regex", ".*")) is False
+    assert _match_field({"t": None}, QueryField("t", "$ilike", "%n%")) is False
+
 
 def test_match_descendant_of_label_aware_inclusive() -> None:
     f = QueryField("p", "$descendant_of", "top.science")

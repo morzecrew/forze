@@ -22,7 +22,7 @@ from forze.application.contracts.querying import (
     AggregatesExpression,
     AggregatesExpressionParser,
     GroupKey,
-    GroupRef,
+    GroupField,
     GroupTrunc,
     ParsedAggregates,
     QueryAnd,
@@ -37,6 +37,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
     elem_inner_is_scalar,
+    validate_aggregate_capabilities,
     validate_query_capabilities,
 )
 from forze.base.exceptions import exc
@@ -158,7 +159,11 @@ class PsycopgValueCoercer:
             return [self.scalar(x, t=None) for x in v]
 
         if not t.is_array and raise_on_scalar_t:
-            raise exc.internal("Expected array column, got scalar")
+            raise exc.precondition(
+                "Set operators ($superset / $subset / $disjoint / $overlaps) "
+                "require an array column on the 'postgres' backend.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
+            )
 
         elem_t = PostgresType(base=t.base, is_array=False, not_null=True)
 
@@ -219,6 +224,10 @@ class PsycopgQueryRenderer:
     ) -> tuple[ParsedAggregates, sql.Composable, sql.Composable | None, list[Any]]:
         """Render aggregate SELECT and GROUP BY clauses."""
 
+        validate_aggregate_capabilities(
+            aggregates, POSTGRES_QUERY_CAPABILITIES, backend="postgres"
+        )
+
         parsed = AggregatesExpressionParser.parse(aggregates)
         select_parts: list[sql.Composable] = []
         group_parts: list[sql.Composable] = []
@@ -250,7 +259,7 @@ class PsycopgQueryRenderer:
     ) -> tuple[sql.Composable, sql.Composable]:
         ident = sql.Identifier(group.alias)
 
-        if isinstance(group.expr, GroupRef):
+        if isinstance(group.expr, GroupField):
             expr = self._render_source_expr(group.expr.field)
 
         else:
@@ -296,7 +305,7 @@ class PsycopgQueryRenderer:
         bad = [field for field in sorts if field not in aliases]
 
         if bad:
-            raise exc.internal(f"Invalid aggregate sort fields: {bad}")
+            raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
 
         parts: list[sql.Composable] = []
 
@@ -464,8 +473,10 @@ class PsycopgQueryRenderer:
             return
 
         if left_t.is_array or right_t.is_array:
-            raise exc.internal(
-                f"Field compare between {left!r} and {right!r} does not support array columns.",
+            raise exc.precondition(
+                f"Field-to-field comparison between {left!r} and {right!r} does not "
+                "support array columns on the 'postgres' backend.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
         if left_t.base == right_t.base:
@@ -475,9 +486,11 @@ class PsycopgQueryRenderer:
             if left_t.base in group and right_t.base in group:
                 return
 
-        raise exc.internal(
-            f"Incompatible types for field compare {left!r} ({left_t.base!r}) "
-            f"and {right!r} ({right_t.base!r}).",
+        raise exc.precondition(
+            f"Incompatible types between fields {left!r} and {right!r}: field-to-field "
+            "comparison of these fields is not supported on the 'postgres' backend "
+            "(compare fields of compatible types).",
+            code=UNSUPPORTED_QUERY_FEATURE_CODE,
         )
 
     # ....................... #
@@ -636,13 +649,16 @@ class PsycopgQueryRenderer:
             return
 
         if t.is_array:
-            raise exc.internal(
-                f"Operator {op!r} is not supported on array column type {t!r}",
+            raise exc.precondition(
+                f"Operator {op!r} is not supported on an array column for the "
+                "'postgres' backend; use a text-like column.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
         if t.base not in _TEXT_LIKE_BASES:
-            raise exc.internal(
-                f"Operator {op!r} requires a text-like column; got {t.base!r}",
+            raise exc.precondition(
+                f"Operator {op!r} requires a text-like column for the 'postgres' backend.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
     # ....................... #
@@ -696,8 +712,10 @@ class PsycopgQueryRenderer:
         path = str(value)
 
         if t is not None and t.is_array:
-            raise exc.internal(
-                f"Hierarchy operator {op!r} is not supported on array column type {t!r}",
+            raise exc.precondition(
+                f"Hierarchy operator {op!r} is not supported on an array column for the "
+                "'postgres' backend; use an ltree or text-like column.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
         if t is not None and t.base == _LTREE_BASE:
@@ -710,9 +728,10 @@ class PsycopgQueryRenderer:
             return sql.SQL("{} {} {}").format(col, ltree_op, bound)
 
         if t is not None and t.base not in _TEXT_LIKE_BASES:
-            raise exc.internal(
-                f"Hierarchy operator {op!r} requires an ltree or text-like column; "
-                f"got {t.base!r}",
+            raise exc.precondition(
+                f"Hierarchy operator {op!r} requires an ltree or text-like column for "
+                "the 'postgres' backend.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
         # Compare label sequences with a trailing separator so equality and strict
@@ -835,10 +854,11 @@ class PsycopgQueryRenderer:
                 value,
                 (str, bytes, bytearray),
             ):
-                raise exc.internal(
-                    f"Array column filter {op!r} requires a list/tuple value; "
-                    "use $null for null checks, $superset / $overlaps / $in for "
-                    "containment-style matches.",
+                raise exc.precondition(
+                    f"Filter {op!r} on an array column requires a list/tuple value on "
+                    "the 'postgres' backend; use $null for null checks, or "
+                    "$superset / $overlaps / $in for containment-style matches.",
+                    code=UNSUPPORTED_QUERY_FEATURE_CODE,
                 )
 
             bound = self.binder.add(self.coercer.array(value, t=t))
@@ -942,8 +962,10 @@ class PsycopgQueryRenderer:
         vacuous = self._elem_vacuous_sql(quantifier)
 
         if t is not None and not t.is_array and t.base not in ("jsonb", "json"):
-            raise exc.internal(
-                f"Element quantifier on {path!r} requires an array or jsonb array column",
+            raise exc.precondition(
+                f"Element quantifier on {path!r} requires an array or jsonb-array "
+                "column on the 'postgres' backend.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
         alias = sql.Identifier(self._elem_alias(0))

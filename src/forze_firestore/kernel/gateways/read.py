@@ -300,7 +300,16 @@ class FirestoreReadGateway[M: BaseModel](
         parsed: QueryExpr | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
         if aggregates is not None:
-            raise exc.internal("Firestore adapter does not support aggregates in MVP")
+            return await self.find_many_aggregates(
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                aggregates=aggregates,
+                return_model=return_model,
+                return_fields=return_fields,
+                parsed=parsed,
+            )
 
         if offset is not None and offset > 0:
             raise exc.precondition(
@@ -383,7 +392,7 @@ class FirestoreReadGateway[M: BaseModel](
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise exc.internal(
+            raise exc.validation(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
@@ -391,7 +400,7 @@ class FirestoreReadGateway[M: BaseModel](
         lim: int = 10 if limit_raw is None else int(cast(Any, limit_raw))  # type: ignore[has-type, assignment]
 
         if lim < 1:
-            raise exc.internal("Cursor pagination 'limit' must be positive")
+            raise exc.validation("Cursor pagination 'limit' must be positive")
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
@@ -402,9 +411,9 @@ class FirestoreReadGateway[M: BaseModel](
         )
 
         if [k for k, _, _ in normalized] != [ID_FIELD] or len(normalized) != 1:
-            raise exc.internal(
-                "Firestore find_many_with_cursor (v1) requires sorting only by primary key: "
-                "omit ``sorts`` or pass a single {id: asc|desc}."
+            raise exc.precondition(
+                "Firestore cursor pagination requires sorting only by primary key: "
+                "omit sorts or pass a single {id: asc|desc}."
             )
 
         _id_asc = normalized[0][1] == "asc"
@@ -420,15 +429,15 @@ class FirestoreReadGateway[M: BaseModel](
                 or len(td) != 1
                 or str(td[0]).lower() not in ("asc", "desc")
             ):
-                raise exc.internal("Invalid cursor for current sort")
+                raise exc.validation("Invalid cursor for current sort")
 
             if str(td[0]).lower() != ("asc" if _id_asc else "desc"):
-                raise exc.internal("Cursor does not match current sort order")
+                raise exc.validation("Cursor does not match current sort order")
 
             rid = str(tv[0]) if len(tv) == 1 else None
 
             if not rid:
-                raise exc.internal("Invalid cursor for current sort")
+                raise exc.validation("Invalid cursor for current sort")
 
             if use_after:
                 start_after = rid

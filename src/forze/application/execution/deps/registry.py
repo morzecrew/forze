@@ -1,11 +1,14 @@
 """Authoring dependency registry (compose, freeze, resolve)."""
 
 import os
-from typing import Self, final
+from typing import TYPE_CHECKING, Any, Self, final
 
 import attrs
 
 from forze.application._logger import logger
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Tracer
 
 from ..interception import PortInterceptor, PortInterceptorChain
 from ..tracing import RuntimeTracer, runtime_tracer_from_flag
@@ -99,6 +102,10 @@ class DepsRegistry:
     interceptors: PortInterceptorChain = attrs.field(factory=tuple)
     """Deps-scoped port interceptors applied to every resolved configurable port."""
 
+    otel_port_tracer: Any = attrs.field(default=None)
+    """When set (via :meth:`with_otel_port_spans`), every resolved configurable port emits a per-call
+    OpenTelemetry client span through this tracer (an OTel ``Tracer``)."""
+
     # ....................... #
 
     @classmethod
@@ -176,6 +183,22 @@ class DepsRegistry:
 
     # ....................... #
 
+    def with_otel_port_spans(self, *, tracer: "Tracer | None" = None) -> Self:
+        """Return a registry that emits a per-call OpenTelemetry **client span** for every resolved
+        configurable port (a child of the operation span — see ``instrument_operations``).
+
+        Production observability: in a hexagonal app every external call is a port, so this turns the
+        port seam into a complete outbound-I/O trace. Opt in once at assembly. *tracer* defaults to the
+        global ``trace.get_tracer("forze")`` (configure the OTel SDK + exporter in your app); pass one
+        explicitly to target a specific provider. Independent of ``with_tracing`` (the dev DST buffer).
+        """
+
+        from opentelemetry import trace
+
+        return attrs.evolve(self, otel_port_tracer=tracer or trace.get_tracer("forze"))
+
+    # ....................... #
+
     def with_interceptors(self, *interceptors: PortInterceptor) -> Self:
         """Return a registry that wraps every resolved configurable port in *interceptors*.
 
@@ -240,4 +263,5 @@ class DepsRegistry:
             resolution_tracer=resolution_tracer,
             runtime_tracer=runtime_tracer,
             interceptors=self.interceptors,
+            otel_port_tracer=self.otel_port_tracer,
         )

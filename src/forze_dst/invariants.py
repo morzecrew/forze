@@ -2,14 +2,15 @@
 
 A namespace over the oracle's assertion vocabulary: always-properties (``no_duplicate_effect``,
 ``monotonic_per``, ``mutual_exclusion``, …), value-level checks (``expect``, ``expect_value``,
-``read_your_writes``), linearizability (``linearizable`` + its specs), and reachability /
-"sometimes" liveness (``sometimes``, ``reached``). Import the namespace and reach for what you
-need: ``from forze_dst import invariants as inv`` → ``inv.no_duplicate_effect(...)``.
+``read_your_writes``), transactional isolation (``snapshot_isolation``, ``serializable``),
+linearizability (``linearizable`` + its specs), commutativity (``commutative_convergence`` — the one
+*cross-history* checker, not a single-history :data:`Invariant`), and reachability / "sometimes"
+liveness (``sometimes``, ``reached``). Import the namespace and reach for what you need:
+``from forze_dst import invariants as inv`` → ``inv.no_duplicate_effect(...)``.
 """
 
-from __future__ import annotations
-
-from forze_dst.oracle.invariants import (
+from .oracle.commutativity import commutative_convergence
+from .oracle.invariants import (
     Invariant,
     Violation,
     check,
@@ -26,7 +27,22 @@ from forze_dst.oracle.invariants import (
     read_your_writes,
     single_key_per_operation,
 )
-from forze_dst.oracle.linearizability import (
+from .oracle.isolation import (
+    ScanRead,
+    TxRecord,
+    VersionedTxRecord,
+    WriteVersion,
+    find_serializability_cycle,
+    find_serializable_violations,
+    find_snapshot_isolation_violations,
+    had_isolation_conflict,
+    isolation_oracle_for,
+    serializable,
+    snapshot_isolation,
+    transactions_from_history,
+    versioned_transactions_from_history,
+)
+from .oracle.linearizability import (
     RegisterSpec,
     SequentialSpec,
     is_linearizable,
@@ -35,12 +51,13 @@ from forze_dst.oracle.linearizability import (
     record_operation,
     sequential,
 )
-from forze_dst.oracle.reachability import (
+from .oracle.reachability import (
     ReachabilityReport,
     assess_reachability,
     reached_labels,
     sometimes,
 )
+from .oracle.system_invariants import CompiledOracle, compile_oracle
 
 # ....................... #
 
@@ -71,6 +88,25 @@ __all__ = [
     "RegisterSpec",
     "SequentialSpec",
     "record_operation",
+    # transactional isolation
+    "snapshot_isolation",
+    "serializable",
+    "transactions_from_history",
+    "versioned_transactions_from_history",
+    "find_snapshot_isolation_violations",
+    "find_serializable_violations",
+    "find_serializability_cycle",
+    "had_isolation_conflict",
+    "isolation_oracle_for",
+    "TxRecord",
+    "VersionedTxRecord",
+    "ScanRead",
+    "WriteVersion",
+    # commutativity (cross-history)
+    "commutative_convergence",
+    # cross-aggregate system-invariant oracle
+    "compile_oracle",
+    "CompiledOracle",
     # reachability / liveness
     "sometimes",
     "reached_labels",

@@ -277,13 +277,13 @@ def parse_analytics_cursor_limit(
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise exc.internal("Cursor pagination: pass at most one of 'after' or 'before'")
+        raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
     lim_raw = c.get("limit")
     lim = int(cast(Any, lim_raw)) if lim_raw is not None else 10
 
     if lim < 1:
-        raise exc.internal("Cursor pagination 'limit' must be positive")
+        raise exc.validation("Cursor pagination 'limit' must be positive")
 
     return lim
 
@@ -302,7 +302,9 @@ def parse_offset_cursor_after(
     lim = parse_analytics_cursor_limit(cursor)
 
     if c.get("before"):
-        raise exc.internal(backward_not_supported)
+        raise exc.precondition(
+            backward_not_supported, code="analytics_backward_cursor_unsupported"
+        )
 
     if not c.get("after"):
         return 0, lim
@@ -311,15 +313,15 @@ def parse_offset_cursor_after(
         payload = _ANALYTICS_CURSOR_CODEC.loads(str(c["after"]))
 
         if not isinstance(payload, dict):
-            raise exc.internal("Invalid analytics cursor token")
+            raise exc.validation("Invalid analytics cursor token")
 
         if "kc" in payload:
-            raise exc.internal("Offset cursor token passed to offset-based query.")
+            raise exc.validation("Offset cursor token passed to offset-based query.")
 
         return int(payload["o"]), lim  # type: ignore[arg-type]
 
     except (ValueError, KeyError, TypeError) as e:
-        raise exc.internal("Invalid analytics cursor token") from e
+        raise exc.validation("Invalid analytics cursor token") from e
 
 
 # ....................... #
@@ -336,7 +338,9 @@ def parse_keyset_cursor_after(
     lim = parse_analytics_cursor_limit(cursor)
 
     if c.get("before"):
-        raise exc.internal(backward_not_supported)
+        raise exc.precondition(
+            backward_not_supported, code="analytics_backward_cursor_unsupported"
+        )
 
     if not c.get("after"):
         return None, lim
@@ -345,12 +349,12 @@ def parse_keyset_cursor_after(
         payload = _ANALYTICS_CURSOR_CODEC.loads(str(c["after"]))
 
         if not isinstance(payload, dict) or "kv" not in payload:
-            raise exc.internal("Invalid analytics keyset cursor token")
+            raise exc.validation("Invalid analytics keyset cursor token")
 
         return payload["kv"], lim  # type: ignore[return-value]
 
     except (ValueError, KeyError, TypeError) as e:
-        raise exc.internal("Invalid analytics keyset cursor token") from e
+        raise exc.validation("Invalid analytics keyset cursor token") from e
 
 
 # ....................... #

@@ -30,6 +30,7 @@ from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.faults import compile_fault_policy
 from forze_dst.latency import compile_latency
 from forze_dst.loop import SimulationDeadlock
+from forze.application.execution.tracing import bind_tx_sequence
 from forze_dst.oracle.recorder import Recorder, bind_recorder, record_event
 
 if TYPE_CHECKING:
@@ -48,7 +49,9 @@ def run_recording(recorder: Recorder, run: Callable[[], None]) -> None:
     find → shrink → report pipeline works with no further changes.
     """
 
-    with bind_recorder(recorder):
+    # Bind a fresh run-global transaction-id counter for the whole run (around the gather of all
+    # tasks), so transactions get unique, replay-stable ids the isolation oracle groups by.
+    with bind_recorder(recorder), bind_tx_sequence():
         try:
             run()
         except SimulationDeadlock as deadlock:

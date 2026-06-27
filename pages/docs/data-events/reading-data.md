@@ -77,6 +77,12 @@ querying and index maintenance never mix.
 Search is wired like any other capability: a `SearchSpec` resolved from the
 context, with per-engine setup living in each integration.
 
+Not every backend compiles every feature — Firestore has no aggregations, a
+key-value document store no array quantifiers. The read DSL is capability-gated:
+a query that reaches for a feature the wired backend can't compile is rejected
+up front with a clean `precondition` naming the feature and backend, never a 500
+deep in an adapter.
+
 For a query-only service with no write side, see the
 [read-only document API](../recipes/read-only-document-api.md) recipe. Reading is one
 half of the story; writes that change state also emit domain events — how those

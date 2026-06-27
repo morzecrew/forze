@@ -115,4 +115,22 @@ DST is judged by the bugs it finds in *real* systems — so Forze runs its own d
 
 Each scenario also keeps a *broken* twin — drop the lock, ignore the remote stamp — that the oracle catches, minimises, and reproduces, so the test proves it can still fail. That is the bar: the framework's own concurrency code is continuously simulation-tested, and app authors inherit the same harness for free.
 
+## The mock matches the real engine
+
+Every invariant DST proves holds against the **mock** port, not against Postgres or Mongo — so a sweep is only as trustworthy as the mock's fidelity. For the property that worries people most, transactional isolation, Forze closes that gap with a **differential conformance** battery.
+
+`forze_dst.conformance` ships the classic isolation anomalies — dirty read, read skew, write skew, the three-transaction read-only anomaly, predicate phantoms — as deterministic forced interleavings, each with a known verdict per isolation level. The same battery runs against the in-memory mock *and*, over testcontainers, against real Postgres (every level) and Mongo (snapshot):
+
+```python
+from forze.application.contracts.transaction import IsolationLevel
+from forze_dst.conformance import BATTERY, expected_verdict
+
+# `backend` is a ConformanceBackend — N independent sessions over one shared store
+level = IsolationLevel.SERIALIZABLE
+for case in BATTERY:
+    assert await case.run(backend, level) == expected_verdict(case, level)
+```
+
+Each anomaly's outcome is normalised to *permitted* or *prevented*, so the differential compares the **behaviour** at the declared level — never the mechanism, the error code, or which transaction lost. The handful of expected differences (Forze's revision guard prevents lost update at *every* level, for one) live in a reviewed `CONTRACT_STRENGTHENINGS` / `MECHANISM_DIVERGENCES` catalog, so a real divergence stands out instead of drowning in noise. A green battery means the mock and the real engine agree on the anomaly — which is what lets "it passed on the mock" mean "it matches the real engine."
+
 Start with [what must hold](invariants.md) — invariants are the lens through which every other capability reports a bug.

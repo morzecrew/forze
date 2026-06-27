@@ -1,4 +1,4 @@
-"""Namespace-tier outbox — a bound relay pass drains each tenant's partition (RFC 0007, E).
+"""Namespace-tier outbox — a bound relay pass drains each tenant's partition.
 
 The durable on-ramp's missing leg: when the realtime **outbox** is itself tenant-aware
 (partitioned), the tenant-less relay can't read it — it must drain each tenant's partition

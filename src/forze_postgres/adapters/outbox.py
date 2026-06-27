@@ -59,6 +59,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
         table = await self._table()
         created_at = utcnow()
         hlc_ordering = self.config.hlc_ordering
+        propagate_trace = self.config.propagate_trace
         cols = (
             "id",
             "outbox_route",
@@ -76,6 +77,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             "available_at",
             "ordering_key",
             *(("hlc",) if hlc_ordering else ()),
+            *(("traceparent",) if propagate_trace else ()),
         )
         col_idents = [sql.Identifier(c) for c in cols]
         row_template = (
@@ -110,6 +112,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                         if hlc_ordering
                         else ()
                     ),
+                    *((event.traceparent,) if propagate_trace else ()),
                 ]
             )
 
@@ -159,10 +162,14 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
         # as a deterministic tiebreaker; legacy null-hlc rows fall back to
         # ``created_at``. Off keeps the size-only created_at order, byte for byte.
         hlc_ordering = self.config.hlc_ordering
+        propagate_trace = self.config.propagate_trace
         order_by = sql.SQL(
             "hlc NULLS LAST, created_at, id" if hlc_ordering else "created_at"
         )
         hlc_returning = sql.SQL(", t.hlc") if hlc_ordering else sql.SQL("")
+        trace_returning = (
+            sql.SQL(", t.traceparent") if propagate_trace else sql.SQL("")
+        )
 
         stmt = sql.SQL(
             """
@@ -185,13 +192,14 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             RETURNING
                 t.id, t.outbox_route, t.event_id, t.event_type, t.payload,
                 t.tenant_id, t.execution_id, t.correlation_id, t.causation_id,
-                t.occurred_at, t.attempts, t.ordering_key, t.created_at{hlc_returning}
+                t.occurred_at, t.attempts, t.ordering_key, t.created_at{hlc_returning}{trace_returning}
             """
         ).format(
             table=table.ident(),
             tenant_filter=tenant_filter,
             order_by=order_by,
             hlc_returning=hlc_returning,
+            trace_returning=trace_returning,
         )
 
         rows = await self.client.fetch_all(stmt, params)
@@ -231,6 +239,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                     if hlc_ordering and row.get("hlc") is not None
                     else None
                 ),
+                traceparent=row.get("traceparent") if propagate_trace else None,
             )
             for row in rows
         ]

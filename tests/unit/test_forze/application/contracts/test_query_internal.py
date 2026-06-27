@@ -8,7 +8,7 @@ import pytest
 from forze.application.contracts.querying import AggregatesExpressionParser
 from forze.application.contracts.querying.internal import (
     ELEM_SCALAR_FIELD,
-    GroupRef,
+    GroupField,
     GroupTrunc,
     QueryAnd,
     QueryCompare,
@@ -67,7 +67,7 @@ class TestAggregatesExpressionParser:
         )
 
         assert parsed.aliases == {"category", "rows", "revenue"}
-        assert isinstance(parsed.groups[0].expr, GroupRef)
+        assert isinstance(parsed.groups[0].expr, GroupField)
         assert parsed.groups[0].expr.field == "category"
         assert parsed.computed_fields[0].function == "$count"
 

@@ -42,6 +42,11 @@ _EXPORTS: dict[str, str] = {
     "DomainEvent": "forze.domain.models",
     "event_emitter": "forze.domain.models",
     "invariant": "forze.domain.models",
+    # cross-aggregate (system) invariants
+    "SystemInvariant": "forze.application.contracts.invariants",
+    "ReadSet": "forze.application.contracts.invariants",
+    "Sum": "forze.application.contracts.invariants",
+    "Count": "forze.application.contracts.invariants",
 }
 
 __all__ = [
@@ -62,6 +67,10 @@ __all__ = [
     "DomainEvent",
     "event_emitter",
     "invariant",
+    "SystemInvariant",
+    "ReadSet",
+    "Sum",
+    "Count",
 ]
 
 
@@ -71,6 +80,12 @@ __getattr__, __dir__ = lazy_exports(__name__, _EXPORTS)
 if TYPE_CHECKING:
     # Eager imports for IDEs and type checkers only
     from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+    from forze.application.contracts.invariants import (
+        Count,
+        ReadSet,
+        SystemInvariant,
+        Sum,
+    )
     from forze.application.execution import (
         Deps,
         DepsModule,

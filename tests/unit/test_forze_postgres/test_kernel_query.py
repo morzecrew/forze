@@ -121,7 +121,7 @@ class TestPsycopgValueCoercer:
         coercer = PsycopgValueCoercer()
         t = PostgresType(base="text", is_array=False, not_null=False)
 
-        with pytest.raises(CoreException, match="Expected array column, got scalar"):
+        with pytest.raises(CoreException, match="require an array column"):
             coercer.array(["val"], t=t, raise_on_scalar_t=True)
 
     def test_array_t_not_array_raise_on_scalar_t_false_passes(self) -> None:

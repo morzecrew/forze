@@ -6,8 +6,10 @@ from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.base.value_objects import CountlessPage, CursorPage
 from forze.application.contracts.deps import DepKey
-from forze.base.primitives import StrKey
+from forze.base.primitives import JsonDict, StrKey
+from forze.domain.constants import ID_FIELD
 
 from ..port_proxy_base import PortProxy
 from .emit import record
@@ -32,6 +34,7 @@ def infer_port_metadata(
 
     if surface.endswith("_query"):
         phase = "query"
+
     elif surface.endswith("_command"):
         phase = "command"
 
@@ -43,11 +46,21 @@ def infer_port_metadata(
 
     return domain, surface, route_name, phase
 
+
 # ----------------------- #
+
+REDACTED = "<redacted>"
+"""The mask a captured value's declared-sensitive fields are replaced with. A single source so a
+trace consumer (e.g. the isolation oracle's predicate matcher) can detect a redacted value and
+refuse to reason over it rather than treat the mask as a real value."""
 
 
 def _default_tx_depth() -> int:
     return 0
+
+
+def _default_tx_id() -> int | None:
+    return None
 
 
 # ....................... #
@@ -58,14 +71,31 @@ class TracingPortProxy(PortProxy):
     """Wrap a port and record sync and async method calls."""
 
     deps: "FrozenDeps"
+    """The frozen dependencies."""
+
     domain: str
+    """The domain of the port."""
+
     surface: str
+    """The surface of the port."""
+
     route: str | None
+    """The route of the port."""
+
     phase: str | None
+    """The phase of the port."""
+
     tx_depth_getter: Callable[[], int] = attrs.field(default=_default_tx_depth)
+    """Returns the active transaction nesting depth."""
+
+    tx_id_getter: Callable[[], int | None] = attrs.field(default=_default_tx_id)
+    """Returns the active root transaction's run-global id (``None`` outside a tx / in production) —
+    lets the oracle group a port call into the transaction that issued it."""
+
     capture: bool = False
     """Capture redaction-applied call values (payload/result) onto the trace — DST only; off in
     production so the trace stays id-only and PII-free."""
+
     redact: frozenset[str] = frozenset()
     """Field names to mask to ``"<redacted>"`` when capturing — the spec's declared-sensitive
     fields (``encryption.encrypted`` ∪ ``encryption.searchable``)."""
@@ -86,9 +116,14 @@ class TracingPortProxy(PortProxy):
     # ....................... #
 
     @staticmethod
-    def _dump(value: Any) -> dict[str, Any] | None:
+    def _dump(value: Any, *, mode: str = "json") -> JsonDict | None:
         """A structural ``dict`` view of *value* (a write DTO / read model), or ``None`` for a
         scalar / id / unstructured value — so capture only records the meaningful payloads.
+
+        ``mode="json"`` (default) keeps values portable (UUID → str, datetime → ISO-8601) for the
+        timeline/bundle; ``mode="python"`` keeps them native (the form the backend's in-memory scan
+        matches a filter against), which the isolation oracle needs so its predicate evaluation agrees
+        with the live scan rather than comparing a JSON string to a native value.
         """
 
         if value is None or isinstance(value, (str, bytes, int, float, bool, UUID)):
@@ -97,10 +132,9 @@ class TracingPortProxy(PortProxy):
         dump = getattr(value, "model_dump", None)
 
         if callable(dump):
-            # ``mode="json"`` keeps the captured value JSON-native (UUID → str, datetime →
-            # ISO-8601), so the trace / timeline / bundle stay portable and deterministic.
             try:
-                data = dump(mode="json")
+                data = dump(mode=mode)
+
             except TypeError:  # a model_dump without the mode kwarg
                 data = dump()
 
@@ -121,21 +155,23 @@ class TracingPortProxy(PortProxy):
 
     # ....................... #
 
-    def _redact(self, data: dict[str, Any]) -> dict[str, Any]:
+    def _redact(self, data: JsonDict) -> JsonDict:
         """Mask the spec's declared-sensitive fields to ``"<redacted>"`` (shallow, top-level)."""
 
         if not self.redact:
             return data
 
         return {
-            key: ("<redacted>" if key in self.redact else value)
+            key: (REDACTED if key in self.redact else value)
             for key, value in data.items()
         }
 
     # ....................... #
 
     def _payload_of(
-        self, args: tuple[Any, ...], kwargs: dict[str, Any]
+        self,
+        args: tuple[Any, ...],
+        kwargs: JsonDict,
     ) -> Mapping[str, Any] | None:
         """The first structured argument as a redacted value map — the write payload."""
 
@@ -148,11 +184,41 @@ class TracingPortProxy(PortProxy):
 
     # ....................... #
 
+    def _captured_in(
+        self,
+        args: tuple[Any, ...],
+        kwargs: JsonDict,
+    ) -> Mapping[str, Any] | None:
+        """The captured input for a call — the scan predicate for a query, else the write payload.
+
+        For a query the predicate is the ``filters`` argument specifically — the explicit ``filters``
+        kwarg when present, else the leading positional (filters is first on every filter-led scan:
+        ``find_many``/``count``/…). Preferring the named kwarg keeps the right argument even for ops
+        whose first positional is not the filter (``aggregate_many(aggregates, filters=…)``), and a
+        *following* positional — pagination, sorts — is never mistaken for it; a match-all scan or a
+        point ``get`` captures ``None``. This precision matters downstream: the isolation oracle
+        re-evaluates the captured filter against concurrent writes, so a wrong argument standing in for
+        the filter would be a wrong predicate. A command keeps the first-structured-argument rule.
+        """
+
+        if self.phase == "query":
+            candidate = (
+                kwargs["filters"]
+                if "filters" in kwargs
+                else (args[0] if args else None)
+            )
+            data = self._dump(candidate)
+            return self._redact(data) if data is not None else None
+
+        return self._payload_of(args, kwargs)
+
+    # ....................... #
+
     def _record_call(
         self,
         name: str,
         args: tuple[Any, ...] = (),
-        kwargs: dict[str, Any] | None = None,
+        kwargs: JsonDict | None = None,
     ) -> None:
         record(
             domain=self.domain,
@@ -161,34 +227,77 @@ class TracingPortProxy(PortProxy):
             route=self.route,
             phase=self.phase,
             tx_depth=self.tx_depth_getter(),
+            tx_id=self.tx_id_getter(),
             key=self._key_of(args),
-            payload=(self._payload_of(args, kwargs or {}) if self.capture else None),
+            payload=(self._captured_in(args, kwargs or {}) if self.capture else None),
             deps=self.deps,
         )
 
     # ....................... #
 
     def _record_return(self, name: str, args: tuple[Any, ...], result: Any) -> None:
-        """Record a read's returned value on a return event (capture mode only)."""
+        """Record a call's returned value(s) on return event(s) (capture mode only).
+
+        A batch operation returns a ``list`` of entities (``create_many``/``update_many``); each is
+        recorded as its own return event, so the value-trace — and the per-commit cross-aggregate
+        oracle, which reconstructs state from these results — sees every written entity, not just
+        single-entity writes. A scan **page** (``find_many``/``find_page``/``find_cursor``) is unwrapped
+        the same way — each hit becomes its own return event — so the isolation oracle sees the
+        individual rows a predicate read returned (``_dump`` would otherwise ``attrs.asdict`` the page
+        wrapper and leave the nested pydantic hits un-dumped). A non-list, non-page (a single read
+        model, or a ``(model, diff)`` tuple that ``_dump`` treats as unstructured) is recorded as one
+        event as before.
+        """
 
         if not self.capture:
             return
 
-        data = self._dump(result)
-        if data is None:
-            return
+        if isinstance(result, list):
+            items = cast("list[Any]", result)  # type: ignore[redundant-cast]
+        elif isinstance(result, (CountlessPage, CursorPage)):
+            items = cast("list[Any]", result.hits)  # type: ignore[redundant-cast]
+        else:
+            items = [result]
 
-        record(
-            domain=self.domain,
-            op=name,
-            surface=self.surface,
-            route=self.route,
-            phase=self.phase,
-            tx_depth=self.tx_depth_getter(),
-            key=self._key_of(args),
-            result=self._redact(data),
-            deps=self.deps,
-        )
+        for item in items:
+            data = self._dump(item)
+
+            if data is None:
+                continue
+
+            # A write result also keeps a NATIVE-typed copy (``result_native``): the isolation oracle
+            # matches a captured scan predicate against it, and the backend scans the native row — so a
+            # JSON copy (UUID/IP/Decimal/datetime → str) would make the oracle's match diverge from the
+            # live scan and manufacture a false phantom edge. Reads keep only the JSON ``result``.
+            native = (
+                self._redact(self._dump(item, mode="python") or data)
+                if self.phase == "command"
+                else None
+            )
+
+            # A create / batch write has no leading id in its args (so ``_key_of`` is ``None``), but
+            # its result carries the assigned id. Backfill the key from it — id-only, like
+            # ``_key_of`` — so the pairwise isolation oracle, which attributes writes by key, sees
+            # create/batch writes too, not only single-key updates.
+            key = self._key_of(args)
+            if key is None and self.phase == "command":
+                rid = data.get(ID_FIELD)
+                if rid is not None:
+                    key = str(rid)
+
+            record(
+                domain=self.domain,
+                op=name,
+                surface=self.surface,
+                route=self.route,
+                phase=self.phase,
+                tx_depth=self.tx_depth_getter(),
+                tx_id=self.tx_id_getter(),
+                key=key,
+                result=self._redact(data),
+                result_native=native,
+                deps=self.deps,
+            )
 
     # ....................... #
 
@@ -238,6 +347,7 @@ def wrap_port[T](
     route: str | None,
     phase: str | None,
     tx_depth_getter: Callable[[], int] | None = None,
+    tx_id_getter: Callable[[], int | None] | None = None,
     capture: bool = False,
     redact: frozenset[str] = frozenset(),
 ) -> T:
@@ -253,6 +363,7 @@ def wrap_port[T](
             route=route,
             phase=phase,
             tx_depth_getter=tx_depth_getter or _default_tx_depth,
+            tx_id_getter=tx_id_getter or _default_tx_id,
             capture=capture,
             redact=redact,
         ),

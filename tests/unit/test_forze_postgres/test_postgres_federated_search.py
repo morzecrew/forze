@@ -409,7 +409,7 @@ async def test_federated_search_rejects_return_fields() -> None:
         federated_spec=_fed(),
         legs=(("a", MagicMock()), ("b", MagicMock())),
     )
-    with pytest.raises(CoreException, match="project_search"):
+    with pytest.raises(CoreException, match="Field projection is not supported"):
         await adapter.project_search(("id",), "q")
 
 

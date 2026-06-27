@@ -52,6 +52,7 @@ nav = [
             "writing-operation/errors.md",
             "writing-operation/concurrency-conflicts.md",
             "writing-operation/idempotency.md",
+            "writing-operation/system-invariants.md",
         ] },
         { "Data & events" = [
             "data-events/reading-data.md",

@@ -42,6 +42,12 @@ class TracingEvent:
     tx_route: str | None = None
     """Transaction route name when inside or entering a scope."""
 
+    tx_id: int | None = None
+    """Run-global id of the root transaction this event belongs to, when one is active. Stamped
+    only under simulation (a per-run counter is bound; ``None`` in production), it gives the oracle
+    a sound way to group port calls into the transaction that issued them — which operation spans
+    cannot, since concurrent transactions interleave. An ``int``, so the trace stays PII-free."""
+
     key: str | None = None
     """Entity / correlation key the call targets (e.g. a document primary key), when one is
     cheaply available. Recorded id-only (UUID / int) — never free-form values — so the trace
@@ -79,6 +85,14 @@ class TracingEvent:
     """A redaction-applied structured view of a read's returned value, captured on the call's
     *return* event under value capture (``None`` otherwise). Lets ``read_your_writes`` assert on
     what a read actually observed."""
+
+    result_native: Mapping[str, Any] | None = None
+    """A redaction-applied **native-typed** view of a *write*'s returned row (``mode="python"``: UUID
+    / IP / Decimal / datetime kept as objects), captured alongside :attr:`result` only on command
+    return events under value capture. The isolation oracle matches a captured scan predicate against
+    this — the same native representation the backend's in-memory scan matches — so its predicate
+    evaluation agrees with the live scan instead of comparing a JSON string to a native value. Not
+    serialized to the portable timeline/bundle (those use :attr:`result`)."""
 
 
 # ....................... #
@@ -155,6 +169,7 @@ class RuntimeTrace:
         phase: str | None = None,
         tx_depth: int = 0,
         tx_route: str | None = None,
+        tx_id: int | None = None,
         at: float = 0.0,
         key: str | None = None,
         outcome: str | None = None,
@@ -163,6 +178,7 @@ class RuntimeTrace:
         nested: bool = False,
         payload: Mapping[str, Any] | None = None,
         result: Mapping[str, Any] | None = None,
+        result_native: Mapping[str, Any] | None = None,
     ) -> TracingEvent:
         """Build and record an event with the next sequence number."""
 
@@ -176,6 +192,7 @@ class RuntimeTrace:
             phase=phase,
             tx_depth=tx_depth,
             tx_route=tx_route,
+            tx_id=tx_id,
             key=key,
             outcome=outcome,
             error=error,
@@ -183,6 +200,7 @@ class RuntimeTrace:
             nested=nested,
             payload=payload,
             result=result,
+            result_native=result_native,
         )
         self._next_seq += 1
         self.record(event)

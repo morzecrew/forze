@@ -27,11 +27,23 @@ from __future__ import annotations
 import asyncio
 from datetime import date
 
+import structlog
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import DepsRegistry, ExecutionContext
+from forze.base.logging import configure_logging
+from forze.base.logging.constants import LogLevel
 from forze_mock import MockDepsModule, MockQueryParamsRegistry, MockState
+
+_LOGGER_NAME = "bound_query_parameters"
+log = structlog.get_logger(_LOGGER_NAME)
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this example's narration and any framework logs cleanly (and filter trace/debug),
+    # **only when run as a script** — leaving global logging untouched so imports/tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
 
 
 # --8<-- [start:spec]
@@ -142,16 +154,17 @@ async def main() -> None:
 
     # As of March, eu's late entry (cy, recorded in April) isn't ranked yet.
     march = await regional_top(ctx, "eu", date(2026, 3, 1))
-    print("eu as of 2026-03-01:")
+    log.info("eu standings", as_of="2026-03-01")
     for s in march:
-        print(f"  #{s.rank} {s.player} ({s.score})")
+        log.info("ranked", rank=s.rank, player=s.player, score=s.score)
 
     # As of May, cy is in and reshuffles the ranks — recomputed inside the source, not by us.
     may = await regional_top(ctx, "eu", date(2026, 5, 1))
-    print("eu as of 2026-05-01:")
+    log.info("eu standings", as_of="2026-05-01")
     for s in may:
-        print(f"  #{s.rank} {s.player} ({s.score})")
+        log.info("ranked", rank=s.rank, player=s.player, score=s.score)
 
 
 if __name__ == "__main__":
+    _setup_logging("info")
     asyncio.run(main())

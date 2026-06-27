@@ -21,6 +21,7 @@ from forze_dst.explore_guided import Genome, GuidedStats, coverage_guided_search
 from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.invariants import check
 from forze_dst.oracle.recorder import History
+from forze_dst.scheduler import Reorderer
 
 if TYPE_CHECKING:
     from forze_dst.harness import Simulation
@@ -45,7 +46,7 @@ def run_guided(
 
     factory = config.scheduler.factory()
 
-    def make_scheduler(seed: int) -> object | None:
+    def make_scheduler(seed: int) -> Reorderer | None:
         # Fresh per run (a PCT scheduler is stateful), seeded from the genome's seed.
         return None if factory is None else factory(derive_seed(seed, "schedule"))
 

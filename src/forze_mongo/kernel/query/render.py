@@ -12,7 +12,7 @@ from forze.application.contracts.querying import (
     AggregatesExpression,
     AggregatesExpressionParser,
     GroupKey,
-    GroupRef,
+    GroupField,
     GroupTrunc,
     ParsedAggregates,
     QueryAnd,
@@ -28,6 +28,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
     elem_inner_is_scalar,
+    validate_aggregate_capabilities,
     validate_query_capabilities,
 )
 from forze.application.contracts.querying.internal.text_pattern import (
@@ -126,6 +127,10 @@ class MongoQueryRenderer:
     ) -> tuple[ParsedAggregates, list[JsonDict]]:
         """Render an aggregate expression into a Mongo aggregation pipeline."""
 
+        validate_aggregate_capabilities(
+            aggregates, MONGO_QUERY_CAPABILITIES, backend="mongo"
+        )
+
         parsed = AggregatesExpressionParser.parse(aggregates)
         pipeline: list[JsonDict] = []
 
@@ -187,7 +192,7 @@ class MongoQueryRenderer:
         bad = [field for field in sorts if field not in aliases]
 
         if bad:
-            raise exc.internal(f"Invalid aggregate sort fields: {bad}")
+            raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
 
         return [
             (field, 1 if direction == "asc" else -1)
@@ -199,7 +204,7 @@ class MongoQueryRenderer:
     def _render_group_id_element(self, group_key: GroupKey) -> object:
         expr = group_key.expr
 
-        if isinstance(expr, GroupRef):
+        if isinstance(expr, GroupField):
             return self._field_ref(expr.field)
 
         trunc = expr

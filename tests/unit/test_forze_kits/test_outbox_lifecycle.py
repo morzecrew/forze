@@ -201,7 +201,7 @@ def test_lifecycle_step_rejects_invalid_options() -> None:
 
 
 # ----------------------- #
-# Tenant-sharded drain (namespace-tier outbox, RFC 0007)
+# Tenant-sharded drain (namespace-tier outbox)
 
 
 _T1 = UUID("11111111-1111-1111-1111-111111111111")

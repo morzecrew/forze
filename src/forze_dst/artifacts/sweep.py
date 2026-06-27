@@ -20,7 +20,8 @@ from __future__ import annotations
 import importlib
 import time
 from concurrent.futures import ProcessPoolExecutor
-from typing import Callable, Sequence, final
+from types import MappingProxyType
+from typing import Callable, Iterable, Mapping, Sequence, final
 
 import attrs
 
@@ -28,6 +29,7 @@ from forze_dst.config import SimulationConfig
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
 from forze_dst.oracle.coverage import Behavior
+from forze_dst.oracle.reachability import ReachabilityReport
 from forze_dst.scheduler import FIFOScheduler, PCTScheduler, RandomScheduler
 
 # ----------------------- #
@@ -46,6 +48,11 @@ class SeedOutcome:
 
     behaviors: frozenset[Behavior]
     """The PII-free behaviours this run exercised (see :func:`~forze_dst.behavioral_coverage`)."""
+
+    reached: frozenset[str] = frozenset()
+    """The reachability labels (:func:`~forze_dst.reached`) this run hit — folded across the sweep
+    so the aggregate knows which *declared targets* the band actually drove. Empty when the runner
+    does not track reachability (e.g. the auto-derived :class:`SimulationSeedRunner`)."""
 
     sim_seconds: float = 0.0
     """Virtual time the run spanned, when the runner can supply it — fuels the time-dilation
@@ -69,6 +76,11 @@ class SweepResult:
     behaviors: frozenset[Behavior]
     """Union of behaviours covered across the whole sweep."""
 
+    reached_runs: Mapping[str, int]
+    """Per reachability label, how many runs reached it — the sweep's folded reachability. Turn it
+    into a :class:`~forze_dst.oracle.reachability.ReachabilityReport` against declared targets with
+    :meth:`reachability` (or read the bare union via :attr:`reached`)."""
+
     simulated_seconds: float
     """Total virtual time simulated across all seeds (``0.0`` when no runner supplied it)."""
 
@@ -82,6 +94,31 @@ class SweepResult:
         """The lowest violating seed — the one to re-run for a minimized report."""
 
         return self.violations[0] if self.violations else None
+
+    # ....................... #
+
+    @property
+    def reached(self) -> frozenset[str]:
+        """Every reachability label some run reached across the sweep (parallels :attr:`behaviors`)."""
+
+        return frozenset(label for label, count in self.reached_runs.items() if count > 0)
+
+    # ....................... #
+
+    def reachability(self, targets: Iterable[str]) -> ReachabilityReport:
+        """Fold the sweep's reachability against declared *targets* — which fired, which never did.
+
+        The cross-sweep "must-be-reached" check (:func:`~forze_dst.assess_reachability`) over the
+        whole band: ``result.reachability(TARGETS).satisfied`` is the false-confidence guard a wide
+        fuzz needs — green invariants over a band that never drove the dangerous interleaving prove
+        nothing. Reuses the per-run hit counts already folded, so it costs nothing extra.
+        """
+
+        return ReachabilityReport(
+            targets=frozenset(targets),
+            hits=self.reached_runs,
+            runs=self.runs,
+        )
 
     # ....................... #
 
@@ -114,6 +151,9 @@ class SweepResult:
             f"  throughput:     {self.runs_per_second:.1f} seeds/s",
         ]
 
+        if self.reached_runs:
+            lines.append(f"  reached:        {len(self.reached)} labels")
+
         if self.simulated_seconds > 0:
             lines.append(
                 f"  time dilation:  {self.time_dilation:.0f}× (sim s / wall s)"
@@ -132,12 +172,15 @@ class SweepResult:
 
 def _aggregate(outcomes: Sequence[SeedOutcome], *, wall_seconds: float) -> SweepResult:
     behaviors: set[Behavior] = set()
+    reached_runs: dict[str, int] = {}
     violations: list[int] = []
     simulated = 0.0
 
     for outcome in outcomes:
         behaviors |= outcome.behaviors
         simulated += outcome.sim_seconds
+        for label in outcome.reached:
+            reached_runs[label] = reached_runs.get(label, 0) + 1
         if outcome.violated:
             violations.append(outcome.seed)
 
@@ -145,6 +188,7 @@ def _aggregate(outcomes: Sequence[SeedOutcome], *, wall_seconds: float) -> Sweep
         runs=len(outcomes),
         violations=tuple(sorted(violations)),
         behaviors=frozenset(behaviors),
+        reached_runs=MappingProxyType(reached_runs),
         simulated_seconds=simulated,
         wall_seconds=wall_seconds,
     )

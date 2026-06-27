@@ -24,7 +24,7 @@ M = TypeVar("M", bound=BaseModel)
 
 
 def _unsupported_cursor() -> NoReturn:
-    raise exc.internal("Mock hub/federated search supports offset pagination only")
+    raise exc.precondition("Mock hub/federated search supports offset pagination only")
 
 
 class MockOffsetOnlySearchMixin(Generic[M]):

@@ -14,6 +14,7 @@ from forze.application.contracts.querying import (
     UNSUPPORTED_QUERY_FEATURE_CODE,
     QueryCapabilities,
     QueryFilterExpressionParser,
+    validate_aggregate_capabilities,
     validate_query_capabilities,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -151,6 +152,36 @@ class TestRejections:
 
         with pytest.raises(CoreException, match="element quantifier"):
             _check(expr, caps)
+
+
+class TestAggregateCapabilities:
+    """The aggregate axis is gated by its own validator, independent of the filter AST."""
+
+    _AGG = {"$computed": {"n": {"$count": {}}}}
+
+    def test_supported_by_default(self) -> None:
+        # supports_aggregates defaults on — most document backends aggregate natively.
+        assert QueryCapabilities().supports_aggregates is True
+        validate_aggregate_capabilities(self._AGG, QueryCapabilities(), backend="test")
+
+    def test_full_capabilities_advertise_aggregates(self) -> None:
+        assert FULL_QUERY_CAPABILITIES.supports_aggregates is True
+
+    def test_rejected_when_unsupported(self) -> None:
+        caps = QueryCapabilities(supports_aggregates=False)
+
+        with pytest.raises(CoreException, match="aggregates") as ei:
+            validate_aggregate_capabilities(self._AGG, caps, backend="test")
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+        assert "test" in str(ei.value)
+
+    def test_none_is_noop_even_when_unsupported(self) -> None:
+        # A non-aggregate query against an aggregate-less backend must not be rejected.
+        validate_aggregate_capabilities(
+            None, QueryCapabilities(supports_aggregates=False), backend="test"
+        )
 
 
 class TestNoOpWhenSupported:
