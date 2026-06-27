@@ -67,9 +67,29 @@ Record an object's operations with `record_operation(key, op, args, session=…)
 - **`sequential(spec)`** — drops the real-time constraint and keeps only per-session program order. A replica that serves a slightly stale but program-order-respecting read is *sequentially* consistent though not linearizable — `sequential` accepts it, `linearizable` flags it.
 - **`monotonic_reads()`** — a session guarantee: within one session, successive reads of a key never go backward in version (the lagging-replica bug). Sound and incomplete — it flags only a *definitive* regression, so it never cries wolf on concurrent writes.
 
-This is the spectrum from strongest to weakest, and it lines up with what an operation *declares*: a handler that runs at `IsolationLevel.SERIALIZABLE` should pass `linearizable`; a weaker level admits the weaker models. (Full snapshot-isolation and serializability checking — across a transaction's read and write *sets* — needs transaction-level recording, a step beyond the per-object history these read.)
+This is the spectrum from strongest to weakest, and it lines up with what an operation *declares*: a handler that runs at `IsolationLevel.SERIALIZABLE` should pass `linearizable`; a weaker level admits the weaker models. Snapshot isolation and serializability are checked separately — across a transaction's read and write *sets* rather than one object's history — in the next subsection.
+
+### Transactional isolation
+
+Consistency models read one object's history; the transactional oracles read *across* a transaction's read and write sets — grouped by transaction from the trace — to catch the multi-object anomalies isolation levels exist to prevent.
+
+- **`snapshot_isolation()`** flags a **lost update** among the committed transactions; write skew is permitted under SI, so it stays clean. Capture-free.
+- **`serializable()`** is, by default, a capture-free **pairwise** check — sound but incomplete, catching lost update and two-transaction write skew. **`serializable(complete=True)`** upgrades to a **dependency-graph** check that is sound *and* complete for conflict-serializability over the captured history: it catches anti-dependency cycles spanning three or more transactions (the read-only anomaly) and predicate **phantoms** — a scan that would have seen a concurrent insert. Complete mode reads the value trace, so it needs `capture_values` and fails closed without it.
+
+Let the level an operation *declares* pick the oracle. `isolation_oracle_for(level)` maps `SERIALIZABLE` → `serializable(complete=True)` and `SNAPSHOT` → `snapshot_isolation()`; `READ_COMMITTED` has no serialization-graph guarantee, so it raises rather than hand back a check that passes on anything — the run is judged at the level it claims:
+
+```python
+from forze.application.contracts.transaction import IsolationLevel
+from forze_dst.invariants import isolation_oracle_for
+
+invariants = [isolation_oracle_for(IsolationLevel.SERIALIZABLE)]
+```
+
+An isolation oracle has a trap the others don't: a green result is meaningless if the run never **contended**. `had_isolation_conflict(history)` answers the prerequisite — did two concurrent committed transactions actually touch the same key, the teeth the oracle needs? Assert `any(had_isolation_conflict(h) for h in histories)` across the sweep, the same way you assert [reachability](#what-must-sometimes-happen), so a clean isolation result rests on a run that genuinely stressed it.
 
 One failure needs no invariant at all: a **deadlock**. If an interleaving drives the workload to a standstill — every task blocked, with no ready work and no timer to advance — that is always a bug, so DST reports it on its own. It minimises to the smallest workload that still stalls and comes back as a `no_deadlock` violation, exactly like an asserted one, instead of aborting the sweep. You catch it for free, even with no invariants declared.
+
+A last cross-cutting claim is **convergence**. If an operation declares itself order-independent, `commutative_convergence(build, final_state=…, schedule_seeds=…)` reruns the workload across a band of schedules and flags a declared-commutative op whose interleavings reach *different* end states, naming the seed that diverged — a cross-history check, like reachability, not a per-run invariant.
 
 !!! note "Value-level invariants need `capture_values`"
 
