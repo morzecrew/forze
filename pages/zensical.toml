@@ -41,6 +41,7 @@ nav = [
             "core-concepts/overview.md",
             "core-concepts/architecture.md",
             "core-concepts/domain-layer.md",
+            "core-concepts/why-four-models.md",
             "core-concepts/application-layer.md",
             "core-concepts/contracts.md",
             "core-concepts/runtime.md",

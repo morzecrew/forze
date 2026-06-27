@@ -30,7 +30,9 @@ frozen, purpose-built types that carry data across boundaries.
 | **Read model** | Frozen projection returned from queries | `ReadDocument` |
 
 How a create command becomes the domain model and is projected back to the read model —
-the codecs that carry it — is the [mapping reference](../reference/mapping.md).
+the codecs that carry it — is the [mapping reference](../reference/mapping.md). Why these
+are *separate* models, rather than one with the rest derived, is
+[Why four models](why-four-models.md).
 
 !!! note "CreateDocumentCmd is deprecated"
 
