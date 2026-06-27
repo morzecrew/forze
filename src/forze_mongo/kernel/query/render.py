@@ -28,6 +28,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
     elem_inner_is_scalar,
+    validate_aggregate_capabilities,
     validate_query_capabilities,
 )
 from forze.application.contracts.querying.internal.text_pattern import (
@@ -125,6 +126,10 @@ class MongoQueryRenderer:
         skip: int | None = None,
     ) -> tuple[ParsedAggregates, list[JsonDict]]:
         """Render an aggregate expression into a Mongo aggregation pipeline."""
+
+        validate_aggregate_capabilities(
+            aggregates, MONGO_QUERY_CAPABILITIES, backend="mongo"
+        )
 
         parsed = AggregatesExpressionParser.parse(aggregates)
         pipeline: list[JsonDict] = []

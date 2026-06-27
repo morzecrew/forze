@@ -74,11 +74,14 @@ async def test_aggregate_raises(firestore_client: FirestoreClient) -> None:
         )
     ).create(QCreate(tag="x"))
 
-    with pytest.raises(CoreException, match="aggregates"):
+    with pytest.raises(CoreException, match="aggregates") as exc_info:
         await query.aggregate_page(
             aggregates={"$count": {}},
             pagination={"limit": 10},
         )
+
+    # Fail-closed on capability grounds (a clean precondition), not an opaque ``internal``.
+    assert exc_info.value.kind is ExceptionKind.PRECONDITION
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,7 @@ import attrs
 
 from forze.base.exceptions import exc
 
+from .expressions import AggregatesExpression
 from .internal.nodes import (
     QueryAnd,
     QueryCompare,
@@ -130,6 +131,14 @@ class QueryCapabilities:
     label-aware path containment (Postgres ``ltree`` / text prefix, the in-memory oracle)
     advertise it; others reject these operators cleanly."""
 
+    supports_aggregates: bool = True
+    """Whether group-by / aggregate pipelines (``find_many_aggregates`` / ``count_aggregates``)
+    compile. On by default — most document backends aggregate natively. Unlike the axes above this
+    is **not** walked by :func:`validate_query_capabilities` (aggregates are not part of the filter
+    AST); :func:`validate_aggregate_capabilities` consults it at the renderer's aggregate entry. A
+    backend that cannot aggregate sets it ``False`` and is then rejected cleanly up front instead of
+    failing deep in its renderer."""
+
 
 # ....................... #
 
@@ -166,6 +175,27 @@ def validate_query_capabilities(
     """
 
     _walk_caps(expr, caps, backend, caps.value_ops, in_element=False)
+
+
+def validate_aggregate_capabilities(
+    aggregates: AggregatesExpression | None,  # type: ignore[valid-type]
+    caps: QueryCapabilities,
+    *,
+    backend: str,
+) -> None:
+    """Raise if *aggregates* are requested but *backend* cannot compile them (clean, not ``internal``).
+
+    Aggregation is a single capability axis (:attr:`QueryCapabilities.supports_aggregates`): a backend
+    either compiles group-by/aggregate pipelines or it does not. Call it at the top of a renderer's
+    ``render_aggregates`` (the aggregate counterpart to :func:`validate_query_capabilities` at filter
+    entry); a request to a backend that lacks support raises
+    :func:`~forze.base.exceptions.exc.precondition` with code :data:`UNSUPPORTED_QUERY_FEATURE_CODE`,
+    naming the feature and *backend*, instead of a render-time ``internal`` failure. ``None`` is a
+    no-op, so it is safe to call unconditionally.
+    """
+
+    if aggregates is not None and not caps.supports_aggregates:
+        _cap_fail(backend, "aggregates")
 
 
 def _cap_fail(backend: str, feature: str) -> None:

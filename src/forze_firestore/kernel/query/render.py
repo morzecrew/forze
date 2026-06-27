@@ -20,6 +20,7 @@ from forze.application.contracts.querying import (
     QueryOr,
     QueryValue,
     QueryValueCaster,
+    validate_aggregate_capabilities,
     validate_query_capabilities,
 )
 from forze.base.exceptions import exc
@@ -45,11 +46,13 @@ FIRESTORE_QUERY_CAPABILITIES = QueryCapabilities(
     supports_quantifiers=False,
     supports_negation=False,
     supports_field_compare=False,
+    supports_aggregates=False,
 )
 """What the Firestore MVP renderer compiles: equality / ordering / membership /
 null / empty, plus ``$and`` / ``$or``. No ``$not``, set or text operators, array
-element quantifiers, field-to-field comparison, or aggregates — the validator
-rejects those up front; the renderer's inner raises are a defense-in-depth backstop."""
+element quantifiers, field-to-field comparison, or aggregates — the capability
+validators reject those up front; the renderer's inner raises are a defense-in-depth
+backstop."""
 
 
 # ....................... #
@@ -79,11 +82,20 @@ class FirestoreQueryRenderer:
         aggregates: AggregatesExpression,
         **kwargs: Any,
     ) -> tuple[Any, list[Any]]:
-        """Aggregates are not supported in the Firestore MVP adapter."""
+        """Aggregates are not supported in the Firestore MVP adapter.
 
-        _ = aggregates, kwargs
+        Rejected up front by the capability check (``supports_aggregates=False``); the
+        trailing raise is an unreachable defense-in-depth backstop.
+        """
 
-        raise exc.internal("Firestore adapter does not support aggregates in MVP")
+        validate_aggregate_capabilities(
+            aggregates, FIRESTORE_QUERY_CAPABILITIES, backend="firestore"
+        )
+        _ = kwargs
+
+        raise exc.internal(  # pragma: no cover
+            "Firestore adapter does not support aggregates in MVP"
+        )
 
     # ....................... #
 

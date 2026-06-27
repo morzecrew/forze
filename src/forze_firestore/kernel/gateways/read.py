@@ -300,7 +300,16 @@ class FirestoreReadGateway[M: BaseModel](
         parsed: QueryExpr | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
         if aggregates is not None:
-            raise exc.internal("Firestore adapter does not support aggregates in MVP")
+            return await self.find_many_aggregates(
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                aggregates=aggregates,
+                return_model=return_model,
+                return_fields=return_fields,
+                parsed=parsed,
+            )
 
         if offset is not None and offset > 0:
             raise exc.precondition(

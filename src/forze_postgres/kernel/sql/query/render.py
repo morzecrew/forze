@@ -37,6 +37,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
     elem_inner_is_scalar,
+    validate_aggregate_capabilities,
     validate_query_capabilities,
 )
 from forze.base.exceptions import exc
@@ -218,6 +219,10 @@ class PsycopgQueryRenderer:
         aggregates: AggregatesExpression,
     ) -> tuple[ParsedAggregates, sql.Composable, sql.Composable | None, list[Any]]:
         """Render aggregate SELECT and GROUP BY clauses."""
+
+        validate_aggregate_capabilities(
+            aggregates, POSTGRES_QUERY_CAPABILITIES, backend="postgres"
+        )
 
         parsed = AggregatesExpressionParser.parse(aggregates)
         select_parts: list[sql.Composable] = []

@@ -11,6 +11,7 @@ from .capabilities import (
     FULL_QUERY_CAPABILITIES,
     UNSUPPORTED_QUERY_FEATURE_CODE,
     QueryCapabilities,
+    validate_aggregate_capabilities,
     validate_query_capabilities,
 )
 from .discovery import (
@@ -172,6 +173,7 @@ __all__ = [
     "ALL_VALUE_OPS",
     "ALL_ELEMENT_OPS",
     "UNSUPPORTED_QUERY_FEATURE_CODE",
+    "validate_aggregate_capabilities",
     "validate_query_capabilities",
     "OPERATOR_TYPE_MISMATCH_CODE",
     "validate_query_field_types",
