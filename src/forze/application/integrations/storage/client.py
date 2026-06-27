@@ -67,14 +67,14 @@ def normalize_list_window(limit: int | None, offset: int | None) -> tuple[int, i
     :param limit: Requested max items (``None`` means effectively unbounded).
     :param offset: Requested start offset (``None`` means ``0``).
     :returns: ``(effective_limit, effective_offset)``.
-    :raises CoreException: When ``limit <= 0`` or ``offset < 0``.
+    :raises CoreException: ``validation`` when ``limit <= 0`` or ``offset < 0``.
     """
 
     if limit is not None and limit <= 0:
-        raise exc.internal("limit must be > 0")
+        raise exc.validation("limit must be > 0")
 
     if offset is not None and offset < 0:
-        raise exc.internal("offset must be >= 0")
+        raise exc.validation("offset must be >= 0")
 
     return (limit if limit is not None else 10_000_000), (offset or 0)
 

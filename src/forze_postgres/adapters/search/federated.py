@@ -208,10 +208,10 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         if return_fields is not None:
-            raise exc.internal(
-                "Field projection is not supported for federated search "
-                "(``project_search`` / ``project_search_page``). "
-                "Use ``select_search`` / ``select_search_page`` with a ``return_type`` instead.",
+            raise exc.precondition(
+                "Field projection is not supported for federated (RRF) search; use "
+                "select_search / select_search_page with a return_type instead.",
+                code="query_feature_unsupported",
             )
 
         leg_opts, member_weights = prepare_federated_search_options(
@@ -398,9 +398,10 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     # ....................... #
 
     def _raise_federated_cursor_not_supported(self) -> NoReturn:
-        raise exc.internal(
+        raise exc.precondition(
             "search_cursor is not implemented for federated (RRF) search; use "
             "search or search_page with limit/offset.",
+            code="query_feature_unsupported",
         )
 
     async def _cursor_search_impl(

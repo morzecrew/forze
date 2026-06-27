@@ -295,7 +295,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             return []
 
         if len({it.id for it in items}) != len(items):
-            raise exc.internal("ensure_many requires distinct id values in the batch")
+            raise exc.precondition("ensure_many requires distinct id values in the batch")
 
         if return_new:
             return [
@@ -382,7 +382,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             return []
 
         if len({it.id for it in items}) != len(items):
-            raise exc.internal("upsert_many requires distinct id values in the batch")
+            raise exc.precondition("upsert_many requires distinct id values in the batch")
 
         if return_new:
             return [

@@ -30,7 +30,7 @@ def assert_cursor_projection_includes_sort_keys(
     projected = set(return_fields)
     if all(k.split(".", 1)[0] in projected for k in sort_keys):
         return
-    raise exc.internal(
+    raise exc.precondition(
         "When using return_fields with cursor list, the projection must include "
         "all sort and tie-breaker fields (including id); a nested sort key needs its "
         "root column in return_fields.",

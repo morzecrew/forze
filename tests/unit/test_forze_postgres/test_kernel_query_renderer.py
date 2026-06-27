@@ -1362,7 +1362,7 @@ class TestPsycopgValueCoercer:
 
     def test_array_raise_on_scalar_type(self) -> None:
         c = PsycopgValueCoercer()
-        with pytest.raises(CoreException, match="Expected array column"):
+        with pytest.raises(CoreException, match="require an array column"):
             c.array([1, 2], t=_t("int4"), raise_on_scalar_t=True)
 
     def test_array_typed_elements_coerced(self) -> None:

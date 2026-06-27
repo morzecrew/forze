@@ -423,7 +423,11 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         batch_size: int = 200,
     ) -> tuple[int, Sequence[D]]:
         _ = filters, dto, batch_size
-        raise exc.internal("Firestore adapter does not support update_matching in MVP")
+        raise exc.precondition(
+            "Firestore adapter does not support update_matching in MVP; "
+            "update records individually with update/update_many.",
+            code="core.document.update_matching_unsupported",
+        )
 
     # ....................... #
 

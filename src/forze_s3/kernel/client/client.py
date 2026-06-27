@@ -748,7 +748,7 @@ class S3Client(S3ClientPort):
             ``GetObjectTagging`` calls).
         :returns: A tuple of ``(items, total_count)`` where *total_count*
             reflects the full (unpaginated) result set.
-        :raises exc.internal: If *limit* is non-positive or *offset* is negative.
+        :raises CoreException: ``validation`` if *limit* is non-positive or *offset* is negative.
         """
 
         c = self.__require_client()

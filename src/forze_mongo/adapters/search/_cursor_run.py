@@ -51,12 +51,12 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise exc.internal("Cursor pagination: pass at most one of 'after' or 'before'")
+        raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
     lim: int = 10 if c.get("limit") is None else int(c["limit"])  # type: ignore[arg-type, call-overload]
 
     if lim < 1:
-        raise exc.internal("Cursor pagination 'limit' must be positive")
+        raise exc.validation("Cursor pagination 'limit' must be positive")
 
     use_after = c.get("after") is not None
     use_before = c.get("before") is not None
@@ -97,11 +97,11 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         tk, td, _tn, tv = decode_keyset_v1(token)
 
         if tk != sort_keys or len(td) != len(directions) or len(_tn) != len(nulls):
-            raise exc.internal("Cursor does not match current search sort")
+            raise exc.validation("Cursor does not match current search sort")
 
         for i, di in enumerate(directions):
             if (td[i] or "").lower() != di or (_tn[i] or "").lower() != nulls[i]:
-                raise exc.internal("Cursor does not match current search sort")
+                raise exc.validation("Cursor does not match current search sort")
 
         seek = build_keyset_seek_match(
             key_spec,

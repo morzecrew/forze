@@ -2,7 +2,7 @@
 
 Focused vertical slice: vertex/edge CRUD, ``ensure_edge``, ``neighbors``, ``expand``,
 ``shortest_path``, and the raw escape hatch. The remaining port methods raise a clear
-``exc.internal`` (code ``graph_not_implemented``) and are filled in follow-ups. Tenancy
+``exc.precondition`` (code ``graph_not_implemented``) and are filled in follow-ups. Tenancy
 uses property partition: a ``tenant_property`` is stamped on writes and constrains
 anchor-node matches.
 """
@@ -58,8 +58,8 @@ def _nyi(method: str) -> CoreException:
     egress mapping can classify it (a bare ``NotImplementedError`` cannot be).
     """
 
-    return exc.internal(
-        f"{method} is not implemented by forze_neo4j yet",
+    return exc.precondition(
+        f"{method} is not implemented by the neo4j backend yet",
         code="graph_not_implemented",
     )
 

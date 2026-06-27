@@ -23,7 +23,7 @@ def _require_distinct_ids(ids: Sequence[UUID]) -> None:
     """Reject duplicate ids within a bulk ensure/upsert batch."""
 
     if len(set(ids)) != len(ids):
-        raise exc.internal(
+        raise exc.precondition(
             "ensure_many and upsert_many require distinct id values in the batch"
         )
 

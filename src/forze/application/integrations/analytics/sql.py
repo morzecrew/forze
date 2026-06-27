@@ -70,13 +70,13 @@ def apply_limit_offset(
 
     if limit is not None:
         if limit < 0:
-            raise exc.internal("Analytics pagination 'limit' must be >= 0.")
+            raise exc.validation("Analytics pagination 'limit' must be >= 0.")
 
         clause += f" LIMIT {int(limit)}"
 
     if offset is not None:
         if offset < 0:
-            raise exc.internal("Analytics pagination 'offset' must be >= 0.")
+            raise exc.validation("Analytics pagination 'offset' must be >= 0.")
 
         clause += f" OFFSET {int(offset)}"
 

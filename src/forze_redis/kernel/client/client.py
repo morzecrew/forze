@@ -483,7 +483,7 @@ class RedisClient(RedisClientPort):
             return True
 
         if nx and xx:
-            raise exc.internal("Redis mset does not allow nx and xx together")
+            raise exc.precondition("Redis mset does not allow nx and xx together")
 
         keys_list = list(mapping.keys())
         argv: list[Any] = [

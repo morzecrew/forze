@@ -789,7 +789,7 @@ class PostgresReadGateway[M: BaseModel](
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise exc.internal(
+            raise exc.validation(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
@@ -798,7 +798,7 @@ class PostgresReadGateway[M: BaseModel](
         lim: int = 10 if limit_raw is None else int(limit_raw)  # type: ignore[call-overload]
 
         if lim < 1:
-            raise exc.internal("Cursor pagination 'limit' must be positive")
+            raise exc.validation("Cursor pagination 'limit' must be positive")
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None

@@ -207,10 +207,10 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         lim_raw = c.get("limit")
         lim = int(cast(Any, lim_raw)) if lim_raw is not None else 10
         if lim < 1:
-            raise exc.internal("Cursor pagination 'limit' must be positive")
+            raise exc.validation("Cursor pagination 'limit' must be positive")
 
         if c.get("after") and c.get("before"):
-            raise exc.internal(
+            raise exc.validation(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
@@ -219,16 +219,17 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 payload = _CURSOR_CODEC.loads(str(c["after"]))
 
                 if not isinstance(payload, dict):
-                    raise exc.internal("Invalid analytics cursor token")
+                    raise exc.validation("Invalid analytics cursor token")
 
                 return str(payload["pt"]), lim  # type: ignore[return-value]
 
             except (ValueError, KeyError, TypeError) as e:
-                raise exc.internal("Invalid analytics cursor token") from e
+                raise exc.validation("Invalid analytics cursor token") from e
 
         if c.get("before"):
-            raise exc.internal(
-                "Backward analytics cursors are not supported on BigQuery."
+            raise exc.precondition(
+                "Backward analytics cursors are not supported on BigQuery.",
+                code="analytics_backward_cursor_unsupported",
             )
 
         return None, lim

@@ -192,7 +192,7 @@ class MongoQueryRenderer:
         bad = [field for field in sorts if field not in aliases]
 
         if bad:
-            raise exc.internal(f"Invalid aggregate sort fields: {bad}")
+            raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
 
         return [
             (field, 1 if direction == "asc" else -1)

@@ -385,8 +385,10 @@ async def test_scoped_walk_fails_closed_without_tenant() -> None:
 @pytest.mark.asyncio
 async def test_deferred_method_raises() -> None:
     adapter, _ = _adapter()
-    with pytest.raises(CoreException, match="not implemented by forze_neo4j yet") as ei:
+    with pytest.raises(
+        CoreException, match="not implemented by the neo4j backend yet"
+    ) as ei:
         await adapter.count_vertices("User")
 
-    assert ei.value.kind is ExceptionKind.INTERNAL
+    assert ei.value.kind is ExceptionKind.PRECONDITION
     assert ei.value.code == "graph_not_implemented"
