@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.outbox import IntegrationEvent
 from forze.application.execution.context.invocation import InvocationContext
+from forze.application.execution.tracing.propagation import current_traceparent
 from forze.base.primitives import HybridLogicalClock, utcnow, uuid7
 
 # ----------------------- #
@@ -53,4 +54,7 @@ class InvocationOutboxEnricher:
             causation_id=metadata.causation_id if metadata is not None else None,
             ordering_key=ordering_key,
             hlc=self.clock.now(),
+            # Captured inside the publishing operation's span, so the relay can replay it from its own
+            # context and the consume span links back here. ``None`` when no span is active.
+            traceparent=current_traceparent(),
         )

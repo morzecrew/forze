@@ -137,6 +137,12 @@ class InvocationMetadataMiddleware:
 
         request = Request(scope, receive)
         ctx = self.ctx_dep()
+        # Forze binds its own invocation envelope (request/correlation/causation ids) below. W3C
+        # trace-context (``traceparent``) extraction is intentionally NOT done here: add the standard
+        # ``opentelemetry-instrumentation-fastapi`` for inbound HTTP — it creates the server span and
+        # establishes the upstream context, which the operation span then nests under. Doing it here too
+        # would re-parent past that server span. (Forze does propagate trace context where OTel cannot:
+        # the async outbox→inbox envelope and outbound HTTP — see ``tracing.propagation``.)
         metadata = self._decode_metadata(request)
         idempotency_key = request.headers.get(self.idem_header) or None
         budget = (

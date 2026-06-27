@@ -100,6 +100,7 @@ async def outbox_table(pg_client: PostgresClient) -> str:
                 available_at TIMESTAMPTZ,
                 ordering_key TEXT,
                 hlc BIGINT,
+                traceparent TEXT,
                 UNIQUE (outbox_route, event_id)
             )
             """
@@ -879,6 +880,69 @@ async def test_hlc_ordering_persists_and_claims_in_causal_order(
     packed = [c.hlc.pack() for c in claims]  # type: ignore[union-attr]
     assert packed == sorted(packed)
     assert len(set(packed)) == 3
+
+
+@pytest.mark.asyncio
+async def test_propagate_trace_persists_and_round_trips(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    """With propagate_trace on, the publishing span's W3C traceparent persists on the row and
+    round-trips back on the claim (so the relay can forward it for cross-async trace linkage)."""
+
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from forze.application.execution.tracing.propagation import current_traceparent
+
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(
+                relation=("public", outbox_table),
+                propagate_trace=True,
+            ),
+        },
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(pg_module).freeze())
+
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
+    tracer = provider.get_tracer("test")
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        with tracer.start_as_current_span("publish"):
+            expected = current_traceparent()
+            async with ctx.tx_ctx.scope("default"):
+                await ctx.outbox.command(outbox_spec).stage(
+                    "demo.a", _OutboxPayload(label="a")
+                )
+                assert await ctx.outbox.command(outbox_spec).flush() == 1
+
+        assert expected is not None
+
+        # Persisted on the row exactly as captured at staging.
+        rows = await pg_client.fetch_all(
+            sql.SQL("SELECT traceparent FROM {t} WHERE outbox_route = %s").format(
+                t=sql.Identifier("public", outbox_table)
+            ),
+            ["integration"],
+        )
+        assert [row["traceparent"] for row in rows] == [expected]
+
+        async with ctx.tx_ctx.scope("default"):
+            claims = list(await ctx.outbox.query(outbox_spec).claim_pending())
+
+    assert len(claims) == 1
+    assert claims[0].traceparent == expected
 
 
 @pytest.mark.asyncio

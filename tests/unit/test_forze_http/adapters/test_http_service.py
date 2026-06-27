@@ -62,6 +62,52 @@ async def test_invoke_static_base_url() -> None:
     await client.aclose()
 
 
+async def _capture_traceparent(*, in_span: bool) -> str | None:
+    from opentelemetry.sdk.trace import TracerProvider
+
+    spec = build_http_service_spec(DemoClient, name="demo")
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["traceparent"] = request.headers.get("traceparent")
+        return httpx.Response(200, json={"items": []})
+
+    client = HttpClient()
+    await client.initialize(
+        base_url="https://api.example.com", transport=httpx.MockTransport(handler)
+    )
+    adapter = HttpServiceAdapter(
+        client=client,
+        config=HttpServiceConfig(base_url="https://api.example.com"),
+        spec=spec,
+    )
+
+    tracer = TracerProvider().get_tracer("test")
+    try:
+        if in_span:
+            with tracer.start_as_current_span("caller"):
+                await adapter.invoke("list_items")
+        else:
+            await adapter.invoke("list_items")
+    finally:
+        await client.aclose()
+
+    return seen["traceparent"]
+
+
+@pytest.mark.asyncio
+async def test_invoke_injects_traceparent_under_an_active_span() -> None:
+    # A Forze service calling downstream continues the distributed trace via the W3C header.
+    traceparent = await _capture_traceparent(in_span=True)
+    assert traceparent is not None and traceparent.startswith("00-")
+
+
+@pytest.mark.asyncio
+async def test_invoke_omits_traceparent_without_a_span() -> None:
+    # No active trace → nothing injected (zero impact for an uninstrumented app).
+    assert await _capture_traceparent(in_span=False) is None
+
+
 @pytest.mark.asyncio
 async def test_invoke_invalid_response_is_validation_error() -> None:
     spec = build_http_service_spec(DemoClient, name="demo")

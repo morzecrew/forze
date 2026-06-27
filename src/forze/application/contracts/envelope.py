@@ -68,7 +68,20 @@ ENVELOPE_HEADER_KEYS: Final = frozenset(
         HEADER_HLC,
     }
 )
-"""All well-known envelope header names."""
+"""All well-known *forze* envelope header names (the dedup/correlation contract)."""
+
+# ....................... #
+
+HEADER_TRACEPARENT: Final = "traceparent"
+"""W3C trace-context ``traceparent`` — present only from trace-propagation outbox backends. Carries
+the publishing operation's span identity so the consumer (``process_with_inbox``) links its span to
+the publish span, stitching the async outbox→broker→inbox flow into one distributed trace.
+
+The **standard W3C header name** (not ``forze_``-prefixed), so OTel collectors and tracing tools that
+sniff broker headers recognize it — and deliberately **not** part of :data:`ENVELOPE_HEADER_KEYS`,
+which is the forze-internal correlation contract. Trust model: like every header, plain broker
+metadata a producer with broker access can forge; it only ever influences trace parenting, never
+identity or authorization."""
 
 # ....................... #
 
@@ -97,5 +110,6 @@ __all__ = [
     "HEADER_OCCURRED_AT",
     "HEADER_HLC",
     "ENVELOPE_HEADER_KEYS",
+    "HEADER_TRACEPARENT",
     "HTTP_HEADER_DEADLINE_BUDGET",
 ]
