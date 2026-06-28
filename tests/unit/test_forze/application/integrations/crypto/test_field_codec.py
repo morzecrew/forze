@@ -153,6 +153,45 @@ async def test_decode_tolerates_legacy_plaintext() -> None:
 # ....................... #
 
 
+def test_envelope_b64_prefix_gate_skips_plaintext() -> None:
+    """``_maybe_envelope`` fast-rejects non-enveloped strings via the b64 prefix.
+
+    The gate must never reject a real envelope and must skip plaintext without a
+    base64 decode (the migration-tolerance fast path).
+    """
+
+    from forze.application.integrations.crypto.codec import (
+        ENVELOPE_B64_PREFIX,
+        _maybe_envelope,
+    )
+    from forze.base.crypto import EncryptedEnvelope, pack_envelope
+
+    blob = pack_envelope(
+        EncryptedEnvelope(
+            alg="AESGCM",
+            key_id="k",
+            key_version="1",
+            nonce=b"0" * 12,
+            wrapped_dek=b"w" * 32,
+            ciphertext=b"ciphertext",
+        )
+    )
+    envelope_b64 = base64.b64encode(blob).decode("ascii")
+
+    # A real envelope's base64 always starts with the prefix and round-trips.
+    assert envelope_b64.startswith(ENVELOPE_B64_PREFIX)
+    assert _maybe_envelope(envelope_b64) == blob
+
+    # Plaintext lacking the prefix is skipped (no decode attempt, returns None);
+    # so is a base64 string whose decoded bytes are not an envelope.
+    assert _maybe_envelope("bob@example.com") is None
+    assert _maybe_envelope("not an envelope at all") is None
+    assert _maybe_envelope(base64.b64encode(b"plain").decode("ascii")) is None
+
+
+# ....................... #
+
+
 async def test_cross_tenant_aad_mismatch_fails() -> None:
     from uuid import uuid4
 

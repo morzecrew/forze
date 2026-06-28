@@ -28,7 +28,9 @@ CUSTOM_CSS = f"""
 {DISABLE_MCP_CUSTOM_CSS}
 """
 
-_DNS_PATTERN = re.compile(r"^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$")
+# Length-bounded per label (<=63) and TLD, matching DNS limits — accepts every valid
+# hostname while keeping backtracking strictly linear (no nested-quantifier ReDoS).
+_DNS_PATTERN = re.compile(r"^(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$")
 
 # ....................... #
 
