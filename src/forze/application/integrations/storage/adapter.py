@@ -409,7 +409,11 @@ class ObjectStorageAdapter(
             description=description,
         )
         meta_dict: JsonDict = attrs.asdict(metadata)
-        safe_meta = {k: str(v) for k, v in meta_dict.items() if v is not None}
+        safe_meta = {
+            k: v.isoformat() if isinstance(v, datetime) else str(v)
+            for k, v in meta_dict.items()
+            if v is not None
+        }
 
         bucket = await self._resolved_bucket()
 
