@@ -28,15 +28,17 @@ CUSTOM_CSS = f"""
 {DISABLE_MCP_CUSTOM_CSS}
 """
 
+# Length-bounded per label (<=63) and TLD, matching DNS limits — accepts every valid
+# hostname while keeping backtracking strictly linear (no nested-quantifier ReDoS).
+_DNS_PATTERN = re.compile(r"^(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$")
+
 # ....................... #
 
 
 def _is_valid_dns(address: str) -> bool:
     """Return ``True`` if *address* matches a valid DNS hostname pattern."""
 
-    dns_pattern = re.compile(r"^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$")
-
-    return bool(dns_pattern.match(address))
+    return bool(_DNS_PATTERN.match(address))
 
 
 # ....................... #

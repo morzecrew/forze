@@ -59,15 +59,16 @@ async def _resolve_cookie_token_authn(
     ctx: ExecutionContext,
 ) -> AuthnResult | None:
     raw = request.cookies.get(ingress.cookie_name)
+    token = raw.strip() if raw is not None else ""
 
-    if raw is None or not str(raw).strip():
+    if not token:
         if ingress.required:
             raise exc.authentication("Authentication credentials are required")
 
         return None
 
     creds = AccessTokenCredentials(
-        token=str(raw).strip(),
+        token=token,
         scheme=ingress.scheme,
     )
 
@@ -87,7 +88,7 @@ async def _resolve_header_token_authn(
 ) -> AuthnResult | None:
     raw = request.headers.get(ingress.header_name)
 
-    if raw is None or not str(raw).strip():
+    if raw is None or not raw.strip():
         if ingress.required:
             raise exc.authentication("Authentication credentials are required")
 
@@ -117,7 +118,7 @@ async def _resolve_header_api_key_authn(
 ) -> AuthnResult | None:
     raw = request.headers.get(ingress.header_name)
 
-    if raw is None or not str(raw).strip():
+    if raw is None or not raw.strip():
         if ingress.required:
             raise exc.authentication("Authentication credentials are required")
 

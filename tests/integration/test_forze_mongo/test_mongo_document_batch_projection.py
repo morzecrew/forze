@@ -10,6 +10,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
+    KeyedUpdate,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
@@ -113,7 +114,10 @@ async def test_create_many_delete_many_restore_many(mongo_client: MongoClient) -
     assert len(created) == 2
 
     deleted = await cmd.update_many(
-        [(c.id, c.rev, BatchUpdate(is_deleted=True)) for c in created],
+        [
+            KeyedUpdate(id=c.id, rev=c.rev, dto=BatchUpdate(is_deleted=True))
+            for c in created
+        ],
         return_new=True,
     )
     assert deleted is not None
@@ -121,7 +125,10 @@ async def test_create_many_delete_many_restore_many(mongo_client: MongoClient) -
     assert all(d.is_deleted for d in deleted)
 
     restored = await cmd.update_many(
-        [(d.id, d.rev, BatchUpdate(is_deleted=False)) for d in deleted],
+        [
+            KeyedUpdate(id=d.id, rev=d.rev, dto=BatchUpdate(is_deleted=False))
+            for d in deleted
+        ],
         return_new=True,
     )
     assert restored is not None

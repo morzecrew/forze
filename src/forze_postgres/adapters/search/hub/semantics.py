@@ -185,12 +185,19 @@ def sort_hub_rows(
 
 
 def _hub_row_key(
-    row: dict[str, Any], *, read_fields: frozenset[str]
+    row: dict[str, Any], key_fields: tuple[str, ...] | None
 ) -> tuple[Any, ...]:
-    if ID_FIELD in read_fields:
+    """Merge key for *row*.
+
+    *key_fields* is ``None`` when the id column is the key (the fast path) and the
+    pre-sorted read-field names otherwise — resolved once by the caller so the field
+    set is not re-sorted on every row.
+    """
+
+    if key_fields is None:
         return (row[ID_FIELD],)
 
-    return tuple(row[f] for f in sorted(read_fields))
+    return tuple(row[f] for f in key_fields)
 
 
 # ....................... #
@@ -215,12 +222,18 @@ def merge_hub_leg_row_lists(
     leg_scores: dict[tuple[Any, ...], list[float | None]] = {}
     leg_matched: dict[tuple[Any, ...], list[bool]] = {}
 
+    # Resolve the merge key shape once: the id column when present, else the read
+    # fields sorted a single time (not per row).
+    key_fields = None if ID_FIELD in read_fields else tuple(sorted(read_fields))
+
     for leg_idx, rows in enumerate(leg_rows):
         weight = float(weights[leg_idx]) if leg_idx < len(weights) else 0.0
 
         for row in rows:
-            key = _hub_row_key(row, read_fields=read_fields)
-            merged.setdefault(key, dict(row))
+            key = _hub_row_key(row, key_fields)
+            # Hold the leg row by reference; the surviving rows are copied once below,
+            # so rejected rows are never copied (and survivors not copied twice).
+            merged.setdefault(key, row)
             scores = leg_scores.setdefault(key, [None] * n_legs)
             matched = leg_matched.setdefault(key, [False] * n_legs)
             raw = row.get(rank_field)

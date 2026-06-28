@@ -10,6 +10,7 @@ import pytest
 from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
+    KeyedUpdate,
     UpsertItem,
 )
 from forze.application.contracts.tenancy import TenantIdentity
@@ -368,16 +369,20 @@ class TestUpdateMany:
         adapter = _adapter(MockState())
         assert await adapter.update_many([]) == []
         assert await adapter.update_many([], return_new=False) is None
+        # Diff-only empty must match its overload's Sequence[JsonDict] (not None).
+        assert (
+            await adapter.update_many([], return_new=False, return_diff=True) == []
+        )
 
     async def test_duplicate_pks_raise(self) -> None:
         state = MockState()
         adapter = _adapter(state)
         created = await adapter.create(ItemCreate(title="a"))
-        with pytest.raises(CoreException, match="unique"):
+        with pytest.raises(CoreException, match="distinct id"):
             await adapter.update_many(
                 [
-                    (created.id, created.rev, ItemUpdate(title="x")),
-                    (created.id, created.rev, ItemUpdate(title="y")),
+                    KeyedUpdate(id=created.id, rev=created.rev, dto=ItemUpdate(title="x")),
+                    KeyedUpdate(id=created.id, rev=created.rev, dto=ItemUpdate(title="y")),
                 ]
             )
 
@@ -388,12 +393,12 @@ class TestUpdateMany:
         b = await adapter.create(ItemCreate(title="b"))
 
         out = await adapter.update_many(
-            [(a.id, a.rev, ItemUpdate(title="a2"))]
+            [KeyedUpdate(id=a.id, rev=a.rev, dto=ItemUpdate(title="a2"))]
         )
         assert out[0].title == "a2"
 
         with_diff = await adapter.update_many(
-            [(b.id, b.rev, ItemUpdate(title="b2"))], return_diff=True
+            [KeyedUpdate(id=b.id, rev=b.rev, dto=ItemUpdate(title="b2"))], return_diff=True
         )
         assert with_diff[0][1]["title"] == "b2"
 
@@ -404,13 +409,13 @@ class TestUpdateMany:
         b = await adapter.create(ItemCreate(title="b"))
 
         diffs = await adapter.update_many(
-            [(a.id, a.rev, ItemUpdate(title="a2"))],
+            [KeyedUpdate(id=a.id, rev=a.rev, dto=ItemUpdate(title="a2"))],
             return_new=False, return_diff=True,
         )
         assert diffs[0]["title"] == "a2"
 
         out = await adapter.update_many(
-            [(b.id, b.rev, ItemUpdate(title="b2"))], return_new=False
+            [KeyedUpdate(id=b.id, rev=b.rev, dto=ItemUpdate(title="b2"))], return_new=False
         )
         assert out is None
 

@@ -1,8 +1,9 @@
 """Value objects for keyed document writes.
 
-``ensure``/``upsert`` insert at a caller-chosen primary key, so the id is an explicit part
-of each item. For bulk variants these value objects bundle the id with its payload(s)
-instead of relying on positional tuples (clearer than ``(id, create, update)`` triples and
+``ensure``/``upsert`` insert at a caller-chosen primary key, and ``update`` patches a known
+key at an expected revision, so the id is an explicit part of each item. For bulk variants
+these value objects bundle the id with its payload(s) and revision instead of relying on
+positional tuples (clearer than ``(id, create, update)`` or ``(id, rev, dto)`` triples and
 extensible — e.g. an import payload can carry its own ``created_at``/``last_update_at``).
 """
 
@@ -41,3 +42,20 @@ class UpsertItem[C: BaseDTO, U: BaseDTO]:
 
     update: U
     """Patch applied when the key already exists."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
+class KeyedUpdate[U: BaseDTO]:
+    """A patch + its expected revision for one primary key, for bulk update."""
+
+    id: UUID
+    """Primary key of the document to update."""
+
+    rev: int
+    """Expected revision (optimistic-concurrency token), as in :meth:`update`."""
+
+    dto: U
+    """Patch applied to the document."""

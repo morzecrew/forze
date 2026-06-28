@@ -28,7 +28,7 @@ from ..querying import (
 )
 from .specs import DocumentSpec
 from .types import RowLockMode
-from .value_objects import KeyedCreate, UpsertItem
+from .value_objects import KeyedCreate, KeyedUpdate, UpsertItem
 
 # ----------------------- #
 
@@ -383,20 +383,32 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
 
     @overload
     def ensure(
-        self, id: UUID, payload: C, *, return_new: Literal[True] = True
+        self,
+        id: UUID,
+        payload: C,
+        *,
+        return_new: Literal[True] = True,
     ) -> Awaitable[R]:
         """Insert *payload* at *id* when missing; if it exists, return it unchanged."""
         ...  # pragma: no cover
 
     @overload
     def ensure(
-        self, id: UUID, payload: C, *, return_new: Literal[False]
+        self,
+        id: UUID,
+        payload: C,
+        *,
+        return_new: Literal[False],
     ) -> Awaitable[None]:
         """Insert when missing; no read when ``return_new`` is false."""
         ...  # pragma: no cover
 
     def ensure(
-        self, id: UUID, payload: C, *, return_new: bool = True
+        self,
+        id: UUID,
+        payload: C,
+        *,
+        return_new: bool = True,
     ) -> Awaitable[R | None]:
         """Insert *payload* at primary key *id* when missing; return it unchanged on conflict.
 
@@ -591,7 +603,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
@@ -602,7 +614,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
@@ -613,7 +625,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
@@ -624,7 +636,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
@@ -634,7 +646,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
 
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: bool = True,
         return_diff: bool = False,

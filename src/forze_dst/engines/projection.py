@@ -107,16 +107,21 @@ def project_operation_events(trace_events: Sequence[Any]) -> None:
         return
 
     op_starts = [e for e in recorder.history.events if e.kind == "op_start"]
-    invokes = [
-        e for e in trace_events if e.domain == "operation" and e.phase == "invoke"
-    ]
 
-    # Terminals indexed by the correlation id (their invoke's seq) ``run_operation`` stamps.
-    by_corr: dict[int, Any] = {
-        event.corr: event
-        for event in trace_events
-        if event.domain == "operation" and event.phase in ("complete", "error")
-    }
+    # Single pass over the trace: collect invokes and index terminals by the correlation
+    # id (their invoke's seq) ``run_operation`` stamps.
+    invokes: list[Any] = []
+    by_corr: dict[int, Any] = {}
+
+    for event in trace_events:
+        if event.domain != "operation":
+            continue
+
+        if event.phase == "invoke":
+            invokes.append(event)
+
+        elif event.phase in ("complete", "error"):
+            by_corr[event.corr] = event
 
     top_level = 0
 

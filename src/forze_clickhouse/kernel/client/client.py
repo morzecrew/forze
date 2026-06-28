@@ -6,6 +6,7 @@ require_clickhouse()
 
 import asyncio
 from datetime import timedelta
+from operator import itemgetter
 from typing import Any, Awaitable, Callable, Sequence, TypeVar, cast, final
 
 import attrs
@@ -334,7 +335,27 @@ class ClickHouseClient(ClickHouseClientPort):
         for start in range(0, len(rows), batch_size):
             batch = rows[start : start + batch_size]
             columns = list(batch[0].keys())
-            data = [[row.get(col) for col in columns] for row in batch]
+
+            # Fast path: rows from ``encode_ingest_payloads`` share one key set, so a
+            # single C-level ``itemgetter`` extracts each row's columns rather than a
+            # per-cell ``.get`` (which also blocks the event loop on large ingests).
+            # ``itemgetter`` returns a bare value for one column, a tuple for several.
+            # A direct ``ClickHouseClientPort.insert_rows`` caller may pass a sparse
+            # row missing one of the first row's keys, though — fall back to the
+            # None-filling ``.get`` for the whole batch then, preserving the legacy
+            # NULL-insertion contract.
+            pick: Callable[[JsonDict], Any] = itemgetter(*columns)
+            single_column = len(columns) == 1
+
+            try:
+                data = (
+                    [[pick(row)] for row in batch]
+                    if single_column
+                    else [list(pick(row)) for row in batch]
+                )
+
+            except KeyError:
+                data = [[row.get(col) for col in columns] for row in batch]
 
             await ch.insert(
                 table,

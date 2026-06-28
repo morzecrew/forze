@@ -4,7 +4,7 @@ import asyncio
 from typing import Generic, Literal, Sequence, overload
 from uuid import UUID
 
-from forze.application.contracts.document import KeyedCreate, UpsertItem
+from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -380,7 +380,7 @@ class DocumentCommandMixin(
     @overload
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
@@ -389,7 +389,7 @@ class DocumentCommandMixin(
     @overload
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
@@ -398,7 +398,7 @@ class DocumentCommandMixin(
     @overload
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
@@ -407,7 +407,7 @@ class DocumentCommandMixin(
     @overload
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
@@ -415,16 +415,15 @@ class DocumentCommandMixin(
 
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: bool = True,
         return_diff: bool = False,
     ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
         """Bulk-update documents and refresh the cache.
 
-        :param pks: Document primary keys.
-        :param dtos: Update payloads matching *pks* by position.
-        :param revs: Optional expected revisions for history validation.
+        :param updates: One :class:`KeyedUpdate` per document (id, expected rev, patch);
+            ids must be unique.
         """
 
         w = self._require_write()
@@ -436,13 +435,19 @@ class DocumentCommandMixin(
             )
 
             if not return_new:
-                return None
+                return [] if return_diff else None
 
             return []
 
-        pks = [x[0] for x in updates]
-        revs = [x[1] for x in updates]
-        dtos = [x[2] for x in updates]
+        pks = [u.id for u in updates]
+
+        if len(set(pks)) != len(pks):
+            raise exc.precondition(
+                "update_many requires distinct id values in the batch"
+            )
+
+        revs = [u.rev for u in updates]
+        dtos = [u.dto for u in updates]
 
         (domains, diffs), _ = await asyncio.gather(
             w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size),
@@ -599,7 +604,10 @@ class DocumentCommandMixin(
             page_ids = [UUID(str(r[ID_FIELD])) for r in page]
             page_revs = [int(r[REV_FIELD]) for r in page]
 
-            updates = list(zip(page_ids, page_revs, [dto] * len(page)))
+            updates = [
+                KeyedUpdate(id=pk, rev=rev, dto=dto)
+                for pk, rev in zip(page_ids, page_revs, strict=True)
+            ]
 
             if return_new:
                 got = await self.update_many(

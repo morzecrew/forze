@@ -11,6 +11,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
+    KeyedUpdate,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
@@ -133,8 +134,8 @@ async def test_update_many_applies_payloads(mongo_client: MongoClient) -> None:
     b = await cmd.create(_Create(title="b0"))
     rows = await cmd.update_many(
         [
-            (a.id, a.rev, _Update(title="a1")),
-            (b.id, b.rev, _Update(title="b1")),
+            KeyedUpdate(id=a.id, rev=a.rev, dto=_Update(title="a1")),
+            KeyedUpdate(id=b.id, rev=b.rev, dto=_Update(title="b1")),
         ],
     )
     assert rows is not None

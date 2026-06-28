@@ -118,19 +118,36 @@ class GraphModuleSpec(BaseSpec):
     edges: tuple[GraphEdgeSpec[BaseModel], ...]
     """All edge kinds in this module."""
 
+    # Kind-name -> spec, resolved once so lookups are O(1) instead of a linear scan
+    # over all kinds on every call (these are hit per element during traversal result
+    # mapping). Derived from ``nodes``/``edges``, so excluded from equality.
+    _node_by_kind: dict[str, GraphNodeSpec[BaseModel]] = attrs.field(
+        init=False,
+        eq=False,
+        repr=False,
+        default=attrs.Factory(lambda self: _index_by_kind(self.nodes), takes_self=True),
+    )
+
+    _edge_by_kind: dict[str, GraphEdgeSpec[BaseModel]] = attrs.field(
+        init=False,
+        eq=False,
+        repr=False,
+        default=attrs.Factory(lambda self: _index_by_kind(self.edges), takes_self=True),
+    )
+
     # ....................... #
 
     def graph_node_by_kind(self, kind: str) -> GraphNodeSpec[BaseModel] | None:
         """Return the ``GraphNodeSpec`` whose name matches *kind*, or ``None``."""
 
-        return next((n for n in self.nodes if _kind_key(n.name) == kind), None)
+        return self._node_by_kind.get(kind)
 
     # ....................... #
 
     def graph_edge_by_kind(self, kind: str) -> GraphEdgeSpec[BaseModel] | None:
         """Return the ``GraphEdgeSpec`` whose name matches *kind*, or ``None``."""
 
-        return next((e for e in self.edges if _kind_key(e.name) == kind), None)
+        return self._edge_by_kind.get(kind)
 
 
 # ....................... #
@@ -138,6 +155,25 @@ class GraphModuleSpec(BaseSpec):
 
 def _kind_key(name: object) -> str:
     return str(name)
+
+
+# ....................... #
+
+
+def _index_by_kind[S: BaseSpec](items: tuple[S, ...]) -> dict[str, S]:
+    """Index *items* by kind name, first occurrence winning.
+
+    Matches the prior ``next(... if _kind_key == kind)`` scan semantics (kind names
+    are unique once :func:`validate_graph_module_spec` has run, so the order only
+    matters for an unvalidated spec).
+    """
+
+    index: dict[str, S] = {}
+
+    for item in items:
+        index.setdefault(_kind_key(item.name), item)
+
+    return index
 
 
 # ....................... #

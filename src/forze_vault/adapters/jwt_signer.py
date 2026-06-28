@@ -15,7 +15,7 @@ Supports two algorithms, matched to the Transit key type:
 """
 
 import json
-from typing import Any, cast, final
+from typing import Any, final
 
 import attrs
 from cryptography.hazmat.primitives import serialization
@@ -52,6 +52,10 @@ class VaultTransitSigner:
 
     _public_pem: str | None = attrs.field(default=None, init=False, repr=False)
     """Cached PEM public key (fetched once from Vault)."""
+
+    _public_key_obj: Any = attrs.field(default=None, init=False, repr=False)
+    """Cached parsed public key, so local verification (per token) does not re-parse
+    the PEM on every call."""
 
     # ....................... #
 
@@ -91,23 +95,29 @@ class VaultTransitSigner:
 
     # ....................... #
 
+    async def _public_key(self) -> Any:
+        if self._public_key_obj is None:
+            self._public_key_obj = serialization.load_pem_public_key(
+                (await self._public_key_pem()).encode()
+            )
+
+        return self._public_key_obj
+
+    # ....................... #
+
     async def verification_key(self) -> Any:
-        return serialization.load_pem_public_key(
-            (await self._public_key_pem()).encode()
-        )
+        return await self._public_key()
 
     # ....................... #
 
     async def public_jwk(self) -> JsonDict:
-        public_key = serialization.load_pem_public_key(
-            (await self._public_key_pem()).encode(),
-        )
+        public_key = await self._public_key()
         algo = (
             ECAlgorithm(ECAlgorithm.SHA256)
             if self._is_ecdsa
             else RSAAlgorithm(RSAAlgorithm.SHA256)
         )
-        jwk: JsonDict = json.loads(algo.to_jwk(cast(Any, public_key)))
+        jwk: JsonDict = json.loads(algo.to_jwk(public_key))
         jwk["use"] = "sig"
         jwk["alg"] = self.algorithm
 

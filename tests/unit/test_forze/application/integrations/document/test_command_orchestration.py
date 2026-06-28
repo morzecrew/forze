@@ -21,7 +21,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.document import KeyedCreate, UpsertItem
+from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
 from forze.application.integrations.document._command import DocumentCommandMixin
 from forze.application.integrations.document._query import DocumentQueryMixin
 from forze.base.exceptions import CoreException
@@ -717,7 +717,10 @@ async def test_update_many_return_shapes(return_new: bool, return_diff: bool) ->
     harness = CommandHarness(write_gw, cache)
 
     res = await harness.update_many(
-        [(_UID_A, 1, _Dto()), (_UID_B, 2, _Dto())],
+        [
+            KeyedUpdate(id=_UID_A, rev=1, dto=_Dto()),
+            KeyedUpdate(id=_UID_B, rev=2, dto=_Dto()),
+        ],
         return_new=return_new,
         return_diff=return_diff,
     )

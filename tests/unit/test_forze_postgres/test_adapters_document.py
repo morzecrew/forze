@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.document import DocumentSpec, KeyedUpdate
 from forze.application.integrations.document import DocumentCache
 from forze.base.serialization import PydanticModelCodec
 from tests.unit._gateway_codec_helpers import codec_for
@@ -1067,8 +1067,8 @@ class TestPostgresDocumentAdapterBatchMutations:
         )
 
         updates = [
-            (pk1, 1, TUpdate(title="a")),
-            (pk2, 2, TUpdate(title="b")),
+            KeyedUpdate(id=pk1, rev=1, dto=TUpdate(title="a")),
+            KeyedUpdate(id=pk2, rev=2, dto=TUpdate(title="b")),
         ]
         out = await adapter.update_many(updates)
 
@@ -1200,8 +1200,8 @@ class TestPostgresDocumentAdapterReturnNew:
         )
 
         updates = [
-            (pk1, 1, TUpdate(title="a")),
-            (pk2, 2, TUpdate(title="b")),
+            KeyedUpdate(id=pk1, rev=1, dto=TUpdate(title="a")),
+            KeyedUpdate(id=pk2, rev=2, dto=TUpdate(title="b")),
         ]
         assert await adapter.update_many(updates, return_new=False) is None
         write_gw.update_many.assert_awaited_once()

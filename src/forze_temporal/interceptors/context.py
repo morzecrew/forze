@@ -266,7 +266,7 @@ class WorkflowContextInboundInterceptor(
 
     async def execute_workflow(self, input: ExecuteWorkflowInput) -> Any:
         return await self.bind_and_call(
-            dict(input.headers),
+            input.headers,
             lambda: self.next.execute_workflow(input),
         )
 
@@ -274,7 +274,7 @@ class WorkflowContextInboundInterceptor(
 
     async def handle_signal(self, input: HandleSignalInput) -> Any:
         return await self.bind_and_call(
-            dict(input.headers),
+            input.headers,
             lambda: self.next.handle_signal(input),
         )
 
@@ -282,7 +282,7 @@ class WorkflowContextInboundInterceptor(
 
     async def handle_query(self, input: HandleQueryInput) -> Any:
         return await self.bind_and_call(
-            dict(input.headers),
+            input.headers,
             lambda: self.next.handle_query(input),
         )
 
@@ -290,7 +290,7 @@ class WorkflowContextInboundInterceptor(
 
     async def handle_update_handler(self, input: HandleUpdateInput) -> Any:
         return await self.bind_and_call(
-            dict(input.headers),
+            input.headers,
             lambda: self.next.handle_update_handler(input),
         )
 
@@ -298,7 +298,7 @@ class WorkflowContextInboundInterceptor(
 
     def handle_update_validator(self, input: HandleUpdateInput) -> None:
         return self.bind_and_call_sync(
-            dict(input.headers),
+            input.headers,
             lambda: self.next.handle_update_validator(input),
         )
 
@@ -373,6 +373,6 @@ class ActivityContextInboundInterceptor(
 
     async def execute_activity(self, input: ExecuteActivityInput) -> Any:
         return await self.bind_and_call(
-            dict(input.headers),
+            input.headers,
             lambda: self.next.execute_activity(input),
         )

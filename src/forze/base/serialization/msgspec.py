@@ -593,13 +593,18 @@ def _dump_struct(
 ) -> JsonDict:
     out: JsonDict = {}
 
+    # Resolve the exclude flags once per struct rather than re-reading the dict on
+    # every field.
+    exclude_none = exclude.get("none", False)
+    exclude_defaults = exclude.get("defaults", False)
+
     for field in _struct_fields_cached(type(obj)):
         value = getattr(obj, field.name)
 
-        if exclude.get("none", False) and value is None:
+        if exclude_none and value is None:
             continue
 
-        if exclude.get("defaults", False) and not field.required:
+        if exclude_defaults and not field.required:
             if value == _default_value_for_field(field):
                 continue
 

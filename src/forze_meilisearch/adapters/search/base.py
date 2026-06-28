@@ -58,7 +58,34 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         repr=False,
     )
 
-    # ....................... #
+    # The logical->physical field map (and its inverse) derive from a frozen config, so
+    # resolve them once instead of rebuilding the dict on every ``physical_path`` (per
+    # indexed field) and every ``from_hit`` (per search hit). Private and read-only — the
+    # public ``field_map`` property still returns a fresh copy.
+    _field_map_cache: dict[str, str] = attrs.field(
+        default=attrs.Factory(
+            lambda self: dict(self.config.field_map or {}),
+            takes_self=True,
+        ),
+        init=False,
+        eq=False,
+        repr=False,
+    )
+
+    _inv_field_map_cache: dict[str, str] = attrs.field(
+        default=attrs.Factory(
+            lambda self: {
+                v: k
+                for k, v in (  # pyright: ignore[reportUnknownVariableType]
+                    self.config.field_map or {}
+                ).items()
+            },
+            takes_self=True,
+        ),
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     # ....................... #
 
@@ -105,7 +132,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     def physical_path(self, field: str) -> str:
-        return self.field_map.get(field, field)
+        return self._field_map_cache.get(field, field)
 
     def physical_paths(self, fields: Sequence[str]) -> list[str]:
         return [self.physical_path(f) for f in fields]
@@ -180,7 +207,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         return out
 
     def from_hit(self, hit: dict[str, Any]) -> dict[str, Any]:
-        inv = {v: k for k, v in self.field_map.items()}
+        inv = self._inv_field_map_cache
         out: dict[str, Any] = {}
 
         for key, value in hit.items():

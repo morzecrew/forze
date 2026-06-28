@@ -12,6 +12,7 @@ marker so callers can cheaply distinguish ciphertext from legacy plaintext (see
 :func:`is_envelope`). The layout is pure ``struct`` — no third-party dependency.
 """
 
+import base64
 import struct
 from typing import final
 
@@ -23,6 +24,15 @@ from ..exceptions import exc
 
 _MAGIC = b"FZEv"
 """Magic marker identifying a packed Forze envelope (``FZE`` + format family)."""
+
+ENVELOPE_B64_PREFIX = base64.b64encode(_MAGIC[:3]).decode("ascii")
+"""Fixed leading characters of any base64-encoded envelope.
+
+Base64 maps each independent group of three source bytes to four output
+characters, and every envelope begins with :data:`_MAGIC`, so its base64 form
+always starts with the encoding of the magic's first three bytes. A stored string
+lacking this prefix therefore cannot be an envelope — a cheap discriminator that
+lets read paths skip a base64 decode on legacy-plaintext values."""
 
 _SCHEME_VERSION = 1
 """Current envelope scheme version (bumped on incompatible layout changes)."""

@@ -77,3 +77,21 @@ class TestNormalizeString:
     def test_mixed_whitespace_and_invisible(self) -> None:
         s = "  \u200b hello \u2060 world  "
         assert normalize_string(s) == "hello world"
+
+    # ----------------------- #
+    # ASCII fast path: pure-ASCII text skips NFC + the per-char scan, so it must
+    # still collapse whitespace, preserve newlines, and return content unchanged.
+
+    def test_ascii_text_passes_through_unchanged(self) -> None:
+        s = "Hello World 123 - the quick brown fox."
+        assert normalize_string(s) == s
+
+    def test_ascii_fast_path_collapses_whitespace_keeps_newlines(self) -> None:
+        s = "alpha\t\tbeta   gamma\nsecond   line"
+        assert normalize_string(s) == "alpha beta gamma\nsecond line"
+
+    def test_ascii_fast_path_keeps_all_printable_ascii(self) -> None:
+        # Every printable-ASCII char survives (none fall in the stripped/format
+        # categories the non-ASCII branch filters).
+        s = "a1!?,.:;_-/=+()[]{}@#$%^&*"
+        assert normalize_string(s) == s

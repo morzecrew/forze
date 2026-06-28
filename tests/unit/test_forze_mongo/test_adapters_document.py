@@ -11,6 +11,7 @@ from forze.base.exceptions import CoreException
 from forze.application.contracts.document import (
     DocumentSpec,
     KeyedCreate,
+    KeyedUpdate,
     UpsertItem,
 )
 from forze.application.integrations.document import DocumentCache
@@ -847,8 +848,8 @@ class TestMongoDocumentAdapterMutationsWithCache:
 
         zipped = await adapter.update_many(
             [
-                (p1, 1, MyUpdateDoc(name="a")),
-                (p2, 1, MyUpdateDoc(name="b")),
+                KeyedUpdate(id=p1, rev=1, dto=MyUpdateDoc(name="a")),
+                KeyedUpdate(id=p2, rev=1, dto=MyUpdateDoc(name="b")),
             ],
             return_diff=True,
         )
@@ -876,7 +877,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             document_cache=_mongo_cc(read_gw, ms),
         )
         out = await adapter.update_many(
-            [(p1, 1, MyUpdateDoc(name="a"))],
+            [KeyedUpdate(id=p1, rev=1, dto=MyUpdateDoc(name="a"))],
             return_new=False,
             return_diff=True,
         )

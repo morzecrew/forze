@@ -30,7 +30,9 @@ frozen, purpose-built types that carry data across boundaries.
 | **Read model** | Frozen projection returned from queries | `ReadDocument` |
 
 How a create command becomes the domain model and is projected back to the read model —
-the codecs that carry it — is the [mapping reference](../reference/mapping.md).
+the codecs that carry it — is the [mapping reference](../reference/mapping.md). Why these
+are *separate* models, rather than one with the rest derived, is
+[Why four models](why-four-models.md).
 
 !!! note "CreateDocumentCmd is deprecated"
 
@@ -84,6 +86,10 @@ class Order(Document):
 Updates are structured. `order.update({"total": 99})` returns a **new immutable
 instance** and a minimal diff, runs the validators, and bumps `last_update_at`.
 A patch that changes nothing returns the original and an empty diff.
+
+These validate a *single* write. A state **transition** — its guard plus the change
+it makes — belongs on the aggregate too, as a *decider* method that returns the patch
+to persist; see [Aggregate decisions](../writing-operation/aggregate-decisions.md).
 
 ## Reusable concerns: mixins
 

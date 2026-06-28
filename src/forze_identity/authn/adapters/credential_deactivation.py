@@ -3,7 +3,11 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
+from forze.application.contracts.document import (
+    DocumentCommandPort,
+    DocumentQueryPort,
+    KeyedUpdate,
+)
 
 from ..domain.models.account import (
     ApiKeyAccount,
@@ -72,7 +76,11 @@ class AuthnCredentialDeactivationHelper:
         )
 
         upds = [
-            (row.id, row.rev, UpdateApiKeyAccountCmd(is_active=False))
+            KeyedUpdate(
+                id=row.id,
+                rev=row.rev,
+                dto=UpdateApiKeyAccountCmd(is_active=False),
+            )
             for row in result.hits
             if row.is_active
         ]

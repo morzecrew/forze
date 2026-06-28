@@ -66,8 +66,9 @@ class Recorder:
                 seq=self._seq,
                 kind=kind,
                 at=monotonic() if at is None else at,
-                # A read-only view so recorded history can't be mutated after the fact
-                # (the immutability the `History`/`Event` contract promises).
+                # A snapshot behind a read-only view, so recorded history can never be
+                # mutated after the fact (the immutability the `History`/`Event` contract
+                # promises) regardless of how callers obtain the field values.
                 fields=MappingProxyType(dict(fields)),
             )
         )

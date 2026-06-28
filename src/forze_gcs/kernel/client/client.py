@@ -597,19 +597,24 @@ class GCSClient(GCSClientPort):
         # Drop in-flight/orphaned multipart scaffolding: compose-based MPU stores
         # temp parts at ``<key>.__forze_mpu__/<session>/<n>`` (no metadata
         # envelope), which would otherwise surface as bogus listed objects and
-        # break the adapter's per-object metadata read.
-        keys = [
-            k
-            for k in keys
-            if not (
-                f".{MPU_NAMESPACE}/" in k
-                and (tail := k.rsplit(f".{MPU_NAMESPACE}/", 1)[1]).count("/") == 1
-                and (
-                    tail.split("/", 1)[1].isdigit()
-                    or tail.split("/", 1)[1] == "__compose__"
-                )
-            )
-        ]
+        # break the adapter's per-object metadata read. The marker is resolved once
+        # (not rebuilt per key) since this scans the whole prefix listing.
+        mpu_marker = f".{MPU_NAMESPACE}/"
+
+        def _is_mpu_scaffold(key: str) -> bool:
+            if mpu_marker not in key:
+                return False
+
+            tail = key.rsplit(mpu_marker, 1)[1]
+
+            if tail.count("/") != 1:
+                return False
+
+            suffix = tail.split("/", 1)[1]
+
+            return suffix.isdigit() or suffix == "__compose__"
+
+        keys = [k for k in keys if not _is_mpu_scaffold(k)]
 
         total_count = len(keys)
         window = keys[_offset : _offset + _limit]

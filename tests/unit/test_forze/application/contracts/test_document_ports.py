@@ -17,7 +17,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.domain.constants import ID_FIELD
-from forze.application.contracts.document import KeyedCreate
+from forze.application.contracts.document import KeyedCreate, KeyedUpdate
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockState
 from forze_mock.adapters import MockDocumentAdapter
@@ -245,8 +245,8 @@ class TestDocumentCommandPortViaMock:
         c2 = await port.create(_CreateWithTitle())
         result = await port.update_many(
             [
-                (c1.id, c1.rev, _UpdateTitle(title="a")),
-                (c2.id, c2.rev, _UpdateTitle(title="b")),
+                KeyedUpdate(id=c1.id, rev=c1.rev, dto=_UpdateTitle(title="a")),
+                KeyedUpdate(id=c2.id, rev=c2.rev, dto=_UpdateTitle(title="b")),
             ]
         )
         assert len(result) == 2
@@ -481,8 +481,8 @@ class TestDocumentCommandReturnNewViaMock:
         assert (
             await port.update_many(
                 [
-                    (c1.id, c1.rev, _UpdateTitle(title="a")),
-                    (c2.id, c2.rev, _UpdateTitle(title="b")),
+                    KeyedUpdate(id=c1.id, rev=c1.rev, dto=_UpdateTitle(title="a")),
+                    KeyedUpdate(id=c2.id, rev=c2.rev, dto=_UpdateTitle(title="b")),
                 ],
                 return_new=False,
             )

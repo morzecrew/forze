@@ -41,6 +41,7 @@ nav = [
             "core-concepts/overview.md",
             "core-concepts/architecture.md",
             "core-concepts/domain-layer.md",
+            "core-concepts/why-four-models.md",
             "core-concepts/application-layer.md",
             "core-concepts/contracts.md",
             "core-concepts/runtime.md",
@@ -52,6 +53,7 @@ nav = [
             "writing-operation/errors.md",
             "writing-operation/concurrency-conflicts.md",
             "writing-operation/idempotency.md",
+            "writing-operation/aggregate-decisions.md",
             "writing-operation/system-invariants.md",
         ] },
         { "Data & events" = [
@@ -251,6 +253,7 @@ check_paths = true
 # Site-wide abbreviations: defined once in pages/_includes (outside the docs tree
 # so it isn't built as a page), rendered as <abbr> tooltips on every page.
 auto_append = ["_includes/abbreviations.md"]
+
 [project.markdown_extensions.abbr]
 [project.markdown_extensions.admonition]
 [project.markdown_extensions.pymdownx.details]

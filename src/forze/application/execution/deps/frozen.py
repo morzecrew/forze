@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING, Any, Iterator, final
 import attrs
 
 from forze.application.contracts.base import BaseSpec
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps import (
+    DepKey,
+    PlainDepsMap,
+    ProviderStore,
+    RoutedDeps,
+)
 from forze.application.execution.tracing import (
     NOOP_RUNTIME_TRACER,
     RuntimeTrace,
@@ -32,7 +37,6 @@ from .resolution import (
     ResolutionTracer,
     frame_for,
 )
-from forze.application.contracts.deps import PlainDepsMap, ProviderStore, RoutedDeps
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
