@@ -369,12 +369,16 @@ class TestUpdateMany:
         adapter = _adapter(MockState())
         assert await adapter.update_many([]) == []
         assert await adapter.update_many([], return_new=False) is None
+        # Diff-only empty must match its overload's Sequence[JsonDict] (not None).
+        assert (
+            await adapter.update_many([], return_new=False, return_diff=True) == []
+        )
 
     async def test_duplicate_pks_raise(self) -> None:
         state = MockState()
         adapter = _adapter(state)
         created = await adapter.create(ItemCreate(title="a"))
-        with pytest.raises(CoreException, match="unique"):
+        with pytest.raises(CoreException, match="distinct id"):
             await adapter.update_many(
                 [
                     KeyedUpdate(id=created.id, rev=created.rev, dto=ItemUpdate(title="x")),

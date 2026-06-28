@@ -539,11 +539,13 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         return_diff: bool = False,
     ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
         if not updates:
-            return [] if return_new else None
+            return [] if (return_new or return_diff) else None
 
         pks = [u.id for u in updates]
         if len(set(pks)) != len(pks):
-            raise exc.internal("Primary keys must be unique")
+            raise exc.precondition(
+                "update_many requires distinct id values in the batch"
+            )
 
         if return_new:
             if return_diff:

@@ -435,11 +435,17 @@ class DocumentCommandMixin(
             )
 
             if not return_new:
-                return None
+                return [] if return_diff else None
 
             return []
 
         pks = [u.id for u in updates]
+
+        if len(set(pks)) != len(pks):
+            raise exc.precondition(
+                "update_many requires distinct id values in the batch"
+            )
+
         revs = [u.rev for u in updates]
         dtos = [u.dto for u in updates]
 
