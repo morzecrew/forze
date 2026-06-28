@@ -5055,6 +5055,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Codecs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#which-serialization-library-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Which serialization library, where
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5325,6 +5342,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Codecs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#which-serialization-library-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Which serialization library, where
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5496,14 +5530,14 @@ identity isn't carried in the payload — <code>create(payload, id=…)</code> /
     <span class="n">total_cents</span><span class="p">:</span> <span class="nb">int</span>
 </code></pre></div>
 <h2 id="codecs">Codecs<a class="headerlink" href="#codecs" title="Permanent link">&para;</a></h2>
-<p>A <strong>codec</strong> serializes a model to/from a mapping (and JSON bytes). Two ship:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.serialization</span><span class="w"> </span><span class="kn">import</span> <span class="n">PydanticModelCodec</span><span class="p">,</span> <span class="n">MsgspecModelCodec</span>
+<p>A <strong>codec</strong> serializes a model to/from a mapping (and JSON bytes). Record models
+are <strong>Pydantic</strong>, so one codec ships:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.serialization</span><span class="w"> </span><span class="kn">import</span> <span class="n">PydanticModelCodec</span><span class="p">,</span> <span class="n">default_model_codec</span>
 
-<span class="n">PydanticModelCodec</span><span class="p">(</span><span class="n">OrderPlaced</span><span class="p">)</span>   <span class="c1"># for pydantic BaseModel</span>
-<span class="n">MsgspecModelCodec</span><span class="p">(</span><span class="n">OrderStruct</span><span class="p">)</span>    <span class="c1"># for msgspec Struct</span>
+<span class="n">PydanticModelCodec</span><span class="p">(</span><span class="n">OrderPlaced</span><span class="p">)</span>   <span class="c1"># for a pydantic BaseModel</span>
+<span class="n">default_model_codec</span><span class="p">(</span><span class="n">OrderPlaced</span><span class="p">)</span>  <span class="c1"># the same, derived from the model type</span>
 </code></pre></div>
-<p>Both take the model type positionally. <code>default_model_codec(model_type)</code>
-auto-selects by base class — which is what specs use when you don't pass one.</p>
+<p><code>default_model_codec(model_type)</code> is what specs use when you don't pass one.</p>
 <p>A codec is <strong>required</strong> wherever a payload crosses a wire and the framework can't
 infer the type from a domain model:</p>
 <table>
@@ -5524,12 +5558,38 @@ infer the type from a domain model:</p>
 </tr>
 <tr>
 <td>Idempotency</td>
-<td>the wrap's <code>result_type</code> (a pydantic/msgspec model)</td>
+<td>the wrap's <code>result_type</code> (a pydantic model)</td>
 </tr>
 </tbody>
 </table>
 <p>Document, search, and analytics specs <strong>derive</strong> their codecs from the model
 types automatically; override with <code>DocumentSpec(codecs=…)</code> only if you need to.</p>
+<h3 id="which-serialization-library-where">Which serialization library, where<a class="headerlink" href="#which-serialization-library-where" title="Permanent link">&para;</a></h3>
+<p>The framework uses one rule, by <strong>who owns the shape</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Shape</th>
+<th>Library</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Your record models — read models, commands, DTOs, events, query params</td>
+<td><strong>Pydantic</strong></td>
+<td>validators, computed/materialized fields, custom coercion — the rich, customizable layer</td>
+</tr>
+<tr>
+<td>Framework-owned value objects — specs, deps, message envelopes, cursors, storage upload/download/metadata</td>
+<td><strong>attrs</strong></td>
+<td>closed, framework-declared shapes with no validation needs; cheap frozen value objects</td>
+</tr>
+</tbody>
+</table>
+<p>The codec layer is <strong>Pydantic only</strong>: read models, commands (create/update),
+idempotency results, and other record contracts must be <code>BaseModel</code> subclasses.
+There is no second model library to opt into.</p>
 <h2 id="how-a-write-maps">How a write maps<a class="headerlink" href="#how-a-write-maps" title="Permanent link">&para;</a></h2>
 <p>A create flows through <strong>two conversions</strong>:</p>
 <ol>

@@ -5504,7 +5504,7 @@ authorization still run first — a replayed result is never an unauthorized one
 <h2 id="wiring">Wiring<a class="headerlink" href="#wiring" title="Permanent link">&para;</a></h2>
 <p>Declare an <code>IdempotencySpec</code> (it carries a TTL for how long a result is
 remembered) and register an idempotency adapter — commonly <a href="../../integrations/redis/">Redis</a> —
-under that name. The operation's result type must be a Pydantic or msgspec model,
+under that name. The operation's result type must be a Pydantic model,
 since the stored result is encoded and decoded. Wired end to end in the
 <a href="../../recipes/add-idempotency/">Add idempotency</a> recipe.</p>
 <h2 id="idempotency-vs-the-inbox">Idempotency vs the inbox<a class="headerlink" href="#idempotency-vs-the-inbox" title="Permanent link">&para;</a></h2>
