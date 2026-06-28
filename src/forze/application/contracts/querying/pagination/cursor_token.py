@@ -18,6 +18,16 @@ def _jsonify_value(v: Any) -> Any:
     if v is None:
         return None
 
+    # Sort-key values are overwhelmingly primitives (ids, numbers, text) — handle
+    # those before paying for ``type(v).__name__`` and the UUID/datetime/Decimal
+    # name checks. No primitive type collides with those names, and none of those
+    # types are primitive/list/dict instances, so the ordering is behavior-neutral.
+    if isinstance(v, (str, int, float, bool)):
+        return v
+
+    if isinstance(v, (list, dict)):
+        return v  # type: ignore[return-value]
+
     t = type(v).__name__
 
     if t in ("UUID", "uuid"):
@@ -28,12 +38,6 @@ def _jsonify_value(v: Any) -> Any:
 
     if t == "Decimal":
         return str(v)
-
-    if isinstance(v, (str, int, float, bool)):
-        return v
-
-    if isinstance(v, (list, dict)):
-        return v  # type: ignore[return-value]
 
     return str(v)
 

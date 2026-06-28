@@ -383,20 +383,32 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
 
     @overload
     def ensure(
-        self, id: UUID, payload: C, *, return_new: Literal[True] = True
+        self,
+        id: UUID,
+        payload: C,
+        *,
+        return_new: Literal[True] = True,
     ) -> Awaitable[R]:
         """Insert *payload* at *id* when missing; if it exists, return it unchanged."""
         ...  # pragma: no cover
 
     @overload
     def ensure(
-        self, id: UUID, payload: C, *, return_new: Literal[False]
+        self,
+        id: UUID,
+        payload: C,
+        *,
+        return_new: Literal[False],
     ) -> Awaitable[None]:
         """Insert when missing; no read when ``return_new`` is false."""
         ...  # pragma: no cover
 
     def ensure(
-        self, id: UUID, payload: C, *, return_new: bool = True
+        self,
+        id: UUID,
+        payload: C,
+        *,
+        return_new: bool = True,
     ) -> Awaitable[R | None]:
         """Insert *payload* at primary key *id* when missing; return it unchanged on conflict.
 
