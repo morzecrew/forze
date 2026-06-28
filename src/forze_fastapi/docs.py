@@ -28,15 +28,15 @@ CUSTOM_CSS = f"""
 {DISABLE_MCP_CUSTOM_CSS}
 """
 
+_DNS_PATTERN = re.compile(r"^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$")
+
 # ....................... #
 
 
 def _is_valid_dns(address: str) -> bool:
     """Return ``True`` if *address* matches a valid DNS hostname pattern."""
 
-    dns_pattern = re.compile(r"^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$")
-
-    return bool(dns_pattern.match(address))
+    return bool(_DNS_PATTERN.match(address))
 
 
 # ....................... #
