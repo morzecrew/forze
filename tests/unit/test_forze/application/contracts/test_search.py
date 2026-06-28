@@ -127,6 +127,38 @@ class TestSearchLenientReadFields:
                 default_sort={"summary": "asc"},
             )
 
+    def test_read_conformity_defaults_to_strict(self) -> None:
+        spec = SearchSpec(
+            name="docs", model_type=_LenientSearchModel, fields=["title"]
+        )
+        assert spec.read_conformity == "strict"
+        assert spec.resolved_lenient_read_fields == frozenset()
+
+    def test_read_conformity_lenient_auto_derives(self) -> None:
+        spec = SearchSpec(
+            name="docs",
+            model_type=_LenientSearchModel,
+            fields=["title"],
+            read_conformity="lenient",
+        )
+        resolved = spec.resolved_lenient_read_fields
+        # ``summary``/``id`` are defaulted and not indexed → derived; identity ``id``
+        # is excluded; required ``author`` and indexed ``title`` are not derived.
+        assert "summary" in resolved
+        assert "id" not in resolved
+        assert "author" not in resolved
+        assert "title" not in resolved
+
+    def test_read_conformity_lenient_excludes_indexed_fields(self) -> None:
+        # An indexed field is never auto-derived (it needs a real column).
+        spec = SearchSpec(
+            name="docs",
+            model_type=_LenientSearchModel,
+            fields=["title", "summary"],
+            read_conformity="lenient",
+        )
+        assert "summary" not in spec.resolved_lenient_read_fields
+
 
 class TestSearchQueryDepKey:
     """Tests for SearchQueryDepKey."""

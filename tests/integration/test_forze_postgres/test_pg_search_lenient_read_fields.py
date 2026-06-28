@@ -105,6 +105,30 @@ async def test_search_lenient_field_hydrates_from_default(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_read_conformity_lenient_auto_derives_end_to_end(
+    pg_client: PostgresClient,
+) -> None:
+    # No explicit lenient_read_fields — read_conformity="lenient" derives ``summary``
+    # (defaulted, non-indexed) and the factory threads the resolved set to the adapter.
+    table, index_name = await _make_index_with_row(pg_client)
+    ctx = _ctx(pg_client, table=table, index_name=index_name)
+
+    spec = SearchSpec(
+        name="auto_lenient_search",
+        model_type=LenientArticle,
+        fields=["title", "content"],
+        read_conformity="lenient",
+    )
+    adapter = ctx.search.query(spec)
+
+    page = await adapter.search_page("tsvector")
+
+    assert page.count == 1
+    assert page.hits[0].summary == "n/a"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_strict_search_of_missing_column_fails(
     pg_client: PostgresClient,
 ) -> None:

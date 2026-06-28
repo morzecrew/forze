@@ -349,6 +349,54 @@ def test_lenient_field_rejected_in_query_policy() -> None:
         )
 
 
+def test_read_conformity_defaults_to_strict() -> None:
+    spec = DocumentSpec(name="users", read=_LenientRead)
+
+    assert spec.read_conformity == "strict"
+    assert spec.resolved_lenient_read_fields == frozenset()
+
+
+def test_read_conformity_lenient_auto_derives_defaulted_fields() -> None:
+    spec = DocumentSpec(name="users", read=_LenientRead, read_conformity="lenient")
+
+    resolved = spec.resolved_lenient_read_fields
+    # Statically-defaulted, non-identity fields are derived...
+    assert {"nickname", "bio"} <= resolved
+    # ...required, identity, and default_factory fields are not.
+    assert "name" not in resolved
+    assert "refreshed_at" not in resolved  # default_factory is excluded
+    assert resolved.isdisjoint({"id", "rev", "created_at", "last_update_at"})
+    # Derived fields are excluded from the query axes.
+    assert spec.filterable_fields().isdisjoint(resolved)
+    assert "name" in spec.filterable_fields()
+
+
+def test_read_conformity_lenient_excludes_materialized() -> None:
+    # A materialized field is stored, so it is never auto-derived as lenient.
+    spec = DocumentSpec(
+        name="orders",
+        read=_PricedRead,
+        write=_priced_write(),
+        materialized={"total"},
+        read_conformity="lenient",
+    )
+
+    assert "total" not in spec.resolved_lenient_read_fields
+
+
+def test_read_conformity_lenient_includes_explicit_fields() -> None:
+    spec = DocumentSpec(
+        name="users",
+        read=_LenientRead,
+        read_conformity="lenient",
+        lenient_read_fields={"nickname"},
+    )
+
+    # Explicit field is present alongside the auto-derived set.
+    assert "nickname" in spec.resolved_lenient_read_fields
+    assert "bio" in spec.resolved_lenient_read_fields
+
+
 # ----------------------- #
 # Query parameters
 

@@ -104,7 +104,7 @@ def postgres_search_port_for_config(
         nested_field_hints=c.nested_field_hints,
         result_snapshot=snap,
         read_validation=c.read_validation,
-        lenient_read_fields=member_spec.lenient_read_fields,
+        lenient_read_fields=member_spec.resolved_lenient_read_fields,
     )
 
     match c.engine:

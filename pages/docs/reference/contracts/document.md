@@ -35,6 +35,7 @@ plus per-aggregate policy:
 | `write` | `DocumentWriteTypes \| None` | `None` | `{domain, create_cmd, update_cmd?}`; **omit for a read-only document** (no command port) |
 | `history_enabled` | `bool` | `False` | keep an audit trail of every revision |
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names persisted as columns, so they're filterable/sortable |
+| `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` from the read model (every statically-defaulted, non-identity, non-`materialized` field); explicit fields are added on top |
 | `lenient_read_fields` | `frozenset[str]` | `∅` | read-model fields with **no** backing column: dropped from the projection, hydrated from their default, removed from the filter/sort/aggregate allow-sets, and tolerated by relational startup schema checks (see below) |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort applied when a caller omits `sorts` (required if the read model has no `id`) |
 | `query_policy` | `QueryFieldPolicy \| None` | `None` | allow-sets restricting which fields a governed caller may filter / sort / aggregate |
@@ -70,6 +71,12 @@ validation still requires its column.
 Use it for a field that exists in code ahead of (or independently of) the physical
 column — e.g. during an expand/contract migration — or a read-model display field
 the write model does not persist.
+
+Instead of listing fields, set `read_conformity="lenient"` to **auto-derive** the set:
+every statically-defaulted, non-identity read field that is not `materialized` becomes
+lenient (fields with a `default_factory` are excluded — declare those explicitly to
+accept a fresh value per row). Explicit `lenient_read_fields` are always added on top.
+`resolved_lenient_read_fields` is the effective set every backend reads.
 
 ## Query port
 

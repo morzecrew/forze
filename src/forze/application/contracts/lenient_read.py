@@ -7,22 +7,31 @@ on read. This module holds the rules common to every spec that exposes the knob
 :class:`~forze.application.contracts.search.SearchSpec`), so they cannot drift.
 """
 
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import BaseModel
 
-from forze.application._logger import logger
 from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD, LAST_UPDATE_AT_FIELD, REV_FIELD
 
+from .._logger import logger
 from .querying.sort_resolution import read_fields_for_model
 
 # ----------------------- #
+
+ReadConformity = Literal["strict", "lenient"]
+"""Storage-conformity level for a read model.
+
+``strict`` (default): every read field must map to a stored column. ``lenient``:
+auto-derive :func:`derive_lenient_read_fields` (every defaulted, non-identity,
+non-operative read field may be absent from storage and hydrates from its default)."""
 
 IDENTITY_READ_FIELDS: Final = frozenset(
     {ID_FIELD, REV_FIELD, "created_at", LAST_UPDATE_AT_FIELD}
 )
 """Identity/audit fields that must always be read from storage (never lenient)."""
+
+# ....................... #
 
 
 def validate_lenient_read_fields(
@@ -81,3 +90,32 @@ def validate_lenient_read_fields(
                 str(spec_name),
                 name,
             )
+
+
+# ....................... #
+
+
+def derive_lenient_read_fields(
+    model_type: type[BaseModel],
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> frozenset[str]:
+    """Auto-derive the lenient read set for ``read_conformity="lenient"``.
+
+    Every non-computed read field that carries a **static** default and is neither an
+    identity/audit field nor in *exclude* (a document's ``materialized`` set, or a
+    search index's ``fields``). Fields with a ``default_factory`` are **not** derived —
+    they would yield a fresh value per row; declare those explicitly to accept that.
+    """
+
+    fields = model_type.model_fields
+    derived = {
+        name
+        for name in read_fields_for_model(model_type)
+        if name not in IDENTITY_READ_FIELDS
+        and name not in exclude
+        and not fields[name].is_required()
+        and fields[name].default_factory is None
+    }
+
+    return frozenset(derived)

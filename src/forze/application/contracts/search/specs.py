@@ -13,10 +13,13 @@ from forze.base.serialization import (
 
 from ..base import BaseSpec
 from ..crypto import FieldEncryption
-from ..lenient_read import validate_lenient_read_fields
+from ..lenient_read import (
+    ReadConformity,
+    derive_lenient_read_fields,
+    validate_lenient_read_fields,
+)
 from ..querying import QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
-
 
 # ----------------------- #
 
@@ -46,6 +49,9 @@ def _validate_search_lenient_read_fields(
     )
 
 
+# ....................... #
+
+
 def _validate_search_encryption(
     *,
     spec_name: object,
@@ -69,6 +75,9 @@ def _validate_search_encryption(
             f"Search spec {spec_name!r} default_sort uses field-encrypted field(s) "
             f"{forbidden}: sealed fields have no order at rest and cannot be sort keys."
         )
+
+
+# ....................... #
 
 
 def _validate_search_default_sort(
@@ -95,7 +104,8 @@ def _validate_search_default_sort(
         client_facing=False,
     )
 
-# ----------------------- #
+
+# ....................... #
 
 
 class SearchFuzzySpec(TypedDict, total=False):
@@ -147,25 +157,32 @@ class SearchSpec[M: BaseModel](BaseSpec):
     fields: Sequence[str] = attrs.field(validator=attrs.validators.min_len(1))
     """Indexed fields."""
 
-    default_weights: Mapping[str, float] | None = attrs.field(default=None)
+    default_weights: Mapping[str, float] | None = None
     """Default weights for fields."""
 
-    fuzzy: SearchFuzzySpec | None = attrs.field(default=None)
+    fuzzy: SearchFuzzySpec | None = None
     """Fuzzy matching configuration."""
 
-    sensitive: bool = attrs.field(default=False)
+    sensitive: bool = False
     """Read model carries credential/secret material (password hashes, token digests);
     generated external surfaces (HTTP route generators, MCP tools/resources) must refuse
     to project it. Defaults to ``False``."""
 
-    snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
+    snapshot: SearchResultSnapshotSpec | None = None
     """Optional defaults for result-ID snapshotting."""
 
-    default_sort: QuerySortExpression | None = attrs.field(default=None)
+    default_sort: QuerySortExpression | None = None
     """Default ``sorts`` when callers omit them (required for models without ``id``)."""
 
+    read_conformity: ReadConformity = "strict"
+    """Storage-conformity level. ``strict`` (default): every returned field must map to a
+    column. ``lenient``: auto-derive :attr:`lenient_read_fields` from the read model —
+    every defaulted, non-identity, non-indexed (:attr:`fields`) field (static defaults
+    only) becomes absent-tolerant. Explicit :attr:`lenient_read_fields` are always
+    included on top. See :attr:`resolved_lenient_read_fields`."""
+
     lenient_read_fields: frozenset[str] = attrs.field(
-        default=frozenset(),
+        factory=frozenset,
         converter=frozenset,
     )
     """Read-model field names permitted to be **absent** from the search relation.
@@ -184,7 +201,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
     )
     """Optional row codec override; use :attr:`resolved_read_codec` at runtime."""
 
-    encryption: FieldEncryption | None = attrs.field(default=None)
+    encryption: FieldEncryption | None = None
     """Field-encryption policy (see :class:`FieldEncryption`). For an **external index**
     (Meilisearch) the encrypted fields are sealed in the index document and decrypted on read;
     for **in-place search** (Postgres/Mongo over an encrypted document table) they are
@@ -206,7 +223,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
             spec_name=self.name,
             model_type=self.model_type,
             default_sort=self.default_sort,
-            lenient_read_fields=self.lenient_read_fields,
+            lenient_read_fields=self.resolved_lenient_read_fields,
         )
 
         _validate_search_encryption(
@@ -233,10 +250,25 @@ class SearchSpec[M: BaseModel](BaseSpec):
                     f"Default weight for search field '{f}' should be between 0.0 and 1.0."
                 )
 
-        if not all(f in self.default_weights for f in self.fields):
+        if any(f not in self.default_weights for f in self.fields):
             raise exc.configuration(
                 "Default weights must be provided for all search fields."
             )
+
+    # ....................... #
+
+    @property
+    def resolved_lenient_read_fields(self) -> frozenset[str]:
+        """Effective lenient read fields: explicit plus, under ``read_conformity``
+        ``"lenient"``, the auto-derived eligible fields (indexed :attr:`fields` excluded).
+        This is what the search backend and sort validation read."""
+
+        if self.read_conformity == "lenient":
+            return self.lenient_read_fields | derive_lenient_read_fields(
+                self.model_type, exclude=frozenset(self.fields)
+            )
+
+        return self.lenient_read_fields
 
     # ....................... #
 
@@ -265,13 +297,13 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     )
     """At least one :class:`SearchSpec` (hub leg / linked index)."""
 
-    default_member_weights: Mapping[str, float] | None = attrs.field(default=None)
+    default_member_weights: Mapping[str, float] | None = None
     """Default weights for hub members."""
 
-    snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
+    snapshot: SearchResultSnapshotSpec | None = None
     """Optional defaults for result-ID snapshotting (outer hub adapter)."""
 
-    default_sort: QuerySortExpression | None = attrs.field(default=None)
+    default_sort: QuerySortExpression | None = None
     """Default ``sorts`` for hub browse/cursor when callers omit them."""
 
     read_codec: ModelCodec[M, Any] | None = attrs.field(
@@ -281,7 +313,7 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     )
     """Row decode/encode codec; defaults to :class:`PydanticModelCodec`."""
 
-    encryption: FieldEncryption | None = attrs.field(default=None)
+    encryption: FieldEncryption | None = None
     """Field-encryption policy for hub-row fields (see :class:`FieldEncryption`), decrypted
     out of hub search results. Mirror of the hub read model's ``DocumentSpec.encryption``."""
 
@@ -349,7 +381,7 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
     )
     """At least two members, each a :class:`SearchSpec` or :class:`HubSearchSpec`."""
 
-    snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
+    snapshot: SearchResultSnapshotSpec | None = None
     """Optional defaults for result-ID snapshotting (outer federated adapter)."""
 
     # ....................... #

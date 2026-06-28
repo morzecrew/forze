@@ -11,8 +11,12 @@ from forze.domain.models import BaseDTO, Document
 from ..base import BaseSpec
 from ..cache import CacheSpec
 from ..codecs import stored_field_names_for
-from ..lenient_read import validate_lenient_read_fields
 from ..crypto import FieldEncryption
+from ..lenient_read import (
+    ReadConformity,
+    derive_lenient_read_fields,
+    validate_lenient_read_fields,
+)
 from ..querying import QueryFieldPolicy, QuerySortExpression
 from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
@@ -39,14 +43,14 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     read: type[R]
     """Read specification for the document aggregate."""
 
-    write: DocumentWriteTypes[D, C, U] | None = attrs.field(default=None)
+    write: DocumentWriteTypes[D, C, U] | None = None
     """Write specification for the document aggregate."""
 
-    history_enabled: bool = attrs.field(default=False)
+    history_enabled: bool = False
     """Enable history for the document aggregate. Defaults to ``False``."""
 
     materialized: frozenset[str] = attrs.field(
-        default=frozenset(),
+        factory=frozenset,
         converter=frozenset,
     )
     """``@computed_field`` names on the read and domain models that are persisted
@@ -59,8 +63,15 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     settable field on any create/update command (a derived value cannot be set
     directly). Empty by default."""
 
+    read_conformity: ReadConformity = attrs.field(default="strict")
+    """Storage-conformity level. ``strict`` (default): every read field must map to a
+    column. ``lenient``: auto-derive :attr:`lenient_read_fields` from the read model —
+    every defaulted, non-identity, non-:attr:`materialized` field (static defaults only)
+    becomes absent-tolerant. Explicit :attr:`lenient_read_fields` are always included on
+    top. See :attr:`resolved_lenient_read_fields`."""
+
     lenient_read_fields: frozenset[str] = attrs.field(
-        default=frozenset(),
+        factory=frozenset,
         converter=frozenset,
     )
     """Read-model field names permitted to be **absent** from the read relation.
@@ -84,23 +95,23 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     model over the same relation, startup write-schema validation still requires
     its column."""
 
-    sensitive: bool = attrs.field(default=False)
+    sensitive: bool = False
     """Read model carries credential/secret material (password hashes, token digests);
     generated external surfaces (HTTP route generators, MCP tools/resources) must refuse
     to project it. Defaults to ``False``."""
 
-    cache: CacheSpec | None = attrs.field(default=None)
+    cache: CacheSpec | None = None
     """Cache specification for the document aggregate."""
 
-    default_sort: QuerySortExpression | None = attrs.field(default=None)
+    default_sort: QuerySortExpression | None = None
     """Default ``sorts`` when callers omit them (required for read models without ``id``)."""
 
-    query_policy: QueryFieldPolicy | None = attrs.field(default=None)
+    query_policy: QueryFieldPolicy | None = None
     """Optional allow-sets restricting which fields a governed caller may filter / sort by.
     ``None`` (default) allows every read-model field. Drives discovery and (when enforced)
     boundary validation."""
 
-    query_params: type[BaseModel] | None = attrs.field(default=None)
+    query_params: type[BaseModel] | None = None
     """Optional **query-parameter contract** — a Pydantic model whose fields are typed values a
     handler binds per read via ``ctx.document.query(spec).with_parameters(...)``. A supporting
     backend applies them as query-scoped session settings the underlying relation reads internally
@@ -109,7 +120,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     **mandatory** (a read without ``with_parameters`` fails closed). ``None`` (default) = an
     ordinary, unparametrized read."""
 
-    encryption: FieldEncryption | None = attrs.field(default=None)
+    encryption: FieldEncryption | None = None
     """Field-encryption policy: which stored fields are sealed at rest, and how (see
     :class:`FieldEncryption`).
 
@@ -142,6 +153,21 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             history_enabled=self.history_enabled,
             materialized=self.materialized,
         )
+
+    # ....................... #
+
+    @property
+    def resolved_lenient_read_fields(self) -> frozenset[str]:
+        """Effective lenient read fields: explicit plus, under ``read_conformity``
+        ``"lenient"``, the auto-derived eligible fields. This is what every backend
+        and query-axis consumer reads."""
+
+        if self.read_conformity == "lenient":
+            return self.lenient_read_fields | derive_lenient_read_fields(
+                self.read, exclude=self.materialized
+            )
+
+        return self.lenient_read_fields
 
     # ....................... #
 
@@ -200,7 +226,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
         return (
             read_fields_for_model(self.read) | self.materialized
-        ) - self.lenient_read_fields
+        ) - self.resolved_lenient_read_fields
 
     # ....................... #
 
