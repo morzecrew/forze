@@ -109,6 +109,23 @@ class AccessTokenService:
     _n_verified: int = attrs.field(default=0, init=False)
     _n_verify_failed: int = attrs.field(default=0, init=False)
 
+    # ``kid`` -> verifier, resolved once so per-request verify is an O(1) lookup
+    # rather than a linear scan that also rebuilds the candidate tuple each call.
+    _verifier_by_kid: dict[str, SignerPort] = attrs.field(
+        factory=dict,
+        init=False,
+        repr=False,
+    )
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # First match wins (the issuing signer takes precedence over rotation
+        # overlap keys), matching the prior in-order scan.
+        for candidate in (self.signer, *self.additional_verifiers):
+            if candidate.kid is not None and candidate.kid not in self._verifier_by_kid:
+                self._verifier_by_kid[candidate.kid] = candidate
+
     # ....................... #
 
     def signing_stats(self) -> SigningStats:
@@ -175,11 +192,12 @@ class AccessTokenService:
         if kid is None:
             return self.signer
 
-        for candidate in (self.signer, *self.additional_verifiers):
-            if candidate.kid == kid:
-                return candidate
+        verifier = self._verifier_by_kid.get(kid)
 
-        raise exc.authentication("Unknown signing key", code="invalid_access_token")
+        if verifier is None:
+            raise exc.authentication("Unknown signing key", code="invalid_access_token")
+
+        return verifier
 
     # ....................... #
 
