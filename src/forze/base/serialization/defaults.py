@@ -1,13 +1,11 @@
-"""Default :class:`ModelCodec` selection for Pydantic and msgspec models."""
+"""Default :class:`ModelCodec` selection for Pydantic record models."""
 
 from typing import Any
 
-import msgspec
 from pydantic import BaseModel
 
 from ..exceptions import exc
 from .model_codec import ModelCodec
-from .msgspec_codec import MsgspecModelCodec
 from .pydantic_codec import PydanticModelCodec
 
 # ----------------------- #
@@ -31,17 +29,14 @@ def _build_codec(
     if issubclass(model_type, BaseModel):
         return PydanticModelCodec(model_type, materialized)  # type: ignore[return-value]
 
-    if issubclass(model_type, msgspec.Struct):
-        return MsgspecModelCodec(model_type, materialized)  # type: ignore[return-value]
-
     raise exc.configuration(
         f"Unsupported model type {model_type!r}; "
-        "expected pydantic.BaseModel or msgspec.Struct subclass"
+        "record models must be a pydantic.BaseModel subclass"
     )
 
 
 def default_model_codec[T](model_type: type[T]) -> ModelCodec[T, Any]:
-    """Return the default :class:`ModelCodec` for *model_type* (Pydantic or msgspec).
+    """Return the default :class:`ModelCodec` for *model_type* (a Pydantic model).
 
     Cached per *model_type* (the codecs are stateless, so one instance is reused).
     The cache is keyed by the application's fixed set of model classes.

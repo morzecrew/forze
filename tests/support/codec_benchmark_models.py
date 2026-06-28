@@ -15,27 +15,18 @@ from enum import StrEnum
 from typing import Any, Literal, NamedTuple
 from uuid import UUID
 
-import msgspec
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from forze.base.primitives import JsonDict
-
-from .codec_benchmark_msgspec_models import (
-    ComplexCodecStruct,
-    MediumCodecStruct,
-    NestedCodecStruct,
-    SimpleCodecStruct,
-)
 
 CodecTierName = Literal["simple", "medium", "complex", "nested"]
 
 
 class CodecBenchmarkTier(NamedTuple):
-    """One benchmark tier: Pydantic + msgspec types and a shared row factory."""
+    """One benchmark tier: a Pydantic model and a shared row factory."""
 
     name: CodecTierName
     pydantic_model: type[BaseModel]
-    msgspec_struct: type[msgspec.Struct]
     sample_rows: Any  # Callable[[int], list[JsonDict]]
 
 
@@ -415,25 +406,21 @@ CODEC_BENCHMARK_TIERS: tuple[CodecBenchmarkTier, ...] = (
     CodecBenchmarkTier(
         "simple",
         SimpleCodecRow,
-        SimpleCodecStruct,
         sample_simple_rows,
     ),
     CodecBenchmarkTier(
         "medium",
         MediumCodecRow,
-        MediumCodecStruct,
         sample_medium_rows,
     ),
     CodecBenchmarkTier(
         "complex",
         ComplexCodecRow,
-        ComplexCodecStruct,
         sample_complex_rows,
     ),
     CodecBenchmarkTier(
         "nested",
         NestedCodecRow,
-        NestedCodecStruct,
         sample_nested_rows,
     ),
 )

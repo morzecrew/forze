@@ -35,7 +35,7 @@ authorization still run first — a replayed result is never an unauthorized one
 
 Declare an `IdempotencySpec` (it carries a TTL for how long a result is
 remembered) and register an idempotency adapter — commonly [Redis](../integrations/redis.md) —
-under that name. The operation's result type must be a Pydantic or msgspec model,
+under that name. The operation's result type must be a Pydantic model,
 since the stored result is encoded and decoded. Wired end to end in the
 [Add idempotency](../recipes/add-idempotency.md) recipe.
 

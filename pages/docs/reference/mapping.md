@@ -46,17 +46,17 @@ class OrderRead(ReadDocument):  # read model — inherits the four metadata fiel
 
 ## Codecs
 
-A **codec** serializes a model to/from a mapping (and JSON bytes). Two ship:
+A **codec** serializes a model to/from a mapping (and JSON bytes). Record models
+are **Pydantic**, so one codec ships:
 
 ```python
-from forze.base.serialization import PydanticModelCodec, MsgspecModelCodec
+from forze.base.serialization import PydanticModelCodec, default_model_codec
 
-PydanticModelCodec(OrderPlaced)   # for pydantic BaseModel
-MsgspecModelCodec(OrderStruct)    # for msgspec Struct
+PydanticModelCodec(OrderPlaced)   # for a pydantic BaseModel
+default_model_codec(OrderPlaced)  # the same, derived from the model type
 ```
 
-Both take the model type positionally. `default_model_codec(model_type)`
-auto-selects by base class — which is what specs use when you don't pass one.
+`default_model_codec(model_type)` is what specs use when you don't pass one.
 
 A codec is **required** wherever a payload crosses a wire and the framework can't
 infer the type from a domain model:
@@ -65,10 +65,23 @@ infer the type from a domain model:
 |-------|-------|
 | Outbox | `OutboxSpec(codec=PydanticModelCodec(Payload))` |
 | Queue / stream / pub-sub | `QueueSpec(codec=…)` |
-| Idempotency | the wrap's `result_type` (a pydantic/msgspec model) |
+| Idempotency | the wrap's `result_type` (a pydantic model) |
 
 Document, search, and analytics specs **derive** their codecs from the model
 types automatically; override with `DocumentSpec(codecs=…)` only if you need to.
+
+### Which serialization library, where
+
+The framework uses one rule, by **who owns the shape**:
+
+| Shape | Library | Why |
+|-------|---------|-----|
+| Your record models — read models, commands, DTOs, events, query params | **Pydantic** | validators, computed/materialized fields, custom coercion — the rich, customizable layer |
+| Framework-owned value objects — specs, deps, message envelopes, cursors, storage upload/download/metadata | **attrs** | closed, framework-declared shapes with no validation needs; cheap frozen value objects |
+
+The codec layer is **Pydantic only**: read models, commands (create/update),
+idempotency results, and other record contracts must be `BaseModel` subclasses.
+There is no second model library to opt into.
 
 ## How a write maps
 

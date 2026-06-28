@@ -3,7 +3,6 @@
 from typing import Any, Awaitable, Callable, final
 
 import attrs
-import msgspec
 from pydantic import BaseModel
 
 from forze.application._logger import logger
@@ -31,7 +30,7 @@ def _hash_args(args: Any) -> str:
     if args is None:
         payload = {}
 
-    elif isinstance(args, (BaseModel, msgspec.Struct)):
+    elif isinstance(args, BaseModel):
         payload = default_model_codec(type(args)).encode_mapping(args)
 
     else:
@@ -69,10 +68,10 @@ class IdempotencyWrap(MiddlewareFactory):
     def __call__(self, ctx: ExecutionContext) -> Middleware[Any, Any]:
         if not (
             isinstance(self.result_type, type)  # pyright: ignore[reportUnnecessaryIsInstance]
-            and issubclass(self.result_type, (BaseModel, msgspec.Struct))
+            and issubclass(self.result_type, BaseModel)
         ):
             raise exc.configuration(
-                f"IdempotencyWrap result_type must be a Pydantic or msgspec model, "
+                f"IdempotencyWrap result_type must be a Pydantic model, "
                 f"got {self.result_type!r}",
             )
 

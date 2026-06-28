@@ -164,9 +164,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     def _require_computed_capable(self, model: type, label: str) -> None:
         """Reject materialized fields on a model that cannot carry ``@computed_field``.
 
-        Computed fields are a Pydantic concept; a msgspec struct (e.g. used as a read
-        or domain model) has none, so declaring materialized fields on it is a clean
-        configuration error rather than a raw ``AttributeError``.
+        Computed fields are a Pydantic concept; a non-Pydantic model (record models
+        must be ``BaseModel`` subclasses) has none, so declaring materialized fields
+        on it is a clean configuration error rather than a raw ``AttributeError``.
         """
 
         if not issubclass(model, BaseModel):

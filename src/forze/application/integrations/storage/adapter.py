@@ -11,7 +11,6 @@ from typing import Mapping
 from uuid import UUID
 
 import attrs
-import msgspec
 
 from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.resolution import (
@@ -409,8 +408,12 @@ class ObjectStorageAdapter(
             size=len(data),
             description=description,
         )
-        meta_dict: JsonDict = msgspec.to_builtins(metadata, str_keys=True)
-        safe_meta = {k: str(v) for k, v in meta_dict.items() if v is not None}
+        meta_dict: JsonDict = attrs.asdict(metadata)
+        safe_meta = {
+            k: v.isoformat() if isinstance(v, datetime) else str(v)
+            for k, v in meta_dict.items()
+            if v is not None
+        }
 
         bucket = await self._resolved_bucket()
 

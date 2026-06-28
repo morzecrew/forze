@@ -2,12 +2,12 @@ from datetime import datetime
 from typing import Literal, Mapping, final
 
 import attrs
-import msgspec
 
 # ----------------------- #
 
 
-class _InternalMetadata(msgspec.Struct):
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _InternalMetadata:
     """Optional metadata for an object."""
 
     filename: str
@@ -23,7 +23,9 @@ class _InternalMetadata(msgspec.Struct):
 # ....................... #
 
 
-class UploadedObject(msgspec.Struct):
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class UploadedObject:
     """Value object for an uploaded object."""
 
     filename: str
@@ -45,7 +47,9 @@ class UploadedObject(msgspec.Struct):
 # ....................... #
 
 
-class DownloadedObject(msgspec.Struct):
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DownloadedObject:
     """Value object for a downloaded object."""
 
     data: bytes
@@ -61,6 +65,8 @@ class DownloadedObject(msgspec.Struct):
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class ObjectMetadata(_InternalMetadata):
     """Value object for an object metadata."""
 
@@ -71,6 +77,8 @@ class ObjectMetadata(_InternalMetadata):
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class StoredObject(_InternalMetadata):
     """Value object for a stored object."""
 

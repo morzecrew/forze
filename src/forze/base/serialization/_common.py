@@ -1,4 +1,4 @@
-"""Shared internal helpers for the pydantic and msgspec serialization modules."""
+"""Shared internal helpers for the pydantic serialization module."""
 
 from typing import Sequence
 

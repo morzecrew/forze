@@ -1,6 +1,5 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
-import msgspec
 import pytest
 from pydantic import BaseModel, computed_field
 
@@ -72,14 +71,6 @@ class _EmptyPydanticUpdate(BaseDTO):
     pass
 
 
-class _MsgspecUpdate(msgspec.Struct, forbid_unknown_fields=True):
-    name: str | None = None
-
-
-class _EmptyMsgspecUpdate(msgspec.Struct, forbid_unknown_fields=True):
-    pass
-
-
 def test_supports_update_true_for_pydantic_with_fields() -> None:
     spec = DocumentSpec(
         name="doc",
@@ -106,30 +97,24 @@ def test_supports_update_false_for_empty_pydantic_update() -> None:
     assert spec.supports_update() is False
 
 
-def test_supports_update_true_for_msgspec_with_fields() -> None:
+def test_non_pydantic_update_command_rejected_at_codec_build() -> None:
+    # Record models (incl. update commands) must be Pydantic; a non-Pydantic
+    # type is rejected when codecs are derived, not silently accepted.
+    class _PlainUpdate:
+        name: str | None = None
+
     spec = DocumentSpec(
         name="doc",
         read=_Read,
         write=DocumentWriteTypes(
             domain=_Domain,
             create_cmd=_Create,
-            update_cmd=_MsgspecUpdate,
+            update_cmd=_PlainUpdate,  # type: ignore[typeddict-item]
         ),
     )
-    assert spec.supports_update() is True
 
-
-def test_supports_update_false_for_empty_msgspec_update() -> None:
-    spec = DocumentSpec(
-        name="doc",
-        read=_Read,
-        write=DocumentWriteTypes(
-            domain=_Domain,
-            create_cmd=_Create,
-            update_cmd=_EmptyMsgspecUpdate,
-        ),
-    )
-    assert spec.supports_update() is False
+    with pytest.raises(CoreException, match="must be a pydantic.BaseModel subclass"):
+        _ = spec.resolved_codecs
 
 
 # ----------------------- #
@@ -251,14 +236,15 @@ def test_materialized_collision_with_settable_command_rejected() -> None:
         )
 
 
-def test_materialized_on_msgspec_model_rejected_cleanly() -> None:
-    # msgspec structs have no @computed_field, so materializing on one is a clean
-    # configuration error, not a raw AttributeError on ``model_computed_fields``.
-    class _MsgspecRead(msgspec.Struct):
+def test_materialized_on_non_pydantic_model_rejected_cleanly() -> None:
+    # A non-Pydantic read model has no @computed_field, so materializing on it is
+    # a clean configuration error, not a raw AttributeError on
+    # ``model_computed_fields``.
+    class _PlainRead:
         a: int
 
     with pytest.raises(CoreException, match="require a Pydantic model"):
-        DocumentSpec(name="doc", read=_MsgspecRead, materialized={"a"})  # type: ignore[type-var]
+        DocumentSpec(name="doc", read=_PlainRead, materialized={"a"})  # type: ignore[type-var]
 
 
 def test_sensitive_defaults_to_false() -> None:

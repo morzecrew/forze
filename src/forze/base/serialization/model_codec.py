@@ -1,8 +1,17 @@
-"""Model codec protocol for pluggable serialization backends.
+"""Model codec protocol: the serialization seam for record models.
 
-This module defines the single extension seam for non-Pydantic backends.
-``forze.base.serialization.pydantic`` remains the low-level Pydantic
-implementation used by the default codec.
+A ``ModelCodec`` is the single place that owns how a record model becomes a
+storage/wire mapping (and JSON bytes) and back: dump modes, batched and
+trusted-decode fast paths, materialized (computed) fields, and the
+persistence-mapping path. Call sites — document cache, the persistence gateway,
+outbox staging, query scans — go through this protocol instead of each
+re-deriving serialization options, and it is the decoration seam that
+``EncryptingModelCodec`` wraps to add field-level encryption transparently.
+
+Pydantic is the model family for record contracts; ``PydanticModelCodec`` (over
+``forze.base.serialization.pydantic``) is the implementation. The protocol earns
+its keep as the wrapping/single-source seam — not as a switch between model
+libraries.
 """
 
 from typing import Iterator, Literal, Protocol, Sequence, TypedDict

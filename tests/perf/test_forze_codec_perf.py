@@ -1,4 +1,4 @@
-"""Micro-benchmarks for Pydantic and msgspec :class:`~forze.base.serialization.ModelCodec` decode paths.
+"""Micro-benchmarks for the Pydantic :class:`~forze.base.serialization.ModelCodec` decode paths.
 
 Perf tier (``@pytest.mark.perf``): excluded from ``just test``; run via ``just perf``.
 
@@ -6,17 +6,13 @@ Run **only** codec benchmarks (no full ``tests/perf`` suite, no Docker)::
 
     just perf tests/perf/test_forze_codec_perf.py
 
-Compare backends on one tier::
+Run one tier::
 
     just perf tests/perf/test_forze_codec_perf.py -k "simple"
 
-Compare decode modes (Pydantic strict/trusted, msgspec convert/forbid_extra)::
+Compare decode modes (strict / trusted)::
 
     just perf tests/perf/test_forze_codec_perf.py -k "simple and decode"
-
-Filter msgspec only::
-
-    just perf tests/perf/test_forze_codec_perf.py -k msgspec
 
 Save a baseline (optional)::
 
@@ -31,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from forze.base.serialization import MsgspecModelCodec, PydanticModelCodec
+from forze.base.serialization import PydanticModelCodec
 from tests.support.codec_benchmark_models import (
     CODEC_BENCHMARK_TIERS,
     CodecBenchmarkTier,
@@ -75,39 +71,6 @@ def test_codec_pydantic_trusted_decode_benchmark(
     rows = codec_tier.sample_rows(_ROWS)
 
     benchmark(lambda: codec.decode_mapping_many(rows, trust_source=True))
-
-
-# ----------------------- #
-# Msgspec
-# ----------------------- #
-
-
-@pytest.mark.perf
-def test_codec_msgspec_decode_benchmark(
-    benchmark: Any,
-    codec_tier: CodecBenchmarkTier,
-) -> None:
-    """Msgspec bulk ``msgspec.convert`` (``trust_source=True`` / default fast path)."""
-
-    codec = MsgspecModelCodec(codec_tier.msgspec_struct)
-    rows = codec_tier.sample_rows(_ROWS)
-
-    benchmark(lambda: codec.decode_mapping_many(rows, trust_source=True))
-
-
-@pytest.mark.perf
-def test_codec_msgspec_forbid_extra_decode_benchmark(
-    benchmark: Any,
-    codec_tier: CodecBenchmarkTier,
-) -> None:
-    """Msgspec decode with per-row unknown-field scan before convert."""
-
-    codec = MsgspecModelCodec(codec_tier.msgspec_struct)
-    rows = codec_tier.sample_rows(_ROWS)
-
-    benchmark(
-        lambda: codec.decode_mapping_many(rows, trust_source=False, forbid_extra=True),
-    )
 
 
 # ----------------------- #
