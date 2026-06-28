@@ -15,7 +15,6 @@ from .diff import (
     split_touches_from_merge_patch,
 )
 from .model_codec import ModelCodec, ModelDumpExcludeOptions
-from .msgspec_codec import MsgspecModelCodec
 from .pydantic import CACHE_DUMP_EXCLUDE_OPTS, PERSISTENCE_DUMP_EXCLUDE_OPTS
 from .pydantic_codec import PydanticModelCodec
 
@@ -37,7 +36,6 @@ __all__ = [
     "decode_rows",
     "materialize_mapping_rows",
     "PydanticModelCodec",
-    "MsgspecModelCodec",
     "split_touches_from_merge_patch",
     "has_hybrid_patch_conflict",
 ]

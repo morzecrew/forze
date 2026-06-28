@@ -72,14 +72,6 @@ class _EmptyPydanticUpdate(BaseDTO):
     pass
 
 
-class _MsgspecUpdate(msgspec.Struct, forbid_unknown_fields=True):
-    name: str | None = None
-
-
-class _EmptyMsgspecUpdate(msgspec.Struct, forbid_unknown_fields=True):
-    pass
-
-
 def test_supports_update_true_for_pydantic_with_fields() -> None:
     spec = DocumentSpec(
         name="doc",
@@ -106,30 +98,24 @@ def test_supports_update_false_for_empty_pydantic_update() -> None:
     assert spec.supports_update() is False
 
 
-def test_supports_update_true_for_msgspec_with_fields() -> None:
+def test_msgspec_update_command_rejected_at_codec_build() -> None:
+    # Record models (incl. update commands) must be Pydantic; a msgspec struct
+    # is rejected when codecs are derived, not silently accepted.
+    class _MsgspecUpdate(msgspec.Struct):
+        name: str | None = None
+
     spec = DocumentSpec(
         name="doc",
         read=_Read,
         write=DocumentWriteTypes(
             domain=_Domain,
             create_cmd=_Create,
-            update_cmd=_MsgspecUpdate,
+            update_cmd=_MsgspecUpdate,  # type: ignore[typeddict-item]
         ),
     )
-    assert spec.supports_update() is True
 
-
-def test_supports_update_false_for_empty_msgspec_update() -> None:
-    spec = DocumentSpec(
-        name="doc",
-        read=_Read,
-        write=DocumentWriteTypes(
-            domain=_Domain,
-            create_cmd=_Create,
-            update_cmd=_EmptyMsgspecUpdate,
-        ),
-    )
-    assert spec.supports_update() is False
+    with pytest.raises(CoreException, match="must be a pydantic.BaseModel subclass"):
+        _ = spec.resolved_codecs
 
 
 # ----------------------- #

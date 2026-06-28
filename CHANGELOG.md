@@ -121,6 +121,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Notify kit: registration split from resolution** *(breaking: `forze_kits`)* — `NotificationRouter` is now a mutable builder (`register()` returns self, then `freeze()`); resolution (`resolve` / `resolve_or_raise`) moves to the immutable `FrozenNotificationRouter` the consumer holds. The package is reorganized into `routing` / `events` / `consumer` / `lifecycle` (public imports from `forze_kits.integrations.notify` unchanged except the new `FrozenNotificationRouter`).
 
+### Removed
+
+- **The codec layer is Pydantic-only** *(breaking: serialization)* — `MsgspecModelCodec` and the `forze.base.serialization.msgspec` helper are removed; record models (read models, create/update commands, idempotency results, and other codec-backed contracts) must be `pydantic.BaseModel` subclasses. A `msgspec.Struct` passed where a codec is derived now raises `exc.configuration` instead of building a msgspec codec. `msgspec` remains an internal detail of the storage value objects only. Migration: model record/payload shapes as Pydantic models. The serialization policy (Pydantic for record models, attrs for in-process framework objects, msgspec for framework-owned wire/value objects) is documented in [Mapping & codecs](reference/mapping.md).
+
 ### Fixed
 
 - **Client-caused errors no longer masquerade as 500s** — across the query / cursor / aggregate / storage / search paths, the `exc.internal` raises a caller can trigger are reclassified: an unsupported backend feature or capability limit now raises `precondition` (400), and a malformed or out-of-range value (cursor `after`+`before` together, a non-positive `limit` / `offset`, an invalid cursor token, an unknown projection field) now raises `validation` (422), instead of an opaque `internal` (500) deep in an adapter. The same situation maps to the same kind across mock ≡ Postgres ≡ Mongo ≡ Firestore, the aggregate DSL now reports parse errors like the filter DSL, and newly client-visible messages were scrubbed of internal detail. Genuine server-fault guards stay `internal` (500).

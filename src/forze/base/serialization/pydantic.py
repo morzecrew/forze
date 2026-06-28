@@ -108,9 +108,9 @@ def pydantic_validate_trusted[M: BaseModel](
     their Python types.
 
     There is no skip-validation fast path here: a ``model_construct`` loop is
-    measurably slower than validation while leaving nested models as raw
-    dicts. The skip-validation semantics live in the msgspec codec instead
-    (:func:`forze.base.serialization.msgspec.msgspec_convert`).
+    measurably slower than validation while leaving nested models as raw dicts,
+    so the trusted path still runs validation and only skips the unknown-column
+    work.
     """
 
     _ = forbid_extra
