@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/integrations/gcs/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/core-concepts/why-four-models/">
       
       
-        <link rel="prev" href="../s3/">
+        <link rel="prev" href="../domain-layer/">
       
       
-        <link rel="next" href="../meilisearch/">
+        <link rel="next" href="../application-layer/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Google Cloud Storage - Forze</title>
+        <title>Why four models - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#install" class="md-skip">
+        <a href="#four-contracts-not-four-copies" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Google Cloud Storage
+              Why four models
             
           </span>
         </div>
@@ -268,15 +268,7 @@
   
   
   
-  
     
-      
-    
-    
-    
-      
-  
-  
   
   
     
@@ -284,8 +276,20 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../core-concepts/overview/" class="md-tabs__link">
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../overview/" class="md-tabs__link">
           
   
   Learn
@@ -303,16 +307,14 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../integrations/" class="md-tabs__link">
           
   
   Integrations
@@ -656,26 +658,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -692,7 +699,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -706,26 +713,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
             
   
   
@@ -742,7 +754,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_1">
             <span class="md-nav__icon md-icon"></span>
             
@@ -759,7 +771,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core-concepts/overview/" class="md-nav__link">
+      <a href="../overview/" class="md-nav__link">
         
   
   
@@ -788,7 +800,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core-concepts/architecture/" class="md-nav__link">
+      <a href="../architecture/" class="md-nav__link">
         
   
   
@@ -817,7 +829,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core-concepts/domain-layer/" class="md-nav__link">
+      <a href="../domain-layer/" class="md-nav__link">
         
   
   
@@ -843,10 +855,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../core-concepts/why-four-models/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Why four models
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -863,6 +901,69 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#four-contracts-not-four-copies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Four contracts, not four copies
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-not-derive-the-repetitive-ones" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Why not derive the repetitive ones?
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-same-trade-off-everywhere" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The same trade-off, everywhere
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-you-can-reduce-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When you can reduce it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -875,7 +976,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core-concepts/application-layer/" class="md-nav__link">
+      <a href="../application-layer/" class="md-nav__link">
         
   
   
@@ -904,7 +1005,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core-concepts/contracts/" class="md-nav__link">
+      <a href="../contracts/" class="md-nav__link">
         
   
   
@@ -933,7 +1034,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core-concepts/runtime/" class="md-nav__link">
+      <a href="../runtime/" class="md-nav__link">
         
   
   
@@ -976,17 +1077,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
             
   
   
@@ -1266,17 +1370,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
             
   
   
@@ -1556,17 +1663,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
             
   
   
@@ -1701,17 +1811,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
             
   
   
@@ -1875,17 +1988,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
             
   
   
@@ -1991,17 +2107,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="">
             
   
   
@@ -2221,31 +2340,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
             
   
   
@@ -2262,7 +2376,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2279,7 +2393,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../integrations/" class="md-nav__link">
         
   
   
@@ -2305,31 +2419,26 @@
                 
   
   
-    
   
   
-  
     
     
     
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
             
   
   
@@ -2346,7 +2455,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2363,7 +2472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../postgres/" class="md-nav__link">
+      <a href="../../integrations/postgres/" class="md-nav__link">
         
   
   
@@ -2392,7 +2501,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mongo/" class="md-nav__link">
+      <a href="../../integrations/mongo/" class="md-nav__link">
         
   
   
@@ -2421,7 +2530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../firestore/" class="md-nav__link">
+      <a href="../../integrations/firestore/" class="md-nav__link">
         
   
   
@@ -2450,7 +2559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../neo4j/" class="md-nav__link">
+      <a href="../../integrations/neo4j/" class="md-nav__link">
         
   
   
@@ -2479,7 +2588,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../redis/" class="md-nav__link">
+      <a href="../../integrations/redis/" class="md-nav__link">
         
   
   
@@ -2508,7 +2617,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../s3/" class="md-nav__link">
+      <a href="../../integrations/s3/" class="md-nav__link">
         
   
   
@@ -2534,36 +2643,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cloud" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Google Cloud Storage
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../integrations/gcs/" class="md-nav__link">
         
   
   
@@ -2580,80 +2663,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Install
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-client" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The client
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#wire-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Wire it
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-it-provides" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What it provides
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Notes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2666,7 +2675,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../meilisearch/" class="md-nav__link">
+      <a href="../../integrations/meilisearch/" class="md-nav__link">
         
   
   
@@ -2695,7 +2704,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../bigquery/" class="md-nav__link">
+      <a href="../../integrations/bigquery/" class="md-nav__link">
         
   
   
@@ -2724,7 +2733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../clickhouse/" class="md-nav__link">
+      <a href="../../integrations/clickhouse/" class="md-nav__link">
         
   
   
@@ -2753,7 +2762,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../duckdb/" class="md-nav__link">
+      <a href="../../integrations/duckdb/" class="md-nav__link">
         
   
   
@@ -2796,20 +2805,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
         
           
-          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
             
   
   
@@ -2843,7 +2849,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rabbitmq/" class="md-nav__link">
+      <a href="../../integrations/rabbitmq/" class="md-nav__link">
         
   
   
@@ -2872,7 +2878,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sqs/" class="md-nav__link">
+      <a href="../../integrations/sqs/" class="md-nav__link">
         
   
   
@@ -2915,20 +2921,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
         
           
-          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
             
   
   
@@ -2962,7 +2965,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../temporal/" class="md-nav__link">
+      <a href="../../integrations/temporal/" class="md-nav__link">
         
   
   
@@ -2991,7 +2994,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inngest/" class="md-nav__link">
+      <a href="../../integrations/inngest/" class="md-nav__link">
         
   
   
@@ -3034,20 +3037,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
         
           
-          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
             
   
   
@@ -3081,7 +3081,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fastapi/" class="md-nav__link">
+      <a href="../../integrations/fastapi/" class="md-nav__link">
         
   
   
@@ -3110,7 +3110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../socketio/" class="md-nav__link">
+      <a href="../../integrations/socketio/" class="md-nav__link">
         
   
   
@@ -3139,7 +3139,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mcp/" class="md-nav__link">
+      <a href="../../integrations/mcp/" class="md-nav__link">
         
   
   
@@ -3182,20 +3182,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
             
   
   
@@ -3229,7 +3226,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../authn/" class="md-nav__link">
+      <a href="../../integrations/authn/" class="md-nav__link">
         
   
   
@@ -3258,7 +3255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../oidc/" class="md-nav__link">
+      <a href="../../integrations/oidc/" class="md-nav__link">
         
   
   
@@ -3301,20 +3298,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
             
   
   
@@ -3348,7 +3342,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../vault/" class="md-nav__link">
+      <a href="../../integrations/vault/" class="md-nav__link">
         
   
   
@@ -3391,20 +3385,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
             
   
   
@@ -3438,7 +3429,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../http/" class="md-nav__link">
+      <a href="../../integrations/http/" class="md-nav__link">
         
   
   
@@ -5337,10 +5328,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
+  <a href="#four-contracts-not-four-copies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Install
+        Four contracts, not four copies
       </span>
     </span>
   </a>
@@ -5348,10 +5339,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-client" class="md-nav__link">
+  <a href="#why-not-derive-the-repetitive-ones" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The client
+        Why not derive the repetitive ones?
       </span>
     </span>
   </a>
@@ -5359,10 +5350,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#wire-it" class="md-nav__link">
+  <a href="#the-same-trade-off-everywhere" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Wire it
+        The same trade-off, everywhere
       </span>
     </span>
   </a>
@@ -5370,21 +5361,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-it-provides" class="md-nav__link">
+  <a href="#when-you-can-reduce-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What it provides
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Notes
+        When you can reduce it
       </span>
     </span>
   </a>
@@ -5437,16 +5417,27 @@
     
     
     
+      
+  
+  
+    
+    
+    
+    
+    
       <li class="md-path__item">
-        <a href="../" class="md-path__link">
+        <a href="../overview/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Integrations
+    Learn
   </span>
 
         </a>
       </li>
+    
+  
+
     
   
 
@@ -5460,11 +5451,11 @@
     
     
       <li class="md-path__item">
-        <a href="../postgres/" class="md-path__link">
+        <a href="../overview/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Data
+    Foundations
   </span>
 
         </a>
@@ -5484,61 +5475,136 @@
   
 
 
-  <h1 id="__skip">Google Cloud Storage</h1>
+  <h1 id="__skip">Why four models</h1>
 
-<p><code>forze[gcs]</code> implements object storage on Google Cloud Storage — the same
-storage contracts as <a href="../s3/">S3</a>, on GCS buckets.</p>
-<h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[gcs]&#39;</span>
-</code></pre></div>
-<p>Needs GCS (or <code>fake-gcs-server</code> via <code>STORAGE_EMULATOR_HOST</code>).</p>
-<h2 id="the-client">The client<a class="headerlink" href="#the-client" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_gcs</span><span class="w"> </span><span class="kn">import</span> <span class="n">GCSClient</span>
-
-<span class="n">gcs</span> <span class="o">=</span> <span class="n">GCSClient</span><span class="p">()</span>
-</code></pre></div>
-<p><code>RoutedGCSClient</code> (with <code>GCSRoutingCredentials</code>) resolves per-tenant
-projects/credentials.</p>
-<h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
-<p>Each storage route names a <strong>bucket</strong>, keyed by <code>StorageSpec.name</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span><span class="p">,</span> <span class="n">LifecyclePlan</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_gcs</span><span class="w"> </span><span class="kn">import</span> <span class="n">GCSClient</span><span class="p">,</span> <span class="n">GCSDepsModule</span><span class="p">,</span> <span class="n">GCSStorageConfig</span><span class="p">,</span> <span class="n">gcs_lifecycle_step</span>
-
-<span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-    <span class="n">GCSDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">gcs</span><span class="p">,</span> <span class="n">storages</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;assets&quot;</span><span class="p">:</span> <span class="n">GCSStorageConfig</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;my-assets&quot;</span><span class="p">)}),</span>
-<span class="p">)</span>
-<span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span><span class="n">gcs_lifecycle_step</span><span class="p">(</span><span class="n">project_id</span><span class="o">=</span><span class="s2">&quot;my-project&quot;</span><span class="p">))</span>
-</code></pre></div>
-<h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
+<p>Modeling an entity in Forze means declaring a small family of Pydantic models — the
+domain model, a create command, an update command, and a read model — then wiring them
+into a <code>DocumentSpec</code>. The fields overlap, so the family can read like boilerplate.</p>
+<p>It isn't. The four are four <em>contracts</em>, and the overlap that remains is the price of two
+guarantees Forze keeps <strong>at the same time</strong>: a domain decoupled from storage, and full
+static typing. Give up either one and the family collapses to a single model — which is
+exactly the trade other frameworks make.</p>
+<h2 id="four-contracts-not-four-copies">Four contracts, not four copies<a class="headerlink" href="#four-contracts-not-four-copies" title="Permanent link">&para;</a></h2>
+<p>The fields repeat, but the <em>shapes</em> differ, because each model answers a different question:</p>
 <table>
 <thead>
 <tr>
-<th>Contract</th>
-<th>Operations</th>
-<th>Keyed by</th>
+<th>Model</th>
+<th>Question it answers</th>
+<th>Why it diverges</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Storage query</td>
-<td><code>download</code>, <code>list</code></td>
-<td><code>StorageSpec.name</code> (<code>storages</code>)</td>
+<td><strong>Domain</strong> (<code>Document</code>)</td>
+<td>What is the entity, and what rules hold?</td>
+<td>Carries identity, revision, and invariants.</td>
 </tr>
 <tr>
-<td>Storage command</td>
-<td><code>upload</code>, <code>delete</code></td>
-<td><code>StorageSpec.name</code> (<code>storages</code>)</td>
+<td><strong>Create command</strong> (<code>BaseDTO</code>)</td>
+<td>What may a caller send to make one?</td>
+<td>Omits server-set fields, applies defaults, validates inbound input on its own terms.</td>
+</tr>
+<tr>
+<td><strong>Update command</strong> (<code>BaseDTO</code>)</td>
+<td>What may a caller change?</td>
+<td>A <strong>merge-patch</strong>: every field optional, where omitting one means <em>"leave it alone"</em> — a different type from the domain.</td>
+</tr>
+<tr>
+<td><strong>Read model</strong> (<code>ReadDocument</code>)</td>
+<td>What does a query return?</td>
+<td>May add computed fields, hide secrets, rename, or project a subset.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
+<p>A slice of one entity makes the divergence concrete — the same <code>status</code> field has a
+different shape in three of the four:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Order</span><span class="p">(</span><span class="n">Document</span><span class="p">):</span>           <span class="c1"># domain: the real state + its rules</span>
+    <span class="n">customer</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;pending&quot;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">OrderCreate</span><span class="p">(</span><span class="n">BaseDTO</span><span class="p">):</span>      <span class="c1"># inbound: status is server-set, so it is absent</span>
+    <span class="n">customer</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">OrderUpdate</span><span class="p">(</span><span class="n">BaseDTO</span><span class="p">):</span>      <span class="c1"># merge-patch: optional, None means &quot;don&#39;t touch&quot;</span>
+    <span class="n">customer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">OrderRead</span><span class="p">(</span><span class="n">ReadDocument</span><span class="p">):</span>   <span class="c1"># outbound: the projection a query returns</span>
+    <span class="n">customer</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">str</span>
+</code></pre></div>
+<p>Collapse these into one model and you lose the ability to let them <strong>diverge</strong> — and the
+divergence is the point. The update command is intentionally <em>not</em> the domain model.</p>
+<h2 id="why-not-derive-the-repetitive-ones">Why not derive the repetitive ones?<a class="headerlink" href="#why-not-derive-the-repetitive-ones" title="Permanent link">&para;</a></h2>
+<p>Even granting they are distinct, much of the overlap is mechanical — the update command is
+"the domain with every field made optional." So why not generate it? Two reasons, each tied
+to a guarantee Forze keeps.</p>
+<p><strong>Deriving at runtime erases static types.</strong> The only way to build one model from another at
+runtime is Pydantic's <code>create_model(...)</code>. It works when the program runs — but a
+type-checker reads your code <em>without</em> running it, and to mypy or pyright <code>create_model(...)</code>
+returns a model with no known fields. You would lose autocomplete and type-checking on the
+very models you touch most. Forze is strict-typed end to end, so that is disqualifying.</p>
+<div class="admonition note">
+<p class="admonition-title">Why the type-checker can't rescue this</p>
+<p>TypeScript can write <code>Partial&lt;Order&gt;</code> — "<code>Order</code> with every field optional" — and the
+compiler computes the derived type, keeping full field-level typing. Python's type
+system has no equivalent: there is no way to express <em>"this type, but all fields
+optional"</em> or <em>"this type, projected to these fields."</em> So even a hand-rolled helper
+can't be typed honestly — it either erases the fields or lies about them. The shape has
+to be <strong>written out</strong> to be seen.</p>
+</div>
+<h2 id="the-same-trade-off-everywhere">The same trade-off, everywhere<a class="headerlink" href="#the-same-trade-off-everywhere" title="Permanent link">&para;</a></h2>
+<p>This is not a Forze quirk. To shrink the family, a framework has to give up one of the two
+guarantees:</p>
+<table>
+<thead>
+<tr>
+<th>Approach</th>
+<th>Models per entity</th>
+<th>What it gives up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fused ORM model (SQLModel, Django, Beanie)</td>
+<td>~1</td>
+<td>The model <strong>is</strong> the storage row — domain coupled to persistence.</td>
+</tr>
+<tr>
+<td>Dynamically typed (Ecto / Elixir)</td>
+<td>1 + changeset</td>
+<td>No static type-checker to satisfy.</td>
+</tr>
+<tr>
+<td>Decoupled <strong>and</strong> typed (SQLAlchemy 2.0, EF Core, <strong>Forze</strong>)</td>
+<td>up to 4</td>
+<td>Nothing — it writes the family out.</td>
+</tr>
+</tbody>
+</table>
+<p>The frameworks that collapse to one model buy it by fusing the domain to the database —
+precisely what hexagonal architecture, and Forze, refuse. The ones that keep a clean domain
+<em>and</em> static types write the same family Forze does.</p>
+<h2 id="when-you-can-reduce-it">When you can reduce it<a class="headerlink" href="#when-you-can-reduce-it" title="Permanent link">&para;</a></h2>
+<p>The family is a floor, not a ceiling — a few things genuinely trim it:</p>
 <ul>
-<li><strong>You provision buckets, IAM, and lifecycle rules.</strong> Forze only does
-  query/command (with content-type detection).</li>
-<li>Credentials default to Application Default Credentials; pass <code>service_file</code> for
-  an explicit key, or <code>RoutedGCSClient</code> for per-tenant projects.</li>
-<li>With <code>tenant_aware</code>, object keys are prefixed per tenant.</li>
+<li><strong>Skip ops you don't have.</strong> A read-only aggregate needs no update (or create) command;
+  omit them. <code>build_document_registry(spec)</code> derives its DTO mapping from the spec, so you
+  never re-list the models when wiring a registry.</li>
+<li><strong>Single-source field rules.</strong> Reuse a field's type and validation across the family with
+  an <code>Annotated</code> alias — <code>Money = Annotated[int, Field(ge=0)]</code> — so a constraint lives in
+  one place even though each model still names the field.</li>
+<li><strong>Generate, don't abstract.</strong> If the typing is tedious at scale, an editor snippet or a
+  scaffold that <em>emits the four classes</em> keeps types perfect: it does the field-transform
+  when you write the code — the one moment Python can.</li>
 </ul>
+<p>The four models aren't ceremony left un-abstracted. They're the shape two commitments — a
+decoupled domain and full static typing — leave behind. For the lifecycle and rules that
+live <em>on</em> the domain model, see <a href="../domain-layer/">the domain layer</a> and
+<a href="../../writing-operation/aggregate-decisions/">aggregate decisions</a>; for why the update
+command is a merge-patch under a revision, see
+<a href="../../writing-operation/concurrency-conflicts/">concurrency conflicts</a>.</p>
 
 
 
@@ -5579,7 +5645,7 @@ projects/credentials.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../s3/" class="md-footer__link md-footer__link--prev" aria-label="Previous: S3-compatible storage">
+          <a href="../domain-layer/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Domain">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -5589,20 +5655,20 @@ projects/credentials.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                S3-compatible storage
+                Domain
               </div>
             </div>
           </a>
         
         
           
-          <a href="../meilisearch/" class="md-footer__link md-footer__link--next" aria-label="Next: Meilisearch">
+          <a href="../application-layer/" class="md-footer__link md-footer__link--next" aria-label="Next: Application">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Meilisearch
+                Application
               </div>
             </div>
             <div class="md-footer__button md-icon">

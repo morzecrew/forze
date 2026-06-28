@@ -18,7 +18,7 @@
         <link rel="prev" href="../architecture/">
       
       
-        <link rel="next" href="../application-layer/">
+        <link rel="next" href="../why-four-models/">
       
       
         
@@ -936,6 +936,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../why-four-models/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Why four models
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../application-layer/" class="md-nav__link">
         
   
@@ -1239,6 +1268,35 @@
     
   
   Idempotency
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../writing-operation/aggregate-decisions/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-git-branch" viewBox="0 0 24 24"><path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Aggregate decisions
 
     
   </span>
@@ -5443,7 +5501,9 @@ frozen, purpose-built types that carry data across boundaries.</p>
 </tbody>
 </table>
 <p>How a create command becomes the domain model and is projected back to the read model —
-the codecs that carry it — is the <a href="../../reference/mapping/">mapping reference</a>.</p>
+the codecs that carry it — is the <a href="../../reference/mapping/">mapping reference</a>. Why these
+are <em>separate</em> models, rather than one with the rest derived, is
+<a href="../why-four-models/">Why four models</a>.</p>
 <div class="admonition note">
 <p class="admonition-title">CreateDocumentCmd is deprecated</p>
 <p><code>CreateDocumentCmd</code> still works as an alias for <code>BaseDTO</code> but is deprecated.
@@ -5516,6 +5576,9 @@ aggregate:</p>
 <p>Updates are structured. <code>order.update({"total": 99})</code> returns a <strong>new immutable
 instance</strong> and a minimal diff, runs the validators, and bumps <code>last_update_at</code>.
 A patch that changes nothing returns the original and an empty diff.</p>
+<p>These validate a <em>single</em> write. A state <strong>transition</strong> — its guard plus the change
+it makes — belongs on the aggregate too, as a <em>decider</em> method that returns the patch
+to persist; see <a href="../../writing-operation/aggregate-decisions/">Aggregate decisions</a>.</p>
 <h2 id="reusable-concerns-mixins">Reusable concerns: mixins<a class="headerlink" href="#reusable-concerns-mixins" title="Permanent link">&para;</a></h2>
 <p>Common domain concerns ship as composable mixins in <code>forze_kits</code> (included in the
 default install). Each adds one focused capability — no deep inheritance chains.</p>
@@ -5605,13 +5668,13 @@ on them into something the runtime can execute is the
         
         
           
-          <a href="../application-layer/" class="md-footer__link md-footer__link--next" aria-label="Next: Application">
+          <a href="../why-four-models/" class="md-footer__link md-footer__link--next" aria-label="Next: Why four models">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Application
+                Why four models
               </div>
             </div>
             <div class="md-footer__button md-icon">

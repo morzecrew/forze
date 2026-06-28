@@ -856,6 +856,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../core-concepts/why-four-models/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Why four models
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../core-concepts/application-layer/" class="md-nav__link">
         
   
@@ -1159,6 +1188,35 @@
     
   
   Idempotency
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../writing-operation/aggregate-decisions/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-git-branch" viewBox="0 0 24 24"><path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Aggregate decisions
 
     
   </span>
@@ -5480,6 +5538,19 @@ transitions. The <code>Order</code> records <code>OrderConfirmed</code> the mome
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Order</span><span class="p">(</span><span class="n">Document</span><span class="p">,</span> <span class="n">AggregateRoot</span><span class="p">):</span>
     <span class="n">status</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;pending&quot;</span>
 
+    <span class="k">def</span><span class="w"> </span><span class="nf">confirm</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;OrderUpdate&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Decide the ``pending`` -&gt; ``confirmed`` transition (illegal from any other status).</span>
+
+<span class="sd">        A pure decision method on the aggregate: it guards the transition and returns the merge-patch</span>
+<span class="sd">        the repository persists under the order&#39;s revision. The rule lives here once — the saga step</span>
+<span class="sd">        and the ``_on_confirm`` emitter both key on it instead of re-encoding it.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;pending&quot;</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">domain</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cannot confirm an order in status </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">status</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">OrderUpdate</span><span class="p">(</span><span class="n">status</span><span class="o">=</span><span class="s2">&quot;confirmed&quot;</span><span class="p">)</span>
+
     <span class="nd">@event_emitter</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">})</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_on_confirm</span><span class="p">(</span><span class="n">before</span><span class="p">,</span> <span class="n">after</span><span class="p">:</span> <span class="n">Self</span><span class="p">,</span> <span class="n">diff</span><span class="p">:</span> <span class="n">JsonDict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DomainEvent</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># type: ignore[no-untyped-def]</span>
         <span class="k">if</span> <span class="n">after</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;confirmed&quot;</span> <span class="ow">and</span> <span class="n">before</span><span class="o">.</span><span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;confirmed&quot;</span><span class="p">:</span>
@@ -5520,12 +5591,13 @@ inside the same transaction:</p>
         <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;payment declined — failing the pivot step&quot;</span><span class="p">)</span>
         <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">domain</span><span class="p">(</span><span class="s2">&quot;payment declined&quot;</span><span class="p">)</span>
 
-    <span class="n">order</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">ORDER_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">order_id</span><span class="p">)</span>
-    <span class="c1"># The status transition fires @event_emitter -&gt; OrderConfirmed, dispatched in THIS</span>
-    <span class="c1"># step&#39;s transaction (the command flow), which the outbox bridge stages.</span>
-    <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">ORDER_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
-        <span class="n">s</span><span class="o">.</span><span class="n">order_id</span><span class="p">,</span> <span class="n">order</span><span class="o">.</span><span class="n">rev</span><span class="p">,</span> <span class="n">OrderUpdate</span><span class="p">(</span><span class="n">status</span><span class="o">=</span><span class="s2">&quot;confirmed&quot;</span><span class="p">)</span>
-    <span class="p">)</span>
+    <span class="c1"># Load the aggregate, let it decide the transition, persist the patch under its rev (OCC).</span>
+    <span class="c1"># confirm() single-sources the pending-&gt;confirmed rule (+ guards it); the resulting status</span>
+    <span class="c1"># change fires @event_emitter -&gt; OrderConfirmed, dispatched in THIS step&#39;s transaction (the</span>
+    <span class="c1"># command flow), which the outbox bridge stages.</span>
+    <span class="n">orders</span> <span class="o">=</span> <span class="n">aggregate_repository</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">ORDER_SPEC</span><span class="p">)</span>
+    <span class="n">order</span> <span class="o">=</span> <span class="k">await</span> <span class="n">orders</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">order_id</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">orders</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">order</span><span class="p">,</span> <span class="n">order</span><span class="o">.</span><span class="n">confirm</span><span class="p">())</span>
     <span class="c1"># Transactional outbox: flush the staged event within the same transaction.</span>
     <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">outbox</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">OUTBOX_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
 

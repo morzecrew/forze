@@ -28,6 +28,9 @@
         <loc>https://morzecrew.github.io/forze/dev/core-concepts/domain-layer/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/core-concepts/why-four-models/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/core-concepts/application-layer/</loc>
       </url>
       <url>
@@ -53,6 +56,9 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/writing-operation/idempotency/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/aggregate-decisions/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/writing-operation/system-invariants/</loc>
