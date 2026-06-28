@@ -123,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **The codec layer is Pydantic-only** *(breaking: serialization)* — `MsgspecModelCodec` and the `forze.base.serialization.msgspec` helper are removed; record models (read models, create/update commands, idempotency results, and other codec-backed contracts) must be `pydantic.BaseModel` subclasses. A `msgspec.Struct` passed where a codec is derived now raises `exc.configuration` instead of building a msgspec codec. `msgspec` remains an internal detail of the storage value objects only. Migration: model record/payload shapes as Pydantic models. The serialization policy (Pydantic for record models, attrs for in-process framework objects, msgspec for framework-owned wire/value objects) is documented in [Mapping & codecs](reference/mapping.md).
+- **`msgspec` dropped as a dependency; the codec layer is Pydantic-only** *(breaking: serialization)* — `MsgspecModelCodec` and the `forze.base.serialization.msgspec` helper are removed; record models (read models, create/update commands, idempotency results, and other codec-backed contracts) must be `pydantic.BaseModel` subclasses. A non-Pydantic type passed where a codec is derived now raises `exc.configuration` instead of building a msgspec codec. The storage value objects (`UploadedObject`, `DownloadedObject`, `ObjectMetadata`, `StoredObject`) are now frozen, keyword-only `attrs` classes (previously `msgspec.Struct`) — construct them with keyword arguments. Migration: model record/payload shapes as Pydantic models. The serialization policy (Pydantic for record models, attrs for in-process framework objects and wire/value objects) is documented in [Mapping & codecs](reference/mapping.md).
 
 ### Fixed
 

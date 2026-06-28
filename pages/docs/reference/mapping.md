@@ -77,12 +77,11 @@ The framework uses one rule, by **who owns the shape**:
 | Shape | Library | Why |
 |-------|---------|-----|
 | Your record models — read models, commands, DTOs, events, query params | **Pydantic** | validators, computed/materialized fields, custom coercion — the rich, customizable layer |
-| In-process framework objects — specs, deps, message envelopes, cursors | **attrs** | never serialized as a typed model; cheap frozen value objects |
-| Framework-owned wire/value objects — storage upload/download/metadata | **msgspec** | a closed, framework-declared shape with no validation needs |
+| Framework-owned value objects — specs, deps, message envelopes, cursors, storage upload/download/metadata | **attrs** | closed, framework-declared shapes with no validation needs; cheap frozen value objects |
 
 The codec layer is **Pydantic only**: read models, commands (create/update),
 idempotency results, and other record contracts must be `BaseModel` subclasses.
-`msgspec` is an internal storage detail, not a model choice you opt into.
+There is no second model library to opt into.
 
 ## How a write maps
 

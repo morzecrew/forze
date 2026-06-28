@@ -37,9 +37,8 @@ just test -m integration
 just test -m "not perf"
 just test tests/unit/test_forze_redis/test_redis_lifecycle.py
 just perf                              # all @pytest.mark.perf benchmarks
-just perf tests/perf/test_forze_codec_perf.py   # pydantic + msgspec tiers
+just perf tests/perf/test_forze_codec_perf.py   # pydantic codec decode tiers
 just perf tests/perf/test_forze_codec_perf.py -k pydantic_strict
-just perf tests/perf/test_forze_codec_perf.py -k msgspec
 just perf tests/perf/test_forze_codec_perf.py -k "simple"
 just perf tests/perf/test_forze_codec_perf.py --benchmark-compare
 ```

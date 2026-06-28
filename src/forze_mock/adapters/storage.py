@@ -15,7 +15,6 @@ from typing import (
 )
 
 import attrs
-import msgspec
 
 from forze.application.contracts.storage import (
     DownloadedObject,
@@ -456,7 +455,7 @@ class MockStorageAdapter(
                 raise exc.not_found(f"Object not found: {key}")
 
             obj = self._objects()[key]
-            self._objects()[key] = msgspec.structs.replace(
+            self._objects()[key] = attrs.evolve(
                 obj,
                 tags=dict(tags) if tags else None,
             )

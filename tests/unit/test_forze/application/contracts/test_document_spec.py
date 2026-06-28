@@ -1,6 +1,5 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
-import msgspec
 import pytest
 from pydantic import BaseModel, computed_field
 
@@ -98,10 +97,10 @@ def test_supports_update_false_for_empty_pydantic_update() -> None:
     assert spec.supports_update() is False
 
 
-def test_msgspec_update_command_rejected_at_codec_build() -> None:
-    # Record models (incl. update commands) must be Pydantic; a msgspec struct
-    # is rejected when codecs are derived, not silently accepted.
-    class _MsgspecUpdate(msgspec.Struct):
+def test_non_pydantic_update_command_rejected_at_codec_build() -> None:
+    # Record models (incl. update commands) must be Pydantic; a non-Pydantic
+    # type is rejected when codecs are derived, not silently accepted.
+    class _PlainUpdate:
         name: str | None = None
 
     spec = DocumentSpec(
@@ -110,7 +109,7 @@ def test_msgspec_update_command_rejected_at_codec_build() -> None:
         write=DocumentWriteTypes(
             domain=_Domain,
             create_cmd=_Create,
-            update_cmd=_MsgspecUpdate,  # type: ignore[typeddict-item]
+            update_cmd=_PlainUpdate,  # type: ignore[typeddict-item]
         ),
     )
 
@@ -237,14 +236,15 @@ def test_materialized_collision_with_settable_command_rejected() -> None:
         )
 
 
-def test_materialized_on_msgspec_model_rejected_cleanly() -> None:
-    # msgspec structs have no @computed_field, so materializing on one is a clean
-    # configuration error, not a raw AttributeError on ``model_computed_fields``.
-    class _MsgspecRead(msgspec.Struct):
+def test_materialized_on_non_pydantic_model_rejected_cleanly() -> None:
+    # A non-Pydantic read model has no @computed_field, so materializing on it is
+    # a clean configuration error, not a raw AttributeError on
+    # ``model_computed_fields``.
+    class _PlainRead:
         a: int
 
     with pytest.raises(CoreException, match="require a Pydantic model"):
-        DocumentSpec(name="doc", read=_MsgspecRead, materialized={"a"})  # type: ignore[type-var]
+        DocumentSpec(name="doc", read=_PlainRead, materialized={"a"})  # type: ignore[type-var]
 
 
 def test_sensitive_defaults_to_false() -> None:
