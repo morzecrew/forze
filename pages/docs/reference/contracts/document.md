@@ -35,6 +35,7 @@ plus per-aggregate policy:
 | `write` | `DocumentWriteTypes \| None` | `None` | `{domain, create_cmd, update_cmd?}`; **omit for a read-only document** (no command port) |
 | `history_enabled` | `bool` | `False` | keep an audit trail of every revision |
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names persisted as columns, so they're filterable/sortable |
+| `lenient_read_fields` | `frozenset[str]` | `∅` | read-model fields with **no** backing column: dropped from the projection, hydrated from their default, removed from the filter/sort/aggregate allow-sets, and tolerated by relational startup schema checks (see below) |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort applied when a caller omits `sorts` (required if the read model has no `id`) |
 | `query_policy` | `QueryFieldPolicy \| None` | `None` | allow-sets restricting which fields a governed caller may filter / sort / aggregate |
 | `query_params` | `type[BaseModel] \| None` | `None` | typed [query-parameter](../../data-events/query-parameters.md) contract, bound via `with_parameters` |
@@ -45,6 +46,30 @@ plus per-aggregate policy:
 
 `write` is a `DocumentWriteTypes` TypedDict — `domain` (the `Document` subclass),
 `create_cmd`, and an optional `update_cmd`.
+
+### Lenient read fields
+
+By default every read-model field must map to a stored column, and a relational
+backend fails at startup if one is missing — drift is caught at boot, not on the
+first query. `lenient_read_fields` opts named fields out of that rule, on the read
+side only:
+
+- the field is **dropped from the read projection** and **hydrated from its model
+  default** on every read (so it carries the same default for every row);
+- it is **removed from the filter / sort / aggregate allow-sets** — a column that
+  is not there cannot be queried;
+- the Postgres startup schema check **tolerates the missing column** instead of
+  failing.
+
+Each name must be a non-computed read-model field that carries a default (is
+non-required) and is not an identity/audit field (`id`, `rev`, `created_at`,
+`last_update_at`) or a `materialized` field. It is read-side only: if the same
+field is also stored on the write/domain model over that relation, write-schema
+validation still requires its column.
+
+Use it for a field that exists in code ahead of (or independently of) the physical
+column — e.g. during an expand/contract migration — or a read-model display field
+the write model does not persist.
 
 ## Query port
 

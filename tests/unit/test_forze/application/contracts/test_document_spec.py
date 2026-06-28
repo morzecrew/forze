@@ -1,7 +1,10 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
+from datetime import datetime
+
 import pytest
-from pydantic import BaseModel, computed_field
+import structlog
+from pydantic import BaseModel, Field, computed_field
 
 from forze.application.contracts.document import (
     DocumentSpec,
@@ -10,6 +13,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.querying import QueryFieldPolicy
 from forze.base.exceptions import CoreException
+from forze.base.primitives import utcnow
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 
@@ -257,6 +261,92 @@ def test_sensitive_flag_round_trips() -> None:
     spec = DocumentSpec(name="doc", read=_Read, sensitive=True)
 
     assert spec.sensitive is True
+
+
+# ----------------------- #
+# Lenient read fields (storage conformity)
+
+
+class _LenientRead(ReadDocument):
+    name: str
+    nickname: str = "anon"  # lenient-eligible: defaulted, non-identity
+    bio: str | None = None  # lenient-eligible: optional with default
+    refreshed_at: datetime = Field(default_factory=utcnow)  # default_factory
+
+
+def test_lenient_field_dropped_from_query_axes() -> None:
+    spec = DocumentSpec(
+        name="users",
+        read=_LenientRead,
+        lenient_read_fields={"nickname", "bio"},
+    )
+
+    for axis in (
+        spec.filterable_fields(),
+        spec.sortable_fields(),
+        spec.aggregatable_fields(),
+    ):
+        assert "nickname" not in axis
+        assert "bio" not in axis
+        # Stored fields stay queryable.
+        assert "name" in axis
+        assert "id" in axis
+
+
+def test_lenient_required_field_rejected() -> None:
+    # ``name`` has no default — absent from storage it cannot be constructed.
+    with pytest.raises(CoreException, match="has no default"):
+        DocumentSpec(name="users", read=_LenientRead, lenient_read_fields={"name"})
+
+
+def test_lenient_identity_field_rejected() -> None:
+    with pytest.raises(CoreException, match="identity/audit fields"):
+        DocumentSpec(name="users", read=_LenientRead, lenient_read_fields={"id"})
+
+    with pytest.raises(CoreException, match="identity/audit fields"):
+        DocumentSpec(
+            name="users", read=_LenientRead, lenient_read_fields={"last_update_at"}
+        )
+
+
+def test_lenient_unknown_field_rejected() -> None:
+    with pytest.raises(CoreException, match="not non-computed fields"):
+        DocumentSpec(name="users", read=_LenientRead, lenient_read_fields={"ghost"})
+
+
+def test_lenient_materialized_overlap_rejected() -> None:
+    with pytest.raises(CoreException, match="cannot be both materialized"):
+        DocumentSpec(
+            name="orders",
+            read=_PricedRead,
+            write=_priced_write(),
+            materialized={"total"},
+            lenient_read_fields={"total"},
+        )
+
+
+def test_lenient_default_factory_warns() -> None:
+    with structlog.testing.capture_logs() as logs:
+        DocumentSpec(
+            name="users",
+            read=_LenientRead,
+            lenient_read_fields={"refreshed_at"},
+        )
+
+    assert any(
+        e["log_level"] == "warning" and "default_factory" in e["event"] for e in logs
+    )
+
+
+def test_lenient_field_rejected_in_query_policy() -> None:
+    # A lenient field has no column, so it cannot appear in a governed allow-set.
+    with pytest.raises(CoreException, match="not on the read model"):
+        DocumentSpec(
+            name="users",
+            read=_LenientRead,
+            lenient_read_fields={"nickname"},
+            query_policy=QueryFieldPolicy(filterable={"nickname"}),
+        )
 
 
 # ----------------------- #

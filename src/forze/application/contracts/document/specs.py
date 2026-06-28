@@ -1,11 +1,13 @@
 """Specifications for document models and storage layout."""
 
-from typing import Any, Generic, TypeVar, final
+from typing import Any, Final, Generic, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
 
+from forze.application._logger import logger
 from forze.base.exceptions import exc
+from forze.domain.constants import ID_FIELD, LAST_UPDATE_AT_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, Document
 
 from ..base import BaseSpec
@@ -21,6 +23,11 @@ from .write_types import DocumentWriteTypes
 # ----------------------- #
 
 R = TypeVar("R", bound=BaseModel)
+
+_IDENTITY_READ_FIELDS: Final = frozenset(
+    {ID_FIELD, REV_FIELD, "created_at", LAST_UPDATE_AT_FIELD}
+)
+"""Identity/audit fields that must always be read from storage (never lenient)."""
 
 # Any is default to avoid separate spec for read-only documents
 D = TypeVar("D", bound=Document, default=Any)
@@ -57,6 +64,31 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     ``@computed_field`` on both the read and domain models and must **not** be a
     settable field on any create/update command (a derived value cannot be set
     directly). Empty by default."""
+
+    lenient_read_fields: frozenset[str] = attrs.field(
+        default=frozenset(),
+        converter=frozenset,
+    )
+    """Read-model field names permitted to be **absent** from the read relation.
+
+    A lenient field is not stored: it is dropped from the read projection and
+    rehydrated from its model default on every read, and a relational backend's
+    startup schema check tolerates the missing column instead of failing. Use it
+    for fields that exist in code ahead of (or independently of) the physical
+    column — e.g. during an expand/contract migration, or a read-model display
+    field that the write/domain model does not persist.
+
+    Each name must be a non-computed read-model field, must carry a default (be
+    non-required), must not be an identity/audit field
+    (``id``/``rev``/``created_at``/``last_update_at``), and must not also be
+    :attr:`materialized` (a field is either stored or not). Lenient fields are
+    removed from the filter/sort/aggregate allow-sets, since a column that is not
+    there cannot be queried. Empty by default (strict — every read field must map
+    to storage).
+
+    Read-side only: if a lenient field is also a stored field on the write/domain
+    model over the same relation, startup write-schema validation still requires
+    its column."""
 
     sensitive: bool = attrs.field(default=False)
     """Read model carries credential/secret material (password hashes, token digests);
@@ -123,7 +155,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         if self.materialized:
             self._validate_materialized()
 
-        read_fields = read_fields_for_model(self.read) | self.materialized
+        if self.lenient_read_fields:
+            self._validate_lenient_read_fields()
+
+        read_fields = self._read_query_fields()
 
         if self.default_sort is not None:
             validate_sort_fields(
@@ -158,6 +193,65 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 f"DocumentSpec.query_params for {self.name!r} must be a Pydantic BaseModel "
                 "subclass."
             )
+
+    # ....................... #
+
+    def _read_query_fields(self) -> frozenset[str]:
+        """Read-model fields a caller may project / filter / sort / aggregate on.
+
+        Declared read fields plus :attr:`materialized`, minus
+        :attr:`lenient_read_fields` (which have no backing column and so cannot be
+        queried).
+        """
+
+        return (
+            read_fields_for_model(self.read) | self.materialized
+        ) - self.lenient_read_fields
+
+    # ....................... #
+
+    def _validate_lenient_read_fields(self) -> None:
+        """Validate lenient read fields are absent-tolerant and non-operative."""
+
+        if identity := self.lenient_read_fields & _IDENTITY_READ_FIELDS:
+            raise exc.configuration(
+                f"Field(s) {sorted(identity)} are identity/audit fields and cannot be "
+                f"lenient; they must always be read from storage (spec {self.name!r}).",
+            )
+
+        if overlap := self.lenient_read_fields & self.materialized:
+            raise exc.configuration(
+                f"Field(s) {sorted(overlap)} cannot be both materialized (stored) and "
+                f"lenient (not stored) (spec {self.name!r}).",
+            )
+
+        read_fields = read_fields_for_model(self.read)
+
+        if missing := self.lenient_read_fields - read_fields:
+            raise exc.configuration(
+                f"Lenient read field(s) {sorted(missing)} are not non-computed fields "
+                f"on the read model {self.read.__name__} (spec {self.name!r}).",
+            )
+
+        fields = self.read.model_fields
+
+        for name in sorted(self.lenient_read_fields):
+            field = fields[name]
+
+            if field.is_required():
+                raise exc.configuration(
+                    f"Lenient read field {name!r} has no default (spec {self.name!r}); "
+                    "a field absent from storage must be constructible from a default.",
+                )
+
+            if field.default_factory is not None:
+                logger.warning(
+                    "DocumentSpec %r: lenient read field %r uses a default_factory; every "
+                    "read of a row missing this column produces a fresh value, not stored "
+                    "data.",
+                    str(self.name),
+                    name,
+                )
 
     # ....................... #
 
@@ -229,7 +323,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     def filterable_fields(self) -> frozenset[str]:
         """Field names a governed caller may filter on (policy allow-set, or all read fields)."""
 
-        read_fields = read_fields_for_model(self.read) | self.materialized
+        read_fields = self._read_query_fields()
 
         if self.query_policy is None:
             return read_fields
@@ -241,7 +335,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     def sortable_fields(self) -> frozenset[str]:
         """Field names a governed caller may sort by (policy allow-set, or all read fields)."""
 
-        read_fields = read_fields_for_model(self.read) | self.materialized
+        read_fields = self._read_query_fields()
 
         if self.query_policy is None:
             return read_fields
@@ -253,7 +347,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     def aggregatable_fields(self) -> frozenset[str]:
         """Field names a governed caller may group by / aggregate (allow-set, or all read fields)."""
 
-        read_fields = read_fields_for_model(self.read) | self.materialized
+        read_fields = self._read_query_fields()
 
         if self.query_policy is None:
             return read_fields

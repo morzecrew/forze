@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Materialized derived fields** — `DocumentSpec(materialized=…)` persists selected computed fields as real columns, making them filterable and sortable. Names are validated, create/update collisions rejected, and startup checks require matching columns.
 
+- **Lenient read fields** — `DocumentSpec(lenient_read_fields=…)` lets a read-model field have no backing column: it is dropped from the read projection, hydrated from its model default, removed from the filter/sort/aggregate allow-sets, and tolerated by Postgres startup schema validation instead of failing. Read-side only and opt-in (strict stays the default); each field must be a non-computed, non-identity read field carrying a default. Useful for expand/contract migrations and read-model fields the write model does not persist.
+
 - **Two-phase prepare/apply handlers** — `TwoPhaseHandler` (plus a kit base): `prepare(args)` runs outside the transaction (CPU or external work) and `apply(args, payload)` inside it, so the transaction wraps only the writes. A tx route is required and `prepare` is read-only.
 
 - **CPU-offload seam** — `run_cpu` / `run_cpu_map` run blocking or CPU-bound work off the event loop via a context-bound `CpuExecutor` (a bounded thread pool in production; inline and deterministic under simulation), honoring the invocation deadline with a cooperative `checkpoint()`.
