@@ -87,6 +87,21 @@ async def test_multi_column_insert_transposes_in_column_order() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sparse_row_falls_back_to_none_fill() -> None:
+    # A direct port caller may send a later row missing one of the first row's
+    # keys; it must NULL-fill (None), not raise KeyError.
+    driver = _RecordingClient()
+    client = _client(driver)
+    rows = [{"a": 1, "b": "x"}, {"a": 2}]  # second row missing "b"
+
+    await client.insert_rows("analytics", "raw", rows)
+
+    call = driver.calls[0]
+    assert call["column_names"] == ["a", "b"]
+    assert call["data"] == [[1, "x"], [2, None]]
+
+
+@pytest.mark.asyncio
 async def test_empty_rows_is_a_noop() -> None:
     driver = _RecordingClient()
     client = _client(driver)
