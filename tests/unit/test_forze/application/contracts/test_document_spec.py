@@ -398,6 +398,68 @@ def test_read_conformity_lenient_includes_explicit_fields() -> None:
 
 
 # ----------------------- #
+# Write-omit fields
+
+
+class _OmitDomain(Document):
+    name: str
+    label: str = "anon"  # defaulted domain field, not persisted
+
+
+def _omit_write() -> DocumentWriteTypes:
+    return DocumentWriteTypes(
+        domain=_OmitDomain,
+        create_cmd=_Create,
+        update_cmd=_PydanticUpdate,
+    )
+
+
+def test_write_omit_field_round_trips() -> None:
+    spec = DocumentSpec(
+        name="doc", read=_Read, write=_omit_write(), write_omit_fields={"label"}
+    )
+    assert spec.write_omit_fields == frozenset({"label"})
+
+
+def test_write_omit_requires_write_spec() -> None:
+    with pytest.raises(CoreException, match="requires a write spec"):
+        DocumentSpec(name="doc", read=_Read, write_omit_fields={"label"})
+
+
+def test_write_omit_required_domain_field_rejected() -> None:
+    # ``name`` has no default — it cannot hydrate on read-back.
+    with pytest.raises(CoreException, match="has no default"):
+        DocumentSpec(
+            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"name"}
+        )
+
+
+def test_write_omit_identity_field_rejected() -> None:
+    with pytest.raises(CoreException, match="identity/audit fields"):
+        DocumentSpec(
+            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"rev"}
+        )
+
+
+def test_write_omit_unknown_field_rejected() -> None:
+    with pytest.raises(CoreException, match="not non-computed fields"):
+        DocumentSpec(
+            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"ghost"}
+        )
+
+
+def test_write_omit_warns_silent_drop() -> None:
+    with structlog.testing.capture_logs() as logs:
+        DocumentSpec(
+            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"label"}
+        )
+
+    assert any(
+        e["log_level"] == "warning" and "silently dropped" in e["event"] for e in logs
+    )
+
+
+# ----------------------- #
 # Query parameters
 
 

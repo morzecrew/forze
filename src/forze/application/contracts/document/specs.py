@@ -5,6 +5,7 @@ from typing import Any, Generic, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
+from forze.application._logger import logger
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, Document
 
@@ -63,7 +64,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     settable field on any create/update command (a derived value cannot be set
     directly). Empty by default."""
 
-    read_conformity: ReadConformity = attrs.field(default="strict")
+    read_conformity: ReadConformity = "strict"
     """Storage-conformity level. ``strict`` (default): every read field must map to a
     column. ``lenient``: auto-derive :attr:`lenient_read_fields` from the read model —
     every defaulted, non-identity, non-:attr:`materialized` field (static defaults only)
@@ -94,6 +95,22 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     Read-side only: if a lenient field is also a stored field on the write/domain
     model over the same relation, startup write-schema validation still requires
     its column."""
+
+    write_omit_fields: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=frozenset,
+    )
+    """Domain-model field names that are **not** persisted to the write relation.
+
+    The write side of :attr:`lenient_read_fields`: such a field is **silently
+    stripped** from every write (insert/update), its column is not required by
+    startup schema validation, and it hydrates from the domain model's default on
+    read-back. Because the value is dropped, this is **explicit-only** — never
+    auto-derived by :attr:`read_conformity` — and each name must be a non-computed,
+    non-identity domain field carrying a default. Requires a :attr:`write` spec.
+
+    Use it for a domain field computed or stored elsewhere (not on this table).
+    Empty by default."""
 
     sensitive: bool = False
     """Read model carries credential/secret material (password hashes, token digests);
@@ -178,6 +195,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         if self.lenient_read_fields:
             self._validate_lenient_read_fields()
 
+        if self.write_omit_fields:
+            self._validate_write_omit_fields()
+
         read_fields = self._read_query_fields()
 
         if self.default_sort is not None:
@@ -243,6 +263,33 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             model_type=self.read,
             lenient=self.lenient_read_fields,
             spec_name=self.name,
+        )
+
+    # ....................... #
+
+    def _validate_write_omit_fields(self) -> None:
+        """Validate write-omit fields against the domain model and warn (silent drop)."""
+
+        if self.write is None:
+            raise exc.configuration(
+                f"DocumentSpec {self.name!r}: write_omit_fields requires a write spec.",
+            )
+
+        domain = self.write["domain"]
+
+        # Same absent-tolerant rules as a lenient read field, but on the domain
+        # (persisted) model: exists, non-identity, carries a default for read-back.
+        validate_lenient_read_fields(
+            model_type=domain,
+            lenient=self.write_omit_fields,
+            spec_name=self.name,
+        )
+
+        logger.warning(
+            "DocumentSpec %r: write_omit_fields %s are silently dropped on every write "
+            "(not persisted) and hydrate from the domain default on read.",
+            str(self.name),
+            sorted(self.write_omit_fields),
         )
 
     # ....................... #

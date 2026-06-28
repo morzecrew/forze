@@ -37,6 +37,7 @@ plus per-aggregate policy:
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names persisted as columns, so they're filterable/sortable |
 | `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` from the read model (every statically-defaulted, non-identity, non-`materialized` field); explicit fields are added on top |
 | `lenient_read_fields` | `frozenset[str]` | `∅` | read-model fields with **no** backing column: dropped from the projection, hydrated from their default, removed from the filter/sort/aggregate allow-sets, and tolerated by relational startup schema checks (see below) |
+| `write_omit_fields` | `frozenset[str]` | `∅` | domain fields with **no** column: **silently stripped** from every write and hydrated from the domain default on read-back (the write-side of `lenient_read_fields`; explicit-only, requires `write`) |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort applied when a caller omits `sorts` (required if the read model has no `id`) |
 | `query_policy` | `QueryFieldPolicy \| None` | `None` | allow-sets restricting which fields a governed caller may filter / sort / aggregate |
 | `query_params` | `type[BaseModel] \| None` | `None` | typed [query-parameter](../../data-events/query-parameters.md) contract, bound via `with_parameters` |
@@ -77,6 +78,13 @@ every statically-defaulted, non-identity read field that is not `materialized` b
 lenient (fields with a `default_factory` are excluded — declare those explicitly to
 accept a fresh value per row). Explicit `lenient_read_fields` are always added on top.
 `resolved_lenient_read_fields` is the effective set every backend reads.
+
+`write_omit_fields` is the **write-side** counterpart: a domain field with no column is
+silently stripped from every insert/update and hydrates from the domain default on
+read-back. Because the value is dropped (not persisted), it is **explicit-only** — never
+auto-derived — requires a `write` spec, and each name must be a defaulted, non-identity
+domain field. Use it for a domain field that is computed or stored elsewhere, not on this
+table.
 
 ## Query port
 

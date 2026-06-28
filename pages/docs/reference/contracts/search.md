@@ -36,6 +36,10 @@ result-set snapshots.
 | `sensitive` | `bool` | `False` | model carries secrets; generated surfaces refuse to project it |
 | `read_codec` | `ModelCodec \| None` | `None` | row codec override (auto-derived otherwise) |
 
+`HubSearchSpec` carries the same `read_conformity` / `lenient_read_fields` over its hub-row
+model (a hub has no index `fields` of its own). `FederatedSearchSpec` inherits leniency
+from each member spec.
+
 ## Query port
 
 Same `search` / `project_search` / `select_search` flavors and `_page` / `_cursor`

@@ -127,6 +127,11 @@ class PostgresGateway[M: BaseModel](
     """Read-model fields not stored on this relation; excluded from the read
     projection and decode bounds (see ``DocumentSpec.lenient_read_fields``)."""
 
+    write_omit_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Domain fields not stored on this relation; stripped from every write payload
+    (see ``DocumentSpec.write_omit_fields``). A write gateway also sets these as
+    :attr:`lenient_read_fields` so the RETURNING/read-back projection skips them."""
+
     filter_table_alias: str | None = attrs.field(default=None)
     """SQL alias for the filtered relation (e.g. search projection ``v``)."""
 
@@ -449,10 +454,11 @@ class PostgresGateway[M: BaseModel](
         create: bool = False,
     ) -> JsonDict:
         types = await self.column_types()
-        out: JsonDict = dict(payload)
-
-        for k, v in out.items():
-            out[k] = self.adapt_value_for_write(v, t=types.get(k))
+        out: JsonDict = {
+            k: self.adapt_value_for_write(v, t=types.get(k))
+            for k, v in payload.items()
+            if k not in self.write_omit_fields
+        }
 
         if create:
             out = self._add_tenant_id(out)
@@ -468,7 +474,11 @@ class PostgresGateway[M: BaseModel](
         create: bool = False,
     ) -> Sequence[JsonDict]:
         types = await self.column_types()
-        out = list(map(dict, payloads))
+        omit = self.write_omit_fields
+        out = [
+            {k: v for k, v in dict(payload).items() if k not in omit}
+            for payload in payloads
+        ]
 
         for payload in out:
             for k, v in payload.items():

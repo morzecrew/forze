@@ -200,6 +200,45 @@ class TestHubSearchSpec:
                 members=(a, b),
             )
 
+    def test_hub_lenient_read_fields_round_trip(self) -> None:
+        leg = SearchSpec(
+            name="leg", model_type=_LenientSearchModel, fields=["title"]
+        )
+        hub = HubSearchSpec(
+            name="h",
+            model_type=_LenientSearchModel,
+            members=(leg,),
+            lenient_read_fields={"summary"},
+        )
+        assert hub.resolved_lenient_read_fields == frozenset({"summary"})
+
+    def test_hub_read_conformity_lenient_auto_derives(self) -> None:
+        leg = SearchSpec(
+            name="leg", model_type=_LenientSearchModel, fields=["title"]
+        )
+        hub = HubSearchSpec(
+            name="h",
+            model_type=_LenientSearchModel,
+            members=(leg,),
+            read_conformity="lenient",
+        )
+        resolved = hub.resolved_lenient_read_fields
+        assert "summary" in resolved
+        assert "id" not in resolved  # identity excluded
+        assert "author" not in resolved  # required excluded
+
+    def test_hub_identity_field_cannot_be_lenient(self) -> None:
+        leg = SearchSpec(
+            name="leg", model_type=_LenientSearchModel, fields=["title"]
+        )
+        with pytest.raises(CoreException, match="identity/audit fields"):
+            HubSearchSpec(
+                name="h",
+                model_type=_LenientSearchModel,
+                members=(leg,),
+                lenient_read_fields={"id"},
+            )
+
 
 class TestFederatedSearchSpec:
     """Tests for FederatedSearchSpec including nested hub members."""

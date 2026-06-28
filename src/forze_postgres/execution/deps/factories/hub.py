@@ -81,6 +81,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             tenant_provider=context.inv_ctx.get_tenant,
             tenant_aware=self.config.tenant_aware,
             filter_table_alias="h",
+            lenient_read_fields=spec.resolved_lenient_read_fields,
             nested_field_hints=self.config.nested_field_hints,
             result_snapshot=result_snapshot(
                 context, spec.snapshot, encrypted=search_spec_encrypts(spec)

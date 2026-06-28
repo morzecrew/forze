@@ -224,6 +224,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             tenant_aware=tenant_aware,
             nested_field_hints=self.config.nested_field_hints,
             conflict_target=self.config.conflict_target,
+            write_omit_fields=spec.write_omit_fields,
         )
 
         after_commit = ctx.tx_ctx.run_or_defer if cache is not None else None

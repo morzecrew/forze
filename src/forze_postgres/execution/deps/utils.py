@@ -131,6 +131,7 @@ def doc_write_gw(
     tenant_aware: bool,
     nested_field_hints: Mapping[str, type[Any]] | None = None,
     conflict_target: tuple[str, ...] | None = None,
+    write_omit_fields: frozenset[str] = frozenset(),
 ) -> PostgresWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history.
 
@@ -179,6 +180,7 @@ def doc_write_gw(
         tenant_aware=tenant_aware,
         nested_field_hints=nested_field_hints,
         codec=domain_codec,
+        lenient_read_fields=write_omit_fields,
     )
     hist = None
 
@@ -205,6 +207,8 @@ def doc_write_gw(
         introspector=introspector,
         model_type=write_types["domain"],
         codec=domain_codec,
+        lenient_read_fields=write_omit_fields,
+        write_omit_fields=write_omit_fields,
         read_gw=read,
         create_cmd_type=write_types["create_cmd"],
         update_cmd_type=write_types.get("update_cmd"),

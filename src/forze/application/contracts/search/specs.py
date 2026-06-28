@@ -306,6 +306,22 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     default_sort: QuerySortExpression | None = None
     """Default ``sorts`` for hub browse/cursor when callers omit them."""
 
+    read_conformity: ReadConformity = "strict"
+    """Storage-conformity level for hub-row fields. ``strict`` (default): every returned
+    field must map to a hub column. ``lenient``: auto-derive :attr:`lenient_read_fields`
+    (every defaulted, non-identity hub-row field; static defaults only). Explicit
+    :attr:`lenient_read_fields` are always included on top."""
+
+    lenient_read_fields: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=frozenset,
+    )
+    """Hub-row fields permitted to be **absent** from the hub relation: dropped from the
+    result projection and hydrated from their default. Mirror of
+    :attr:`SearchSpec.lenient_read_fields` (a hub has no index ``fields`` of its own).
+    Each must be a non-computed, non-identity hub-row field carrying a default. Empty by
+    default (strict)."""
+
     read_codec: ModelCodec[M, Any] | None = attrs.field(
         default=None,
         eq=False,
@@ -320,10 +336,17 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        validate_lenient_read_fields(
+            model_type=self.model_type,
+            lenient=self.lenient_read_fields,
+            spec_name=self.name,
+        )
+
         _validate_search_default_sort(
             spec_name=self.name,
             model_type=self.model_type,
             default_sort=self.default_sort,
+            lenient_read_fields=self.resolved_lenient_read_fields,
         )
 
         _validate_search_encryption(
@@ -353,6 +376,18 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
                     raise exc.configuration(
                         f"Default weight for search field '{member.name}' should be between 0.0 and 1.0."
                     )
+
+    # ....................... #
+
+    @property
+    def resolved_lenient_read_fields(self) -> frozenset[str]:
+        """Effective lenient hub-row fields: explicit plus, under ``read_conformity``
+        ``"lenient"``, the auto-derived eligible fields."""
+
+        if self.read_conformity == "lenient":
+            return self.lenient_read_fields | derive_lenient_read_fields(self.model_type)
+
+        return self.lenient_read_fields
 
     # ....................... #
 
