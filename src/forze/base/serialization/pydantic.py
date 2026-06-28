@@ -66,13 +66,18 @@ def pydantic_validate[M: BaseModel](
 # ....................... #
 
 
-def _trusted_unknown_field_names(
+def _trusted_row_has_unknown(
     row: JsonDict,
     allowed: frozenset[str],
-) -> set[str]:
-    """Return row keys that are not declared on the model (empty when row is valid)."""
+) -> bool:
+    """Whether *row* carries a key not declared on the model.
 
-    return row.keys() - allowed
+    A subset test rather than a difference: it returns a bool (no per-row set
+    allocation) and short-circuits on the first stray key. The offending names are
+    materialized only on the rare failure, for the error message.
+    """
+
+    return not (row.keys() <= allowed)
 
 
 def _raise_trusted_unknown_fields[M: BaseModel](
@@ -110,10 +115,9 @@ def pydantic_validate_trusted[M: BaseModel](
 
     _ = forbid_extra
     allowed = pydantic_field_names(cls, include_computed=False)
-    unknown = _trusted_unknown_field_names(data, allowed)
 
-    if unknown:
-        _raise_trusted_unknown_fields(cls, unknown)
+    if _trusted_row_has_unknown(data, allowed):
+        _raise_trusted_unknown_fields(cls, data.keys() - allowed)
 
     logger.trace("Trusted validate into %s", cls.__name__)
 
@@ -144,10 +148,8 @@ def pydantic_validate_many_trusted[M: BaseModel](
     allowed = pydantic_field_names(cls, include_computed=False)
 
     for row in payload:
-        unknown = _trusted_unknown_field_names(row, allowed)
-
-        if unknown:
-            _raise_trusted_unknown_fields(cls, unknown)
+        if _trusted_row_has_unknown(row, allowed):
+            _raise_trusted_unknown_fields(cls, row.keys() - allowed)
 
     logger.trace(
         "Trusted validate %s rows into list[%s]",
