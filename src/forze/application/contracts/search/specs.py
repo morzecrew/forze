@@ -13,11 +13,37 @@ from forze.base.serialization import (
 
 from ..base import BaseSpec
 from ..crypto import FieldEncryption
+from ..lenient_read import validate_lenient_read_fields
 from ..querying import QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 
 
 # ----------------------- #
+
+
+def _validate_search_lenient_read_fields(
+    *,
+    spec_name: object,
+    model_type: type[BaseModel],
+    lenient_read_fields: frozenset[str],
+    fields: Sequence[str],
+) -> None:
+    """Validate a search spec's lenient read fields (shared rules + index-field overlap)."""
+
+    if not lenient_read_fields:
+        return
+
+    if overlap := lenient_read_fields & frozenset(fields):
+        raise exc.configuration(
+            f"Search spec {spec_name!r}: field(s) {sorted(overlap)} are indexed "
+            "(searchable) and cannot be lenient — an indexed field needs a real column.",
+        )
+
+    validate_lenient_read_fields(
+        model_type=model_type,
+        lenient=lenient_read_fields,
+        spec_name=spec_name,
+    )
 
 
 def _validate_search_encryption(
@@ -50,15 +76,20 @@ def _validate_search_default_sort(
     spec_name: str,
     model_type: type[BaseModel],
     default_sort: QuerySortExpression | None,
+    lenient_read_fields: frozenset[str] = frozenset(),
 ) -> None:
-    """Validate a search spec's ``default_sort`` against the read model (nested-path aware)."""
+    """Validate a search spec's ``default_sort`` against the read model (nested-path aware).
+
+    Lenient read fields have no column and so cannot be sort keys; they are excluded
+    from the accepted field set.
+    """
 
     if default_sort is None:
         return
 
     validate_sort_fields(
         default_sort,
-        read_fields=read_fields_for_model(model_type),
+        read_fields=read_fields_for_model(model_type) - lenient_read_fields,
         spec_name=spec_name,
         model=model_type,
         client_facing=False,
@@ -133,6 +164,19 @@ class SearchSpec[M: BaseModel](BaseSpec):
     default_sort: QuerySortExpression | None = attrs.field(default=None)
     """Default ``sorts`` when callers omit them (required for models without ``id``)."""
 
+    lenient_read_fields: frozenset[str] = attrs.field(
+        default=frozenset(),
+        converter=frozenset,
+    )
+    """Read-model field names permitted to be **absent** from the search relation.
+
+    Mirrors :attr:`~forze.application.contracts.document.DocumentSpec.lenient_read_fields`
+    for the search return shape: a lenient field is dropped from the result projection
+    and hydrated from its model default. Each name must be a non-computed,
+    non-identity read field carrying a default, and must **not** be an indexed
+    (searchable) :attr:`fields` member — an indexed field needs a real column. Lenient
+    fields are also excluded from sort keys. Empty by default (strict)."""
+
     read_codec: ModelCodec[M, Any] | None = attrs.field(
         default=None,
         eq=False,
@@ -151,10 +195,18 @@ class SearchSpec[M: BaseModel](BaseSpec):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        _validate_search_lenient_read_fields(
+            spec_name=self.name,
+            model_type=self.model_type,
+            lenient_read_fields=self.lenient_read_fields,
+            fields=self.fields,
+        )
+
         _validate_search_default_sort(
             spec_name=self.name,
             model_type=self.model_type,
             default_sort=self.default_sort,
+            lenient_read_fields=self.lenient_read_fields,
         )
 
         _validate_search_encryption(

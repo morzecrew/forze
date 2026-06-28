@@ -29,6 +29,7 @@ result-set snapshots.
 | `default_weights` | `Mapping[str, float] \| None` | `None` | per-field relevance weights |
 | `fuzzy` | `SearchFuzzySpec \| None` | `None` | fuzzy-matching configuration |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts` (required if the model has no `id`) |
+| `lenient_read_fields` | `frozenset[str]` | `∅` | returned read-model fields with **no** backing column: dropped from the result projection, hydrated from their default, and excluded from sort keys (mirror of [`DocumentSpec.lenient_read_fields`](document.md#lenient-read-fields); must **not** be an indexed `fields` member) |
 | `snapshot` | `SearchResultSnapshotSpec \| None` | `None` | result-ID snapshotting defaults (stable re-pagination) |
 | `encryption` | `FieldEncryption \| None` | `None` | field [encryption](../../identity-tenancy-enc/encryption.md) — **the same policy** as the document table's, so in-place search reproduces its AAD |
 | `sensitive` | `bool` | `False` | model carries secrets; generated surfaces refuse to project it |

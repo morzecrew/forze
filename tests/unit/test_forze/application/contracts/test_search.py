@@ -69,6 +69,65 @@ class TestSearchSpec:
             )
 
 
+class _LenientSearchModel(BaseModel):
+    id: str = ""
+    title: str
+    author: str  # required, not indexed
+    summary: str = ""  # returned, not indexed; eligible for leniency
+
+
+class TestSearchLenientReadFields:
+    """Lenient read fields on a SearchSpec (storage conformity)."""
+
+    def test_lenient_field_round_trips(self) -> None:
+        spec = SearchSpec(
+            name="docs",
+            model_type=_LenientSearchModel,
+            fields=["title"],
+            lenient_read_fields={"summary"},
+        )
+        assert spec.lenient_read_fields == frozenset({"summary"})
+
+    def test_indexed_field_cannot_be_lenient(self) -> None:
+        # An indexed (searchable) field needs a real column.
+        with pytest.raises(CoreException, match="indexed .* and cannot be lenient"):
+            SearchSpec(
+                name="docs",
+                model_type=_LenientSearchModel,
+                fields=["title", "summary"],
+                lenient_read_fields={"summary"},
+            )
+
+    def test_required_field_cannot_be_lenient(self) -> None:
+        with pytest.raises(CoreException, match="has no default"):
+            SearchSpec(
+                name="docs",
+                model_type=_LenientSearchModel,
+                fields=["title"],
+                lenient_read_fields={"author"},
+            )
+
+    def test_identity_field_cannot_be_lenient(self) -> None:
+        with pytest.raises(CoreException, match="identity/audit fields"):
+            SearchSpec(
+                name="docs",
+                model_type=_LenientSearchModel,
+                fields=["title"],
+                lenient_read_fields={"id"},
+            )
+
+    def test_lenient_field_rejected_as_default_sort(self) -> None:
+        # A lenient field has no column, so it cannot be a sort key.
+        with pytest.raises(CoreException, match="[Ss]ort field"):
+            SearchSpec(
+                name="docs",
+                model_type=_LenientSearchModel,
+                fields=["title"],
+                lenient_read_fields={"summary"},
+                default_sort={"summary": "asc"},
+            )
+
+
 class TestSearchQueryDepKey:
     """Tests for SearchQueryDepKey."""
 

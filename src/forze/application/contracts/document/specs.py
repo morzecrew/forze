@@ -1,18 +1,17 @@
 """Specifications for document models and storage layout."""
 
-from typing import Any, Final, Generic, TypeVar, final
+from typing import Any, Generic, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application._logger import logger
 from forze.base.exceptions import exc
-from forze.domain.constants import ID_FIELD, LAST_UPDATE_AT_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
 from ..codecs import stored_field_names_for
+from ..lenient_read import validate_lenient_read_fields
 from ..crypto import FieldEncryption
 from ..querying import QueryFieldPolicy, QuerySortExpression
 from ..querying.field_policy import validate_field_policy
@@ -23,11 +22,6 @@ from .write_types import DocumentWriteTypes
 # ----------------------- #
 
 R = TypeVar("R", bound=BaseModel)
-
-_IDENTITY_READ_FIELDS: Final = frozenset(
-    {ID_FIELD, REV_FIELD, "created_at", LAST_UPDATE_AT_FIELD}
-)
-"""Identity/audit fields that must always be read from storage (never lenient)."""
 
 # Any is default to avoid separate spec for read-only documents
 D = TypeVar("D", bound=Document, default=Any)
@@ -213,45 +207,17 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     def _validate_lenient_read_fields(self) -> None:
         """Validate lenient read fields are absent-tolerant and non-operative."""
 
-        if identity := self.lenient_read_fields & _IDENTITY_READ_FIELDS:
-            raise exc.configuration(
-                f"Field(s) {sorted(identity)} are identity/audit fields and cannot be "
-                f"lenient; they must always be read from storage (spec {self.name!r}).",
-            )
-
         if overlap := self.lenient_read_fields & self.materialized:
             raise exc.configuration(
                 f"Field(s) {sorted(overlap)} cannot be both materialized (stored) and "
                 f"lenient (not stored) (spec {self.name!r}).",
             )
 
-        read_fields = read_fields_for_model(self.read)
-
-        if missing := self.lenient_read_fields - read_fields:
-            raise exc.configuration(
-                f"Lenient read field(s) {sorted(missing)} are not non-computed fields "
-                f"on the read model {self.read.__name__} (spec {self.name!r}).",
-            )
-
-        fields = self.read.model_fields
-
-        for name in sorted(self.lenient_read_fields):
-            field = fields[name]
-
-            if field.is_required():
-                raise exc.configuration(
-                    f"Lenient read field {name!r} has no default (spec {self.name!r}); "
-                    "a field absent from storage must be constructible from a default.",
-                )
-
-            if field.default_factory is not None:
-                logger.warning(
-                    "DocumentSpec %r: lenient read field %r uses a default_factory; every "
-                    "read of a row missing this column produces a fresh value, not stored "
-                    "data.",
-                    str(self.name),
-                    name,
-                )
+        validate_lenient_read_fields(
+            model_type=self.read,
+            lenient=self.lenient_read_fields,
+            spec_name=self.name,
+        )
 
     # ....................... #
 

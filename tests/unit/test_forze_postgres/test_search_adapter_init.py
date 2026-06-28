@@ -29,6 +29,40 @@ def _spec() -> SearchSpec[_Entity]:
     return SearchSpec(name="s", model_type=_Entity, fields=["a", "b"])
 
 
+class _EntityWithExtra(BaseModel):
+    id: UUID
+    a: str
+    note: str = ""  # returned, not indexed — eligible for leniency
+
+
+def test_search_adapter_excludes_lenient_read_fields_from_projection() -> None:
+    # A lenient read field has no column, so the adapter must not project it
+    # (read_fields drives the result projection and cursor keyset).
+    spec = SearchSpec(
+        name="s",
+        model_type=_EntityWithExtra,
+        fields=["a"],
+        lenient_read_fields={"note"},
+    )
+    adapter = PostgresPGroongaSearchAdapter(
+        spec=spec,
+        codec=spec.resolved_read_codec,
+        relation=("public", "v"),
+        index_relation=("public", "i"),
+        index_heap_relation=("public", "h"),
+        client=MagicMock(),
+        model_type=_EntityWithExtra,
+        introspector=MagicMock(),
+        tenant_provider=None,
+        tenant_aware=False,
+        lenient_read_fields=spec.lenient_read_fields,
+    )
+
+    assert adapter.lenient_read_fields == frozenset({"note"})
+    assert "note" not in adapter.read_fields
+    assert {"id", "a"} <= adapter.read_fields
+
+
 @pytest.mark.asyncio
 async def test_pgroonga_v2_match_combined_empty_string_is_true_predicate() -> None:
     """Empty match text skips PGroonga clause construction (filter-only path uses ``TRUE`` elsewhere)."""
