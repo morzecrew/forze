@@ -45,7 +45,7 @@ from forze.application.contracts.querying import (
     QueryOr,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.crypto import is_envelope, unpack_envelope
+from forze.base.crypto import ENVELOPE_B64_PREFIX, is_envelope, unpack_envelope
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization.model_codec import ModelCodec, ModelDumpExcludeOptions
@@ -63,6 +63,12 @@ AAD during a binding migration — any other failure (e.g. ``cipher_not_warm``) 
 
 def _maybe_envelope(value: str) -> bytes | None:
     """Return the envelope bytes if *value* is base64 of a Forze envelope, else ``None``."""
+
+    # A base64 envelope always starts with this fixed prefix, so a value lacking it
+    # cannot be one — reject it without paying for a base64 decode (the common case
+    # on legacy-plaintext rows during a migration).
+    if not value.startswith(ENVELOPE_B64_PREFIX):
+        return None
 
     try:
         blob = base64.b64decode(value, validate=True)

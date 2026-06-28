@@ -30,5 +30,8 @@ async def decrypt_rows(
     if prepare_decrypt is not None:
         await prepare_decrypt(rows)
 
-    decrypted = [decrypt_mapping(dict(row)) for row in rows]
+    # ``decrypt_mapping`` does not mutate its argument — it returns a fresh dict only
+    # when a field actually decrypts, otherwise the row unchanged — so no defensive
+    # copy is needed here.
+    decrypted = [decrypt_mapping(row) for row in rows]
     return decrypted, getattr(codec, "inner", codec)

@@ -27,6 +27,7 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    compile_filter,
 )
 from forze.application.contracts.search import (
     PhraseCombine,
@@ -52,7 +53,6 @@ from forze_mock.query.cursors import (
     _mock_cursor_tokens,  # type: ignore[reportPrivateUsage]
 )
 from forze_mock.query.matching import (
-    _match_filters,  # type: ignore[reportPrivateUsage]
     _path_text,  # type: ignore[reportPrivateUsage]
     _project,  # type: ignore[reportPrivateUsage]
     _sort_docs,  # type: ignore[reportPrivateUsage]
@@ -201,9 +201,13 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
 
+        # Parse the filter once into a reusable predicate rather than re-parsing it
+        # per document inside the scan.
+        matches = compile_filter(filters)
+
         ranked: list[tuple[float, JsonDict]] = []
         for doc in docs:
-            if not _match_filters(doc, filters):
+            if not matches(doc):
                 continue
 
             score = self._document_score_multi_phrase(

@@ -10,6 +10,7 @@ live in integration packages.
 from .aead import Aead
 from .ciphers import AesGcmAead, ChaCha20Poly1305Aead
 from .envelope import (
+    ENVELOPE_B64_PREFIX,
     EncryptedEnvelope,
     ensure_algorithm,
     is_envelope,
@@ -20,6 +21,7 @@ from .envelope import (
 # ----------------------- #
 
 __all__ = [
+    "ENVELOPE_B64_PREFIX",
     "Aead",
     "AesGcmAead",
     "ChaCha20Poly1305Aead",

@@ -24,6 +24,7 @@ from forze.application.contracts.querying import (
     AggregatesExpression,
     AggregatesExpressionParser,
     QuerySortExpression,
+    compile_filter,
     ordered_compare,
     resolve_sort_keys,
 )
@@ -113,14 +114,23 @@ def _sort_docs(  # type: ignore[reportPrivateUsage]
         v = _path_get(d, field)
         return None if v is _MISSING else v
 
-    def _cmp(a: JsonDict, b: JsonDict) -> int:
+    # Resolve each sort key's value once per document (one dotted-path walk each)
+    # rather than re-walking it on every pairwise comparison the sort performs.
+    decorated = [([_val(doc, field) for field, _, _ in keys], doc) for doc in docs]
+
+    def _cmp(
+        a: tuple[list[Any], JsonDict],
+        b: tuple[list[Any], JsonDict],
+    ) -> int:
         # Same canonical key comparison as keyset pagination: type-aware, per-key
         # direction, and null = smallest unless an explicit ``nulls`` overrides — so
         # offset and cursor sorts agree, and a missing field sorts like a null.
-        for field, direction, nulls in keys:
+        a_values, b_values = a[0], b[0]
+
+        for index, (_field, direction, nulls) in enumerate(keys):
             c = ordered_compare(
-                _val(a, field),
-                _val(b, field),
+                a_values[index],
+                b_values[index],
                 direction=direction,
                 nulls=nulls,
             )
@@ -130,7 +140,9 @@ def _sort_docs(  # type: ignore[reportPrivateUsage]
 
         return 0
 
-    return sorted(docs, key=cmp_to_key(_cmp))
+    decorated.sort(key=cmp_to_key(_cmp))
+
+    return [doc for _values, doc in decorated]
 
 
 def _require_numeric(value: Any, *, function: str, field: str) -> int | float:
@@ -211,6 +223,13 @@ def _aggregate_docs(  # type: ignore[reportPrivateUsage]
 ) -> list[JsonDict]:
     parsed = AggregatesExpressionParser.parse(aggregates)
 
+    # Compile each computed field's filter once (not per group, per document) into a
+    # reusable predicate; ``None`` means the aggregate sees every group member.
+    computed_matchers = [
+        compile_filter(computed.filter) if computed.filter is not None else None
+        for computed in parsed.computed_fields
+    ]
+
     grouped: dict[tuple[Any, ...], list[JsonDict]] = {}
 
     for doc in docs:
@@ -226,10 +245,12 @@ def _aggregate_docs(  # type: ignore[reportPrivateUsage]
         for group, value in zip(parsed.groups, key, strict=True):
             row[group.alias] = value
 
-        for computed in parsed.computed_fields:
+        for computed, matcher in zip(
+            parsed.computed_fields, computed_matchers, strict=True
+        ):
             computed_items = (
-                [doc for doc in items if _match_filters(doc, computed.filter)]
-                if computed.filter is not None
+                [doc for doc in items if matcher(doc)]
+                if matcher is not None
                 else items
             )
 
