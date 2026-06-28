@@ -255,8 +255,8 @@ class TestRequestReset:
         assert issued is not None
         adapter.reset_cmd.update_many.assert_awaited_once()
         upds = adapter.reset_cmd.update_many.await_args.args[0]
-        assert [(pk, rev) for pk, rev, _cmd in upds] == [(previous.id, previous.rev)]
-        assert all(cmd.used_at is not None for _pk, _rev, cmd in upds)
+        assert [(u.id, u.rev) for u in upds] == [(previous.id, previous.rev)]
+        assert all(u.dto.used_at is not None for u in upds)
 
     @pytest.mark.asyncio
     async def test_no_outstanding_resets_skips_supersession_write(self) -> None:
@@ -359,7 +359,7 @@ class TestResetPassword:
         assert filters == {"$values": {"principal_id": account.principal_id}}
         adapter.session_cmd.update_many.assert_awaited_once()
         upds = adapter.session_cmd.update_many.await_args.args[0]
-        assert [(pk, rev) for pk, rev, _cmd in upds] == [(session.id, session.rev)]
+        assert [(u.id, u.rev) for u in upds] == [(session.id, session.rev)]
 
     @pytest.mark.asyncio
     async def test_opted_out_session_revocation_skips_session_writes(self) -> None:

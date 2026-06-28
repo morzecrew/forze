@@ -28,7 +28,7 @@ from ..querying import (
 )
 from .specs import DocumentSpec
 from .types import RowLockMode
-from .value_objects import KeyedCreate, UpsertItem
+from .value_objects import KeyedCreate, KeyedUpdate, UpsertItem
 
 # ----------------------- #
 
@@ -603,7 +603,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
@@ -614,7 +614,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
@@ -625,7 +625,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
@@ -636,7 +636,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
@@ -646,7 +646,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
 
     def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: bool = True,
         return_diff: bool = False,

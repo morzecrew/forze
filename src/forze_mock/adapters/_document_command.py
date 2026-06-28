@@ -15,7 +15,7 @@ from typing import (
 )
 from uuid import UUID
 
-from forze.application.contracts.document import KeyedCreate, UpsertItem
+from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
@@ -498,7 +498,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
@@ -507,7 +507,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
@@ -516,7 +516,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
@@ -525,7 +525,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
@@ -533,7 +533,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def update_many(
         self,
-        updates: Sequence[tuple[UUID, int, U]],
+        updates: Sequence[KeyedUpdate[U]],
         *,
         return_new: bool = True,
         return_diff: bool = False,
@@ -541,30 +541,30 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not updates:
             return [] if return_new else None
 
-        pks = [u[0] for u in updates]
+        pks = [u.id for u in updates]
         if len(set(pks)) != len(pks):
             raise exc.internal("Primary keys must be unique")
 
         if return_new:
             if return_diff:
                 return [
-                    await self.update(pk, r, dto, return_new=True, return_diff=True)
-                    for pk, r, dto in updates
+                    await self.update(u.id, u.rev, u.dto, return_new=True, return_diff=True)
+                    for u in updates
                 ]
 
             return [
-                await self.update(pk, r, dto, return_new=True, return_diff=False)
-                for pk, r, dto in updates
+                await self.update(u.id, u.rev, u.dto, return_new=True, return_diff=False)
+                for u in updates
             ]
 
         if return_diff:
             return [
-                await self.update(pk, r, dto, return_new=False, return_diff=True)
-                for pk, r, dto in updates
+                await self.update(u.id, u.rev, u.dto, return_new=False, return_diff=True)
+                for u in updates
             ]
 
-        for pk, r, dto in updates:
-            await self.update(pk, r, dto, return_new=False)
+        for u in updates:
+            await self.update(u.id, u.rev, u.dto, return_new=False)
 
         return None
 
@@ -726,7 +726,10 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             if not rows:
                 break
 
-            updates = [(UUID(str(r[ID_FIELD])), int(r[REV_FIELD]), dto) for r in rows]
+            updates = [
+                KeyedUpdate(id=UUID(str(r[ID_FIELD])), rev=int(r[REV_FIELD]), dto=dto)
+                for r in rows
+            ]
 
             if return_new:
                 out.extend(

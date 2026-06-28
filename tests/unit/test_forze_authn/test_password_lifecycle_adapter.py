@@ -15,7 +15,7 @@ from forze.application.contracts.authn import (
     RefreshTokenCredentials,
 )
 from forze.application.contracts.base import CountlessPage
-from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.document import DocumentSpec, KeyedUpdate
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 from forze_identity.authn.adapters.password_lifecycle import PasswordLifecycleAdapter
@@ -115,10 +115,10 @@ class _SessionStore:
             return updated
 
         async def update_many(
-            upds: list[tuple[UUID, int, Any]],
+            upds: list[KeyedUpdate[Any]],
             return_new: bool = True,
         ) -> list[ReadSession]:
-            return [await update(i, r, c) for i, r, c in upds]
+            return [await update(u.id, u.rev, u.dto) for u in upds]
 
         port.create = AsyncMock(side_effect=create)
         port.update = AsyncMock(side_effect=update)

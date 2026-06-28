@@ -16,6 +16,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
+    KeyedUpdate,
 )
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
@@ -426,8 +427,8 @@ async def test_pg_adapter_mutation_branches_and_empty_batches(
     b = await cmd.create(_CxCreate(sku="mb"))
     diffs = await cmd.update_many(
         [
-            (a.id, a.rev, _CxUpdate(sku="ma2")),
-            (b.id, b.rev, _CxUpdate(sku="mb2")),
+            KeyedUpdate(id=a.id, rev=a.rev, dto=_CxUpdate(sku="ma2")),
+            KeyedUpdate(id=b.id, rev=b.rev, dto=_CxUpdate(sku="mb2")),
         ],
         return_new=False,
         return_diff=True,
@@ -652,8 +653,8 @@ async def test_pg_adapter_update_many_return_new_with_diffs(
     b = await cmd.create(_CxCreate(sku="u2"))
     pairs = await cmd.update_many(
         [
-            (a.id, a.rev, _CxUpdate(sku="u1x")),
-            (b.id, b.rev, _CxUpdate(sku="u2x")),
+            KeyedUpdate(id=a.id, rev=a.rev, dto=_CxUpdate(sku="u1x")),
+            KeyedUpdate(id=b.id, rev=b.rev, dto=_CxUpdate(sku="u2x")),
         ],
         return_new=True,
         return_diff=True,
@@ -734,8 +735,8 @@ async def test_pg_adapter_soft_delete_and_restore_many_return_new_true(
     d2 = await cmd.create(_SoftCreate(label="b"))
     del_rows = await cmd.update_many(
         [
-            (d1.id, d1.rev, _SoftUpdate(is_deleted=True)),
-            (d2.id, d2.rev, _SoftUpdate(is_deleted=True)),
+            KeyedUpdate(id=d1.id, rev=d1.rev, dto=_SoftUpdate(is_deleted=True)),
+            KeyedUpdate(id=d2.id, rev=d2.rev, dto=_SoftUpdate(is_deleted=True)),
         ],
         return_new=True,
     )
@@ -745,8 +746,8 @@ async def test_pg_adapter_soft_delete_and_restore_many_return_new_true(
     r1, r2 = del_rows[0], del_rows[1]
     rest = await cmd.update_many(
         [
-            (r1.id, r1.rev, _SoftUpdate(is_deleted=False)),
-            (r2.id, r2.rev, _SoftUpdate(is_deleted=False)),
+            KeyedUpdate(id=r1.id, rev=r1.rev, dto=_SoftUpdate(is_deleted=False)),
+            KeyedUpdate(id=r2.id, rev=r2.rev, dto=_SoftUpdate(is_deleted=False)),
         ],
         return_new=True,
     )

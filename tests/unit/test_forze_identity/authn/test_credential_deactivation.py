@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.base import CountlessPage
+from forze.application.contracts.document import KeyedUpdate
 from forze_identity.authn.adapters.credential_deactivation import (
     AuthnCredentialDeactivationHelper,
 )
@@ -84,7 +85,13 @@ async def test_deactivate_all_updates_password_and_active_api_keys() -> None:
         return_new=False,
     )
     ak_cmd.update_many.assert_awaited_once_with(
-        [(active_key.id, active_key.rev, UpdateApiKeyAccountCmd(is_active=False))],
+        [
+            KeyedUpdate(
+                id=active_key.id,
+                rev=active_key.rev,
+                dto=UpdateApiKeyAccountCmd(is_active=False),
+            )
+        ],
         return_new=False,
     )
 

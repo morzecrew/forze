@@ -10,7 +10,11 @@ from forze.application.contracts.authn import (
     PrincipalEligibilityPort,
     login_digest,
 )
-from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
+from forze.application.contracts.document import (
+    DocumentCommandPort,
+    DocumentQueryPort,
+    KeyedUpdate,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import utcnow
 from forze_identity._secure_spec import forbid_cache_and_history
@@ -210,7 +214,11 @@ class PasswordResetAdapter(PasswordResetPort):
         if outstanding:
             await self.reset_cmd.update_many(
                 [
-                    (x.id, x.rev, UpdatePasswordResetCmd(used_at=now))
+                    KeyedUpdate(
+                        id=x.id,
+                        rev=x.rev,
+                        dto=UpdatePasswordResetCmd(used_at=now),
+                    )
                     for x in outstanding
                 ],
                 return_new=False,

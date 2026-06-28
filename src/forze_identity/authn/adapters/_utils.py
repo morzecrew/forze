@@ -2,7 +2,11 @@ from typing import Any, Mapping
 from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity
-from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
+from forze.application.contracts.document import (
+    DocumentCommandPort,
+    DocumentQueryPort,
+    KeyedUpdate,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 
@@ -159,7 +163,10 @@ async def revoke_sessions_matching(
         }
     )
 
-    upds = [(x.id, x.rev, UpdateSessionCmd(revoked_at=utcnow())) for x in sessions.hits]
+    upds = [
+        KeyedUpdate(id=x.id, rev=x.rev, dto=UpdateSessionCmd(revoked_at=utcnow()))
+        for x in sessions.hits
+    ]
 
     await session_cmd.update_many(upds, return_new=False)
 
