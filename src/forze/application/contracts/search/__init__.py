@@ -49,8 +49,8 @@ from .specs import (
 )
 from .types import (
     HighlightOptions,
+    MultiSourceSearchOptions,
     PhraseCombine,
-    PgroongaPlan,
     ResultSnapshotMode,
     SearchOptions,
     SearchResultSnapshotOptions,
@@ -85,8 +85,8 @@ __all__ = [
     "FacetResults",
     "HitHighlights",
     "HighlightOptions",
+    "MultiSourceSearchOptions",
     "PhraseCombine",
-    "PgroongaPlan",
     "ResultSnapshotMode",
     "SearchSpec",
     "calculate_effective_field_weights",

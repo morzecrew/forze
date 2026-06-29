@@ -5,9 +5,6 @@ from typing import Literal, Sequence, TypeAlias, TypedDict
 PhraseCombine = Literal["any", "all"]
 """``any``: at least one list phrase matches (disjunction). ``all``: every phrase must match."""
 
-PgroongaPlan = Literal["filter_first", "index_first", "auto"]
-"""PGroonga ranked search SQL shape (Postgres adapter)."""
-
 SearchCountPolicy = Literal["exact", "approximate", "none"]
 """How ranked search populates page totals when ``return_count=True``."""
 
@@ -81,7 +78,12 @@ class SearchResultSnapshotOptions(TypedDict, total=False):
 
 
 class SearchOptions(TypedDict, total=False):
-    """Optional tuning parameters for search backends."""
+    """Backend- and topology-agnostic per-request search options.
+
+    Carries only options that make sense for any search backend and any search topology.
+    Hub / federated (multi-source) requests use :class:`MultiSourceSearchOptions`, which
+    extends this with the member-selection and merge-pool keys.
+    """
 
     fuzzy: bool
     """Whether fuzzy matching is enabled."""
@@ -96,16 +98,6 @@ class SearchOptions(TypedDict, total=False):
     Ignored if weights are provided.
     """
 
-    member_weights: dict[str, float]
-    """Weights for hub / federation members."""
-
-    members: Sequence[str]
-    """Simple alternative to member_weights for specifying hub / federation members to search on.
-
-    For specified members weights will be set to 1.0, for other members weights will be set to 0.0.
-    Ignored if member_weights are provided.
-    """
-
     phrase_combine: PhraseCombine
     """When ``query`` is a list of strings, how to combine them.
 
@@ -113,20 +105,13 @@ class SearchOptions(TypedDict, total=False):
     ``all``: conjunction (match every phrase).
     """
 
-    pgroonga_plan: PgroongaPlan
-    """Override Postgres PGroonga plan (``filter_first``, ``index_first``, ``auto``)."""
-
-    candidate_limit: int
-    """Cap ranked heap rows per PGroonga leg or simple search pipeline."""
-
-    groonga_query: str
-    """Raw Groonga query string for ``pgroonga_condition`` (skips phrase combiner)."""
+    max_candidates: int
+    """Advisory upper bound on the candidate pool the ranking stage considers before
+    pagination. A recall/cost trade: honored where a backend supports it, harmlessly
+    ignored otherwise (ignoring yields equal-or-higher recall at higher cost)."""
 
     search_count: SearchCountPolicy
     """Ranked search total: ``exact`` (``COUNT(*)``), ``approximate`` (planner/stats), ``none``."""
-
-    combo_limit: int
-    """Cap rows in hub ``combo_top`` before outer pagination (Postgres hub search)."""
 
     facets: Sequence[str]
     """Field names to compute term (value) distributions over for this query (see RFC 0006).
@@ -145,3 +130,30 @@ class SearchOptions(TypedDict, total=False):
     all highlightable fields with default markers; a :class:`HighlightOptions` narrows the
     fields / customizes markers. Returned index-aligned on the page
     (:attr:`~forze.application.contracts.base.value_objects.CountlessPage.highlights`)."""
+
+
+# ....................... #
+
+
+class MultiSourceSearchOptions(SearchOptions, total=False):
+    """Per-request options for multi-source search (hub and federated).
+
+    Extends :class:`SearchOptions` with the member-selection and merge-pool keys that only
+    exist when a query fans out across several search sources. Single-index search uses the
+    plain :class:`SearchOptions` and never sees these.
+    """
+
+    member_weights: dict[str, float]
+    """Weights for hub / federation members."""
+
+    members: Sequence[str]
+    """Simple alternative to member_weights for specifying hub / federation members to search on.
+
+    For specified members weights will be set to 1.0, for other members weights will be set to 0.0.
+    Ignored if member_weights are provided.
+    """
+
+    merge_candidates: int
+    """Advisory upper bound on the merged candidate pool kept across members before the final
+    rank and pagination. Same recall/cost trade as :attr:`SearchOptions.max_candidates`, one
+    stage later (the post-merge pool)."""

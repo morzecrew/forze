@@ -19,7 +19,6 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.search import (
-    PgroongaPlan,
     SearchOptions,
     SearchResultSnapshotOptions,
     SearchSpec,
@@ -44,6 +43,7 @@ from ._highlights import build_pgroonga_highlight
 from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page, search_trust_source
 from ._pgroonga_plan import (
+    PgroongaPlan,
     effective_ranked_candidate_limit,
     ensure_pgroonga_plan_with_candidate_cap,
     index_first_heap_limit,
@@ -516,7 +516,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         resolved_plan = await resolve_pgroonga_plan(
             configured=self.pgroonga_plan,
-            options=options,
             parsed_filters=parsed_filters,
             read_qname=proj_qname,
             introspector=self.introspector,
