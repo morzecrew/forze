@@ -385,26 +385,38 @@ async def _hydrate_thin_hub_page(
     codec: Any,
     trust_source: bool,
     combo_alias: str,
+    fold_count: bool = False,
 ) -> Any:
     """Two-phase hub page: rank the thin id pipeline, then hydrate the page by primary key.
 
     Phase A runs the thin ``WITH`` pipeline (ids + rank + sort keys only) with the page's
     ``LIMIT``/``OFFSET`` to get the ordered page ids. Phase B reads the full read-model
     columns for exactly those ids from the hub relation, reordered to the page order.
+
+    When ``fold_count`` is set, Phase A also carries ``count(*) OVER ()`` so the exact total
+    comes from the same scan instead of a separate count statement (caller guarantees this is
+    sound — uncapped relation, first page).
     """
 
     page_total = total if count_policy != "none" else None
 
+    total_col = (
+        sql.SQL(", count(*) OVER () AS {}").format(sql.Identifier("_total"))
+        if fold_count
+        else sql.SQL("")
+    )
+
     id_stmt = sql.SQL(
         """
             {with_clause}
-            SELECT {ca}.{idf} AS {idf} FROM {combo} {ca}
+            SELECT {ca}.{idf} AS {idf}{total_col} FROM {combo} {ca}
             ORDER BY {order}
             """
     ).format(
         with_clause=plan.with_clause,
         ca=sql.Identifier(combo_alias),
         idf=sql.Identifier(ID_FIELD),
+        total_col=total_col,
         combo=sql.Identifier(plan.data_relation),
         order=plan.order_sql,
     )
@@ -422,6 +434,9 @@ async def _hydrate_thin_hub_page(
 
     id_rows = await gw.client.fetch_all(id_stmt, id_params, row_factory="dict")
     page_ids = [row[ID_FIELD] for row in id_rows]
+
+    if fold_count:
+        page_total = int(id_rows[0]["_total"]) if id_rows else 0
 
     ordered = await hydrate_hub_rows_by_id(
         gw,
@@ -518,8 +533,31 @@ async def execute_hub_ranked_offset_search(
 
     total = 0
     pagination_dict: dict[str, Any] = dict(pagination or {})
+    read_codec = hub_spec.resolved_read_codec
+    page_offset = offset_from_dict(pagination_dict)
 
-    if return_count and count_policy != "none":
+    want_sn = (
+        result_snapshot is not None
+        and rs_spec is not None
+        and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
+    )
+
+    # Fold the exact count into the thin id scan (``count(*) OVER ()``) instead of running a
+    # separate count statement — halving evaluation of an expensive ``hf`` on the filter-only
+    # path. Sound only when the data scan reads the uncapped ``combo`` (``data_relation`` ==
+    # ``count_relation``, i.e. no ``combo_top`` cap / no active legs) and the first page is
+    # requested (a past-the-end offset returns no rows and would lose the window count). The
+    # thin (non-snapshot) branch reads the folded total from Phase A. RFC 0008 P3.
+    fold_count = (
+        plan.thin
+        and not want_sn
+        and return_count
+        and count_policy == "exact"
+        and plan.data_relation == plan.count_relation
+        and page_offset == 0
+    )
+
+    if return_count and count_policy != "none" and not fold_count:
         if count_policy == "approximate" and plan.approximate_total is not None:
             total = int(plan.approximate_total)
 
@@ -545,15 +583,6 @@ async def execute_hub_ranked_offset_search(
                 pagination or {},
                 total=0,
             )
-
-    read_codec = hub_spec.resolved_read_codec
-    page_offset = offset_from_dict(pagination_dict)
-
-    want_sn = (
-        result_snapshot is not None
-        and rs_spec is not None
-        and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
-    )
 
     if want_sn and result_snapshot is not None and rs_spec is not None:
         # Stream the merged combo result window-by-window into the snapshot store so peak
@@ -680,6 +709,7 @@ async def execute_hub_ranked_offset_search(
             codec=read_codec,
             trust_source=trust_source,
             combo_alias=combo_alias,
+            fold_count=fold_count,
         )
 
     cols = gw.return_clause(

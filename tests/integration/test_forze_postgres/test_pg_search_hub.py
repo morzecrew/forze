@@ -2487,3 +2487,103 @@ async def test_postgres_hub_search_thin_projection_defers_heavy_columns(
     assert cur_hydration, captured
     assert all('"body"' not in q for q in cur_ranked)
     assert any('"body"' in q for q in cur_hydration)
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_filter_only_count_folds_into_thin_scan(
+    pg_client: PostgresClient,
+):
+    """RFC 0008 P3: on the filter-only (no-leg) first page, the exact count rides the thin
+    id scan via ``count(*) OVER ()`` — no separate ``COUNT(*)`` statement is issued."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+    await pg_client.execute(
+        """
+        CREATE TABLE kinds2 (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE docs_hub2 (
+            id uuid PRIMARY KEY,
+            kind_id uuid NOT NULL REFERENCES kinds2 (id),
+            body text NOT NULL
+        );
+        CREATE INDEX idx_kinds2_pg ON kinds2 USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    k1 = uuid4()
+    await pg_client.execute(
+        "INSERT INTO kinds2 (id, name, display_name) VALUES (%(id)s, 'k', 'K')",
+        {"id": k1},
+    )
+    for _ in range(4):
+        await pg_client.execute(
+            "INSERT INTO docs_hub2 (id, kind_id, body) VALUES (%(id)s, %(k)s, 'b')",
+            {"id": uuid4(), "k": k1},
+        )
+
+    class DocHub2(BaseModel):
+        id: UUID
+        kind_id: UUID
+        body: str
+
+    hub_spec = HubSearchSpec(
+        name="docs_hub2_search",
+        model_type=DocHub2,
+        members=(
+            SearchSpec(name="kind_txt", model_type=_HubLegTxt, fields=["name", "display_name"]),
+        ),
+    )
+    hub_pg = _hub_config(
+        hub=("public", "docs_hub2"),
+        members={
+            "kind_txt": _hub_member(
+                index=("public", "idx_kinds2_pg"),
+                read=("public", "kinds2"),
+                hub_fk="kind_id",
+                engine="pgroonga",
+            ),
+        },
+    )
+    introspector = PostgresIntrospector(client=pg_client)
+    ctx_hub = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: introspector,
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_pg)(ctx_hub, hub_spec)
+
+    fa_captured: list[str] = []
+    fv_captured: list[str] = []
+    orig_fa = pg_client.fetch_all
+    orig_fv = pg_client.fetch_value
+
+    async def _cap_fa(query: Any, params: Any = None, **kwargs: Any) -> Any:
+        fa_captured.append(query.as_string(None))
+        return await orig_fa(query, params, **kwargs)
+
+    async def _cap_fv(query: Any, params: Any = None, **kwargs: Any) -> Any:
+        fv_captured.append(query.as_string(None))
+        return await orig_fv(query, params, **kwargs)
+
+    pg_client.fetch_all = _cap_fa  # type: ignore[method-assign]
+    pg_client.fetch_value = _cap_fv  # type: ignore[method-assign]
+
+    try:
+        # Browse (no search terms) → no active legs → uncapped `combo` → count folds in.
+        page = await adapter.search_page("", pagination={"limit": 2, "offset": 0})
+    finally:
+        pg_client.fetch_all = orig_fa  # type: ignore[method-assign]
+        pg_client.fetch_value = orig_fv  # type: ignore[method-assign]
+
+    assert page.count == 4
+    assert len(page.hits) == 2
+    # The id scan carries the windowed count ...
+    assert any("count(*) OVER ()" in q for q in fa_captured), fa_captured
+    # ... and no separate COUNT(*) statement was run.
+    assert not any("COUNT(*)" in q for q in fv_captured), fv_captured
+    assert not any("COUNT(*)" in q for q in fa_captured), fa_captured
