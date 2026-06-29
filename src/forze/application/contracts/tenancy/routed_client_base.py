@@ -9,16 +9,15 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.secrets import (
+    SecretRef,
+    SecretsPort,
+    TenantSecretResolver,
+)
 from forze.base.exceptions import exc
 
-from .helpers import (
-    ensure_dsn_fingerprint,
-    ensure_structured_fingerprint,
-    require_tenant_id,
-    resolve_dsn_for_tenant,
-    resolve_structured_for_tenant,
-)
+from .fingerprint import ensure_dsn_fingerprint, ensure_structured_fingerprint
+from .tenant_hint import require_tenant_id
 from .registry import TenantClientRegistry, TenantPoolStats
 from .value_objects import TenantIdentity
 
@@ -215,13 +214,20 @@ class DsnRoutedTenantClientBase(RoutedTenantClientBase[C]):
 
     # ....................... #
 
-    async def resolve_credentials(self, tenant_id: UUID) -> str:
-        return await resolve_dsn_for_tenant(
-            tenant_id=tenant_id,
+    @property
+    def _resolver(self) -> TenantSecretResolver:
+        """The per-tenant DSN resolver bound to this client's secrets/ref/backend."""
+
+        return TenantSecretResolver(
             secrets=self.secrets,
             ref_for_tenant=self.secret_ref_for_tenant,
             backend=self.dsn_backend,
         )
+
+    # ....................... #
+
+    async def resolve_credentials(self, tenant_id: UUID) -> str:
+        return await self._resolver.resolve_str(tenant_id)
 
     # ....................... #
 
@@ -230,9 +236,7 @@ class DsnRoutedTenantClientBase(RoutedTenantClientBase[C]):
             self._pool.get_fingerprint,
             self._pool.set_fingerprint,
             tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend=self.dsn_backend,
+            resolver=self._resolver,
             is_expired=self._fingerprint_expiry_check(),
             on_change=self._pool.evict,
         )
@@ -257,14 +261,20 @@ class StructuredSecretRoutedTenantClientBase(RoutedTenantClientBase[C]):
 
     # ....................... #
 
-    async def resolve_credentials(self, tenant_id: UUID) -> BaseModel:
-        return await resolve_structured_for_tenant(
-            self.creds_type,
-            tenant_id=tenant_id,
+    @property
+    def _resolver(self) -> TenantSecretResolver:
+        """The per-tenant structured-secret resolver bound to this client's secrets/ref/backend."""
+
+        return TenantSecretResolver(
             secrets=self.secrets,
             ref_for_tenant=self.secret_ref_for_tenant,
             backend=self.backend,
         )
+
+    # ....................... #
+
+    async def resolve_credentials(self, tenant_id: UUID) -> BaseModel:
+        return await self._resolver.resolve_structured(self.creds_type, tenant_id)
 
     # ....................... #
 

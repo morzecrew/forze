@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`forze.application.contracts.secrets.helpers`."""
+"""Unit tests for :mod:`forze.application.contracts.secrets.resolution`."""
 
 from uuid import UUID
 
@@ -9,7 +9,7 @@ from forze.application.contracts.secrets import (
     resolve_str_for_tenant,
     secret_ref_for_tenant,
 )
-from forze.application.contracts.secrets.helpers import resolve_structured
+from forze.application.contracts.secrets.resolution import resolve_structured
 from forze.base.exceptions import CoreException, exc
 from pydantic import BaseModel
 

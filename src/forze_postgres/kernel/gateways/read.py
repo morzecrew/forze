@@ -38,9 +38,7 @@ from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
-from forze.application.contracts.querying.sort_resolution import (
-    normalize_sorts_for_keyset,
-)
+from forze.application.contracts.querying import normalize_sorts_for_keyset
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_seek_condition,

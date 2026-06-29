@@ -67,9 +67,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
             self._pool.get_fingerprint,
             self._pool.set_fingerprint,
             tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend=self.dsn_backend,
+            resolver=self._resolver,
             extra_parts=[self.connection_config.namespace],
         )
 

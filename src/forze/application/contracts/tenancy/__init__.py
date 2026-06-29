@@ -6,15 +6,12 @@ from .deps import (
     TenantResolverDepKey,
     TenantResolverDepPort,
 )
-from .helpers import (
+from .fingerprint import ensure_dsn_fingerprint, ensure_structured_fingerprint
+from .tenant_hint import (
     TENANT_ID_HEADER,
     coalesce_tenant_request_hints,
-    ensure_dsn_fingerprint,
-    ensure_structured_fingerprint,
     parse_tenant_hint,
     require_tenant_id,
-    resolve_dsn_for_tenant,
-    resolve_structured_for_tenant,
     soft_tenant_id,
 )
 from .integration_config import TenantAwareIntegrationConfig
@@ -81,8 +78,6 @@ __all__ = [
     "TenantClientRegistry",
     "TenantPoolStats",
     "ensure_dsn_fingerprint",
-    "resolve_dsn_for_tenant",
-    "resolve_structured_for_tenant",
     "ensure_structured_fingerprint",
     "soft_tenant_id",
 ]
