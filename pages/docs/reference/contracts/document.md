@@ -61,13 +61,14 @@ side only:
 - it is **removed from the filter / sort / aggregate allow-sets** — a column that
   is not there cannot be queried;
 - the Postgres startup schema check **tolerates the missing column** instead of
-  failing.
+  failing (Mongo and Firestore are schemaless, so they tolerate it naturally).
 
-Each name must be a non-computed read-model field that carries a default (is
-non-required) and is not an identity/audit field (`id`, `rev`, `created_at`,
-`last_update_at`) or a `materialized` field. It is read-side only: if the same
-field is also stored on the write/domain model over that relation, write-schema
-validation still requires its column.
+Honored on Postgres, Mongo, and Firestore. Each name must be a non-computed
+read-model field that carries a default (is non-required) and is not an
+identity/audit field (`id`, `rev`, `created_at`, `last_update_at`) or a
+`materialized` field. It is read-side only: if the same field is also stored on the
+write/domain model over that relation, Postgres write-schema validation still
+requires its column.
 
 Use it for a field that exists in code ahead of (or independently of) the physical
 column — e.g. during an expand/contract migration — or a read-model display field
@@ -81,10 +82,10 @@ accept a fresh value per row). Explicit `lenient_read_fields` are always added o
 
 `write_omit_fields` is the **write-side** counterpart: a domain field with no column is
 silently stripped from every insert/update and hydrates from the domain default on
-read-back. Because the value is dropped (not persisted), it is **explicit-only** — never
-auto-derived — requires a `write` spec, and each name must be a defaulted, non-identity
-domain field. Use it for a domain field that is computed or stored elsewhere, not on this
-table.
+read-back (Postgres, Mongo, and Firestore). Because the value is dropped (not persisted),
+it is **explicit-only** — never auto-derived — requires a `write` spec, and each name must
+be a defaulted, non-identity domain field. Use it for a domain field that is computed or
+stored elsewhere, not on this table.
 
 ## Query port
 
