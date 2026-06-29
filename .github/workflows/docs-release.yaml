@@ -17,9 +17,6 @@ on:
       - 'v*'
   workflow_dispatch:
 
-permissions:
-  contents: write # mike pushes the built site to the gh-pages branch
-
 # Shared with docs-dev.yaml so deploys to gh-pages serialize. Never cancel mid-push.
 concurrency:
   group: docs-deploy
@@ -29,6 +26,8 @@ jobs:
   deploy:
     name: Publish released docs
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # mike pushes the built site to the gh-pages branch
 
     steps:
       - name: Harden the runner (Audit all outbound calls)

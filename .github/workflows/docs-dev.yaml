@@ -13,9 +13,6 @@ on:
       - 'pages/**'
   workflow_dispatch:
 
-permissions:
-  contents: write # mike pushes the built site to the gh-pages branch
-
 # Share one group with docs-release.yaml so concurrent mike deploys (which all
 # mutate gh-pages) serialize instead of racing. Never cancel a deploy mid-push.
 concurrency:
@@ -30,6 +27,8 @@ jobs:
     # feature/release branch and silently overwrite main's docs under `dev`.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # mike pushes the built site to the gh-pages branch
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
