@@ -197,14 +197,70 @@ async def test_facet_on_non_facetable_field_refused(pg_client: PostgresClient) -
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_highlight_request_fails_closed(pg_client: PostgresClient) -> None:
-    # Highlighting is not yet implemented on Postgres; a request must fail closed
-    # (never silently drop), not return None.
+async def test_pgroonga_highlights(pg_client: PostgresClient) -> None:
     table, index_name = await _bootstrap(pg_client, engine="pgroonga")
     ctx = _ctx(pg_client, table=table, index_name=index_name, engine="pgroonga")
-    spec = _spec("pgr_hl_guard")
+    spec = _spec("pgr_hl")
+
+    page = await ctx.search.query(spec).search_page(
+        "book", options={"highlight": {"fields": ["title"]}}
+    )
+
+    assert page.highlights is not None
+    assert len(page.highlights) == len(page.hits)
+    fragments = [hl["title"][0] for hl in page.highlights if "title" in hl]
+    assert fragments
+    # Default <em> markers wrap the match (rewritten from PGroonga's fixed span).
+    assert all("<em>" in frag.lower() and "book" in frag.lower() for frag in fragments)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pgroonga_highlights_custom_tags(pg_client: PostgresClient) -> None:
+    table, index_name = await _bootstrap(pg_client, engine="pgroonga")
+    ctx = _ctx(pg_client, table=table, index_name=index_name, engine="pgroonga")
+    spec = _spec("pgr_hl_tags")
+
+    page = await ctx.search.query(spec).search_page(
+        "book",
+        options={"highlight": {"fields": ["title"], "pre_tag": "[", "post_tag": "]"}},
+    )
+
+    assert page.highlights is not None
+    fragments = [hl["title"][0] for hl in page.highlights if "title" in hl]
+    assert fragments
+    assert all("[" in frag and "]" in frag and "<span" not in frag for frag in fragments)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_fts_highlights(pg_client: PostgresClient) -> None:
+    table, index_name = await _bootstrap(pg_client, engine="fts")
+    ctx = _ctx(pg_client, table=table, index_name=index_name, engine="fts")
+    spec = _spec("fts_hl")
+
+    page = await ctx.search.query(spec).search_page(
+        "book", options={"highlight": {"fields": ["title"]}}
+    )
+
+    assert page.highlights is not None
+    assert len(page.highlights) == len(page.hits)
+    fragments = [hl["title"][0] for hl in page.highlights if "title" in hl]
+    assert fragments
+    assert all("<em>book</em>".lower() in frag.lower() for frag in fragments)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_cursor_highlight_request_fails_closed(pg_client: PostgresClient) -> None:
+    # Cursor-paginated highlights are not implemented; a request must fail closed.
+    table, index_name = await _bootstrap(pg_client, engine="pgroonga")
+    ctx = _ctx(pg_client, table=table, index_name=index_name, engine="pgroonga")
+    spec = _spec("pgr_hl_cursor_guard")
 
     with pytest.raises(CoreException) as ei:
-        await ctx.search.query(spec).search_page("book", options={"highlight": True})
+        await ctx.search.query(spec).search_cursor(
+            "book", cursor={"limit": 5}, options={"highlight": True}
+        )
 
     assert ei.value.kind is ExceptionKind.PRECONDITION

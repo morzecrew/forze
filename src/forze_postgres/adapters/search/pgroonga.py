@@ -26,7 +26,6 @@ from forze.application.contracts.search import (
     effective_phrase_combine,
     facet_size_of,
     normalize_search_queries,
-    reject_unsupported_highlight,
     resolve_facet_fields,
     search_options_for_simple_adapter,
 )
@@ -37,6 +36,7 @@ from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
 from ._facets import fetch_pg_facets
+from ._highlights import build_pgroonga_highlight
 from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page, search_trust_source
 from ._pgroonga_plan import (
@@ -170,7 +170,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
-        reject_unsupported_highlight(self.spec, options, backend="Postgres")
 
         if normalize_search_queries(query):
             return await super()._offset_search_impl(
@@ -531,6 +530,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             scored_alias=self.pipeline.scored,
         )
 
+        highlight = build_pgroonga_highlight(
+            spec=self.spec,
+            options=options,
+            terms=terms,
+            alias=self.projection_alias,
+        )
+
         if resolved_plan == "index_first":
             if candidate_cap is None:
                 raise exc.internal("candidate_cap is None")
@@ -579,6 +585,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 projection_alias=self.projection_alias,
                 resolved_plan=resolved_plan,
                 candidate_limit=candidate_cap,
+                highlight=highlight,
+                from_outer_param_count=len(fp),
             )
 
         cap_kw: dict[str, Any] = {}
@@ -626,4 +634,5 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             rank_column=self.search_rank_column,
             projection_alias=self.projection_alias,
             resolved_plan=resolved_plan,
+            highlight=highlight,
         )

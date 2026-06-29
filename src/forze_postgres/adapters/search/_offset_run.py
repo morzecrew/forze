@@ -6,11 +6,14 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, Sequence, TypeVar
 
 import attrs
 from psycopg import sql
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from ._highlights import HighlightSelect
 
 from forze.application.contracts.base import page_from_limit_offset
 from forze.application.contracts.querying import (
@@ -38,6 +41,7 @@ from forze.application.integrations.search.offset_executor import (
 
 from ...kernel.gateways import PostgresGateway
 from ._facets import fetch_pg_facets
+from ._highlights import extract_and_strip_highlights
 from ._search_count import effective_search_count
 
 # ----------------------- #
@@ -82,6 +86,13 @@ class RankedOffsetPlan:
 
     select_table_alias: str
     """Table alias passed to :meth:`~PostgresGateway.return_clause`."""
+
+    highlight: "HighlightSelect | None" = None
+    """Synthetic highlight columns to splice into the data SELECT (RFC 0006)."""
+
+    from_outer_param_count: int = 0
+    """Trailing :attr:`params` that belong to :attr:`from_outer` (highlight params splice
+    before these)."""
 
 
 # ....................... #
@@ -153,20 +164,31 @@ class _PostgresSimpleOffsetHooks:
             table_alias=self.plan.select_table_alias,
         )
 
+        hl = self.plan.highlight
+        hl_cols = hl.select_fragment() if hl is not None else sql.SQL("")
+
         data_stmt = sql.SQL(
             """
             {with_clause}
-            SELECT {cols} {from_outer}
+            SELECT {cols}{hl_cols} {from_outer}
             ORDER BY {order}
             """
         ).format(
             with_clause=self.plan.with_clause,
             cols=cols,
+            hl_cols=hl_cols,
             from_outer=self.plan.from_outer,
             order=self.plan.order_sql,
         )
 
-        params = list(self.plan.params)
+        # Highlight column placeholders sit in the SELECT list, between the WITH-clause
+        # params and any from_outer params (index-first puts the projection filter there).
+        body = list(self.plan.params)
+        if hl is not None:
+            split = len(body) - self.plan.from_outer_param_count
+            params = [*body[:split], *hl.params, *body[split:]]
+        else:
+            params = body
 
         if window.fetch_limit is not None:
             data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
@@ -180,11 +202,19 @@ class _PostgresSimpleOffsetHooks:
             data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(offset_from_dict(self.pagination_dict))
 
-        rows = await self.gw.client.fetch_all(data_stmt, params, row_factory="dict")
+        rows = [
+            dict(row)
+            for row in await self.gw.client.fetch_all(
+                data_stmt, params, row_factory="dict"
+            )
+        ]
 
+        highlights = (
+            extract_and_strip_highlights(rows, hl) if hl is not None else None
+        )
         facets = await self._fetch_facets()
 
-        return OffsetRowsResult(rows=list(rows), facets=facets)
+        return OffsetRowsResult(rows=rows, facets=facets, highlights=highlights)
 
     async def _fetch_facets(self) -> Any:
         """Companion ``GROUP BY`` over the uncapped matched set (mirrors :meth:`fetch_count`)."""

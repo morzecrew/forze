@@ -265,7 +265,6 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
-        reject_unsupported_highlight(self.spec, options, backend="Postgres")
         parsed_filters = self.compile_filters(filters)
         fw, fp = await self.where_clause(filters, parsed=parsed_filters)
         terms = tuple(normalize_search_queries(query))
@@ -309,6 +308,8 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             count_from_outer=pipeline_sql.count_from_outer,
             approximate_total=approximate_total,
             select_table_alias=self.projection_alias,
+            highlight=pipeline_sql.highlight,
+            from_outer_param_count=pipeline_sql.from_outer_param_count,
         )
 
         fp_extras = self._fingerprint_extras(
@@ -354,7 +355,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             sorts, encryption=self.spec.encryption, spec_name=self.spec.name
         )
         options = search_options_for_simple_adapter(options)
-        reject_unsupported_highlight(self.spec, options, backend="Postgres")
+        reject_unsupported_highlight(self.spec, options, backend="Postgres cursor-paginated")
         lim, _, _ = parse_search_cursor(cursor)
         terms = tuple(normalize_search_queries(query))
         parsed_filters = self.compile_filters(filters)
