@@ -25,13 +25,19 @@ M = TypeVar("M", bound=BaseModel)
 # ....................... #
 
 
-class SearchQueryPort[R: BaseModel](Protocol):
+class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
     """Full-text search with result shape encoded in method names.
 
     ``search*`` returns the spec read model ``R``; ``project_search*`` returns ``JsonDict`` rows;
     ``select_search*`` validates rows as ``return_type``. Methods without ``_page`` or ``_cursor``
     return :class:`~.CountlessPage` (no total count query); ``*_page`` returns :class:`~.Page`;
     ``*_cursor`` returns :class:`~.CursorPage`.
+
+    ``O`` is the per-request ``options`` type: the backend- and topology-agnostic
+    :class:`~.SearchOptions` for single-index search (the default), widened to
+    :class:`~.MultiSourceSearchOptions` for hub / federated ports so callers may pass the
+    member-selection keys. ``O`` is an input-only (contravariant) param, so an adapter whose
+    methods accept the base :class:`~.SearchOptions` still satisfies the multi-source port.
     """
 
     def search(
@@ -41,7 +47,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = None,
+        options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> Awaitable[CountlessPage[R]]:
         """Search and return typed read models (no total count query)."""
@@ -54,7 +60,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = None,
+        options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> Awaitable[Page[R]]:
         """Search and return typed read models with total matching count."""
@@ -68,7 +74,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = None,
+        options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> Awaitable[CountlessPage[JsonDict]]:
         """Search with field projection (no total count query)."""
@@ -82,7 +88,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = None,
+        options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> Awaitable[Page[JsonDict]]:
         """Search with field projection and total matching count."""
@@ -96,7 +102,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = None,
+        options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> Awaitable[CountlessPage[T]]:
         """Search validating each hit as ``return_type`` (no total count query)."""
@@ -110,7 +116,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = None,
+        options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> Awaitable[Page[T]]:
         """Search as ``return_type`` with total matching count."""
@@ -123,7 +129,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = None,
+        options: O | None = None,
     ) -> Awaitable[CursorPage[R]]:
         """Keyset / cursor page of typed read models."""
         ...  # pragma: no cover
@@ -136,7 +142,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = None,
+        options: O | None = None,
     ) -> Awaitable[CursorPage[JsonDict]]:
         """Keyset / cursor page with field projection."""
         ...  # pragma: no cover
@@ -149,7 +155,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = None,
+        options: O | None = None,
     ) -> Awaitable[CursorPage[T]]:
         """Keyset / cursor page validating each hit as ``return_type``."""
         ...  # pragma: no cover

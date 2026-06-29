@@ -18,6 +18,7 @@ from .specs import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
+from .types import MultiSourceSearchOptions
 
 # ----------------------- #
 
@@ -41,13 +42,13 @@ SearchManagementDepPort = ConfigurableDepPort[
 
 HubSearchQueryDepPort = ConfigurableDepPort[
     HubSearchSpec[Any],
-    SearchQueryPort[Any],
+    SearchQueryPort[Any, MultiSourceSearchOptions],
 ]
 """Hub (multi-leg) search query dependency port."""
 
 FederatedSearchQueryDepPort = ConfigurableDepPort[
     FederatedSearchSpec[Any],
-    SearchQueryPort[FederatedSearchReadModel[Any]],
+    SearchQueryPort[FederatedSearchReadModel[Any], MultiSourceSearchOptions],
 ]
 """Federated search query dependency port."""
 
@@ -122,8 +123,16 @@ class SearchDeps(ConvenientDeps):
 
     # ....................... #
 
-    def hub(self, spec: HubSearchSpec[T]) -> SearchQueryPort[T]:
-        """Resolve a hub search query port for the given spec."""
+    def hub(
+        self,
+        spec: HubSearchSpec[T],
+    ) -> SearchQueryPort[T, MultiSourceSearchOptions]:
+        """Resolve a hub search query port for the given spec.
+
+        Returns a multi-source port: the ``options`` argument accepts the member-selection
+        keys (``member_weights`` / ``members``) and ``merge_candidates`` of
+        :class:`~.MultiSourceSearchOptions`.
+        """
 
         return self._resolve_configurable(
             HubSearchQueryDepKey,
@@ -136,8 +145,8 @@ class SearchDeps(ConvenientDeps):
     def federated(
         self,
         spec: FederatedSearchSpec[T],
-    ) -> SearchQueryPort[FederatedSearchReadModel[T]]:
-        """Resolve a federated search query port for the given spec."""
+    ) -> SearchQueryPort[FederatedSearchReadModel[T], MultiSourceSearchOptions]:
+        """Resolve a federated search query port for the given spec (multi-source options)."""
 
         return self._resolve_configurable(
             FederatedSearchQueryDepKey,
