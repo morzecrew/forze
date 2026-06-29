@@ -37,6 +37,8 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
+    resolve_facet_fields,
+    resolve_highlight,
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import SearchResultSnapshot
@@ -51,6 +53,10 @@ from forze_mock.query._types import (
 from forze_mock.query.cursors import (
     _mock_cursor_start_and_limit,  # type: ignore[reportPrivateUsage]
     _mock_cursor_tokens,  # type: ignore[reportPrivateUsage]
+)
+from forze_mock.adapters.search._facets_highlights import (
+    compute_facets,
+    compute_highlights,
 )
 from forze_mock.query.matching import (
     _path_text,  # type: ignore[reportPrivateUsage]
@@ -227,6 +233,41 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
     # ....................... #
 
+    def _facets_and_highlights(
+        self,
+        query: str | Sequence[str],
+        options: SearchOptions | None,
+        *,
+        all_rows: Sequence[JsonDict],
+        page_rows: Sequence[JsonDict],
+    ) -> tuple[Any | None, list[Any] | None]:
+        """Compute optional facets (over the full matching set ``all_rows``) and per-hit
+        highlights (over the returned ``page_rows``); ``None`` when not requested."""
+
+        facet_fields = resolve_facet_fields(self.spec, options)
+        facets = (
+            compute_facets(all_rows, facet_fields, options=options)
+            if facet_fields
+            else None
+        )
+
+        highlight = resolve_highlight(self.spec, options)
+        highlights = (
+            compute_highlights(
+                page_rows,
+                normalize_search_queries(query),
+                highlight[0],
+                pre_tag=highlight[1],
+                post_tag=highlight[2],
+            )
+            if highlight is not None
+            else None
+        )
+
+        return facets, highlights
+
+    # ....................... #
+
     @overload
     async def _offset_search_impl(
         self,
@@ -342,34 +383,42 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         limit = pagination.get("limit")
         offset = pagination.get("offset")
 
+        all_rows = ordered
         if offset:
             ordered = ordered[offset:]
 
         if limit is not None:
             ordered = ordered[:limit]
 
-        if return_fields is not None:
-            proj = [_project(doc, return_fields) for doc in ordered]
-            if return_count:
-                return page_from_limit_offset(proj, pagination, total=total)
-            return page_from_limit_offset(proj, pagination, total=None)
-
-        if return_type is not None:
-            out = default_model_codec(return_type).decode_mapping_many(ordered)
-            if return_count:
-                return page_from_limit_offset(out, pagination, total=total)
-            return page_from_limit_offset(out, pagination, total=None)
-
-        allowed = set(self.spec.model_type.model_fields.keys())
-        typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
-        out = cast(
-            list[Any],
-            self.spec.resolved_read_codec.decode_mapping_many(typed_docs),
+        facets, highlights = self._facets_and_highlights(
+            query, options, all_rows=all_rows, page_rows=ordered
         )
 
+        if return_fields is not None:
+            hits: list[Any] = [_project(doc, return_fields) for doc in ordered]
+        elif return_type is not None:
+            hits = default_model_codec(return_type).decode_mapping_many(ordered)
+        else:
+            allowed = set(self.spec.model_type.model_fields.keys())
+            typed_docs = [
+                {k: v for k, v in doc.items() if k in allowed} for doc in ordered
+            ]
+            hits = cast(
+                list[Any],
+                self.spec.resolved_read_codec.decode_mapping_many(typed_docs),
+            )
+
         if return_count:
-            return page_from_limit_offset(out, pagination, total=total)
-        return page_from_limit_offset(out, pagination, total=None)
+            page: CountlessPage[Any] = page_from_limit_offset(
+                hits, pagination, total=total
+            )
+        else:
+            page = page_from_limit_offset(hits, pagination, total=None)
+
+        if facets is None and highlights is None:
+            return page
+
+        return attrs.evolve(page, facets=facets, highlights=highlights)
 
     # ....................... #
 
@@ -565,38 +614,34 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         start, lim = _mock_cursor_start_and_limit(cursor)
         window = ordered[start : start + lim + 1]
         has_more = len(window) > lim
-        page = window[:lim]
-        next_c, prev_c = _mock_cursor_tokens(start, len(page), has_more=has_more)
+        page_rows = window[:lim]
+        next_c, prev_c = _mock_cursor_tokens(start, len(page_rows), has_more=has_more)
+
+        facets, highlights = self._facets_and_highlights(
+            query, options, all_rows=ordered, page_rows=page_rows
+        )
 
         if return_fields is not None:
-            hits_JD = [_project(doc, return_fields) for doc in page]
-
-            return CursorPage(
-                hits=hits_JD,
-                next_cursor=next_c,
-                prev_cursor=prev_c,
-                has_more=has_more,
+            hits: list[Any] = [_project(doc, return_fields) for doc in page_rows]
+        elif return_type is not None:
+            hits = default_model_codec(return_type).decode_mapping_many(page_rows)
+        else:
+            allowed = set(self.spec.model_type.model_fields.keys())
+            typed_docs = [
+                {k: v for k, v in doc.items() if k in allowed} for doc in page_rows
+            ]
+            hits = cast(
+                list[Any],
+                self.spec.resolved_read_codec.decode_mapping_many(typed_docs),
             )
-
-        if return_type is not None:
-            hits_T = default_model_codec(return_type).decode_mapping_many(page)
-
-            return CursorPage(
-                hits=hits_T,
-                next_cursor=next_c,
-                prev_cursor=prev_c,
-                has_more=has_more,
-            )
-
-        allowed = set(self.spec.model_type.model_fields.keys())
-        typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
-        hits = self.spec.resolved_read_codec.decode_mapping_many(typed_docs)
 
         return CursorPage(
             hits=hits,
             next_cursor=next_c,
             prev_cursor=prev_c,
             has_more=has_more,
+            facets=facets,
+            highlights=highlights,
         )
 
     async def search_cursor(

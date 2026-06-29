@@ -5,7 +5,11 @@ from typing import Any, Protocol, Sequence, TypeVar, runtime_checkable
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import page_from_limit_offset
+from forze.application.contracts.base import (
+    FacetResults,
+    HitHighlights,
+    page_from_limit_offset,
+)
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
@@ -74,6 +78,13 @@ class OffsetRowsResult:
 
     total: int | None = None
     """When set and counting is enabled, used as the result total."""
+
+    facets: FacetResults | None = None
+    """Optional facet distributions for this search (result-level; see RFC 0006)."""
+
+    highlights: list[HitHighlights] | None = None
+    """Optional per-hit highlighted fragments, index-aligned with :attr:`rows`
+    (sliced in lockstep with the rows when a snapshot pool is paginated)."""
 
 
 # ....................... #
@@ -238,6 +249,8 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         model_type=model_type,
         codec=codec,
         trust_source=trust_source,
+        facets=outcome.facets,
+        highlights=outcome.highlights,
     )
 
 
@@ -261,6 +274,8 @@ async def snapshot_materialize_and_paginate[M: BaseModel](
     model_type: type[M],
     codec: ModelCodec[Any, Any],
     trust_source: bool = False,
+    facets: FacetResults | None = None,
+    highlights: list[HitHighlights] | None = None,
 ) -> Any:
     """Snapshot write, in-memory slice, materialize, and :func:`page_from_limit_offset`."""
 
@@ -279,6 +294,9 @@ async def snapshot_materialize_and_paginate[M: BaseModel](
             pool_len_before_cap=pool_len,
         )
         rows = rows[page_offset : page_offset + page_limit]
+        # Keep per-hit highlights aligned with the page slice of the pooled rows.
+        if highlights is not None:
+            highlights = highlights[page_offset : page_offset + page_limit]
 
     effective_page_limit = (
         page_limit
@@ -302,9 +320,14 @@ async def snapshot_materialize_and_paginate[M: BaseModel](
         trust_source=trust_source,
     )
 
-    return page_from_limit_offset(
+    result: Any = page_from_limit_offset(
         page,
         pagination_dict,
         total=total if return_count else None,
         snapshot=handle_out,
     )
+
+    if facets is None and highlights is None:
+        return result
+
+    return attrs.evolve(result, facets=facets, highlights=highlights)

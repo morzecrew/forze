@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, overload
+from typing import Any, Mapping, Tuple, TypeAlias, overload
 
 import attrs
 
@@ -29,6 +29,37 @@ class SearchSnapshotHandle:
 
 
 # ----------------------- #
+# Facets & highlights (optional search-result metadata; see RFC 0006). Defined
+# here for the same reason as SearchSnapshotHandle: the page value objects below
+# carry them, and the base contract must not import from the search contract.
+# Re-exported from forze.application.contracts.search.value_objects.
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class FacetBucket:
+    """One value in a facet (term) distribution: a field value and its document count."""
+
+    value: Any
+    """The field value (scalar: str / int / float / bool / ...)."""
+
+    count: int
+    """Number of matching documents carrying this value."""
+
+
+FacetResults: TypeAlias = Mapping[str, Tuple[FacetBucket, ...]]
+"""Facet distributions keyed by facetable field name → buckets ordered count-descending.
+
+Result-level metadata attached to a paged search response (:attr:`CountlessPage.facets`)."""
+
+HitHighlights: TypeAlias = Mapping[str, Tuple[str, ...]]
+"""Highlighted fragments for a single hit, keyed by field name → marked-up snippets.
+
+Each fragment already carries the requested ``pre_tag`` / ``post_tag`` markers. A field
+with no match is absent; a hit with no highlights maps to an empty mapping (never ``None``),
+so the per-hit highlight list stays index-aligned with ``hits`` and non-sparse."""
+
+
+# ----------------------- #
 # Pagination
 
 
@@ -47,6 +78,15 @@ class CountlessPage[T]:
 
     snapshot: SearchSnapshotHandle | None = None
     """When present, a snapshot of ordered ids was used or created for this search."""
+
+    facets: FacetResults | None = None
+    """Optional facet (term) distributions for this search, when facets were requested
+    (search surfaces only; ``None`` for document queries and when not requested). See RFC 0006."""
+
+    highlights: list[HitHighlights] | None = None
+    """Optional per-hit highlighted fragments, index-aligned with :attr:`hits`
+    (``highlights[i]`` describes ``hits[i]``), when highlighting was requested. ``None`` when
+    not requested or unavailable (e.g. snapshot-continuation pages). See RFC 0006."""
 
 
 # ....................... #
@@ -81,6 +121,13 @@ class CursorPage[T]:
 
     has_more: bool = False
     """Whether there are more pages after this one."""
+
+    facets: FacetResults | None = None
+    """Optional facet (term) distributions for this search, when facets were requested. See RFC 0006."""
+
+    highlights: list[HitHighlights] | None = None
+    """Optional per-hit highlighted fragments, index-aligned with :attr:`hits`, when
+    highlighting was requested. ``None`` when not requested or unavailable. See RFC 0006."""
 
 
 # ....................... #

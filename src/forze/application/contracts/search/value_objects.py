@@ -4,6 +4,11 @@ import attrs
 
 from forze.base.exceptions import exc
 
+# Facets & highlights are defined in the base contract (next to the page value
+# objects that carry them, same rationale as SearchSnapshotHandle) and re-exported
+# here so they are reachable from the search contract surface.
+from ..base.value_objects import FacetBucket, FacetResults, HitHighlights
+
 # ----------------------- #
 
 
@@ -54,3 +59,14 @@ class SearchResultSnapshotMeta:
 
     complete: bool
     """True when all chunks and meta were written for this run."""
+
+
+# ....................... #
+
+__all__ = [
+    "Rrf",
+    "SearchResultSnapshotMeta",
+    "FacetBucket",
+    "FacetResults",
+    "HitHighlights",
+]

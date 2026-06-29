@@ -109,6 +109,73 @@ def _validate_search_encryption(
 # ....................... #
 
 
+def _validate_search_facetable_highlightable(
+    *,
+    spec_name: object,
+    model_type: type[BaseModel],
+    fields: Sequence[str],
+    facetable_fields: frozenset[str],
+    highlightable_fields: frozenset[str] | None,
+    lenient_read_fields: frozenset[str],
+    encryption: FieldEncryption | None,
+) -> None:
+    """Validate a search spec's facet/highlight field declarations (see RFC 0006).
+
+    A **facetable** field must be a real read column (exists on the model, not lenient,
+    not sealed) — a value distribution needs a stored value. A **highlightable** field
+    must be a searchable ``fields`` member (only analyzed text can be highlighted) and
+    not sealed (ciphertext has no fragments).
+    """
+
+    if not facetable_fields and highlightable_fields is None:
+        return
+
+    sealed: frozenset[str] = (
+        (encryption.encrypted | encryption.searchable)
+        if encryption is not None
+        else frozenset()
+    )
+
+    if facetable_fields:
+        read_fields = read_fields_for_model(model_type)
+
+        if missing := facetable_fields - read_fields:
+            raise exc.configuration(
+                f"Search spec {spec_name!r}: facetable field(s) {sorted(missing)} are not "
+                "fields on the read model.",
+            )
+
+        if lenient := facetable_fields & lenient_read_fields:
+            raise exc.configuration(
+                f"Search spec {spec_name!r}: facetable field(s) {sorted(lenient)} are lenient "
+                "(not stored) and cannot be faceted — faceting needs a real column.",
+            )
+
+        if forbidden := facetable_fields & sealed:
+            raise exc.configuration(
+                f"Search spec {spec_name!r}: facetable field(s) {sorted(forbidden)} are "
+                "field-encrypted — a sealed value cannot be aggregated.",
+            )
+
+    if highlightable_fields is None:
+        return
+
+    if not_searchable := highlightable_fields - frozenset(fields):
+        raise exc.configuration(
+            f"Search spec {spec_name!r}: highlightable field(s) {sorted(not_searchable)} are "
+            "not indexed (searchable) — only searchable fields can be highlighted.",
+        )
+
+    if forbidden := highlightable_fields & sealed:
+        raise exc.configuration(
+            f"Search spec {spec_name!r}: highlightable field(s) {sorted(forbidden)} are "
+            "field-encrypted — a sealed value has no highlightable text.",
+        )
+
+
+# ....................... #
+
+
 def _validate_search_default_sort(
     *,
     spec_name: str,
@@ -239,6 +306,24 @@ class SearchSpec[M: BaseModel](BaseSpec):
     (searchable) :attr:`fields` member — an indexed field needs a real column. Lenient
     fields are also excluded from sort keys. Empty by default (strict)."""
 
+    facetable_fields: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=frozenset,
+    )
+    """Read-model field names that may be **faceted** (value-distribution aggregated) when
+    a caller passes :attr:`~.types.SearchOptions.facets` (see RFC 0006). Each must be a real
+    stored read field (not :attr:`lenient_read_fields`, not field-encrypted); analyzed-text
+    :attr:`fields` are poor facet targets but are not rejected. Empty by default — faceting
+    is opt-in because it has index/mapping implications (e.g. an external index must declare
+    the field filterable/keyword). A facet request for a field outside this set is refused."""
+
+    highlightable_fields: frozenset[str] | None = attrs.field(default=None)
+    """Searchable field names that may be **highlighted** (matched fragments returned) when
+    a caller passes :attr:`~.types.SearchOptions.highlight` (see RFC 0006). ``None`` (default)
+    means all searchable :attr:`fields`; an explicit set narrows it. Each named field must be
+    an indexed :attr:`fields` member (only analyzed text can be highlighted) and not
+    field-encrypted."""
+
     read_codec: ModelCodec[M, Any] | None = attrs.field(
         default=None,
         eq=False,
@@ -285,6 +370,16 @@ class SearchSpec[M: BaseModel](BaseSpec):
             encryption=self.encryption,
             default_sort=self.default_sort,
             lenient_read_fields=self.resolved_lenient_read_fields,
+        )
+
+        _validate_search_facetable_highlightable(
+            spec_name=self.name,
+            model_type=self.model_type,
+            fields=self.fields,
+            facetable_fields=self.facetable_fields,
+            highlightable_fields=self.highlightable_fields,
+            lenient_read_fields=self.resolved_lenient_read_fields,
+            encryption=self.encryption,
         )
 
         if len(self.fields) != len(set(self.fields)):
@@ -336,6 +431,19 @@ class SearchSpec[M: BaseModel](BaseSpec):
             return self.read_codec
 
         return model_codec_for(self.model_type, materialized=self.materialized)
+
+    # ....................... #
+
+    @property
+    def resolved_highlightable_fields(self) -> frozenset[str]:
+        """Effective highlightable fields: the explicit :attr:`highlightable_fields`, or —
+        when ``None`` — all searchable :attr:`fields`. What the search backend reads to bound
+        a highlight request."""
+
+        if self.highlightable_fields is None:
+            return frozenset(self.fields)
+
+        return self.highlightable_fields
 
 
 # ....................... #

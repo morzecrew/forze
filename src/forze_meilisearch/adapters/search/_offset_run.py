@@ -25,6 +25,14 @@ from forze.application.integrations.search.offset_executor import (
     execute_simple_offset_search_with_snapshot,
     offset_from_dict,
 )
+from forze_meilisearch.adapters.search._facets_highlights import (
+    FacetPlan,
+    HighlightPlan,
+    extract_facets,
+    extract_highlights,
+    plan_facets,
+    plan_highlights,
+)
 from forze_meilisearch.adapters.search._search_params import (
     attributes_to_search_on,
     build_search_query_string,
@@ -48,6 +56,8 @@ class _MeilisearchOffsetHooks:
     pagination_dict: dict[str, Any]
     return_count: bool
     return_fields: Sequence[str] | None
+    facet_plan: FacetPlan | None = None
+    highlight_plan: HighlightPlan | None = None
 
     async def fetch_count(self) -> int | None:
         return None
@@ -68,6 +78,14 @@ class _MeilisearchOffsetHooks:
 
         if self.sort_list is not None:
             search_kwargs["sort"] = self.sort_list
+
+        if self.facet_plan is not None:
+            search_kwargs["facets"] = self.facet_plan.physical_fields
+
+        if self.highlight_plan is not None:
+            search_kwargs["attributes_to_highlight"] = self.highlight_plan.physical_fields
+            search_kwargs["highlight_pre_tag"] = self.highlight_plan.pre_tag
+            search_kwargs["highlight_post_tag"] = self.highlight_plan.post_tag
 
         if want_snap:
             if window.fetch_offset:
@@ -97,15 +115,31 @@ class _MeilisearchOffsetHooks:
         )
         result = await index.search(self.query_string, **search_kwargs)
 
-        hits_raw = list(getattr(result, "hits", []) or [])
+        hits_raw = [dict(h) for h in getattr(result, "hits", []) or []]
         total = int(
             getattr(result, "estimated_total_hits", None)
             or getattr(result, "total_hits", None)
             or len(hits_raw)
         )
-        rows = [self.gw.from_hit(dict(h)) for h in hits_raw]
+        rows = [self.gw.from_hit(h) for h in hits_raw]
 
-        return OffsetRowsResult(rows=rows, total=total if self.return_count else None)
+        facets = (
+            extract_facets(result, self.facet_plan)
+            if self.facet_plan is not None
+            else None
+        )
+        highlights = (
+            extract_highlights(hits_raw, self.highlight_plan)
+            if self.highlight_plan is not None
+            else None
+        )
+
+        return OffsetRowsResult(
+            rows=rows,
+            total=total if self.return_count else None,
+            facets=facets,
+            highlights=highlights,
+        )
 
 
 # ....................... #
@@ -137,6 +171,8 @@ async def execute_meilisearch_offset_search[M: BaseModel](
     attrs = attributes_to_search_on(spec, options, gw.field_map)
     sort_list = build_sort(render_user_sorts(sorts, gw.field_map))
     pagination_dict: dict[str, Any] = dict(pagination or {})
+    facet_plan = plan_facets(gw, spec, options)
+    highlight_plan = plan_highlights(gw, spec, options)
 
     return await execute_simple_offset_search_with_snapshot(
         query=query,
@@ -163,5 +199,7 @@ async def execute_meilisearch_offset_search[M: BaseModel](
             pagination_dict=pagination_dict,
             return_count=return_count,
             return_fields=return_fields,
+            facet_plan=facet_plan,
+            highlight_plan=highlight_plan,
         ),
     )

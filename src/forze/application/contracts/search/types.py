@@ -23,6 +23,35 @@ to the search surface defaults (e.g. :class:`~.SearchResultSnapshotSpec`).
 # ....................... #
 
 
+class HighlightOptions(TypedDict, total=False):
+    """Per-request highlighting options (see RFC 0006).
+
+    Used as the value of :attr:`SearchOptions.highlight` when finer control than
+    ``True`` is needed. Omitted keys fall back to backend defaults; the marker tags
+    default to the cross-industry ``<em>`` / ``</em>`` and are always passed to the
+    backend explicitly so marked-up output is uniform across adapters.
+    """
+
+    fields: Sequence[str]
+    """Subset of highlightable fields to highlight; omit to highlight all of them
+    (the spec's :attr:`~.SearchSpec.highlightable_fields`, defaulting to searchable ``fields``)."""
+
+    pre_tag: str
+    """Opening marker inserted before each matched fragment. Default ``\"<em>\"``."""
+
+    post_tag: str
+    """Closing marker inserted after each matched fragment. Default ``\"</em>\"``."""
+
+    fragment_size: int
+    """Approximate maximum length (characters) of each returned snippet fragment."""
+
+    max_fragments: int
+    """Maximum number of snippet fragments returned per field."""
+
+
+# ....................... #
+
+
 class SearchResultSnapshotOptions(TypedDict, total=False):
     """Per-request options for result-ID snapshotting.
 
@@ -98,3 +127,21 @@ class SearchOptions(TypedDict, total=False):
 
     combo_limit: int
     """Cap rows in hub ``combo_top`` before outer pagination (Postgres hub search)."""
+
+    facets: Sequence[str]
+    """Field names to compute term (value) distributions over for this query (see RFC 0006).
+
+    Each must be a :attr:`~.SearchSpec.facetable_fields` member; an unservable field
+    fails with a ``precondition``. Distributions are returned on the page
+    (:attr:`~forze.application.contracts.base.value_objects.CountlessPage.facets`),
+    computed over the full matching set, independent of the page window."""
+
+    facet_size: int
+    """Maximum number of buckets returned per faceted field (caps buckets, not the match
+    count). Backend default applies when omitted."""
+
+    highlight: bool | HighlightOptions
+    """Request highlighting of matched fragments per hit (see RFC 0006). ``True`` highlights
+    all highlightable fields with default markers; a :class:`HighlightOptions` narrows the
+    fields / customizes markers. Returned index-aligned on the page
+    (:attr:`~forze.application.contracts.base.value_objects.CountlessPage.highlights`)."""
