@@ -4516,6 +4516,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Spec">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lenient-read-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Lenient read fields
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5403,6 +5420,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Spec">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lenient-read-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Lenient read fields
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5670,6 +5704,24 @@ plus per-aggregate policy:</p>
 <td><code>@computed_field</code> names persisted as columns, so they're filterable/sortable</td>
 </tr>
 <tr>
+<td><code>read_conformity</code></td>
+<td><code>"strict" \| "lenient"</code></td>
+<td><code>"strict"</code></td>
+<td><code>"lenient"</code> auto-derives <code>lenient_read_fields</code> from the read model (every statically-defaulted, non-identity, non-<code>materialized</code> field); explicit fields are added on top</td>
+</tr>
+<tr>
+<td><code>lenient_read_fields</code></td>
+<td><code>frozenset[str]</code></td>
+<td><code>∅</code></td>
+<td>read-model fields with <strong>no</strong> backing column: dropped from the projection, hydrated from their default, removed from the filter/sort/aggregate allow-sets, and tolerated by relational startup schema checks (see below)</td>
+</tr>
+<tr>
+<td><code>write_omit_fields</code></td>
+<td><code>frozenset[str]</code></td>
+<td><code>∅</code></td>
+<td>domain fields with <strong>no</strong> column: <strong>silently stripped</strong> from every write and hydrated from the domain default on read-back (the write-side of <code>lenient_read_fields</code>; explicit-only, requires <code>write</code>)</td>
+</tr>
+<tr>
 <td><code>default_sort</code></td>
 <td><code>QuerySortExpression \| None</code></td>
 <td><code>None</code></td>
@@ -5715,6 +5767,39 @@ plus per-aggregate policy:</p>
 </table>
 <p><code>write</code> is a <code>DocumentWriteTypes</code> TypedDict — <code>domain</code> (the <code>Document</code> subclass),
 <code>create_cmd</code>, and an optional <code>update_cmd</code>.</p>
+<h3 id="lenient-read-fields">Lenient read fields<a class="headerlink" href="#lenient-read-fields" title="Permanent link">&para;</a></h3>
+<p>By default every read-model field must map to a stored column, and a relational
+backend fails at startup if one is missing — drift is caught at boot, not on the
+first query. <code>lenient_read_fields</code> opts named fields out of that rule, on the read
+side only:</p>
+<ul>
+<li>the field is <strong>dropped from the read projection</strong> and <strong>hydrated from its model
+  default</strong> on every read (so it carries the same default for every row);</li>
+<li>it is <strong>removed from the filter / sort / aggregate allow-sets</strong> — a column that
+  is not there cannot be queried;</li>
+<li>the Postgres startup schema check <strong>tolerates the missing column</strong> instead of
+  failing (Mongo and Firestore are schemaless, so they tolerate it naturally).</li>
+</ul>
+<p>Honored on Postgres, Mongo, and Firestore. Each name must be a non-computed
+read-model field that carries a default (is non-required) and is not an
+identity/audit field (<code>id</code>, <code>rev</code>, <code>created_at</code>, <code>last_update_at</code>) or a
+<code>materialized</code> field. It is read-side only: if the same field is also stored on the
+write/domain model over that relation, Postgres write-schema validation still
+requires its column.</p>
+<p>Use it for a field that exists in code ahead of (or independently of) the physical
+column — e.g. during an expand/contract migration — or a read-model display field
+the write model does not persist.</p>
+<p>Instead of listing fields, set <code>read_conformity="lenient"</code> to <strong>auto-derive</strong> the set:
+every statically-defaulted, non-identity read field that is not <code>materialized</code> becomes
+lenient (fields with a <code>default_factory</code> are excluded — declare those explicitly to
+accept a fresh value per row). Explicit <code>lenient_read_fields</code> are always added on top.
+<code>resolved_lenient_read_fields</code> is the effective set every backend reads.</p>
+<p><code>write_omit_fields</code> is the <strong>write-side</strong> counterpart: a domain field with no column is
+silently stripped from every insert/update and hydrates from the domain default on
+read-back (Postgres, Mongo, and Firestore). Because the value is dropped (not persisted),
+it is <strong>explicit-only</strong> — never auto-derived — requires a <code>write</code> spec, and each name must
+be a defaulted, non-identity domain field. Use it for a domain field that is computed or
+stored elsewhere, not on this table.</p>
 <h2 id="query-port">Query port<a class="headerlink" href="#query-port" title="Permanent link">&para;</a></h2>
 <h3 id="fetch-one">Fetch one<a class="headerlink" href="#fetch-one" title="Permanent link">&para;</a></h3>
 <table>

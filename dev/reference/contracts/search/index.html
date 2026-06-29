@@ -5535,6 +5535,24 @@ result-set snapshots.</p>
 <td>sort when a caller omits <code>sorts</code> (required if the model has no <code>id</code>)</td>
 </tr>
 <tr>
+<td><code>materialized</code></td>
+<td><code>frozenset[str]</code></td>
+<td><code>∅</code></td>
+<td><code>@computed_field</code> names that are real columns on the search relation, so results can be filtered/sorted by the derived value (mirror of <a href="../document/#spec"><code>DocumentSpec.materialized</code></a>; relational in-place only, <strong>not</strong> startup-validated)</td>
+</tr>
+<tr>
+<td><code>read_conformity</code></td>
+<td><code>"strict" \| "lenient"</code></td>
+<td><code>"strict"</code></td>
+<td><code>"lenient"</code> auto-derives <code>lenient_read_fields</code> (every statically-defaulted, non-identity, non-indexed, non-<code>materialized</code> field); explicit fields added on top</td>
+</tr>
+<tr>
+<td><code>lenient_read_fields</code></td>
+<td><code>frozenset[str]</code></td>
+<td><code>∅</code></td>
+<td>returned read-model fields with <strong>no</strong> backing column: dropped from the result projection, hydrated from their default, and excluded from sort keys (mirror of <a href="../document/#lenient-read-fields"><code>DocumentSpec.lenient_read_fields</code></a>; must <strong>not</strong> be an indexed <code>fields</code> member)</td>
+</tr>
+<tr>
 <td><code>snapshot</code></td>
 <td><code>SearchResultSnapshotSpec \| None</code></td>
 <td><code>None</code></td>
@@ -5560,6 +5578,12 @@ result-set snapshots.</p>
 </tr>
 </tbody>
 </table>
+<p><code>HubSearchSpec</code> carries the same <code>read_conformity</code> / <code>lenient_read_fields</code> / <code>materialized</code>
+over its hub-row model (a hub has no index <code>fields</code> of its own). <code>FederatedSearchSpec</code>
+inherits these from each member spec.</p>
+<p><code>materialized</code> is for <strong>filtering and sorting</strong> search results by a derived value — the
+column must already exist (typically written by the document side over the same table).
+Returning a computed field needs no <code>materialized</code>: it recomputes from the row on decode.</p>
 <h2 id="query-port">Query port<a class="headerlink" href="#query-port" title="Permanent link">&para;</a></h2>
 <p>Same <code>search</code> / <code>project_search</code> / <code>select_search</code> flavors and <code>_page</code> / <code>_cursor</code>
 containers as the <a href="../document/">document query port</a>. The query text is the first
