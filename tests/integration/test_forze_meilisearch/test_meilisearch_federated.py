@@ -187,3 +187,87 @@ async def test_federated_with_filters_and_cursor(meilisearch_client) -> None:
 
     with pytest.raises(CoreException, match="search_cursor is not implemented"):
         await fed.search_cursor("match", cursor={"limit": 1})
+
+
+def _fed_ctx(meilisearch_client, *, merge: str, a_uid: str, b_uid: str):
+    return context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                FederatedSearchQueryDepKey: ConfigurableMeilisearchFederatedSearch(
+                    config=MeilisearchFederatedSearchConfig(
+                        merge=merge,  # type: ignore[arg-type]
+                        members={
+                            "a": MeilisearchSearchConfig(index_uid=a_uid),
+                            "b": MeilisearchSearchConfig(index_uid=b_uid),
+                        },
+                    ),
+                ),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
+                    config=MeilisearchSearchConfig(index_uid="unused"),
+                ),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=MeilisearchSearchConfig(index_uid="unused"),
+                ),
+            }
+        )
+    )
+
+
+async def _seed_fed(ctx, *, a_uid: str, b_uid: str) -> None:
+    for member, uid in (("a", a_uid), ("b", b_uid)):
+        cmd = ConfigurableMeilisearchSearchCommand(
+            config=MeilisearchSearchConfig(index_uid=uid),
+        )(ctx, _mem(member))
+        mgmt = ConfigurableMeilisearchSearchManagement(
+            config=MeilisearchSearchConfig(index_uid=uid),
+        )(ctx, _mem(member))
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
+        await cmd.upsert([Hit(id="1", label=f"{member} shared book")])
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_federated_rrf_highlights(meilisearch_client) -> None:
+    spec = FederatedSearchSpec(name="fed_hl", members=(_mem("a"), _mem("b")))
+    ctx = _fed_ctx(meilisearch_client, merge="rrf", a_uid="fed_hl_a", b_uid="fed_hl_b")
+    await _seed_fed(ctx, a_uid="fed_hl_a", b_uid="fed_hl_b")
+
+    page = await ctx.search.federated(spec).search_page(
+        "book", options={"highlight": {"fields": ["label"]}}
+    )
+
+    assert page.highlights is not None
+    assert len(page.highlights) == len(page.hits)
+    fragments = [hl["label"][0] for hl in page.highlights if "label" in hl]
+    assert fragments
+    assert all("<em>" in frag.lower() and "book" in frag.lower() for frag in fragments)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_federated_native_highlights_fail_closed(meilisearch_client) -> None:
+    spec = FederatedSearchSpec(name="fed_hl_native", members=(_mem("a"), _mem("b")))
+    ctx = _fed_ctx(
+        meilisearch_client, merge="federation", a_uid="fed_hln_a", b_uid="fed_hln_b"
+    )
+    await _seed_fed(ctx, a_uid="fed_hln_a", b_uid="fed_hln_b")
+
+    with pytest.raises(CoreException, match="native federation"):
+        await ctx.search.federated(spec).search_page(
+            "book", options={"highlight": True}
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_federated_facets_fail_closed(meilisearch_client) -> None:
+    spec = FederatedSearchSpec(name="fed_facet", members=(_mem("a"), _mem("b")))
+    ctx = _fed_ctx(meilisearch_client, merge="rrf", a_uid="fed_fc_a", b_uid="fed_fc_b")
+    await _seed_fed(ctx, a_uid="fed_fc_a", b_uid="fed_fc_b")
+
+    with pytest.raises(CoreException, match="does not support facets"):
+        await ctx.search.federated(spec).search_page(
+            "book", options={"facets": ["label"]}
+        )

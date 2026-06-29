@@ -502,6 +502,34 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     """Field-encryption policy for hub-row fields (see :class:`FieldEncryption`), decrypted
     out of hub search results. Mirror of the hub read model's ``DocumentSpec.encryption``."""
 
+    facetable_fields: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=frozenset,
+    )
+    """Hub-row field names that may be **faceted** when a caller passes
+    :attr:`~.types.SearchOptions.facets` (see RFC 0006). A hub facet distribution is computed
+    over the merged hub rows (homogeneous model), so it is a flat :class:`FacetResults` like
+    single-index. Each must be a real, non-lenient, non-encrypted hub-row field. Empty = opt-out."""
+
+    highlightable_fields: frozenset[str] | None = attrs.field(default=None)
+    """Hub-row field names that may be **highlighted** (see RFC 0006). ``None`` = the union of
+    all member legs' searchable :attr:`SearchSpec.fields`. Each named field must be searchable
+    on at least one member leg and not field-encrypted. (Highlighting a merged hub row is
+    backend-dependent — see the adapter docs.)"""
+
+    # ....................... #
+
+    @property
+    def _member_searchable_fields(self) -> frozenset[str]:
+        """Union of every member leg's searchable ``fields`` (the hub's highlightable base)."""
+
+        fields: frozenset[str] = frozenset()
+
+        for member in self.members:
+            fields = fields | frozenset(member.fields)
+
+        return fields
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -532,6 +560,16 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
             encryption=self.encryption,
             default_sort=self.default_sort,
             lenient_read_fields=self.resolved_lenient_read_fields,
+        )
+
+        _validate_search_facetable_highlightable(
+            spec_name=self.name,
+            model_type=self.model_type,
+            fields=tuple(self._member_searchable_fields),
+            facetable_fields=self.facetable_fields,
+            highlightable_fields=self.highlightable_fields,
+            lenient_read_fields=self.resolved_lenient_read_fields,
+            encryption=self.encryption,
         )
 
         names = [member.name for member in self.members]
@@ -580,6 +618,19 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
             return self.read_codec
 
         return model_codec_for(self.model_type, materialized=self.materialized)
+
+    # ....................... #
+
+    @property
+    def resolved_highlightable_fields(self) -> frozenset[str]:
+        """Effective highlightable hub-row fields: the explicit
+        :attr:`highlightable_fields`, or — when ``None`` — the union of all member legs'
+        searchable :attr:`SearchSpec.fields`."""
+
+        if self.highlightable_fields is None:
+            return self._member_searchable_fields
+
+        return self.highlightable_fields
 
 
 # ....................... #

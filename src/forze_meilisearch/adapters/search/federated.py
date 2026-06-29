@@ -40,8 +40,13 @@ from forze.application.contracts.search import (
     effective_phrase_combine,
     normalize_search_queries,
     prepare_federated_search_options,
+    reject_federated_facets,
 )
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    build_federated_highlight_index,
+    federated_highlights_for_hits,
+)
 from forze.base.exceptions import exc
 from forze.base.serialization import default_model_codec
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
@@ -226,6 +231,8 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 "Field projection is not supported for federated Meilisearch search.",
             )
 
+        reject_federated_facets(options)
+
         if self.merge == "federation":
             return await self._search_federation(
                 query,
@@ -264,6 +271,13 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None,
     ) -> Any:
         from meilisearch_python_sdk.models.search import FederationOptions, SearchParams
+
+        if (options or {}).get("highlight"):
+            raise exc.precondition(
+                "Highlighting is not available for Meilisearch native federation "
+                "(it has no per-hit _formatted); use merge='rrf' to get highlights.",
+                code="query_feature_unsupported",
+            )
 
         leg_opts, member_weights = prepare_federated_search_options(
             self.federated_spec,
@@ -475,7 +489,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             name: str,
             port: MeilisearchSimpleSearchAdapter[M],
             weight: float,
-        ) -> tuple[str, list[M], float]:
+        ) -> tuple[str, Any, float]:
             page = await port.search(
                 query,
                 filters,
@@ -483,14 +497,17 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 None,
                 options=leg_opts,
             )
-            return name, page.hits, weight
+            return name, page, weight
 
         leg_results = await asyncio.gather(
             *(_run_leg(n, p, w) for n, p, w in active),
         )
 
+        hl_index = build_federated_highlight_index(
+            [(name, page) for name, page, _w in leg_results]
+        )
         merged = SearchResultSnapshot.weighted_rrf_merge_rows(
-            leg_rows=leg_results,
+            leg_rows=[(name, page.hits, w) for name, page, w in leg_results],
             k=int(self.rrf_k),
         )
 
@@ -521,6 +538,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             rs_spec=rs_spec,
             fp_computed=fp_computed,
             merged_for_snap=merged,
+            highlights=federated_highlights_for_hits(window_models, hl_index),
         )
 
     # ....................... #
@@ -539,6 +557,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         merged_for_snap: list[
             tuple[FederatedSearchReadModel[M], float] | tuple[Any, float]
         ],
+        highlights: list[Any] | None = None,
     ) -> Any:
         handle_out: SearchSnapshotHandle | None = None
 
@@ -564,6 +583,11 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 pool_len_before_cap=total or len(merged_for_snap),
             )
 
+        def _attach(result: Any) -> Any:
+            if highlights is None:
+                return result
+            return attrs.evolve(result, highlights=highlights)
+
         if return_type is not None:
             rows = [
                 {"hit": h.hit.model_dump(mode="json"), "member": h.member} for h in hits
@@ -571,26 +595,26 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             v = default_model_codec(return_type).decode_mapping_many(rows)
 
             if return_count:
-                return page_from_limit_offset(
-                    v,
-                    pagination,
-                    total=total,
-                    snapshot=handle_out,
+                return _attach(
+                    page_from_limit_offset(
+                        v, pagination, total=total, snapshot=handle_out
+                    )
                 )
 
-            return page_from_limit_offset(
-                v, pagination, total=None, snapshot=handle_out
+            return _attach(
+                page_from_limit_offset(v, pagination, total=None, snapshot=handle_out)
             )
 
         if return_count:
-            return page_from_limit_offset(
-                hits,
-                pagination,
-                total=total,
-                snapshot=handle_out,
+            return _attach(
+                page_from_limit_offset(
+                    hits, pagination, total=total, snapshot=handle_out
+                )
             )
 
-        return page_from_limit_offset(hits, pagination, total=None, snapshot=handle_out)
+        return _attach(
+            page_from_limit_offset(hits, pagination, total=None, snapshot=handle_out)
+        )
 
     # ....................... #
 

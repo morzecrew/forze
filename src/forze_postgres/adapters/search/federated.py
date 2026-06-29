@@ -27,8 +27,13 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchResultSnapshotSpec,
     prepare_federated_search_options,
+    reject_federated_facets,
 )
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    build_federated_highlight_index,
+    federated_highlights_for_hits,
+)
 from forze.base.exceptions import exc
 from forze.base.serialization import default_model_codec
 
@@ -214,6 +219,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 code="query_feature_unsupported",
             )
 
+        reject_federated_facets(options)
+
         leg_opts, member_weights = prepare_federated_search_options(
             self.federated_spec,
             options,
@@ -278,7 +285,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             name: str,
             port: SearchQueryPort[M],
             weight: float,
-        ) -> tuple[str, list[M], float]:
+        ) -> tuple[str, Any, float]:
             page = await port.search(
                 query,
                 filters,
@@ -286,7 +293,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 None,
                 options=leg_opts,
             )
-            return name, page.hits, weight
+            return name, page, weight
 
         if self.postgres_client is not None:
             leg_results = await gather_db_work(
@@ -299,8 +306,11 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 *(_run_leg(n, p, w) for n, p, w in active),
             )
 
+        hl_index = build_federated_highlight_index(
+            [(name, page) for name, page, _w in leg_results]
+        )
         merged = SearchResultSnapshot.weighted_rrf_merge_rows(
-            leg_rows=leg_results,
+            leg_rows=[(name, page.hits, w) for name, page, w in leg_results],
             k=int(self.rrf_k),
         )
 
@@ -348,6 +358,22 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         if limit is not None:
             window = window[: int(limit)]
 
+        # Per-hit highlights from the originating leg, aligned with the windowed hits.
+        highlights = federated_highlights_for_hits(
+            [it[0] for it in window], hl_index
+        )
+
+        def _finish(hits: list[Any]) -> Any:
+            result = page_from_limit_offset(
+                hits,
+                pagination,
+                total=total if return_count else None,
+                snapshot=handle_out,
+            )
+            if highlights is None:
+                return result
+            return attrs.evolve(result, highlights=highlights)
+
         if return_type is not None:
             rows = [
                 {
@@ -363,37 +389,9 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 return_type=return_type,
                 trust_source=False,
             )
-            if return_count:
-                return page_from_limit_offset(
-                    v,
-                    pagination,
-                    total=total,
-                    snapshot=handle_out,
-                )
+            return _finish(v)
 
-            return page_from_limit_offset(
-                v,
-                pagination,
-                total=None,
-                snapshot=handle_out,
-            )
-
-        out = [it[0] for it in window]
-
-        if return_count:
-            return page_from_limit_offset(
-                out,
-                pagination,
-                total=total,
-                snapshot=handle_out,
-            )
-
-        return page_from_limit_offset(
-            out,
-            pagination,
-            total=None,
-            snapshot=handle_out,
-        )
+        return _finish([it[0] for it in window])
 
     # ....................... #
 

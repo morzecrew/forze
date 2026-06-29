@@ -13,8 +13,12 @@ from typing import Any
 
 from forze.base.exceptions import exc
 
-from .specs import SearchSpec
+from .specs import HubSearchSpec, SearchSpec
 from .types import SearchOptions
+
+# A facet/highlight request resolves against a single-index or hub spec; both expose
+# ``facetable_fields`` and ``resolved_highlightable_fields``.
+FacetableSpec = SearchSpec[Any] | HubSearchSpec[Any]
 
 # ----------------------- #
 
@@ -31,7 +35,7 @@ DEFAULT_HIGHLIGHT_POST_TAG = "</em>"
 
 
 def resolve_facet_fields(
-    spec: SearchSpec[Any], options: SearchOptions | None
+    spec: FacetableSpec, options: SearchOptions | None
 ) -> tuple[str, ...]:
     """The requested facet fields, fail-closed against ``spec.facetable_fields``.
 
@@ -66,7 +70,7 @@ def facet_size_of(options: SearchOptions | None) -> int:
 
 
 def resolve_highlight(
-    spec: SearchSpec[Any], options: SearchOptions | None
+    spec: FacetableSpec, options: SearchOptions | None
 ) -> tuple[tuple[str, ...], str, str] | None:
     """Resolve a highlight request to ``(fields, pre_tag, post_tag)`` or ``None``.
 
@@ -82,7 +86,7 @@ def resolve_highlight(
         return None
 
     allowed = spec.resolved_highlightable_fields
-    default_fields = tuple(f for f in spec.fields if f in allowed)
+    default_fields = tuple(sorted(allowed))
 
     if highlight is True:
         return default_fields, DEFAULT_HIGHLIGHT_PRE_TAG, DEFAULT_HIGHLIGHT_POST_TAG
@@ -108,7 +112,7 @@ def resolve_highlight(
 
 
 def reject_unsupported_highlight(
-    spec: SearchSpec[Any], options: SearchOptions | None, *, backend: str
+    spec: FacetableSpec, options: SearchOptions | None, *, backend: str
 ) -> None:
     """Fail closed when *backend* does not yet implement highlighting but one was requested.
 
@@ -121,5 +125,39 @@ def reject_unsupported_highlight(
         raise exc.precondition(
             f"Highlighting is not yet supported on the {backend} search backend "
             f"(spec {spec.name!r}).",
+            code="query_feature_unsupported",
+        )
+
+
+# ....................... #
+
+
+def reject_unsupported_facets(
+    options: SearchOptions | None, *, backend: str
+) -> None:
+    """Fail closed when *backend* does not yet implement faceting but one was requested."""
+
+    if (options or {}).get("facets"):
+        raise exc.precondition(
+            f"Faceting is not yet supported on the {backend} search backend.",
+            code="query_feature_unsupported",
+        )
+
+
+# ....................... #
+
+
+def reject_federated_facets(options: SearchOptions | None) -> None:
+    """Fail closed on a facet request to a federated surface (heterogeneous legs).
+
+    Federated facets are deferred — they need a per-member (`Mapping[member, FacetResults]`)
+    response shape distinct from the flat single-index/hub `FacetResults`. Until that ships,
+    a facet request is refused rather than silently dropped; facet each member index directly.
+    """
+
+    if (options or {}).get("facets"):
+        raise exc.precondition(
+            "Federated search does not support facets yet (per-member facets are planned); "
+            "request facets against an individual member index instead.",
             code="query_feature_unsupported",
         )

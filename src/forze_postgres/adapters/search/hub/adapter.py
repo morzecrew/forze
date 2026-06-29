@@ -23,6 +23,8 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
+    reject_unsupported_facets,
+    reject_unsupported_highlight,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -103,6 +105,12 @@ class PostgresHubSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        # Postgres hub search merges heterogeneous leg engines into one combined SQL, so a
+        # single facet companion query and a single highlight engine over the merged row are
+        # ill-defined; fail closed rather than silently drop (mock hub is the reference shape).
+        reject_unsupported_facets(options, backend="Postgres hub")
+        reject_unsupported_highlight(self.hub_spec, options, backend="Postgres hub")
+
         plan = await build_hub_search_plan(
             cast(HubSearchHost[Any], self),
             query=query,
