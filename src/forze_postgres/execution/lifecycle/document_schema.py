@@ -51,6 +51,7 @@ def postgres_document_schema_spec_for_binding(
             name=name,
             read_model=spec.read,
             read_relation=read_rel,
+            read_omit_fields=spec.resolved_lenient_read_fields,
             tenant_aware=tenant_aware,
             materialized=spec.materialized,
         )
@@ -83,6 +84,8 @@ def postgres_document_schema_spec_for_binding(
         name=name,
         read_model=spec.read,
         read_relation=read_rel,
+        read_omit_fields=spec.resolved_lenient_read_fields,
+        write_omit_fields=spec.write_omit_fields,
         tenant_aware=tenant_aware,
         write_domain_model=w["domain"],
         write_create_model=w["create_cmd"],

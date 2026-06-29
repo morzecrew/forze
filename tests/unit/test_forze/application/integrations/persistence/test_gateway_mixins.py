@@ -62,6 +62,29 @@ def test_model_codec_gateway_read_fields_cached() -> None:
     assert gw.read_fields is gw.read_fields
 
 
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _LenientCodecGateway(ModelCodecGatewayMixin[_Model]):
+    model_type: type[_Model]
+    codec: ModelCodec[_Model, Any]
+    lenient_read_fields: frozenset[str] = frozenset()
+
+
+def test_model_codec_gateway_lenient_defaults_strict() -> None:
+    # A gateway that does not set lenient_read_fields inherits the empty default.
+    gw = _CodecGateway(model_type=_Model, codec=default_model_codec(_Model))
+    assert gw.lenient_read_fields == frozenset()
+
+
+def test_model_codec_gateway_read_fields_excludes_lenient() -> None:
+    gw = _LenientCodecGateway(
+        model_type=_Model,
+        codec=default_model_codec(_Model),
+        lenient_read_fields=frozenset({"name"}),
+    )
+    # ``name`` is not stored, so it is neither a projected nor trusted read field.
+    assert gw.read_fields == frozenset({"id"})
+
+
 def test_filter_parser_compile_filters_none() -> None:
     gw = _FilterGateway(filter_limits=None)
     assert gw.compile_filters(None) is None

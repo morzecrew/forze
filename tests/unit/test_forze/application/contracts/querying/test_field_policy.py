@@ -238,3 +238,26 @@ class TestValidateRuntimeFilterFields:
             )
         assert ei.value.kind is ExceptionKind.PRECONDITION
         assert ei.value.code == "field_not_on_read_model"
+
+    def test_lenient_field_is_rejected(self) -> None:
+        from pydantic import BaseModel
+
+        from forze.application.contracts.querying import validate_runtime_filter_fields
+
+        class _Doc(BaseModel):
+            id: str
+            name: str
+            nickname: str = "anon"
+
+        # ``nickname`` is a real model field but declared lenient (not stored), so a
+        # filter on it must be rejected before reaching the backend.
+        with pytest.raises(CoreException, match="not on the read model") as ei:
+            validate_runtime_filter_fields(
+                {"$values": {"nickname": "x"}},
+                model=_Doc,
+                lenient=frozenset({"nickname"}),
+            )
+        assert ei.value.code == "field_not_on_read_model"
+
+        # without the lenient marker the same filter passes (field is on the model)
+        validate_runtime_filter_fields({"$values": {"nickname": "x"}}, model=_Doc)

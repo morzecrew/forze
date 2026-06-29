@@ -62,6 +62,16 @@ class MongoGateway[M: BaseModel](
     codec: ModelCodec[M, Any] = attrs.field(kw_only=True, eq=False, repr=False)
     """Row decode/encode codec (inject via ``read_gw`` or ``default_model_codec``)."""
 
+    lenient_read_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Read-model fields not stored on this collection; excluded from the read-field
+    bounds (see ``DocumentSpec.lenient_read_fields``). Decode hydrates them from the
+    model default."""
+
+    write_omit_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Domain fields not stored on this collection; stripped from every write payload
+    (see ``DocumentSpec.write_omit_fields``). A write gateway also sets these as
+    :attr:`lenient_read_fields` so read-back hydrates them from the default."""
+
     relation: RelationSpec
     """Static ``(database, collection)`` or tenant-scoped resolver."""
 
@@ -298,6 +308,7 @@ class MongoGateway[M: BaseModel](
             model=self.model_type,
             backend="mongo",
             materialized=self.read_codec.materialized,
+            lenient=self.lenient_read_fields,
         )
         resolved = resolve_sort_keys(sorts)
 
@@ -339,6 +350,7 @@ class MongoGateway[M: BaseModel](
             model=self.model_type,
             backend="mongo",
             materialized=self.read_codec.materialized,
+            lenient=self.lenient_read_fields,
         )
         resolved = resolve_sort_keys(sorts)
 
@@ -395,7 +407,7 @@ class MongoGateway[M: BaseModel](
         *,
         create: bool = False,
     ) -> JsonDict:
-        out = dict(payload)
+        out = {k: v for k, v in payload.items() if k not in self.write_omit_fields}
 
         if create:
             out = self._add_tenant_id(out)
@@ -410,7 +422,8 @@ class MongoGateway[M: BaseModel](
         *,
         create: bool = False,
     ) -> Sequence[JsonDict]:
-        out = list(map(dict, payloads))
+        omit = self.write_omit_fields
+        out = [{k: v for k, v in p.items() if k not in omit} for p in payloads]
 
         if create:
             out = [self._add_tenant_id(payload) for payload in out]

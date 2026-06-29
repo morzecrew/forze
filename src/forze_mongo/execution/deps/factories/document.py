@@ -122,6 +122,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             codec=codecs.read,
             read_validation=self.config.read_validation,
             computed_null_ordering=self.config.computed_null_ordering,
+            lenient_read_fields=spec.resolved_lenient_read_fields,
         )
 
         after_commit: AfterCommitPort | None = None
@@ -196,6 +197,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             codec=codecs.read,
             read_validation=config.read_validation,
             computed_null_ordering=config.computed_null_ordering,
+            lenient_read_fields=spec.resolved_lenient_read_fields,
         )
 
         write_relation = config.write
@@ -220,6 +222,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             history_relation=history_relation,
             history_enabled=spec.history_enabled,
             tenant_aware=tenant_aware,
+            write_omit_fields=spec.write_omit_fields,
         )
 
         after_commit: AfterCommitPort | None = None

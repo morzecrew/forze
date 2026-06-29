@@ -122,6 +122,7 @@ class ConfigurableFirestoreReadOnlyDocument(DocumentQueryDepPort[R]):
             tenant_aware=self.config.tenant_aware,
             codec=codecs.read,
             read_validation=self.config.read_validation,
+            lenient_read_fields=spec.resolved_lenient_read_fields,
         )
 
         after_commit: AfterCommitPort | None = None
@@ -195,6 +196,7 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
             tenant_aware=tenant_aware,
             codec=codecs.read,
             read_validation=config.read_validation,
+            lenient_read_fields=spec.resolved_lenient_read_fields,
         )
 
         history_relation = config.history
@@ -217,6 +219,7 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
             history_relation=history_relation,
             history_enabled=spec.history_enabled,
             tenant_aware=tenant_aware,
+            write_omit_fields=spec.write_omit_fields,
         )
 
         after_commit: AfterCommitPort | None = None

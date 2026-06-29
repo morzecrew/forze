@@ -3,7 +3,7 @@
 import pytest
 
 from forze.base.exceptions import CoreException
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from forze.application.contracts.search import (
     FederatedSearchSpec,
@@ -69,6 +69,172 @@ class TestSearchSpec:
             )
 
 
+class _LenientSearchModel(BaseModel):
+    id: str = ""
+    title: str
+    author: str  # required, not indexed
+    summary: str = ""  # returned, not indexed; eligible for leniency
+
+
+class TestSearchLenientReadFields:
+    """Lenient read fields on a SearchSpec (storage conformity)."""
+
+    def test_lenient_field_round_trips(self) -> None:
+        spec = SearchSpec(
+            name="docs",
+            model_type=_LenientSearchModel,
+            fields=["title"],
+            lenient_read_fields={"summary"},
+        )
+        assert spec.lenient_read_fields == frozenset({"summary"})
+
+    def test_indexed_field_cannot_be_lenient(self) -> None:
+        # An indexed (searchable) field needs a real column.
+        with pytest.raises(CoreException, match="indexed .* and cannot be lenient"):
+            SearchSpec(
+                name="docs",
+                model_type=_LenientSearchModel,
+                fields=["title", "summary"],
+                lenient_read_fields={"summary"},
+            )
+
+    def test_required_field_cannot_be_lenient(self) -> None:
+        with pytest.raises(CoreException, match="has no default"):
+            SearchSpec(
+                name="docs",
+                model_type=_LenientSearchModel,
+                fields=["title"],
+                lenient_read_fields={"author"},
+            )
+
+    def test_identity_field_cannot_be_lenient(self) -> None:
+        with pytest.raises(CoreException, match="identity/audit fields"):
+            SearchSpec(
+                name="docs",
+                model_type=_LenientSearchModel,
+                fields=["title"],
+                lenient_read_fields={"id"},
+            )
+
+    def test_lenient_field_rejected_as_default_sort(self) -> None:
+        # A lenient field has no column, so it cannot be a sort key.
+        with pytest.raises(CoreException, match="[Ss]ort field"):
+            SearchSpec(
+                name="docs",
+                model_type=_LenientSearchModel,
+                fields=["title"],
+                lenient_read_fields={"summary"},
+                default_sort={"summary": "asc"},
+            )
+
+    def test_read_conformity_defaults_to_strict(self) -> None:
+        spec = SearchSpec(
+            name="docs", model_type=_LenientSearchModel, fields=["title"]
+        )
+        assert spec.read_conformity == "strict"
+        assert spec.resolved_lenient_read_fields == frozenset()
+
+    def test_read_conformity_lenient_auto_derives(self) -> None:
+        spec = SearchSpec(
+            name="docs",
+            model_type=_LenientSearchModel,
+            fields=["title"],
+            read_conformity="lenient",
+        )
+        resolved = spec.resolved_lenient_read_fields
+        # ``summary``/``id`` are defaulted and not indexed → derived; identity ``id``
+        # is excluded; required ``author`` and indexed ``title`` are not derived.
+        assert "summary" in resolved
+        assert "id" not in resolved
+        assert "author" not in resolved
+        assert "title" not in resolved
+
+    def test_read_conformity_lenient_excludes_indexed_fields(self) -> None:
+        # An indexed field is never auto-derived (it needs a real column).
+        spec = SearchSpec(
+            name="docs",
+            model_type=_LenientSearchModel,
+            fields=["title", "summary"],
+            read_conformity="lenient",
+        )
+        assert "summary" not in spec.resolved_lenient_read_fields
+
+
+class _MaterializedSearchModel(BaseModel):
+    id: str = ""
+    qty: int
+    unit_price: float
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total(self) -> float:
+        return self.qty * self.unit_price
+
+
+class TestSearchMaterialized:
+    """Materialized computed fields on a SearchSpec."""
+
+    def test_materialized_persisted_in_read_codec(self) -> None:
+        spec = SearchSpec(
+            name="orders",
+            model_type=_MaterializedSearchModel,
+            fields=["id"],
+            materialized={"total"},
+        )
+        assert spec.materialized == frozenset({"total"})
+        # The derived value becomes a projected/queryable column.
+        assert "total" in spec.resolved_read_codec.persisted_field_names()
+
+    def test_materialized_allows_default_sort_on_derived_field(self) -> None:
+        spec = SearchSpec(
+            name="orders",
+            model_type=_MaterializedSearchModel,
+            fields=["id"],
+            materialized={"total"},
+            default_sort={"total": "desc"},
+        )
+        assert spec.default_sort == {"total": "desc"}
+
+    def test_materialized_non_computed_field_rejected(self) -> None:
+        with pytest.raises(CoreException, match="not ``@computed_field``"):
+            SearchSpec(
+                name="orders",
+                model_type=_MaterializedSearchModel,
+                fields=["id"],
+                materialized={"qty"},
+            )
+
+    def test_materialized_unknown_field_rejected(self) -> None:
+        with pytest.raises(CoreException, match="not ``@computed_field``"):
+            SearchSpec(
+                name="orders",
+                model_type=_MaterializedSearchModel,
+                fields=["id"],
+                materialized={"ghost"},
+            )
+
+    def test_materialized_and_lenient_overlap_rejected(self) -> None:
+        with pytest.raises(CoreException, match="both"):
+            SearchSpec(
+                name="orders",
+                model_type=_MaterializedSearchModel,
+                fields=["id"],
+                materialized={"total"},
+                lenient_read_fields={"total"},
+            )
+
+    def test_materialized_excluded_from_lenient_auto_derive(self) -> None:
+        # A materialized field is stored, so read_conformity="lenient" must not derive it.
+        spec = SearchSpec(
+            name="orders",
+            model_type=_MaterializedSearchModel,
+            fields=["id"],
+            materialized={"total"},
+            read_conformity="lenient",
+        )
+        assert "total" not in spec.resolved_lenient_read_fields
+
+
 class TestSearchQueryDepKey:
     """Tests for SearchQueryDepKey."""
 
@@ -107,6 +273,45 @@ class TestHubSearchSpec:
                 name="h",
                 model_type=_MinimalSearchModel,
                 members=(a, b),
+            )
+
+    def test_hub_lenient_read_fields_round_trip(self) -> None:
+        leg = SearchSpec(
+            name="leg", model_type=_LenientSearchModel, fields=["title"]
+        )
+        hub = HubSearchSpec(
+            name="h",
+            model_type=_LenientSearchModel,
+            members=(leg,),
+            lenient_read_fields={"summary"},
+        )
+        assert hub.resolved_lenient_read_fields == frozenset({"summary"})
+
+    def test_hub_read_conformity_lenient_auto_derives(self) -> None:
+        leg = SearchSpec(
+            name="leg", model_type=_LenientSearchModel, fields=["title"]
+        )
+        hub = HubSearchSpec(
+            name="h",
+            model_type=_LenientSearchModel,
+            members=(leg,),
+            read_conformity="lenient",
+        )
+        resolved = hub.resolved_lenient_read_fields
+        assert "summary" in resolved
+        assert "id" not in resolved  # identity excluded
+        assert "author" not in resolved  # required excluded
+
+    def test_hub_identity_field_cannot_be_lenient(self) -> None:
+        leg = SearchSpec(
+            name="leg", model_type=_LenientSearchModel, fields=["title"]
+        )
+        with pytest.raises(CoreException, match="identity/audit fields"):
+            HubSearchSpec(
+                name="h",
+                model_type=_LenientSearchModel,
+                members=(leg,),
+                lenient_read_fields={"id"},
             )
 
 

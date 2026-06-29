@@ -36,6 +36,14 @@ ReadValidation = Literal["strict", "trusted"]
 class ModelCodecGatewayMixin(Generic[M]):
     """Codec selection, row decoding, and stored field names for gateways."""
 
+    lenient_read_fields: frozenset[str] = frozenset()
+    """Read-model fields not stored on the relation (absent-with-default).
+
+    Excluded from :attr:`read_fields`, so they are neither projected on read nor
+    trusted on decode (they hydrate from their model default instead). Backends
+    that support storage leniency set this at gateway construction; defaults empty
+    (strict)."""
+
     if TYPE_CHECKING:
         model_type: type[M]
         codec: ModelCodec[M, Any]
@@ -131,9 +139,11 @@ class ModelCodecGatewayMixin(Generic[M]):
 
         This is the set of keys a stored row may carry, so it bounds the
         ``trust_source`` decode and any persisted-field checks.
+        :attr:`lenient_read_fields` are excluded — they are not stored, so they are
+        not projected and not trusted on decode.
         """
 
-        return self.read_codec.persisted_field_names()
+        return self.read_codec.persisted_field_names() - self.lenient_read_fields
 
 
 # ....................... #
@@ -487,6 +497,7 @@ class FilterParserMixin(Generic[M]):
             filters,
             model=self.model_type,
             materialized=codec.materialized if codec else frozenset(),
+            lenient=getattr(self, "lenient_read_fields", frozenset()),
         )
 
         expr = self.filter_parser.parse_filter(filters)

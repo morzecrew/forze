@@ -30,6 +30,7 @@ def read_gw(
     tenant_aware: bool,
     codec: ModelCodec[Any, Any] | None = None,
     read_validation: Literal["strict", "trusted"] = "strict",
+    lenient_read_fields: frozenset[str] = frozenset(),
 ) -> FirestoreReadGateway[Any]:
     client = ctx.deps.provide(FirestoreClientDepKey)
 
@@ -43,6 +44,7 @@ def read_gw(
         tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
         read_validation=read_validation,
+        lenient_read_fields=lenient_read_fields,
     )
 
 
@@ -79,6 +81,7 @@ def doc_write_gw(
     history_relation: RelationSpec | None = None,
     history_enabled: bool = False,
     tenant_aware: bool,
+    write_omit_fields: frozenset[str] = frozenset(),
 ) -> FirestoreWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history.
 
@@ -116,6 +119,7 @@ def doc_write_gw(
         read_relation=write_relation,
         tenant_aware=tenant_aware,
         codec=domain_codec,
+        lenient_read_fields=write_omit_fields,
     )
     hist = None
 
@@ -140,6 +144,8 @@ def doc_write_gw(
         client=client,
         model_type=write_types["domain"],
         codec=domain_codec,
+        lenient_read_fields=write_omit_fields,
+        write_omit_fields=write_omit_fields,
         create_cmd_type=write_types["create_cmd"],
         update_cmd_type=write_types.get("update_cmd"),
         read_gw=read,

@@ -350,6 +350,7 @@ def validate_runtime_sort_fields(
     model: type[BaseModel],
     backend: str,
     materialized: frozenset[str] = frozenset(),
+    lenient: frozenset[str] = frozenset(),
 ) -> None:
     """Raise when a runtime sort references a field absent from the read *model*.
 
@@ -358,13 +359,22 @@ def validate_runtime_sort_fields(
     them the same fail-loud, path-aware validation Postgres gets from SQL.
 
     *materialized* names computed fields persisted for this spec, so they are
-    sortable despite living in ``model_computed_fields``.
+    sortable despite living in ``model_computed_fields``. *lenient* names fields
+    declared on the model but **not** stored (see ``DocumentSpec.lenient_read_fields``);
+    they have no column/key and are rejected before reaching the backend.
     """
 
     if not sorts:
         return
 
     for field in sorts:
+        if field.split(".", 1)[0] in lenient:
+            raise exc.precondition(
+                f"Sort field {field!r} is a lenient (non-stored) field on the "
+                f"{backend} read model ({model.__name__}); it cannot be sorted on.",
+                code="field_not_on_read_model",
+            )
+
         if not field_path_resolves(model, field, materialized=materialized):
             raise exc.precondition(
                 f"Sort field {field!r} is not on the {backend} read model "

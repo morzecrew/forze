@@ -110,6 +110,7 @@ def validate_runtime_filter_fields(
     *,
     model: type[BaseModel],
     materialized: frozenset[str] = frozenset(),
+    lenient: frozenset[str] = frozenset(),
 ) -> None:
     """Raise when a runtime filter references a top-level field absent from *model*.
 
@@ -120,13 +121,16 @@ def validate_runtime_filter_fields(
     predicates are relative to the array element and are not validated here.
 
     *materialized* names computed fields that are persisted for this spec, so they
-    are filterable despite living in ``model_computed_fields``.
+    are filterable despite living in ``model_computed_fields``. *lenient* names
+    fields that are declared on the model but **not** stored (see
+    ``DocumentSpec.lenient_read_fields``); they have no column/key and are rejected
+    before reaching the backend.
     """
 
     if filters is None:
         return
 
-    fields = frozenset(model.model_fields) | materialized
+    fields = (frozenset(model.model_fields) | materialized) - lenient
     unknown = sorted(
         root for root in collect_filter_field_roots(filters) if root not in fields
     )

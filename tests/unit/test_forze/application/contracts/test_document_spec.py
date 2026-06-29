@@ -1,7 +1,10 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
+from datetime import datetime
+
 import pytest
-from pydantic import BaseModel, computed_field
+import structlog
+from pydantic import BaseModel, Field, computed_field
 
 from forze.application.contracts.document import (
     DocumentSpec,
@@ -10,6 +13,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.querying import QueryFieldPolicy
 from forze.base.exceptions import CoreException
+from forze.base.primitives import utcnow
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 
@@ -247,6 +251,20 @@ def test_materialized_on_non_pydantic_model_rejected_cleanly() -> None:
         DocumentSpec(name="doc", read=_PlainRead, materialized={"a"})  # type: ignore[type-var]
 
 
+def test_validate_materialized_non_class_rejected_cleanly() -> None:
+    # A non-class value (e.g. an instance) must surface as a configuration error,
+    # not a raw TypeError from issubclass(...).
+    from forze.application.contracts.materialized import validate_materialized_computed
+
+    with pytest.raises(CoreException, match="is not a class"):
+        validate_materialized_computed(
+            object(),  # type: ignore[arg-type]
+            frozenset({"a"}),
+            spec_name="doc",
+            label="read",
+        )
+
+
 def test_sensitive_defaults_to_false() -> None:
     spec = DocumentSpec(name="doc", read=_Read)
 
@@ -257,6 +275,202 @@ def test_sensitive_flag_round_trips() -> None:
     spec = DocumentSpec(name="doc", read=_Read, sensitive=True)
 
     assert spec.sensitive is True
+
+
+# ----------------------- #
+# Lenient read fields (storage conformity)
+
+
+class _LenientRead(ReadDocument):
+    name: str
+    nickname: str = "anon"  # lenient-eligible: defaulted, non-identity
+    bio: str | None = None  # lenient-eligible: optional with default
+    refreshed_at: datetime = Field(default_factory=utcnow)  # default_factory
+
+
+def test_lenient_field_dropped_from_query_axes() -> None:
+    spec = DocumentSpec(
+        name="users",
+        read=_LenientRead,
+        lenient_read_fields={"nickname", "bio"},
+    )
+
+    for axis in (
+        spec.filterable_fields(),
+        spec.sortable_fields(),
+        spec.aggregatable_fields(),
+    ):
+        assert "nickname" not in axis
+        assert "bio" not in axis
+        # Stored fields stay queryable.
+        assert "name" in axis
+        assert "id" in axis
+
+
+def test_lenient_required_field_rejected() -> None:
+    # ``name`` has no default — absent from storage it cannot be constructed.
+    with pytest.raises(CoreException, match="has no default"):
+        DocumentSpec(name="users", read=_LenientRead, lenient_read_fields={"name"})
+
+
+def test_lenient_identity_field_rejected() -> None:
+    with pytest.raises(CoreException, match="identity/audit fields"):
+        DocumentSpec(name="users", read=_LenientRead, lenient_read_fields={"id"})
+
+    with pytest.raises(CoreException, match="identity/audit fields"):
+        DocumentSpec(
+            name="users", read=_LenientRead, lenient_read_fields={"last_update_at"}
+        )
+
+
+def test_lenient_unknown_field_rejected() -> None:
+    with pytest.raises(CoreException, match="not non-computed fields"):
+        DocumentSpec(name="users", read=_LenientRead, lenient_read_fields={"ghost"})
+
+
+def test_lenient_materialized_overlap_rejected() -> None:
+    with pytest.raises(CoreException, match="cannot be both materialized"):
+        DocumentSpec(
+            name="orders",
+            read=_PricedRead,
+            write=_priced_write(),
+            materialized={"total"},
+            lenient_read_fields={"total"},
+        )
+
+
+def test_lenient_default_factory_warns() -> None:
+    with structlog.testing.capture_logs() as logs:
+        DocumentSpec(
+            name="users",
+            read=_LenientRead,
+            lenient_read_fields={"refreshed_at"},
+        )
+
+    assert any(
+        e["log_level"] == "warning" and "default_factory" in e["event"] for e in logs
+    )
+
+
+def test_lenient_field_rejected_in_query_policy() -> None:
+    # A lenient field has no column, so it cannot appear in a governed allow-set.
+    with pytest.raises(CoreException, match="not on the read model"):
+        DocumentSpec(
+            name="users",
+            read=_LenientRead,
+            lenient_read_fields={"nickname"},
+            query_policy=QueryFieldPolicy(filterable={"nickname"}),
+        )
+
+
+def test_read_conformity_defaults_to_strict() -> None:
+    spec = DocumentSpec(name="users", read=_LenientRead)
+
+    assert spec.read_conformity == "strict"
+    assert spec.resolved_lenient_read_fields == frozenset()
+
+
+def test_read_conformity_lenient_auto_derives_defaulted_fields() -> None:
+    spec = DocumentSpec(name="users", read=_LenientRead, read_conformity="lenient")
+
+    resolved = spec.resolved_lenient_read_fields
+    # Statically-defaulted, non-identity fields are derived...
+    assert {"nickname", "bio"} <= resolved
+    # ...required, identity, and default_factory fields are not.
+    assert "name" not in resolved
+    assert "refreshed_at" not in resolved  # default_factory is excluded
+    assert resolved.isdisjoint({"id", "rev", "created_at", "last_update_at"})
+    # Derived fields are excluded from the query axes.
+    assert spec.filterable_fields().isdisjoint(resolved)
+    assert "name" in spec.filterable_fields()
+
+
+def test_read_conformity_lenient_excludes_materialized() -> None:
+    # A materialized field is stored, so it is never auto-derived as lenient.
+    spec = DocumentSpec(
+        name="orders",
+        read=_PricedRead,
+        write=_priced_write(),
+        materialized={"total"},
+        read_conformity="lenient",
+    )
+
+    assert "total" not in spec.resolved_lenient_read_fields
+
+
+def test_read_conformity_lenient_includes_explicit_fields() -> None:
+    spec = DocumentSpec(
+        name="users",
+        read=_LenientRead,
+        read_conformity="lenient",
+        lenient_read_fields={"nickname"},
+    )
+
+    # Explicit field is present alongside the auto-derived set.
+    assert "nickname" in spec.resolved_lenient_read_fields
+    assert "bio" in spec.resolved_lenient_read_fields
+
+
+# ----------------------- #
+# Write-omit fields
+
+
+class _OmitDomain(Document):
+    name: str
+    label: str = "anon"  # defaulted domain field, not persisted
+
+
+def _omit_write() -> DocumentWriteTypes:
+    return DocumentWriteTypes(
+        domain=_OmitDomain,
+        create_cmd=_Create,
+        update_cmd=_PydanticUpdate,
+    )
+
+
+def test_write_omit_field_round_trips() -> None:
+    spec = DocumentSpec(
+        name="doc", read=_Read, write=_omit_write(), write_omit_fields={"label"}
+    )
+    assert spec.write_omit_fields == frozenset({"label"})
+
+
+def test_write_omit_requires_write_spec() -> None:
+    with pytest.raises(CoreException, match="requires a write spec"):
+        DocumentSpec(name="doc", read=_Read, write_omit_fields={"label"})
+
+
+def test_write_omit_required_domain_field_rejected() -> None:
+    # ``name`` has no default — it cannot hydrate on read-back.
+    with pytest.raises(CoreException, match="has no default"):
+        DocumentSpec(
+            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"name"}
+        )
+
+
+def test_write_omit_identity_field_rejected() -> None:
+    with pytest.raises(CoreException, match="identity/audit fields"):
+        DocumentSpec(
+            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"rev"}
+        )
+
+
+def test_write_omit_unknown_field_rejected() -> None:
+    with pytest.raises(CoreException, match="not non-computed fields"):
+        DocumentSpec(
+            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"ghost"}
+        )
+
+
+def test_write_omit_warns_silent_drop() -> None:
+    with structlog.testing.capture_logs() as logs:
+        DocumentSpec(
+            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"label"}
+        )
+
+    assert any(
+        e["log_level"] == "warning" and "silently dropped" in e["event"] for e in logs
+    )
 
 
 # ----------------------- #

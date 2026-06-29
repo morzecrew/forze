@@ -389,6 +389,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             filters,
             model=self.read_model,
             materialized=self.spec.materialized,
+            lenient=self.spec.resolved_lenient_read_fields,
         )
         expr = QueryFilterExpressionParser.parse(filters)
         validate_query_field_types(expr, self.read_model)
@@ -619,6 +620,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 model=self.read_model,
                 backend="mock",
                 materialized=self.spec.materialized,
+                lenient=self.spec.resolved_lenient_read_fields,
             )
             total = len(filtered)
             ordered_docs = _sort_docs(filtered, sorts)

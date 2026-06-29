@@ -38,6 +38,7 @@ def read_gw(
     read_validation: Literal["strict", "trusted"] = "strict",
     param_namespace: str = "forze",
     params_required: bool = False,
+    lenient_read_fields: frozenset[str] = frozenset(),
 ) -> PostgresReadGateway[Any]:
     """Build a read gateway for a relation and model.
 
@@ -47,6 +48,8 @@ def read_gw(
     :param tenant_aware: Whether the document is tenant-aware.
     :param param_namespace: Session-setting prefix for bound query parameters.
     :param params_required: Whether the spec declares a query-parameter contract.
+    :param lenient_read_fields: Read fields not stored on the relation (dropped from
+        the projection and hydrated from their model default).
     :returns: Postgres read gateway.
     """
 
@@ -67,6 +70,7 @@ def read_gw(
         read_validation=read_validation,
         param_namespace=param_namespace,
         params_required=params_required,
+        lenient_read_fields=lenient_read_fields,
     )
 
 
@@ -127,6 +131,7 @@ def doc_write_gw(
     tenant_aware: bool,
     nested_field_hints: Mapping[str, type[Any]] | None = None,
     conflict_target: tuple[str, ...] | None = None,
+    write_omit_fields: frozenset[str] = frozenset(),
 ) -> PostgresWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history.
 
@@ -175,6 +180,7 @@ def doc_write_gw(
         tenant_aware=tenant_aware,
         nested_field_hints=nested_field_hints,
         codec=domain_codec,
+        lenient_read_fields=write_omit_fields,
     )
     hist = None
 
@@ -201,6 +207,8 @@ def doc_write_gw(
         introspector=introspector,
         model_type=write_types["domain"],
         codec=domain_codec,
+        lenient_read_fields=write_omit_fields,
+        write_omit_fields=write_omit_fields,
         read_gw=read,
         create_cmd_type=write_types["create_cmd"],
         update_cmd_type=write_types.get("update_cmd"),

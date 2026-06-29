@@ -257,6 +257,26 @@ class TestValidateRuntimeSortFields:
         assert ei.value.kind is ExceptionKind.PRECONDITION
         assert ei.value.code == "field_not_on_read_model"
 
+    def test_lenient_field_rejected(self) -> None:
+        # ``name`` is a real model field but declared lenient (not stored), so a sort
+        # on it — flat or via a dotted root — must be rejected before the driver.
+        with pytest.raises(CoreException, match="lenient") as ei:
+            validate_runtime_sort_fields(
+                {"name": "asc"}, model=_Doc, backend="mongo", lenient=frozenset({"name"})
+            )
+        assert ei.value.code == "field_not_on_read_model"
+
+        with pytest.raises(CoreException, match="lenient"):
+            validate_runtime_sort_fields(
+                {"addr.city": "asc"},
+                model=_Doc,
+                backend="mongo",
+                lenient=frozenset({"addr"}),
+            )
+
+        # without the lenient marker the same sort passes
+        validate_runtime_sort_fields({"name": "asc"}, model=_Doc, backend="mongo")
+
 
 class TestSharedValidatorsNestedPaths:
     """The shared sort validators accept nested/dotted paths when given the model,

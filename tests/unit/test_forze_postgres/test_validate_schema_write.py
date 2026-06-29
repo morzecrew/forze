@@ -164,6 +164,55 @@ async def test_validate_materialized_field_passes_when_column_present() -> None:
     )
 
 
+class _ReadWithExtra(BaseModel):
+    id: str
+    name: str
+    nickname: str = "anon"  # declared in code, not (yet) a column
+
+
+@pytest.mark.asyncio
+async def test_validate_read_requires_undeclared_field_by_default() -> None:
+    # Strict (default): a read field with no column fails startup validation.
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(
+        return_value={"id": _col("id"), "name": _col("name")},  # no 'nickname'
+    )
+
+    with pytest.raises(CoreException, match="nickname"):
+        await validate_postgres_document_schemas(
+            intro,
+            [
+                PostgresDocumentSchemaSpec(
+                    name="doc",
+                    read_model=_ReadWithExtra,
+                    read_relation=("public", "t"),
+                ),
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_validate_read_tolerates_lenient_field_without_column() -> None:
+    # read_omit_fields (wired from DocumentSpec.lenient_read_fields): the missing
+    # column is tolerated and not type/nullability-checked.
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(
+        return_value={"id": _col("id"), "name": _col("name")},  # no 'nickname'
+    )
+
+    await validate_postgres_document_schemas(
+        intro,
+        [
+            PostgresDocumentSchemaSpec(
+                name="doc",
+                read_model=_ReadWithExtra,
+                read_relation=("public", "t"),
+                read_omit_fields=frozenset({"nickname"}),
+            ),
+        ],
+    )
+
+
 @pytest.mark.asyncio
 async def test_validate_tenant_aware_write_requires_tenant_column() -> None:
     intro = MagicMock(spec=PostgresIntrospector)

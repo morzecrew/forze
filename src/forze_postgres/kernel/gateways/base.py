@@ -108,21 +108,6 @@ class PostgresGateway[M: BaseModel](
     relation: RelationSpec
     """Static ``(schema, relation)`` or tenant-scoped resolver."""
 
-    _qname_cell: OnceCell[PostgresQualifiedName] = attrs.field(
-        factory=OnceCell,
-        init=False,
-        eq=False,
-        repr=False,
-    )
-
-    _return_clause_cache: dict[
-        tuple[type[BaseModel] | None, str | None], sql.Composable
-    ] = attrs.field(factory=dict, init=False, eq=False, repr=False, hash=False)
-    """Per-gateway memo of column-list composables for the non-projection cases
-    (default read fields / explicit ``return_type``), keyed by ``(return_type, alias)``.
-    Schema-independent (derived from read-model field names), so it is safe for the
-    gateway's lifetime. Explicit ``return_fields`` projections are not cached."""
-
     client: PostgresClientPort
     """Shared :class:`~forze_postgres.kernel.client.PostgresClientPort` instance."""
 
@@ -138,6 +123,15 @@ class PostgresGateway[M: BaseModel](
     nested_field_hints: Mapping[str, type[Any]] | None = attrs.field(default=None)
     """Optional per-path Python types when read-model annotations are ambiguous."""
 
+    lenient_read_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Read-model fields not stored on this relation; excluded from the read
+    projection and decode bounds (see ``DocumentSpec.lenient_read_fields``)."""
+
+    write_omit_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Domain fields not stored on this relation; stripped from every write payload
+    (see ``DocumentSpec.write_omit_fields``). A write gateway also sets these as
+    :attr:`lenient_read_fields` so the RETURNING/read-back projection skips them."""
+
     filter_table_alias: str | None = attrs.field(default=None)
     """SQL alias for the filtered relation (e.g. search projection ``v``)."""
 
@@ -149,10 +143,37 @@ class PostgresGateway[M: BaseModel](
     """
 
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)
+    """Optional filter DSL abuse limits."""
+
+    # ....................... #
+
+    _qname_cell: OnceCell[PostgresQualifiedName] = attrs.field(
+        factory=OnceCell,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+
+    _return_clause_cache: dict[
+        tuple[type[BaseModel] | None, str | None],
+        sql.Composable,
+    ] = attrs.field(
+        factory=dict,
+        init=False,
+        eq=False,
+        repr=False,
+        hash=False,
+    )
+    """Per-gateway memo of column-list composables for the non-projection cases
+    (default read fields / explicit ``return_type``), keyed by ``(return_type, alias)``.
+    Schema-independent (derived from read-model field names), so it is safe for the
+    gateway's lifetime. Explicit ``return_fields`` projections are not cached."""
+
     filter_parser: QueryFilterExpressionParser = attrs.field(
         default=attrs.Factory(lambda self: self.build_filter_parser(), takes_self=True),
         init=False,
     )
+    """Parser built from :attr:`filter_limits` during initialization."""
 
     # ....................... #
 
@@ -307,6 +328,13 @@ class PostgresGateway[M: BaseModel](
         parts: list[sql.Composable] = []
 
         for field, direction, nulls in resolve_sort_keys(sorts):
+            if field.split(".", 1)[0] in self.lenient_read_fields:
+                raise exc.precondition(
+                    f"Sort field {field!r} is a lenient (non-stored) read field; "
+                    "it has no column and cannot be sorted on.",
+                    code="field_not_on_read_model",
+                )
+
             key = sort_key_expr(
                 field=field,
                 column_types=types,
@@ -355,11 +383,16 @@ class PostgresGateway[M: BaseModel](
             return cached
 
         if return_type is not None:
-            use = list(
-                default_model_codec(return_type).stored_field_names(
+            # Drop lenient fields (no column) just like the default-read path below,
+            # so a return_type carrying one hydrates from its default instead of
+            # being rejected as an unknown projection field.
+            use = [
+                f
+                for f in default_model_codec(return_type).stored_field_names(
                     include_computed=False,
-                ),
-            )
+                )
+                if f not in self.lenient_read_fields
+            ]
 
         else:
             use = list(self.read_fields)
@@ -376,13 +409,7 @@ class PostgresGateway[M: BaseModel](
         use: list[str],
         table_alias: str | None,
     ) -> sql.Composable:
-        bad = [f for f in use if f not in self.read_fields]
-
-        # Projection fields come from the caller's request and are not validated
-        # upstream, so an unknown field is caller-fixable: reject it cleanly with the
-        # same precondition + code the filter/sort paths use for a field not on the
-        # read model, rather than failing deep in the renderer with a 500.
-        if bad:
+        if bad := [f for f in use if f not in self.read_fields]:
             raise exc.precondition(
                 f"Unknown projection field(s): {bad}.", code="field_not_on_read_model"
             )
@@ -405,6 +432,7 @@ class PostgresGateway[M: BaseModel](
     # ....................... #
 
     def adapt_value_for_write(self, v: Any, *, t: PostgresType | None) -> Any:
+        # sourcery skip: remove-redundant-if, remove-unreachable-code
         if t is None:
             return v
 
@@ -438,10 +466,11 @@ class PostgresGateway[M: BaseModel](
         create: bool = False,
     ) -> JsonDict:
         types = await self.column_types()
-        out: JsonDict = dict(payload)
-
-        for k, v in out.items():
-            out[k] = self.adapt_value_for_write(v, t=types.get(k))
+        out: JsonDict = {
+            k: self.adapt_value_for_write(v, t=types.get(k))
+            for k, v in payload.items()
+            if k not in self.write_omit_fields
+        }
 
         if create:
             out = self._add_tenant_id(out)
@@ -457,14 +486,18 @@ class PostgresGateway[M: BaseModel](
         create: bool = False,
     ) -> Sequence[JsonDict]:
         types = await self.column_types()
-        out = list(map(dict, payloads))
+        omit = self.write_omit_fields
+        out = [
+            {k: v for k, v in dict(payload).items() if k not in omit}
+            for payload in payloads
+        ]
 
         for payload in out:
             for k, v in payload.items():
                 payload[k] = self.adapt_value_for_write(v, t=types.get(k))
 
-            if create:
-                payload = self._add_tenant_id(payload)
+        if create:
+            out = [self._add_tenant_id(payload) for payload in out]
 
         return out
 
