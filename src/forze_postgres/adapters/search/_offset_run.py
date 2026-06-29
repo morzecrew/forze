@@ -42,6 +42,7 @@ from forze.application.integrations.search.offset_executor import (
     materialize_offset_page,
     offset_from_dict,
 )
+from forze.base.primitives import JsonDict
 from forze.base.serialization import materialize_mapping_rows
 from forze.domain.constants import ID_FIELD
 
@@ -323,6 +324,53 @@ async def execute_simple_ranked_offset_search(
 # ....................... #
 
 
+async def hydrate_hub_rows_by_id(
+    gw: PostgresGateway[Any],
+    *,
+    page_ids: list[Any],
+    return_type: type[BaseModel] | None,
+    return_fields: Sequence[str] | None,
+) -> list[JsonDict]:
+    """Phase B of hub late materialization: read full read-model rows for ``page_ids``.
+
+    Selects the requested columns from the hub relation for exactly the page's primary keys
+    and returns them reordered to match ``page_ids`` (the order the thin ranking pipeline
+    produced). When ``return_fields`` is given without the id column, the id is selected too
+    so rows can be reordered, then dropped downstream by the materializer.
+    """
+
+    if not page_ids:
+        return []
+
+    hyd_alias = "hyd"
+    cols = gw.return_clause(return_type, return_fields, table_alias=hyd_alias)
+    need_id_extra = return_fields is not None and ID_FIELD not in return_fields
+
+    if need_id_extra:
+        cols = sql.SQL("{}, {}.{} AS {}").format(
+            cols,
+            sql.Identifier(hyd_alias),
+            sql.Identifier(ID_FIELD),
+            sql.Identifier(ID_FIELD),
+        )
+
+    hub_qn = await gw._qname()  # pyright: ignore[reportPrivateUsage]
+    hyd_stmt = sql.SQL(
+        "SELECT {cols} FROM {rel} {ca} WHERE {ca}.{idf} = ANY({ph})"
+    ).format(
+        cols=cols,
+        rel=hub_qn.ident(),
+        ca=sql.Identifier(hyd_alias),
+        idf=sql.Identifier(ID_FIELD),
+        ph=sql.Placeholder(),
+    )
+
+    hyd_rows = await gw.client.fetch_all(hyd_stmt, [page_ids], row_factory="dict")
+    by_id = {row[ID_FIELD]: dict(row) for row in hyd_rows}
+
+    return [by_id[i] for i in page_ids if i in by_id]
+
+
 async def _hydrate_thin_hub_page(
     gw: PostgresGateway[M],
     *,
@@ -375,45 +423,12 @@ async def _hydrate_thin_hub_page(
     id_rows = await gw.client.fetch_all(id_stmt, id_params, row_factory="dict")
     page_ids = [row[ID_FIELD] for row in id_rows]
 
-    if not page_ids:
-        return await materialize_offset_page(
-            rows=[],
-            pagination_dict=pagination_dict,
-            return_count=return_count,
-            total=page_total,
-            return_type=return_type,
-            return_fields=return_fields,
-            model_type=model_type,
-            codec=codec,
-            trust_source=trust_source,
-        )
-
-    hyd_alias = "hyd"
-    cols = gw.return_clause(return_type, return_fields, table_alias=hyd_alias)
-    need_id_extra = return_fields is not None and ID_FIELD not in return_fields
-
-    if need_id_extra:
-        cols = sql.SQL("{}, {}.{} AS {}").format(
-            cols,
-            sql.Identifier(hyd_alias),
-            sql.Identifier(ID_FIELD),
-            sql.Identifier(ID_FIELD),
-        )
-
-    hub_qn = await gw._qname()  # pyright: ignore[reportPrivateUsage]
-    hyd_stmt = sql.SQL(
-        "SELECT {cols} FROM {rel} {ca} WHERE {ca}.{idf} = ANY({ph})"
-    ).format(
-        cols=cols,
-        rel=hub_qn.ident(),
-        ca=sql.Identifier(hyd_alias),
-        idf=sql.Identifier(ID_FIELD),
-        ph=sql.Placeholder(),
+    ordered = await hydrate_hub_rows_by_id(
+        gw,
+        page_ids=page_ids,
+        return_type=return_type,
+        return_fields=return_fields,
     )
-
-    hyd_rows = await gw.client.fetch_all(hyd_stmt, [page_ids], row_factory="dict")
-    by_id = {row[ID_FIELD]: dict(row) for row in hyd_rows}
-    ordered = [by_id[i] for i in page_ids if i in by_id]
 
     return await materialize_offset_page(
         rows=ordered,
@@ -531,46 +546,6 @@ async def execute_hub_ranked_offset_search(
                 total=0,
             )
 
-    if plan.thin:
-        # Late materialization: rank/paginate over the thin id pipeline, then hydrate the
-        # heavy read-model columns for only the returned page (avoids projecting every
-        # candidate row of an expensive hub relation). Snapshot-write requests never take
-        # this path (the plan is built non-thin when a snapshot is written).
-        return await _hydrate_thin_hub_page(
-            gw,
-            plan=plan,
-            pagination_dict=pagination_dict,
-            return_count=return_count,
-            total=total,
-            count_policy=count_policy,
-            return_type=return_type,
-            return_fields=return_fields,
-            model_type=model_type,
-            codec=hub_spec.resolved_read_codec,
-            trust_source=trust_source,
-            combo_alias=combo_alias,
-        )
-
-    cols = gw.return_clause(
-        return_type,
-        return_fields,
-        table_alias=plan.select_table_alias,
-    )
-
-    data_stmt = sql.SQL(
-        """
-            {with_clause}
-            SELECT {cols} FROM {combo} {ca}
-            ORDER BY {order}
-            """
-    ).format(
-        with_clause=plan.with_clause,
-        cols=cols,
-        combo=sql.Identifier(plan.data_relation),
-        ca=sql.Identifier(combo_alias),
-        order=plan.order_sql,
-    )
-
     read_codec = hub_spec.resolved_read_codec
     page_offset = offset_from_dict(pagination_dict)
 
@@ -583,24 +558,78 @@ async def execute_hub_ranked_offset_search(
     if want_sn and result_snapshot is not None and rs_spec is not None:
         # Stream the merged combo result window-by-window into the snapshot store so peak
         # memory is one chunk, never the whole (up to ``max_ids``) decoded pool at once.
+        # When thin, each window is ranked over the id-only pipeline and hydrated by id, so
+        # the heavy projection runs only for actually-stored windows (RFC 0008 P1.5).
         page_limit = SearchResultSnapshot.snapshot_pagination(
             True, 0, pagination_dict
         )[2]
         base_params = list(plan.params)
 
+        thin_id_stmt = sql.SQL(
+            """
+                {with_clause}
+                SELECT {ca}.{idf} AS {idf} FROM {combo} {ca}
+                ORDER BY {order}
+                """
+        ).format(
+            with_clause=plan.with_clause,
+            ca=sql.Identifier(combo_alias),
+            idf=sql.Identifier(ID_FIELD),
+            combo=sql.Identifier(plan.data_relation),
+            order=plan.order_sql,
+        )
+
+        heavy_data_stmt = sql.SQL(
+            """
+                {with_clause}
+                SELECT {cols} FROM {combo} {ca}
+                ORDER BY {order}
+                """
+        ).format(
+            with_clause=plan.with_clause,
+            cols=gw.return_clause(
+                return_type, return_fields, table_alias=plan.select_table_alias
+            ),
+            combo=sql.Identifier(plan.data_relation),
+            ca=sql.Identifier(combo_alias),
+            order=plan.order_sql,
+        )
+
+        drop_id = return_fields is not None and ID_FIELD not in return_fields
+
         async def fetch_window(
             window_offset: int, window_limit: int
         ) -> SnapshotWindow:
-            stmt = data_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
+            window_params = [*base_params, int(window_limit), int(window_offset)]
+
+            if not plan.thin:
+                stmt = heavy_data_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
+                    sql.Placeholder(), sql.Placeholder()
+                )
+                window_rows = await gw.client.fetch_all(
+                    stmt, window_params, row_factory="dict"
+                )
+                return SnapshotWindow(rows=[dict(row) for row in window_rows])
+
+            stmt = thin_id_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
                 sql.Placeholder(), sql.Placeholder()
             )
-            window_rows = await gw.client.fetch_all(
-                stmt,
-                [*base_params, int(window_limit), int(window_offset)],
-                row_factory="dict",
+            id_rows = await gw.client.fetch_all(
+                stmt, window_params, row_factory="dict"
+            )
+            window_ids = [row[ID_FIELD] for row in id_rows]
+            hydrated = await hydrate_hub_rows_by_id(
+                gw,
+                page_ids=window_ids,
+                return_type=return_type,
+                return_fields=return_fields,
             )
 
-            return SnapshotWindow(rows=[dict(row) for row in window_rows])
+            if drop_id:
+                for row in hydrated:
+                    row.pop(ID_FIELD, None)
+
+            return SnapshotWindow(rows=hydrated)
 
         stream = await build_snapshot_pool_streaming(
             result_snapshot=result_snapshot,
@@ -634,6 +663,44 @@ async def execute_hub_ranked_offset_search(
             ),
             snapshot=stream.handle,
         )
+
+    if plan.thin:
+        # Late materialization (non-snapshot): rank/paginate over the thin id pipeline, then
+        # hydrate the heavy read-model columns for only the returned page.
+        return await _hydrate_thin_hub_page(
+            gw,
+            plan=plan,
+            pagination_dict=pagination_dict,
+            return_count=return_count,
+            total=total,
+            count_policy=count_policy,
+            return_type=return_type,
+            return_fields=return_fields,
+            model_type=model_type,
+            codec=read_codec,
+            trust_source=trust_source,
+            combo_alias=combo_alias,
+        )
+
+    cols = gw.return_clause(
+        return_type,
+        return_fields,
+        table_alias=plan.select_table_alias,
+    )
+
+    data_stmt = sql.SQL(
+        """
+            {with_clause}
+            SELECT {cols} FROM {combo} {ca}
+            ORDER BY {order}
+            """
+    ).format(
+        with_clause=plan.with_clause,
+        cols=cols,
+        combo=sql.Identifier(plan.data_relation),
+        ca=sql.Identifier(combo_alias),
+        order=plan.order_sql,
+    )
 
     params = list(plan.params)
     user_limit = pagination_dict.get("limit")

@@ -141,16 +141,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
         combo_cap = plan.resolved_combo if plan.do_legs else None
 
         # Late materialization: project only key/sort columns through the WITH pipeline and
-        # hydrate the heavy read-model columns for the final page by id. Disabled when this
-        # request writes a result snapshot (that path streams the whole result window and
-        # needs the full projection) or when the shape can't be thinned safely.
-        rs_spec = self.hub_spec.snapshot
-        writes_snapshot = (
-            self.result_snapshot is not None
-            and rs_spec is not None
-            and SearchResultSnapshot.should_write_result_snapshot(snapshot, rs_spec)
-        )
-        thin = (not writes_snapshot) and self._hub_thin_projection(plan) is not None
+        # hydrate the heavy read-model columns for the page by id. Enabled whenever the shape
+        # can be thinned safely; snapshot-writing requests hydrate per streamed window
+        # (handled in the executor), so they no longer force the full projection.
+        thin = self._hub_thin_projection(plan) is not None
 
         # do_legs (_) is not used for some reason
         with_clause, params, _, count_relation, data_relation = (

@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence, TypeVar
+from typing import Any, Sequence, TypeVar, cast
 
 from psycopg import sql
 from pydantic import BaseModel
@@ -23,12 +23,17 @@ from forze.application.contracts.search import (
     SearchOptions,
     cursor_return_fields_for_select,
 )
-
-from .._cursor_run import parse_search_cursor
-from .._materialize_hits import decode_search_hits, search_trust_source
-from forze_postgres.kernel.sql import build_ranked_cursor_order_by_sql, build_seek_condition
+from forze.domain.constants import ID_FIELD
+from forze_postgres.kernel.sql import (
+    build_ranked_cursor_order_by_sql,
+    build_seek_condition,
+)
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
+from ....kernel.gateways import PostgresGateway
+from .._cursor_run import parse_search_cursor
+from .._materialize_hits import decode_search_hits, search_trust_source
+from .._offset_run import hydrate_hub_rows_by_id
 from .constants import COMBO_ALIAS, HUB_RANK
 from .parallel import HubParallelSearchMixin
 from .plan import build_hub_search_plan
@@ -96,11 +101,18 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
 
         combo_cap = plan.resolved_combo if plan.terms else None
 
+        # Late materialization (RFC 0008 P2): keyset-paginate over the thin id pipeline and
+        # hydrate the heavy read-model columns for the returned page by id. Cursor search
+        # never writes a result snapshot, so it is always eligible when the shape is thinnable.
+        thin_fields = self._hub_thin_projection(plan)
+        thin = thin_fields is not None
+
         with_clause, params, do_legs, _count_rel, data_relation = (
             await self._hub_build_with_clause_from_plan(
                 plan,
                 filters=filters,
                 combo_limit=combo_cap,
+                thin=thin,
             )
         )
 
@@ -165,17 +177,27 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         else:
             return_fields_sql = None
 
-        base_cols = self._hub_host.return_clause(
-            return_type,
-            return_fields_sql,
-            table_alias=COMBO_ALIAS,
-        )
-
         cols: sql.Composable
+
+        if (
+            thin
+            and thin_fields is not None  # pyright: ignore[reportUnnecessaryComparison]
+        ):
+            # Phase A selects only key/sort columns (+ rank); heavy columns are hydrated
+            # for the page after the keyset bounds are computed.
+            cols = sql.SQL(", ").join(
+                sql.Identifier(COMBO_ALIAS, f) for f in thin_fields
+            )
+        else:
+            cols = self._hub_host.return_clause(
+                return_type,
+                return_fields_sql,
+                table_alias=COMBO_ALIAS,
+            )
 
         if do_legs:
             cols = sql.SQL("{}, {}").format(
-                base_cols,
+                cols,
                 sql.SQL("{} AS {}").format(
                     sql.SQL("{}.{}").format(
                         sql.Identifier(COMBO_ALIAS),
@@ -184,9 +206,6 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                     sql.Identifier(HUB_RANK),
                 ),
             )
-
-        else:
-            cols = base_cols
 
         data_stmt = sql.SQL(
             """
@@ -226,8 +245,21 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
 
         trust = search_trust_source(self._hub_host.read_validation)
 
+        # Phase B: the keyset bounds (and next/prev cursors) were computed from the thin
+        # sort-key values above; hydrate the heavy read-model columns for the page only.
+        source_rows = rows
+
+        if thin:
+            page_ids = [r[ID_FIELD] for r in rows]
+            source_rows = await hydrate_hub_rows_by_id(
+                cast(PostgresGateway[Any], self._hub_host),
+                page_ids=page_ids,
+                return_type=return_type,
+                return_fields=return_fields,
+            )
+
         if return_fields is not None:
-            rj = [{k: r.get(k, None) for k in return_fields} for r in rows]
+            rj = [{k: r.get(k, None) for k in return_fields} for r in source_rows]
 
             return CursorPage(
                 hits=rj,
@@ -237,7 +269,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
             )
 
         hits = decode_search_hits(
-            rows=rows,
+            rows=source_rows,
             model_type=self._hub_host.model_type,
             codec=self._hub_host.hub_spec.resolved_read_codec,
             return_type=return_type,

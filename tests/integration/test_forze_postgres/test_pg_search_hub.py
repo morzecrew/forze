@@ -2467,3 +2467,23 @@ async def test_postgres_hub_search_thin_projection_defers_heavy_columns(
     assert all('"body"' not in q for q in ranked)
     # ... and `body` is hydrated by primary key for the page only.
     assert any('"body"' in q for q in hydration)
+
+    # Cursor pagination (RFC 0008 P2) defers the same way: keyset over the thin row,
+    # heavy columns hydrated by id.
+    captured.clear()
+    pg_client.fetch_all = _capturing_fetch_all  # type: ignore[method-assign]
+
+    try:
+        cpage = await adapter.search_cursor("alpha", cursor={"limit": 5})
+    finally:
+        pg_client.fetch_all = original_fetch_all  # type: ignore[method-assign]
+
+    assert {h.id for h in cpage.hits} == {h1}
+    assert cpage.hits[0].body == "secret heavy body"
+
+    cur_ranked = [q for q in captured if "_hub_rank" in q and "ANY(" not in q]
+    cur_hydration = [q for q in captured if "ANY(" in q]
+    assert cur_ranked, captured
+    assert cur_hydration, captured
+    assert all('"body"' not in q for q in cur_ranked)
+    assert any('"body"' in q for q in cur_hydration)
