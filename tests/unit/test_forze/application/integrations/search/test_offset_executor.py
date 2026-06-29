@@ -336,6 +336,50 @@ async def test_streaming_snapshot_caps_at_max_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_streaming_snapshot_reports_expires_at() -> None:
+    """The snapshot handle carries an absolute expiry, consistent across write and replay."""
+
+    from datetime import UTC, datetime
+
+    from forze.base.primitives import FrozenTimeSource, bind_time_source
+
+    instant = datetime(2026, 6, 29, 12, 0, 0, tzinfo=UTC)
+    ttl_seconds = 5 * 60  # SearchResultSnapshotSpec default ttl
+    expected = int(instant.timestamp()) + ttl_seconds
+
+    spec = SearchSpec(
+        name="t",
+        model_type=_Hit,
+        fields=["id", "label"],
+        snapshot=SearchResultSnapshotSpec(name="snap", enabled=True, chunk_size=2),
+    )
+    rows = _make_rows(3)
+    result_snapshot, _ = _snapshot_over_mock(chunk_size=2)
+
+    with bind_time_source(FrozenTimeSource(instant=instant)):
+        page = await _run_offset(
+            spec=spec,
+            hooks=_WindowedHooks(rows),
+            result_snapshot=result_snapshot,
+            pagination={"limit": 2, "offset": 0},
+        )
+        assert page.snapshot is not None
+        assert page.snapshot.expires_at == expected
+
+        replay = await _run_offset(
+            spec=spec,
+            hooks=_WindowedHooks(rows),
+            result_snapshot=result_snapshot,
+            pagination={"limit": 3, "offset": 0},
+            snapshot={"id": page.snapshot.id, "fingerprint": page.snapshot.fingerprint},
+        )
+
+    # Replay reports the same absolute expiry persisted at write time.
+    assert replay.snapshot is not None
+    assert replay.snapshot.expires_at == expected
+
+
+@pytest.mark.asyncio
 async def test_streaming_snapshot_deep_page_offset() -> None:
     """A page offset inside a later window still slices the correct hits."""
 

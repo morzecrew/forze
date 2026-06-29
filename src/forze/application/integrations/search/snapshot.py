@@ -40,7 +40,12 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import payload_aad
 from forze.base.crypto import unpack_envelope
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict, stable_payload_fingerprint, uuid4
+from forze.base.primitives import (
+    JsonDict,
+    stable_payload_fingerprint,
+    utcnow,
+    uuid4,
+)
 from forze.base.serialization import default_model_codec
 
 # ----------------------- #
@@ -717,7 +722,11 @@ class SearchResultSnapshot:
         fp_h = (sm and sm.fingerprint) or fp_computed
 
         handle = SearchSnapshotHandle(
-            id=run_id, fingerprint=fp_h, total=total_snap, capped=False
+            id=run_id,
+            fingerprint=fp_h,
+            total=total_snap,
+            capped=False,
+            expires_at=sm.expires_at if sm else None,
         )
 
         return _shape_snapshot_page(
@@ -747,13 +756,16 @@ class SearchResultSnapshot:
         from the in-memory RRF merge via :meth:`put_ordered_snapshot_keys`.
         """
 
+        ttl = self.effective_snapshot_ttl(snap_opt, rs_spec)
+
         return _OrderedHitSink(
             coordinator=self,
             run_id=str(uuid4()),
             fingerprint=fp_computed,
             chunk_size=self.effective_snapshot_chunk_size(snap_opt, rs_spec),
             max_ids=self.effective_snapshot_max_ids(snap_opt, rs_spec),
-            ttl=self.effective_snapshot_ttl(snap_opt, rs_spec),
+            ttl=ttl,
+            expires_at=int(utcnow().timestamp()) + int(ttl.total_seconds()),
         )
 
     # ....................... #
@@ -854,6 +866,8 @@ class _OrderedHitSink:
     chunk_size: int
     max_ids: int
     ttl: timedelta
+    expires_at: int
+    """Absolute UTC unix-second expiry, mirroring what the store persists in run meta."""
 
     # ....................... #
 
@@ -942,4 +956,5 @@ class _OrderedHitSink:
             fingerprint=self.fingerprint,
             total=self._stored,
             capped=self._capped or pool_len_before_cap > self._stored,
+            expires_at=self.expires_at,
         )

@@ -16,7 +16,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotPort,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, utcnow
 from forze_redis.kernel.scripts import APPEND_SNAPSHOT_CHUNK
 
 from .base import RedisBaseAdapter
@@ -41,6 +41,12 @@ def _ex_seconds(ttl: timedelta) -> int:
     if sec < 1:
         raise exc.internal("ttl must be at least one second for Redis key expiry.")
     return sec
+
+
+def _expires_at(ex_seconds: int) -> int:
+    """Absolute UTC unix-second expiry for a run, computed once at write time."""
+
+    return int(utcnow().timestamp()) + ex_seconds
 
 
 def _json_dumps_bytes(value: Any) -> bytes:
@@ -130,12 +136,15 @@ class RedisSearchResultSnapshotAdapter(
 
     @staticmethod
     def __as_meta_model(run_id: str, data: dict[str, Any]) -> SearchResultSnapshotMeta:
+        raw_expires = data.get("expires_at")
+
         return SearchResultSnapshotMeta(
             run_id=run_id,
             fingerprint=str(data.get("fingerprint", "")),
             total=int(data.get("total", data.get("total_ids", 0))),
             chunk_size=int(data.get("chunk_size", 0)),
             complete=bool(data.get("complete", False)),
+            expires_at=int(raw_expires) if raw_expires is not None else None,
         )
 
     # ....................... #
@@ -164,6 +173,7 @@ class RedisSearchResultSnapshotAdapter(
                 "num_chunks": 0,
                 "complete": True,
                 "ttl_seconds": ex,
+                "expires_at": _expires_at(ex),
             }
             await self.client.set(
                 self.__key_meta(run_id),
@@ -210,6 +220,7 @@ class RedisSearchResultSnapshotAdapter(
             "complete": False,
             "next_chunk_index": 0,
             "total_ids": 0,
+            "expires_at": _expires_at(ex),
         }
 
         await self.client.set(
@@ -262,6 +273,8 @@ class RedisSearchResultSnapshotAdapter(
         total_ids = int(meta.get("total_ids", 0)) + len(ids)
         next_idx = chunk_index + 1
 
+        expires_at = meta.get("expires_at")
+
         if is_last:
             new_meta = {
                 "fingerprint": meta["fingerprint"],
@@ -270,6 +283,7 @@ class RedisSearchResultSnapshotAdapter(
                 "total": total_ids,
                 "num_chunks": next_idx,
                 "complete": True,
+                "expires_at": expires_at,
             }
 
         else:
@@ -280,6 +294,7 @@ class RedisSearchResultSnapshotAdapter(
                 "complete": False,
                 "next_chunk_index": next_idx,
                 "total_ids": total_ids,
+                "expires_at": expires_at,
             }
 
         chunk_b = _json_dumps_bytes(list(ids))
@@ -372,12 +387,15 @@ class RedisSearchResultSnapshotAdapter(
         if meta.get("complete"):
             return self.__as_meta_model(run_id, meta)
 
+        raw_expires = meta.get("expires_at")
+
         return SearchResultSnapshotMeta(
             run_id=run_id,
             fingerprint=str(meta.get("fingerprint", "")),
             total=int(meta.get("total_ids", 0)),
             chunk_size=int(meta.get("chunk_size", 0)),
             complete=False,
+            expires_at=int(raw_expires) if raw_expires is not None else None,
         )
 
     # ....................... #

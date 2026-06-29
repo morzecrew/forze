@@ -27,6 +27,11 @@ class SearchSnapshotHandle:
     capped: bool = False
     """``True`` if the result set was truncated to ``max_ids`` when the snapshot was written."""
 
+    expires_at: int | None = None
+    """Unix timestamp (UTC seconds) when the snapshot expires and replay stops serving it, or
+    ``None`` when unknown (e.g. a run written before this was tracked). Lets a client tell how
+    long the snapshot id stays valid before the query must be re-run."""
+
 
 # ----------------------- #
 # Facets & highlights (optional search-result metadata; see RFC 0006). Defined

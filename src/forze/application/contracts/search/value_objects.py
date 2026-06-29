@@ -60,6 +60,10 @@ class SearchResultSnapshotMeta:
     complete: bool
     """True when all chunks and meta were written for this run."""
 
+    expires_at: int | None = None
+    """Unix timestamp (UTC seconds) when the run's store keys expire, or ``None`` for a run
+    written before this was tracked. Computed at write time as ``now + ttl``."""
+
 
 # ....................... #
 
