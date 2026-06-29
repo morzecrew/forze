@@ -27,8 +27,7 @@ from ..querying import (
     QuerySortExpression,
 )
 from .specs import DocumentSpec
-from .types import RowLockMode
-from .value_objects import KeyedCreate, KeyedUpdate, UpsertItem
+from .value_objects import KeyedCreate, KeyedUpdate, RowLockMode, UpsertItem
 
 # ----------------------- #
 

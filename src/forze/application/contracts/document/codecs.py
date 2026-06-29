@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from forze.domain.models import BaseDTO, Document, DocumentHistory
 
-from ..codecs import ModelCodec, default_model_codec, model_codec_for
+from forze.base.serialization import ModelCodec, default_model_codec, model_codec_for
 from .write_types import DocumentWriteTypes
 
 # ----------------------- #

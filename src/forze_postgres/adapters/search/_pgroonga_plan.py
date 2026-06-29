@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 from forze.application.contracts.querying import QueryExpr
-from forze.application.contracts.querying.internal import QueryAnd, QueryField
+from forze.application.contracts.querying import QueryAnd, QueryField
 from forze.application.contracts.resolution import is_static_relation
 from forze.application.contracts.search import PgroongaPlan, SearchOptions
 from forze.domain.constants import ID_FIELD

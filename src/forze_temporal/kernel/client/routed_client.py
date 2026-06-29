@@ -1,6 +1,6 @@
 """Temporal client that resolves a server address per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from typing import Any, Callable, Mapping, final
+from typing import Any, Callable, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -13,7 +13,6 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleTiming,
 )
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy import ensure_dsn_fingerprint
 from forze.application.contracts.tenancy.routed_client_base import DsnRoutedTenantClientBase
 from forze.base.exceptions import exc
 
@@ -62,16 +61,8 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
 
     # ....................... #
 
-    async def ensure_access_fingerprint(self, tenant_id: UUID) -> None:
-        await ensure_dsn_fingerprint(
-            self._pool.get_fingerprint,
-            self._pool.set_fingerprint,
-            tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend=self.dsn_backend,
-            extra_parts=[self.connection_config.namespace],
-        )
+    def access_fingerprint_extra_parts(self, tenant_id: UUID) -> Sequence[str]:
+        return [self.connection_config.namespace]
 
     # ....................... #
 

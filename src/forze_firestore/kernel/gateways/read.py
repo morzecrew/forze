@@ -13,9 +13,8 @@ import attrs
 from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel
 
-from forze.application.contracts.document.types import (
+from forze.application.contracts.document.value_objects import (
     RowLockMode,
-    log_non_postgres_lock_degrade,
     row_lock_requires_transaction,
 )
 from forze.application.contracts.querying import (
@@ -31,7 +30,10 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD
 
-from forze.application.integrations.persistence import ReadValidationCodecMixin
+from forze.application.integrations.persistence import (
+    ReadValidationCodecMixin,
+    log_non_postgres_lock_degrade,
+)
 
 from .base import FirestoreGateway
 

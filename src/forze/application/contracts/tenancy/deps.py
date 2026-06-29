@@ -3,7 +3,7 @@ from uuid import UUID
 from forze.base.exceptions import exc
 
 from ..deps import ConvenientDeps, DepKey, SimpleDepPort
-from .helpers import require_tenant_id
+from .tenant_hint import require_tenant_id
 from .ports import TenantManagementPort, TenantResolverPort
 from .value_objects import TenantIdentity
 

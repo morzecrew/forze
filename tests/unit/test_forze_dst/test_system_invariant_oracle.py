@@ -16,9 +16,9 @@ import pytest
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.invariants import (
-    Count,
+    CountAll,
     ReadSet,
-    Sum,
+    SumOf,
     SystemInvariant,
 )
 from forze.application.execution import ExecutionContext
@@ -62,7 +62,7 @@ ENTRIES = DocumentSpec(
 CONSERVATION = SystemInvariant(
     name="conservation",
     read_set=ReadSet(spec=ENTRIES, scope_keys=("group",)),
-    aggregate=Sum("amount"),
+    aggregate=SumOf("amount"),
     holds=lambda total: total == 0,
 )
 
@@ -71,7 +71,7 @@ CARDINALITY = SystemInvariant(
     read_set=ReadSet(
         spec=ENTRIES, scope_keys=("group",), where={"$values": {"status": "active"}}
     ),
-    aggregate=Count(),
+    aggregate=CountAll(),
     holds=lambda n: n <= 1,
 )
 
@@ -276,14 +276,14 @@ TAGGED = DocumentSpec(
 GLOBAL_CONSERVATION = SystemInvariant(
     name="global_conservation",
     read_set=ReadSet(spec=ENTRIES, scope_keys=()),  # no scope_keys → one whole-collection check
-    aggregate=Sum("amount"),
+    aggregate=SumOf("amount"),
     holds=lambda total: total == 0,
 )
 
 VALUE_SCOPED = SystemInvariant(
     name="value_scoped",
     read_set=ReadSet(spec=TAGGED, scope_keys=("value",)),  # scope key collides with the old alias
-    aggregate=Count(),
+    aggregate=CountAll(),
     holds=lambda n: n <= 1,
 )
 
@@ -358,7 +358,7 @@ class TestReviewDrivenCoverage:
         clash = SystemInvariant(
             name="conservation",  # same name as CONSERVATION
             read_set=ReadSet(spec=ENTRIES, scope_keys=("group",)),
-            aggregate=Count(),
+            aggregate=CountAll(),
             holds=lambda n: n >= 0,
         )
 

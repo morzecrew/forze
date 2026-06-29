@@ -16,9 +16,9 @@ import pytest
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.invariants import (
-    Count,
+    CountAll,
     ReadSet,
-    Sum,
+    SumOf,
     SystemInvariant,
 )
 from forze.application.execution import ExecutionContext
@@ -62,7 +62,7 @@ ROUTE = ENTRIES.name
 CONSERVATION = SystemInvariant(
     name="conservation",
     read_set=ReadSet(spec=ENTRIES, scope_keys=("group",)),
-    aggregate=Sum("amount"),
+    aggregate=SumOf("amount"),
     holds=lambda total: total == 0,
 )
 
@@ -71,7 +71,7 @@ CARDINALITY = SystemInvariant(
     read_set=ReadSet(
         spec=ENTRIES, scope_keys=("group",), where={"$values": {"status": "active"}}
     ),
-    aggregate=Count(),
+    aggregate=CountAll(),
     holds=lambda n: n <= 1,
 )
 
@@ -299,7 +299,7 @@ class TestPerCommitConservation:
         law = SystemInvariant(
             name="one_per_group",
             read_set=ReadSet(spec=ENTRIES, scope_keys=("group",)),
-            aggregate=Count(),
+            aggregate=CountAll(),
             holds=lambda n: n <= 1,
         )
         history = _history(
@@ -418,7 +418,7 @@ class TestPerCommitGuards:
                 scope_keys=("group",),
                 where={"$and": [{"$values": {"status": "active"}}]},
             ),
-            aggregate=Count(),
+            aggregate=CountAll(),
             holds=lambda n: n <= 1,
         )
 

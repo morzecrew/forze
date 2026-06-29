@@ -20,7 +20,7 @@ import attrs
 
 from forze.application.contracts.invariants import (
     AGGREGATE_FIELD,
-    Count,
+    CountAll,
     SystemInvariant,
     computed_aggregate,
     scope_filter,
@@ -42,7 +42,7 @@ class InvariantResult:
     """The invariant's name (for violation messages and oracle provenance)."""
 
     observed: float
-    """The aggregate value read over the read-set — a :class:`Sum`'s total or a :class:`Count`'s cardinality."""
+    """The aggregate value read over the read-set — a :class:`SumOf`'s total or a :class:`CountAll`'s cardinality."""
 
     held: bool
     """Whether :attr:`~forze.application.contracts.invariants.SystemInvariant.holds` accepted the aggregate."""
@@ -58,8 +58,8 @@ async def evaluate(
 ) -> InvariantResult:
     """Read the read-set's aggregate under *ctx* and check the predicate — a pure read, no enforcement.
 
-    Builds the scope filter from *params*, runs ``count`` (for :class:`Count`) or a no-group
-    ``$sum`` ``aggregate_many`` (for :class:`Sum`) over the scoped set, and applies
+    Builds the scope filter from *params*, runs ``count`` (for :class:`CountAll`) or a no-group
+    ``$sum`` ``aggregate_many`` (for :class:`SumOf`) over the scoped set, and applies
     ``invariant.holds`` to the aggregate as a ``float``. This is the kernel both :func:`enforce` and
     the DST oracle reuse, so it stays side-effect free (it only reads).
     """
@@ -69,9 +69,9 @@ async def evaluate(
     query = ctx.document.query(read_set.spec)
     aggregate = invariant.aggregate
 
-    if isinstance(aggregate, Count):
+    if isinstance(aggregate, CountAll):
         observed = float(await query.count(filters))
-    else:  # Sum — a no-group aggregate is the total over the scoped set (one row).
+    else:  # SumOf — a no-group aggregate is the total over the scoped set (one row).
         page = await query.aggregate_many(
             {"$computed": computed_aggregate(aggregate)}, filters=filters
         )

@@ -10,7 +10,7 @@ from forze.base.primitives.fingerprint import build_routing_fingerprint
 class HttpRoutingCredentials(BaseModel):
     """JSON shape stored in secrets for :class:`~forze_http.kernel.client.RoutedHttpClient`.
 
-    Use with :func:`~forze.application.contracts.secrets.resolve_structured_for_tenant`.
+    Use with :meth:`~forze.application.contracts.secrets.TenantSecretResolver.resolve_structured`.
     """
 
     base_url: str = Field(..., min_length=1)

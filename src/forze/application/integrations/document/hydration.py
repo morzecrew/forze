@@ -4,7 +4,7 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from forze.application.contracts.codecs import stored_field_names_for
+from forze.base.serialization import stored_field_names_for
 from forze.base.exceptions import exc
 
 # ----------------------- #

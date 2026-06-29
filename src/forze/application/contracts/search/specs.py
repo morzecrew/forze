@@ -13,12 +13,12 @@ from forze.base.serialization import (
 
 from ..base import BaseSpec
 from ..crypto import FieldEncryption
-from ..lenient_read import (
+from ..conformity import (
     ReadConformity,
     derive_lenient_read_fields,
     validate_lenient_read_fields,
+    validate_materialized_computed,
 )
-from ..materialized import validate_materialized_computed
 from ..querying import QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 

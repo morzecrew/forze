@@ -41,7 +41,7 @@ import attrs
 
 from forze.application.contracts.invariants import (
     AGGREGATE_FIELD,
-    Count,
+    CountAll,
     SystemInvariant,
     computed_aggregate,
 )
@@ -182,10 +182,10 @@ def _aggregate_by_scope(
 
     aggregate = law.aggregate
 
-    if isinstance(aggregate, Count):
+    if isinstance(aggregate, CountAll):
         return {scope: float(len(members)) for scope, members in groups.items()}
 
-    # Sum — the fold bypasses the backend's numeric validation, so guard non-numeric values with a
+    # SumOf — the fold bypasses the backend's numeric validation, so guard non-numeric values with a
     # clear configuration error rather than a bare TypeError mid-fold (a missing field is treated 0).
     field = aggregate.field
     totals: dict[tuple[Any, ...], float] = {}
@@ -201,7 +201,7 @@ def _aggregate_by_scope(
 
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise exc.configuration(
-                    f"per-commit oracle: read-set field {field!r} must be numeric to Sum, but an "
+                    f"per-commit oracle: read-set field {field!r} must be numeric to sum, but an "
                     f"entity in scope holds {type(value).__name__} {value!r}",
                     code="non_numeric_sum_field",
                 )

@@ -8,10 +8,10 @@ An [`@invariant`](../core-concepts/domain-layer.md#rules-live-with-the-data) kee
 
 ## A law over a read-set
 
-A system invariant is a predicate over an **aggregate of a scoped set of records**. You declare three things: the records it ranges over (a `ReadSet`), how to collapse them to one number (`Sum` or `Count`), and what that number must satisfy (`holds`):
+A system invariant is a predicate over an **aggregate of a scoped set of records**. You declare three things: the records it ranges over (a `ReadSet`), how to collapse them to one number (`SumOf` or `CountAll`), and what that number must satisfy (`holds`):
 
 ```python
-from forze.application.contracts.invariants import SystemInvariant, ReadSet, Count
+from forze.application.contracts.invariants import SystemInvariant, ReadSet, CountAll
 
 one_capture_per_order = SystemInvariant(
     name="single-capture-per-order",
@@ -20,12 +20,12 @@ one_capture_per_order = SystemInvariant(
         scope_keys=("order_id",),
         where={"$values": {"status": "captured"}},
     ),
-    aggregate=Count(),
+    aggregate=CountAll(),
     holds=lambda n: n <= 1,
 )
 ```
 
-The law holds **per distinct scope value** — once *per order* here, because `scope_keys=("order_id",)`. Empty `scope_keys` declares a *global* law (one check over the whole `where`-filtered collection); reuse `tenant_aware` in `where` for a per-tenant scope. `holds` is a pure function of the aggregate — a `Count`'s cardinality or a `Sum`'s total, as a `float` — and must be deterministic and side-effect-free, because the same predicate runs in production *and* inside the simulation.
+The law holds **per distinct scope value** — once *per order* here, because `scope_keys=("order_id",)`. Empty `scope_keys` declares a *global* law (one check over the whole `where`-filtered collection); reuse `tenant_aware` in `where` for a per-tenant scope. `holds` is a pure function of the aggregate — a `CountAll`'s cardinality or a `SumOf`'s total, as a `float` — and must be deterministic and side-effect-free, because the same predicate runs in production *and* inside the simulation.
 
 ## Enforce it: detective or preventive
 

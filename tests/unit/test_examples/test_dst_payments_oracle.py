@@ -11,7 +11,7 @@ would catch *any* double-charged order, not a hand-named one.
 
 from __future__ import annotations
 
-from forze.application.contracts.invariants import Count, ReadSet, SystemInvariant
+from forze.application.contracts.invariants import CountAll, ReadSet, SystemInvariant
 from forze_dst import Simulation, SimulationConfig, Strategy
 from forze_dst.invariants import compile_oracle
 from forze_mock import MockDepsModule
@@ -23,7 +23,7 @@ from examples.recipes.dst_payments.app import PAYMENT_SPEC, _EVENTS, registry
 SINGLE_PAYMENT_PER_ORDER = SystemInvariant(
     name="single_payment_per_order",
     read_set=ReadSet(spec=PAYMENT_SPEC, scope_keys=("order_id",)),
-    aggregate=Count(),
+    aggregate=CountAll(),
     holds=lambda n: n <= 1,
 )
 
