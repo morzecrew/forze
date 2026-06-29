@@ -23,6 +23,10 @@ from forze.application.integrations.search.encryption import (
     decrypt_search_rows,
     reject_encrypted_sort_fields,
 )
+from forze.application.integrations.search._snapshot_stream import (
+    SnapshotWindow,
+    build_snapshot_pool_streaming,
+)
 from forze.application.integrations.search.snapshot import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, materialize_mapping_rows
@@ -201,17 +205,88 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         and rs_spec is not None
         and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
     )
-    max_nw = (
-        result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
-        if want_snap and result_snapshot is not None
-        else 0
-    )
+    page_offset = offset_from_dict(pagination_dict)
+
+    if want_snap and result_snapshot is not None and rs_spec is not None:
+        # Snapshot write: stream the ordered pool window-by-window straight into the store so
+        # peak memory is one chunk, never the whole (up to ``max_ids``) decoded pool at once.
+        page_limit = SearchResultSnapshot.snapshot_pagination(
+            True, 0, pagination_dict
+        )[2]
+        read_codec = codec
+
+        async def fetch_window(
+            window_offset: int, window_limit: int
+        ) -> SnapshotWindow:
+            outcome = await hooks.fetch_rows(
+                OffsetFetchWindow(
+                    fetch_limit=window_limit,
+                    fetch_offset=window_offset,
+                    page_offset=page_offset,
+                    page_limit=page_limit,
+                ),
+                want_snap=True,
+            )
+
+            return SnapshotWindow(
+                rows=outcome.rows,
+                facets=outcome.facets,
+                highlights=outcome.highlights,
+                total=outcome.total,
+            )
+
+        async def prepare_window_rows(
+            raw_rows: list[JsonDict],
+        ) -> tuple[list[JsonDict], ModelCodec[Any, Any]]:
+            return await decrypt_search_rows(read_codec, raw_rows)
+
+        stream = await build_snapshot_pool_streaming(
+            result_snapshot=result_snapshot,
+            rs_spec=rs_spec,
+            snap_opt=snapshot,
+            fp_computed=fp_fingerprint,
+            codec=read_codec,
+            prepare_rows=prepare_window_rows,
+            fetch_window=fetch_window,
+            page_offset=page_offset,
+            page_limit=page_limit,
+            trust_source=trust_source,
+        )
+
+        if return_count and total is None:
+            total = stream.total
+
+        page = materialize_mapping_rows(
+            codec=stream.page_codec,
+            model_type=model_type,
+            page_rows=stream.page_rows,
+            pool=None,
+            u=page_offset,
+            page_limit=page_limit,
+            return_type=return_type,
+            return_fields=return_fields,
+            trust_source=trust_source,
+        )
+
+        snap_result: Any = page_from_limit_offset(
+            page,
+            pagination_dict,
+            total=total if emit_total else None,
+            snapshot=stream.handle,
+        )
+
+        if stream.facets is None and stream.page_highlights is None:
+            return snap_result
+
+        return attrs.evolve(
+            snap_result, facets=stream.facets, highlights=stream.page_highlights
+        )
+
     fetch_limit, fetch_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
-        want_snap,
-        max_nw,
+        False,
+        0,
         pagination_dict,
     )
-    page_offset = offset_from_dict(pagination_dict)
 
     window = OffsetFetchWindow(
         fetch_limit=fetch_limit,
@@ -220,7 +295,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         page_limit=page_limit,
     )
 
-    outcome = await hooks.fetch_rows(window, want_snap=want_snap)
+    outcome = await hooks.fetch_rows(window, want_snap=False)
     rows, codec = await decrypt_search_rows(codec, outcome.rows)
 
     if return_count and total is None and outcome.total is not None:
@@ -235,7 +310,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
 
     return await snapshot_materialize_and_paginate(
         rows=rows,
-        want_snap=want_snap,
+        want_snap=False,
         result_snapshot=result_snapshot,
         rs_spec=rs_spec,
         snapshot=snapshot,
