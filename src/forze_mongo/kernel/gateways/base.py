@@ -308,6 +308,7 @@ class MongoGateway[M: BaseModel](
             model=self.model_type,
             backend="mongo",
             materialized=self.read_codec.materialized,
+            lenient=self.lenient_read_fields,
         )
         resolved = resolve_sort_keys(sorts)
 
@@ -349,6 +350,7 @@ class MongoGateway[M: BaseModel](
             model=self.model_type,
             backend="mongo",
             materialized=self.read_codec.materialized,
+            lenient=self.lenient_read_fields,
         )
         resolved = resolve_sort_keys(sorts)
 

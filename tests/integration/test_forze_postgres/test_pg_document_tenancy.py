@@ -176,6 +176,48 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
         assert (await adapter.count({})) == 1
 
 @pytest.mark.asyncio
+async def test_bulk_create_stamps_tenant_id_on_every_row(
+    pg_client: PostgresClient,
+) -> None:
+    # Bulk create must stamp tenant_id on every inserted row (the NOT NULL tenant
+    # column would otherwise reject the insert, or rows would escape tenant scope).
+    table = f"tenant_docs_bulk_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            tenant_id uuid NOT NULL,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL
+        );
+        """
+    )
+
+    execution_context = _tenant_table_context(pg_client, table)
+    tenant = uuid4()
+    spec = _spec()
+
+    with execution_context.inv_ctx.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant),
+    ):
+        adapter = execution_context.document.command(spec)
+        created = await adapter.create_many(
+            [TenantCreateDoc(name="alpha"), TenantCreateDoc(name="beta")]
+        )
+
+    assert len(created) == 2
+    rows = await pg_client.fetch_all(
+        f"SELECT tenant_id FROM {table}", [], row_factory="dict"
+    )
+    assert len(rows) == 2
+    assert all(row["tenant_id"] == tenant for row in rows)
+
+
+@pytest.mark.asyncio
 async def test_kill_respects_tenant_scope(pg_client: PostgresClient) -> None:
     table = f"tenant_docs_kill_{uuid4().hex[:12]}"
     await pg_client.execute(

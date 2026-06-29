@@ -269,6 +269,7 @@ class FirestoreGateway[M: BaseModel](
             model=self.model_type,
             backend="firestore",
             materialized=self.read_codec.materialized,
+            lenient=self.lenient_read_fields,
         )
         resolved = resolve_sort_keys(sorts)
         assert_default_null_ordering(resolved, backend="firestore")

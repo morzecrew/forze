@@ -497,6 +497,7 @@ class FilterParserMixin(Generic[M]):
             filters,
             model=self.model_type,
             materialized=codec.materialized if codec else frozenset(),
+            lenient=getattr(self, "lenient_read_fields", frozenset()),
         )
 
         expr = self.filter_parser.parse_filter(filters)

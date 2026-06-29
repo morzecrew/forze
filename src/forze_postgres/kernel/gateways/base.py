@@ -328,6 +328,13 @@ class PostgresGateway[M: BaseModel](
         parts: list[sql.Composable] = []
 
         for field, direction, nulls in resolve_sort_keys(sorts):
+            if field.split(".", 1)[0] in self.lenient_read_fields:
+                raise exc.precondition(
+                    f"Sort field {field!r} is a lenient (non-stored) read field; "
+                    "it has no column and cannot be sorted on.",
+                    code="field_not_on_read_model",
+                )
+
             key = sort_key_expr(
                 field=field,
                 column_types=types,
@@ -484,8 +491,8 @@ class PostgresGateway[M: BaseModel](
             for k, v in payload.items():
                 payload[k] = self.adapt_value_for_write(v, t=types.get(k))
 
-            if create:
-                payload = self._add_tenant_id(payload)
+        if create:
+            out = [self._add_tenant_id(payload) for payload in out]
 
         return out
 

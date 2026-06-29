@@ -106,3 +106,30 @@ async def test_strict_read_of_missing_column_fails(
 
     with pytest.raises(CoreException):
         await read.get(row_id)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_lenient_field_filter_and_sort_rejected_before_sql(
+    pg_client: PostgresClient,
+) -> None:
+    # A filter or sort on a lenient field is rejected as a clean precondition rather
+    # than rendering ORDER BY / WHERE against a column that does not exist.
+    table, _ = await _make_table_with_row(pg_client)
+    ctx = _ctx(pg_client)
+
+    read = read_gw(
+        ctx,
+        read_type=_LenientReadDoc,
+        read_relation=("public", table),
+        tenant_aware=False,
+        lenient_read_fields=frozenset({"nickname"}),
+    )
+
+    with pytest.raises(CoreException) as ei_filter:
+        await read.find_many({"$values": {"nickname": "anon"}})
+    assert ei_filter.value.code == "field_not_on_read_model"
+
+    with pytest.raises(CoreException) as ei_sort:
+        await read.find_many(None, sorts={"nickname": "asc"})
+    assert ei_sort.value.code == "field_not_on_read_model"
