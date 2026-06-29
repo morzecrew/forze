@@ -18,6 +18,7 @@ from ..lenient_read import (
     derive_lenient_read_fields,
     validate_lenient_read_fields,
 )
+from ..materialized import validate_materialized_computed
 from ..querying import QueryFieldPolicy, QuerySortExpression
 from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
@@ -294,50 +295,20 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
-    def _require_computed_capable(self, model: type, label: str) -> None:
-        """Reject materialized fields on a model that cannot carry ``@computed_field``.
-
-        Computed fields are a Pydantic concept; a non-Pydantic model (record models
-        must be ``BaseModel`` subclasses) has none, so declaring materialized fields
-        on it is a clean configuration error rather than a raw ``AttributeError``.
-        """
-
-        if not issubclass(model, BaseModel):
-            raise exc.configuration(
-                f"Materialized fields require a Pydantic model with ``@computed_field``; "
-                f"the {label} model {model.__name__} (spec {self.name!r}) is not one.",
-            )
-
-    # ....................... #
-
     def _validate_materialized(self) -> None:
         """Validate materialized fields exist as computed fields and never collide with commands."""
 
-        self._require_computed_capable(self.read, "read")
-
-        if missing_read := self.materialized - frozenset(
-            self.read.model_computed_fields
-        ):
-            raise exc.configuration(
-                f"Materialized field(s) {sorted(missing_read)} are not "
-                f"``@computed_field`` on the read model {self.read.__name__} "
-                f"(spec {self.name!r}).",
-            )
+        validate_materialized_computed(
+            self.read, self.materialized, spec_name=self.name, label="read"
+        )
 
         if self.write is None:
             return
 
         domain = self.write["domain"]
-        self._require_computed_capable(domain, "domain")
-
-        if missing_domain := self.materialized - frozenset(
-            domain.model_computed_fields
-        ):
-            raise exc.configuration(
-                f"Materialized field(s) {sorted(missing_domain)} are not "
-                f"``@computed_field`` on the domain model {domain.__name__} "
-                f"(spec {self.name!r}).",
-            )
+        validate_materialized_computed(
+            domain, self.materialized, spec_name=self.name, label="domain"
+        )
 
         settable = stored_field_names_for(
             self.write["create_cmd"],

@@ -3,7 +3,7 @@
 import pytest
 
 from forze.base.exceptions import CoreException
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from forze.application.contracts.search import (
     FederatedSearchSpec,
@@ -158,6 +158,81 @@ class TestSearchLenientReadFields:
             read_conformity="lenient",
         )
         assert "summary" not in spec.resolved_lenient_read_fields
+
+
+class _MaterializedSearchModel(BaseModel):
+    id: str = ""
+    qty: int
+    unit_price: float
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total(self) -> float:
+        return self.qty * self.unit_price
+
+
+class TestSearchMaterialized:
+    """Materialized computed fields on a SearchSpec."""
+
+    def test_materialized_persisted_in_read_codec(self) -> None:
+        spec = SearchSpec(
+            name="orders",
+            model_type=_MaterializedSearchModel,
+            fields=["id"],
+            materialized={"total"},
+        )
+        assert spec.materialized == frozenset({"total"})
+        # The derived value becomes a projected/queryable column.
+        assert "total" in spec.resolved_read_codec.persisted_field_names()
+
+    def test_materialized_allows_default_sort_on_derived_field(self) -> None:
+        spec = SearchSpec(
+            name="orders",
+            model_type=_MaterializedSearchModel,
+            fields=["id"],
+            materialized={"total"},
+            default_sort={"total": "desc"},
+        )
+        assert spec.default_sort == {"total": "desc"}
+
+    def test_materialized_non_computed_field_rejected(self) -> None:
+        with pytest.raises(CoreException, match="not ``@computed_field``"):
+            SearchSpec(
+                name="orders",
+                model_type=_MaterializedSearchModel,
+                fields=["id"],
+                materialized={"qty"},
+            )
+
+    def test_materialized_unknown_field_rejected(self) -> None:
+        with pytest.raises(CoreException, match="not ``@computed_field``"):
+            SearchSpec(
+                name="orders",
+                model_type=_MaterializedSearchModel,
+                fields=["id"],
+                materialized={"ghost"},
+            )
+
+    def test_materialized_and_lenient_overlap_rejected(self) -> None:
+        with pytest.raises(CoreException, match="both"):
+            SearchSpec(
+                name="orders",
+                model_type=_MaterializedSearchModel,
+                fields=["id"],
+                materialized={"total"},
+                lenient_read_fields={"total"},
+            )
+
+    def test_materialized_excluded_from_lenient_auto_derive(self) -> None:
+        # A materialized field is stored, so read_conformity="lenient" must not derive it.
+        spec = SearchSpec(
+            name="orders",
+            model_type=_MaterializedSearchModel,
+            fields=["id"],
+            materialized={"total"},
+            read_conformity="lenient",
+        )
+        assert "total" not in spec.resolved_lenient_read_fields
 
 
 class TestSearchQueryDepKey:

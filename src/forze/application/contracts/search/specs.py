@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from forze.base.exceptions import exc
 from forze.base.serialization import (
     ModelCodec,
-    default_model_codec,
+    model_codec_for,
     stored_field_names_for,
 )
 
@@ -18,6 +18,7 @@ from ..lenient_read import (
     derive_lenient_read_fields,
     validate_lenient_read_fields,
 )
+from ..materialized import validate_materialized_computed
 from ..querying import QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 
@@ -47,6 +48,32 @@ def _validate_search_lenient_read_fields(
         lenient=lenient_read_fields,
         spec_name=spec_name,
     )
+
+
+# ....................... #
+
+
+def _validate_search_materialized(
+    *,
+    spec_name: object,
+    model_type: type[BaseModel],
+    materialized: frozenset[str],
+    lenient_read_fields: frozenset[str],
+) -> None:
+    """Validate a search spec's materialized fields (computed on model, disjoint from lenient)."""
+
+    if not materialized:
+        return
+
+    validate_materialized_computed(
+        model_type, materialized, spec_name=spec_name, label="read"
+    )
+
+    if overlap := materialized & lenient_read_fields:
+        raise exc.configuration(
+            f"Search spec {spec_name!r}: field(s) {sorted(overlap)} cannot be both "
+            "materialized (stored) and lenient (not stored).",
+        )
 
 
 # ....................... #
@@ -86,11 +113,13 @@ def _validate_search_default_sort(
     model_type: type[BaseModel],
     default_sort: QuerySortExpression | None,
     lenient_read_fields: frozenset[str] = frozenset(),
+    materialized: frozenset[str] = frozenset(),
 ) -> None:
     """Validate a search spec's ``default_sort`` against the read model (nested-path aware).
 
-    Lenient read fields have no column and so cannot be sort keys; they are excluded
-    from the accepted field set.
+    Materialized computed fields are persisted columns and so may be sort keys; lenient
+    read fields have no column and so cannot be — the accepted field set adds the former
+    and removes the latter.
     """
 
     if default_sort is None:
@@ -98,7 +127,8 @@ def _validate_search_default_sort(
 
     validate_sort_fields(
         default_sort,
-        read_fields=read_fields_for_model(model_type) - lenient_read_fields,
+        read_fields=(read_fields_for_model(model_type) | materialized)
+        - lenient_read_fields,
         spec_name=spec_name,
         model=model_type,
         client_facing=False,
@@ -174,12 +204,25 @@ class SearchSpec[M: BaseModel](BaseSpec):
     default_sort: QuerySortExpression | None = None
     """Default ``sorts`` when callers omit them (required for models without ``id``)."""
 
+    materialized: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
+    """``@computed_field`` names on the read model that are persisted as real columns on
+    the search relation, so search results can be **filtered and sorted by the derived
+    value** at the database instead of only recomputing it after decode.
+
+    Mirrors :attr:`~forze.application.contracts.document.DocumentSpec.materialized`; the
+    column is typically created by the document side over the same table. Each name must
+    be a ``@computed_field`` on :attr:`model_type` and must not also be
+    :attr:`lenient_read_fields` (stored vs not-stored). Relational in-place search only;
+    inert for an external index. Unlike documents, a missing column is **not** validated
+    at startup (search has no schema check) — it fails on first query. Empty by default."""
+
     read_conformity: ReadConformity = "strict"
     """Storage-conformity level. ``strict`` (default): every returned field must map to a
     column. ``lenient``: auto-derive :attr:`lenient_read_fields` from the read model —
-    every defaulted, non-identity, non-indexed (:attr:`fields`) field (static defaults
-    only) becomes absent-tolerant. Explicit :attr:`lenient_read_fields` are always
-    included on top. See :attr:`resolved_lenient_read_fields`."""
+    every defaulted, non-identity, non-indexed (:attr:`fields`), non-:attr:`materialized`
+    field (static defaults only) becomes absent-tolerant. Explicit
+    :attr:`lenient_read_fields` are always included on top. See
+    :attr:`resolved_lenient_read_fields`."""
 
     lenient_read_fields: frozenset[str] = attrs.field(
         factory=frozenset,
@@ -212,6 +255,13 @@ class SearchSpec[M: BaseModel](BaseSpec):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        _validate_search_materialized(
+            spec_name=self.name,
+            model_type=self.model_type,
+            materialized=self.materialized,
+            lenient_read_fields=self.lenient_read_fields,
+        )
+
         _validate_search_lenient_read_fields(
             spec_name=self.name,
             model_type=self.model_type,
@@ -224,6 +274,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
             model_type=self.model_type,
             default_sort=self.default_sort,
             lenient_read_fields=self.resolved_lenient_read_fields,
+            materialized=self.materialized,
         )
 
         _validate_search_encryption(
@@ -260,12 +311,13 @@ class SearchSpec[M: BaseModel](BaseSpec):
     @property
     def resolved_lenient_read_fields(self) -> frozenset[str]:
         """Effective lenient read fields: explicit plus, under ``read_conformity``
-        ``"lenient"``, the auto-derived eligible fields (indexed :attr:`fields` excluded).
-        This is what the search backend and sort validation read."""
+        ``"lenient"``, the auto-derived eligible fields (indexed :attr:`fields` and
+        :attr:`materialized` columns excluded). This is what the search backend and sort
+        validation read."""
 
         if self.read_conformity == "lenient":
             return self.lenient_read_fields | derive_lenient_read_fields(
-                self.model_type, exclude=frozenset(self.fields)
+                self.model_type, exclude=frozenset(self.fields) | self.materialized
             )
 
         return self.lenient_read_fields
@@ -274,12 +326,13 @@ class SearchSpec[M: BaseModel](BaseSpec):
 
     @property
     def resolved_read_codec(self) -> ModelCodec[M, Any]:
-        """Row codec (explicit override or :func:`default_model_codec`)."""
+        """Row codec (explicit override, or a default codec that persists
+        :attr:`materialized` computed fields as columns)."""
 
         if self.read_codec is not None:
             return self.read_codec
 
-        return default_model_codec(self.model_type)
+        return model_codec_for(self.model_type, materialized=self.materialized)
 
 
 # ....................... #
@@ -306,11 +359,16 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     default_sort: QuerySortExpression | None = None
     """Default ``sorts`` for hub browse/cursor when callers omit them."""
 
+    materialized: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
+    """``@computed_field`` names on the hub-row model persisted as real hub columns, so
+    hub results can be filtered/sorted by the derived value. Mirror of
+    :attr:`SearchSpec.materialized`; relational in-place only, not startup-validated."""
+
     read_conformity: ReadConformity = "strict"
     """Storage-conformity level for hub-row fields. ``strict`` (default): every returned
     field must map to a hub column. ``lenient``: auto-derive :attr:`lenient_read_fields`
-    (every defaulted, non-identity hub-row field; static defaults only). Explicit
-    :attr:`lenient_read_fields` are always included on top."""
+    (every defaulted, non-identity, non-:attr:`materialized` hub-row field; static defaults
+    only). Explicit :attr:`lenient_read_fields` are always included on top."""
 
     lenient_read_fields: frozenset[str] = attrs.field(
         factory=frozenset,
@@ -336,6 +394,13 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        _validate_search_materialized(
+            spec_name=self.name,
+            model_type=self.model_type,
+            materialized=self.materialized,
+            lenient_read_fields=self.lenient_read_fields,
+        )
+
         validate_lenient_read_fields(
             model_type=self.model_type,
             lenient=self.lenient_read_fields,
@@ -347,6 +412,7 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
             model_type=self.model_type,
             default_sort=self.default_sort,
             lenient_read_fields=self.resolved_lenient_read_fields,
+            materialized=self.materialized,
         )
 
         _validate_search_encryption(
@@ -382,10 +448,12 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     @property
     def resolved_lenient_read_fields(self) -> frozenset[str]:
         """Effective lenient hub-row fields: explicit plus, under ``read_conformity``
-        ``"lenient"``, the auto-derived eligible fields."""
+        ``"lenient"``, the auto-derived eligible fields (:attr:`materialized` excluded)."""
 
         if self.read_conformity == "lenient":
-            return self.lenient_read_fields | derive_lenient_read_fields(self.model_type)
+            return self.lenient_read_fields | derive_lenient_read_fields(
+                self.model_type, exclude=self.materialized
+            )
 
         return self.lenient_read_fields
 
@@ -393,12 +461,13 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
 
     @property
     def resolved_read_codec(self) -> ModelCodec[M, Any]:
-        """Row codec (explicit override or :func:`default_model_codec`)."""
+        """Row codec (explicit override, or a default codec that persists
+        :attr:`materialized` computed fields as columns)."""
 
         if self.read_codec is not None:
             return self.read_codec
 
-        return default_model_codec(self.model_type)
+        return model_codec_for(self.model_type, materialized=self.materialized)
 
 
 # ....................... #

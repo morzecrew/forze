@@ -29,16 +29,21 @@ result-set snapshots.
 | `default_weights` | `Mapping[str, float] \| None` | `None` | per-field relevance weights |
 | `fuzzy` | `SearchFuzzySpec \| None` | `None` | fuzzy-matching configuration |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts` (required if the model has no `id`) |
-| `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` (every statically-defaulted, non-identity, non-indexed field); explicit fields added on top |
+| `materialized` | `frozenset[str]` | `∅` | `@computed_field` names that are real columns on the search relation, so results can be filtered/sorted by the derived value (mirror of [`DocumentSpec.materialized`](document.md#spec); relational in-place only, **not** startup-validated) |
+| `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` (every statically-defaulted, non-identity, non-indexed, non-`materialized` field); explicit fields added on top |
 | `lenient_read_fields` | `frozenset[str]` | `∅` | returned read-model fields with **no** backing column: dropped from the result projection, hydrated from their default, and excluded from sort keys (mirror of [`DocumentSpec.lenient_read_fields`](document.md#lenient-read-fields); must **not** be an indexed `fields` member) |
 | `snapshot` | `SearchResultSnapshotSpec \| None` | `None` | result-ID snapshotting defaults (stable re-pagination) |
 | `encryption` | `FieldEncryption \| None` | `None` | field [encryption](../../identity-tenancy-enc/encryption.md) — **the same policy** as the document table's, so in-place search reproduces its AAD |
 | `sensitive` | `bool` | `False` | model carries secrets; generated surfaces refuse to project it |
 | `read_codec` | `ModelCodec \| None` | `None` | row codec override (auto-derived otherwise) |
 
-`HubSearchSpec` carries the same `read_conformity` / `lenient_read_fields` over its hub-row
-model (a hub has no index `fields` of its own). `FederatedSearchSpec` inherits leniency
-from each member spec.
+`HubSearchSpec` carries the same `read_conformity` / `lenient_read_fields` / `materialized`
+over its hub-row model (a hub has no index `fields` of its own). `FederatedSearchSpec`
+inherits these from each member spec.
+
+`materialized` is for **filtering and sorting** search results by a derived value — the
+column must already exist (typically written by the document side over the same table).
+Returning a computed field needs no `materialized`: it recomputes from the row on decode.
 
 ## Query port
 
