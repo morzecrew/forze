@@ -102,3 +102,24 @@ def resolve_highlight(
     pre = highlight.get("pre_tag", DEFAULT_HIGHLIGHT_PRE_TAG)
     post = highlight.get("post_tag", DEFAULT_HIGHLIGHT_POST_TAG)
     return fields, pre, post
+
+
+# ....................... #
+
+
+def reject_unsupported_highlight(
+    spec: SearchSpec[Any], options: SearchOptions | None, *, backend: str
+) -> None:
+    """Fail closed when *backend* does not yet implement highlighting but one was requested.
+
+    Surfaces the gap explicitly (``query_feature_unsupported``) rather than silently
+    returning no highlights — a request a caller can't tell was dropped. The field
+    validation in :func:`resolve_highlight` still runs first.
+    """
+
+    if resolve_highlight(spec, options) is not None:
+        raise exc.precondition(
+            f"Highlighting is not yet supported on the {backend} search backend "
+            f"(spec {spec.name!r}).",
+            code="query_feature_unsupported",
+        )

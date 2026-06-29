@@ -24,7 +24,10 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
     effective_phrase_combine,
+    facet_size_of,
     normalize_search_queries,
+    reject_unsupported_highlight,
+    resolve_facet_fields,
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import SearchResultSnapshot
@@ -33,6 +36,7 @@ from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
+from ._facets import fetch_pg_facets
 from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page, search_trust_source
 from ._pgroonga_plan import (
@@ -166,6 +170,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
+        reject_unsupported_highlight(self.spec, options, backend="Postgres")
 
         if normalize_search_queries(query):
             return await super()._offset_search_impl(
@@ -364,19 +369,57 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             trust_source=search_trust_source(self.read_validation),
         )
 
+        facets = await self._browse_facets(proj_qname, fw, fp, options)
+
         if return_count:
-            return page_from_limit_offset(
+            result: Any = page_from_limit_offset(
                 page,
                 pagination,
                 total=total if count_policy != "none" else None,
                 snapshot=handle_no,
             )
+        else:
+            result = page_from_limit_offset(
+                page,
+                pagination,
+                total=None,
+                snapshot=handle_no,
+            )
 
-        return page_from_limit_offset(
-            page,
-            pagination,
-            total=None,
-            snapshot=handle_no,
+        if facets is None:
+            return result
+
+        return attrs.evolve(result, facets=facets)
+
+    # ....................... #
+
+    async def _browse_facets(
+        self,
+        proj_qname: Any,
+        fw: sql.Composable,
+        fp: Sequence[Any],
+        options: SearchOptions | None,
+    ) -> Any:
+        """Facets for the empty-query browse: ``GROUP BY`` over the filtered projection."""
+
+        facet_fields = resolve_facet_fields(self.spec, options)
+        if not facet_fields:
+            return None
+
+        body = sql.SQL("FROM {proj} {pa} WHERE {fw}").format(
+            proj=proj_qname.ident(),
+            pa=sql.Identifier(self.projection_alias),
+            fw=fw,
+        )
+
+        return await fetch_pg_facets(
+            self.client,
+            with_clause=None,
+            body=body,
+            params=list(fp),
+            table_alias=self.projection_alias,
+            fields=facet_fields,
+            size=facet_size_of(options),
         )
 
     # ....................... #

@@ -23,6 +23,7 @@ from forze.application.contracts.search import (
     SearchQueryPort,
     SearchResultSnapshotOptions,
     normalize_search_queries,
+    reject_unsupported_highlight,
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import (
@@ -264,6 +265,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
+        reject_unsupported_highlight(self.spec, options, backend="Postgres")
         parsed_filters = self.compile_filters(filters)
         fw, fp = await self.where_clause(filters, parsed=parsed_filters)
         terms = tuple(normalize_search_queries(query))
@@ -352,6 +354,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             sorts, encryption=self.spec.encryption, spec_name=self.spec.name
         )
         options = search_options_for_simple_adapter(options)
+        reject_unsupported_highlight(self.spec, options, backend="Postgres")
         lim, _, _ = parse_search_cursor(cursor)
         terms = tuple(normalize_search_queries(query))
         parsed_filters = self.compile_filters(filters)

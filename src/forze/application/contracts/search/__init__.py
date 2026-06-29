@@ -7,6 +7,7 @@ from .facet_highlight import (
     DEFAULT_HIGHLIGHT_POST_TAG,
     DEFAULT_HIGHLIGHT_PRE_TAG,
     facet_size_of,
+    reject_unsupported_highlight,
     resolve_facet_fields,
     resolve_highlight,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "DEFAULT_HIGHLIGHT_PRE_TAG",
     "DEFAULT_HIGHLIGHT_POST_TAG",
     "facet_size_of",
+    "reject_unsupported_highlight",
     "resolve_facet_fields",
     "resolve_highlight",
     "FacetBucket",

@@ -23,7 +23,9 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchResultSnapshotOptions,
     SearchSpec,
+    facet_size_of,
     normalize_search_queries,
+    resolve_facet_fields,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.application.integrations.search.offset_executor import (
@@ -35,6 +37,7 @@ from forze.application.integrations.search.offset_executor import (
 )
 
 from ...kernel.gateways import PostgresGateway
+from ._facets import fetch_pg_facets
 from ._search_count import effective_search_count
 
 # ----------------------- #
@@ -93,6 +96,8 @@ class _PostgresSimpleOffsetHooks:
     return_count: bool
     count_policy: str
     pagination_dict: dict[str, Any]
+    facet_fields: tuple[str, ...] = ()
+    facet_size: int = 0
 
     async def fetch_count(self) -> int | None:
         if not self.return_count or self.count_policy == "none":
@@ -177,7 +182,41 @@ class _PostgresSimpleOffsetHooks:
 
         rows = await self.gw.client.fetch_all(data_stmt, params, row_factory="dict")
 
-        return OffsetRowsResult(rows=list(rows))
+        facets = await self._fetch_facets()
+
+        return OffsetRowsResult(rows=list(rows), facets=facets)
+
+    async def _fetch_facets(self) -> Any:
+        """Companion ``GROUP BY`` over the uncapped matched set (mirrors :meth:`fetch_count`)."""
+
+        if not self.facet_fields:
+            return None
+
+        if (
+            self.plan.count_with_clause is not None
+            and self.plan.count_from_outer is not None
+        ):
+            facet_with: sql.Composable = self.plan.count_with_clause
+            facet_body: sql.Composable = self.plan.count_from_outer
+        else:
+            facet_with = self.plan.with_clause
+            facet_body = self.plan.from_outer
+
+        facet_params = (
+            self.plan.count_params
+            if self.plan.count_params is not None
+            else self.plan.params
+        )
+
+        return await fetch_pg_facets(
+            self.gw.client,
+            with_clause=facet_with,
+            body=facet_body,
+            params=facet_params,
+            table_alias=self.plan.select_table_alias,
+            fields=self.facet_fields,
+            size=self.facet_size,
+        )
 
 
 # ....................... #
@@ -207,6 +246,7 @@ async def execute_simple_ranked_offset_search(
 
     count_policy = effective_search_count(options)
     pagination_dict: dict[str, Any] = dict(pagination or {})
+    facet_fields = resolve_facet_fields(spec, options)
 
     return await execute_simple_offset_search_with_snapshot(
         query=query,
@@ -233,6 +273,8 @@ async def execute_simple_ranked_offset_search(
             return_count=return_count,
             count_policy=count_policy,
             pagination_dict=pagination_dict,
+            facet_fields=facet_fields,
+            facet_size=facet_size_of(options),
         ),
         trust_source=trust_source,
     )
