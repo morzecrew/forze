@@ -218,8 +218,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             )
 
         if self.encryption is not None:
+            # Lenient fields are not stored, so they cannot be sealed at rest.
             self.encryption.validate_fields_exist(
-                stored_field_names_for(self.read), spec_name=self.name
+                stored_field_names_for(self.read) - self.resolved_lenient_read_fields,
+                spec_name=self.name,
             )
 
         if self.query_params is not None and not (

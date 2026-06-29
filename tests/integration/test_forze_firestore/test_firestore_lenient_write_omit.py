@@ -84,6 +84,16 @@ async def test_firestore_write_omit_field_stripped(
     assert "label" not in raw
     assert raw["name"] == "Ada"
 
+    # The update path strips it too — the stored document still excludes "label".
+    updated = await adapter.update(created.id, created.rev, OmitUpdate(name="Ada Lovelace"))
+    assert updated.name == "Ada Lovelace"
+    assert updated.label == "n/a"
+
+    raw_after = await firestore_client.get_document(coll, str(created.id))
+    assert raw_after is not None
+    assert "label" not in raw_after
+    assert raw_after["name"] == "Ada Lovelace"
+
 
 class LenientRead(ReadDocument):
     name: str

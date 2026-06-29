@@ -251,6 +251,20 @@ def test_materialized_on_non_pydantic_model_rejected_cleanly() -> None:
         DocumentSpec(name="doc", read=_PlainRead, materialized={"a"})  # type: ignore[type-var]
 
 
+def test_validate_materialized_non_class_rejected_cleanly() -> None:
+    # A non-class value (e.g. an instance) must surface as a configuration error,
+    # not a raw TypeError from issubclass(...).
+    from forze.application.contracts.materialized import validate_materialized_computed
+
+    with pytest.raises(CoreException, match="is not a class"):
+        validate_materialized_computed(
+            object(),  # type: ignore[arg-type]
+            frozenset({"a"}),
+            spec_name="doc",
+            label="read",
+        )
+
+
 def test_sensitive_defaults_to_false() -> None:
     spec = DocumentSpec(name="doc", read=_Read)
 

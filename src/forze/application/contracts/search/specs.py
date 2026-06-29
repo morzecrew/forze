@@ -85,14 +85,16 @@ def _validate_search_encryption(
     model_type: type[BaseModel],
     encryption: FieldEncryption | None,
     default_sort: QuerySortExpression | None,
+    lenient_read_fields: frozenset[str] = frozenset(),
 ) -> None:
     """Reject typo'd sealed field names and sealed fields used as ``default_sort`` keys."""
 
     if encryption is None:
         return
 
+    # Lenient fields are not stored in search results, so they cannot be sealed.
     encryption.validate_fields_exist(
-        stored_field_names_for(model_type), spec_name=spec_name
+        stored_field_names_for(model_type) - lenient_read_fields, spec_name=spec_name
     )
 
     if default_sort is not None and (
@@ -282,6 +284,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
             model_type=self.model_type,
             encryption=self.encryption,
             default_sort=self.default_sort,
+            lenient_read_fields=self.resolved_lenient_read_fields,
         )
 
         if len(self.fields) != len(set(self.fields)):
@@ -420,6 +423,7 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
             model_type=self.model_type,
             encryption=self.encryption,
             default_sort=self.default_sort,
+            lenient_read_fields=self.resolved_lenient_read_fields,
         )
 
         names = [member.name for member in self.members]

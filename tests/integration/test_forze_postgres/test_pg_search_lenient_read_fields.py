@@ -57,7 +57,7 @@ async def _make_index_with_row(pg_client: PostgresClient) -> tuple[str, str]:
 
     await pg_client.execute(
         f"""
-        CREATE TABLE {table} (
+        CREATE TABLE public.{table} (
             id uuid PRIMARY KEY,
             title text NOT NULL,
             content text NOT NULL
@@ -66,12 +66,12 @@ async def _make_index_with_row(pg_client: PostgresClient) -> tuple[str, str]:
     )
     await pg_client.execute(
         f"""
-        CREATE INDEX {index_name} ON {table}
+        CREATE INDEX {index_name} ON public.{table}
         USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')));
         """
     )
     await pg_client.execute(
-        f"INSERT INTO {table} (id, title, content) VALUES (%(id)s, %(title)s, %(content)s)",
+        f"INSERT INTO public.{table} (id, title, content) VALUES (%(id)s, %(title)s, %(content)s)",
         {"id": uuid4(), "title": "PostgreSQL FTS", "content": "tsvector search"},
     )
 

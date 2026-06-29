@@ -383,11 +383,16 @@ class PostgresGateway[M: BaseModel](
             return cached
 
         if return_type is not None:
-            use = list(
-                default_model_codec(return_type).stored_field_names(
+            # Drop lenient fields (no column) just like the default-read path below,
+            # so a return_type carrying one hydrates from its default instead of
+            # being rejected as an unknown projection field.
+            use = [
+                f
+                for f in default_model_codec(return_type).stored_field_names(
                     include_computed=False,
-                ),
-            )
+                )
+                if f not in self.lenient_read_fields
+            ]
 
         else:
             use = list(self.read_fields)

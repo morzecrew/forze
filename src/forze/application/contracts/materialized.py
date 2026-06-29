@@ -36,6 +36,12 @@ def validate_materialized_computed(
     if not materialized:
         return
 
+    if not isinstance(model, type):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise exc.configuration(
+            "Materialized fields require a Pydantic model with ``@computed_field``; "
+            f"the {label} value {model!r} (spec {spec_name!r}) is not a class.",
+        )
+
     if not issubclass(model, BaseModel):
         raise exc.configuration(
             "Materialized fields require a Pydantic model with ``@computed_field``; "

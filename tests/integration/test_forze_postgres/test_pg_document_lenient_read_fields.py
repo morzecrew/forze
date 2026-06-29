@@ -110,6 +110,31 @@ async def test_strict_read_of_missing_column_fails(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_return_type_projection_drops_lenient_field(
+    pg_client: PostgresClient,
+) -> None:
+    # A read mapped to an explicit return_type that carries the lenient field must
+    # drop it from the projection and hydrate it from the default — not reject it.
+    table, _ = await _make_table_with_row(pg_client)
+    ctx = _ctx(pg_client)
+
+    read = read_gw(
+        ctx,
+        read_type=_LenientReadDoc,
+        read_relation=("public", table),
+        tenant_aware=False,
+        lenient_read_fields=frozenset({"nickname"}),
+    )
+
+    rows = await read.find_many(None, return_model=_LenientReadDoc)
+
+    assert len(rows) == 1
+    assert rows[0].name == "Ada"
+    assert rows[0].nickname == "anon"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_lenient_field_filter_and_sort_rejected_before_sql(
     pg_client: PostgresClient,
 ) -> None:

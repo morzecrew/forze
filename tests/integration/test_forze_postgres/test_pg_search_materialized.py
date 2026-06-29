@@ -61,7 +61,7 @@ async def _seed(pg_client: PostgresClient) -> tuple[str, str]:
 
     await pg_client.execute(
         f"""
-        CREATE TABLE {table} (
+        CREATE TABLE public.{table} (
             id uuid PRIMARY KEY,
             title text NOT NULL,
             qty integer NOT NULL,
@@ -71,7 +71,7 @@ async def _seed(pg_client: PostgresClient) -> tuple[str, str]:
         """
     )
     await pg_client.execute(
-        f"CREATE INDEX {index_name} ON {table} "
+        f"CREATE INDEX {index_name} ON public.{table} "
         "USING gin (to_tsvector('english', coalesce(title, '')));"
     )
 
@@ -79,7 +79,7 @@ async def _seed(pg_client: PostgresClient) -> tuple[str, str]:
     rows = [("widget alpha", 2, 5.0), ("widget beta", 3, 10.0), ("widget gamma", 1, 4.0)]
     for title, qty, price in rows:
         await pg_client.execute(
-            f"INSERT INTO {table} (id, title, qty, unit_price, total) "
+            f"INSERT INTO public.{table} (id, title, qty, unit_price, total) "
             "VALUES (%(id)s, %(title)s, %(qty)s, %(price)s, %(total)s)",
             {
                 "id": uuid4(),
