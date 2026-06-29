@@ -122,9 +122,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      checks: write
-      pull-requests: write
-      issues: write
     strategy:
       fail-fast: false
       matrix:
@@ -223,7 +220,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
