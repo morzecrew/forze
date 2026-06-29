@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import HubSearchSpec
 from forze.base.exceptions import exc
-from forze.application.contracts.codecs import stored_field_names_for
+from forze.base.serialization import stored_field_names_for
 
 from ....adapters import HubLegRuntime
 from ..configs import PostgresHubSearchConfig

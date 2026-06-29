@@ -12,9 +12,8 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.document.types import (
+from forze.application.contracts.document.value_objects import (
     RowLockMode,
-    log_non_postgres_lock_degrade,
     row_lock_requires_transaction,
 )
 from forze.application.contracts.querying import (
@@ -27,7 +26,10 @@ from forze.application.contracts.querying import (
     decode_keyset_v1,
     normalize_sorts_for_keyset,
 )
-from forze.application.integrations.persistence import ReadValidationCodecMixin
+from forze.application.integrations.persistence import (
+    ReadValidationCodecMixin,
+    log_non_postgres_lock_degrade,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD

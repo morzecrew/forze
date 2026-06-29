@@ -254,7 +254,7 @@ def test_materialized_on_non_pydantic_model_rejected_cleanly() -> None:
 def test_validate_materialized_non_class_rejected_cleanly() -> None:
     # A non-class value (e.g. an instance) must surface as a configuration error,
     # not a raw TypeError from issubclass(...).
-    from forze.application.contracts.materialized import validate_materialized_computed
+    from forze.application.contracts.conformity import validate_materialized_computed
 
     with pytest.raises(CoreException, match="is not a class"):
         validate_materialized_computed(

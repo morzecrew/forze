@@ -5,7 +5,7 @@ from typing import Sequence
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.codecs import stored_field_names_for
+from forze.base.serialization import stored_field_names_for
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
 from forze.domain.models import DocumentHistory

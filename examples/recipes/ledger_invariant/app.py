@@ -27,7 +27,7 @@ from uuid import UUID
 import structlog
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
-from forze.application.contracts.invariants import ReadSet, Sum, SystemInvariant
+from forze.application.contracts.invariants import ReadSet, SumOf, SystemInvariant
 from forze.application.execution import ExecutionContext
 from forze.application.execution.deps import DepsRegistry
 from forze.base.exceptions import CoreException
@@ -94,7 +94,7 @@ ACCOUNT_SPEC = DocumentSpec(
 LEDGER_BALANCED = SystemInvariant(
     name="ledger_balanced",
     read_set=ReadSet(spec=ACCOUNT_SPEC, scope_keys=("ledger_id",)),
-    aggregate=Sum("balance"),
+    aggregate=SumOf("balance"),
     holds=lambda total: total == 0,
 )
 

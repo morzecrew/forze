@@ -16,9 +16,9 @@ import attrs
 import pytest
 
 from forze.application.contracts.invariants import (
-    Count,
+    CountAll,
     ReadSet,
-    Sum,
+    SumOf,
     SystemInvariant,
 )
 from forze.application.contracts.transaction import IsolationLevel
@@ -81,7 +81,7 @@ PAYMENTS = DocumentSpec(
 LEDGER_BALANCED = SystemInvariant(
     name="ledger_balanced",
     read_set=ReadSet(spec=ACCOUNTS, scope_keys=("ledger_id",)),
-    aggregate=Sum("balance"),
+    aggregate=SumOf("balance"),
     holds=lambda total: total == 0,
 )
 
@@ -92,7 +92,7 @@ SINGLE_CAPTURED_PAYMENT = SystemInvariant(
         scope_keys=("order_id",),
         where={"$values": {"status": "captured"}},
     ),
-    aggregate=Count(),
+    aggregate=CountAll(),
     holds=lambda n: n <= 1,
 )
 

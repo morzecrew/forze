@@ -427,7 +427,7 @@ def _read_gw_for(
     *,
     tenant_aware: bool = False,
 ) -> Any:
-    from forze.application.contracts.codecs import default_model_codec
+    from forze.base.serialization import default_model_codec
     from forze_mongo.kernel.gateways import MongoReadGateway
 
     return MongoReadGateway(
@@ -449,7 +449,7 @@ def _direct_write_gw(
     tenant_aware: bool = False,
     update_codec_none: bool = False,
 ) -> MongoWriteGateway:
-    from forze.application.contracts.codecs import default_model_codec
+    from forze.base.serialization import default_model_codec
 
     domain_codec = default_model_codec(WmDoc)
     create_codec = default_model_codec(WmDoc)
@@ -535,7 +535,7 @@ async def test_write_gateway_client_mismatch_raises(
 ) -> None:
     """A read gateway bound to a different client instance is rejected."""
 
-    from forze.application.contracts.codecs import default_model_codec
+    from forze.base.serialization import default_model_codec
 
     db_name = (await mongo_client.db()).name
     relation = (db_name, f"wm_cm_{uuid4().hex[:8]}")
@@ -602,7 +602,7 @@ async def test_write_gateway_history_mismatch_raises(
 ) -> None:
     """History gateway client / relation / tenant-awareness mismatches are rejected."""
 
-    from forze.application.contracts.codecs import default_model_codec
+    from forze.base.serialization import default_model_codec
 
     db_name = (await mongo_client.db()).name
     relation = (db_name, f"wm_hm_{uuid4().hex[:8]}")

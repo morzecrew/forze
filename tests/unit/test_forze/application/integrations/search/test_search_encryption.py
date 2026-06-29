@@ -14,7 +14,7 @@ from forze.application.contracts.crypto import (
     KeyRef,
     StaticKeyDirectory,
 )
-from forze.application.contracts.codecs import default_model_codec
+from forze.base.serialization import default_model_codec
 from forze.application.contracts.search import SearchSpec
 from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
 from forze.application.integrations.search import (

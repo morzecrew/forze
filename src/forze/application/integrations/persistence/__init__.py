@@ -8,6 +8,7 @@ from .gateway_mixins import (
     ReadValidationCodecMixin,
     TenantResolvedRelationMixin,
 )
+from .row_lock import log_non_postgres_lock_degrade
 
 __all__ = [
     "DocumentWriteCodecMixin",
@@ -16,4 +17,5 @@ __all__ = [
     "ModelCodecGatewayMixin",
     "ReadValidationCodecMixin",
     "TenantResolvedRelationMixin",
+    "log_non_postgres_lock_degrade",
 ]

@@ -13,7 +13,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
 )
-from forze.application.contracts.codecs import default_model_codec
+from forze.base.serialization import default_model_codec
 from forze.application.contracts.search import SearchSpec
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument

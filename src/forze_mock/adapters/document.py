@@ -23,7 +23,7 @@ from forze.application.contracts.base import (
     Page,
     page_from_limit_offset,
 )
-from forze.application.contracts.codecs import default_model_codec
+from forze.base.serialization import default_model_codec
 from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,

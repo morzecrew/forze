@@ -6,7 +6,7 @@ import base64
 
 import pytest
 
-from forze.application.contracts.codecs import default_model_codec
+from forze.base.serialization import default_model_codec
 from forze.application.contracts.crypto import AesGcmAead, KeyRef, StaticKeyDirectory
 from forze.application.contracts.document import (
     DocumentCodecs,

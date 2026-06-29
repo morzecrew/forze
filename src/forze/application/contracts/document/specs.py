@@ -11,14 +11,14 @@ from forze.domain.models import BaseDTO, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
-from ..codecs import stored_field_names_for
+from forze.base.serialization import stored_field_names_for
 from ..crypto import FieldEncryption
-from ..lenient_read import (
+from ..conformity import (
     ReadConformity,
     derive_lenient_read_fields,
     validate_lenient_read_fields,
+    validate_materialized_computed,
 )
-from ..materialized import validate_materialized_computed
 from ..querying import QueryFieldPolicy, QuerySortExpression
 from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 
-from forze.application.contracts.codecs import default_model_codec
+from forze.base.serialization import default_model_codec
 from forze.application.contracts.crypto import (
     AesGcmAead,
     KeyRef,

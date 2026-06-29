@@ -14,8 +14,8 @@ from pydantic import BaseModel
 from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD, LAST_UPDATE_AT_FIELD, REV_FIELD
 
-from .._logger import logger
-from .querying.sort_resolution import read_fields_for_model
+from ..._logger import logger
+from ..querying.sort_resolution import read_fields_for_model
 
 # ----------------------- #
 

@@ -45,8 +45,8 @@ _EXPORTS: dict[str, str] = {
     # cross-aggregate (system) invariants
     "SystemInvariant": "forze.application.contracts.invariants",
     "ReadSet": "forze.application.contracts.invariants",
-    "Sum": "forze.application.contracts.invariants",
-    "Count": "forze.application.contracts.invariants",
+    "SumOf": "forze.application.contracts.invariants",
+    "CountAll": "forze.application.contracts.invariants",
 }
 
 __all__ = [
@@ -69,8 +69,8 @@ __all__ = [
     "invariant",
     "SystemInvariant",
     "ReadSet",
-    "Sum",
-    "Count",
+    "SumOf",
+    "CountAll",
 ]
 
 
@@ -81,10 +81,10 @@ if TYPE_CHECKING:
     # Eager imports for IDEs and type checkers only
     from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
     from forze.application.contracts.invariants import (
-        Count,
+        CountAll,
         ReadSet,
+        SumOf,
         SystemInvariant,
-        Sum,
     )
     from forze.application.execution import (
         Deps,

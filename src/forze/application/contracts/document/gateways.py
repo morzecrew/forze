@@ -14,7 +14,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from forze.application.contracts.document.types import RowLockMode
+from forze.application.contracts.document.value_objects import RowLockMode
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,

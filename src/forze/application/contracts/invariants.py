@@ -1,24 +1,15 @@
 """System invariants — declared laws that span more than one record.
 
-The entity-level :func:`~forze.domain.validation.invariant` guards a *single* entity: it runs on
-create and every update, sees only ``self``, and so structurally cannot express a relation *across*
-records. The hardest correctness rules usually are exactly that — a conservation law (a ledger's
-balances sum to zero), a cardinality law (at most one captured payment per order), a threshold law
-(reserved never exceeds stock). A :class:`SystemInvariant` is the declaration those need: a named
-**read-set** (a document spec plus a scope filter that selects the records the law ranges over)
-reduced by one **aggregate**, and a **predicate** the aggregate must satisfy.
+The entity-level :func:`~forze.domain.validation.invariant` sees only one ``self`` and so cannot
+express a relation *across* records (a ledger's balances sum to zero, at most one captured payment
+per order). A :class:`SystemInvariant` declares exactly that: a named **read-set** (a document spec
+plus a scope filter) reduced by one **aggregate**, and a predicate the aggregate must satisfy.
 
-It is a *pure declaration* — nothing here runs it. It is handed to two consumers (one declaration,
-two consumers): the runtime helper in ``forze_kits`` enforces it, and the DST compiler in
-``forze_dst`` verifies it under simulation. The aggregate-over-a-read-set shape is deliberate: it is
-the intersection of "pushes down to the query port" (``count`` / ``aggregate_many``) and
-"reconstructible from a recorded trace at each committed point" (the simulation oracle).
-
-**Honesty.** A cross-aggregate law is *not* free distributed atomicity. Enforcement is **preventive**
-only when the read-set co-locates with the write in one transaction under a sufficient
-(capability-verified) isolation level; otherwise it is **detective** — evaluated after commit, so a
-violation is *reported*, not prevented. This module only declares the law; the enforcement mode is
-chosen at the call site, and the distinction is named there, never blurred.
+It is a *pure declaration* — the runtime helper in ``forze_kits`` enforces it and the ``forze_dst``
+compiler verifies it under simulation. Enforcement is **preventive** only when the read-set
+co-locates with the write in one sufficiently-isolated transaction; otherwise it is **detective**
+(evaluated after commit, so a violation is reported, not prevented). The mode is chosen at the call
+site, never here.
 """
 
 from __future__ import annotations
@@ -49,7 +40,7 @@ in the same result row (a scope key named ``"value"`` would have)."""
 
 @final
 @attrs.define(frozen=True, slots=True)
-class Sum:
+class SumOf:
     """Sum a numeric field over the read-set."""
 
     field: str
@@ -57,11 +48,11 @@ class Sum:
 
 @final
 @attrs.define(frozen=True, slots=True)
-class Count:
+class CountAll:
     """Count the records in the read-set."""
 
 
-Reducer = Sum | Count
+Reducer = SumOf | CountAll
 """The aggregate that collapses a scoped read-set to a single comparable number."""
 
 
@@ -96,11 +87,11 @@ class ReadSet:
 def computed_aggregate(reducer: Reducer) -> AggregateComputedFieldExpression:
     """The ``$computed`` clause reducing a (grouped or whole) read-set to a single ``"value"`` field.
 
-    Shared by runtime evaluation and the DST oracle so both speak the same aggregate — a ``Count``
-    becomes ``$count``, a ``Sum`` becomes ``$sum`` of its field.
+    Shared by runtime evaluation and the DST oracle so both speak the same aggregate — a ``CountAll``
+    becomes ``$count``, a ``SumOf`` becomes ``$sum`` of its field.
     """
 
-    if isinstance(reducer, Count):
+    if isinstance(reducer, CountAll):
         return {AGGREGATE_FIELD: {"$count": None}}
 
     return {AGGREGATE_FIELD: {"$sum": reducer.field}}
@@ -145,8 +136,8 @@ class SystemInvariant:
     """A declared law over a read-set: an aggregate of the scoped records must satisfy a predicate.
 
     Cross-record by construction — what :func:`~forze.domain.validation.invariant` cannot express.
-    *holds* is a **pure** predicate over the aggregate (a :class:`Sum`'s numeric total, or a
-    :class:`Count`'s cardinality, passed as a ``float``); it must be deterministic and side-effect
+    *holds* is a **pure** predicate over the aggregate (a :class:`SumOf`'s numeric total, or a
+    :class:`CountAll`'s cardinality, passed as a ``float``); it must be deterministic and side-effect
     free, because it runs both in production and inside the deterministic simulation. *name*
     identifies the law in violations and in the oracle's provenance.
     """
