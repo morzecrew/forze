@@ -23,7 +23,6 @@ from forze.application.contracts.search import (
     SearchQueryPort,
     SearchResultSnapshotOptions,
     normalize_search_queries,
-    reject_unsupported_highlight,
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import (
@@ -355,7 +354,6 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             sorts, encryption=self.spec.encryption, spec_name=self.spec.name
         )
         options = search_options_for_simple_adapter(options)
-        reject_unsupported_highlight(self.spec, options, backend="Postgres cursor-paginated")
         lim, _, _ = parse_search_cursor(cursor)
         terms = tuple(normalize_search_queries(query))
         parsed_filters = self.compile_filters(filters)

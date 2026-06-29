@@ -252,15 +252,34 @@ async def test_fts_highlights(pg_client: PostgresClient) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_cursor_highlight_request_fails_closed(pg_client: PostgresClient) -> None:
-    # Cursor-paginated highlights are not implemented; a request must fail closed.
+async def test_pgroonga_cursor_highlights(pg_client: PostgresClient) -> None:
     table, index_name = await _bootstrap(pg_client, engine="pgroonga")
     ctx = _ctx(pg_client, table=table, index_name=index_name, engine="pgroonga")
-    spec = _spec("pgr_hl_cursor_guard")
+    spec = _spec("pgr_hl_cursor")
 
-    with pytest.raises(CoreException) as ei:
-        await ctx.search.query(spec).search_cursor(
-            "book", cursor={"limit": 5}, options={"highlight": True}
-        )
+    page = await ctx.search.query(spec).search_cursor(
+        "book", cursor={"limit": 5}, options={"highlight": {"fields": ["title"]}}
+    )
 
-    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert page.highlights is not None
+    assert len(page.highlights) == len(page.hits)
+    fragments = [hl["title"][0] for hl in page.highlights if "title" in hl]
+    assert fragments
+    assert all("<em>" in frag.lower() and "book" in frag.lower() for frag in fragments)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_fts_cursor_highlights(pg_client: PostgresClient) -> None:
+    table, index_name = await _bootstrap(pg_client, engine="fts")
+    ctx = _ctx(pg_client, table=table, index_name=index_name, engine="fts")
+    spec = _spec("fts_hl_cursor")
+
+    page = await ctx.search.query(spec).search_cursor(
+        "book", cursor={"limit": 5}, options={"highlight": {"fields": ["title"]}}
+    )
+
+    assert page.highlights is not None
+    fragments = [hl["title"][0] for hl in page.highlights if "title" in hl]
+    assert fragments
+    assert all("<em>book</em>".lower() in frag.lower() for frag in fragments)

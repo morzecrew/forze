@@ -11,7 +11,7 @@ from typing import Any, Sequence
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CursorPage
+from forze.application.contracts.base import CursorPage, HitHighlights
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
@@ -31,6 +31,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
 
+from ._highlights import extract_and_strip_highlights
 from ._materialize_hits import decode_search_hits
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
@@ -251,7 +252,17 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
             )
 
     where_fin: sql.Composable = sql.SQL("TRUE")
-    params: list[Any] = list(pipeline_sql.params_body)
+
+    # Highlight column placeholders sit in the SELECT list, between the WITH-clause params
+    # and any from_outer params; splice them at that boundary (mirrors the offset path).
+    hl = pipeline_sql.highlight
+    body = list(pipeline_sql.params_body)
+
+    if hl is not None:
+        split = len(body) - pipeline_sql.from_outer_param_count
+        body = [*body[:split], *hl.params, *body[split:]]
+
+    params: list[Any] = body
 
     if use_after or use_before:
         token = str(c["after" if use_after else "before"])
@@ -298,12 +309,13 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         table_alias=proj_alias,
     )
 
-    cols = sql.SQL("{}, {}").format(
+    cols = sql.SQL("{}, {}{}").format(
         base_cols,
         sql.SQL("{} AS {}").format(
             sql.Identifier(pipe.scored, rank_col),
             sql.Identifier(rank_col),
         ),
+        hl.select_fragment() if hl is not None else sql.SQL(""),
     )
 
     data_stmt = sql.SQL(
@@ -340,6 +352,10 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         use_before=use_before,
     )
 
+    # Capture + strip the synthetic highlight columns from the final page rows (after
+    # keyset slicing, so they stay aligned with the returned hits).
+    highlights = extract_and_strip_highlights(rows, hl) if hl is not None else None
+
     return await _cursor_page_from_rows(
         rows,
         return_type=return_type,
@@ -350,6 +366,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         prev_cursor=prv,
         has_more=has_more,
         trust_source=trust_source,
+        highlights=highlights,
     )
 
 
@@ -367,6 +384,7 @@ async def _cursor_page_from_rows(
     prev_cursor: str | None,
     has_more: bool,
     trust_source: bool = False,
+    highlights: list[HitHighlights] | None = None,
 ) -> CursorPage[Any]:
     # Decrypt sealed fields out of the raw rows once, so the spec model, a custom
     # return_type, and raw field projections all read plaintext (no-op for a plain codec).
@@ -391,4 +409,5 @@ async def _cursor_page_from_rows(
         next_cursor=next_cursor,
         prev_cursor=prev_cursor,
         has_more=has_more,
+        highlights=highlights,
     )
