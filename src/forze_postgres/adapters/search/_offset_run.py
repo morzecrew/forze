@@ -43,6 +43,7 @@ from forze.application.integrations.search.offset_executor import (
     offset_from_dict,
 )
 from forze.base.serialization import materialize_mapping_rows
+from forze.domain.constants import ID_FIELD
 
 from ...kernel.gateways import PostgresGateway
 from ._facets import fetch_pg_facets
@@ -88,6 +89,10 @@ class RankedOffsetPlan:
 
     data_relation: str = "combo"
     """Hub - relation name for the ranked data ``SELECT`` (e.g. ``combo_top``)."""
+
+    thin: bool = False
+    """Hub - when set, the ``WITH`` pipeline projects only key/sort columns; the ranked data
+    ``SELECT`` returns ids only and the page is hydrated from the hub relation by primary key."""
 
     select_table_alias: str
     """Table alias passed to :meth:`~PostgresGateway.return_clause`."""
@@ -318,6 +323,114 @@ async def execute_simple_ranked_offset_search(
 # ....................... #
 
 
+async def _hydrate_thin_hub_page(
+    gw: PostgresGateway[M],
+    *,
+    plan: RankedOffsetPlan,
+    pagination_dict: dict[str, Any],
+    return_count: bool,
+    total: int | None,
+    count_policy: str,
+    return_type: type[BaseModel] | None,
+    return_fields: Sequence[str] | None,
+    model_type: type[M],
+    codec: Any,
+    trust_source: bool,
+    combo_alias: str,
+) -> Any:
+    """Two-phase hub page: rank the thin id pipeline, then hydrate the page by primary key.
+
+    Phase A runs the thin ``WITH`` pipeline (ids + rank + sort keys only) with the page's
+    ``LIMIT``/``OFFSET`` to get the ordered page ids. Phase B reads the full read-model
+    columns for exactly those ids from the hub relation, reordered to the page order.
+    """
+
+    page_total = total if count_policy != "none" else None
+
+    id_stmt = sql.SQL(
+        """
+            {with_clause}
+            SELECT {ca}.{idf} AS {idf} FROM {combo} {ca}
+            ORDER BY {order}
+            """
+    ).format(
+        with_clause=plan.with_clause,
+        ca=sql.Identifier(combo_alias),
+        idf=sql.Identifier(ID_FIELD),
+        combo=sql.Identifier(plan.data_relation),
+        order=plan.order_sql,
+    )
+
+    id_params = list(plan.params)
+    user_limit = pagination_dict.get("limit")
+
+    if user_limit is not None:
+        id_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+        id_params.append(int(user_limit))
+
+    if pagination_dict.get("offset") is not None:
+        id_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+        id_params.append(offset_from_dict(pagination_dict))
+
+    id_rows = await gw.client.fetch_all(id_stmt, id_params, row_factory="dict")
+    page_ids = [row[ID_FIELD] for row in id_rows]
+
+    if not page_ids:
+        return await materialize_offset_page(
+            rows=[],
+            pagination_dict=pagination_dict,
+            return_count=return_count,
+            total=page_total,
+            return_type=return_type,
+            return_fields=return_fields,
+            model_type=model_type,
+            codec=codec,
+            trust_source=trust_source,
+        )
+
+    hyd_alias = "hyd"
+    cols = gw.return_clause(return_type, return_fields, table_alias=hyd_alias)
+    need_id_extra = return_fields is not None and ID_FIELD not in return_fields
+
+    if need_id_extra:
+        cols = sql.SQL("{}, {}.{} AS {}").format(
+            cols,
+            sql.Identifier(hyd_alias),
+            sql.Identifier(ID_FIELD),
+            sql.Identifier(ID_FIELD),
+        )
+
+    hub_qn = await gw._qname()  # pyright: ignore[reportPrivateUsage]
+    hyd_stmt = sql.SQL(
+        "SELECT {cols} FROM {rel} {ca} WHERE {ca}.{idf} = ANY({ph})"
+    ).format(
+        cols=cols,
+        rel=hub_qn.ident(),
+        ca=sql.Identifier(hyd_alias),
+        idf=sql.Identifier(ID_FIELD),
+        ph=sql.Placeholder(),
+    )
+
+    hyd_rows = await gw.client.fetch_all(hyd_stmt, [page_ids], row_factory="dict")
+    by_id = {row[ID_FIELD]: dict(row) for row in hyd_rows}
+    ordered = [by_id[i] for i in page_ids if i in by_id]
+
+    return await materialize_offset_page(
+        rows=ordered,
+        pagination_dict=pagination_dict,
+        return_count=return_count,
+        total=page_total,
+        return_type=return_type,
+        return_fields=return_fields,
+        model_type=model_type,
+        codec=codec,
+        trust_source=trust_source,
+    )
+
+
+# ....................... #
+
+
 async def execute_hub_ranked_offset_search(
     gw: PostgresGateway[M],
     *,
@@ -417,6 +530,26 @@ async def execute_hub_ranked_offset_search(
                 pagination or {},
                 total=0,
             )
+
+    if plan.thin:
+        # Late materialization: rank/paginate over the thin id pipeline, then hydrate the
+        # heavy read-model columns for only the returned page (avoids projecting every
+        # candidate row of an expensive hub relation). Snapshot-write requests never take
+        # this path (the plan is built non-thin when a snapshot is written).
+        return await _hydrate_thin_hub_page(
+            gw,
+            plan=plan,
+            pagination_dict=pagination_dict,
+            return_count=return_count,
+            total=total,
+            count_policy=count_policy,
+            return_type=return_type,
+            return_fields=return_fields,
+            model_type=model_type,
+            codec=hub_spec.resolved_read_codec,
+            trust_source=trust_source,
+            combo_alias=combo_alias,
+        )
 
     cols = gw.return_clause(
         return_type,
