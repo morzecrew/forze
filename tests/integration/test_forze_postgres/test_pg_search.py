@@ -567,3 +567,83 @@ async def test_pgroonga_exact_total_exceeds_candidate_cap(
     )
     assert page.count == 15
     assert len(page.hits) == 3
+
+
+class _ProjModel(BaseModel):
+    id: UUID
+    title: str
+    content: str
+    body: str
+
+
+@pytest.mark.asyncio
+async def test_postgres_search_read_view_defers_heavy_column(
+    pg_client: PostgresClient,
+) -> None:
+    """RFC 0008 P4: when the read relation is a view distinct from the index heap, the ranked
+    scan projects only the id and the heavy column is hydrated by id."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+    await pg_client.execute(
+        """
+        CREATE TABLE p4_heap (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        CREATE VIEW p4_proj AS
+            SELECT id, title, content, (title || ' ' || content) AS body FROM p4_heap;
+        CREATE INDEX idx_p4_pg ON p4_heap USING pgroonga ((ARRAY[title, content]));
+        """
+    )
+    rid = uuid4()
+    await pg_client.execute(
+        "INSERT INTO p4_heap (id, title, content) VALUES (%(id)s, 'hello', 'world')",
+        {"id": rid},
+    )
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", "idx_p4_pg"),
+                        read=("public", "p4_proj"),
+                        heap=("public", "p4_heap"),
+                        engine="pgroonga",
+                    )
+                ),
+            }
+        )
+    )
+    spec = SearchSpec(name="p4_ns", model_type=_ProjModel, fields=["title", "content"])
+    adapter = ctx.search.query(spec)
+    assert isinstance(adapter, PostgresPGroongaSearchAdapter)
+
+    captured = []
+    orig_fa = pg_client.fetch_all
+
+    async def _cap_fa(query, params=None, **kwargs):
+        captured.append(query.as_string(None))
+        return await orig_fa(query, params, **kwargs)
+
+    pg_client.fetch_all = _cap_fa  # type: ignore[method-assign]
+
+    try:
+        page = await adapter.search_page("hello", pagination={"limit": 5, "offset": 0})
+    finally:
+        pg_client.fetch_all = orig_fa  # type: ignore[method-assign]
+
+    assert page.count == 1
+    assert page.hits[0].body == "hello world"
+
+    ranked = [q for q in captured if "pgroonga" in q.lower() and "ANY(" not in q]
+    hydration = [q for q in captured if "ANY(" in q]
+    assert ranked, captured
+    assert hydration, captured
+    # Ranked scan projects only the id (no heavy `body`) ...
+    assert all('"body"' not in q for q in ranked)
+    # ... `body` is hydrated from the read view by id.
+    assert any('"body"' in q for q in hydration)

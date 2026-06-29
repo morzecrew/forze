@@ -31,6 +31,7 @@ from forze.application.integrations.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell
+from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import (
     RelationSpec,
     is_static_relation,
@@ -317,6 +318,19 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             candidate_limit=getattr(pipeline_sql, "candidate_limit", None),
         )
 
+        # Late materialization (RFC 0008 P4): when the read relation is a distinct projection
+        # from the index heap (typically a heavy view), rank an id-only scan and hydrate the
+        # page's read-model columns by id. No-op when read == heap (plain table search) or
+        # when highlights are requested (snippets need the projection row in the SELECT).
+        thin_read_qname: PostgresQualifiedName | None = None
+
+        if pipeline_sql.highlight is None and ID_FIELD in self.read_fields:
+            read_qn = await self._pipeline_read_qname()
+            heap_qn = await self._pipeline_heap_qname()
+
+            if (read_qn.schema, read_qn.name) != (heap_qn.schema, heap_qn.name):
+                thin_read_qname = read_qn
+
         return await execute_simple_ranked_offset_search(
             self,
             plan=plan,
@@ -335,6 +349,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             result_snapshot=self.result_snapshot,
             options=options,
             trust_source=search_trust_source(self.read_validation),
+            thin_read_qname=thin_read_qname,
         )
 
     # ....................... #

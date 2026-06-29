@@ -33,7 +33,7 @@ from forze_postgres.kernel.sql.query.nested import sort_key_expr
 from ....kernel.gateways import PostgresGateway
 from .._cursor_run import parse_search_cursor
 from .._materialize_hits import decode_search_hits, search_trust_source
-from .._offset_run import hydrate_hub_rows_by_id
+from .._offset_run import hydrate_rows_by_id
 from .constants import COMBO_ALIAS, HUB_RANK
 from .parallel import HubParallelSearchMixin
 from .plan import build_hub_search_plan
@@ -251,7 +251,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
 
         if thin:
             page_ids = [r[ID_FIELD] for r in rows]
-            source_rows = await hydrate_hub_rows_by_id(
+            source_rows = await hydrate_rows_by_id(
                 cast(PostgresGateway[Any], self._hub_host),
                 page_ids=page_ids,
                 return_type=return_type,

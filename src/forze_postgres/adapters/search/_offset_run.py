@@ -46,7 +46,7 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import materialize_mapping_rows
 from forze.domain.constants import ID_FIELD
 
-from ...kernel.gateways import PostgresGateway
+from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ._facets import fetch_pg_facets
 from ._highlights import extract_and_strip_highlights
 from ._search_count import effective_search_count
@@ -120,6 +120,10 @@ class _PostgresSimpleOffsetHooks:
     pagination_dict: dict[str, Any]
     facet_fields: tuple[str, ...] = ()
     facet_size: int = 0
+    thin_read_qname: PostgresQualifiedName | None = None
+    """When set, the non-snapshot page ranks over an id-only projection and hydrates the
+    read-model columns from this relation by id (RFC 0008 P4). Set only when the read
+    relation differs from the index heap (a distinct, potentially heavy projection)."""
 
     async def fetch_count(self) -> int | None:
         if not self.return_count or self.count_policy == "none":
@@ -169,6 +173,9 @@ class _PostgresSimpleOffsetHooks:
         *,
         want_snap: bool,
     ) -> OffsetRowsResult:
+        if self.thin_read_qname is not None and not want_snap:
+            return await self._fetch_rows_thin(window)
+
         cols = self.gw.return_clause(
             self.return_type,
             self.return_fields,
@@ -227,6 +234,61 @@ class _PostgresSimpleOffsetHooks:
 
         return OffsetRowsResult(rows=rows, facets=facets, highlights=highlights)
 
+    async def _fetch_rows_thin(self, window: OffsetFetchWindow) -> OffsetRowsResult:
+        """Late materialization (RFC 0008 P4): rank an id-only projection, hydrate by id.
+
+        Only reached for the non-snapshot page when :attr:`thin_read_qname` is set (read
+        relation distinct from the index heap, no highlights). The ranked scan projects only
+        the read id, then the page's read-model columns are read from the read relation by id.
+        """
+
+        read_qname = self.thin_read_qname
+
+        if read_qname is None:
+            return await self.fetch_rows(window, want_snap=False)
+
+        id_stmt = sql.SQL(
+            """
+            {with_clause}
+            SELECT {idcol} AS {idf} {from_outer}
+            ORDER BY {order}
+            """
+        ).format(
+            with_clause=self.plan.with_clause,
+            idcol=sql.SQL("{}.{}").format(
+                sql.Identifier(self.plan.select_table_alias),
+                sql.Identifier(ID_FIELD),
+            ),
+            idf=sql.Identifier(ID_FIELD),
+            from_outer=self.plan.from_outer,
+            order=self.plan.order_sql,
+        )
+
+        params = list(self.plan.params)
+
+        if window.fetch_limit is not None:
+            id_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+            params.append(int(window.fetch_limit))
+
+        if self.pagination_dict.get("offset") is not None:
+            id_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(offset_from_dict(self.pagination_dict))
+
+        id_rows = await self.gw.client.fetch_all(id_stmt, params, row_factory="dict")
+        page_ids = [row[ID_FIELD] for row in id_rows]
+
+        rows = await hydrate_rows_by_id(
+            self.gw,
+            page_ids=page_ids,
+            return_type=self.return_type,
+            return_fields=self.return_fields,
+            relation=read_qname,
+        )
+
+        facets = await self._fetch_facets()
+
+        return OffsetRowsResult(rows=rows, facets=facets, highlights=None)
+
     async def _fetch_facets(self) -> Any:
         """Companion ``GROUP BY`` over the uncapped matched set (mirrors :meth:`fetch_count`)."""
 
@@ -282,6 +344,7 @@ async def execute_simple_ranked_offset_search(
     result_snapshot: SearchResultSnapshot | None,
     options: SearchOptions | None = None,
     trust_source: bool = False,
+    thin_read_qname: PostgresQualifiedName | None = None,
 ) -> Any:
     """Run count (optional), data fetch, snapshot materialization for simple search adapters."""
 
@@ -316,6 +379,7 @@ async def execute_simple_ranked_offset_search(
             pagination_dict=pagination_dict,
             facet_fields=facet_fields,
             facet_size=facet_size_of(options),
+            thin_read_qname=thin_read_qname,
         ),
         trust_source=trust_source,
     )
@@ -324,19 +388,21 @@ async def execute_simple_ranked_offset_search(
 # ....................... #
 
 
-async def hydrate_hub_rows_by_id(
+async def hydrate_rows_by_id(
     gw: PostgresGateway[Any],
     *,
     page_ids: list[Any],
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
+    relation: PostgresQualifiedName | None = None,
 ) -> list[JsonDict]:
-    """Phase B of hub late materialization: read full read-model rows for ``page_ids``.
+    """Phase B of search late materialization: read full read-model rows for ``page_ids``.
 
-    Selects the requested columns from the hub relation for exactly the page's primary keys
-    and returns them reordered to match ``page_ids`` (the order the thin ranking pipeline
-    produced). When ``return_fields`` is given without the id column, the id is selected too
-    so rows can be reordered, then dropped downstream by the materializer.
+    Selects the requested columns from ``relation`` (the hub view by default, or an explicit
+    read relation for single-index search) for exactly the page's primary keys and returns
+    them reordered to match ``page_ids`` (the order the thin ranking pipeline produced). When
+    ``return_fields`` is given without the id column, the id is selected too so rows can be
+    reordered, then dropped downstream by the materializer.
     """
 
     if not page_ids:
@@ -354,12 +420,12 @@ async def hydrate_hub_rows_by_id(
             sql.Identifier(ID_FIELD),
         )
 
-    hub_qn = await gw._qname()  # pyright: ignore[reportPrivateUsage]
+    rel = relation if relation is not None else await gw._qname()  # pyright: ignore[reportPrivateUsage]
     hyd_stmt = sql.SQL(
         "SELECT {cols} FROM {rel} {ca} WHERE {ca}.{idf} = ANY({ph})"
     ).format(
         cols=cols,
-        rel=hub_qn.ident(),
+        rel=rel.ident(),
         ca=sql.Identifier(hyd_alias),
         idf=sql.Identifier(ID_FIELD),
         ph=sql.Placeholder(),
@@ -438,7 +504,7 @@ async def _hydrate_thin_hub_page(
     if fold_count:
         page_total = int(id_rows[0]["_total"]) if id_rows else 0
 
-    ordered = await hydrate_hub_rows_by_id(
+    ordered = await hydrate_rows_by_id(
         gw,
         page_ids=page_ids,
         return_type=return_type,
@@ -647,7 +713,7 @@ async def execute_hub_ranked_offset_search(
                 stmt, window_params, row_factory="dict"
             )
             window_ids = [row[ID_FIELD] for row in id_rows]
-            hydrated = await hydrate_hub_rows_by_id(
+            hydrated = await hydrate_rows_by_id(
                 gw,
                 page_ids=window_ids,
                 return_type=return_type,
