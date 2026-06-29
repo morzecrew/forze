@@ -5,8 +5,14 @@ from pydantic import BaseModel
 from forze.base.exceptions import exc
 
 from ..expressions import QuerySortExpression
-from .field_path import _sort_field_resolves, field_path_resolves
-from .value import _raise_invalid_sort, parse_sort_value
+from .field_path import (
+    _sort_field_resolves,  # pyright: ignore[reportPrivateUsage]
+    field_path_resolves,
+)
+from .value import (
+    _raise_invalid_sort,  # pyright: ignore[reportPrivateUsage]
+    parse_sort_value,
+)
 
 # ----------------------- #
 

@@ -41,7 +41,9 @@ def _is_any_like(annotation: Any) -> bool:
     # ``Any``, a bare object, or a wide union we cannot meaningfully walk into.
     if annotation is Any or annotation is object:
         return True
-    return get_origin(annotation) in (Union, UnionType) and len(get_args(annotation)) > 2
+    return (
+        get_origin(annotation) in (Union, UnionType) and len(get_args(annotation)) > 2
+    )
 
 
 def _str_keyed_mapping_value(annotation: Any) -> Any:
@@ -80,7 +82,11 @@ def _subpath_resolves(annotation: Any, segments: list[str]) -> bool:
     val = _str_keyed_mapping_value(annotation)
     if val is not _MISSING:
         # A dynamic-key hop; an untyped value is walkable for any remaining path.
-        return True if val is None else _subpath_resolves(_unwrap_optional(val), segments[1:])
+        return (
+            True
+            if val is None
+            else _subpath_resolves(_unwrap_optional(val), segments[1:])
+        )
 
     # A scalar leaf with path left over is invalid; an ``Any``/wide type cannot
     # be disproved, so allow it (avoid false rejections).
@@ -121,7 +127,7 @@ def field_path_resolves(
     )
 
 
-def _sort_field_resolves(
+def _sort_field_resolves(  # pyright: ignore[reportUnusedFunction]
     field: str,
     *,
     read_fields: frozenset[str],
@@ -138,6 +144,14 @@ def _sort_field_resolves(
 
     if "." not in field or model is None:
         return field in read_fields
+
+    # A dotted key's root segment must be in the allow-set too, so a nested sort
+    # cannot bypass a field excluded from read_fields (a lenient/non-stored field)
+    # the way the flat key above is gated — matching validate_runtime_sort_fields.
+    root = field.split(".", 1)[0]
+
+    if root not in read_fields:
+        return False
 
     materialized = read_fields - read_fields_for_model(model)
     return field_path_resolves(model, field, materialized=materialized)

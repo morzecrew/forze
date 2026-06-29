@@ -8,11 +8,11 @@ from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
 
 from ..expressions import QuerySortExpression
-from .field_path import _sort_field_resolves
+from .field_path import _sort_field_resolves  # pyright: ignore[reportPrivateUsage]
 from .validation import validate_sort_fields
 from .value import (
-    _raise_invalid_sort,
-    _tiebreaker_direction,
+    _raise_invalid_sort,  # pyright: ignore[reportPrivateUsage]
+    _tiebreaker_direction,  # pyright: ignore[reportPrivateUsage]
     default_nulls,
     parse_sort_value,
 )

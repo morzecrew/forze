@@ -20,15 +20,15 @@ T = TypeVar("T", bound=BaseModel)
 
 
 def secret_ref_for_tenant(
-    secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
+    ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
     tenant_id: UUID,
 ) -> SecretRef:
     """Resolve a :class:`SecretRef` for *tenant_id* from a callable or mapping."""
 
-    if callable(secret_ref_for_tenant):
-        return secret_ref_for_tenant(tenant_id)
+    if callable(ref_for_tenant):
+        return ref_for_tenant(tenant_id)
 
-    return secret_ref_for_tenant[tenant_id]
+    return ref_for_tenant[tenant_id]
 
 
 # ....................... #
@@ -78,7 +78,7 @@ async def resolve_structured(
 
     except ValidationError as e:
         raise exc.internal(
-            f"Secret at {ref.path!r} is not valid for {model_type.__name__}: {e}",
+            f"Secret at {ref.path!r} is not valid for {model_type.__name__}.",
             code="secret_invalid",
             details={"errors": sanitize_pydantic_errors(e.errors())},
         ) from e
@@ -117,14 +117,28 @@ class TenantSecretResolver:
     # ....................... #
 
     async def resolve_str(self, tenant_id: UUID) -> str:
-        """Resolve *tenant_id*'s secret as a string (e.g. a DSN), wrapping unexpected errors."""
+        """Resolve *tenant_id*'s secret as a string (e.g. a DSN), wrapping unexpected errors.
 
-        return await resolve_str_for_tenant(
-            self.secrets,
-            self.ref(tenant_id),
-            tenant_id=tenant_id,
-            backend=self.backend,
-        )
+        The :meth:`ref` lookup is wrapped too (a missing mapping entry or a faulty
+        resolver callable), so this path raises the same domain failure as
+        :meth:`resolve_structured` rather than a raw ``KeyError``.
+        """
+
+        try:
+            return await resolve_str_for_tenant(
+                self.secrets,
+                self.ref(tenant_id),
+                tenant_id=tenant_id,
+                backend=self.backend,
+            )
+
+        except exc:
+            raise
+
+        except Exception as e:
+            raise exc.internal(
+                f"Failed to resolve {self.backend} secret for tenant {tenant_id}: {e}",
+            ) from e
 
     # ....................... #
 

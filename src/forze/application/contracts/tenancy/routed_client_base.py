@@ -1,6 +1,6 @@
 """Shared tenant-routed client pooling for integration packages."""
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any, AsyncGenerator, Callable, Generic, Mapping, Protocol, TypeVar
@@ -231,12 +231,25 @@ class DsnRoutedTenantClientBase(RoutedTenantClientBase[C]):
 
     # ....................... #
 
+    def access_fingerprint_extra_parts(self, tenant_id: UUID) -> Sequence[str]:
+        """Extra fingerprint parts beyond the resolved DSN (e.g. database/namespace).
+
+        Override this — not :meth:`ensure_access_fingerprint` — to fold per-tenant
+        connection facets into the access fingerprint, so the base keeps its TTL
+        refresh (``is_expired``) and rotation eviction (``on_change``) wiring. Default none.
+        """
+
+        return ()
+
+    # ....................... #
+
     async def ensure_access_fingerprint(self, tenant_id: UUID) -> None:
         await ensure_dsn_fingerprint(
             self._pool.get_fingerprint,
             self._pool.set_fingerprint,
             tenant_id=tenant_id,
             resolver=self._resolver,
+            extra_parts=self.access_fingerprint_extra_parts(tenant_id),
             is_expired=self._fingerprint_expiry_check(),
             on_change=self._pool.evict,
         )

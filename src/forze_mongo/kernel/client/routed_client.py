@@ -21,7 +21,6 @@ from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy import ensure_dsn_fingerprint
 from forze.application.contracts.tenancy.routed_client_base import DsnRoutedTenantClientBase
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -75,14 +74,8 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
 
     # ....................... #
 
-    async def ensure_access_fingerprint(self, tenant_id: UUID) -> None:
-        await ensure_dsn_fingerprint(
-            self._pool.get_fingerprint,
-            self._pool.set_fingerprint,
-            tenant_id=tenant_id,
-            resolver=self._resolver,
-            extra_parts=[self.database_name_for_tenant(tenant_id)],
-        )
+    def access_fingerprint_extra_parts(self, tenant_id: UUID) -> Sequence[str]:
+        return [self.database_name_for_tenant(tenant_id)]
 
     # ....................... #
 

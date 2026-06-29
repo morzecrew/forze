@@ -120,7 +120,9 @@ def assert_default_null_ordering(
 # ....................... #
 
 
-def _tiebreaker_direction(explicit: list[str]) -> str:
+def _tiebreaker_direction(  # pyright: ignore[reportUnusedFunction]
+    explicit: list[str],
+) -> str:
     """Direction for an auto-appended tie-breaker: the shared one, else ``asc``.
 
     A single-direction sort keeps its direction on the tie-breaker (so ``m desc`` stays
