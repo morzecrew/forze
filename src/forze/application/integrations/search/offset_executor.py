@@ -308,15 +308,9 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
                 total=0,
             )
 
-    return await snapshot_materialize_and_paginate(
+    return await materialize_offset_page(
         rows=rows,
-        want_snap=False,
-        result_snapshot=result_snapshot,
-        rs_spec=rs_spec,
-        snapshot=snapshot,
-        fp_fingerprint=fp_fingerprint,
         pagination_dict=pagination_dict,
-        page_limit=page_limit,
         return_count=emit_total,
         total=total,
         return_type=return_type,
@@ -332,16 +326,10 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
 # ....................... #
 
 
-async def snapshot_materialize_and_paginate[M: BaseModel](
+async def materialize_offset_page[M: BaseModel](
     *,
     rows: list[JsonDict],
-    want_snap: bool,
-    result_snapshot: SearchResultSnapshot | None,
-    rs_spec: Any,
-    snapshot: SearchResultSnapshotOptions | None,
-    fp_fingerprint: str,
     pagination_dict: dict[str, Any],
-    page_limit: int,
     return_count: bool,
     total: int | None,
     return_type: type[BaseModel] | None,
@@ -352,42 +340,25 @@ async def snapshot_materialize_and_paginate[M: BaseModel](
     facets: FacetResults | None = None,
     highlights: list[HitHighlights] | None = None,
 ) -> Any:
-    """Snapshot write, in-memory slice, materialize, and :func:`page_from_limit_offset`."""
+    """Materialize already-fetched rows into a paginated page (no snapshot write).
 
-    handle_out = None
-    pool_snap: list[M] | None = None
+    The non-snapshot tail shared by the offset adapters: snapshot writes now stream the pool
+    straight into the store (see :func:`build_snapshot_pool_streaming`), so this only decodes
+    the fetched page rows and wraps them with pagination and optional facets/highlights.
+    """
+
     page_offset = offset_from_dict(pagination_dict)
-
-    if want_snap and result_snapshot is not None and rs_spec is not None:
-        pool_len = len(rows)
-        pool_snap = codec.decode_mapping_many(rows, trust_source=trust_source)
-        handle_out = await result_snapshot.put_simple_ordered_hits(
-            pool_snap,
-            snap_opt=snapshot,
-            rs_spec=rs_spec,
-            fp_computed=fp_fingerprint,
-            pool_len_before_cap=pool_len,
-        )
-        rows = rows[page_offset : page_offset + page_limit]
-        # Keep per-hit highlights aligned with the page slice of the pooled rows.
-        if highlights is not None:
-            highlights = highlights[page_offset : page_offset + page_limit]
-
     effective_page_limit = (
-        page_limit
-        if want_snap
-        else (
-            int(pagination_dict["limit"])
-            if pagination_dict.get("limit") is not None
-            else len(rows)
-        )
+        int(pagination_dict["limit"])
+        if pagination_dict.get("limit") is not None
+        else len(rows)
     )
 
     page = materialize_mapping_rows(
         codec=codec,
         model_type=model_type,
         page_rows=rows,
-        pool=pool_snap,
+        pool=None,
         u=page_offset,
         page_limit=effective_page_limit,
         return_type=return_type,
@@ -399,7 +370,7 @@ async def snapshot_materialize_and_paginate[M: BaseModel](
         page,
         pagination_dict,
         total=total if return_count else None,
-        snapshot=handle_out,
+        snapshot=None,
     )
 
     if facets is None and highlights is None:

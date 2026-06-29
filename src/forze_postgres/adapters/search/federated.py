@@ -334,19 +334,14 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             and rs_spec is not None
             and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
         ):
-            max_n = self.result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
-            to_store = merged[:max_n]
-
-            row_keys = [
-                SearchResultSnapshot.federated_record_key_string(
-                    item[0].member,
-                    item[0].hit,
-                )
-                for item in to_store
-            ]
-
             handle_out = await self.result_snapshot.put_ordered_snapshot_keys(
-                row_keys,
+                (
+                    SearchResultSnapshot.federated_record_key_string(
+                        item[0].member,
+                        item[0].hit,
+                    )
+                    for item in merged
+                ),
                 snap_opt=snapshot,
                 rs_spec=rs_spec,
                 fp_computed=fp_computed,

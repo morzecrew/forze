@@ -353,32 +353,43 @@ async def test_read_hub_result_snapshot_branches() -> None:
 
 
 @pytest.mark.asyncio
-async def test_put_simple_ordered_hits() -> None:
-    store = MagicMock()
-    store.put_run = AsyncMock()
-    sp = _rs_spec()
-    hits = [_Row(id=i, name="z") for i in range(3)]
-    coord = SearchResultSnapshot(store=store)
+async def test_put_ordered_snapshot_keys_streams_caps_and_round_trips() -> None:
+    from forze_mock.adapters.search.snapshot import MockSearchResultSnapshotAdapter
+    from forze_mock.state import MockState
 
-    h = await coord.put_simple_ordered_hits(
-        hits,
-        snap_opt=None,
-        rs_spec=sp,
-        fp_computed="fp0",
-        pool_len_before_cap=10,
+    # max_ids=5, chunk_size=2: a lazy generator of 8 keys is sealed in blocks and capped.
+    rs_spec = SearchResultSnapshotSpec(
+        name="snap", enabled=True, max_ids=5, chunk_size=2
     )
-    assert h.capped is True
-    assert h.total == 3
-    store.put_run.assert_awaited_once()
+    store = MockSearchResultSnapshotAdapter(state=MockState(), spec=rs_spec)
+    coord = SearchResultSnapshot(store=store)
+    keys = [f"key-{i}" for i in range(8)]
 
-    h2 = await coord.put_simple_ordered_hits(
-        hits,
+    handle = await coord.put_ordered_snapshot_keys(
+        (k for k in keys),  # generator: only one chunk of keys is held at a time
         snap_opt=None,
-        rs_spec=sp,
+        rs_spec=rs_spec,
         fp_computed="fp0",
+        pool_len_before_cap=len(keys),
+    )
+
+    assert handle.total == 5  # capped to max_ids
+    assert handle.capped is True
+
+    stored = await store.get_id_range(handle.id, 0, 50, expected_fingerprint="fp0")
+    assert stored == keys[:5]
+
+    # A pool that fits is complete and not capped.
+    h2 = await coord.put_ordered_snapshot_keys(
+        (k for k in keys[:3]),
+        snap_opt=None,
+        rs_spec=rs_spec,
+        fp_computed="fp1",
         pool_len_before_cap=3,
     )
+    assert h2.total == 3
     assert h2.capped is False
+    assert await store.get_id_range(h2.id, 0, 50, expected_fingerprint="fp1") == keys[:3]
 
 
 def test_federated_fingerprint_list_query_differs() -> None:

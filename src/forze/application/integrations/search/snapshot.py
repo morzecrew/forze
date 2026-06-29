@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import timedelta
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
@@ -732,40 +732,6 @@ class SearchResultSnapshot:
 
     # ....................... #
 
-    async def put_simple_ordered_hits(
-        self,
-        ordered_hits: Sequence[BaseModel],
-        *,
-        snap_opt: SearchResultSnapshotOptions | None,
-        rs_spec: SearchResultSnapshotSpec,
-        fp_computed: str,
-        pool_len_before_cap: int,
-    ) -> SearchSnapshotHandle:
-        max_n = self.effective_snapshot_max_ids(snap_opt, rs_spec)
-        to_store = list(ordered_hits)[:max_n]
-        capped = pool_len_before_cap > len(to_store)
-        run_id = str(uuid4())
-
-        await self.store.put_run(
-            run_id=run_id,
-            fingerprint=fp_computed,
-            ordered_ids=await self._seal_ids(
-                [self.result_record_key_string(h) for h in to_store],
-                run_id=run_id,
-            ),
-            ttl=self.effective_snapshot_ttl(snap_opt, rs_spec),
-            chunk_size=self.effective_snapshot_chunk_size(snap_opt, rs_spec),
-        )
-
-        return SearchSnapshotHandle(
-            id=run_id,
-            fingerprint=fp_computed,
-            total=len(to_store),
-            capped=capped,
-        )
-
-    # ....................... #
-
     def open_simple_hit_sink(
         self,
         *,
@@ -775,10 +741,10 @@ class SearchResultSnapshot:
     ) -> _OrderedHitSink:
         """Open a streaming sink that writes ordered record keys one chunk at a time.
 
-        The memory-bounded counterpart to :meth:`put_simple_ordered_hits`: instead of taking
-        the whole decoded pool up front, callers feed record keys incrementally and the sink
-        seals + appends them in ``chunk_size`` blocks, so peak memory is one chunk regardless
-        of ``max_ids``.
+        Callers feed record keys incrementally and the sink seals + appends them in
+        ``chunk_size`` blocks, so peak memory is one chunk regardless of ``max_ids`` — the
+        ranked offset/PGroonga paths drive it from a windowed pool fetch, the federated path
+        from the in-memory RRF merge via :meth:`put_ordered_snapshot_keys`.
         """
 
         return _OrderedHitSink(
@@ -794,35 +760,42 @@ class SearchResultSnapshot:
 
     async def put_ordered_snapshot_keys(
         self,
-        ordered_ids: Sequence[str],
+        ordered_ids: Iterable[str],
         *,
         snap_opt: SearchResultSnapshotOptions | None,
         rs_spec: SearchResultSnapshotSpec,
         fp_computed: str,
         pool_len_before_cap: int,
     ) -> SearchSnapshotHandle:
-        max_n = self.effective_snapshot_max_ids(snap_opt, rs_spec)
+        """Seal and store pre-built ordered record keys, streamed in ``chunk_size`` blocks.
 
-        sliced = list(ordered_ids)[:max_n]
+        The federated path's counterpart to the windowed pool build: the RRF merge already
+        holds the ordered keys in memory, but sealing + storing them streams through the sink
+        so the full sealed copy is never materialized. ``ordered_ids`` may be a lazy generator
+        — only one chunk of keys is sealed at a time, and iteration stops once ``max_ids`` is
+        reached.
+        """
 
-        capped = pool_len_before_cap > len(sliced)
-
-        run_id = str(uuid4())
-
-        await self.store.put_run(
-            run_id=run_id,
-            fingerprint=fp_computed,
-            ordered_ids=await self._seal_ids(sliced, run_id=run_id),
-            ttl=self.effective_snapshot_ttl(snap_opt, rs_spec),
-            chunk_size=self.effective_snapshot_chunk_size(snap_opt, rs_spec),
+        sink = self.open_simple_hit_sink(
+            snap_opt=snap_opt, rs_spec=rs_spec, fp_computed=fp_computed
         )
+        batch: list[str] = []
 
-        return SearchSnapshotHandle(
-            id=run_id,
-            fingerprint=fp_computed,
-            total=len(sliced),
-            capped=capped,
-        )
+        for key in ordered_ids:
+            batch.append(key)
+
+            if len(batch) >= sink.chunk_size:
+                full = await sink.add(batch)
+                batch = []
+
+                if full:
+                    break
+
+        else:
+            if batch:
+                await sink.add(batch)
+
+        return await sink.finish(pool_len_before_cap=pool_len_before_cap)
 
     # ....................... #
 

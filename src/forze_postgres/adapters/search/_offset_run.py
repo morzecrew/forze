@@ -30,14 +30,19 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     resolve_facet_fields,
 )
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    SnapshotWindow,
+    build_snapshot_pool_streaming,
+)
 from forze.application.integrations.search.offset_executor import (
     OffsetFetchWindow,
     OffsetRowsResult,
     execute_simple_offset_search_with_snapshot,
+    materialize_offset_page,
     offset_from_dict,
-    snapshot_materialize_and_paginate,
 )
+from forze.base.serialization import materialize_mapping_rows
 
 from ...kernel.gateways import PostgresGateway
 from ._facets import fetch_pg_facets
@@ -433,50 +438,91 @@ async def execute_hub_ranked_offset_search(
         order=plan.order_sql,
     )
 
-    params = list(plan.params)
+    read_codec = hub_spec.resolved_read_codec
+    page_offset = offset_from_dict(pagination_dict)
 
     want_sn = (
         result_snapshot is not None
         and rs_spec is not None
         and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
     )
-    max_nh = (
-        result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
-        if want_sn and result_snapshot is not None
-        else 0
-    )
-    fetch_limit, fetch_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
-        want_sn, max_nh, pagination_dict
-    )
 
-    if fetch_limit is not None:
+    if want_sn and result_snapshot is not None and rs_spec is not None:
+        # Stream the merged combo result window-by-window into the snapshot store so peak
+        # memory is one chunk, never the whole (up to ``max_ids``) decoded pool at once.
+        page_limit = SearchResultSnapshot.snapshot_pagination(
+            True, 0, pagination_dict
+        )[2]
+        base_params = list(plan.params)
+
+        async def fetch_window(
+            window_offset: int, window_limit: int
+        ) -> SnapshotWindow:
+            stmt = data_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
+                sql.Placeholder(), sql.Placeholder()
+            )
+            window_rows = await gw.client.fetch_all(
+                stmt,
+                [*base_params, int(window_limit), int(window_offset)],
+                row_factory="dict",
+            )
+
+            return SnapshotWindow(rows=[dict(row) for row in window_rows])
+
+        stream = await build_snapshot_pool_streaming(
+            result_snapshot=result_snapshot,
+            rs_spec=rs_spec,
+            snap_opt=snapshot,
+            fp_computed=fp_fingerprint,
+            codec=read_codec,
+            prepare_rows=None,
+            fetch_window=fetch_window,
+            page_offset=page_offset,
+            page_limit=page_limit,
+            trust_source=trust_source,
+        )
+        page = materialize_mapping_rows(
+            codec=read_codec,
+            model_type=model_type,
+            page_rows=stream.page_rows,
+            pool=None,
+            u=page_offset,
+            page_limit=page_limit,
+            return_type=return_type,
+            return_fields=return_fields,
+            trust_source=trust_source,
+        )
+
+        return page_from_limit_offset(
+            page,
+            pagination_dict,
+            total=(
+                total if (return_count and count_policy != "none") else None
+            ),
+            snapshot=stream.handle,
+        )
+
+    params = list(plan.params)
+    user_limit = pagination_dict.get("limit")
+
+    if user_limit is not None:
         data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-        params.append(int(fetch_limit))
+        params.append(int(user_limit))
 
-    if want_sn:
-        data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-        params.append(int(fetch_offset))
-
-    elif pagination_dict.get("offset") is not None:
+    if pagination_dict.get("offset") is not None:
         data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
         params.append(offset_from_dict(pagination_dict))
 
     rows = await gw.client.fetch_all(data_stmt, params, row_factory="dict")
 
-    return await snapshot_materialize_and_paginate(
+    return await materialize_offset_page(
         rows=list(rows),
-        want_snap=want_sn,
-        result_snapshot=result_snapshot,
-        rs_spec=rs_spec,
-        snapshot=snapshot,
-        fp_fingerprint=fp_fingerprint,
         pagination_dict=pagination_dict,
-        page_limit=page_limit,
         return_count=return_count,
         total=total if count_policy != "none" else None,
         return_type=return_type,
         return_fields=return_fields,
         model_type=model_type,
-        codec=hub_spec.resolved_read_codec,
+        codec=read_codec,
         trust_source=trust_source,
     )
