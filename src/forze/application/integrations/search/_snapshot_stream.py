@@ -131,9 +131,14 @@ async def build_snapshot_pool_streaming(
             if page_offset <= global_index < page_end:
                 page_rows.append(row)
 
-                if window.highlights is not None and i < len(window.highlights):
+                # Highlights are per-hit and index-aligned with the page rows, so append one
+                # entry for every page row when the window carries them — the hit's highlights
+                # or ``{}`` when it has none — never skip, or later entries describe the wrong hit.
+                if window.highlights is not None:
                     has_highlights = True
-                    page_highlights.append(window.highlights[i])
+                    page_highlights.append(
+                        window.highlights[i] if i < len(window.highlights) else {}
+                    )
 
         seen += len(rows)
         fetch_offset += len(window.rows)

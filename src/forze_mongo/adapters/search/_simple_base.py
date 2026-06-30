@@ -19,6 +19,8 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     effective_phrase_combine,
     normalize_search_queries,
+    reject_unsupported_facets,
+    reject_unsupported_highlight,
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import (
@@ -88,6 +90,11 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        # Mongo search does not produce facets or highlights; fail closed rather than
+        # silently ignore a request (which would let a caller think sidecars were coming).
+        reject_unsupported_facets(options, backend="Mongo")
+        reject_unsupported_highlight(self.spec, options, backend="Mongo")
+
         # The encrypted-sort guard runs in the shared offset executor below.
         options = search_options_for_simple_adapter(options)
         terms = tuple(normalize_search_queries(query))
@@ -131,6 +138,8 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        reject_unsupported_facets(options, backend="Mongo")
+        reject_unsupported_highlight(self.spec, options, backend="Mongo")
         reject_encrypted_sort_fields(
             sorts, encryption=self.spec.encryption, spec_name=self.spec.name
         )

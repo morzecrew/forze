@@ -70,6 +70,7 @@ import pytest
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsSpec
 from forze.application.contracts.search import SearchQueryDepKey
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException
 from forze_mock import MockHashEmbeddingsProvider
 from forze_mongo.adapters.search import MongoVectorSearchAdapter
 from forze_mongo.execution.deps import ConfigurableMongoSearch
@@ -131,3 +132,20 @@ async def test_mongo_vector_max_candidates_overrides_num_candidates() -> None:
 
     assert default[0]["$vectorSearch"]["numCandidates"] == 100  # configured default
     assert override[0]["$vectorSearch"]["numCandidates"] == 7  # per-request override
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_options", [{"facets": ["label"]}, {"highlight": True}])
+async def test_mongo_search_fails_closed_on_facets_or_highlights(
+    bad_options: dict,
+) -> None:
+    """Mongo search produces no facets/highlights, so requesting them fails closed
+    (``query_feature_unsupported``) rather than silently dropping the sidecars."""
+
+    adapter = _vector_adapter()
+
+    with pytest.raises(CoreException, match="not yet supported"):
+        await adapter.search_page("alpha", options=bad_options)
+
+    with pytest.raises(CoreException, match="not yet supported"):
+        await adapter.search_cursor("alpha", options=bad_options)

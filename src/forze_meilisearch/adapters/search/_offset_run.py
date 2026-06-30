@@ -168,7 +168,7 @@ async def execute_meilisearch_offset_search[M: BaseModel](
     q = build_search_query_string(terms, combine=combine)
 
     filter_str = gw.build_filter(filters)
-    attrs = attributes_to_search_on(spec, options, gw.field_map)
+    search_attrs = attributes_to_search_on(spec, options, gw.field_map)
     sort_list = build_sort(render_user_sorts(sorts, gw.field_map))
     pagination_dict: dict[str, Any] = dict(pagination or {})
     facet_plan = plan_facets(gw, spec, options)
@@ -194,7 +194,7 @@ async def execute_meilisearch_offset_search[M: BaseModel](
             client=client,
             query_string=q,
             filter_str=filter_str,
-            attrs=attrs,
+            attrs=search_attrs,
             sort_list=sort_list,
             pagination_dict=pagination_dict,
             return_count=return_count,

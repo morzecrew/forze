@@ -42,6 +42,7 @@ from forze.application.integrations.search.offset_executor import (
     materialize_offset_page,
     offset_from_dict,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import materialize_mapping_rows
 from forze.domain.constants import ID_FIELD
@@ -434,7 +435,17 @@ async def hydrate_rows_by_id(
     hyd_rows = await gw.client.fetch_all(hyd_stmt, [page_ids], row_factory="dict")
     by_id = {row[ID_FIELD]: dict(row) for row in hyd_rows}
 
-    return [by_id[i] for i in page_ids if i in by_id]
+    # The ids were just ranked from the same relation, so every one must hydrate. A miss
+    # means the relation changed between the ranking and hydration reads; dropping it would
+    # return fewer hits than the page while keeping the original count and cursor state, so
+    # fail closed rather than silently shrink the page.
+    if missing := [i for i in page_ids if i not in by_id]:
+        raise exc.internal(
+            f"Search hydration is missing {len(missing)} ranked id(s); the read relation "
+            "changed between the ranking and hydration reads.",
+        )
+
+    return [by_id[i] for i in page_ids]
 
 
 async def _hydrate_thin_hub_page(

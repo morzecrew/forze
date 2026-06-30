@@ -330,7 +330,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
             member_spec = next(m for m in self.federated_spec.members if m.name == name)
             filter_str = adapter.build_filter(filters)
-            attrs = attributes_to_search_on(
+            search_attrs = attributes_to_search_on(
                 cast(SearchSpec[M], member_spec),
                 leg_opts,
                 adapter.field_map,
@@ -345,8 +345,8 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             if filter_str is not None:
                 params_kwargs["filter"] = filter_str
 
-            if attrs is not None:
-                params_kwargs["attributes_to_search_on"] = attrs
+            if search_attrs is not None:
+                params_kwargs["attributes_to_search_on"] = search_attrs
 
             if sort_list is not None:
                 params_kwargs["sort"] = sort_list
