@@ -22,6 +22,7 @@ from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
+from ._highlights import build_fts_highlight
 from ._pgroonga_plan import effective_ranked_candidate_limit, is_trivial_filter
 from ._fts_sql import FtsGroupLetter
 from ._leg_fts import build_fts_leg
@@ -196,4 +197,10 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             rank_column=self.search_rank_column,
             projection_alias=self.projection_alias,
             browse_count_params=[*fp] if not terms else None,
+            highlight=build_fts_highlight(
+                spec=self.spec,
+                options=options,
+                terms=terms,
+                alias=self.projection_alias,
+            ),
         )

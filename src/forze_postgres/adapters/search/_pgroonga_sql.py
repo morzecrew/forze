@@ -30,9 +30,8 @@ def pgroonga_literal_phrase(term: str) -> str:
     User-supplied terms must never be interpreted as Groonga query syntax (boolean
     operators, column references, wildcards, weights): that is a search-language
     injection surface. Double-quoting turns the whole term into a literal phrase, so
-    operator characters lose their special meaning. Trusted advanced queries should use
-    the ``groonga_query`` :class:`~forze.application.contracts.search.SearchOptions`
-    override, which bypasses this path and is passed to PGroonga verbatim.
+    operator characters lose their special meaning. Trusted advanced raw-Groonga queries
+    belong at the Postgres client / raw-SQL layer, not the backend-agnostic search port.
     """
 
     escaped = term.replace("\\", "\\\\").replace('"', '\\"')
@@ -115,11 +114,7 @@ async def pgroonga_match_clause(
 
     use_fuzzy = options.get("fuzzy", False)
 
-    if search.fuzzy is not None:
-        ratio = search.fuzzy.get("max_distance_ratio", 0.34)
-
-    else:
-        ratio = 0.34
+    ratio = search.fuzzy.max_distance_ratio if search.fuzzy is not None else 0.34
 
     if not uses_array:
         col = heap_cols[0]
@@ -249,17 +244,9 @@ def pgroonga_match_query_text(
     queries: tuple[str, ...],
     options: SearchOptions | None,
 ) -> str:
-    """Resolve the Groonga query string (raw override or phrase combiner)."""
+    """Resolve the Groonga query string from the phrase combiner."""
 
     from forze.application.contracts.search import effective_phrase_combine
-
-    raw = (options or {}).get("groonga_query")
-
-    if raw is not None:
-        s = str(raw).strip()
-
-        if s:
-            return s
 
     return pgroonga_phrase_match_text(
         queries,

@@ -31,6 +31,7 @@ from forze.application.integrations.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell
+from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import (
     RelationSpec,
     is_static_relation,
@@ -307,6 +308,8 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             count_from_outer=pipeline_sql.count_from_outer,
             approximate_total=approximate_total,
             select_table_alias=self.projection_alias,
+            highlight=pipeline_sql.highlight,
+            from_outer_param_count=pipeline_sql.from_outer_param_count,
         )
 
         fp_extras = self._fingerprint_extras(
@@ -314,6 +317,19 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             resolved_plan=getattr(pipeline_sql, "resolved_plan", None),
             candidate_limit=getattr(pipeline_sql, "candidate_limit", None),
         )
+
+        # Late materialization: when the read relation is a distinct projection
+        # from the index heap (typically a heavy view), rank an id-only scan and hydrate the
+        # page's read-model columns by id. No-op when read == heap (plain table search) or
+        # when highlights are requested (snippets need the projection row in the SELECT).
+        thin_read_qname: PostgresQualifiedName | None = None
+
+        if pipeline_sql.highlight is None and ID_FIELD in self.read_fields:
+            read_qn = await self._pipeline_read_qname()
+            heap_qn = await self._pipeline_heap_qname()
+
+            if (read_qn.schema, read_qn.name) != (heap_qn.schema, heap_qn.name):
+                thin_read_qname = read_qn
 
         return await execute_simple_ranked_offset_search(
             self,
@@ -333,6 +349,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             result_snapshot=self.result_snapshot,
             options=options,
             trust_source=search_trust_source(self.read_validation),
+            thin_read_qname=thin_read_qname,
         )
 
     # ....................... #

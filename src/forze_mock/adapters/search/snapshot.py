@@ -13,6 +13,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import utcnow
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
 
@@ -22,6 +23,21 @@ from forze_mock.tenancy import MockTenancyMixin
 def _validate_chunk_size(chunk_size: int) -> None:
     if chunk_size < 1:
         raise exc.internal("chunk_size must be at least 1.")
+
+
+def _expires_at(ttl: timedelta) -> int:
+    """Absolute UTC unix-second expiry for a run, computed once at write time."""
+
+    return int(utcnow().timestamp()) + int(ttl.total_seconds())
+
+
+def _is_expired(meta: dict[str, Any]) -> bool:
+    """Whether a run's stored expiry has passed (Redis lets the keys lapse; the mock has no
+    TTL eviction, so reads must check expiry explicitly to match that behavior)."""
+
+    expires_at = meta.get("expires_at")
+
+    return expires_at is not None and int(expires_at) <= int(utcnow().timestamp())
 
 
 @final
@@ -69,12 +85,15 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
 
     @staticmethod
     def _as_meta(run_id: str, data: dict[str, Any]) -> SearchResultSnapshotMeta:
+        raw_expires = data.get("expires_at")
+
         return SearchResultSnapshotMeta(
             run_id=run_id,
             fingerprint=str(data.get("fingerprint", "")),
             total=int(data.get("total", data.get("total_ids", 0))),
             chunk_size=int(data.get("chunk_size", 0)),
             complete=bool(data.get("complete", False)),
+            expires_at=int(raw_expires) if raw_expires is not None else None,
         )
 
     # ....................... #
@@ -88,7 +107,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
         ttl: timedelta | None = None,
         chunk_size: int | None = None,
     ) -> None:
-        _ = self._resolve_ttl(ttl)
+        ttl_eff = self._resolve_ttl(ttl)
         cs = self._resolve_chunk_size(chunk_size)
         _validate_chunk_size(cs)
         n = len(ordered_ids)
@@ -100,6 +119,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
                     "total": 0,
                     "num_chunks": 0,
                     "complete": True,
+                    "expires_at": _expires_at(ttl_eff),
                 }
             return
         await self.begin_run(
@@ -127,7 +147,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
         chunk_size: int | None = None,
         ttl: timedelta | None = None,
     ) -> None:
-        _ = self._resolve_ttl(ttl)
+        ttl_eff = self._resolve_ttl(ttl)
         cs = self._resolve_chunk_size(chunk_size)
         _validate_chunk_size(cs)
         with self.state.lock:
@@ -137,6 +157,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
                 "complete": False,
                 "next_chunk_index": 0,
                 "total_ids": 0,
+                "expires_at": _expires_at(ttl_eff),
             }
 
     async def append_chunk(
@@ -171,6 +192,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
             self._chunk_store()[(run_id, chunk_index)] = list(ids)
             total_ids = int(meta.get("total_ids", 0)) + len(ids)
             next_idx = chunk_index + 1
+            expires_at = meta.get("expires_at")
             if is_last:
                 self._meta_store()[run_id] = {
                     "fingerprint": meta["fingerprint"],
@@ -178,6 +200,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
                     "total": total_ids,
                     "num_chunks": next_idx,
                     "complete": True,
+                    "expires_at": expires_at,
                 }
             else:
                 self._meta_store()[run_id] = {
@@ -186,6 +209,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
                     "complete": False,
                     "next_chunk_index": next_idx,
                     "total_ids": total_ids,
+                    "expires_at": expires_at,
                 }
 
     async def get_id_range(
@@ -200,7 +224,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
             raise exc.internal("get_id_range requires offset >= 0 and limit >= 1.")
         with self.state.lock:
             meta = self._meta_store().get(run_id)
-            if meta is None or not meta.get("complete"):
+            if meta is None or not meta.get("complete") or _is_expired(meta):
                 return None
             if expected_fingerprint is not None and str(
                 meta.get("fingerprint")
@@ -231,7 +255,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
     async def get_meta(self, run_id: str) -> SearchResultSnapshotMeta | None:
         with self.state.lock:
             meta = self._meta_store().get(run_id)
-            if meta is None:
+            if meta is None or _is_expired(meta):
                 return None
             return self._as_meta(run_id, meta)
 

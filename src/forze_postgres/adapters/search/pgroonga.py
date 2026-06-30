@@ -19,23 +19,31 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.search import (
-    PgroongaPlan,
     SearchOptions,
     SearchResultSnapshotOptions,
     SearchSpec,
     effective_phrase_combine,
+    facet_size_of,
     normalize_search_queries,
+    resolve_facet_fields,
     search_options_for_simple_adapter,
 )
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    SnapshotWindow,
+    build_snapshot_pool_streaming,
+)
 from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
+from ._facets import fetch_pg_facets
+from ._highlights import build_pgroonga_highlight
 from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page, search_trust_source
 from ._pgroonga_plan import (
+    PgroongaPlan,
     effective_ranked_candidate_limit,
     ensure_pgroonga_plan_with_candidate_cap,
     index_first_heap_limit,
@@ -212,6 +220,9 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         fw, fp = await self.where_clause(filters)
         rs_spec = self.spec.snapshot
+        # Facets are computed live per page; an id-only snapshot replay would drop them, so a
+        # facet request runs live (no snapshot read or write).
+        facet_fields = resolve_facet_fields(self.spec, options)
         fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
             query,
             filters,
@@ -221,7 +232,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             extras=self._fingerprint_extras(options),
         )
 
-        if self.result_snapshot is not None and rs_spec is not None:
+        if self.result_snapshot is not None and rs_spec is not None and not facet_fields:
             maybe_snap: Any = await self.result_snapshot.read_simple_result_snapshot(
                 rs_spec=rs_spec,
                 snap_opt=snapshot,
@@ -305,78 +316,134 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         params = params_base
         pagination = pagination or {}
+        trust_source = search_trust_source(self.read_validation)
+        read_codec = self.spec.resolved_read_codec
+        u_ = int(pagination.get("offset") or 0)
 
         want_sn = (
             self.result_snapshot is not None
             and rs_spec is not None
+            and not facet_fields
             and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
         )
-        max_n0 = (
-            self.result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
-            if want_sn and self.result_snapshot is not None
-            else 0
-        )
-        sql_limit, sql_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
-            want_sn, max_n0, dict(pagination)
-        )
-        if sql_limit is not None:
-            data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(int(sql_limit))
-
-        if want_sn:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(sql_offset))
-
-        elif pagination.get("offset") is not None:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(pagination.get("offset") or 0))
-
-        rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
-
-        handle_no = None
-        pool_pg0: list[M] | None = None
-        u_ = int(pagination.get("offset") or 0)
 
         if want_sn and self.result_snapshot is not None and rs_spec is not None:
-            pool_len = len(rows)
-            pool_pg0 = self.spec.resolved_read_codec.decode_mapping_many(
-                rows,
-                trust_source=search_trust_source(self.read_validation),
-            )
-            handle_no = await self.result_snapshot.put_simple_ordered_hits(
-                pool_pg0,
-                snap_opt=snapshot,
+            # Stream the ordered pool window-by-window into the snapshot store so peak memory
+            # is one chunk, never the whole (up to ``max_ids``) decoded pool at once.
+            page_limit = SearchResultSnapshot.snapshot_pagination(
+                True, 0, dict(pagination)
+            )[2]
+            base_params = list(params_base)
+
+            async def fetch_window(
+                window_offset: int, window_limit: int
+            ) -> SnapshotWindow:
+                stmt = data_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
+                    sql.Placeholder(), sql.Placeholder()
+                )
+                window_rows = await self.client.fetch_all(
+                    stmt,
+                    [*base_params, int(window_limit), int(window_offset)],
+                    row_factory="dict",
+                )
+
+                return SnapshotWindow(rows=[dict(row) for row in window_rows])
+
+            stream = await build_snapshot_pool_streaming(
+                result_snapshot=self.result_snapshot,
                 rs_spec=rs_spec,
+                snap_opt=snapshot,
                 fp_computed=fp_fingerprint,
-                pool_len_before_cap=pool_len,
+                codec=read_codec,
+                prepare_rows=None,
+                fetch_window=fetch_window,
+                page_offset=u_,
+                page_limit=page_limit,
+                trust_source=trust_source,
             )
-            rows = rows[u_ : u_ + page_limit]
+            handle_no = stream.handle
+            page_rows = stream.page_rows
+
+        else:
+            handle_no = None
+            sql_limit, _, page_limit = SearchResultSnapshot.snapshot_pagination(
+                False, 0, dict(pagination)
+            )
+            stmt = data_stmt
+
+            if sql_limit is not None:
+                stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+                params.append(int(sql_limit))
+
+            if pagination.get("offset") is not None:
+                stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+                params.append(int(pagination.get("offset") or 0))
+
+            page_rows = await self.client.fetch_all(stmt, params, row_factory="dict")
 
         page = materialize_search_page(
-            page_rows=rows,
-            pool=pool_pg0,
+            page_rows=page_rows,
+            pool=None,
             u=u_,
             page_limit=page_limit,
             return_type=return_type,
             return_fields=return_fields,
             model_type=self.model_type,
-            codec=self.spec.resolved_read_codec,
-            trust_source=search_trust_source(self.read_validation),
+            codec=read_codec,
+            trust_source=trust_source,
         )
 
+        facets = await self._browse_facets(proj_qname, fw, fp, options)
+
         if return_count:
-            return page_from_limit_offset(
+            result: Any = page_from_limit_offset(
                 page,
                 pagination,
                 total=total if count_policy != "none" else None,
                 snapshot=handle_no,
             )
+        else:
+            result = page_from_limit_offset(
+                page,
+                pagination,
+                total=None,
+                snapshot=handle_no,
+            )
 
-        return page_from_limit_offset(
-            page,
-            pagination,
-            total=None,
-            snapshot=handle_no,
+        if facets is None:
+            return result
+
+        return attrs.evolve(result, facets=facets)
+
+    # ....................... #
+
+    async def _browse_facets(
+        self,
+        proj_qname: Any,
+        fw: sql.Composable,
+        fp: Sequence[Any],
+        options: SearchOptions | None,
+    ) -> Any:
+        """Facets for the empty-query browse: ``GROUP BY`` over the filtered projection."""
+
+        facet_fields = resolve_facet_fields(self.spec, options)
+        if not facet_fields:
+            return None
+
+        body = sql.SQL("FROM {proj} {pa} WHERE {fw}").format(
+            proj=proj_qname.ident(),
+            pa=sql.Identifier(self.projection_alias),
+            fw=fw,
+        )
+
+        return await fetch_pg_facets(
+            self.client,
+            with_clause=None,
+            body=body,
+            params=list(fp),
+            table_alias=self.projection_alias,
+            fields=facet_fields,
+            size=facet_size_of(options),
         )
 
     # ....................... #
@@ -453,7 +520,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         resolved_plan = await resolve_pgroonga_plan(
             configured=self.pgroonga_plan,
-            options=options,
             parsed_filters=parsed_filters,
             read_qname=proj_qname,
             introspector=self.introspector,
@@ -486,6 +552,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             join,
             projection_alias=self.pipeline.projection,
             scored_alias=self.pipeline.scored,
+        )
+
+        highlight = build_pgroonga_highlight(
+            spec=self.spec,
+            options=options,
+            terms=terms,
+            alias=self.projection_alias,
         )
 
         if resolved_plan == "index_first":
@@ -536,6 +609,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 projection_alias=self.projection_alias,
                 resolved_plan=resolved_plan,
                 candidate_limit=candidate_cap,
+                highlight=highlight,
+                from_outer_param_count=len(fp),
             )
 
         cap_kw: dict[str, Any] = {}
@@ -583,4 +658,5 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             rank_column=self.search_rank_column,
             projection_alias=self.projection_alias,
             resolved_plan=resolved_plan,
+            highlight=highlight,
         )

@@ -56,3 +56,96 @@ def test_atlas_pipeline_starts_with_search_stage() -> None:
 
     assert "$search" in pipeline[0]
     assert pipeline[0]["$search"]["index"] == "default"
+
+
+# ----------------------- #
+# `max_candidates` -> Mongo `$vectorSearch.numCandidates`
+
+
+from unittest.mock import MagicMock
+from uuid import UUID
+
+import pytest
+
+from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsSpec
+from forze.application.contracts.search import SearchQueryDepKey
+from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException
+from forze_mock import MockHashEmbeddingsProvider
+from forze_mongo.adapters.search import MongoVectorSearchAdapter
+from forze_mongo.execution.deps import ConfigurableMongoSearch
+from forze_mongo.execution.deps.configs import MongoSearchConfig, MongoVectorEngine
+from forze_mongo.execution.deps.keys import MongoClientDepKey
+from tests.support.execution_context import context_from_deps
+
+
+class _VecDoc(BaseModel):
+    id: UUID
+    label: str
+
+
+def _embeddings_factory(
+    _ctx: ExecutionContext, spec: EmbeddingsSpec
+) -> MockHashEmbeddingsProvider:
+    return MockHashEmbeddingsProvider(dimensions=spec.dimensions)
+
+
+def _vector_adapter() -> MongoVectorSearchAdapter[_VecDoc]:
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MongoClientDepKey: MagicMock(),
+                SearchQueryDepKey: ConfigurableMongoSearch(
+                    config=MongoSearchConfig(
+                        read=("db", "coll"),
+                        engine=MongoVectorEngine(
+                            index_name="vec_idx",
+                            vector_path="emb",
+                            embeddings_name="vt",
+                            dimensions=3,
+                        ),
+                    )
+                ),
+                EmbeddingsProviderDepKey: _embeddings_factory,
+            }
+        )
+    )
+    adapter = ctx.search.query(SearchSpec(name="vn", model_type=_VecDoc, fields=("label",)))
+    assert isinstance(adapter, MongoVectorSearchAdapter)
+    return adapter
+
+
+@pytest.mark.asyncio
+async def test_mongo_vector_max_candidates_overrides_num_candidates() -> None:
+    adapter = _vector_adapter()
+
+    default = await adapter._ranked_pipeline(
+        terms=("alpha",), combine="any", pre_filter={}, sorts=None, options=None
+    )
+    override = await adapter._ranked_pipeline(
+        terms=("alpha",),
+        combine="any",
+        pre_filter={},
+        sorts=None,
+        options={"max_candidates": 7},
+    )
+
+    assert default[0]["$vectorSearch"]["numCandidates"] == 100  # configured default
+    assert override[0]["$vectorSearch"]["numCandidates"] == 7  # per-request override
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_options", [{"facets": ["label"]}, {"highlight": True}])
+async def test_mongo_search_fails_closed_on_facets_or_highlights(
+    bad_options: dict,
+) -> None:
+    """Mongo search produces no facets/highlights, so requesting them fails closed
+    (``query_feature_unsupported``) rather than silently dropping the sidecars."""
+
+    adapter = _vector_adapter()
+
+    with pytest.raises(CoreException, match="not yet supported"):
+        await adapter.search_page("alpha", options=bad_options)
+
+    with pytest.raises(CoreException, match="not yet supported"):
+        await adapter.search_cursor("alpha", options=bad_options)

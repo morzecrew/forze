@@ -8,7 +8,7 @@ import pytest
 from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.search import SearchFuzzySpec, SearchSpec
 from forze_postgres.adapters.search._fts_sql import (
     fts_effective_group_weights,
     fts_rank_cd_weight_array,
@@ -214,7 +214,7 @@ async def test_pgroonga_match_non_array_fuzzy_uses_spec_ratio() -> None:
         name="s",
         model_type=_Doc,
         fields=["a", "b"],
-        fuzzy={"max_distance_ratio": 0.11},
+        fuzzy=SearchFuzzySpec(max_distance_ratio=0.11),
     )
     sw, params = await pgroonga_match_clause(
         search=spec,

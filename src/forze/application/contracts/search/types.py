@@ -5,9 +5,6 @@ from typing import Literal, Sequence, TypeAlias, TypedDict
 PhraseCombine = Literal["any", "all"]
 """``any``: at least one list phrase matches (disjunction). ``all``: every phrase must match."""
 
-PgroongaPlan = Literal["filter_first", "index_first", "auto"]
-"""PGroonga ranked search SQL shape (Postgres adapter)."""
-
 SearchCountPolicy = Literal["exact", "approximate", "none"]
 """How ranked search populates page totals when ``return_count=True``."""
 
@@ -19,6 +16,35 @@ ResultSnapshotMode: TypeAlias = bool | Literal["auto"]
 ``True`` always (when the adapter supports it), ``False`` never, ``\"auto\"`` defers
 to the search surface defaults (e.g. :class:`~.SearchResultSnapshotSpec`).
 """
+
+# ....................... #
+
+
+class HighlightOptions(TypedDict, total=False):
+    """Per-request highlighting options.
+
+    Used as the value of :attr:`SearchOptions.highlight` when finer control than
+    ``True`` is needed. Omitted keys fall back to backend defaults; the marker tags
+    default to the cross-industry ``<em>`` / ``</em>`` and are always passed to the
+    backend explicitly so marked-up output is uniform across adapters.
+    """
+
+    fields: Sequence[str]
+    """Subset of highlightable fields to highlight; omit to highlight all of them
+    (the spec's :attr:`~.SearchSpec.highlightable_fields`, defaulting to searchable ``fields``)."""
+
+    pre_tag: str
+    """Opening marker inserted before each matched fragment. Default ``\"<em>\"``."""
+
+    post_tag: str
+    """Closing marker inserted after each matched fragment. Default ``\"</em>\"``."""
+
+    fragment_size: int
+    """Approximate maximum length (characters) of each returned snippet fragment."""
+
+    max_fragments: int
+    """Maximum number of snippet fragments returned per field."""
+
 
 # ....................... #
 
@@ -52,7 +78,12 @@ class SearchResultSnapshotOptions(TypedDict, total=False):
 
 
 class SearchOptions(TypedDict, total=False):
-    """Optional tuning parameters for search backends."""
+    """Backend- and topology-agnostic per-request search options.
+
+    Carries only options that make sense for any search backend and any search topology.
+    Hub / federated (multi-source) requests use :class:`MultiSourceSearchOptions`, which
+    extends this with the member-selection and merge-pool keys.
+    """
 
     fuzzy: bool
     """Whether fuzzy matching is enabled."""
@@ -67,6 +98,51 @@ class SearchOptions(TypedDict, total=False):
     Ignored if weights are provided.
     """
 
+    phrase_combine: PhraseCombine
+    """When ``query`` is a list of strings, how to combine them.
+
+    ``any`` (default): disjunction (match if any phrase matches).
+    ``all``: conjunction (match every phrase).
+    """
+
+    max_candidates: int
+    """Advisory upper bound on the candidate pool the ranking stage considers before
+    pagination. A recall/cost trade: honored where a backend supports it, harmlessly
+    ignored otherwise (ignoring yields equal-or-higher recall at higher cost)."""
+
+    search_count: SearchCountPolicy
+    """Ranked search total: ``exact`` (``COUNT(*)``), ``approximate`` (planner/stats), ``none``."""
+
+    facets: Sequence[str]
+    """Field names to compute term (value) distributions over for this query.
+
+    Each must be a :attr:`~.SearchSpec.facetable_fields` member; an unservable field
+    fails with a ``precondition``. Distributions are returned on the page
+    (:attr:`~forze.application.contracts.base.value_objects.CountlessPage.facets`),
+    computed over the full matching set, independent of the page window."""
+
+    facet_size: int
+    """Maximum number of buckets returned per faceted field (caps buckets, not the match
+    count). Backend default applies when omitted."""
+
+    highlight: bool | HighlightOptions
+    """Request highlighting of matched fragments per hit. ``True`` highlights
+    all highlightable fields with default markers; a :class:`HighlightOptions` narrows the
+    fields / customizes markers. Returned index-aligned on the page
+    (:attr:`~forze.application.contracts.base.value_objects.CountlessPage.highlights`)."""
+
+
+# ....................... #
+
+
+class MultiSourceSearchOptions(SearchOptions, total=False):
+    """Per-request options for multi-source search (hub and federated).
+
+    Extends :class:`SearchOptions` with the member-selection and merge-pool keys that only
+    exist when a query fans out across several search sources. Single-index search uses the
+    plain :class:`SearchOptions` and never sees these.
+    """
+
     member_weights: dict[str, float]
     """Weights for hub / federation members."""
 
@@ -77,24 +153,7 @@ class SearchOptions(TypedDict, total=False):
     Ignored if member_weights are provided.
     """
 
-    phrase_combine: PhraseCombine
-    """When ``query`` is a list of strings, how to combine them.
-
-    ``any`` (default): disjunction (match if any phrase matches).
-    ``all``: conjunction (match every phrase).
-    """
-
-    pgroonga_plan: PgroongaPlan
-    """Override Postgres PGroonga plan (``filter_first``, ``index_first``, ``auto``)."""
-
-    candidate_limit: int
-    """Cap ranked heap rows per PGroonga leg or simple search pipeline."""
-
-    groonga_query: str
-    """Raw Groonga query string for ``pgroonga_condition`` (skips phrase combiner)."""
-
-    search_count: SearchCountPolicy
-    """Ranked search total: ``exact`` (``COUNT(*)``), ``approximate`` (planner/stats), ``none``."""
-
-    combo_limit: int
-    """Cap rows in hub ``combo_top`` before outer pagination (Postgres hub search)."""
+    merge_candidates: int
+    """Advisory upper bound on the merged candidate pool kept across members before the final
+    rank and pagination. Same recall/cost trade as :attr:`SearchOptions.max_candidates`, one
+    stage later (the post-merge pool)."""

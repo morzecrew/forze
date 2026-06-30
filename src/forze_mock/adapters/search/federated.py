@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Final, Sequence, final
+from typing import Any, Final, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -20,8 +20,13 @@ from forze.application.contracts.search import (
     SearchQueryPort,
     SearchResultSnapshotOptions,
     prepare_federated_search_options,
+    reject_federated_facets,
 )
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    build_federated_highlight_index,
+    federated_highlights_for_hits,
+)
 from forze_mock.adapters.search._unsupported import MockOffsetOnlySearchMixin
 from forze_mock.adapters.search.query import MockSearchAdapter
 
@@ -52,23 +57,22 @@ class MockFederatedSearchAdapter[M: BaseModel](
 
     # ....................... #
 
-    async def search(
+    async def _merge_legs(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[FederatedSearchReadModel[M]]:
-        _ = snapshot
+        filters: QueryFilterExpression | None,
+        options: SearchOptions | None,
+    ) -> tuple[list[FederatedSearchReadModel[M]], dict[str, Any]]:
+        """Run each leg (with facet/highlight options), RRF-merge, and index leg highlights."""
+
+        reject_federated_facets(options)
         leg_opts, member_weights = prepare_federated_search_options(
             self.federated_spec,
             options,
         )
         leg_cap = max(1, int(self.rrf_per_leg_limit))
         leg_rows: list[tuple[str, list[M], float]] = []
+        leg_pages: list[tuple[str, Any]] = []
 
         for i, (name, port) in enumerate(self.legs):
             weight = float(member_weights[i])
@@ -82,19 +86,50 @@ class MockFederatedSearchAdapter[M: BaseModel](
                 options=leg_opts,
             )
             leg_rows.append((name, list(page.hits), weight))
+            leg_pages.append((name, page))
 
         merged = SearchResultSnapshot.weighted_rrf_merge_rows(
             leg_rows=leg_rows,
             k=int(self.rrf_k),
         )
         hits = [item[0] for item in merged]
-        pagination = pagination or {}
-        offset = int(pagination.get("offset") or 0)
-        limit = pagination.get("limit")
+        return hits, build_federated_highlight_index(leg_pages)
+
+    # ....................... #
+
+    @staticmethod
+    def _window(
+        hits: list[FederatedSearchReadModel[M]],
+        pagination: PaginationExpression | None,
+    ) -> list[FederatedSearchReadModel[M]]:
+        pg = pagination or {}
+        offset = int(pg.get("offset") or 0)
+        limit = pg.get("limit")
         window = hits[offset:]
         if limit is not None:
             window = window[: int(limit)]
-        return page_from_limit_offset(window, pagination, total=None)
+        return window
+
+    # ....................... #
+
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[FederatedSearchReadModel[M]]:
+        _ = snapshot, sorts
+        hits, hl_index = await self._merge_legs(query, filters, options)
+        window = self._window(hits, pagination)
+        highlights = federated_highlights_for_hits(window, hl_index)
+        result = page_from_limit_offset(window, pagination or {}, total=None)
+        if highlights is None:
+            return result
+        return attrs.evolve(result, highlights=highlights)
 
     async def search_page(
         self,
@@ -107,35 +142,10 @@ class MockFederatedSearchAdapter[M: BaseModel](
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> Page[FederatedSearchReadModel[M]]:
         _ = snapshot, sorts
-        leg_opts, member_weights = prepare_federated_search_options(
-            self.federated_spec,
-            options,
-        )
-        leg_cap = max(1, int(self.rrf_per_leg_limit))
-        leg_rows: list[tuple[str, list[M], float]] = []
-
-        for i, (name, port) in enumerate(self.legs):
-            weight = float(member_weights[i])
-            if weight <= 0.0:
-                continue
-            page = await port.search(
-                query,
-                filters,
-                {"limit": leg_cap},
-                None,
-                options=leg_opts,
-            )
-            leg_rows.append((name, list(page.hits), weight))
-
-        merged = SearchResultSnapshot.weighted_rrf_merge_rows(
-            leg_rows=leg_rows,
-            k=int(self.rrf_k),
-        )
-        hits = [item[0] for item in merged]
-        pagination = pagination or {}
-        offset = int(pagination.get("offset") or 0)
-        limit = pagination.get("limit")
-        window = hits[offset:]
-        if limit is not None:
-            window = window[: int(limit)]
-        return page_from_limit_offset(window, pagination, total=len(hits))
+        hits, hl_index = await self._merge_legs(query, filters, options)
+        window = self._window(hits, pagination)
+        highlights = federated_highlights_for_hits(window, hl_index)
+        result = page_from_limit_offset(window, pagination or {}, total=len(hits))
+        if highlights is None:
+            return result
+        return attrs.evolve(result, highlights=highlights)

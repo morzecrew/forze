@@ -138,6 +138,8 @@ hits, total = page.hits, page.count
 
 Methods: `search` (typed, offset), `cursor_search` (typed, keyset), `projected_search` / `projected_cursor_search` (raw dict rows). The physical FTS/PGroonga/vector layout belongs in **`PostgresDepsModule.searches`** (or hub/federated maps), never on the spec.
 
+For faceted navigation and result highlighting, declare `facetable_fields` / `highlightable_fields` on the `SearchSpec` and request them per query through search options (`facets=[…]`, `highlight=True`); the page carries `page.facets` and per-hit `page.highlights`, failing closed when a field or backend can't serve them. Per-request options are backend-agnostic — single-index search takes `SearchOptions`, while hub and federated search take `MultiSourceSearchOptions` (adds `member_weights` / `members`).
+
 ## Hub and federated search
 
 Use `HubSearchSpec` with `build_hub_search_registry` when one hub entity searches through weighted member legs — it yields the full `SearchFacade` surface. Use `FederatedSearchSpec` with `build_federated_search_registry` to merge independent specs; it registers only the typed `search` and `cursor_search` (no `projected_search` / `projected_cursor_search`). Keep snapshot storage and cursor/keyset behaviour in infrastructure config.

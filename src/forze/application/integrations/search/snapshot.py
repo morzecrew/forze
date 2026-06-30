@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import timedelta
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
@@ -40,7 +40,12 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import payload_aad
 from forze.base.crypto import unpack_envelope
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict, stable_payload_fingerprint, uuid4
+from forze.base.primitives import (
+    JsonDict,
+    stable_payload_fingerprint,
+    utcnow,
+    uuid4,
+)
 from forze.base.serialization import default_model_codec
 
 # ----------------------- #
@@ -717,7 +722,11 @@ class SearchResultSnapshot:
         fp_h = (sm and sm.fingerprint) or fp_computed
 
         handle = SearchSnapshotHandle(
-            id=run_id, fingerprint=fp_h, total=total_snap, capped=False
+            id=run_id,
+            fingerprint=fp_h,
+            total=total_snap,
+            capped=False,
+            expires_at=sm.expires_at if sm else None,
         )
 
         return _shape_snapshot_page(
@@ -732,71 +741,73 @@ class SearchResultSnapshot:
 
     # ....................... #
 
-    async def put_simple_ordered_hits(
+    def open_simple_hit_sink(
         self,
-        ordered_hits: Sequence[BaseModel],
         *,
         snap_opt: SearchResultSnapshotOptions | None,
         rs_spec: SearchResultSnapshotSpec,
         fp_computed: str,
-        pool_len_before_cap: int,
-    ) -> SearchSnapshotHandle:
-        max_n = self.effective_snapshot_max_ids(snap_opt, rs_spec)
-        to_store = list(ordered_hits)[:max_n]
-        capped = pool_len_before_cap > len(to_store)
-        run_id = str(uuid4())
+    ) -> _OrderedHitSink:
+        """Open a streaming sink that writes ordered record keys one chunk at a time.
 
-        await self.store.put_run(
-            run_id=run_id,
+        Callers feed record keys incrementally and the sink seals + appends them in
+        ``chunk_size`` blocks, so peak memory is one chunk regardless of ``max_ids`` — the
+        ranked offset/PGroonga paths drive it from a windowed pool fetch, the federated path
+        from the in-memory RRF merge via :meth:`put_ordered_snapshot_keys`.
+        """
+
+        ttl = self.effective_snapshot_ttl(snap_opt, rs_spec)
+
+        return _OrderedHitSink(
+            coordinator=self,
+            run_id=str(uuid4()),
             fingerprint=fp_computed,
-            ordered_ids=await self._seal_ids(
-                [self.result_record_key_string(h) for h in to_store],
-                run_id=run_id,
-            ),
-            ttl=self.effective_snapshot_ttl(snap_opt, rs_spec),
             chunk_size=self.effective_snapshot_chunk_size(snap_opt, rs_spec),
-        )
-
-        return SearchSnapshotHandle(
-            id=run_id,
-            fingerprint=fp_computed,
-            total=len(to_store),
-            capped=capped,
+            max_ids=self.effective_snapshot_max_ids(snap_opt, rs_spec),
+            ttl=ttl,
+            expires_at=int(utcnow().timestamp()) + int(ttl.total_seconds()),
         )
 
     # ....................... #
 
     async def put_ordered_snapshot_keys(
         self,
-        ordered_ids: Sequence[str],
+        ordered_ids: Iterable[str],
         *,
         snap_opt: SearchResultSnapshotOptions | None,
         rs_spec: SearchResultSnapshotSpec,
         fp_computed: str,
         pool_len_before_cap: int,
     ) -> SearchSnapshotHandle:
-        max_n = self.effective_snapshot_max_ids(snap_opt, rs_spec)
+        """Seal and store pre-built ordered record keys, streamed in ``chunk_size`` blocks.
 
-        sliced = list(ordered_ids)[:max_n]
+        The federated path's counterpart to the windowed pool build: the RRF merge already
+        holds the ordered keys in memory, but sealing + storing them streams through the sink
+        so the full sealed copy is never materialized. ``ordered_ids`` may be a lazy generator
+        — only one chunk of keys is sealed at a time, and iteration stops once ``max_ids`` is
+        reached.
+        """
 
-        capped = pool_len_before_cap > len(sliced)
-
-        run_id = str(uuid4())
-
-        await self.store.put_run(
-            run_id=run_id,
-            fingerprint=fp_computed,
-            ordered_ids=await self._seal_ids(sliced, run_id=run_id),
-            ttl=self.effective_snapshot_ttl(snap_opt, rs_spec),
-            chunk_size=self.effective_snapshot_chunk_size(snap_opt, rs_spec),
+        sink = self.open_simple_hit_sink(
+            snap_opt=snap_opt, rs_spec=rs_spec, fp_computed=fp_computed
         )
+        batch: list[str] = []
 
-        return SearchSnapshotHandle(
-            id=run_id,
-            fingerprint=fp_computed,
-            total=len(sliced),
-            capped=capped,
-        )
+        for key in ordered_ids:
+            batch.append(key)
+
+            if len(batch) >= sink.chunk_size:
+                full = await sink.add(batch)
+                batch = []
+
+                if full:
+                    break
+
+        else:
+            if batch:
+                await sink.add(batch)
+
+        return await sink.finish(pool_len_before_cap=pool_len_before_cap)
 
     # ....................... #
 
@@ -832,4 +843,118 @@ class SearchResultSnapshot:
             return_type=return_type,
             return_fields=None,
             return_count=return_count,
+        )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _OrderedHitSink:
+    """Streams ordered record keys into a snapshot run one ``chunk_size`` block at a time.
+
+    The store requires every non-final chunk to hold exactly ``chunk_size`` ids, so keys are
+    buffered and flushed in full blocks (sealed under the run id), the remainder going out as
+    the final chunk. Peak retained memory is one chunk, independent of the pool size.
+    ``begin_run`` is deferred to the first flush, so an empty pool still writes a canonical
+    empty run via :meth:`SearchResultSnapshotPort.put_run`.
+    """
+
+    coordinator: SearchResultSnapshot
+    run_id: str
+    fingerprint: str
+    chunk_size: int
+    max_ids: int
+    ttl: timedelta
+    expires_at: int
+    """Absolute UTC unix-second expiry, mirroring what the store persists in run meta."""
+
+    # ....................... #
+
+    _buffer: list[str] = attrs.field(factory=list, init=False)
+    _stored: int = attrs.field(default=0, init=False)
+    _chunk_index: int = attrs.field(default=0, init=False)
+    _began: bool = attrs.field(default=False, init=False)
+    _capped: bool = attrs.field(default=False, init=False)
+
+    # ....................... #
+
+    async def add(self, record_keys: Sequence[str]) -> bool:
+        """Buffer ``record_keys`` (dropping any past ``max_ids``), flushing full chunks.
+
+        Returns ``True`` once the cap is reached and further keys would be dropped.
+        """
+
+        for key in record_keys:
+            if self._stored + len(self._buffer) >= self.max_ids:
+                self._capped = True
+                break
+
+            self._buffer.append(key)
+
+            if len(self._buffer) >= self.chunk_size:
+                await self._flush(is_last=False)
+
+        return self._stored + len(self._buffer) >= self.max_ids
+
+    # ....................... #
+
+    async def _flush(self, *, is_last: bool) -> None:
+        if not self._began:
+            await self.coordinator.store.begin_run(
+                run_id=self.run_id,
+                fingerprint=self.fingerprint,
+                chunk_size=self.chunk_size,
+                ttl=self.ttl,
+            )
+            self._began = True
+
+        take = len(self._buffer) if is_last else self.chunk_size
+        block = self._buffer[:take]
+
+        sealed = (
+            await self.coordinator._seal_ids(  # pyright: ignore[reportPrivateUsage]
+                block,
+                run_id=self.run_id,
+            )
+        )
+
+        await self.coordinator.store.append_chunk(
+            run_id=self.run_id,
+            chunk_index=self._chunk_index,
+            ids=sealed,
+            is_last=is_last,
+        )
+
+        self._chunk_index += 1
+        self._stored += len(block)
+        del self._buffer[:take]
+
+    # ....................... #
+
+    async def finish(self, *, pool_len_before_cap: int) -> SearchSnapshotHandle:
+        """Flush the final chunk and return the run handle.
+
+        ``pool_len_before_cap`` is the number of hits the source produced before capping; it
+        marks the snapshot ``capped`` when it exceeds what was stored.
+        """
+
+        if not self._began and not self._buffer:
+            await self.coordinator.store.put_run(
+                run_id=self.run_id,
+                fingerprint=self.fingerprint,
+                ordered_ids=[],
+                ttl=self.ttl,
+                chunk_size=self.chunk_size,
+            )
+
+        else:
+            await self._flush(is_last=True)
+
+        return SearchSnapshotHandle(
+            id=self.run_id,
+            fingerprint=self.fingerprint,
+            total=self._stored,
+            capped=self._capped or pool_len_before_cap > self._stored,
+            expires_at=self.expires_at,
         )

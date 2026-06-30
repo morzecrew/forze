@@ -4,22 +4,28 @@ from __future__ import annotations
 
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from forze.application.contracts.querying import QueryExpr
 from forze.application.contracts.querying import QueryAnd, QueryField
 from forze.application.contracts.resolution import is_static_relation
-from forze.application.contracts.search import PgroongaPlan, SearchOptions
+from forze.application.contracts.search import SearchOptions
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
 if TYPE_CHECKING:
-    from forze.application.contracts.search import SearchResultSnapshotOptions
+    from forze.application.contracts.search import (
+        MultiSourceSearchOptions,
+        SearchResultSnapshotOptions,
+    )
     from forze.application.integrations.search import SearchResultSnapshot
     from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
     from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 # ----------------------- #
+
+PgroongaPlan = Literal["filter_first", "index_first", "auto"]
+"""PGroonga ranked search SQL shape (Postgres adapter config; resolved per query)."""
 
 ResolvedPgroongaPlan = Literal["filter_first", "index_first"]
 
@@ -78,17 +84,6 @@ def is_coalesced_read_heap(
     return pairs == ((ID_FIELD, ID_FIELD),)
 
 
-def effective_pgroonga_plan_option(
-    options: SearchOptions | None,
-) -> PgroongaPlan | None:
-    raw = (options or {}).get("pgroonga_plan")
-
-    if raw in ("filter_first", "index_first", "auto"):
-        return raw
-
-    return None
-
-
 def effective_ranked_candidate_limit(
     *,
     config_limit: int | None,
@@ -100,7 +95,7 @@ def effective_ranked_candidate_limit(
 ) -> int | None:
     """Resolve the ranked-row cap for PGroonga, FTS, and vector pipelines (``None`` disables)."""
 
-    opt_raw = (options or {}).get("candidate_limit")
+    opt_raw = (options or {}).get("max_candidates")
 
     if opt_raw is not None:
         cap = int(opt_raw)
@@ -161,7 +156,9 @@ def effective_combo_limit(
 ) -> int | None:
     """Resolve hub ``combo_top`` cap (``None`` disables the extra CTE)."""
 
-    opt_raw = (options or {}).get("combo_limit")
+    # ``merge_candidates`` lives on ``MultiSourceSearchOptions`` (hub/federated); the param is
+    # typed as the base ``SearchOptions``, so view it as the multi-source shape to read the key.
+    opt_raw = cast("MultiSourceSearchOptions", options or {}).get("merge_candidates")
 
     if opt_raw is not None:
         cap = int(opt_raw)
@@ -237,7 +234,6 @@ def ensure_pgroonga_plan_with_candidate_cap(
 async def resolve_pgroonga_plan(
     *,
     configured: PgroongaPlan,
-    options: SearchOptions | None,
     parsed_filters: QueryExpr | None,
     read_qname: PostgresQualifiedName,
     introspector: PostgresIntrospector,
@@ -264,7 +260,7 @@ async def resolve_pgroonga_plan(
     if tenant_aware:
         return "filter_first"
 
-    plan = effective_pgroonga_plan_option(options) or configured
+    plan = configured
 
     if plan == "filter_first":
         return "filter_first"

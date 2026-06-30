@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Search facets & highlights** — search requests can ask for term facet distributions and per-hit match highlights through the search options, declared on the spec and returned as optional page sidecars. Available on the mock, Meilisearch, and Postgres (PGroonga and FTS, over offset and cursor pagination) plus hub and federated search; requests for an unsupported field or topology fail closed.
+
 - **Cross-aggregate (system) invariants** — `SystemInvariant` (with `ReadSet`, `SumOf`, `CountAll`) in `forze.application.contracts` (front-doored from `forze`) declares a law over a scoped read-set's aggregate that the entity-level `@invariant` can't express. `forze_kits.invariants` adds `evaluate` / `enforce` (post-commit, detective) / `enforce_preventive` (in-tx rollback, fails closed below the law's `required_isolation`) / `propose` (dry-run); `forze_dst.compile_oracle(*laws[, per_commit=True])` verifies it under simulation.
 
 - **Transaction isolation as a fail-closed contract** — operations declare an isolation level and the kernel verifies it against the route's manager (`exc.configuration`, never silently weaker); declaring isolation without a tx route is rejected at registry freeze. `TransactionContext.current_isolation()` exposes the active level, and a `tx` `exit` trace event now carries `outcome` (`commit`/`rollback`).
@@ -97,7 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`SearchFuzzySpec` is now an immutable value object** *(breaking)* — it changed from a dict to a frozen value object, exported from the search contract and constructed explicitly. The edit-distance ratio defaults to 0.34 and is validated to the 0.0–1.0 range, and the never-read prefix-length field is removed. There is no compatibility shim for the old dict form.
+
+- **Search options de-leaked and grouped by topology** *(breaking)* — Postgres internals are gone from the backend-agnostic search options: the raw-Groonga override removed, the PGroonga plan made adapter-config only, and the advisory candidate caps renamed to `max_candidates` and `merge_candidates`. Hub and federated member keys move to a multi-source options type that single-index search now rejects at type-check. There are no compatibility shims.
+
 - **Application contracts surface consolidation** *(breaking: deep imports; no runtime change)* — loose modules at the `forze.application.contracts` root are regrouped. Removed `contracts.codecs` (import codec helpers from `forze.base.serialization`); `contracts.lenient_read` / `contracts.materialized` → new `contracts.conformity`; `RowLockMode` / `row_lock_requires_transaction` → `contracts.document.value_objects` (still re-exported from `contracts.document`). System-invariant reducers `Sum` / `Count` renamed `SumOf` / `CountAll`. New `TenantSecretResolver` (`contracts.secrets`) replaces the removed `contracts.tenancy` functions `resolve_dsn_for_tenant` / `resolve_structured_for_tenant`, and `ensure_dsn_fingerprint` now takes `resolver=`. Internal `contracts.tenancy.helpers` (→ `tenant_hint` + `fingerprint`), `contracts.secrets.helpers` (→ `resolution`), and `contracts.querying.sort_resolution` (now a package) are restructured — public names re-export unchanged from their packages.
+
+- **Search result snapshots stream their pool and expose expiry** — a snapshot is now sealed into the store one chunk at a time, so peak memory is a single chunk regardless of result size, fixing out-of-memory on wide read models. The returned snapshot handle also carries `expires_at` so a client knows how long the snapshot stays valid; semantics and replay are unchanged.
+
+- **Postgres hub search defers its heavy projection to per-page hydration** *(no behavior change)* — a multi-leg hub search ranks, counts, and paginates over a thin candidate row and hydrates full read-model columns only for the returned page, avoiding large temp-file spills on relations backed by wide views. Single-index search over a similar view defers the same way.
 
 - **`update_many` takes `KeyedUpdate` items, not raw tuples** *(breaking: document command port)* — the bulk update method on `DocumentCommandPort` now accepts `Sequence[KeyedUpdate[U]]` (a frozen VO with `id`, `rev`, `dto`; exported from `forze.application.contracts.document`) instead of `Sequence[tuple[UUID, int, U]]`, matching the `KeyedCreate` / `UpsertItem` shape already used by `ensure_many` / `upsert_many`. Replace `update_many([(pk, rev, dto), …])` with `update_many([KeyedUpdate(id=pk, rev=rev, dto=dto), …])`. Single-item `update(pk, rev, dto)` is unchanged.
 

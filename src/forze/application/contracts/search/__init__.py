@@ -2,6 +2,17 @@ from .cursor_keyset import (
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
 )
+from .facet_highlight import (
+    DEFAULT_FACET_SIZE,
+    DEFAULT_HIGHLIGHT_POST_TAG,
+    DEFAULT_HIGHLIGHT_PRE_TAG,
+    facet_size_of,
+    reject_federated_facets,
+    reject_unsupported_facets,
+    reject_unsupported_highlight,
+    resolve_facet_fields,
+    resolve_highlight,
+)
 from .deps import (
     FederatedSearchQueryDepKey,
     FederatedSearchQueryDepPort,
@@ -33,12 +44,14 @@ from .specs import (
     FederatedSearchMemberSpec,
     FederatedSearchSpec,
     HubSearchSpec,
+    SearchFuzzySpec,
     SearchResultSnapshotSpec,
     SearchSpec,
 )
 from .types import (
+    HighlightOptions,
+    MultiSourceSearchOptions,
     PhraseCombine,
-    PgroongaPlan,
     ResultSnapshotMode,
     SearchOptions,
     SearchResultSnapshotOptions,
@@ -48,20 +61,40 @@ from .utils import (
     effective_phrase_combine,
     normalize_search_queries,
 )
-from .value_objects import Rrf, SearchResultSnapshotMeta
+from .value_objects import (
+    FacetBucket,
+    FacetResults,
+    HitHighlights,
+    Rrf,
+    SearchResultSnapshotMeta,
+)
 
 # ----------------------- #
 
 __all__ = [
     "Rrf",
+    "DEFAULT_FACET_SIZE",
+    "DEFAULT_HIGHLIGHT_PRE_TAG",
+    "DEFAULT_HIGHLIGHT_POST_TAG",
+    "facet_size_of",
+    "reject_federated_facets",
+    "reject_unsupported_facets",
+    "reject_unsupported_highlight",
+    "resolve_facet_fields",
+    "resolve_highlight",
+    "FacetBucket",
+    "FacetResults",
+    "HitHighlights",
+    "HighlightOptions",
+    "MultiSourceSearchOptions",
     "PhraseCombine",
-    "PgroongaPlan",
     "ResultSnapshotMode",
     "SearchSpec",
     "calculate_effective_field_weights",
     "cursor_return_fields_for_select",
     "FederatedSearchMemberSpec",
     "HubSearchSpec",
+    "SearchFuzzySpec",
     "SearchOptions",
     "SearchResultSnapshotMeta",
     "SearchResultSnapshotPort",

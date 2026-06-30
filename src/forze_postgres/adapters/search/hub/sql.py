@@ -47,11 +47,54 @@ class HubSearchSqlMixin[M: BaseModel]:
 
     # ....................... #
 
-    def _hub_select_list(self, *, include_groonga_sys: bool) -> sql.Composable:
+    def _hub_thin_projection(self, plan: HubSearchPlan) -> list[str] | None:
+        """Minimal ``hf``/``combo`` projection for late materialization.
+
+        Returns the columns the ranking pipeline needs downstream of ``hf`` — the primary
+        key (hydration + join key), each active leg's hub FK column(s), and the root column
+        of every sort key — so the heavy read-model columns are deferred to a per-page
+        hydration by id. Returns ``None`` when the shape can't be thinned safely (no ``id``
+        column, or a sort over a non-projectable column); the caller then projects all
+        ``read_fields`` as before. Filter columns are intentionally excluded: filters are
+        applied in ``hf``'s ``WHERE`` over the full hub relation, independent of its SELECT.
+        """
+
+        read = self._hub_host.read_fields
+
+        if ID_FIELD not in read:
+            return None
+
+        fields = {ID_FIELD}
+
+        for _i, leg, _w in plan.active:
+            for col in leg.hub_fk_columns:
+                if col in read:
+                    fields.add(col)
+
+        for key, _direction in plan.order_key_spec:
+            if key == HUB_RANK:
+                continue
+
+            root = key.split(".", 1)[0]
+
+            if root not in read:
+                return None
+
+            fields.add(root)
+
+        return sorted(fields)
+
+    # ....................... #
+
+    def _hub_select_list(
+        self,
+        *,
+        include_groonga_sys: bool,
+        fields: Sequence[str] | None = None,
+    ) -> sql.Composable:
         host = self._hub_host
-        base = sql.SQL(", ").join(
-            sql.Identifier(HUB_ROW_ALIAS, f) for f in sorted(host.read_fields)
-        )
+        use = sorted(host.read_fields) if fields is None else list(fields)
+        base = sql.SQL(", ").join(sql.Identifier(HUB_ROW_ALIAS, f) for f in use)
 
         if not include_groonga_sys:
             return base
@@ -217,6 +260,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         combo_limit: int | None = None,
         uncapped_legs: bool = False,
+        thin: bool = False,
     ) -> tuple[sql.Composable, list[Any], bool, str, str]:
         fw, fp = await self._hub_host.where_clause(filters)
         tenant_id = (
@@ -228,8 +272,18 @@ class HubSearchSqlMixin[M: BaseModel]:
         active = list(plan.active)
         need_groonga_sys = False
 
+        thin_fields = self._hub_thin_projection(plan) if thin else None
+        proj_fields = (
+            thin_fields
+            if thin_fields is not None
+            else sorted(self._hub_host.read_fields)
+        )
+
         hub_cte = build_hub_cte(
-            hub_cols=self._hub_select_list(include_groonga_sys=need_groonga_sys),
+            hub_cols=self._hub_select_list(
+                include_groonga_sys=need_groonga_sys,
+                fields=proj_fields,
+            ),
             hub_rel_ident=hub_qn.ident(),
             fw=fw,
         )
@@ -266,7 +320,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         hf_cols = sql.SQL(", ").join(
             [
                 sql.SQL("{}.{}").format(sql.Identifier(HUB_CTE), sql.Identifier(f))
-                for f in sorted(self._hub_host.read_fields)
+                for f in proj_fields
             ]
         )
 
@@ -461,6 +515,7 @@ class HubSearchSqlMixin[M: BaseModel]:
                 filters=filters,
                 combo_limit=None,
                 uncapped_legs=True,
+                thin=True,
             )
         )
         count_stmt = sql.SQL(

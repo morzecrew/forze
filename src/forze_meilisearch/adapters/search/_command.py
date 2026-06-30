@@ -125,6 +125,13 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
             if tenant_attr not in attrs_list:
                 attrs_list.append(tenant_attr)
 
+        # Faceting requires the attribute to be filterable in Meilisearch, so a declared
+        # facetable field must appear here even when the caller pinned filterable_attributes.
+        for field in self.spec.facetable_fields:
+            facet_attr = self.physical_path(field)
+            if facet_attr not in attrs_list:
+                attrs_list.append(facet_attr)
+
         return attrs_list
 
     def _sortable_attributes(self) -> list[str]:

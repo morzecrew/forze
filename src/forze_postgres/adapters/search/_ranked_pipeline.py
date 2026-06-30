@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ._engine import RankedPipelineSql
+    from ._highlights import HighlightSelect
 
 import attrs
 from psycopg import sql
@@ -200,6 +201,7 @@ def ranked_parts_to_sql(
     projection_alias: str,
     browse_count_params: list[Any] | None = None,
     resolved_plan: str | None = None,
+    highlight: "HighlightSelect | None" = None,
 ) -> "RankedPipelineSql":
     """Convert :class:`RankedPipelineParts` to :class:`RankedPipelineSql`."""
 
@@ -219,6 +221,7 @@ def ranked_parts_to_sql(
         projection_alias=projection_alias,
         resolved_plan=resolved_plan,
         candidate_limit=parts.candidate_limit,
+        highlight=highlight,
     )
 
 

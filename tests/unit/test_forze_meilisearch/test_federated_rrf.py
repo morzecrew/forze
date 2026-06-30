@@ -16,6 +16,8 @@ from forze.application.contracts.search import (
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze_meilisearch.adapters.search.federated import MeilisearchFederatedSearchAdapter
+from forze_mock.adapters.search.snapshot import MockSearchResultSnapshotAdapter
+from forze_mock.state import MockState
 
 # ----------------------- #
 
@@ -300,10 +302,8 @@ async def test_rrf_snapshot_read_short_circuits() -> None:
 
 @pytest.mark.asyncio
 async def test_rrf_snapshot_read_miss_then_merges_and_writes() -> None:
-    store = MagicMock()
-    store.get_id_range = AsyncMock(return_value=None)
-    store.get_meta = AsyncMock(return_value=None)
-    store.put_run = AsyncMock(return_value=None)
+    rs_spec = _snap_spec()
+    store = MockSearchResultSnapshotAdapter(state=MockState(), spec=rs_spec)
     result_snapshot = SearchResultSnapshot(store=store)
 
     a = [_Hit(id="1", label="alpha")]
@@ -312,12 +312,17 @@ async def test_rrf_snapshot_read_miss_then_merges_and_writes() -> None:
         _rrf_leg("a", a),
         _rrf_leg("b", b),
         name="fed_rrf_snap_write",
-        snapshot=_snap_spec(),
+        snapshot=rs_spec,
         result_snapshot=result_snapshot,
     )
 
     page = await adapter.search_page("q", snapshot={"id": "missing", "mode": True})
 
-    store.put_run.assert_awaited_once()
     assert page.snapshot is not None
     assert page.snapshot.total == 2
+    # The merged keys were streamed into the store and replay can serve them.
+    stored = await store.get_id_range(
+        page.snapshot.id, 0, 10, expected_fingerprint=page.snapshot.fingerprint
+    )
+    assert stored is not None
+    assert len(stored) == 2

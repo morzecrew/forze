@@ -10,7 +10,6 @@ from forze.application.contracts.querying.internal import QueryAnd, QueryField
 from forze_postgres.adapters.search._pgroonga_plan import (
     effective_candidate_limit,
     effective_combo_limit,
-    effective_pgroonga_plan_option,
     ensure_pgroonga_plan_with_candidate_cap,
     index_first_heap_limit,
     is_coalesced_read_heap,
@@ -40,7 +39,7 @@ def test_is_coalesced_read_heap_different_tables() -> None:
 def test_effective_candidate_limit_page_and_snapshot() -> None:
     cap = effective_candidate_limit(
         config_limit=100,
-        options={"candidate_limit": 200},
+        options={"max_candidates": 200},
         pagination={"limit": 50, "offset": 100},
         snapshot=None,
         result_snapshot=None,
@@ -98,7 +97,6 @@ async def test_resolve_pgroonga_plan_auto_ineligible_filter_uses_filter_first() 
     intro = AsyncMock()
     plan = await resolve_pgroonga_plan(
         configured="auto",
-        options=None,
         parsed_filters=QueryField(name="title", op="$like", value="%a%"),
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -120,7 +118,6 @@ async def test_resolve_pgroonga_plan_auto_selective_filter_index_first() -> None
 
     plan = await resolve_pgroonga_plan(
         configured="auto",
-        options=None,
         parsed_filters=QueryField(name="tenant_id", op="$eq", value="t1"),
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -141,7 +138,6 @@ async def test_resolve_pgroonga_plan_auto_large_table_index_first() -> None:
 
     plan = await resolve_pgroonga_plan(
         configured="auto",
-        options=None,
         parsed_filters=None,
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -156,11 +152,10 @@ async def test_resolve_pgroonga_plan_auto_large_table_index_first() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_pgroonga_plan_option_override() -> None:
+async def test_resolve_pgroonga_plan_configured_index_first_short_circuits() -> None:
     intro = AsyncMock()
     plan = await resolve_pgroonga_plan(
-        configured="filter_first",
-        options={"pgroonga_plan": "index_first"},
+        configured="index_first",
         parsed_filters=None,
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -172,6 +167,7 @@ async def test_resolve_pgroonga_plan_option_override() -> None:
         estimate_filtered_rows=None,
     )
     assert plan == "index_first"
+    intro.estimate_relation_rows.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -181,7 +177,7 @@ async def test_resolve_pgroonga_plan_tenant_aware_forces_filter_first() -> None:
     ``index_first`` ranks a heap top-K across all tenants and applies the tenant
     predicate only as an outer post-filter, which scans cross-tenant rows and
     truncates a tenant's results. Tenant-awareness overrides every other signal —
-    an explicit ``index_first`` option, a large-table ``auto`` estimate, and the
+    an explicit ``index_first`` config, a large-table ``auto`` estimate, and the
     filterless-browse path — without issuing the (misleading) estimation queries.
     """
 
@@ -189,15 +185,13 @@ async def test_resolve_pgroonga_plan_tenant_aware_forces_filter_first() -> None:
     intro.estimate_relation_rows = AsyncMock(return_value=500_000)
     intro.estimate_filtered_rows = AsyncMock(return_value=500_000)
 
-    for configured, options, parsed in (
-        ("index_first", None, None),
-        ("auto", {"pgroonga_plan": "index_first"}, None),
-        ("auto", None, None),
-        ("auto", None, QueryField(name="tenant_id", op="$eq", value="t1")),
+    for configured, parsed in (
+        ("index_first", None),
+        ("auto", None),
+        ("auto", QueryField(name="tenant_id", op="$eq", value="t1")),
     ):
         plan = await resolve_pgroonga_plan(
             configured=configured,
-            options=options,
             parsed_filters=parsed,
             read_qname=PostgresQualifiedName("public", "docs"),
             introspector=intro,
@@ -216,10 +210,9 @@ async def test_resolve_pgroonga_plan_tenant_aware_forces_filter_first() -> None:
     intro.estimate_filtered_rows.assert_not_awaited()
 
 
-def test_is_trivial_filter_and_plan_option() -> None:
+def test_is_trivial_filter() -> None:
     assert is_trivial_filter(None) is True
-    assert effective_pgroonga_plan_option({"pgroonga_plan": "auto"}) == "auto"
-    assert effective_pgroonga_plan_option({}) is None
+    assert is_trivial_filter(QueryField(name="a", op="$eq", value=1)) is False
 
 
 def test_ensure_pgroonga_plan_with_candidate_cap() -> None:
@@ -328,7 +321,7 @@ def test_effective_combo_limit_option_override() -> None:
     cap = effective_combo_limit(
         config_limit=None,
         per_leg_limit=10,
-        options={"combo_limit": 777},
+        options={"merge_candidates": 777},
         pagination=None,
         snapshot=None,
         result_snapshot=None,
@@ -355,7 +348,7 @@ def test_effective_combo_limit_option_override_snapshot_floor() -> None:
     cap = effective_combo_limit(
         config_limit=None,
         per_leg_limit=10,
-        options={"combo_limit": 100},
+        options={"merge_candidates": 100},
         pagination={"limit": 10, "offset": 0},
         snapshot=None,
         result_snapshot=snap,
@@ -383,7 +376,6 @@ async def test_resolve_pgroonga_plan_configured_filter_first_short_circuits() ->
     intro = AsyncMock()
     plan = await resolve_pgroonga_plan(
         configured="filter_first",
-        options=None,
         parsed_filters=None,
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -411,7 +403,6 @@ async def test_resolve_pgroonga_plan_trivial_exact_count(
     count = AsyncMock(return_value=filtered_count)
     plan = await resolve_pgroonga_plan(
         configured="auto",
-        options=None,
         parsed_filters=None,
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -433,7 +424,6 @@ async def test_resolve_pgroonga_plan_trivial_estimate_filter_first() -> None:
     intro.estimate_relation_rows = AsyncMock(return_value=10)
     plan = await resolve_pgroonga_plan(
         configured="auto",
-        options=None,
         parsed_filters=None,
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -465,7 +455,6 @@ async def test_resolve_pgroonga_plan_filtered_exact_count_thresholds(
     count = AsyncMock(return_value=filtered_count)
     plan = await resolve_pgroonga_plan(
         configured="auto",
-        options=None,
         parsed_filters=QueryField(name="tenant_id", op="$eq", value="t1"),
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -497,7 +486,6 @@ async def test_resolve_pgroonga_plan_filtered_estimate_thresholds(
     estimate = AsyncMock(return_value=filtered_estimate)
     plan = await resolve_pgroonga_plan(
         configured="auto",
-        options=None,
         parsed_filters=QueryField(name="tenant_id", op="$eq", value="t1"),
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -519,7 +507,6 @@ async def test_resolve_pgroonga_plan_filtered_no_estimate_falls_through() -> Non
     intro = AsyncMock()
     plan = await resolve_pgroonga_plan(
         configured="auto",
-        options=None,
         parsed_filters=QueryField(name="tenant_id", op="$eq", value="t1"),
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,
@@ -553,7 +540,6 @@ async def test_resolve_pgroonga_plan_count_returns_none_uses_estimate_block(
     estimate = AsyncMock(return_value=filtered_estimate)
     plan = await resolve_pgroonga_plan(
         configured="auto",
-        options=None,
         parsed_filters=QueryField(name="tenant_id", op="$eq", value="t1"),
         read_qname=PostgresQualifiedName("public", "docs"),
         introspector=intro,

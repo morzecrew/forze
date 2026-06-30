@@ -19,6 +19,8 @@ from forze_meilisearch.adapters.search.federated import (
     MeilisearchFederatedSearchAdapter,
     _hit_index_uid,
 )
+from forze_mock.adapters.search.snapshot import MockSearchResultSnapshotAdapter
+from forze_mock.state import MockState
 
 # ----------------------- #
 
@@ -403,11 +405,9 @@ async def test_federation_snapshot_read_short_circuits() -> None:
 
 @pytest.mark.asyncio
 async def test_federation_snapshot_read_miss_then_searches_and_writes() -> None:
-    # get_id_range -> None means a miss, so the adapter searches and writes a snapshot.
-    store = MagicMock()
-    store.get_id_range = AsyncMock(return_value=None)
-    store.get_meta = AsyncMock(return_value=None)
-    store.put_run = AsyncMock(return_value=None)
+    # An empty store means a miss, so the adapter searches and writes a snapshot.
+    fed_spec = _fed_spec_with_snapshot("fed_snap_write")
+    store = MockSearchResultSnapshotAdapter(state=MockState(), spec=fed_spec.snapshot)
     result_snapshot = SearchResultSnapshot(store=store)
 
     client = MagicMock()
@@ -419,7 +419,7 @@ async def test_federation_snapshot_read_miss_then_searches_and_writes() -> None:
     )
 
     adapter = MeilisearchFederatedSearchAdapter(
-        federated_spec=_fed_spec_with_snapshot("fed_snap_write"),
+        federated_spec=fed_spec,
         legs=(("a", _leg("a", "idx_a")), ("b", _leg("b", "idx_b"))),
         client=client,
         merge="federation",
@@ -429,6 +429,11 @@ async def test_federation_snapshot_read_miss_then_searches_and_writes() -> None:
     page = await adapter.search_page("q", snapshot={"id": "missing", "mode": True})
 
     client.multi_search.assert_awaited_once()
-    store.put_run.assert_awaited_once()
     assert page.snapshot is not None
     assert page.snapshot.total == 1
+    # The merged key was streamed into the store and replay can serve it.
+    stored = await store.get_id_range(
+        page.snapshot.id, 0, 10, expected_fingerprint=page.snapshot.fingerprint
+    )
+    assert stored is not None
+    assert len(stored) == 1

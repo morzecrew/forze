@@ -15,6 +15,7 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
 )
 from forze.application.integrations.crypto import Keyring
+from forze.application.contracts.search import SearchResultSnapshotSpec
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     resolve_snapshot_cipher,
@@ -22,6 +23,8 @@ from forze.application.integrations.search import (
 from forze.application.integrations.search.snapshot import _SEALED_PREFIX
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockKeyManagement
+from forze_mock.adapters.search.snapshot import MockSearchResultSnapshotAdapter
+from forze_mock.state import MockState
 
 # ----------------------- #
 
@@ -157,6 +160,35 @@ async def test_open_fails_closed_when_sealed_but_no_cipher() -> None:
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
     assert ei.value.code == "core.search.snapshot_encryption_wiring"
+
+
+@pytest.mark.asyncio
+async def test_streaming_sink_seals_per_chunk_and_round_trips() -> None:
+    # The chunked streaming build seals each chunk under the run id; replay opens them all
+    # — identical at-rest protection to the one-shot ``put_simple_ordered_hits`` path.
+    rs_spec = SearchResultSnapshotSpec(name="snap", enabled=True, chunk_size=2)
+    store = MockSearchResultSnapshotAdapter(state=MockState(), spec=rs_spec)
+    snap = SearchResultSnapshot(
+        store=store, cipher=_keyring(), cipher_tenant=lambda: None
+    )
+    keys = [
+        SearchResultSnapshot.result_record_key_string(_Hit(id=str(i), ssn=f"secret-{i}"))
+        for i in range(5)
+    ]
+
+    sink = snap.open_simple_hit_sink(snap_opt=None, rs_spec=rs_spec, fp_computed="fp")
+    await sink.add(keys[:3])
+    await sink.add(keys[3:])
+    handle = await sink.finish(pool_len_before_cap=len(keys))
+
+    assert handle.total == 5
+
+    stored = await store.get_id_range(handle.id, 0, 10, expected_fingerprint="fp")
+    assert stored is not None
+    assert all(record.startswith(_SEALED_PREFIX) for record in stored)
+    assert not any("secret" in record for record in stored)
+
+    assert await snap._open_ids(stored, run_id=handle.id) == keys
 
 
 @pytest.mark.asyncio

@@ -91,8 +91,6 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
         sorts: QuerySortExpression | None,
         options: SearchOptions | None,
     ) -> list[dict[str, Any]]:
-        _ = options
-
         if not terms:
             return build_browse_pipeline(
                 pre_filter=pre_filter,
@@ -125,8 +123,23 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
             query_vector=vec,
             index_name=await self._resolved_index_name(),
             vector_path=self.vector_path,
-            num_candidates=self.vector_num_candidates,
+            num_candidates=self._effective_num_candidates(options),
             limit=self.vector_fetch_limit,
             rank_field=self.rank_field,
             user_sorts=self._user_sorts(sorts),
         )
+
+    # ....................... #
+
+    def _effective_num_candidates(self, options: SearchOptions | None) -> int:
+        """``numCandidates`` for ``$vectorSearch``: per-request ``max_candidates`` overrides the
+        configured default. ``max_candidates`` is the advisory candidate-pool cap of
+        :class:`~forze.application.contracts.search.SearchOptions`; for Atlas vector search it
+        maps directly to ``numCandidates`` (the ANN breadth — a genuine recall/speed trade)."""
+
+        raw = (options or {}).get("max_candidates")
+
+        if raw is not None:
+            return max(1, int(raw))
+
+        return self.vector_num_candidates

@@ -18,6 +18,8 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.integrations.search import SearchResultSnapshot
+from forze_mock.adapters.search.snapshot import MockSearchResultSnapshotAdapter
+from forze_mock.state import MockState
 from forze_postgres.adapters.search.federated import (
     PostgresFederatedSearchAdapter,
 )
@@ -244,10 +246,10 @@ async def test_federated_search_materializes_snapshot_after_merge() -> None:
     pa.search = AsyncMock(side_effect=one)
     pb = MagicMock()
     pb.search = AsyncMock(side_effect=one)
-    store = MagicMock()
-    store.put_run = AsyncMock()
+    fed_spec = _fed_with_result_snapshot()
+    store = MockSearchResultSnapshotAdapter(state=MockState(), spec=fed_spec.snapshot)
     adapter = PostgresFederatedSearchAdapter(
-        federated_spec=_fed_with_result_snapshot(),
+        federated_spec=fed_spec,
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=10,
         result_snapshot=SearchResultSnapshot(store=store),
@@ -260,10 +262,12 @@ async def test_federated_search_materializes_snapshot_after_merge() -> None:
     run_id = page.snapshot.id
     assert run_id
     assert page.snapshot.capped is False
-    store.put_run.assert_awaited_once()
-    pr_kw = store.put_run.call_args[1]
-    assert pr_kw["run_id"] == run_id
-    assert pr_kw["ordered_ids"]
+    # The full merged pool was streamed into the store; replay serves exactly that many ids.
+    stored = await store.get_id_range(
+        run_id, 0, 10, expected_fingerprint=page.snapshot.fingerprint
+    )
+    assert stored is not None
+    assert len(stored) == page.snapshot.total
 
 
 @pytest.mark.asyncio

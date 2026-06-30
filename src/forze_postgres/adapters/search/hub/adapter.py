@@ -23,6 +23,8 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
+    reject_unsupported_facets,
+    reject_unsupported_highlight,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -103,6 +105,12 @@ class PostgresHubSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        # Postgres hub search merges heterogeneous leg engines into one combined SQL, so a
+        # single facet companion query and a single highlight engine over the merged row are
+        # ill-defined; fail closed rather than silently drop (mock hub is the reference shape).
+        reject_unsupported_facets(options, backend="Postgres hub")
+        reject_unsupported_highlight(self.hub_spec, options, backend="Postgres hub")
+
         plan = await build_hub_search_plan(
             cast(HubSearchHost[Any], self),
             query=query,
@@ -132,12 +140,19 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
         combo_cap = plan.resolved_combo if plan.do_legs else None
 
+        # Late materialization: project only key/sort columns through the WITH pipeline and
+        # hydrate the heavy read-model columns for the page by id. Enabled whenever the shape
+        # can be thinned safely; snapshot-writing requests hydrate per streamed window
+        # (handled in the executor), so they no longer force the full projection.
+        thin = self._hub_thin_projection(plan) is not None
+
         # do_legs (_) is not used for some reason
         with_clause, params, _, count_relation, data_relation = (
             await self._hub_build_with_clause_from_plan(
                 plan,
                 filters=filters,
                 combo_limit=combo_cap,
+                thin=thin,
             )
         )
 
@@ -165,6 +180,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             approximate_total=approximate_total,
             count_relation=count_relation,
             data_relation=data_relation,
+            thin=thin,
             select_table_alias=COMBO_ALIAS,
         )
 

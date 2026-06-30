@@ -30,6 +30,8 @@ result-set snapshots.
 | `fuzzy` | `SearchFuzzySpec \| None` | `None` | fuzzy-matching configuration |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts` (required if the model has no `id`) |
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names that are real columns on the search relation, so results can be filtered/sorted by the derived value (mirror of [`DocumentSpec.materialized`](document.md#spec); relational in-place only, **not** startup-validated) |
+| `facetable_fields` | `frozenset[str]` | `∅` | fields a query may compute term (value) facet distributions over (must be real, non-lenient, non-encrypted columns) |
+| `highlightable_fields` | `frozenset[str] \| None` | `None` | searchable fields a query may highlight; `None` = all searchable `fields`, `∅` = none |
 | `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` (every statically-defaulted, non-identity, non-indexed, non-`materialized` field); explicit fields added on top |
 | `lenient_read_fields` | `frozenset[str]` | `∅` | returned read-model fields with **no** backing column: dropped from the result projection, hydrated from their default, and excluded from sort keys (mirror of [`DocumentSpec.lenient_read_fields`](document.md#lenient-read-fields); must **not** be an indexed `fields` member) |
 | `snapshot` | `SearchResultSnapshotSpec \| None` | `None` | result-ID snapshotting defaults (stable re-pagination) |
@@ -60,8 +62,50 @@ argument; everything else mirrors the document side:
 | `select_search` / `select_search_page` / `select_search_cursor` `(return_type, query, …)` | pages of `T` |
 
 `query` is a string (or a sequence of strings); `filters` and `sorts` use the
-[query DSL](../query-syntax.md). `options: SearchOptions` tunes relevance,
-highlighting, etc.
+[query DSL](../query-syntax.md). `options: SearchOptions` is the backend- and
+topology-agnostic per-request surface — relevance weights, fuzzy matching, the count
+policy (`search_count`), an advisory candidate cap (`max_candidates`), and the facet /
+highlight requests below. Hub and federated searches resolve to a `MultiSourceSearchOptions`
+port that also carries member selection (`member_weights` / `members`) and a post-merge cap
+(`merge_candidates`); passing those keys to a single-index `query(...)` port is a type error.
+
+### Facets and highlights
+
+A query requests term facet distributions with `options={"facets": [...]}` and per-hit
+match snippets with `options={"highlight": True}` (or a `HighlightOptions` mapping to narrow
+fields / customize the `<em>` markers), over the spec's `facetable_fields` /
+`highlightable_fields`. Results ride the page as optional `page.facets` (one set per query,
+over the full matching set) and `page.highlights` (per hit, index-aligned with `hits`),
+`None` when not requested. A field or backend that cannot serve a request fails closed with
+`query_feature_unsupported`.
+
+Support is per backend (single-index) and per topology (hub / federated). **fail-closed**
+raises `query_feature_unsupported`; **—** means not applicable.
+
+| Backend / engine | Facets | Highlights |
+|------------------|--------|------------|
+| Mock | ✅ | ✅ |
+| Meilisearch | ✅ (`facetDistribution`) | ✅ (`_formatted`) |
+| Postgres — PGroonga | ✅ | ✅ (`pgroonga_snippet_html`) |
+| Postgres — FTS | ✅ | ✅ (`ts_headline`) |
+| Postgres — vector | ✅ | — |
+| Mongo | fail-closed | fail-closed |
+
+| Topology | Facets | Highlights |
+|----------|--------|------------|
+| Hub — mock | ✅ | ✅ |
+| Hub — Postgres | fail-closed | fail-closed |
+| Federated — RRF merge (mock, Postgres, Meilisearch) | fail-closed | ✅ (per hit) |
+| Federated — Meilisearch native | fail-closed | fail-closed |
+
+- **Vector** ranks by distance with no lexical match, so there is no snippet to highlight
+  (facets still group over the ranked set).
+- **Federated facets** are deferred — per-member distributions don't compose under the
+  reciprocal-rank merge, so every federated search fails closed on facets. Highlights
+  survive only the RRF-merge path (each merged hit keeps its originating leg's snippet),
+  not Meilisearch native federation.
+- Requesting facets or highlights bypasses result-snapshot replay (snapshots store hit ids
+  only), so a sidecar request always runs against a live query.
 
 ## Command port
 
