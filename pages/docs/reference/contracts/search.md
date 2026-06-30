@@ -79,6 +79,34 @@ over the full matching set) and `page.highlights` (per hit, index-aligned with `
 `None` when not requested. A field or backend that cannot serve a request fails closed with
 `query_feature_unsupported`.
 
+Support is per backend (single-index) and per topology (hub / federated). **fail-closed**
+raises `query_feature_unsupported`; **—** means not applicable.
+
+| Backend / engine | Facets | Highlights |
+|------------------|--------|------------|
+| Mock | ✅ | ✅ |
+| Meilisearch | ✅ (`facetDistribution`) | ✅ (`_formatted`) |
+| Postgres — PGroonga | ✅ | ✅ (`pgroonga_snippet_html`) |
+| Postgres — FTS | ✅ | ✅ (`ts_headline`) |
+| Postgres — vector | ✅ | — |
+| Mongo | fail-closed | fail-closed |
+
+| Topology | Facets | Highlights |
+|----------|--------|------------|
+| Hub — mock | ✅ | ✅ |
+| Hub — Postgres | fail-closed | fail-closed |
+| Federated — RRF merge (mock, Postgres, Meilisearch) | fail-closed | ✅ (per hit) |
+| Federated — Meilisearch native | fail-closed | fail-closed |
+
+- **Vector** ranks by distance with no lexical match, so there is no snippet to highlight
+  (facets still group over the ranked set).
+- **Federated facets** are deferred — per-member distributions don't compose under the
+  reciprocal-rank merge, so every federated search fails closed on facets. Highlights
+  survive only the RRF-merge path (each merged hit keeps its originating leg's snippet),
+  not Meilisearch native federation.
+- Requesting facets or highlights bypasses result-snapshot replay (snapshots store hit ids
+  only), so a sidecar request always runs against a live query.
+
 ## Command port
 
 Data-plane document writes — `ctx.search.command(spec)`.
