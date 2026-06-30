@@ -33,7 +33,7 @@ class SearchSnapshotHandle:
     long the snapshot id stays valid before the query must be re-run."""
 
 
-# ----------------------- #
+# ....................... #
 # Facets & highlights (optional search-result metadata). Defined
 # here for the same reason as SearchSnapshotHandle: the page value objects below
 # carry them, and the base contract must not import from the search contract.
@@ -63,8 +63,7 @@ Each fragment already carries the requested ``pre_tag`` / ``post_tag`` markers. 
 with no match is absent; a hit with no highlights maps to an empty mapping (never ``None``),
 so the per-hit highlight list stays index-aligned with ``hits`` and non-sparse."""
 
-
-# ----------------------- #
+# ....................... #
 # Pagination
 
 

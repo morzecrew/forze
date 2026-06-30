@@ -14,7 +14,12 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from forze.application.contracts.base import FacetBucket, FacetResults, HitHighlights
-from forze.application.contracts.search import SearchOptions, facet_size_of
+from forze.application.contracts.search import (
+    SearchOptions,
+    facet_size_of,
+    highlight_tokens,
+    mark_highlight,
+)
 from forze.base.primitives import JsonDict
 from forze_mock.query.matching import (
     _MISSING,  # type: ignore[reportPrivateUsage]
@@ -96,11 +101,7 @@ def compute_highlights(
     index-aligned and non-sparse.
     """
 
-    tokens = sorted(
-        {tok.lower() for term in terms for tok in term.split() if tok},
-        key=len,
-        reverse=True,
-    )
+    tokens = highlight_tokens(terms)
 
     out: list[HitHighlights] = []
 
@@ -113,7 +114,9 @@ def compute_highlights(
 
                 if not text:
                     continue
-                fragment = _mark_text(text, tokens, pre_tag, post_tag)
+                fragment = mark_highlight(
+                    text, tokens, pre_tag=pre_tag, post_tag=post_tag
+                )
 
                 if fragment is not None:
                     marked[field] = (fragment,)
@@ -121,43 +124,3 @@ def compute_highlights(
         out.append(marked)
 
     return out
-
-
-# ....................... #
-
-
-def _mark_text(text: str, tokens: Sequence[str], pre: str, post: str) -> str | None:
-    """Wrap each (case-insensitive, substring) token occurrence; ``None`` if no match."""
-
-    lowered = text.lower()
-    spans: list[tuple[int, int]] = []
-
-    for token in tokens:
-        start = lowered.find(token)
-
-        while start != -1:
-            spans.append((start, start + len(token)))
-            start = lowered.find(token, start + 1)
-
-    if not spans:
-        return None
-
-    spans.sort()
-    merged: list[tuple[int, int]] = []
-
-    for start, end in spans:
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-
-    pieces: list[str] = []
-    cursor = 0
-
-    for start, end in merged:
-        pieces.extend((text[cursor:start], f"{pre}{text[start:end]}{post}"))
-        cursor = end
-
-    pieces.append(text[cursor:])
-
-    return "".join(pieces)

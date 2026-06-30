@@ -9,7 +9,7 @@ parity guarantee real rather than per-adapter.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 from forze.base.exceptions import exc
 
@@ -109,6 +109,74 @@ def resolve_highlight(
     pre = highlight.get("pre_tag", DEFAULT_HIGHLIGHT_PRE_TAG)
     post = highlight.get("post_tag", DEFAULT_HIGHLIGHT_POST_TAG)
     return fields, pre, post
+
+
+# ....................... #
+
+
+def highlight_tokens(terms: Sequence[str]) -> tuple[str, ...]:
+    """Lowercased, whitespace-split, deduped query tokens for substring highlighting.
+
+    Ordered longest-first so a shorter token nested in a longer one can't pre-empt the
+    longer match when spans are merged.
+    """
+
+    return tuple(
+        sorted(
+            {tok.lower() for term in terms for tok in term.split() if tok},
+            key=len,
+            reverse=True,
+        )
+    )
+
+
+def mark_highlight(
+    text: str, tokens: Sequence[str], *, pre_tag: str, post_tag: str
+) -> str | None:
+    """Wrap each case-insensitive substring occurrence of *tokens* in *text*; ``None`` if none.
+
+    Matching runs on ``text.lower()`` but the marked fragment is sliced from the **original**
+    *text*, so it keeps the source casing — a lowercase query still highlights a Title- or
+    mixed-cased match (e.g. ``бета`` in ``БетаМед``). Overlapping spans merge into one. This
+    is the canonical highlight reconstruction shared by the mock oracle and the relational
+    backends, so they wrap identically regardless of a backend's own normalizer.
+    """
+
+    if not tokens:
+        return None
+
+    lowered = text.lower()
+    spans: list[tuple[int, int]] = []
+
+    for token in tokens:
+        start = lowered.find(token)
+
+        while start != -1:
+            spans.append((start, start + len(token)))
+            start = lowered.find(token, start + 1)
+
+    if not spans:
+        return None
+
+    spans.sort()
+    merged: list[tuple[int, int]] = []
+
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    pieces: list[str] = []
+    cursor = 0
+
+    for start, end in merged:
+        pieces.extend((text[cursor:start], f"{pre_tag}{text[start:end]}{post_tag}"))
+        cursor = end
+
+    pieces.append(text[cursor:])
+
+    return "".join(pieces)
 
 
 # ....................... #

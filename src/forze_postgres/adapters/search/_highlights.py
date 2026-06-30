@@ -1,4 +1,4 @@
-"""Per-hit highlight snippet columns for Postgres ranked search.
+"""Per-hit highlight columns for Postgres ranked search.
 
 Highlights are added to the ranked data ``SELECT`` as synthetic columns (one per
 highlightable field), captured from the raw rows, then stripped before codec decode.
@@ -6,10 +6,13 @@ highlightable field), captured from the raw rows, then stripped before codec dec
 - **FTS** uses ``ts_headline(document, websearch_to_tsquery(%s), options)`` with the
   requested ``StartSel`` / ``StopSel`` markers — one whole-field fragment with matches
   wrapped (matches the mock reference oracle's shape).
-- **PGroonga** uses ``pgroonga_snippet_html(target, pgroonga_query_extract_keywords(%s),
-  width)`` — which emits a fixed ``<span class="keyword">`` wrapper, so the markers are
-  rewritten to the requested tags in Python (the snippet body is HTML-escaped by PGroonga,
-  so the fixed wrapper is the only such span in the output and the rewrite is unambiguous).
+- **PGroonga** selects the **raw** field text and wraps matches in Python via the shared
+  :func:`~forze.application.contracts.search.mark_highlight`. ``pgroonga_snippet_html`` was
+  dropped because its built-in ``NormalizerAuto`` case-folds ASCII but **not** other scripts
+  (e.g. Cyrillic), so a lowercase query keyword silently failed to wrap a mixed-case match
+  the search itself found. Marking in Python folds case for matching while slicing the
+  original text, so the fragment keeps its display case and the result is identical to the
+  mock oracle for any casing.
 """
 
 from forze_postgres._compat import require_psycopg
@@ -27,17 +30,14 @@ from forze.application.contracts.base import HitHighlights
 from forze.application.contracts.search import (
     SearchOptions,
     SearchSpec,
+    highlight_tokens,
+    mark_highlight,
     resolve_highlight,
 )
-
-from ._pgroonga_sql import pgroonga_match_query_text
 
 # ----------------------- #
 
 _HL_ALIAS_PREFIX = "__hl__"
-_PGROONGA_SNIPPET_OPEN = '<span class="keyword">'
-_PGROONGA_SNIPPET_CLOSE = "</span>"
-_DEFAULT_PGROONGA_WIDTH = 200
 
 # ....................... #
 
@@ -60,7 +60,10 @@ class HighlightSelect:
 
     pre_tag: str
     post_tag: str
-    max_fragments: int | None
+
+    tokens: tuple[str, ...] = ()
+    """Lowercased query tokens for the PGroonga path's Python-side substring marking;
+    unused by FTS (``ts_headline`` inserts the markers in SQL)."""
 
     # ....................... #
 
@@ -123,7 +126,6 @@ def build_fts_highlight(
         engine="fts",
         pre_tag=pre_tag,
         post_tag=post_tag,
-        max_fragments=None,
     )
 
 
@@ -134,41 +136,29 @@ def build_pgroonga_highlight(
     terms: Sequence[str],
     alias: str,
 ) -> HighlightSelect | None:
-    """``pgroonga_snippet_html`` column per highlightable field, or ``None``."""
+    """Raw field-text column per highlightable field (marked in Python), or ``None``.
+
+    The synthetic column is the bare field value; matches are wrapped at decode time by
+    :func:`_fragments_for` using :func:`~forze.application.contracts.search.mark_highlight`,
+    so highlighting folds case the same way for every script and keeps the original casing.
+    """
 
     resolved = resolve_highlight(spec, options)
     if resolved is None or not terms:
         return None
 
     fields, pre_tag, post_tag = resolved
-    query_text = pgroonga_match_query_text(tuple(terms), options)
-    raw_width = (options or {}).get("fragment_size")
-    width = int(raw_width) if isinstance(raw_width, int) else _DEFAULT_PGROONGA_WIDTH
-    raw_max = (options or {}).get("max_fragments")
-    max_fragments = int(raw_max) if isinstance(raw_max, int) and raw_max > 0 else None
 
-    columns: list[sql.Composable] = []
-    params: list[Any] = []
-    for field in fields:
-        columns.append(
-            sql.SQL(
-                "pgroonga_snippet_html({}, pgroonga_query_extract_keywords({}::text), {}::int)"
-            ).format(
-                _coalesced_text(alias, field),
-                sql.Placeholder(),
-                sql.Placeholder(),
-            )
-        )
-        params.extend([query_text, width])
+    columns = tuple(_coalesced_text(alias, field) for field in fields)
 
     return HighlightSelect(
         fields=tuple(fields),
-        columns=tuple(columns),
-        params=tuple(params),
+        columns=columns,
+        params=(),
         engine="pgroonga",
         pre_tag=pre_tag,
         post_tag=post_tag,
-        max_fragments=max_fragments,
+        tokens=highlight_tokens(terms),
     )
 
 
@@ -201,25 +191,14 @@ def extract_and_strip_highlights(
 
 
 def _fragments_for(raw: Any, hl: HighlightSelect) -> tuple[str, ...]:
+    if not isinstance(raw, str) or not raw:
+        return ()
+
     if hl.engine == "fts":
         # ts_headline returns one string; keep it only if a marker was inserted.
-        if isinstance(raw, str) and hl.pre_tag in raw:
-            return (raw,)
-        return ()
+        return (raw,) if hl.pre_tag in raw else ()
 
-    # PGroonga: text[] of HTML snippets wrapping matches in a fixed span.
-    if not isinstance(raw, (list, tuple)):
-        return ()
-
-    fragments: list[str] = []
-    for item in raw:  # pyright: ignore[reportUnknownVariableType]
-        if not isinstance(item, str) or _PGROONGA_SNIPPET_OPEN not in item:
-            continue
-        rewritten = item.replace(_PGROONGA_SNIPPET_OPEN, hl.pre_tag).replace(
-            _PGROONGA_SNIPPET_CLOSE, hl.post_tag
-        )
-        fragments.append(rewritten)
-        if hl.max_fragments is not None and len(fragments) >= hl.max_fragments:
-            break
-
-    return tuple(fragments)
+    # PGroonga: the raw field text — mark case-insensitive substring matches in Python so
+    # the fragment keeps its original casing for any script (the mock oracle's behavior).
+    marked = mark_highlight(raw, hl.tokens, pre_tag=hl.pre_tag, post_tag=hl.post_tag)
+    return (marked,) if marked is not None else ()
