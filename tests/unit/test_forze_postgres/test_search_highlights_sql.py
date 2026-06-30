@@ -75,6 +75,47 @@ def test_pgroonga_highlight_no_match_maps_to_empty() -> None:
     assert extract_and_strip_highlights(rows, select) == [{}]
 
 
+def test_pgroonga_highlight_honors_fragment_size_and_max_fragments() -> None:
+    text = "alpha beta gamma beta delta beta epsilon beta zeta"
+
+    # fragment_size bounds each fragment; max_fragments caps the count.
+    select = build_pgroonga_highlight(
+        spec=_spec(),
+        options={
+            "highlight": {"fields": ["name"], "fragment_size": 12, "max_fragments": 2}
+        },
+        terms=("beta",),
+        alias="t",
+    )
+    assert select is not None
+    assert select.fragment_size == 12
+    assert select.max_fragments == 2
+
+    rows = [{"id": 1, "__hl__0": text}]
+    frags = extract_and_strip_highlights(rows, select)[0]["name"]
+
+    assert len(frags) == 2  # capped at max_fragments
+    for frag in frags:
+        assert "<em>beta</em>" in frag
+        # The window (markers stripped) stays within fragment_size characters.
+        assert len(frag.replace("<em>", "").replace("</em>", "")) <= 12
+
+
+def test_pgroonga_highlight_unbounded_returns_whole_field() -> None:
+    text = "alpha beta gamma beta delta"
+    select = build_pgroonga_highlight(
+        spec=_spec(),
+        options={"highlight": {"fields": ["name"]}},
+        terms=("beta",),
+        alias="t",
+    )
+    assert select is not None
+
+    frags = extract_and_strip_highlights([{"id": 1, "__hl__0": text}], select)[0]["name"]
+    # No fragment_size: one whole-field fragment with every match wrapped.
+    assert frags == ("alpha <em>beta</em> gamma <em>beta</em> delta",)
+
+
 def test_fts_highlight_still_uses_ts_headline() -> None:
     select = build_fts_highlight(
         spec=_spec(), options={"highlight": True}, terms=("beta",), alias="t"

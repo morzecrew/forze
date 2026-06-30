@@ -96,12 +96,15 @@ def compute_highlights(
     *,
     pre_tag: str,
     post_tag: str,
+    fragment_size: int | None = None,
+    max_fragments: int | None = None,
 ) -> list[HitHighlights]:
     """Per-row highlighted fragments (index-aligned with *rows*).
 
     Delegates to the shared :func:`~forze.application.contracts.search.compute_highlights`
     with the mock's nested-path text accessor, so the oracle and the relational backends wrap
-    identically. A field with no match is omitted; a row with none maps to ``{}``.
+    identically (and honor ``fragment_size`` / ``max_fragments`` the same way). A field with
+    no match is omitted; a row with none maps to ``{}``.
     """
 
     return shared_compute_highlights(
@@ -111,4 +114,6 @@ def compute_highlights(
         pre_tag=pre_tag,
         post_tag=post_tag,
         get_text=_path_text,
+        fragment_size=fragment_size,
+        max_fragments=max_fragments,
     )

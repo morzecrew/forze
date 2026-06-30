@@ -18,6 +18,7 @@ from forze.application.contracts.search import (
     HubSearchSpec,
     SearchOptions,
     compute_highlights,
+    highlight_fragment_bounds,
     resolve_highlight,
 )
 
@@ -62,6 +63,7 @@ def attach_hub_highlights[P](
         return page
 
     fields, pre_tag, post_tag = resolved
+    fragment_size, max_fragments = highlight_fragment_bounds(options)
     highlights = compute_highlights(
         getattr(page, "hits"),
         _query_terms(query),
@@ -69,6 +71,8 @@ def attach_hub_highlights[P](
         pre_tag=pre_tag,
         post_tag=post_tag,
         get_text=_hit_text,
+        fragment_size=fragment_size,
+        max_fragments=max_fragments,
     )
 
     return attrs.evolve(page, highlights=highlights)  # type: ignore[misc]

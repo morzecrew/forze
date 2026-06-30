@@ -7,12 +7,12 @@ highlightable field), captured from the raw rows, then stripped before codec dec
   requested ``StartSel`` / ``StopSel`` markers — one whole-field fragment with matches
   wrapped (matches the mock reference oracle's shape).
 - **PGroonga** selects the **raw** field text and wraps matches in Python via the shared
-  :func:`~forze.application.contracts.search.mark_highlight`. ``pgroonga_snippet_html`` was
-  dropped because its built-in ``NormalizerAuto`` case-folds ASCII but **not** other scripts
-  (e.g. Cyrillic), so a lowercase query keyword silently failed to wrap a mixed-case match
-  the search itself found. Marking in Python folds case for matching while slicing the
+  :func:`~forze.application.contracts.search.highlight_fragments`. ``pgroonga_snippet_html``
+  was dropped because its built-in ``NormalizerAuto`` case-folds ASCII but **not** other
+  scripts (e.g. Cyrillic), so a lowercase query keyword silently failed to wrap a mixed-case
+  match the search itself found. Marking in Python folds case for matching while slicing the
   original text, so the fragment keeps its display case and the result is identical to the
-  mock oracle for any casing.
+  mock oracle for any casing — bounded by the caller's ``fragment_size`` / ``max_fragments``.
 """
 
 from forze_postgres._compat import require_psycopg
@@ -30,8 +30,9 @@ from forze.application.contracts.search import (
     HitHighlights,
     SearchOptions,
     SearchSpec,
+    highlight_fragment_bounds,
+    highlight_fragments,
     highlight_tokens,
-    mark_highlight,
     resolve_highlight,
 )
 
@@ -64,6 +65,12 @@ class HighlightSelect:
     tokens: tuple[str, ...] = ()
     """Lowercased query tokens for the PGroonga path's Python-side substring marking;
     unused by FTS (``ts_headline`` inserts the markers in SQL)."""
+
+    fragment_size: int | None = None
+    """PGroonga: caller's max characters per highlight fragment (whole field when ``None``)."""
+
+    max_fragments: int | None = None
+    """PGroonga: caller's max number of highlight fragments (uncapped when ``None``)."""
 
     # ....................... #
 
@@ -139,8 +146,9 @@ def build_pgroonga_highlight(
     """Raw field-text column per highlightable field (marked in Python), or ``None``.
 
     The synthetic column is the bare field value; matches are wrapped at decode time by
-    :func:`_fragments_for` using :func:`~forze.application.contracts.search.mark_highlight`,
-    so highlighting folds case the same way for every script and keeps the original casing.
+    :func:`_fragments_for` using :func:`~forze.application.contracts.search.highlight_fragments`,
+    so highlighting folds case the same way for every script and keeps the original casing,
+    bounded by the caller's ``fragment_size`` / ``max_fragments``.
     """
 
     resolved = resolve_highlight(spec, options)
@@ -148,6 +156,7 @@ def build_pgroonga_highlight(
         return None
 
     fields, pre_tag, post_tag = resolved
+    fragment_size, max_fragments = highlight_fragment_bounds(options)
 
     columns = tuple(_coalesced_text(alias, field) for field in fields)
 
@@ -159,6 +168,8 @@ def build_pgroonga_highlight(
         pre_tag=pre_tag,
         post_tag=post_tag,
         tokens=highlight_tokens(terms),
+        fragment_size=fragment_size,
+        max_fragments=max_fragments,
     )
 
 
@@ -198,7 +209,14 @@ def _fragments_for(raw: Any, hl: HighlightSelect) -> tuple[str, ...]:
         # ts_headline returns one string; keep it only if a marker was inserted.
         return (raw,) if hl.pre_tag in raw else ()
 
-    # PGroonga: the raw field text — mark case-insensitive substring matches in Python so
-    # the fragment keeps its original casing for any script (the mock oracle's behavior).
-    marked = mark_highlight(raw, hl.tokens, pre_tag=hl.pre_tag, post_tag=hl.post_tag)
-    return (marked,) if marked is not None else ()
+    # PGroonga: the raw field text — mark case-insensitive substring matches in Python so the
+    # fragment keeps its original casing for any script (the mock oracle's behavior), bounded
+    # by the caller's fragment_size / max_fragments.
+    return highlight_fragments(
+        raw,
+        hl.tokens,
+        pre_tag=hl.pre_tag,
+        post_tag=hl.post_tag,
+        fragment_size=hl.fragment_size,
+        max_fragments=hl.max_fragments,
+    )

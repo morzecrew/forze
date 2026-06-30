@@ -9,7 +9,7 @@ parity guarantee real rather than per-adapter.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from forze.base.exceptions import exc
 
@@ -131,20 +131,13 @@ def highlight_tokens(terms: Sequence[str]) -> tuple[str, ...]:
     )
 
 
-def mark_highlight(
-    text: str, tokens: Sequence[str], *, pre_tag: str, post_tag: str
-) -> str | None:
-    """Wrap each case-insensitive substring occurrence of *tokens* in *text*; ``None`` if none.
+def _match_spans(text: str, tokens: Sequence[str]) -> list[tuple[int, int]]:
+    """Merged, sorted ``(start, end)`` spans of every case-insensitive substring match.
 
-    Matching runs on ``text.lower()`` but the marked fragment is sliced from the **original**
-    *text*, so it keeps the source casing — a lowercase query still highlights a Title- or
-    mixed-cased match (e.g. ``бета`` in ``БетаМед``). Overlapping spans merge into one. This
-    is the canonical highlight reconstruction shared by the mock oracle and the relational
-    backends, so they wrap identically regardless of a backend's own normalizer.
+    Matching runs on ``text.lower()`` but the offsets index the **original** *text*, so a
+    fragment sliced by them keeps the source casing (e.g. ``бета`` in ``БетаМед``). Overlapping
+    matches merge into one span.
     """
-
-    if not tokens:
-        return None
 
     lowered = text.lower()
     spans: list[tuple[int, int]] = []
@@ -157,7 +150,7 @@ def mark_highlight(
             start = lowered.find(token, start + 1)
 
     if not spans:
-        return None
+        return []
 
     spans.sort()
     merged: list[tuple[int, int]] = []
@@ -168,16 +161,107 @@ def mark_highlight(
         else:
             merged.append((start, end))
 
+    return merged
+
+
+def _wrap_spans(
+    text: str, spans: Sequence[tuple[int, int]], pre_tag: str, post_tag: str
+) -> str:
+    """Splice the markers around each *span* in *text* (spans sorted, disjoint)."""
+
     pieces: list[str] = []
     cursor = 0
 
-    for start, end in merged:
+    for start, end in spans:
         pieces.extend((text[cursor:start], f"{pre_tag}{text[start:end]}{post_tag}"))
         cursor = end
 
     pieces.append(text[cursor:])
 
     return "".join(pieces)
+
+
+def highlight_fragments(
+    text: str,
+    tokens: Sequence[str],
+    *,
+    pre_tag: str,
+    post_tag: str,
+    fragment_size: int | None = None,
+    max_fragments: int | None = None,
+) -> tuple[str, ...]:
+    """Highlighted fragments for *text*: one whole-field fragment, or bounded windows.
+
+    Without *fragment_size* the whole field is returned as a single fragment with every match
+    wrapped (the default oracle shape). With a *fragment_size* the result is windowed — each
+    fragment spans at most *fragment_size* characters starting at the next unwrapped match and
+    wraps every match inside it, capped at *max_fragments* windows — so a large field can never
+    return more highlight text than the caller bounded.
+    """
+
+    spans = _match_spans(text, tokens)
+    if not spans:
+        return ()
+
+    if not fragment_size or fragment_size <= 0:
+        return (_wrap_spans(text, spans, pre_tag, post_tag),)
+
+    cap = max_fragments if (max_fragments and max_fragments > 0) else None
+    fragments: list[str] = []
+    i = 0
+
+    while i < len(spans) and (cap is None or len(fragments) < cap):
+        w_start = spans[i][0]
+        w_end = min(len(text), w_start + fragment_size)
+        window: list[tuple[int, int]] = []
+
+        while i < len(spans) and spans[i][0] < w_end:
+            start, end = spans[i]
+            window.append((start - w_start, min(end, w_end) - w_start))
+            i += 1
+
+        fragments.append(_wrap_spans(text[w_start:w_end], window, pre_tag, post_tag))
+
+    return tuple(fragments)
+
+
+def mark_highlight(
+    text: str, tokens: Sequence[str], *, pre_tag: str, post_tag: str
+) -> str | None:
+    """Whole-field highlight: every match in *text* wrapped, or ``None`` when none match.
+
+    A thin shim over :func:`highlight_fragments` for callers that want the single unbounded
+    fragment (the canonical shape shared by the mock oracle and the relational backends).
+    """
+
+    if not tokens:
+        return None
+
+    fragments = highlight_fragments(text, tokens, pre_tag=pre_tag, post_tag=post_tag)
+    return fragments[0] if fragments else None
+
+
+def highlight_fragment_bounds(
+    options: SearchOptions | None,
+) -> tuple[int | None, int | None]:
+    """Caller-requested ``(fragment_size, max_fragments)`` from a highlight request.
+
+    ``True`` (highlight-all with defaults) and an absent request carry no bounds, returning
+    ``(None, None)``; only a :class:`HighlightOptions` mapping can set them.
+    """
+
+    highlight = (options or {}).get("highlight")
+
+    if not isinstance(highlight, Mapping):
+        return None, None
+
+    raw_size = highlight.get("fragment_size")
+    raw_max = highlight.get("max_fragments")
+
+    return (
+        int(raw_size) if isinstance(raw_size, int) and raw_size > 0 else None,
+        int(raw_max) if isinstance(raw_max, int) and raw_max > 0 else None,
+    )
 
 
 def compute_highlights(
@@ -188,13 +272,15 @@ def compute_highlights(
     pre_tag: str,
     post_tag: str,
     get_text: Callable[[Any, str], Any],
+    fragment_size: int | None = None,
+    max_fragments: int | None = None,
 ) -> list[HitHighlights]:
-    """Per-item highlighted fragments (index-aligned with *items*), via :func:`mark_highlight`.
+    """Per-item highlighted fragments (index-aligned with *items*), via :func:`highlight_fragments`.
 
     Each item's *fields* are read with *get_text* (a row mapping, a hydrated model, ...) and
-    marked against the query *terms*; a field with no match is omitted, an item with none maps
-    to ``{}`` so the list stays index-aligned and non-sparse. The shared reconstruction every
-    backend that highlights in process (mock oracle, relational hits) runs, so they match.
+    marked against the query *terms*, bounded by *fragment_size* / *max_fragments*; a field
+    with no match is omitted, an item with none maps to ``{}`` so the list stays index-aligned
+    and non-sparse. The shared reconstruction every backend that highlights in process runs.
     """
 
     tokens = highlight_tokens(terms)
@@ -210,12 +296,17 @@ def compute_highlights(
                 if not isinstance(text, str) or not text:
                     continue
 
-                fragment = mark_highlight(
-                    text, tokens, pre_tag=pre_tag, post_tag=post_tag
+                fragments = highlight_fragments(
+                    text,
+                    tokens,
+                    pre_tag=pre_tag,
+                    post_tag=post_tag,
+                    fragment_size=fragment_size,
+                    max_fragments=max_fragments,
                 )
 
-                if fragment is not None:
-                    marked[field] = (fragment,)
+                if fragments:
+                    marked[field] = fragments
 
         out.append(marked)
 

@@ -22,6 +22,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
+    highlight_fragment_bounds,
     normalize_search_queries,
     prepare_hub_search_options,
     resolve_facet_fields,
@@ -120,6 +121,7 @@ class MockHubSearchAdapter[M: BaseModel](
         )
 
         highlight = resolve_highlight(self.hub_spec, options)
+        fragment_size, max_fragments = highlight_fragment_bounds(options)
         highlights = (
             compute_highlights(
                 page_docs,
@@ -127,6 +129,8 @@ class MockHubSearchAdapter[M: BaseModel](
                 highlight[0],
                 pre_tag=highlight[1],
                 post_tag=highlight[2],
+                fragment_size=fragment_size,
+                max_fragments=max_fragments,
             )
             if highlight is not None
             else None

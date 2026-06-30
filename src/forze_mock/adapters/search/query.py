@@ -36,6 +36,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
     effective_phrase_combine,
+    highlight_fragment_bounds,
     normalize_search_queries,
     resolve_facet_fields,
     resolve_highlight,
@@ -252,6 +253,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         )
 
         highlight = resolve_highlight(self.spec, options)
+        fragment_size, max_fragments = highlight_fragment_bounds(options)
         highlights = (
             compute_highlights(
                 page_rows,
@@ -259,6 +261,8 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
                 highlight[0],
                 pre_tag=highlight[1],
                 post_tag=highlight[2],
+                fragment_size=fragment_size,
+                max_fragments=max_fragments,
             )
             if highlight is not None
             else None
