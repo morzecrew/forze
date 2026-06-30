@@ -547,6 +547,41 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
+    def weighted_rrf_merge_ids(
+        *,
+        leg_rows: Sequence[tuple[str, Sequence[str], float]],
+        k: int,
+    ) -> list[tuple[str, str, float]]:
+        """Thin (id-only) weighted RRF: fuse ordered ``(member, ids, weight)`` legs.
+
+        The late-materialization counterpart of :meth:`weighted_rrf_merge_rows`: it
+        fuses on the ``(member, id)`` identity instead of the full-record key, so the
+        caller never has to hold the full hits to merge. Each leg's ``ids`` are in
+        relevance order (rank = 1-based position); the contribution per hit is
+        ``weight / (k + rank)``. Returns ``(member, id, score)`` ordered by descending
+        score, breaking ties by ``(member, id)`` (deterministic; the full-record path's
+        tie-break by serialized record differs only among identical-score hits).
+        """
+
+        scores: dict[tuple[str, str], float] = {}
+
+        for member, ids, weight in leg_rows:
+            if weight <= 0.0:
+                continue
+
+            for rank, rid in enumerate(ids, start=1):
+                key = (member, rid)
+                scores[key] = scores.get(key, 0.0) + float(weight) / (
+                    float(k) + float(rank)
+                )
+
+        ordered = sorted(scores.keys(), key=lambda kk: (-scores[kk], kk[0], kk[1]))
+
+        return [(member, rid, scores[(member, rid)]) for member, rid in ordered]
+
+    # ....................... #
+
+    @staticmethod
     def federated_merged_hit_field(
         item: tuple[FederatedSearchReadModel[Any], float],
         *,

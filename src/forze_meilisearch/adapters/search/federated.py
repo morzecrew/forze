@@ -4,6 +4,8 @@ import asyncio
 from functools import partial
 from typing import (
     Any,
+    Awaitable,
+    Callable,
     Final,
     Literal,
     NoReturn,
@@ -45,7 +47,9 @@ from forze.application.contracts.search import (
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     build_federated_highlight_index,
+    execute_federated_thin_offset,
     federated_highlights_for_hits,
+    federated_thin_eligible,
 )
 from forze.base.exceptions import exc
 from forze.base.serialization import default_model_codec
@@ -417,6 +421,16 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    async def _run_legs(
+        self,
+        makers: Sequence[Callable[[], Awaitable[Any]]],
+    ) -> list[Any]:
+        """Run leg thunks concurrently (Meilisearch has no shared-connection limit)."""
+
+        return list(await asyncio.gather(*(maker() for maker in makers)))
+
+    # ....................... #
+
     async def _search_rrf(
         self,
         query: str | Sequence[str],
@@ -484,6 +498,34 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
         leg_cap = max(1, int(self.rrf_per_leg_limit))
         leg_page: PaginationExpression = {"limit": leg_cap}
+
+        _hl = (options or {}).get("highlight")
+        wants_highlights = _hl is not None and _hl is not False
+        snapshot_write = (
+            self.result_snapshot is not None
+            and rs_spec is not None
+            and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
+        )
+
+        if federated_thin_eligible(
+            members=self.federated_spec.members,
+            thin_merge=self.federated_spec.thin_merge,
+            wants_highlights=wants_highlights,
+            sorts=sorts,
+            snapshot_write=snapshot_write,
+        ):
+            return await execute_federated_thin_offset(
+                legs=active,
+                query=query,
+                filters=filters,
+                pagination=pagination,
+                leg_opts=leg_opts,
+                rrf_k=int(self.rrf_k),
+                per_leg_limit=leg_cap,
+                return_count=return_count,
+                return_type=return_type,
+                run_legs=self._run_legs,
+            )
 
         async def _run_leg(
             name: str,

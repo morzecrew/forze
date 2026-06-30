@@ -694,6 +694,22 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
     snapshot: SearchResultSnapshotSpec | None = None
     """Optional defaults for result-ID snapshotting (outer federated adapter)."""
 
+    thin_merge: bool = False
+    """Opt into late-materialized RRF merge to bound merge-time memory.
+
+    By default each leg fetches up to ``rrf_per_leg_limit`` **full** hits, and the
+    whole candidate union (full hits) is held in memory to fuse and sort — peak
+    grows with ``members × rrf_per_leg_limit × hit size``, independent of page size.
+    When ``True``, eligible searches instead fetch only ``id`` per leg, fuse on
+    ``(member, id)``, and re-hydrate **just the page** from each member — so peak is
+    the thin candidate keys plus one page of full hits. The trade-off is one extra
+    (page-sized) round trip per member, so it is opt-in.
+
+    Falls back to the full-fetch path for a search that requests highlights or a
+    secondary ``sorts`` (both need the full leg hits up front), writes a result
+    snapshot (the snapshot stores full records for leg-free replay), or whose member
+    read models lack an ``id`` field. Default ``False`` keeps the previous behaviour."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

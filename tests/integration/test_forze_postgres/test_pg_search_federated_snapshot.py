@@ -162,3 +162,90 @@ async def test_federated_snapshot_reread_search_count_none(
     assert not isinstance(second, Page)
     assert len(second.hits) == 2
     assert {row.hit.id for row in second.hits} == {id_a, id_b}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_federated_thin_merge_matches_full(pg_client: PostgresClient) -> None:
+    """``thin_merge=True`` returns the same federated hits as the full-fetch path."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:10]
+    ta, tb = f"fed_thin_a_{suffix}", f"fed_thin_b_{suffix}"
+    ia, ib = f"idx_thin_a_{suffix}", f"idx_thin_b_{suffix}"
+    token = "thintok"
+
+    for table, idx in ((ta, ia), (tb, ib)):
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {table} (
+                id uuid PRIMARY KEY,
+                label text NOT NULL
+            );
+            CREATE INDEX {idx} ON {table} USING pgroonga (label);
+            """
+        )
+
+    shared, only_a, only_b = uuid4(), uuid4(), uuid4()
+    rows_by_table = (
+        (ta, ((shared, f"{token} shared"), (only_a, f"{token} a"))),
+        (tb, ((shared, f"{token} shared"), (only_b, f"{token} b"))),
+    )
+    for table, rows in rows_by_table:
+        for rid, lbl in rows:
+            await pg_client.execute(
+                f"INSERT INTO {table} (id, label) VALUES (%(id)s, %(lbl)s)",
+                {"id": rid, "lbl": lbl},
+            )
+
+    leg_a, leg_b = f"a_{suffix}", f"b_{suffix}"
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                FederatedSearchQueryDepKey: ConfigurablePostgresFederatedSearch(
+                    config=PostgresFederatedSearchConfig(
+                        members={
+                            leg_a: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", ia),
+                                    read=("public", ta),
+                                    engine="pgroonga",
+                                ),
+                            ),
+                            leg_b: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", ib),
+                                    read=("public", tb),
+                                    engine="pgroonga",
+                                ),
+                            ),
+                        },
+                    ),
+                ),
+            }
+        )
+    )
+
+    members = (_mem(leg_a), _mem(leg_b))
+    full_spec = FederatedSearchSpec(name=f"fed_full_{suffix}", members=members)
+    thin_spec = FederatedSearchSpec(
+        name=f"fed_thinm_{suffix}", members=members, thin_merge=True
+    )
+
+    full = await ctx.search.federated(full_spec).search_page(
+        token, pagination={"limit": 10}
+    )
+    thin = await ctx.search.federated(thin_spec).search_page(
+        token, pagination={"limit": 10}
+    )
+
+    def idents(page: object) -> list[tuple[str, str]]:
+        return sorted((h.member, str(h.hit.id)) for h in page.hits)  # type: ignore[attr-defined]
+
+    assert idents(thin) == idents(full)
+    assert thin.count == full.count == 4
+    # The shared id is a distinct federated identity per member, preserved by the thin path.
+    assert (leg_a, str(shared)) in idents(thin)
+    assert (leg_b, str(shared)) in idents(thin)
