@@ -1,8 +1,11 @@
 from .dto import (
     CursorSearchRequestDTO,
+    FacetBucketDTO,
     ProjectedCursorSearchRequestDTO,
+    ProjectedSearchCursorPaginated,
     ProjectedSearchPaginated,
     ProjectedSearchRequestDTO,
+    SearchCursorPaginated,
     SearchPaginated,
     SearchRequestDTO,
 )
@@ -32,6 +35,9 @@ __all__ = [
     "ProjectedCursorSearchRequestDTO",
     "SearchPaginated",
     "ProjectedSearchPaginated",
+    "SearchCursorPaginated",
+    "ProjectedSearchCursorPaginated",
+    "FacetBucketDTO",
     "CursorSearch",
     "ProjectedCursorSearch",
     "ProjectedSearch",

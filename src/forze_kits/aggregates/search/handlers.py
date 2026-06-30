@@ -6,13 +6,13 @@ from pydantic import BaseModel as Bm
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.mapping import Mapper
 from forze.application.contracts.search import SearchOptions, SearchQueryPort
-from forze_kits.dto import CursorPaginated, ProjectedCursorPaginated
-
 from .dto import (
     CursorSearchRequestDTO,
     ProjectedCursorSearchRequestDTO,
+    ProjectedSearchCursorPaginated,
     ProjectedSearchPaginated,
     ProjectedSearchRequestDTO,
+    SearchCursorPaginated,
     SearchPaginated,
     SearchRequestDTO,
 )
@@ -108,7 +108,7 @@ class ProjectedSearch[Opt: SearchOptions = SearchOptions](Handler[Psr[Opt], Proj
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class CursorSearch[Out: Bm, Opt: SearchOptions = SearchOptions](
-    Handler[Csr[Opt], CursorPaginated[Out]]
+    Handler[Csr[Opt], SearchCursorPaginated[Out]]
 ):
     """Operation handler that searches with typed results and cursor (keyset) pagination."""
 
@@ -120,7 +120,7 @@ class CursorSearch[Out: Bm, Opt: SearchOptions = SearchOptions](
 
     # ....................... #
 
-    async def __call__(self, args: Csr[Opt]) -> CursorPaginated[Out]:
+    async def __call__(self, args: Csr[Opt]) -> SearchCursorPaginated[Out]:
         body = args
 
         if self.mapper:
@@ -134,7 +134,7 @@ class CursorSearch[Out: Bm, Opt: SearchOptions = SearchOptions](
             options=body.options,
         )
 
-        return CursorPaginated.from_page(res)
+        return SearchCursorPaginated.from_search_page(res)
 
 
 # ....................... #
@@ -142,7 +142,7 @@ class CursorSearch[Out: Bm, Opt: SearchOptions = SearchOptions](
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ProjectedCursorSearch[Opt: SearchOptions = SearchOptions](
-    Handler[Pcsr[Opt], ProjectedCursorPaginated]
+    Handler[Pcsr[Opt], ProjectedSearchCursorPaginated]
 ):
     """Operation handler that searches with raw results and cursor (keyset) pagination."""
 
@@ -154,7 +154,7 @@ class ProjectedCursorSearch[Opt: SearchOptions = SearchOptions](
 
     # ....................... #
 
-    async def __call__(self, args: Pcsr[Opt]) -> ProjectedCursorPaginated:
+    async def __call__(self, args: Pcsr[Opt]) -> ProjectedSearchCursorPaginated:
         body = args
 
         if self.mapper:
@@ -169,4 +169,4 @@ class ProjectedCursorSearch[Opt: SearchOptions = SearchOptions](
             options=body.options,
         )
 
-        return ProjectedCursorPaginated.from_page(res)
+        return ProjectedSearchCursorPaginated.from_search_page(res)

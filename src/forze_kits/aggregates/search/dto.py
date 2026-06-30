@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
 from forze.application.contracts.search import (
+    FacetResults,
+    HitHighlights,
+    SearchCursorPage,
     SearchOptions,
     SearchPage,
     SearchResultSnapshotOptions,
@@ -13,10 +16,13 @@ from forze.application.contracts.search import (
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
 from forze_kits.dto.paginated import (
+    CursorPaginated,
     CursorPagination,
     Paginated,
     Pagination,
+    ProjectedCursorPaginated,
     ProjectedPaginated,
+    cursor_page_fields,
     offset_page_fields,
 )
 from forze_kits.dto.querying import (
@@ -154,11 +160,55 @@ class SearchSnapshotHandleDTO(BaseDTO):
 # ....................... #
 
 
+class FacetBucketDTO(BaseDTO):
+    """One value in a facet distribution: a field value and its matching-document count."""
+
+    value: Any
+    """The field value (a scalar)."""
+
+    count: int
+    """Number of matching documents carrying this value."""
+
+
+def _facets_to_dto(
+    facets: FacetResults | None,
+) -> dict[str, list[FacetBucketDTO]] | None:
+    """Map contract facet results to response DTOs, or ``None`` when facets were not requested."""
+
+    if facets is None:
+        return None
+
+    return {
+        field: [FacetBucketDTO(value=b.value, count=b.count) for b in buckets]
+        for field, buckets in facets.items()
+    }
+
+
+def _highlights_to_dto(
+    highlights: list[HitHighlights] | None,
+) -> list[dict[str, tuple[str, ...]]] | None:
+    """Per-hit highlight fragments as plain dicts (index-aligned with hits), or ``None``."""
+
+    if highlights is None:
+        return None
+
+    return [dict(hit) for hit in highlights]
+
+
+# ....................... #
+
+
 class SearchPaginated[T: BaseModel](Paginated[T]):
     """Paginated response for search operations."""
 
     snapshot: SearchSnapshotHandleDTO | None = None
     """When present, KV result snapshot metadata for paged follow-up (send back in request ``snapshot``)."""
+
+    facets: dict[str, list[FacetBucketDTO]] | None = None
+    """Per-field facet distributions over the full matching set, when facets were requested."""
+
+    highlights: list[dict[str, tuple[str, ...]]] | None = None
+    """Per-hit highlighted fragments, index-aligned with ``hits``, when highlighting was requested."""
 
     # ....................... #
 
@@ -169,6 +219,8 @@ class SearchPaginated[T: BaseModel](Paginated[T]):
         return out(
             **offset_page_fields(page),
             snapshot=SearchSnapshotHandleDTO.from_handle(page.snapshot),
+            facets=_facets_to_dto(page.facets),
+            highlights=_highlights_to_dto(page.highlights),
         )
 
 
@@ -181,6 +233,12 @@ class ProjectedSearchPaginated(ProjectedPaginated):
     snapshot: SearchSnapshotHandleDTO | None = None
     """When present, KV result snapshot metadata for paged follow-up (send back in request ``snapshot``)."""
 
+    facets: dict[str, list[FacetBucketDTO]] | None = None
+    """Per-field facet distributions over the full matching set, when facets were requested."""
+
+    highlights: list[dict[str, tuple[str, ...]]] | None = None
+    """Per-hit highlighted fragments, index-aligned with ``hits``, when highlighting was requested."""
+
     # ....................... #
 
     @classmethod
@@ -188,4 +246,58 @@ class ProjectedSearchPaginated(ProjectedPaginated):
         return cls(
             **offset_page_fields(page),
             snapshot=SearchSnapshotHandleDTO.from_handle(page.snapshot),
+            facets=_facets_to_dto(page.facets),
+            highlights=_highlights_to_dto(page.highlights),
+        )
+
+
+# ....................... #
+
+
+class SearchCursorPaginated[T: BaseModel](CursorPaginated[T]):
+    """Cursor-paginated response for search operations (facets / highlights, no snapshot)."""
+
+    facets: dict[str, list[FacetBucketDTO]] | None = None
+    """Per-field facet distributions over the full matching set, when facets were requested."""
+
+    highlights: list[dict[str, tuple[str, ...]]] | None = None
+    """Per-hit highlighted fragments, index-aligned with ``hits``, when highlighting was requested."""
+
+    # ....................... #
+
+    @classmethod
+    def from_search_page[X: BaseModel](
+        cls, page: SearchCursorPage[X]
+    ) -> SearchCursorPaginated[X]:
+        out = cast(type[SearchCursorPaginated[X]], cls)
+
+        return out(
+            **cursor_page_fields(page),
+            facets=_facets_to_dto(page.facets),
+            highlights=_highlights_to_dto(page.highlights),
+        )
+
+
+# ....................... #
+
+
+class ProjectedSearchCursorPaginated(ProjectedCursorPaginated):
+    """Cursor-paginated search response with field projection (facets / highlights)."""
+
+    facets: dict[str, list[FacetBucketDTO]] | None = None
+    """Per-field facet distributions over the full matching set, when facets were requested."""
+
+    highlights: list[dict[str, tuple[str, ...]]] | None = None
+    """Per-hit highlighted fragments, index-aligned with ``hits``, when highlighting was requested."""
+
+    # ....................... #
+
+    @classmethod
+    def from_search_page(
+        cls, page: SearchCursorPage[JsonDict]
+    ) -> ProjectedSearchCursorPaginated:
+        return cls(
+            **cursor_page_fields(page),
+            facets=_facets_to_dto(page.facets),
+            highlights=_highlights_to_dto(page.highlights),
         )

@@ -12,13 +12,13 @@ from forze.application.contracts.search import (
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKey, StrKeyNamespace
-from forze_kits.dto.paginated import CursorPaginated, ProjectedCursorPaginated
-
 from .dto import (
     CursorSearchRequestDTO,
     ProjectedCursorSearchRequestDTO,
+    ProjectedSearchCursorPaginated,
     ProjectedSearchPaginated,
     ProjectedSearchRequestDTO,
+    SearchCursorPaginated,
     SearchPaginated,
     SearchRequestDTO,
 )
@@ -86,13 +86,13 @@ def _typed_search_descriptors(
         ),
         SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
             input_type=_request_dto(CursorSearchRequestDTO, options_type),
-            output_type=_parametrized(CursorPaginated, model_type),
+            output_type=_parametrized(SearchCursorPaginated, model_type),
             description="Full-text search with typed results (cursor pagination).",
             sensitive=sensitive,
         ),
         SearchKernelOp.RAW_CURSOR: OperationDescriptor(
             input_type=_request_dto(ProjectedCursorSearchRequestDTO, options_type),
-            output_type=ProjectedCursorPaginated,
+            output_type=ProjectedSearchCursorPaginated,
             description="Full-text search with field-projected results (cursor pagination).",
             sensitive=sensitive,
         ),
