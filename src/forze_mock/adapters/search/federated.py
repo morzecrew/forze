@@ -7,7 +7,11 @@ from typing import Any, Final, Sequence, final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CountlessPage, Page, page_from_limit_offset
+from forze.application.contracts.search import (
+    SearchCountlessPage,
+    SearchPage,
+    search_page_from_limit_offset,
+)
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
@@ -121,15 +125,14 @@ class MockFederatedSearchAdapter[M: BaseModel](
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[FederatedSearchReadModel[M]]:
+    ) -> SearchCountlessPage[FederatedSearchReadModel[M]]:
         _ = snapshot, sorts
         hits, hl_index = await self._merge_legs(query, filters, options)
         window = self._window(hits, pagination)
         highlights = federated_highlights_for_hits(window, hl_index)
-        result = page_from_limit_offset(window, pagination or {}, total=None)
-        if highlights is None:
-            return result
-        return attrs.evolve(result, highlights=highlights)
+        return search_page_from_limit_offset(
+            window, pagination or {}, total=None, highlights=highlights
+        )
 
     async def search_page(
         self,
@@ -140,12 +143,11 @@ class MockFederatedSearchAdapter[M: BaseModel](
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[FederatedSearchReadModel[M]]:
+    ) -> SearchPage[FederatedSearchReadModel[M]]:
         _ = snapshot, sorts
         hits, hl_index = await self._merge_legs(query, filters, options)
         window = self._window(hits, pagination)
         highlights = federated_highlights_for_hits(window, hl_index)
-        result = page_from_limit_offset(window, pagination or {}, total=len(hits))
-        if highlights is None:
-            return result
-        return attrs.evolve(result, highlights=highlights)
+        return search_page_from_limit_offset(
+            window, pagination or {}, total=len(hits), highlights=highlights
+        )

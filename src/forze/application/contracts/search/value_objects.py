@@ -1,13 +1,63 @@
-from typing import final
+from typing import Any, Mapping, Tuple, TypeAlias, final
 
 import attrs
 
 from forze.base.exceptions import exc
 
-# Facets & highlights are defined in the base contract (next to the page value
-# objects that carry them, same rationale as SearchSnapshotHandle) and re-exported
-# here so they are reachable from the search contract surface.
-from ..base.value_objects import FacetBucket, FacetResults, HitHighlights
+# ----------------------- #
+# Result-level search metadata: the snapshot continuation handle plus facet and
+# highlight value objects carried by the SearchPage family (see .pages). These are
+# search concepts, so they live here rather than in the base pagination contract.
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class SearchSnapshotHandle:
+    """Opaque handle to continue paged search without re-running the full query (KV snapshot)."""
+
+    id: str
+    """Snapshot run id; send back as :attr:`~.types.SearchResultSnapshotOptions.id`."""
+
+    fingerprint: str
+    """Stable request fingerprint; clients should echo for validation."""
+
+    total: int
+    """Number of entries materialized in the snapshot (after cap)."""
+
+    capped: bool = False
+    """``True`` if the result set was truncated to ``max_ids`` when the snapshot was written."""
+
+    expires_at: int | None = None
+    """Unix timestamp (UTC seconds) when the snapshot expires and replay stops serving it, or
+    ``None`` when unknown (e.g. a run written before this was tracked). Lets a client tell how
+    long the snapshot id stays valid before the query must be re-run."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class FacetBucket:
+    """One value in a facet (term) distribution: a field value and its document count."""
+
+    value: Any
+    """The field value (scalar: str / int / float / bool / ...)."""
+
+    count: int
+    """Number of matching documents carrying this value."""
+
+
+FacetResults: TypeAlias = Mapping[str, Tuple[FacetBucket, ...]]
+"""Facet distributions keyed by facetable field name → buckets ordered count-descending.
+
+Result-level metadata attached to a paged search response (:attr:`~.pages.SearchCountlessPage.facets`)."""
+
+HitHighlights: TypeAlias = Mapping[str, Tuple[str, ...]]
+"""Highlighted fragments for a single hit, keyed by field name → marked-up snippets.
+
+Each fragment already carries the requested ``pre_tag`` / ``post_tag`` markers. A field
+with no match is absent; a hit with no highlights maps to an empty mapping (never ``None``),
+so the per-hit highlight list stays index-aligned with ``hits`` and non-sparse."""
 
 # ----------------------- #
 
@@ -73,4 +123,5 @@ __all__ = [
     "HitHighlights",
     "Rrf",
     "SearchResultSnapshotMeta",
+    "SearchSnapshotHandle",
 ]

@@ -11,7 +11,7 @@ from typing import Any, Sequence, TypeVar, cast
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CursorPage
+from forze.application.contracts.search import SearchCursorPage
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
@@ -22,8 +22,9 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import (
     SearchOptions,
     cursor_return_fields_for_select,
+    facet_size_of,
     reject_unsupported_facets,
-    reject_unsupported_highlight,
+    resolve_facet_fields,
 )
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.sql import (
@@ -34,8 +35,10 @@ from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
 from ....kernel.gateways import PostgresGateway
 from .._cursor_run import parse_search_cursor
+from .._facets import fetch_hub_facets
 from .._materialize_hits import decode_search_hits, search_trust_source
 from .._offset_run import hydrate_rows_by_id
+from ._facets_highlights import attach_hub_highlights
 from .constants import COMBO_ALIAS, HUB_RANK
 from .parallel import HubParallelSearchMixin
 from .plan import build_hub_search_plan
@@ -77,11 +80,6 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         internally and stripped from the response.
         """
 
-        # Cursor pages cannot carry facets/highlights — fail closed like the offset path
-        # rather than silently dropping the request.
-        reject_unsupported_facets(options, backend="Postgres hub")
-        reject_unsupported_highlight(self._hub_host.hub_spec, options, backend="Postgres hub")
-
         plan = await build_hub_search_plan(
             self._hub_host,
             query=query,
@@ -94,7 +92,11 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         )
 
         if plan.use_parallel:
-            return await self._hub_parallel_cursor_search(
+            # Parallel execution merges per-leg results in Python; facets fail closed there.
+            reject_unsupported_facets(
+                options, backend="Postgres hub (parallel execution)"
+            )
+            parallel_page = await self._hub_parallel_cursor_search(
                 plan=plan,
                 filters=filters,
                 cursor=cursor,
@@ -102,6 +104,17 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 return_fields=return_fields,
                 hub_spec=self._hub_host.hub_spec,
             )
+            return attach_hub_highlights(
+                parallel_page,
+                hub_spec=self._hub_host.hub_spec,
+                query=query,
+                options=options,
+                return_fields=return_fields,
+            )
+
+        # ``sql`` execution: facets via a companion over the merged set; highlights marked
+        # on the returned page (field validation runs in both helpers).
+        facet_fields = resolve_facet_fields(self._hub_host.hub_spec, options)
 
         c = dict(cursor or {})
         lim, use_after, use_before = parse_search_cursor(cursor)
@@ -114,13 +127,30 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         thin_fields = self._hub_thin_projection(plan)
         thin = thin_fields is not None
 
-        with_clause, params, do_legs, _count_rel, data_relation = (
+        with_clause, params, do_legs, count_rel, data_relation = (
             await self._hub_build_with_clause_from_plan(
                 plan,
                 filters=filters,
                 combo_limit=combo_cap,
                 thin=thin,
             )
+        )
+
+        # Facets count over the full merged set, so capture the WITH-clause params before the
+        # seek/limit params are appended below; the companion runs without the keyset bound.
+        facets = (
+            await fetch_hub_facets(
+                self._hub_host.client,
+                with_clause=with_clause,
+                count_relation=count_rel,
+                combo_alias=COMBO_ALIAS,
+                read_relation=await self._hub_host._qname(),  # pyright: ignore[reportPrivateUsage]
+                params=list(params),
+                fields=facet_fields,
+                size=facet_size_of(options),
+            )
+            if facet_fields
+            else None
         )
 
         sort_keys = [k for k, _ in plan.order_key_spec]
@@ -268,11 +298,18 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         if return_fields is not None:
             rj = [{k: r.get(k, None) for k in return_fields} for r in source_rows]
 
-            return CursorPage(
-                hits=rj,
-                next_cursor=nxt,
-                prev_cursor=prv,
-                has_more=has_more,
+            return attach_hub_highlights(
+                SearchCursorPage(
+                    hits=rj,
+                    next_cursor=nxt,
+                    prev_cursor=prv,
+                    has_more=has_more,
+                    facets=facets,
+                ),
+                hub_spec=self._hub_host.hub_spec,
+                query=query,
+                options=options,
+                return_fields=return_fields,
             )
 
         hits = decode_search_hits(
@@ -283,9 +320,15 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
             trust_source=trust,
         )
 
-        return CursorPage(
-            hits=hits,
-            next_cursor=nxt,
-            prev_cursor=prv,
-            has_more=has_more,
+        return attach_hub_highlights(
+            SearchCursorPage(
+                hits=hits,
+                next_cursor=nxt,
+                prev_cursor=prv,
+                has_more=has_more,
+                facets=facets,
+            ),
+            hub_spec=self._hub_host.hub_spec,
+            query=query,
+            options=options,
         )

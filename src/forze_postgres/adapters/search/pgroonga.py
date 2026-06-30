@@ -12,7 +12,6 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.base import page_from_limit_offset
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
@@ -27,6 +26,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     resolve_facet_fields,
     search_options_for_simple_adapter,
+    search_page_from_limit_offset,
 )
 from forze.application.integrations.search import (
     SearchResultSnapshot,
@@ -223,6 +223,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         # Facets are computed live per page; an id-only snapshot replay would drop them, so a
         # facet request runs live (no snapshot read or write).
         facet_fields = resolve_facet_fields(self.spec, options)
+        count_policy = effective_search_count(options)
         fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
             query,
             filters,
@@ -241,7 +242,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 pagination=dict(pagination or {}),
                 return_type=return_type,
                 return_fields=return_fields,
-                return_count=return_count,
+                return_count=return_count and count_policy != "none",
             )
 
             if maybe_snap is not None:
@@ -274,7 +275,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         params_base = list(fp)
         total = 0
-        count_policy = effective_search_count(options)
 
         if return_count and count_policy != "none":
             if count_policy == "exact":
@@ -283,10 +283,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 )
 
                 if total == 0:
-                    return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                    # No matches: the facet distribution is empty buckets per requested field,
+                    # not ``None`` — keep the sidecar shape the live path returns.
+                    return search_page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                         [],
                         pagination or {},
                         total=0,
+                        facets={f: () for f in facet_fields} if facet_fields else None,
                     )
             else:
                 total = await resolve_ranked_approximate_total(
@@ -395,25 +398,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         facets = await self._browse_facets(proj_qname, fw, fp, options)
 
-        if return_count:
-            result: Any = page_from_limit_offset(
-                page,
-                pagination,
-                total=total if count_policy != "none" else None,
-                snapshot=handle_no,
-            )
-        else:
-            result = page_from_limit_offset(
-                page,
-                pagination,
-                total=None,
-                snapshot=handle_no,
-            )
-
-        if facets is None:
-            return result
-
-        return attrs.evolve(result, facets=facets)
+        return search_page_from_limit_offset(
+            page,
+            pagination,
+            total=(total if (return_count and count_policy != "none") else None),
+            snapshot=handle_no,
+            facets=facets,
+        )
 
     # ....................... #
 

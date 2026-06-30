@@ -5,14 +5,14 @@ from pydantic import BaseModel as Bm
 
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.mapping import Mapper
-from forze.application.contracts.search import SearchQueryPort
-from forze_kits.dto import CursorPaginated, ProjectedCursorPaginated
-
+from forze.application.contracts.search import SearchOptions, SearchQueryPort
 from .dto import (
     CursorSearchRequestDTO,
     ProjectedCursorSearchRequestDTO,
+    ProjectedSearchCursorPaginated,
     ProjectedSearchPaginated,
     ProjectedSearchRequestDTO,
+    SearchCursorPaginated,
     SearchPaginated,
     SearchRequestDTO,
 )
@@ -28,18 +28,18 @@ Pcsr = ProjectedCursorSearchRequestDTO
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class Search[Out: Bm](Handler[Sr, SearchPaginated[Out]]):
+class Search[Out: Bm, Opt: SearchOptions = SearchOptions](Handler[Sr[Opt], SearchPaginated[Out]]):
     """Operation handler that searches with typed results."""
 
-    search: SearchQueryPort[Out]
+    search: SearchQueryPort[Out, Opt]
     """Search port for search operations."""
 
-    mapper: Mapper[Sr, Sr] | None = attrs.field(default=None)
+    mapper: Mapper[Sr[Opt], Sr[Opt]] | None = attrs.field(default=None)
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def __call__(self, args: Sr) -> SearchPaginated[Out]:
+    async def __call__(self, args: Sr[Opt]) -> SearchPaginated[Out]:
         """Search with typed paginated results.
 
         :param args: Search arguments (body, page, size).
@@ -60,25 +60,25 @@ class Search[Out: Bm](Handler[Sr, SearchPaginated[Out]]):
             snapshot=body.snapshot,
         )
 
-        return SearchPaginated.from_page(res)
+        return SearchPaginated.from_search_page(res)
 
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ProjectedSearch(Handler[Psr, ProjectedSearchPaginated]):
+class ProjectedSearch[Opt: SearchOptions = SearchOptions](Handler[Psr[Opt], ProjectedSearchPaginated]):
     """Operation handler that searches with field-projected raw results."""
 
-    search: SearchQueryPort[Any]
+    search: SearchQueryPort[Any, Opt]
     """Search port for search operations."""
 
-    mapper: Mapper[Psr, Psr] | None = attrs.field(default=None)
+    mapper: Mapper[Psr[Opt], Psr[Opt]] | None = attrs.field(default=None)
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def __call__(self, args: Psr) -> ProjectedSearchPaginated:
+    async def __call__(self, args: Psr[Opt]) -> ProjectedSearchPaginated:
         """Search with raw results.
 
         :param args: Search arguments (body, page, size).
@@ -100,25 +100,27 @@ class ProjectedSearch(Handler[Psr, ProjectedSearchPaginated]):
             snapshot=body.snapshot,
         )
 
-        return ProjectedSearchPaginated.from_page(res)
+        return ProjectedSearchPaginated.from_search_page(res)
 
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class CursorSearch[Out: Bm](Handler[Csr, CursorPaginated[Out]]):
+class CursorSearch[Out: Bm, Opt: SearchOptions = SearchOptions](
+    Handler[Csr[Opt], SearchCursorPaginated[Out]]
+):
     """Operation handler that searches with typed results and cursor (keyset) pagination."""
 
-    search: SearchQueryPort[Out]
+    search: SearchQueryPort[Out, Opt]
     """Search port for search operations."""
 
-    mapper: Mapper[Csr, Csr] | None = attrs.field(default=None)
+    mapper: Mapper[Csr[Opt], Csr[Opt]] | None = attrs.field(default=None)
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def __call__(self, args: Csr) -> CursorPaginated[Out]:
+    async def __call__(self, args: Csr[Opt]) -> SearchCursorPaginated[Out]:
         body = args
 
         if self.mapper:
@@ -132,25 +134,27 @@ class CursorSearch[Out: Bm](Handler[Csr, CursorPaginated[Out]]):
             options=body.options,
         )
 
-        return CursorPaginated.from_page(res)
+        return SearchCursorPaginated.from_search_page(res)
 
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ProjectedCursorSearch(Handler[Pcsr, ProjectedCursorPaginated]):
+class ProjectedCursorSearch[Opt: SearchOptions = SearchOptions](
+    Handler[Pcsr[Opt], ProjectedSearchCursorPaginated]
+):
     """Operation handler that searches with raw results and cursor (keyset) pagination."""
 
-    search: SearchQueryPort[Any]
+    search: SearchQueryPort[Any, Opt]
     """Search port for search operations."""
 
-    mapper: Mapper[Pcsr, Pcsr] | None = attrs.field(default=None)
+    mapper: Mapper[Pcsr[Opt], Pcsr[Opt]] | None = attrs.field(default=None)
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def __call__(self, args: Pcsr) -> ProjectedCursorPaginated:
+    async def __call__(self, args: Pcsr[Opt]) -> ProjectedSearchCursorPaginated:
         body = args
 
         if self.mapper:
@@ -165,4 +169,4 @@ class ProjectedCursorSearch(Handler[Pcsr, ProjectedCursorPaginated]):
             options=body.options,
         )
 
-        return ProjectedCursorPaginated.from_page(res)
+        return ProjectedSearchCursorPaginated.from_search_page(res)

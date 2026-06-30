@@ -7,10 +7,10 @@ from typing import Any, Literal, Sequence, final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import (
-    CountlessPage,
-    Page,
-    page_from_limit_offset,
+from forze.application.contracts.search import (
+    SearchCountlessPage,
+    SearchPage,
+    search_page_from_limit_offset,
 )
 from forze.application.contracts.querying import (
     PaginationExpression,
@@ -22,6 +22,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
+    highlight_fragment_bounds,
     normalize_search_queries,
     prepare_hub_search_options,
     resolve_facet_fields,
@@ -120,6 +121,7 @@ class MockHubSearchAdapter[M: BaseModel](
         )
 
         highlight = resolve_highlight(self.hub_spec, options)
+        fragment_size, max_fragments = highlight_fragment_bounds(options)
         highlights = (
             compute_highlights(
                 page_docs,
@@ -127,6 +129,8 @@ class MockHubSearchAdapter[M: BaseModel](
                 highlight[0],
                 pre_tag=highlight[1],
                 post_tag=highlight[2],
+                fragment_size=fragment_size,
+                max_fragments=max_fragments,
             )
             if highlight is not None
             else None
@@ -158,7 +162,7 @@ class MockHubSearchAdapter[M: BaseModel](
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[M]:
+    ) -> SearchCountlessPage[M]:
         _ = snapshot
         ordered = await self._merged_docs(query, filters, sorts, options)
         page = self._window(ordered, pagination)
@@ -168,10 +172,9 @@ class MockHubSearchAdapter[M: BaseModel](
         allowed = set(self.hub_spec.model_type.model_fields.keys())
         typed = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
         hits = self.hub_spec.resolved_read_codec.decode_mapping_many(typed)
-        result = page_from_limit_offset(hits, pagination or {}, total=None)
-        if facets is None and highlights is None:
-            return result
-        return attrs.evolve(result, facets=facets, highlights=highlights)
+        return search_page_from_limit_offset(
+            hits, pagination or {}, total=None, facets=facets, highlights=highlights
+        )
 
     async def search_page(
         self,
@@ -182,7 +185,7 @@ class MockHubSearchAdapter[M: BaseModel](
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[M]:
+    ) -> SearchPage[M]:
         _ = snapshot
         ordered = await self._merged_docs(query, filters, sorts, options)
         page = self._window(ordered, pagination)
@@ -192,7 +195,10 @@ class MockHubSearchAdapter[M: BaseModel](
         allowed = set(self.hub_spec.model_type.model_fields.keys())
         typed = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
         hits = self.hub_spec.resolved_read_codec.decode_mapping_many(typed)
-        result = page_from_limit_offset(hits, pagination or {}, total=len(ordered))
-        if facets is None and highlights is None:
-            return result
-        return attrs.evolve(result, facets=facets, highlights=highlights)
+        return search_page_from_limit_offset(
+            hits,
+            pagination or {},
+            total=len(ordered),
+            facets=facets,
+            highlights=highlights,
+        )

@@ -17,11 +17,11 @@ from typing import (
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import (
-    CountlessPage,
-    Page,
+from forze.application.contracts.search import (
+    SearchCountlessPage,
+    SearchPage,
     SearchSnapshotHandle,
-    page_from_limit_offset,
+    search_page_from_limit_offset,
 )
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
@@ -151,7 +151,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         return_count: Literal[False],
         return_type: None = None,
         return_fields: None = None,
-    ) -> CountlessPage[FederatedSearchReadModel[M]]: ...
+    ) -> SearchCountlessPage[FederatedSearchReadModel[M]]: ...
 
     @overload
     async def _offset_search_impl(
@@ -166,7 +166,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         return_count: Literal[True],
         return_type: None = None,
         return_fields: None = None,
-    ) -> Page[FederatedSearchReadModel[M]]: ...
+    ) -> SearchPage[FederatedSearchReadModel[M]]: ...
 
     @overload
     async def _offset_search_impl(
@@ -181,7 +181,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         return_count: Literal[False],
         return_type: type[T],
         return_fields: None = None,
-    ) -> CountlessPage[T]: ...
+    ) -> SearchCountlessPage[T]: ...
 
     @overload
     async def _offset_search_impl(
@@ -196,7 +196,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         return_count: Literal[True],
         return_type: type[T],
         return_fields: None = None,
-    ) -> Page[T]: ...
+    ) -> SearchPage[T]: ...
 
     @overload
     async def _offset_search_impl(
@@ -362,9 +362,9 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             empty: list[FederatedSearchReadModel[M]] = []
 
             if return_count:
-                return page_from_limit_offset(empty, pagination or {}, total=0)
+                return search_page_from_limit_offset(empty, pagination or {}, total=0)
 
-            return page_from_limit_offset(empty, pagination or {}, total=None)
+            return search_page_from_limit_offset(empty, pagination or {}, total=None)
 
         offset = int((pagination or {}).get("offset") or 0)
         limit = (pagination or {}).get("limit")
@@ -478,9 +478,9 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             empty: list[FederatedSearchReadModel[M]] = []
 
             if return_count:
-                return page_from_limit_offset(empty, pagination or {}, total=0)
+                return search_page_from_limit_offset(empty, pagination or {}, total=0)
 
-            return page_from_limit_offset(empty, pagination or {}, total=None)
+            return search_page_from_limit_offset(empty, pagination or {}, total=None)
 
         leg_cap = max(1, int(self.rrf_per_leg_limit))
         leg_page: PaginationExpression = {"limit": leg_cap}
@@ -593,24 +593,24 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
             if return_count:
                 return _attach(
-                    page_from_limit_offset(
+                    search_page_from_limit_offset(
                         v, pagination, total=total, snapshot=handle_out
                     )
                 )
 
             return _attach(
-                page_from_limit_offset(v, pagination, total=None, snapshot=handle_out)
+                search_page_from_limit_offset(v, pagination, total=None, snapshot=handle_out)
             )
 
         if return_count:
             return _attach(
-                page_from_limit_offset(
+                search_page_from_limit_offset(
                     hits, pagination, total=total, snapshot=handle_out
                 )
             )
 
         return _attach(
-            page_from_limit_offset(hits, pagination, total=None, snapshot=handle_out)
+            search_page_from_limit_offset(hits, pagination, total=None, snapshot=handle_out)
         )
 
     # ....................... #

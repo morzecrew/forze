@@ -5,18 +5,20 @@ from pydantic import BaseModel
 from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchSpec,
+    MultiSourceSearchOptions,
+    SearchOptions,
     SearchSpec,
 )
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKey, StrKeyNamespace
-from forze_kits.dto.paginated import CursorPaginated, ProjectedCursorPaginated
-
 from .dto import (
     CursorSearchRequestDTO,
     ProjectedCursorSearchRequestDTO,
+    ProjectedSearchCursorPaginated,
     ProjectedSearchPaginated,
     ProjectedSearchRequestDTO,
+    SearchCursorPaginated,
     SearchPaginated,
     SearchRequestDTO,
 )
@@ -38,44 +40,66 @@ def _parametrized(generic: Any, arg: Any) -> Any:
     return generic[arg]
 
 
+# ....................... #
+
+
+def _request_dto(dto: Any, options_type: Any) -> Any:
+    """The request DTO with its ``options`` shape pinned, or the bare default-typed class.
+
+    ``options_type is None`` keeps the plain single-index :class:`SearchOptions` DTO (and its
+    schema name); a multi-source type parametrizes the generic so the body accepts the extra
+    member-selection / merge keys.
+    """
+
+    return dto if options_type is None else _parametrized(dto, options_type)
+
+
+# ....................... #
+
+
 def _typed_search_descriptors(
     model_type: type,
     *,
     sensitive: bool = False,
+    options_type: Any = None,
 ) -> dict[StrKey, OperationDescriptor]:
     """Descriptors for the four single-index/hub search operations.
 
     A ``sensitive`` spec propagates the flag onto every descriptor so projection
-    surfaces (generated routes, MCP) can refuse it at build time.
+    surfaces (generated routes, MCP) can refuse it at build time. ``options_type`` pins the
+    request ``options`` shape — left ``None`` for single-index (:class:`SearchOptions`), set to
+    :class:`MultiSourceSearchOptions` for hub requests.
     """
 
     return {
         SearchKernelOp.TYPED: OperationDescriptor(
-            input_type=SearchRequestDTO,
+            input_type=_request_dto(SearchRequestDTO, options_type),
             output_type=_parametrized(SearchPaginated, model_type),
             description="Full-text search with typed results (offset pagination).",
             sensitive=sensitive,
         ),
         SearchKernelOp.RAW: OperationDescriptor(
-            input_type=ProjectedSearchRequestDTO,
+            input_type=_request_dto(ProjectedSearchRequestDTO, options_type),
             output_type=ProjectedSearchPaginated,
             description="Full-text search with field-projected results (offset pagination).",
             sensitive=sensitive,
         ),
         SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
-            input_type=CursorSearchRequestDTO,
-            output_type=_parametrized(CursorPaginated, model_type),
+            input_type=_request_dto(CursorSearchRequestDTO, options_type),
+            output_type=_parametrized(SearchCursorPaginated, model_type),
             description="Full-text search with typed results (cursor pagination).",
             sensitive=sensitive,
         ),
         SearchKernelOp.RAW_CURSOR: OperationDescriptor(
-            input_type=ProjectedCursorSearchRequestDTO,
-            output_type=ProjectedCursorPaginated,
+            input_type=_request_dto(ProjectedCursorSearchRequestDTO, options_type),
+            output_type=ProjectedSearchCursorPaginated,
             description="Full-text search with field-projected results (cursor pagination).",
             sensitive=sensitive,
         ),
     }
 
+
+# ....................... #
 
 _ALL_SEARCH_OPS: tuple[SearchKernelOp, ...] = (
     SearchKernelOp.TYPED,
@@ -85,10 +109,12 @@ _ALL_SEARCH_OPS: tuple[SearchKernelOp, ...] = (
 )
 """Single-index / hub search operations — all read-only (query)."""
 
+# ....................... #
+
 
 def build_search_registry[M: BaseModel](
     spec: SearchSpec[M],
-    mappers: SearchMappers = SearchMappers(),
+    mappers: SearchMappers[SearchOptions] = SearchMappers(),
     *,
     ns: StrKeyNamespace | None = None,
 ) -> OperationRegistry:
@@ -143,7 +169,7 @@ def build_search_registry[M: BaseModel](
 
 def build_hub_search_registry[M: BaseModel](
     spec: HubSearchSpec[M],
-    mappers: SearchMappers = SearchMappers(),
+    mappers: SearchMappers[MultiSourceSearchOptions] = SearchMappers(),
     *,
     ns: StrKeyNamespace | None = None,
 ) -> OperationRegistry:
@@ -191,6 +217,7 @@ def build_hub_search_registry[M: BaseModel](
         _typed_search_descriptors(
             spec.model_type,
             sensitive=any(member.sensitive for member in spec.members),
+            options_type=MultiSourceSearchOptions,
         ),
         namespace=ns,
     )
@@ -201,7 +228,7 @@ def build_hub_search_registry[M: BaseModel](
 
 def build_federated_search_registry[M: BaseModel](
     spec: FederatedSearchSpec[M],
-    mappers: SearchMappers = SearchMappers(),
+    mappers: SearchMappers[MultiSourceSearchOptions] = SearchMappers(),
     *,
     ns: StrKeyNamespace | None = None,
 ) -> OperationRegistry:
@@ -228,16 +255,20 @@ def build_federated_search_registry[M: BaseModel](
         },
     )
 
-    reg = reg.bind(
-        SearchKernelOp.TYPED, SearchKernelOp.TYPED_CURSOR, namespace=ns
-    ).as_query().finish()
+    reg = (
+        reg.bind(SearchKernelOp.TYPED, SearchKernelOp.TYPED_CURSOR, namespace=ns)
+        .as_query()
+        .finish()
+    )
 
     # A federated surface projects every member's rows, so it is sensitive if any
     # member (or any nested hub member) is.
     sensitive = any(
-        member.sensitive
-        if isinstance(member, SearchSpec)
-        else any(leg.sensitive for leg in member.members)
+        (
+            member.sensitive
+            if isinstance(member, SearchSpec)
+            else any(leg.sensitive for leg in member.members)
+        )
         for member in spec.members
     )
 
@@ -246,12 +277,14 @@ def build_federated_search_registry[M: BaseModel](
     return reg.set_descriptors(
         {
             SearchKernelOp.TYPED: OperationDescriptor(
-                input_type=SearchRequestDTO,
+                input_type=_request_dto(SearchRequestDTO, MultiSourceSearchOptions),
                 description="Federated full-text search across members (offset pagination).",
                 sensitive=sensitive,
             ),
             SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
-                input_type=CursorSearchRequestDTO,
+                input_type=_request_dto(
+                    CursorSearchRequestDTO, MultiSourceSearchOptions
+                ),
                 description="Federated full-text search across members (cursor pagination).",
                 sensitive=sensitive,
             ),

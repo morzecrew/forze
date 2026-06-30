@@ -13,8 +13,16 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from forze.application.contracts.base import FacetBucket, FacetResults, HitHighlights
-from forze.application.contracts.search import SearchOptions, facet_size_of
+from forze.application.contracts.search import (
+    FacetBucket,
+    FacetResults,
+    HitHighlights,
+    SearchOptions,
+    facet_size_of,
+)
+from forze.application.contracts.search import (
+    compute_highlights as shared_compute_highlights,
+)
 from forze.base.primitives import JsonDict
 from forze_mock.query.matching import (
     _MISSING,  # type: ignore[reportPrivateUsage]
@@ -88,76 +96,24 @@ def compute_highlights(
     *,
     pre_tag: str,
     post_tag: str,
+    fragment_size: int | None = None,
+    max_fragments: int | None = None,
 ) -> list[HitHighlights]:
     """Per-row highlighted fragments (index-aligned with *rows*).
 
-    Each field's text gets every matched query token wrapped in the markers; a field with
-    no match is omitted, a row with no matches maps to ``{}`` — so the list stays
-    index-aligned and non-sparse.
+    Delegates to the shared :func:`~forze.application.contracts.search.compute_highlights`
+    with the mock's nested-path text accessor, so the oracle and the relational backends wrap
+    identically (and honor ``fragment_size`` / ``max_fragments`` the same way). A field with
+    no match is omitted; a row with none maps to ``{}``.
     """
 
-    tokens = sorted(
-        {tok.lower() for term in terms for tok in term.split() if tok},
-        key=len,
-        reverse=True,
+    return shared_compute_highlights(
+        rows,
+        terms,
+        fields,
+        pre_tag=pre_tag,
+        post_tag=post_tag,
+        get_text=_path_text,
+        fragment_size=fragment_size,
+        max_fragments=max_fragments,
     )
-
-    out: list[HitHighlights] = []
-
-    for row in rows:
-        marked: dict[str, tuple[str, ...]] = {}
-
-        if tokens:
-            for field in fields:
-                text = _path_text(row, field)
-
-                if not text:
-                    continue
-                fragment = _mark_text(text, tokens, pre_tag, post_tag)
-
-                if fragment is not None:
-                    marked[field] = (fragment,)
-
-        out.append(marked)
-
-    return out
-
-
-# ....................... #
-
-
-def _mark_text(text: str, tokens: Sequence[str], pre: str, post: str) -> str | None:
-    """Wrap each (case-insensitive, substring) token occurrence; ``None`` if no match."""
-
-    lowered = text.lower()
-    spans: list[tuple[int, int]] = []
-
-    for token in tokens:
-        start = lowered.find(token)
-
-        while start != -1:
-            spans.append((start, start + len(token)))
-            start = lowered.find(token, start + 1)
-
-    if not spans:
-        return None
-
-    spans.sort()
-    merged: list[tuple[int, int]] = []
-
-    for start, end in spans:
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-
-    pieces: list[str] = []
-    cursor = 0
-
-    for start, end in merged:
-        pieces.extend((text[cursor:start], f"{pre}{text[start:end]}{post}"))
-        cursor = end
-
-    pieces.append(text[cursor:])
-
-    return "".join(pieces)

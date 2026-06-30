@@ -10,8 +10,10 @@ from typing import Any, Sequence
 
 import attrs
 
-from forze.application.contracts.base import FacetBucket, FacetResults, HitHighlights
 from forze.application.contracts.search import (
+    FacetBucket,
+    FacetResults,
+    HitHighlights,
     SearchOptions,
     SearchSpec,
     facet_size_of,

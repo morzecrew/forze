@@ -12,13 +12,13 @@ from forze.base.serialization import (
 )
 
 from ..base import BaseSpec
-from ..crypto import FieldEncryption
 from ..conformity import (
     ReadConformity,
     derive_lenient_read_fields,
     validate_lenient_read_fields,
     validate_materialized_computed,
 )
+from ..crypto import FieldEncryption
 from ..querying import QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 
@@ -217,6 +217,13 @@ def _validate_search_default_sort(
 # ....................... #
 
 
+def _seq_to_frozenset(value: Sequence[str] | None) -> frozenset[str] | None:
+    return None if value is None else frozenset(value)
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchFuzzySpec:
     """Fuzzy matching configuration for a search index (immutable value object)."""
@@ -331,7 +338,10 @@ class SearchSpec[M: BaseModel](BaseSpec):
     is opt-in because it has index/mapping implications (e.g. an external index must declare
     the field filterable/keyword). A facet request for a field outside this set is refused."""
 
-    highlightable_fields: frozenset[str] | None = attrs.field(default=None)
+    highlightable_fields: frozenset[str] | None = attrs.field(
+        default=None,
+        converter=_seq_to_frozenset,
+    )
     """Searchable field names that may be **highlighted** (matched fragments returned) when
     a caller passes :attr:`~.types.SearchOptions.highlight`. ``None`` (default)
     means all searchable :attr:`fields`; an explicit set narrows it. Each named field must be
@@ -453,7 +463,8 @@ class SearchSpec[M: BaseModel](BaseSpec):
     def resolved_highlightable_fields(self) -> frozenset[str]:
         """Effective highlightable fields: the explicit :attr:`highlightable_fields`, or —
         when ``None`` — all searchable :attr:`fields` minus field-encrypted ones (ciphertext
-        has no highlightable text). What the search backend reads to bound a highlight request."""
+        has no highlightable text). What the search backend reads to bound a highlight request.
+        """
 
         if self.highlightable_fields is None:
             return frozenset(self.fields) - _sealed_fields(self.encryption)
@@ -614,7 +625,8 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     @property
     def resolved_lenient_read_fields(self) -> frozenset[str]:
         """Effective lenient hub-row fields: explicit plus, under ``read_conformity``
-        ``"lenient"``, the auto-derived eligible fields (:attr:`materialized` excluded)."""
+        ``"lenient"``, the auto-derived eligible fields (:attr:`materialized` excluded).
+        """
 
         if self.read_conformity == "lenient":
             return self.lenient_read_fields | derive_lenient_read_fields(

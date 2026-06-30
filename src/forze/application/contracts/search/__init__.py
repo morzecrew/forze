@@ -6,7 +6,12 @@ from .facet_highlight import (
     DEFAULT_FACET_SIZE,
     DEFAULT_HIGHLIGHT_POST_TAG,
     DEFAULT_HIGHLIGHT_PRE_TAG,
+    compute_highlights,
     facet_size_of,
+    highlight_fragment_bounds,
+    highlight_fragments,
+    highlight_tokens,
+    mark_highlight,
     reject_federated_facets,
     reject_unsupported_facets,
     reject_unsupported_highlight,
@@ -61,22 +66,39 @@ from .utils import (
     effective_phrase_combine,
     normalize_search_queries,
 )
+from .pages import (
+    SearchCountlessPage,
+    SearchCursorPage,
+    SearchPage,
+    search_page_from_limit_offset,
+)
 from .value_objects import (
     FacetBucket,
     FacetResults,
     HitHighlights,
     Rrf,
     SearchResultSnapshotMeta,
+    SearchSnapshotHandle,
 )
 
 # ----------------------- #
 
 __all__ = [
     "Rrf",
+    "SearchCountlessPage",
+    "SearchCursorPage",
+    "SearchPage",
+    "SearchSnapshotHandle",
+    "search_page_from_limit_offset",
     "DEFAULT_FACET_SIZE",
     "DEFAULT_HIGHLIGHT_PRE_TAG",
     "DEFAULT_HIGHLIGHT_POST_TAG",
+    "compute_highlights",
     "facet_size_of",
+    "highlight_fragment_bounds",
+    "highlight_fragments",
+    "highlight_tokens",
+    "mark_highlight",
     "reject_federated_facets",
     "reject_unsupported_facets",
     "reject_unsupported_highlight",

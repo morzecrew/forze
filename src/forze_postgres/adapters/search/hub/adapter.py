@@ -23,8 +23,9 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
+    facet_size_of,
     reject_unsupported_facets,
-    reject_unsupported_highlight,
+    resolve_facet_fields,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -35,6 +36,7 @@ from .._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
 from .._port import PostgresSearchPortMixin
 from .._search_count import resolve_ranked_approximate_total
 from ._typing_host import HubSearchHost
+from ._facets_highlights import attach_hub_highlights
 from .constants import COMBO_ALIAS
 from .cursor import HubSearchCursorMixin
 from .plan import build_hub_search_plan, hub_members_weighted
@@ -105,12 +107,6 @@ class PostgresHubSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        # Postgres hub search merges heterogeneous leg engines into one combined SQL, so a
-        # single facet companion query and a single highlight engine over the merged row are
-        # ill-defined; fail closed rather than silently drop (mock hub is the reference shape).
-        reject_unsupported_facets(options, backend="Postgres hub")
-        reject_unsupported_highlight(self.hub_spec, options, backend="Postgres hub")
-
         plan = await build_hub_search_plan(
             cast(HubSearchHost[Any], self),
             query=query,
@@ -123,7 +119,12 @@ class PostgresHubSearchAdapter[M: BaseModel](
         )
 
         if plan.use_parallel:
-            return await self._hub_parallel_offset_search(
+            # Parallel execution merges per-leg results in Python; faceting the merged,
+            # deduped set there is deferred, so facets fail closed. Highlights still apply.
+            reject_unsupported_facets(
+                options, backend="Postgres hub (parallel execution)"
+            )
+            parallel_page = await self._hub_parallel_offset_search(
                 plan=plan,
                 query=query,
                 filters=filters,
@@ -137,6 +138,17 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 hub_spec=self.hub_spec,
                 result_snapshot=self.result_snapshot,
             )
+            return attach_hub_highlights(
+                parallel_page,
+                hub_spec=self.hub_spec,
+                query=query,
+                options=options,
+                return_fields=return_fields,
+            )
+
+        # ``sql`` execution: facets via a companion GROUP BY over the merged set; highlights
+        # are marked on the returned page below (the field validation runs in both helpers).
+        facet_fields = resolve_facet_fields(self.hub_spec, options)
 
         combo_cap = plan.resolved_combo if plan.do_legs else None
 
@@ -189,7 +201,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             plan.member_weights_list,
         )
 
-        return await execute_hub_ranked_offset_search(
+        page = await execute_hub_ranked_offset_search(
             self,
             plan=ranked_plan,
             query=query,
@@ -212,4 +224,14 @@ class PostgresHubSearchAdapter[M: BaseModel](
             execution=str(self.execution),
             combo_limit=combo_cap,
             trust_source=search_trust_source(self.read_validation),
+            facet_fields=facet_fields,
+            facet_size=facet_size_of(options),
+        )
+
+        return attach_hub_highlights(
+            page,
+            hub_spec=self.hub_spec,
+            query=query,
+            options=options,
+            return_fields=return_fields,
         )

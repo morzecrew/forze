@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CursorPage
+from forze.application.contracts.search import SearchCursorPage
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
@@ -44,7 +44,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     cursor: CursorPaginationExpression | None,
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
-) -> CursorPage[Any]:
+) -> SearchCursorPage[Any]:
     """Run keyset cursor search over a ranked aggregation pipeline."""
 
     _ = query, filters
@@ -172,7 +172,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         codec=decode_codec,
     )
 
-    return CursorPage(
+    return SearchCursorPage(
         hits=hits,
         next_cursor=next_c,
         prev_cursor=prev_c,

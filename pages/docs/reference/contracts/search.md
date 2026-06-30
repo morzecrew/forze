@@ -86,7 +86,7 @@ raises `query_feature_unsupported`; **—** means not applicable.
 |------------------|--------|------------|
 | Mock | ✅ | ✅ |
 | Meilisearch | ✅ (`facetDistribution`) | ✅ (`_formatted`) |
-| Postgres — PGroonga | ✅ | ✅ (`pgroonga_snippet_html`) |
+| Postgres — PGroonga | ✅ | ✅ |
 | Postgres — FTS | ✅ | ✅ (`ts_headline`) |
 | Postgres — vector | ✅ | — |
 | Mongo | fail-closed | fail-closed |
@@ -94,12 +94,18 @@ raises `query_feature_unsupported`; **—** means not applicable.
 | Topology | Facets | Highlights |
 |----------|--------|------------|
 | Hub — mock | ✅ | ✅ |
-| Hub — Postgres | fail-closed | fail-closed |
+| Hub — Postgres | ✅ (`sql` exec) / fail-closed (`parallel`) | ✅ |
 | Federated — RRF merge (mock, Postgres, Meilisearch) | fail-closed | ✅ (per hit) |
 | Federated — Meilisearch native | fail-closed | fail-closed |
 
+- **PGroonga / hub highlights** are marked in process (case-insensitive substring over the
+  raw field text), so they fold case for any script and keep the original casing; FTS uses
+  `ts_headline` for language-aware stemming.
 - **Vector** ranks by distance with no lexical match, so there is no snippet to highlight
   (facets still group over the ranked set).
+- **Hub** highlights apply in both `sql` and `parallel` execution; hub facets run as a
+  companion `GROUP BY` over the merged set under `sql` execution and fail closed under
+  `parallel` (the Python merge can't dedup-count the facet field).
 - **Federated facets** are deferred — per-member distributions don't compose under the
   reciprocal-rank merge, so every federated search fails closed on facets. Highlights
   survive only the RRF-merge path (each merged hit keeps its originating leg's snippet),

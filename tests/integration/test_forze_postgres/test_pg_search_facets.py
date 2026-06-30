@@ -210,7 +210,7 @@ async def test_pgroonga_highlights(pg_client: PostgresClient) -> None:
     assert len(page.highlights) == len(page.hits)
     fragments = [hl["title"][0] for hl in page.highlights if "title" in hl]
     assert fragments
-    # Default <em> markers wrap the match (rewritten from PGroonga's fixed span).
+    # Default <em> markers wrap the match (raw field text marked in Python).
     assert all("<em>" in frag.lower() and "book" in frag.lower() for frag in fragments)
 
 
@@ -230,6 +230,53 @@ async def test_pgroonga_highlights_custom_tags(pg_client: PostgresClient) -> Non
     fragments = [hl["title"][0] for hl in page.highlights if "title" in hl]
     assert fragments
     assert all("[" in frag and "]" in frag and "<span" not in frag for frag in fragments)
+
+
+async def _bootstrap_cyrillic(pg_client: PostgresClient) -> tuple[str, str]:
+    tag = uuid4().hex[:12]
+    table, index_name = f"cyr_{tag}", f"idx_cyr_{tag}"
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL,
+            category text NOT NULL
+        );
+        CREATE INDEX {index_name} ON {table} USING pgroonga ((ARRAY[title, content]));
+        """
+    )
+    for title in ('ООО "БетаМед"', "Гамма Лаб"):
+        await pg_client.execute(
+            f"INSERT INTO {table} (id, title, content, category) "
+            "VALUES (%(id)s, %(t)s, '', 'org')",
+            {"id": uuid4(), "t": title},
+        )
+    return table, index_name
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pgroonga_highlights_cyrillic_preserves_case(
+    pg_client: PostgresClient,
+) -> None:
+    table, index_name = await _bootstrap_cyrillic(pg_client)
+    ctx = _ctx(pg_client, table=table, index_name=index_name, engine="pgroonga")
+    spec = _spec("pgr_hl_cyr")
+
+    # The query token is lowercased for matching but the fragment is sliced from the original
+    # text, so the wrapped match keeps its source casing (no empty highlight on Cyrillic). A
+    # lowercase query needs a case-folding index normalizer to *match*, which the test image
+    # lacks; that path is covered by the unit tests.
+    page = await ctx.search.query(spec).search_page(
+        "Бета", options={"highlight": {"fields": ["title"]}}
+    )
+
+    assert page.highlights is not None
+    fragments = [hl["title"][0] for hl in page.highlights if "title" in hl]
+    assert fragments == ['ООО "<em>Бета</em>Мед"']
 
 
 @pytest.mark.integration

@@ -2,11 +2,8 @@ from .specs import BaseSpec, EncryptionReach, MessageCodecSpec, MessageEncryptio
 from .value_objects import (
     CountlessPage,
     CursorPage,
-    FacetBucket,
-    FacetResults,
-    HitHighlights,
     Page,
-    SearchSnapshotHandle,
+    offset_page_coords,
     page_from_limit_offset,
 )
 
@@ -17,12 +14,9 @@ __all__ = [
     "CountlessPage",
     "CursorPage",
     "EncryptionReach",
-    "FacetBucket",
-    "FacetResults",
-    "HitHighlights",
     "MessageCodecSpec",
     "MessageEncryptionTier",
     "Page",
-    "SearchSnapshotHandle",
+    "offset_page_coords",
     "page_from_limit_offset",
 ]
