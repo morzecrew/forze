@@ -232,6 +232,69 @@ async def test_pgroonga_highlights_custom_tags(pg_client: PostgresClient) -> Non
     assert all("[" in frag and "]" in frag and "<span" not in frag for frag in fragments)
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pgroonga_highlight_scan_limit_bounds_far_match(
+    pg_client: PostgresClient,
+) -> None:
+    """``highlight_scan_limit`` caps the field text marked: a far match is not highlighted."""
+    tag = uuid4().hex[:12]
+    table, index_name = f"hl_scan_{tag}", f"idx_hl_scan_{tag}"
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL,
+            category text NOT NULL
+        );
+        CREATE INDEX {index_name} ON {table} USING pgroonga ((ARRAY[title, content]));
+        """
+    )
+    # "needle" sits ~240 chars into content — well past a 50-char highlight scan cap.
+    far_content = ("x " * 120) + "needle tail"
+    await pg_client.execute(
+        f"INSERT INTO {table} (id, title, content, category) "
+        "VALUES (%(id)s, %(t)s, %(c)s, %(cat)s)",
+        {"id": uuid4(), "t": "short title", "c": far_content, "cat": "books"},
+    )
+
+    ctx = _ctx(pg_client, table=table, index_name=index_name, engine="pgroonga")
+
+    # No scan limit: the far content match IS highlighted.
+    unbounded = SearchSpec(name="hl_unb", model_type=CatRow, fields=["title", "content"])
+    page = await ctx.search.query(unbounded).search_page(
+        "needle", options={"highlight": {"fields": ["content"]}}
+    )
+    assert page.highlights is not None
+    content_frags = [hl["content"] for hl in page.highlights if "content" in hl]
+    assert content_frags and any("<em>needle</em>" in f for f in content_frags[0])
+
+    # A 50-char scan limit: the hit is still found (the index is unbounded), but the
+    # far match is past the cap, so no content fragment is produced.
+    bounded = SearchSpec(
+        name="hl_bnd",
+        model_type=CatRow,
+        fields=["title", "content"],
+        highlight_scan_limit=50,
+    )
+    page2 = await ctx.search.query(bounded).search_page(
+        "needle", options={"highlight": {"fields": ["content"]}}
+    )
+    assert len(page2.hits) == 1
+    assert page2.highlights is not None
+    assert all("content" not in hl for hl in page2.highlights)
+
+    # A match within the cap still highlights normally under the same limit.
+    page3 = await ctx.search.query(bounded).search_page(
+        "short", options={"highlight": {"fields": ["title"]}}
+    )
+    assert page3.highlights is not None
+    title_frags = [hl["title"] for hl in page3.highlights if "title" in hl]
+    assert title_frags and any("<em>short</em>" in f for f in title_frags[0])
+
+
 async def _bootstrap_cyrillic(pg_client: PostgresClient) -> tuple[str, str]:
     tag = uuid4().hex[:12]
     table, index_name = f"cyr_{tag}", f"idx_cyr_{tag}"

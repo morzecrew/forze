@@ -86,8 +86,17 @@ class HighlightSelect:
 # ....................... #
 
 
-def _coalesced_text(alias: str, field: str) -> sql.Composable:
-    return sql.SQL("coalesce({}::text, '')").format(sql.Identifier(alias, field))
+def _coalesced_text(
+    alias: str, field: str, *, scan_limit: int | None = None
+) -> sql.Composable:
+    text = sql.SQL("coalesce({}::text, '')").format(sql.Identifier(alias, field))
+
+    if scan_limit is None:
+        return text
+
+    # Bound the field text scanned for highlighting: only the first ``scan_limit``
+    # characters are fetched/marked (a match beyond the cap is not highlighted).
+    return sql.SQL("left({}, {})").format(text, sql.Literal(int(scan_limit)))
 
 
 def _fts_options(pre_tag: str, post_tag: str) -> str:
@@ -114,12 +123,13 @@ def build_fts_highlight(
     query_text = " ".join(t for t in terms if t)
     hl_options = _fts_options(pre_tag, post_tag)
 
+    scan_limit = spec.highlight_scan_limit
     columns: list[sql.Composable] = []
     params: list[Any] = []
     for field in fields:
         columns.append(
             sql.SQL("ts_headline({}, websearch_to_tsquery({}::text), {}::text)").format(
-                _coalesced_text(alias, field),
+                _coalesced_text(alias, field, scan_limit=scan_limit),
                 sql.Placeholder(),
                 sql.Placeholder(),
             )
@@ -158,7 +168,10 @@ def build_pgroonga_highlight(
     fields, pre_tag, post_tag = resolved
     fragment_size, max_fragments = highlight_fragment_bounds(options)
 
-    columns = tuple(_coalesced_text(alias, field) for field in fields)
+    columns = tuple(
+        _coalesced_text(alias, field, scan_limit=spec.highlight_scan_limit)
+        for field in fields
+    )
 
     return HighlightSelect(
         fields=tuple(fields),

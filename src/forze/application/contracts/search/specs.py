@@ -348,6 +348,17 @@ class SearchSpec[M: BaseModel](BaseSpec):
     an indexed :attr:`fields` member (only analyzed text can be highlighted) and not
     field-encrypted."""
 
+    highlight_scan_limit: int | None = None
+    """Cap on the characters of each field scanned for highlighting (relational search).
+
+    Highlighting a PGroonga field fetches the field's **raw text** to mark matches in
+    Python (PGroonga's own snippet can't case-fold non-ASCII scripts correctly), so a
+    very large text field can transfer a lot per hit. When set, only the field's first
+    ``highlight_scan_limit`` characters are scanned (server-side ``left(...)``) — a match
+    beyond the cap is not highlighted, but the hit and its read fields are unaffected.
+    Defense in depth for pathological fields; ``None`` (default) scans the whole field.
+    A field shorter than the cap highlights identically."""
+
     read_codec: ModelCodec[M, Any] | None = attrs.field(
         default=None,
         eq=False,
@@ -379,6 +390,11 @@ class SearchSpec[M: BaseModel](BaseSpec):
         if self.max_results is not None and self.max_results < 1:
             raise exc.configuration(
                 f"SearchSpec {self.name!r}: max_results must be at least 1 when set."
+            )
+
+        if self.highlight_scan_limit is not None and self.highlight_scan_limit < 1:
+            raise exc.configuration(
+                f"SearchSpec {self.name!r}: highlight_scan_limit must be at least 1 when set."
             )
 
         _validate_search_materialized(
