@@ -4556,6 +4556,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Query port">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#facets-and-highlights" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Facets and highlights
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5347,6 +5364,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Query port">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#facets-and-highlights" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Facets and highlights
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5541,6 +5575,18 @@ result-set snapshots.</p>
 <td><code>@computed_field</code> names that are real columns on the search relation, so results can be filtered/sorted by the derived value (mirror of <a href="../document/#spec"><code>DocumentSpec.materialized</code></a>; relational in-place only, <strong>not</strong> startup-validated)</td>
 </tr>
 <tr>
+<td><code>facetable_fields</code></td>
+<td><code>frozenset[str]</code></td>
+<td><code>∅</code></td>
+<td>fields a query may compute term (value) facet distributions over (must be real, non-lenient, non-encrypted columns)</td>
+</tr>
+<tr>
+<td><code>highlightable_fields</code></td>
+<td><code>frozenset[str] \| None</code></td>
+<td><code>None</code></td>
+<td>searchable fields a query may highlight; <code>None</code> = all searchable <code>fields</code>, <code>∅</code> = none</td>
+</tr>
+<tr>
 <td><code>read_conformity</code></td>
 <td><code>"strict" \| "lenient"</code></td>
 <td><code>"strict"</code></td>
@@ -5619,8 +5665,104 @@ argument; everything else mirrors the document side:</p>
 </tbody>
 </table>
 <p><code>query</code> is a string (or a sequence of strings); <code>filters</code> and <code>sorts</code> use the
-<a href="../../query-syntax/">query DSL</a>. <code>options: SearchOptions</code> tunes relevance,
-highlighting, etc.</p>
+<a href="../../query-syntax/">query DSL</a>. <code>options: SearchOptions</code> is the backend- and
+topology-agnostic per-request surface — relevance weights, fuzzy matching, the count
+policy (<code>search_count</code>), an advisory candidate cap (<code>max_candidates</code>), and the facet /
+highlight requests below. Hub and federated searches resolve to a <code>MultiSourceSearchOptions</code>
+port that also carries member selection (<code>member_weights</code> / <code>members</code>) and a post-merge cap
+(<code>merge_candidates</code>); passing those keys to a single-index <code>query(...)</code> port is a type error.</p>
+<h3 id="facets-and-highlights">Facets and highlights<a class="headerlink" href="#facets-and-highlights" title="Permanent link">&para;</a></h3>
+<p>A query requests term facet distributions with <code>options={"facets": [...]}</code> and per-hit
+match snippets with <code>options={"highlight": True}</code> (or a <code>HighlightOptions</code> mapping to narrow
+fields / customize the <code>&lt;em&gt;</code> markers), over the spec's <code>facetable_fields</code> /
+<code>highlightable_fields</code>. Results ride the page as optional <code>page.facets</code> (one set per query,
+over the full matching set) and <code>page.highlights</code> (per hit, index-aligned with <code>hits</code>),
+<code>None</code> when not requested. A field or backend that cannot serve a request fails closed with
+<code>query_feature_unsupported</code>.</p>
+<p>Support is per backend (single-index) and per topology (hub / federated). <strong>fail-closed</strong>
+raises <code>query_feature_unsupported</code>; <strong>—</strong> means not applicable.</p>
+<table>
+<thead>
+<tr>
+<th>Backend / engine</th>
+<th>Facets</th>
+<th>Highlights</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mock</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Meilisearch</td>
+<td>✅ (<code>facetDistribution</code>)</td>
+<td>✅ (<code>_formatted</code>)</td>
+</tr>
+<tr>
+<td>Postgres — PGroonga</td>
+<td>✅</td>
+<td>✅ (<code>pgroonga_snippet_html</code>)</td>
+</tr>
+<tr>
+<td>Postgres — FTS</td>
+<td>✅</td>
+<td>✅ (<code>ts_headline</code>)</td>
+</tr>
+<tr>
+<td>Postgres — vector</td>
+<td>✅</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Mongo</td>
+<td>fail-closed</td>
+<td>fail-closed</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Topology</th>
+<th>Facets</th>
+<th>Highlights</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hub — mock</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Hub — Postgres</td>
+<td>fail-closed</td>
+<td>fail-closed</td>
+</tr>
+<tr>
+<td>Federated — <abbr title="Reciprocal Rank Fusion">RRF</abbr> merge (mock, Postgres, Meilisearch)</td>
+<td>fail-closed</td>
+<td>✅ (per hit)</td>
+</tr>
+<tr>
+<td>Federated — Meilisearch native</td>
+<td>fail-closed</td>
+<td>fail-closed</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Vector</strong> ranks by distance with no lexical match, so there is no snippet to highlight
+  (facets still group over the ranked set).</li>
+<li><strong>Federated facets</strong> are deferred — per-member distributions don't compose under the
+  reciprocal-rank merge, so every federated search fails closed on facets. Highlights
+  survive only the <abbr title="Reciprocal Rank Fusion">RRF</abbr>-merge path (each merged hit keeps its originating leg's snippet),
+  not Meilisearch native federation.</li>
+<li>Requesting facets or highlights bypasses result-snapshot replay (snapshots store hit ids
+  only), so a sidecar request always runs against a live query.</li>
+</ul>
 <h2 id="command-port">Command port<a class="headerlink" href="#command-port" title="Permanent link">&para;</a></h2>
 <p>Data-plane document writes — <code>ctx.search.command(spec)</code>.</p>
 <table>

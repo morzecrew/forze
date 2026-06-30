@@ -7246,6 +7246,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Search facets &amp; highlights</strong> — search requests can ask for term facet distributions and per-hit match highlights through the search options, declared on the spec and returned as optional page sidecars. Available on the mock, Meilisearch, and Postgres (PGroonga and FTS, over offset and cursor pagination) plus hub and federated search; requests for an unsupported field or topology fail closed.</p>
+</li>
+<li>
 <p><strong>Cross-aggregate (system) invariants</strong> — <code>SystemInvariant</code> (with <code>ReadSet</code>, <code>SumOf</code>, <code>CountAll</code>) in <code>forze.application.contracts</code> (front-doored from <code>forze</code>) declares a law over a scoped read-set's aggregate that the entity-level <code>@invariant</code> can't express. <code>forze_kits.invariants</code> adds <code>evaluate</code> / <code>enforce</code> (post-commit, detective) / <code>enforce_preventive</code> (in-tx rollback, fails closed below the law's <code>required_isolation</code>) / <code>propose</code> (dry-run); <code>forze_dst.compile_oracle(*laws[, per_commit=True])</code> verifies it under simulation.</p>
 </li>
 <li>
@@ -7378,7 +7381,19 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>SearchFuzzySpec</code> is now an immutable value object</strong> <em>(breaking)</em> — it changed from a dict to a frozen value object, exported from the search contract and constructed explicitly. The edit-distance ratio defaults to 0.34 and is validated to the 0.0–1.0 range, and the never-read prefix-length field is removed. There is no compatibility shim for the old dict form.</p>
+</li>
+<li>
+<p><strong>Search options de-leaked and grouped by topology</strong> <em>(breaking)</em> — Postgres internals are gone from the backend-agnostic search options: the raw-Groonga override removed, the PGroonga plan made adapter-config only, and the advisory candidate caps renamed to <code>max_candidates</code> and <code>merge_candidates</code>. Hub and federated member keys move to a multi-source options type that single-index search now rejects at type-check. There are no compatibility shims.</p>
+</li>
+<li>
 <p><strong>Application contracts surface consolidation</strong> <em>(breaking: deep imports; no runtime change)</em> — loose modules at the <code>forze.application.contracts</code> root are regrouped. Removed <code>contracts.codecs</code> (import codec helpers from <code>forze.base.serialization</code>); <code>contracts.lenient_read</code> / <code>contracts.materialized</code> → new <code>contracts.conformity</code>; <code>RowLockMode</code> / <code>row_lock_requires_transaction</code> → <code>contracts.document.value_objects</code> (still re-exported from <code>contracts.document</code>). System-invariant reducers <code>Sum</code> / <code>Count</code> renamed <code>SumOf</code> / <code>CountAll</code>. New <code>TenantSecretResolver</code> (<code>contracts.secrets</code>) replaces the removed <code>contracts.tenancy</code> functions <code>resolve_dsn_for_tenant</code> / <code>resolve_structured_for_tenant</code>, and <code>ensure_dsn_fingerprint</code> now takes <code>resolver=</code>. Internal <code>contracts.tenancy.helpers</code> (→ <code>tenant_hint</code> + <code>fingerprint</code>), <code>contracts.secrets.helpers</code> (→ <code>resolution</code>), and <code>contracts.querying.sort_resolution</code> (now a package) are restructured — public names re-export unchanged from their packages.</p>
+</li>
+<li>
+<p><strong>Search result snapshots stream their pool and expose expiry</strong> — a snapshot is now sealed into the store one chunk at a time, so peak memory is a single chunk regardless of result size, fixing out-of-memory on wide read models. The returned snapshot handle also carries <code>expires_at</code> so a client knows how long the snapshot stays valid; semantics and replay are unchanged.</p>
+</li>
+<li>
+<p><strong>Postgres hub search defers its heavy projection to per-page hydration</strong> <em>(no behavior change)</em> — a multi-leg hub search ranks, counts, and paginates over a thin candidate row and hydrates full read-model columns only for the returned page, avoiding large temp-file spills on relations backed by wide views. Single-index search over a similar view defers the same way.</p>
 </li>
 <li>
 <p><strong><code>update_many</code> takes <code>KeyedUpdate</code> items, not raw tuples</strong> <em>(breaking: document command port)</em> — the bulk update method on <code>DocumentCommandPort</code> now accepts <code>Sequence[KeyedUpdate[U]]</code> (a frozen VO with <code>id</code>, <code>rev</code>, <code>dto</code>; exported from <code>forze.application.contracts.document</code>) instead of <code>Sequence[tuple[UUID, int, U]]</code>, matching the <code>KeyedCreate</code> / <code>UpsertItem</code> shape already used by <code>ensure_many</code> / <code>upsert_many</code>. Replace <code>update_many([(pk, rev, dto), …])</code> with <code>update_many([KeyedUpdate(id=pk, rev=rev, dto=dto), …])</code>. Single-item <code>update(pk, rev, dto)</code> is unchanged.</p>
