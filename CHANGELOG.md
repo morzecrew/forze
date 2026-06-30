@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Search facets & highlights** — search requests can ask for term facet distributions and per-hit match highlights through the search options, declared on the spec and returned as optional page sidecars. Available on the mock, Meilisearch, and Postgres (PGroonga and FTS, over offset and cursor pagination) plus hub and federated search; requests for an unsupported field or topology fail closed.
+- **Search facets & highlights** — requests can ask for term facet distributions and per-hit match highlights via the search options, declared on the spec and returned as optional page sidecars. Available on mock, Meilisearch, and Postgres single-index (PGroonga/FTS) and hub, over offset and cursor pagination, plus per-hit highlights on federated; unsupported fields or topologies fail closed. The DTO response carries them on the generated search routes.
 
 - **Cross-aggregate (system) invariants** — `SystemInvariant` (with `ReadSet`, `SumOf`, `CountAll`) in `forze.application.contracts` (front-doored from `forze`) declares a law over a scoped read-set's aggregate that the entity-level `@invariant` can't express. `forze_kits.invariants` adds `evaluate` / `enforce` (post-commit, detective) / `enforce_preventive` (in-tx rollback, fails closed below the law's `required_isolation`) / `propose` (dry-run); `forze_dst.compile_oracle(*laws[, per_commit=True])` verifies it under simulation.
 

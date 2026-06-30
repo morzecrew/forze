@@ -48,7 +48,7 @@ from forze.base.serialization import materialize_mapping_rows
 from forze.domain.constants import ID_FIELD
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
-from ._facets import fetch_pg_facets
+from ._facets import fetch_hub_facets, fetch_pg_facets
 from ._highlights import extract_and_strip_highlights
 from ._search_count import effective_search_count
 
@@ -469,6 +469,7 @@ async def _hydrate_thin_hub_page(
     trust_source: bool,
     combo_alias: str,
     fold_count: bool = False,
+    facets: Any = None,
 ) -> Any:
     """Two-phase hub page: rank the thin id pipeline, then hydrate the page by primary key.
 
@@ -538,6 +539,7 @@ async def _hydrate_thin_hub_page(
         model_type=model_type,
         codec=codec,
         trust_source=trust_source,
+        facets=facets,
     )
 
 
@@ -568,10 +570,14 @@ async def execute_hub_ranked_offset_search(
     execution: str | None = None,
     combo_limit: int | None = None,
     trust_source: bool = False,
+    facet_fields: tuple[str, ...] = (),
+    facet_size: int = 0,
 ) -> Any:
     """Ranked offset search for :class:`~forze_postgres.adapters.search.hub.PostgresHubSearchAdapter`."""
 
-    rs_spec = hub_spec.snapshot
+    # Facets ride the live page, not the id-only snapshot (a replay restores hits only), so a
+    # facet request runs against a live execution — no snapshot read or write.
+    rs_spec = None if facet_fields else hub_spec.snapshot
     count_policy = effective_search_count(options)
     snapshot_return_count = return_count and count_policy != "none"
     fp_fingerprint = SearchResultSnapshot.hub_search_fingerprint(
@@ -665,6 +671,7 @@ async def execute_hub_ranked_offset_search(
                 [],
                 pagination or {},
                 total=0,
+                facets={f: () for f in facet_fields} if facet_fields else None,
             )
 
     if want_sn and result_snapshot is not None and rs_spec is not None:
@@ -776,6 +783,23 @@ async def execute_hub_ranked_offset_search(
             snapshot=stream.handle,
         )
 
+    # Term facets over the full merged set (uncapped ``count_relation``), independent of the
+    # page window — a companion ``GROUP BY`` joining the merged ids to the hub read relation.
+    facets = (
+        await fetch_hub_facets(
+            gw.client,
+            with_clause=plan.with_clause,
+            count_relation=plan.count_relation,
+            combo_alias=combo_alias,
+            read_relation=await gw._qname(),  # pyright: ignore[reportPrivateUsage]
+            params=plan.params,
+            fields=facet_fields,
+            size=facet_size,
+        )
+        if facet_fields
+        else None
+    )
+
     if plan.thin:
         # Late materialization (non-snapshot): rank/paginate over the thin id pipeline, then
         # hydrate the heavy read-model columns for only the returned page.
@@ -793,6 +817,7 @@ async def execute_hub_ranked_offset_search(
             trust_source=trust_source,
             combo_alias=combo_alias,
             fold_count=fold_count,
+            facets=facets,
         )
 
     cols = gw.return_clause(
@@ -838,4 +863,5 @@ async def execute_hub_ranked_offset_search(
         model_type=model_type,
         codec=read_codec,
         trust_source=trust_source,
+        facets=facets,
     )

@@ -19,8 +19,9 @@ from forze.application.contracts.search import (
     HitHighlights,
     SearchOptions,
     facet_size_of,
-    highlight_tokens,
-    mark_highlight,
+)
+from forze.application.contracts.search import (
+    compute_highlights as shared_compute_highlights,
 )
 from forze.base.primitives import JsonDict
 from forze_mock.query.matching import (
@@ -98,31 +99,16 @@ def compute_highlights(
 ) -> list[HitHighlights]:
     """Per-row highlighted fragments (index-aligned with *rows*).
 
-    Each field's text gets every matched query token wrapped in the markers; a field with
-    no match is omitted, a row with no matches maps to ``{}`` — so the list stays
-    index-aligned and non-sparse.
+    Delegates to the shared :func:`~forze.application.contracts.search.compute_highlights`
+    with the mock's nested-path text accessor, so the oracle and the relational backends wrap
+    identically. A field with no match is omitted; a row with none maps to ``{}``.
     """
 
-    tokens = highlight_tokens(terms)
-
-    out: list[HitHighlights] = []
-
-    for row in rows:
-        marked: dict[str, tuple[str, ...]] = {}
-
-        if tokens:
-            for field in fields:
-                text = _path_text(row, field)
-
-                if not text:
-                    continue
-                fragment = mark_highlight(
-                    text, tokens, pre_tag=pre_tag, post_tag=post_tag
-                )
-
-                if fragment is not None:
-                    marked[field] = (fragment,)
-
-        out.append(marked)
-
-    return out
+    return shared_compute_highlights(
+        rows,
+        terms,
+        fields,
+        pre_tag=pre_tag,
+        post_tag=post_tag,
+        get_text=_path_text,
+    )

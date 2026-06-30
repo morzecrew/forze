@@ -17,8 +17,10 @@ from typing import Any, Sequence
 from psycopg import sql
 
 from forze.application.contracts.search import FacetBucket, FacetResults
+from forze.domain.constants import ID_FIELD
 
 from ...kernel.client import PostgresClientPort
+from ...kernel.gateways import PostgresQualifiedName
 
 # ----------------------- #
 
@@ -69,3 +71,47 @@ async def fetch_pg_facets(
         )
 
     return out
+
+
+# ....................... #
+
+
+async def fetch_hub_facets(
+    client: PostgresClientPort,
+    *,
+    with_clause: sql.Composable,
+    count_relation: str,
+    combo_alias: str,
+    read_relation: PostgresQualifiedName,
+    params: Sequence[Any],
+    fields: Sequence[str],
+    size: int,
+) -> FacetResults:
+    """Term facets over the merged hub matched set (``sql`` execution).
+
+    Joins the uncapped merged candidate relation (``count_relation`` in *with_clause*) to the
+    hub read relation by id so the companion can ``GROUP BY`` the facet column, which lives on
+    the read row, not the thin candidate pipeline. Counts are over the full matched set,
+    independent of the page window — the same set the hub total counts.
+    """
+
+    read_alias = "fct"
+    body = sql.SQL(
+        "FROM {combo} {ca} JOIN {read} {ra} ON {ra}.{idf} = {ca}.{idf}"
+    ).format(
+        combo=sql.Identifier(count_relation),
+        ca=sql.Identifier(combo_alias),
+        read=read_relation.ident(),
+        ra=sql.Identifier(read_alias),
+        idf=sql.Identifier(ID_FIELD),
+    )
+
+    return await fetch_pg_facets(
+        client,
+        with_clause=with_clause,
+        body=body,
+        params=params,
+        table_alias=read_alias,
+        fields=fields,
+        size=size,
+    )

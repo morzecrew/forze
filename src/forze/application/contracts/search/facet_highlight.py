@@ -9,12 +9,13 @@ parity guarantee real rather than per-adapter.
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from forze.base.exceptions import exc
 
 from .specs import HubSearchSpec, SearchSpec
 from .types import SearchOptions
+from .value_objects import HitHighlights
 
 # A facet/highlight request resolves against a single-index or hub spec; both expose
 # ``facetable_fields`` and ``resolved_highlightable_fields``.
@@ -177,6 +178,48 @@ def mark_highlight(
     pieces.append(text[cursor:])
 
     return "".join(pieces)
+
+
+def compute_highlights(
+    items: Sequence[Any],
+    terms: Sequence[str],
+    fields: Sequence[str],
+    *,
+    pre_tag: str,
+    post_tag: str,
+    get_text: Callable[[Any, str], Any],
+) -> list[HitHighlights]:
+    """Per-item highlighted fragments (index-aligned with *items*), via :func:`mark_highlight`.
+
+    Each item's *fields* are read with *get_text* (a row mapping, a hydrated model, ...) and
+    marked against the query *terms*; a field with no match is omitted, an item with none maps
+    to ``{}`` so the list stays index-aligned and non-sparse. The shared reconstruction every
+    backend that highlights in process (mock oracle, relational hits) runs, so they match.
+    """
+
+    tokens = highlight_tokens(terms)
+    out: list[HitHighlights] = []
+
+    for item in items:
+        marked: dict[str, tuple[str, ...]] = {}
+
+        if tokens:
+            for field in fields:
+                text = get_text(item, field)
+
+                if not isinstance(text, str) or not text:
+                    continue
+
+                fragment = mark_highlight(
+                    text, tokens, pre_tag=pre_tag, post_tag=post_tag
+                )
+
+                if fragment is not None:
+                    marked[field] = (fragment,)
+
+        out.append(marked)
+
+    return out
 
 
 # ....................... #
