@@ -35,7 +35,7 @@ def build_federated_highlight_index(
         if not highlights:
             continue
 
-        for hit, hl in zip(page.hits, highlights):
+        for hit, hl in zip(page.hits, highlights, strict=True):
             key = SearchResultSnapshot.federated_record_key_string(member, hit)
             index[key] = hl
 

@@ -31,6 +31,15 @@ def _expires_at(ttl: timedelta) -> int:
     return int(utcnow().timestamp()) + int(ttl.total_seconds())
 
 
+def _is_expired(meta: dict[str, Any]) -> bool:
+    """Whether a run's stored expiry has passed (Redis lets the keys lapse; the mock has no
+    TTL eviction, so reads must check expiry explicitly to match that behavior)."""
+
+    expires_at = meta.get("expires_at")
+
+    return expires_at is not None and int(expires_at) <= int(utcnow().timestamp())
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort):
@@ -215,7 +224,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
             raise exc.internal("get_id_range requires offset >= 0 and limit >= 1.")
         with self.state.lock:
             meta = self._meta_store().get(run_id)
-            if meta is None or not meta.get("complete"):
+            if meta is None or not meta.get("complete") or _is_expired(meta):
                 return None
             if expected_fingerprint is not None and str(
                 meta.get("fingerprint")
@@ -246,7 +255,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
     async def get_meta(self, run_id: str) -> SearchResultSnapshotMeta | None:
         with self.state.lock:
             meta = self._meta_store().get(run_id)
-            if meta is None:
+            if meta is None or _is_expired(meta):
                 return None
             return self._as_meta(run_id, meta)
 

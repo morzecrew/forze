@@ -68,9 +68,9 @@ class SearchResultSnapshotMeta:
 # ....................... #
 
 __all__ = [
-    "Rrf",
-    "SearchResultSnapshotMeta",
     "FacetBucket",
     "FacetResults",
     "HitHighlights",
+    "Rrf",
+    "SearchResultSnapshotMeta",
 ]

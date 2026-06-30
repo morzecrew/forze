@@ -2583,7 +2583,11 @@ async def test_postgres_hub_filter_only_count_folds_into_thin_scan(
     assert page.count == 4
     assert len(page.hits) == 2
     # The id scan carries the windowed count ...
-    assert any("count(*) OVER ()" in q for q in fa_captured), fa_captured
-    # ... and no separate COUNT(*) statement was run.
-    assert not any("COUNT(*)" in q for q in fv_captured), fv_captured
-    assert not any("COUNT(*)" in q for q in fa_captured), fa_captured
+    assert any("count(*) over ()" in q.lower() for q in fa_captured), fa_captured
+    # ... and no separate (non-windowed) COUNT(*) statement was run, in any case.
+    def _has_plain_count(q: str) -> bool:
+        ql = q.lower()
+        return "count(*)" in ql and "count(*) over" not in ql
+
+    assert not any(_has_plain_count(q) for q in fv_captured), fv_captured
+    assert not any(_has_plain_count(q) for q in fa_captured), fa_captured

@@ -233,6 +233,11 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         count_policy = effective_search_count(options)
         snapshot_return_count = return_count and count_policy != "none"
 
+        # Per-hit highlights are rebuilt from leg results, which a snapshot replay skips, so a
+        # highlight request runs live (no snapshot read or write) to keep them.
+        _hl = (options or {}).get("highlight")
+        wants_highlights = _hl is not None and _hl is not False
+
         fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,
@@ -244,6 +249,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         if (
             self.result_snapshot is not None
             and rs_spec is not None
+            and not wants_highlights
             and snapshot is not None
             and "id" in snapshot
         ):
@@ -332,6 +338,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         if (
             self.result_snapshot is not None
             and rs_spec is not None
+            and not wants_highlights
             and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
         ):
             handle_out = await self.result_snapshot.put_ordered_snapshot_keys(

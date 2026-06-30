@@ -147,7 +147,7 @@ async def build_snapshot_pool_streaming(
         if len(window.rows) < want:
             break
 
-    handle = await sink.finish(pool_len_before_cap=seen)
+    handle = await sink.finish(pool_len_before_cap=total if total is not None else seen)
 
     return SnapshotStreamResult(
         handle=handle,

@@ -22,6 +22,8 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import (
     SearchOptions,
     cursor_return_fields_for_select,
+    reject_unsupported_facets,
+    reject_unsupported_highlight,
 )
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.sql import (
@@ -74,6 +76,11 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         columns (including ``_hub_rank`` when legs are active) are selected
         internally and stripped from the response.
         """
+
+        # Cursor pages cannot carry facets/highlights — fail closed like the offset path
+        # rather than silently dropping the request.
+        reject_unsupported_facets(options, backend="Postgres hub")
+        reject_unsupported_highlight(self._hub_host.hub_spec, options, backend="Postgres hub")
 
         plan = await build_hub_search_plan(
             self._hub_host,

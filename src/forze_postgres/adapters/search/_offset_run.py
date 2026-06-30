@@ -353,6 +353,12 @@ async def execute_simple_ranked_offset_search(
     pagination_dict: dict[str, Any] = dict(pagination or {})
     facet_fields = resolve_facet_fields(spec, options)
 
+    # Facets/highlights ride the live page, not the id-only snapshot; a snapshot replay only
+    # restores hits and would silently drop them. Disable snapshot reuse (read and write) for
+    # those requests so each page runs live and produces the sidecars.
+    if facet_fields or plan.highlight is not None:
+        result_snapshot = None
+
     return await execute_simple_offset_search_with_snapshot(
         query=query,
         filters=filters,

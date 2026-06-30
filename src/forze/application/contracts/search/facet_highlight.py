@@ -82,7 +82,10 @@ def resolve_highlight(
     """
 
     highlight = (options or {}).get("highlight")
-    if not highlight:
+
+    # ``True`` or any ``HighlightOptions`` mapping (including ``{}`` = all defaults) is a
+    # request; only an absent or ``False`` value means no highlighting.
+    if highlight is None or highlight is False:
         return None
 
     allowed = spec.resolved_highlightable_fields

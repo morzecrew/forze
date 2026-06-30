@@ -25,6 +25,18 @@ from ..querying.sort_resolution import read_fields_for_model, validate_sort_fiel
 # ----------------------- #
 
 
+def _sealed_fields(encryption: FieldEncryption | None) -> frozenset[str]:
+    """Fields whose stored value is ciphertext — cannot be aggregated or highlighted."""
+
+    if encryption is None:
+        return frozenset()
+
+    return encryption.encrypted | encryption.searchable
+
+
+# ....................... #
+
+
 def _validate_search_lenient_read_fields(
     *,
     spec_name: object,
@@ -117,6 +129,7 @@ def _validate_search_facetable_highlightable(
     facetable_fields: frozenset[str],
     highlightable_fields: frozenset[str] | None,
     lenient_read_fields: frozenset[str],
+    materialized: frozenset[str],
     encryption: FieldEncryption | None,
 ) -> None:
     """Validate a search spec's facet/highlight field declarations.
@@ -130,14 +143,11 @@ def _validate_search_facetable_highlightable(
     if not facetable_fields and highlightable_fields is None:
         return
 
-    sealed: frozenset[str] = (
-        (encryption.encrypted | encryption.searchable)
-        if encryption is not None
-        else frozenset()
-    )
+    sealed: frozenset[str] = _sealed_fields(encryption)
 
     if facetable_fields:
-        read_fields = read_fields_for_model(model_type)
+        # Materialized computed fields are persisted real columns, so they are facetable too.
+        read_fields = read_fields_for_model(model_type) | materialized
 
         if missing := facetable_fields - read_fields:
             raise exc.configuration(
@@ -383,6 +393,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
             facetable_fields=self.facetable_fields,
             highlightable_fields=self.highlightable_fields,
             lenient_read_fields=self.resolved_lenient_read_fields,
+            materialized=self.materialized,
             encryption=self.encryption,
         )
 
@@ -441,11 +452,11 @@ class SearchSpec[M: BaseModel](BaseSpec):
     @property
     def resolved_highlightable_fields(self) -> frozenset[str]:
         """Effective highlightable fields: the explicit :attr:`highlightable_fields`, or —
-        when ``None`` — all searchable :attr:`fields`. What the search backend reads to bound
-        a highlight request."""
+        when ``None`` — all searchable :attr:`fields` minus field-encrypted ones (ciphertext
+        has no highlightable text). What the search backend reads to bound a highlight request."""
 
         if self.highlightable_fields is None:
-            return frozenset(self.fields)
+            return frozenset(self.fields) - _sealed_fields(self.encryption)
 
         return self.highlightable_fields
 
@@ -573,6 +584,7 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
             facetable_fields=self.facetable_fields,
             highlightable_fields=self.highlightable_fields,
             lenient_read_fields=self.resolved_lenient_read_fields,
+            materialized=self.materialized,
             encryption=self.encryption,
         )
 
@@ -629,10 +641,10 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     def resolved_highlightable_fields(self) -> frozenset[str]:
         """Effective highlightable hub-row fields: the explicit
         :attr:`highlightable_fields`, or — when ``None`` — the union of all member legs'
-        searchable :attr:`SearchSpec.fields`."""
+        searchable :attr:`SearchSpec.fields` minus field-encrypted ones."""
 
         if self.highlightable_fields is None:
-            return self._member_searchable_fields
+            return self._member_searchable_fields - _sealed_fields(self.encryption)
 
         return self.highlightable_fields
 

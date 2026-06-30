@@ -224,6 +224,17 @@ class TestSearchMaterialized:
                 lenient_read_fields={"total"},
             )
 
+    def test_materialized_field_is_facetable(self) -> None:
+        # A materialized computed field is a persisted real column, so it may be faceted.
+        spec = SearchSpec(
+            name="orders",
+            model_type=_MaterializedSearchModel,
+            fields=["id"],
+            materialized={"total"},
+            facetable_fields={"total"},
+        )
+        assert "total" in spec.facetable_fields
+
     def test_materialized_excluded_from_lenient_auto_derive(self) -> None:
         # A materialized field is stored, so read_conformity="lenient" must not derive it.
         spec = SearchSpec(

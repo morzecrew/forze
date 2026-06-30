@@ -55,7 +55,7 @@ def _phys_map(
 ) -> tuple[list[str], dict[str, str]]:
     physical = gw.physical_paths(logical)
 
-    return list(physical), dict(zip(physical, logical))
+    return list(physical), dict(zip(physical, logical, strict=True))
 
 
 # ....................... #

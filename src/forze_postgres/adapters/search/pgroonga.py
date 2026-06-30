@@ -220,6 +220,9 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         fw, fp = await self.where_clause(filters)
         rs_spec = self.spec.snapshot
+        # Facets are computed live per page; an id-only snapshot replay would drop them, so a
+        # facet request runs live (no snapshot read or write).
+        facet_fields = resolve_facet_fields(self.spec, options)
         fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
             query,
             filters,
@@ -229,7 +232,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             extras=self._fingerprint_extras(options),
         )
 
-        if self.result_snapshot is not None and rs_spec is not None:
+        if self.result_snapshot is not None and rs_spec is not None and not facet_fields:
             maybe_snap: Any = await self.result_snapshot.read_simple_result_snapshot(
                 rs_spec=rs_spec,
                 snap_opt=snapshot,
@@ -320,6 +323,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         want_sn = (
             self.result_snapshot is not None
             and rs_spec is not None
+            and not facet_fields
             and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
         )
 

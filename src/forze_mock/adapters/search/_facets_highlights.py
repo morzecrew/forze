@@ -50,7 +50,11 @@ def compute_facets(
             for atom in _facet_atoms(value):
                 counts[atom] = counts.get(atom, 0) + 1
 
-        ordered = sorted(counts.items(), key=lambda kv: (-kv[1], str(kv[0])))
+        # Tie-break by the real value (so 2 sorts before 10), grouping by type name first
+        # to keep a total order across the mixed value types a facet field may hold.
+        ordered = sorted(
+            counts.items(), key=lambda kv: (-kv[1], type(kv[0]).__name__, kv[0])
+        )
         results[field] = tuple(
             FacetBucket(value=value, count=count) for value, count in ordered[:size]
         )

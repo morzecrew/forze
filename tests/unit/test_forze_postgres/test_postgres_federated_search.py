@@ -262,11 +262,12 @@ async def test_federated_search_materializes_snapshot_after_merge() -> None:
     run_id = page.snapshot.id
     assert run_id
     assert page.snapshot.capped is False
-    # The merged keys were streamed into the store; replay can serve them.
+    # The full merged pool was streamed into the store; replay serves exactly that many ids.
     stored = await store.get_id_range(
         run_id, 0, 10, expected_fingerprint=page.snapshot.fingerprint
     )
-    assert stored
+    assert stored is not None
+    assert len(stored) == page.snapshot.total
 
 
 @pytest.mark.asyncio

@@ -174,6 +174,11 @@ async def execute_meilisearch_offset_search[M: BaseModel](
     facet_plan = plan_facets(gw, spec, options)
     highlight_plan = plan_highlights(gw, spec, options)
 
+    # Facets/highlights ride the live page, not the id-only snapshot; a replay would silently
+    # drop them. Disable snapshot reuse for those requests so each page runs live.
+    if facet_plan is not None or highlight_plan is not None:
+        result_snapshot = None
+
     return await execute_simple_offset_search_with_snapshot(
         query=query,
         filters=filters,
