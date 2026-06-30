@@ -20,6 +20,8 @@ from uuid import UUID
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.primitives.projection import MISSING as _MISSING
+from forze.base.primitives.projection import path_get as _path_get
 
 from .nodes import (
     ELEM_SCALAR_FIELD,
@@ -39,25 +41,10 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-_MISSING = object()
-"""Sentinel for an absent field — distinct from a present ``None`` (``$null`` must tell them apart)."""
-
-
-# ....................... #
-
-
-def _path_get(obj: Any, path: str) -> Any:
-    cur = obj
-    for part in path.split("."):
-        if isinstance(cur, dict):
-            if part not in cur:
-                return _MISSING
-            cur = cur[part]  # pyright: ignore[reportUnknownVariableType]
-            continue
-
-        return _MISSING
-
-    return cur  # pyright: ignore[reportUnknownVariableType]
+# The dotted-path walker (:func:`_path_get`) and the absent-field sentinel (:data:`_MISSING`)
+# now live in ``forze.base.primitives.projection`` so the filter matcher, the projection
+# reshaper, and the backends all resolve nested paths through one implementation. They are
+# imported (aliased) above; consumers that do ``from ...matching import _path_get`` still work.
 
 
 def _value_is_empty(value: Any) -> bool:

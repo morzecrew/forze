@@ -19,6 +19,9 @@ concurrency:
   group: docs-deploy
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Publish dev docs

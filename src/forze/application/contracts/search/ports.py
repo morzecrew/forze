@@ -77,7 +77,12 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> Awaitable[SearchCountlessPage[JsonDict]]:
-        """Search with field projection (no total count query)."""
+        """Search with field projection (no total count query).
+
+        ``fields`` accepts dotted paths: ``contract.reg_number`` returns the nested
+        ``{"contract": {"reg_number": ...}}`` shape, the same as document projection. The
+        rule applies to every ``project_search_*`` method on this port.
+        """
         ...  # pragma: no cover
 
     def project_search_page(

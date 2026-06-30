@@ -28,8 +28,10 @@ from forze.application.contracts.querying import (
     ordered_compare,
     resolve_sort_keys,
 )
+from forze.base.primitives.projection import MISSING as _MISSING
+from forze.base.primitives.projection import build_projection
+from forze.base.primitives.projection import path_get as _path_get
 from forze.application.contracts.querying.internal.matching import (
-    _MISSING,  # type: ignore[reportPrivateUsage]
     _coerce_set,  # type: ignore[reportPrivateUsage]
     _is_descendant_path,  # type: ignore[reportPrivateUsage]
     _match_expr,  # type: ignore[reportPrivateUsage]
@@ -38,7 +40,6 @@ from forze.application.contracts.querying.internal.matching import (
     _match_text,  # type: ignore[reportPrivateUsage]
     _memb_contains,  # type: ignore[reportPrivateUsage]
     _normalize_array_value,  # type: ignore[reportPrivateUsage]
-    _path_get,  # type: ignore[reportPrivateUsage]
     _value_is_empty,  # type: ignore[reportPrivateUsage]
 )
 from forze.application.contracts.querying.internal.time_bucket import (
@@ -88,17 +89,10 @@ def _path_text(obj: Any, path: str) -> str:  # type: ignore[reportPrivateUsage]
 
 
 def _project(doc: JsonDict, return_fields: Sequence[str] | None) -> JsonDict:  # type: ignore[reportPrivateUsage]
-    if return_fields is None:
-        return dict(doc)
-
-    out: JsonDict = {}
-    for path in return_fields:
-        value = _path_get(doc, path)
-        if value is _MISSING:
-            continue
-        out[path] = value
-
-    return out
+    # Delegate to the shared reshaper so the mock (the cross-backend parity oracle) emits the
+    # same nested shape as the real backends: a dotted path like ``contract.reg_number`` yields
+    # ``{"contract": {"reg_number": ...}}`` rather than a flat ``contract.reg_number`` key.
+    return build_projection(doc, return_fields)
 
 
 def _sort_docs(  # type: ignore[reportPrivateUsage]

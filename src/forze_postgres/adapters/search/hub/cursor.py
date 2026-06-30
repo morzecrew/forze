@@ -26,6 +26,7 @@ from forze.application.contracts.search import (
     reject_unsupported_facets,
     resolve_facet_fields,
 )
+from forze.base.primitives import build_projection
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.sql import (
     build_ranked_cursor_order_by_sql,
@@ -296,7 +297,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
             )
 
         if return_fields is not None:
-            rj = [{k: r.get(k, None) for k in return_fields} for r in source_rows]
+            rj = [build_projection(r, return_fields) for r in source_rows]
 
             return attach_hub_highlights(
                 SearchCursorPage(

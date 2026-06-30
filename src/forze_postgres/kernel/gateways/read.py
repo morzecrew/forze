@@ -34,7 +34,7 @@ from forze.application.contracts.querying import (
     validate_cursor_token,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, build_projection
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
@@ -387,7 +387,7 @@ class PostgresReadGateway[M: BaseModel](
 
         if return_fields is not None:
             [decrypted] = await self._adecrypt_projection_rows((row,))
-            return {k: decrypted.get(k, None) for k in return_fields}
+            return build_projection(decrypted, return_fields)
 
         return await self._adecode_row(row)
 
@@ -531,7 +531,7 @@ class PostgresReadGateway[M: BaseModel](
 
         if return_fields is not None:
             decrypted = await self._adecrypt_projection_rows(rows)
-            return [{k: row.get(k, None) for k in return_fields} for row in decrypted]
+            return [build_projection(row, return_fields) for row in decrypted]
 
         return await self._adecode_rows(rows)
 
@@ -592,9 +592,7 @@ class PostgresReadGateway[M: BaseModel](
 
             if return_fields is not None:
                 decrypted = await self._adecrypt_projection_rows(dict_chunk)
-                yield [
-                    {k: row.get(k, None) for k in return_fields} for row in decrypted
-                ]
+                yield [build_projection(row, return_fields) for row in decrypted]
 
             elif return_model is not None:
                 await self._prepare_decode(dict_chunk)
@@ -872,7 +870,7 @@ class PostgresReadGateway[M: BaseModel](
 
         if return_fields is not None:
             decrypted = await self._adecrypt_projection_rows(raw_rows)
-            return [{k: r.get(k, None) for k in return_fields} for r in decrypted]
+            return [build_projection(r, return_fields) for r in decrypted]
 
         return await self._adecode_rows(raw_rows)
 

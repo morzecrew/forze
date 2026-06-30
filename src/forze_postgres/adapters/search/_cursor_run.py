@@ -31,7 +31,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.integrations.search import decrypt_search_rows
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, build_projection
 from forze.base.serialization import ModelCodec
 
 from ._highlights import extract_and_strip_highlights
@@ -396,7 +396,7 @@ async def _cursor_page_from_rows(
     hits: list[Any]
 
     if return_fields is not None:
-        hits = [{k: r.get(k, None) for k in return_fields} for r in rows]
+        hits = [build_projection(r, return_fields) for r in rows]
 
     else:
         hits = decode_search_hits(
