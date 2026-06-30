@@ -1123,14 +1123,20 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         *,
         batch_size: int = 200,
     ) -> tuple[int, Sequence[D]]:
-        """Bulk-update rows matching *filters* in a single ``UPDATE … RETURNING``.
+        """Bulk-update rows matching *filters*, keyset-paged in ``batch_size`` chunks.
 
-        Revision is bumped with ``rev = rev + 1`` when :attr:`strategy` is
-        ``"application"``; for ``"database"`` the revision is left to triggers.
+        Each chunk updates one primary-key page (``id`` ascending) with its own
+        ``UPDATE … RETURNING`` and history write, so a broad filter never runs a
+        single unbounded statement; the whole loop is one transaction. Revision is
+        bumped with ``rev = rev + 1`` when :attr:`strategy` is ``"application"``; for
+        ``"database"`` the revision is left to triggers.
         """
 
         self._require_update_cmd()
         self._reject_matching_update_with_materialized()
+
+        if batch_size < 1:
+            raise exc.internal("batch_size must be >= 1")
 
         update_data = await self._encode_patch_one(dto)
 
@@ -1145,13 +1151,13 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         async with self._write_tx():
             set_parts: list[sql.Composable] = []
-            params: list[Any] = []
+            set_params: list[Any] = []
 
             for k, v in adapted.items():
                 set_parts.append(
                     sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder())
                 )
-                params.append(v)
+                set_params.append(v)
 
             if self.strategy == "application":
                 set_parts.append(
@@ -1162,28 +1168,63 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 )
 
             where_sql, where_params = await self.where_clause(filters)
-            params.extend(where_params)
+            table = (await self._qname()).ident()
+            pk = self.ident_pk()
+            sets = sql.SQL(", ").join(set_parts)
+            ret = self.return_clause()
 
-            stmt = sql.SQL(
-                "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
-            ).format(
-                table=(await self._qname()).ident(),
-                sets=sql.SQL(", ").join(set_parts),
-                where=where_sql,
-                ret=self.return_clause(),
-            )
+            # Mirror the Mongo path: keyset-page the matched rows by primary key and
+            # update one ``batch_size`` chunk per statement (history written per chunk),
+            # so a broad filter never drives a single unbounded ``UPDATE … RETURNING``.
+            # The whole loop runs in one transaction (``_write_tx``), so it stays atomic.
+            total = 0
+            out_domains: list[D] = []
+            last_id: Any = None
 
-            rows = await self.client.fetch_all(
-                stmt,
-                params,
-                row_factory="dict",
-                commit=False,
-            )
+            while True:
+                if last_id is None:
+                    chunk_where = where_sql
+                    chunk_params: list[Any] = list(where_params)
 
-            doms = self._decode_rows(rows)
-            await self._write_history(*doms)
+                else:
+                    chunk_where = sql.SQL("({}) AND {} > {}").format(
+                        where_sql, pk, sql.Placeholder()
+                    )
+                    chunk_params = [*where_params, last_id]
 
-            return len(doms), doms
+                stmt = sql.SQL(
+                    "UPDATE {table} SET {sets} WHERE {pk} IN "
+                    "(SELECT {pk} FROM {table} WHERE {where} ORDER BY {pk} LIMIT {lim}) "
+                    "RETURNING {ret}"
+                ).format(
+                    table=table,
+                    sets=sets,
+                    pk=pk,
+                    where=chunk_where,
+                    lim=sql.Placeholder(),
+                    ret=ret,
+                )
+
+                rows = await self.client.fetch_all(
+                    stmt,
+                    [*set_params, *chunk_params, batch_size],
+                    row_factory="dict",
+                    commit=False,
+                )
+
+                if not rows:
+                    break
+
+                doms = self._decode_rows(rows)
+                await self._write_history(*doms)
+                out_domains.extend(doms)
+                total += len(doms)
+                last_id = max(getattr(d, ID_FIELD) for d in doms)
+
+                if len(rows) < batch_size:
+                    break
+
+            return total, out_domains
 
     # ....................... #
 

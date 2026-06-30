@@ -115,6 +115,37 @@ async def test_update_matching_bumps_rev_and_returns_rows(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_update_matching_chunks_by_batch_size(
+    pg_client: PostgresClient,
+) -> None:
+    """A small ``batch_size`` keyset-chunks the update; every row is updated exactly once."""
+
+    write = await _make_gw(pg_client)
+    read = write.read_gw
+
+    created = [await write.create(WmCreate(name=f"n{i}", category="x")) for i in range(5)]
+    other = await write.create(WmCreate(name="z", category="y"))
+
+    # 5 matches with batch_size=2 -> 3 chunks (2, 2, 1).
+    count, rows = await write.update_matching(
+        {"$values": {"category": "x"}},
+        WmUpdate(category="patched"),
+        batch_size=2,
+    )
+
+    assert count == 5
+    assert {r.id for r in rows} == {c.id for c in created}
+    assert all(r.category == "patched" for r in rows)
+    # rev bumped exactly once — no chunk re-processed an already-updated row.
+    assert all(r.rev == 2 for r in rows)
+
+    fresh = await read.get(other.id)
+    assert fresh.category == "y"
+    assert fresh.rev == 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_update_matching_empty_match_returns_zero(
     pg_client: PostgresClient,
 ) -> None:
