@@ -363,9 +363,24 @@ class SearchSpec[M: BaseModel](BaseSpec):
     ``DocumentSpec.encryption`` so in-place search reproduces the document write's AAD and
     decrypts its ciphertext. ``None`` (default) = no field encryption."""
 
+    max_results: int | None = None
+    """Server-side cap on offset-search results when a caller passes **no** ``limit``.
+
+    A simple offset search with no pagination ``limit`` otherwise fetches the entire
+    matched set into memory — a latent OOM on a large index. When set, an unbounded
+    request is fetched at most this many rows (an explicit caller ``limit`` is honoured
+    as-is, never raised). Defense in depth; ``None`` (default) keeps the previous
+    fetch-everything behaviour. Independent of result-snapshot ``max_ids`` (which already
+    bounds the snapshot pool)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.max_results is not None and self.max_results < 1:
+            raise exc.configuration(
+                f"SearchSpec {self.name!r}: max_results must be at least 1 when set."
+            )
+
         _validate_search_materialized(
             spec_name=self.name,
             model_type=self.model_type,

@@ -283,6 +283,16 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         pagination_dict,
     )
 
+    # Defense in depth: an unbounded request (no caller ``limit``) otherwise fetches the
+    # whole matched set. ``spec.max_results`` caps that fetch when configured; an explicit
+    # caller limit is never raised, only the unbounded case is bounded.
+    if spec.max_results is not None:
+        fetch_limit = (
+            spec.max_results
+            if fetch_limit is None
+            else min(fetch_limit, spec.max_results)
+        )
+
     window = OffsetFetchWindow(
         fetch_limit=fetch_limit,
         fetch_offset=fetch_offset,
