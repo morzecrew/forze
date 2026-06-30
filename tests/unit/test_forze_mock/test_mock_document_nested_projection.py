@@ -220,3 +220,29 @@ async def test_project_array_multi_leaf_merges_per_element() -> None:
         "ref": "o1",
         "items": [{"sku": "A", "qty": 2}, {"sku": "B", "qty": 1}],
     }
+
+
+@pytest.mark.asyncio
+async def test_project_cursor_sibling_leaf_of_sort_key_rejected() -> None:
+    doc = _adapter()
+    await doc.create(_PersonCreate(name="a", addr=_Addr(city="paris", zip="75001")))
+
+    # Projecting a sibling leaf (``addr.zip``) cannot serve a cursor sort on ``addr.city`` —
+    # the token would read the wrong value. The projection guard must reject it.
+    with pytest.raises(Exception, match="projection must include"):
+        await doc.project_cursor(
+            ["id", "addr.zip"], sorts={"addr.city": "asc"}, cursor={"limit": 2}
+        )
+
+
+@pytest.mark.asyncio
+async def test_cursor_sort_through_list_is_rejected() -> None:
+    doc = _order_adapter()
+    await doc.create(_OrderCreate(ref="o1", items=[_Item(sku="A"), _Item(sku="B")]))
+
+    # A sort key whose path crosses a list resolves to no scalar; sort validation rejects it
+    # before a cursor token is ever built from it.
+    with pytest.raises(Exception, match="not on read model"):
+        await doc.project_cursor(
+            ["id", "items.sku"], sorts={"items.sku": "asc"}, cursor={"limit": 2}
+        )

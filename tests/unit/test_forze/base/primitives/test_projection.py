@@ -64,7 +64,23 @@ def test_build_projection_skips_absent_leaf_keeps_present_none() -> None:
 
     out = build_projection(doc, ["contract.bogus", "contract.reg_number", "top", "gone"])
 
-    assert out == {"contract": {"reg_number": "X"}, "top": None}
+    # A nested leaf (``contract.bogus``) absent from the doc is omitted; a whole top-level
+    # field (``gone``) the doc lacks stays present as None (flat-projection contract).
+    assert out == {"contract": {"reg_number": "X"}, "top": None, "gone": None}
+
+
+def test_build_projection_absent_top_level_field_is_none() -> None:
+    out = build_projection({"a": 1}, ["a", "missing"])
+
+    # Every requested *top-level* field is present; an absent one reads as None (matches a
+    # Postgres NULL column and the prior ``row.get(k, None)`` behavior).
+    assert out == {"a": 1, "missing": None}
+
+
+def test_build_projection_absent_dotted_root_is_omitted() -> None:
+    # A dotted path whose root is absent stays omitted (the nested value "isn't defined") —
+    # only whole top-level fields get the None fill.
+    assert build_projection({"a": 1}, ["contract.reg_number"]) == {}
 
 
 def test_build_projection_deep_nested_path() -> None:

@@ -53,8 +53,27 @@ def test_assert_cursor_projection_nested_key_satisfied_by_root() -> None:
     )
 
 
+def test_assert_cursor_projection_nested_key_satisfied_by_exact_leaf() -> None:
+    # Projecting the leaf itself also serves the sort key — the projected row nests it
+    # (``{"addr": {"city": ...}}``) and the token reads ``addr.city`` back out.
+    assert_cursor_projection_includes_sort_keys(
+        return_fields=["addr.city", ID_FIELD],
+        sort_keys=["addr.city", ID_FIELD],
+    )
+
+
+def test_assert_cursor_projection_sibling_leaf_does_not_satisfy() -> None:
+    # A sibling leaf shares the root but not the value: projecting ``addr.zip`` cannot serve
+    # a sort on ``addr.city`` (the token would read None and seek from the wrong key).
+    with pytest.raises(CoreException, match="projection must include"):
+        assert_cursor_projection_includes_sort_keys(
+            return_fields=["addr.zip", ID_FIELD],
+            sort_keys=["addr.city", ID_FIELD],
+        )
+
+
 def test_assert_cursor_projection_nested_key_missing_root_raises() -> None:
-    with pytest.raises(CoreException, match="root column"):
+    with pytest.raises(CoreException, match="projection must include"):
         assert_cursor_projection_includes_sort_keys(
             return_fields=["name", ID_FIELD],
             sort_keys=["addr.city", ID_FIELD],

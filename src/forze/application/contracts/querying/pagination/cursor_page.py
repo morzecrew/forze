@@ -14,28 +14,41 @@ _DEFAULT_CURSOR_LIMIT = 10
 # ....................... #
 
 
+def _sort_key_in_projection(sort_key: str, return_fields: Sequence[str]) -> bool:
+    """Whether the projection carries *sort_key*'s value for the cursor token.
+
+    The keyset token is built from the **projected** row and read back by dotted path
+    (:func:`row_value_for_sort_key`), so a sort key is served only by a return field that is
+    the key itself or one of its ancestors: projecting ``address`` whole serves ``address.city``,
+    and ``address.city`` serves itself. A *sibling* leaf (``address.zip`` for a sort on
+    ``address.city``) shares the root but not the value — it would read back as ``None`` and
+    seek the cursor from the wrong key — so the root alone is not enough.
+    """
+
+    return any(
+        sort_key == field or sort_key.startswith(f"{field}.") for field in return_fields
+    )
+
+
 def assert_cursor_projection_includes_sort_keys(
     *,
     return_fields: Sequence[str] | None,
     sort_keys: Sequence[str],
 ) -> None:
-    """Raise when projected fields omit any sort keys used by keyset cursors.
+    """Raise when projected fields can't supply a sort key used by keyset cursors.
 
-    A nested/dotted sort key is satisfied by projecting its **root** column (``address``
-    for ``address.city``): the whole JSON column is fetched and the cursor token reads the
-    nested value out of it, so the caller need only include the root in ``return_fields``.
-    A dotted *return field* (``address.city``) likewise contributes its root column, so the
-    membership test compares roots on both sides.
+    Each sort key must be covered by a return field equal to it or to one of its ancestors
+    (project ``address`` whole, or ``address.city`` itself, to sort by ``address.city``);
+    a sibling leaf sharing only the root does not count (see :func:`_sort_key_in_projection`).
     """
     if return_fields is None:
         return
-    projected = {f.split(".", 1)[0] for f in return_fields}
-    if all(k.split(".", 1)[0] in projected for k in sort_keys):
+    if all(_sort_key_in_projection(k, return_fields) for k in sort_keys):
         return
     raise exc.precondition(
         "When using return_fields with cursor list, the projection must include "
-        "all sort and tie-breaker fields (including id); a nested sort key needs its "
-        "root column in return_fields.",
+        "all sort and tie-breaker fields (including id): each sort key needs itself or "
+        "an ancestor in return_fields (a sibling leaf sharing the root is not enough).",
     )
 
 

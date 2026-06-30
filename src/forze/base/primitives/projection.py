@@ -156,9 +156,12 @@ def build_projection(doc: JsonDict, fields: Sequence[str] | None) -> JsonDict:
     ``{"contract": {"reg_number": ...}}`` and sibling leaves merge under one ``contract``
     object. A dotted path that crosses a **list** maps the selection over each element,
     preserving structure and length — ``items.sku`` + ``items.qty`` over a list of items
-    yields ``{"items": [{"sku": ..., "qty": ...}, ...]}``, and nested lists recurse. A path
-    whose value is absent is skipped (the key omitted, not set to ``None``); a requested root
-    subsumes its leaves.
+    yields ``{"items": [{"sku": ..., "qty": ...}, ...]}``, and nested lists recurse.
+
+    A whole top-level field that the row lacks is returned as ``None`` (the flat-projection
+    contract the backends keep — it mirrors a Postgres ``NULL`` column, so every requested
+    top-level field is present). A *nested* leaf that is absent is omitted (the key is not
+    set), and a requested root subsumes its leaves.
     """
 
     if fields is None:
@@ -168,6 +171,10 @@ def build_projection(doc: JsonDict, fields: Sequence[str] | None) -> JsonDict:
 
     for segment, node in _build_path_trie(fields).items():
         if segment not in doc:
+            # A requested whole top-level field stays present as None (flat contract); a
+            # dotted path whose root is absent is omitted (the nested leaf "isn't defined").
+            if node.terminal:
+                out[segment] = None
             continue
         value = doc[segment]
         if node.terminal or not node.children:
