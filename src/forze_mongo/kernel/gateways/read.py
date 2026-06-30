@@ -6,7 +6,17 @@ require_mongo()
 
 # ....................... #
 
-from typing import Any, Literal, Never, Sequence, TypeVar, cast, final, overload
+from typing import (
+    Any,
+    AsyncGenerator,
+    Literal,
+    Never,
+    Sequence,
+    TypeVar,
+    cast,
+    final,
+    overload,
+)
 from uuid import UUID
 
 import attrs
@@ -418,6 +428,61 @@ class MongoReadGateway[M: BaseModel](
             return [self.return_subset(row, return_fields) for row in decrypted]
 
         return await self._adecode_rows(normalized)
+
+    # ....................... #
+
+    async def find_many_chunked(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        fetch_batch_size: int = 2000,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> AsyncGenerator[list[M] | list[T] | list[JsonDict]]:
+        """Like :meth:`find_many` but stream validated row batches from the cursor.
+
+        Each yielded list has at most ``fetch_batch_size`` rows, so peak memory is one
+        batch regardless of how many documents match — the bounded-memory way to read
+        past the implicit ``find_many`` cap. Same ``return_model`` / ``return_fields``
+        rules as :meth:`find_many`. Computed null-ordering is not supported here.
+        """
+
+        if return_model is not None and return_fields is not None:
+            raise exc.internal("return_model and return_fields cannot be combined")
+
+        query = self.render_filters(filters)
+
+        if self.offset_null_sort_stages(sorts) is not None:
+            raise exc.precondition(
+                "Chunked reads do not support computed null ordering; use find_many"
+            )
+
+        async for raw in self.client.find_many_streamed(
+            await self.coll(),
+            query,
+            projection=self.render_projection(return_fields),
+            sort=self.render_sorts(sorts),
+            limit=limit,
+            skip=offset,
+            batch_size=fetch_batch_size,
+        ):
+            if not raw:
+                continue
+
+            normalized = [self._from_storage_doc(row) for row in raw]
+
+            if return_fields is not None:
+                decrypted = await self._adecrypt_projection_rows(normalized)
+                yield [self.return_subset(row, return_fields) for row in decrypted]
+
+            elif return_model is not None:
+                yield await self._adecode_rows(normalized, model=return_model)
+
+            else:
+                yield await self._adecode_rows(normalized)
 
     # ....................... #
 

@@ -190,6 +190,30 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
             skip=skip,
         )
 
+    async def find_many_streamed(
+        self,
+        coll: AsyncCollection[JsonDict],
+        filter: Mapping[str, Any],
+        *,
+        projection: Mapping[str, Any] | None = None,
+        sort: Sequence[tuple[str, int]] | None = None,
+        limit: int | None = None,
+        skip: int | None = None,
+        batch_size: int = 2000,
+    ) -> AsyncGenerator[list[JsonDict]]:
+        inner = await self._get_client()
+
+        async for batch in inner.find_many_streamed(
+            coll,
+            filter,
+            projection=projection,
+            sort=sort,
+            limit=limit,
+            skip=skip,
+            batch_size=batch_size,
+        ):
+            yield batch
+
     async def aggregate(
         self,
         coll: AsyncCollection[JsonDict],

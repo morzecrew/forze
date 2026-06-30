@@ -90,6 +90,37 @@ async def test_get_many_empty_returns_empty(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_find_many_chunked_streams_all(
+    mongo_client: MongoClient,
+    rv_ctx: ExecutionContext,
+) -> None:
+    """``find_many_chunked`` streams every match in bounded batches (peak = one batch)."""
+
+    write, read = await _seed(mongo_client, rv_ctx, "rv_chunk")
+    for i in range(5):
+        await write.create(RvCreate(name=f"chunk-{i:02d}", category="stream"))
+
+    batches = [
+        chunk
+        async for chunk in read.find_many_chunked(
+            {"$values": {"category": "stream"}},
+            sorts={"name": "asc"},
+            fetch_batch_size=2,
+            return_fields=["name"],
+        )
+    ]
+
+    # 5 docs -> batches of 2, 2, 1 (last short).
+    assert [len(chunk) for chunk in batches] == [2, 2, 1]
+    names = [row["name"] for chunk in batches for row in chunk]
+    assert names == [f"chunk-{i:02d}" for i in range(5)]
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_find_many_return_model_and_dispatch(
     mongo_client: MongoClient,
     rv_ctx: ExecutionContext,

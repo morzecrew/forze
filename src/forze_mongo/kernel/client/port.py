@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import (
     Any,
     AsyncContextManager,
+    AsyncGenerator,
     Awaitable,
     Mapping,
     Protocol,
@@ -79,6 +80,18 @@ class MongoClientPort(Protocol):
         limit: int | None = None,
         skip: int | None = None,
     ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
+
+    def find_many_streamed(
+        self,
+        coll: AsyncCollection[JsonDict],
+        filter: Mapping[str, Any],
+        *,
+        projection: Mapping[str, Any] | None = None,
+        sort: Sequence[tuple[str, int]] | None = None,
+        limit: int | None = None,
+        skip: int | None = None,
+        batch_size: int = 2000,
+    ) -> AsyncGenerator[list[JsonDict]]: ...  # pragma: no cover
 
     def aggregate(
         self,
