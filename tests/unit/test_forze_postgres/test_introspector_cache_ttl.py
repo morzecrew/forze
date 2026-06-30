@@ -123,3 +123,49 @@ async def test_column_types_ttl() -> None:
         t3 = await intro.get_column_types(schema="public", relation="t")
         assert "a" in t3
         assert client.fetch_all.await_count == 2
+
+
+# ----------------------- #
+# Default cache bounds
+
+
+def _filtered_lane(intro: PostgresIntrospector) -> CacheLane[object, object]:
+    return getattr(intro, "_PostgresIntrospector__filtered_row_estimate_lane")
+
+
+def _relation_lane(intro: PostgresIntrospector) -> CacheLane[object, object]:
+    return getattr(intro, "_PostgresIntrospector__relation_lane")
+
+
+def test_filtered_estimate_lane_is_bounded_by_default() -> None:
+    # The filtered-row-estimate lane is keyed by a hash of WHERE + params (unbounded
+    # key cardinality), so it ships capped — while the schema-keyed metadata lanes
+    # stay unbounded by default.
+    intro = PostgresIntrospector(client=MagicMock())
+
+    assert _filtered_lane(intro).max_entries == 2048
+    assert _relation_lane(intro).max_entries is None
+
+
+def test_filtered_estimate_lane_takes_the_tighter_cap() -> None:
+    by_kind = PostgresIntrospector(client=MagicMock(), max_cache_entries_per_kind=100)
+    assert _filtered_lane(by_kind).max_entries == 100  # min(100, 2048 default)
+
+    both = PostgresIntrospector(
+        client=MagicMock(),
+        max_cache_entries_per_kind=100,
+        max_filtered_estimate_entries=50,
+    )
+    assert _filtered_lane(both).max_entries == 50  # min(100, 50)
+
+
+def test_filtered_estimate_lane_can_be_disabled() -> None:
+    intro = PostgresIntrospector(client=MagicMock(), max_filtered_estimate_entries=None)
+    assert _filtered_lane(intro).max_entries is None
+
+
+def test_max_filtered_estimate_entries_rejects_non_positive() -> None:
+    from forze.base.exceptions import CoreException
+
+    with pytest.raises(CoreException):
+        PostgresIntrospector(client=MagicMock(), max_filtered_estimate_entries=0)

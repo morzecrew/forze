@@ -226,3 +226,43 @@ class TestSeamWiring:
 
         assert first == second == doc
         cache.get.assert_awaited_once()
+
+
+def test_register_l1_store_sweeps_dead_refs_on_append() -> None:
+    """The live-store registry must not grow when the OTel exporter never runs."""
+
+    import gc
+
+    from forze.application.integrations.document import l1 as l1_mod
+
+    registry = l1_mod._LIVE_STORES  # noqa: SLF001
+    saved = list(registry)
+    registry.clear()
+
+    try:
+
+        class _Store:
+            def stats(self) -> None:  # pragma: no cover - presence only
+                return None
+
+        keep = _Store()
+        l1_mod.register_l1_store("d", keep)
+
+        transient = _Store()
+        l1_mod.register_l1_store("d", transient)
+        assert len(registry) == 2
+
+        del transient
+        gc.collect()
+
+        # Appending sweeps the now-dead ref instead of letting it linger forever.
+        again = _Store()
+        l1_mod.register_l1_store("d", again)
+        assert len(registry) == 2
+
+        live = {ref() for _, ref in registry}
+        assert keep in live and again in live
+
+    finally:
+        registry.clear()
+        registry.extend(saved)

@@ -439,8 +439,14 @@ def register_l1_store(name: str, store: Any) -> None:
     reads the registry at metric collection time. Weak references keep
     per-scope rebuilds from leaking — a store dies with its coordinator and
     is pruned on the next iteration.
+
+    Dead references are swept on every append, not only when :func:`iter_l1_stats`
+    runs: that iterator is driven solely by the OTel L1 exporter, so without it the
+    registry would otherwise grow one stale ``(name, dead-ref)`` tuple per
+    coordinator ever built. Sweeping here keeps the list at the live-store count.
     """
 
+    _LIVE_STORES[:] = [(n, ref) for n, ref in _LIVE_STORES if ref() is not None]
     _LIVE_STORES.append((name, weakref.ref(store)))
 
 
