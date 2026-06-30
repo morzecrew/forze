@@ -11,7 +11,10 @@ from typing import Any, Sequence
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CursorPage, HitHighlights
+from forze.application.contracts.search import (
+    HitHighlights,
+    SearchCursorPage,
+)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
@@ -79,7 +82,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     trust_source: bool = False,
-) -> CursorPage[Any]:
+) -> SearchCursorPage[Any]:
     """Keyset cursor on the projection relation only (empty search query)."""
 
     lim, use_after, use_before = parse_search_cursor(cursor)
@@ -213,7 +216,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     trust_source: bool = False,
-) -> CursorPage[Any]:
+) -> SearchCursorPage[Any]:
     """Keyset cursor over a ranked projection + index-heap pipeline."""
 
     lim, use_after, use_before = parse_search_cursor(cursor)
@@ -385,7 +388,7 @@ async def _cursor_page_from_rows(
     has_more: bool,
     trust_source: bool = False,
     highlights: list[HitHighlights] | None = None,
-) -> CursorPage[Any]:
+) -> SearchCursorPage[Any]:
     # Decrypt sealed fields out of the raw rows once, so the spec model, a custom
     # return_type, and raw field projections all read plaintext (no-op for a plain codec).
     rows, codec = await decrypt_search_rows(codec, rows)
@@ -404,7 +407,7 @@ async def _cursor_page_from_rows(
             trust_source=trust_source,
         )
 
-    return CursorPage(
+    return SearchCursorPage(
         hits=hits,
         next_cursor=next_cursor,
         prev_cursor=prev_cursor,

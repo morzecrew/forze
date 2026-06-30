@@ -7,11 +7,11 @@ from typing import Any, Final, Literal, NoReturn, Sequence, TypeVar, cast, final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import (
-    CountlessPage,
-    Page,
+from forze.application.contracts.search import (
+    SearchCountlessPage,
+    SearchPage,
     SearchSnapshotHandle,
-    page_from_limit_offset,
+    search_page_from_limit_offset,
 )
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
@@ -137,7 +137,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         return_count: Literal[False],
         return_type: None = None,
         return_fields: None = None,
-    ) -> CountlessPage[FederatedSearchReadModel[M]]: ...
+    ) -> SearchCountlessPage[FederatedSearchReadModel[M]]: ...
 
     @overload
     async def _offset_search_impl(
@@ -152,7 +152,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         return_count: Literal[True],
         return_type: None = None,
         return_fields: None = None,
-    ) -> Page[FederatedSearchReadModel[M]]: ...
+    ) -> SearchPage[FederatedSearchReadModel[M]]: ...
 
     @overload
     async def _offset_search_impl(
@@ -167,7 +167,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         return_count: Literal[False],
         return_type: type[T],
         return_fields: None = None,
-    ) -> CountlessPage[T]: ...
+    ) -> SearchCountlessPage[T]: ...
 
     @overload
     async def _offset_search_impl(
@@ -182,7 +182,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         return_count: Literal[True],
         return_type: type[T],
         return_fields: None = None,
-    ) -> Page[T]: ...
+    ) -> SearchPage[T]: ...
 
     @overload
     async def _offset_search_impl(
@@ -276,13 +276,13 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         if not active:
             empty_hits: list[FederatedSearchReadModel[M]] = []
             if return_count:
-                return page_from_limit_offset(
+                return search_page_from_limit_offset(
                     empty_hits,
                     pagination or {},
                     total=0,
                 )
 
-            return page_from_limit_offset(empty_hits, pagination or {}, total=None)
+            return search_page_from_limit_offset(empty_hits, pagination or {}, total=None)
 
         leg_cap = max(1, int(self.rrf_per_leg_limit))
         leg_page: PaginationExpression = {"limit": leg_cap}
@@ -366,7 +366,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         )
 
         def _finish(hits: list[Any]) -> Any:
-            result = page_from_limit_offset(
+            result = search_page_from_limit_offset(
                 hits,
                 pagination,
                 total=total if return_count else None,

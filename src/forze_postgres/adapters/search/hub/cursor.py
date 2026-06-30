@@ -11,7 +11,7 @@ from typing import Any, Sequence, TypeVar, cast
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CursorPage
+from forze.application.contracts.search import SearchCursorPage
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
@@ -268,7 +268,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         if return_fields is not None:
             rj = [{k: r.get(k, None) for k in return_fields} for r in source_rows]
 
-            return CursorPage(
+            return SearchCursorPage(
                 hits=rj,
                 next_cursor=nxt,
                 prev_cursor=prv,
@@ -283,7 +283,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
             trust_source=trust,
         )
 
-        return CursorPage(
+        return SearchCursorPage(
             hits=hits,
             next_cursor=nxt,
             prev_cursor=prv,

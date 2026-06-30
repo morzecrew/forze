@@ -6,7 +6,11 @@ from typing import Generic, NoReturn, Sequence, TypeVar
 
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CountlessPage, CursorPage, Page
+from forze.application.contracts.search import (
+    SearchCountlessPage,
+    SearchCursorPage,
+    SearchPage,
+)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -38,7 +42,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-    ) -> CursorPage[M]:
+    ) -> SearchCursorPage[M]:
         _ = query, filters, cursor, sorts, options
         _unsupported_cursor()
 
@@ -52,7 +56,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[JsonDict]:
+    ) -> SearchCountlessPage[JsonDict]:
         _ = fields, query, filters, pagination, sorts, options, snapshot
         _unsupported_cursor()
 
@@ -66,7 +70,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[JsonDict]:
+    ) -> SearchPage[JsonDict]:
         _ = fields, query, filters, pagination, sorts, options, snapshot
         _unsupported_cursor()
 
@@ -79,7 +83,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-    ) -> CursorPage[JsonDict]:
+    ) -> SearchCursorPage[JsonDict]:
         _ = fields, query, filters, cursor, sorts, options
         _unsupported_cursor()
 
@@ -93,7 +97,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[T]:
+    ) -> SearchCountlessPage[T]:
         _ = return_type, query, filters, pagination, sorts, options, snapshot
         _unsupported_cursor()
 
@@ -107,7 +111,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[T]:
+    ) -> SearchPage[T]:
         _ = return_type, query, filters, pagination, sorts, options, snapshot
         _unsupported_cursor()
 
@@ -120,6 +124,6 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-    ) -> CursorPage[T]:
+    ) -> SearchCursorPage[T]:
         _ = return_type, query, filters, cursor, sorts, options
         _unsupported_cursor()

@@ -13,7 +13,11 @@ from typing import Any, Literal, Sequence, TypeVar, overload
 
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CountlessPage, CursorPage, Page
+from forze.application.contracts.search import (
+    SearchCountlessPage,
+    SearchCursorPage,
+    SearchPage,
+)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -54,7 +58,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         return_count: Literal[False],
         return_type: None = None,
         return_fields: None = None,
-    ) -> CountlessPage[M]: ...
+    ) -> SearchCountlessPage[M]: ...
 
     @overload
     async def _offset_search_impl(
@@ -69,7 +73,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         return_count: Literal[True],
         return_type: None = None,
         return_fields: None = None,
-    ) -> Page[M]: ...
+    ) -> SearchPage[M]: ...
 
     @overload
     async def _offset_search_impl(
@@ -84,7 +88,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         return_count: Literal[False],
         return_type: type[T],
         return_fields: None = None,
-    ) -> CountlessPage[T]: ...
+    ) -> SearchCountlessPage[T]: ...
 
     @overload
     async def _offset_search_impl(
@@ -99,7 +103,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         return_count: Literal[True],
         return_type: type[T],
         return_fields: None = None,
-    ) -> Page[T]: ...
+    ) -> SearchPage[T]: ...
 
     @overload
     async def _offset_search_impl(
@@ -114,7 +118,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         return_count: Literal[False],
         return_type: None = None,
         return_fields: Sequence[str],
-    ) -> CountlessPage[Any]: ...
+    ) -> SearchCountlessPage[Any]: ...
 
     @overload
     async def _offset_search_impl(
@@ -129,7 +133,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         return_count: Literal[True],
         return_type: None = None,
         return_fields: Sequence[str],
-    ) -> Page[Any]: ...
+    ) -> SearchPage[Any]: ...
 
     async def _offset_search_impl(
         self,
@@ -170,7 +174,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[M]:
+    ) -> SearchCountlessPage[M]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -190,7 +194,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[M]:
+    ) -> SearchPage[M]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -211,7 +215,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[Any]:
+    ) -> SearchCountlessPage[Any]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -233,7 +237,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[Any]:
+    ) -> SearchPage[Any]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -255,7 +259,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[T]:
+    ) -> SearchCountlessPage[T]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -277,7 +281,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[T]:
+    ) -> SearchPage[T]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -297,7 +301,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-    ) -> CursorPage[M]:
+    ) -> SearchCursorPage[M]:
         return await self._cursor_search_impl(
             query,
             filters,
@@ -315,7 +319,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-    ) -> CursorPage[Any]:
+    ) -> SearchCursorPage[Any]:
         return await self._cursor_search_impl(
             query,
             filters,
@@ -334,7 +338,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-    ) -> CursorPage[T]:
+    ) -> SearchCursorPage[T]:
         return await self._cursor_search_impl(
             query,
             filters,

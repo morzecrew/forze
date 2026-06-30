@@ -99,6 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Search pages split from the base pagination contract** *(breaking)* — result-level facets, highlights, and the snapshot handle move off `CountlessPage` / `Page` / `CursorPage` onto a new `SearchPage` / `SearchCountlessPage` / `SearchCursorPage` family that the search ports now return. `FacetBucket`, `FacetResults`, `HitHighlights`, and `SearchSnapshotHandle` move from the base contract to the search contract — import them from there. Document and analytics pages no longer carry unused search fields.
+
 - **`SearchFuzzySpec` is now an immutable value object** *(breaking)* — it changed from a dict to a frozen value object, exported from the search contract and constructed explicitly. The edit-distance ratio defaults to 0.34 and is validated to the 0.0–1.0 range, and the never-read prefix-length field is removed. There is no compatibility shim for the old dict form.
 
 - **Search options de-leaked and grouped by topology** *(breaking)* — Postgres internals are gone from the backend-agnostic search options: the raw-Groonga override removed, the PGroonga plan made adapter-config only, and the advisory candidate caps renamed to `max_candidates` and `merge_candidates`. Hub and federated member keys move to a multi-source options type that single-index search rejects at type-check and that the generated hub/federated request bodies now carry (previously dropped at the DTO boundary). There are no compatibility shims.

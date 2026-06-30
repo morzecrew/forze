@@ -15,7 +15,6 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from ._highlights import HighlightSelect
 
-from forze.application.contracts.base import page_from_limit_offset
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
@@ -29,6 +28,7 @@ from forze.application.contracts.search import (
     facet_size_of,
     normalize_search_queries,
     resolve_facet_fields,
+    search_page_from_limit_offset,
 )
 from forze.application.integrations.search import (
     SearchResultSnapshot,
@@ -661,7 +661,7 @@ async def execute_hub_ranked_offset_search(
             total = int(await gw.client.fetch_value(count_stmt, plan.params, default=0))
 
         if return_count and total == 0:
-            return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+            return search_page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                 [],
                 pagination or {},
                 total=0,
@@ -767,7 +767,7 @@ async def execute_hub_ranked_offset_search(
             trust_source=trust_source,
         )
 
-        return page_from_limit_offset(
+        return search_page_from_limit_offset(
             page,
             pagination_dict,
             total=(

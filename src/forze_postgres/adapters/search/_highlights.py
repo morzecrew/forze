@@ -26,8 +26,8 @@ from typing import Any, Sequence
 import attrs
 from psycopg import sql
 
-from forze.application.contracts.base import HitHighlights
 from forze.application.contracts.search import (
+    HitHighlights,
     SearchOptions,
     SearchSpec,
     highlight_tokens,

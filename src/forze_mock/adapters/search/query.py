@@ -16,11 +16,11 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import (
-    CountlessPage,
-    CursorPage,
-    Page,
-    page_from_limit_offset,
+from forze.application.contracts.search import (
+    SearchCountlessPage,
+    SearchCursorPage,
+    SearchPage,
+    search_page_from_limit_offset,
 )
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
@@ -281,7 +281,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         return_count: Literal[False],
         return_type: None = None,
         return_fields: None = None,
-    ) -> CountlessPage[M]: ...
+    ) -> SearchCountlessPage[M]: ...
 
     @overload
     async def _offset_search_impl(
@@ -296,7 +296,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         return_count: Literal[True],
         return_type: None = None,
         return_fields: None = None,
-    ) -> Page[M]: ...
+    ) -> SearchPage[M]: ...
 
     @overload
     async def _offset_search_impl(
@@ -311,7 +311,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         return_count: Literal[False],
         return_type: type[T],
         return_fields: None = None,
-    ) -> CountlessPage[T]: ...
+    ) -> SearchCountlessPage[T]: ...
 
     @overload
     async def _offset_search_impl(
@@ -326,7 +326,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         return_count: Literal[True],
         return_type: type[T],
         return_fields: None = None,
-    ) -> Page[T]: ...
+    ) -> SearchPage[T]: ...
 
     @overload
     async def _offset_search_impl(
@@ -408,17 +408,13 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
                 self.spec.resolved_read_codec.decode_mapping_many(typed_docs),
             )
 
-        if return_count:
-            page: CountlessPage[Any] = page_from_limit_offset(
-                hits, pagination, total=total
-            )
-        else:
-            page = page_from_limit_offset(hits, pagination, total=None)
-
-        if facets is None and highlights is None:
-            return page
-
-        return attrs.evolve(page, facets=facets, highlights=highlights)
+        return search_page_from_limit_offset(
+            hits,
+            pagination,
+            total=total if return_count else None,
+            facets=facets,
+            highlights=highlights,
+        )
 
     # ....................... #
 
@@ -431,7 +427,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[M]:
+    ) -> SearchCountlessPage[M]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -453,7 +449,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[M]:
+    ) -> SearchPage[M]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -476,7 +472,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[JsonDict]:
+    ) -> SearchCountlessPage[JsonDict]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -499,7 +495,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[JsonDict]:
+    ) -> SearchPage[JsonDict]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -522,7 +518,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[T]:
+    ) -> SearchCountlessPage[T]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -545,7 +541,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[T]:
+    ) -> SearchPage[T]:
         return await self._offset_search_impl(
             query,
             filters,
@@ -571,7 +567,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         options: SearchOptions | None = None,
         return_type: None = None,
         return_fields: None = None,
-    ) -> CursorPage[M]: ...
+    ) -> SearchCursorPage[M]: ...
 
     @overload
     async def _cursor_search_impl(
@@ -584,7 +580,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         options: SearchOptions | None = None,
         return_type: None = None,
         return_fields: Sequence[str],
-    ) -> CursorPage[JsonDict]: ...
+    ) -> SearchCursorPage[JsonDict]: ...
 
     @overload
     async def _cursor_search_impl(
@@ -597,7 +593,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         options: SearchOptions | None = None,
         return_type: type[T],
         return_fields: None = None,
-    ) -> CursorPage[T]: ...
+    ) -> SearchCursorPage[T]: ...
 
     async def _cursor_search_impl(
         self,
@@ -635,7 +631,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
                 self.spec.resolved_read_codec.decode_mapping_many(typed_docs),
             )
 
-        return CursorPage(
+        return SearchCursorPage(
             hits=hits,
             next_cursor=next_c,
             prev_cursor=prev_c,
@@ -652,7 +648,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-    ) -> CursorPage[M]:
+    ) -> SearchCursorPage[M]:
         return await self._cursor_search_impl(
             query,
             filters,
@@ -672,7 +668,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-    ) -> CursorPage[JsonDict]:
+    ) -> SearchCursorPage[JsonDict]:
         return await self._cursor_search_impl(
             query,
             filters,
@@ -692,7 +688,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-    ) -> CursorPage[T]:
+    ) -> SearchCursorPage[T]:
         return await self._cursor_search_impl(
             query,
             filters,

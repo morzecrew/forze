@@ -12,7 +12,6 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.base import page_from_limit_offset
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
@@ -27,6 +26,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     resolve_facet_fields,
     search_options_for_simple_adapter,
+    search_page_from_limit_offset,
 )
 from forze.application.integrations.search import (
     SearchResultSnapshot,
@@ -283,7 +283,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 )
 
                 if total == 0:
-                    return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                    return search_page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                         [],
                         pagination or {},
                         total=0,
@@ -395,25 +395,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         facets = await self._browse_facets(proj_qname, fw, fp, options)
 
-        if return_count:
-            result: Any = page_from_limit_offset(
-                page,
-                pagination,
-                total=total if count_policy != "none" else None,
-                snapshot=handle_no,
-            )
-        else:
-            result = page_from_limit_offset(
-                page,
-                pagination,
-                total=None,
-                snapshot=handle_no,
-            )
-
-        if facets is None:
-            return result
-
-        return attrs.evolve(result, facets=facets)
+        return search_page_from_limit_offset(
+            page,
+            pagination,
+            total=(total if (return_count and count_policy != "none") else None),
+            snapshot=handle_no,
+            facets=facets,
+        )
 
     # ....................... #
 

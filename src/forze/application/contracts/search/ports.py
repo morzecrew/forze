@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
 
-from ..base import CountlessPage, CursorPage, Page
+from .pages import SearchCountlessPage, SearchCursorPage, SearchPage
 from ..querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -30,8 +30,8 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
 
     ``search*`` returns the spec read model ``R``; ``project_search*`` returns ``JsonDict`` rows;
     ``select_search*`` validates rows as ``return_type``. Methods without ``_page`` or ``_cursor``
-    return :class:`~.CountlessPage` (no total count query); ``*_page`` returns :class:`~.Page`;
-    ``*_cursor`` returns :class:`~.CursorPage`.
+    return :class:`~.SearchCountlessPage` (no total count query); ``*_page`` returns
+    :class:`~.SearchPage`; ``*_cursor`` returns :class:`~.SearchCursorPage`.
 
     ``O`` is the per-request ``options`` type: the backend- and topology-agnostic
     :class:`~.SearchOptions` for single-index search (the default), widened to
@@ -49,7 +49,7 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         *,
         options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Awaitable[CountlessPage[R]]:
+    ) -> Awaitable[SearchCountlessPage[R]]:
         """Search and return typed read models (no total count query)."""
         ...  # pragma: no cover
 
@@ -62,7 +62,7 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         *,
         options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Awaitable[Page[R]]:
+    ) -> Awaitable[SearchPage[R]]:
         """Search and return typed read models with total matching count."""
         ...  # pragma: no cover
 
@@ -76,7 +76,7 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         *,
         options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Awaitable[CountlessPage[JsonDict]]:
+    ) -> Awaitable[SearchCountlessPage[JsonDict]]:
         """Search with field projection (no total count query)."""
         ...  # pragma: no cover
 
@@ -90,7 +90,7 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         *,
         options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Awaitable[Page[JsonDict]]:
+    ) -> Awaitable[SearchPage[JsonDict]]:
         """Search with field projection and total matching count."""
         ...  # pragma: no cover
 
@@ -104,7 +104,7 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         *,
         options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Awaitable[CountlessPage[T]]:
+    ) -> Awaitable[SearchCountlessPage[T]]:
         """Search validating each hit as ``return_type`` (no total count query)."""
         ...  # pragma: no cover
 
@@ -118,7 +118,7 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         *,
         options: O | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Awaitable[Page[T]]:
+    ) -> Awaitable[SearchPage[T]]:
         """Search as ``return_type`` with total matching count."""
         ...  # pragma: no cover
 
@@ -130,7 +130,7 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         sorts: QuerySortExpression | None = None,
         *,
         options: O | None = None,
-    ) -> Awaitable[CursorPage[R]]:
+    ) -> Awaitable[SearchCursorPage[R]]:
         """Keyset / cursor page of typed read models."""
         ...  # pragma: no cover
 
@@ -143,7 +143,7 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         sorts: QuerySortExpression | None = None,
         *,
         options: O | None = None,
-    ) -> Awaitable[CursorPage[JsonDict]]:
+    ) -> Awaitable[SearchCursorPage[JsonDict]]:
         """Keyset / cursor page with field projection."""
         ...  # pragma: no cover
 
@@ -156,7 +156,7 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         sorts: QuerySortExpression | None = None,
         *,
         options: O | None = None,
-    ) -> Awaitable[CursorPage[T]]:
+    ) -> Awaitable[SearchCursorPage[T]]:
         """Keyset / cursor page validating each hit as ``return_type``."""
         ...  # pragma: no cover
 

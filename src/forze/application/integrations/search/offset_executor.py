@@ -5,10 +5,10 @@ from typing import Any, Protocol, Sequence, TypeVar, runtime_checkable
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import (
+from forze.application.contracts.search import (
     FacetResults,
     HitHighlights,
-    page_from_limit_offset,
+    search_page_from_limit_offset,
 )
 from forze.application.contracts.querying import (
     PaginationExpression,
@@ -194,7 +194,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         total = await hooks.fetch_count()
 
         if total is not None and total == 0:
-            return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+            return search_page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                 [],
                 pagination_dict,
                 total=0,
@@ -268,18 +268,13 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
             trust_source=trust_source,
         )
 
-        snap_result: Any = page_from_limit_offset(
+        return search_page_from_limit_offset(
             page,
             pagination_dict,
             total=total if emit_total else None,
             snapshot=stream.handle,
-        )
-
-        if stream.facets is None and stream.page_highlights is None:
-            return snap_result
-
-        return attrs.evolve(
-            snap_result, facets=stream.facets, highlights=stream.page_highlights
+            facets=stream.facets,
+            highlights=stream.page_highlights,
         )
 
     fetch_limit, fetch_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
@@ -302,7 +297,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         total = outcome.total
 
         if total == 0:
-            return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+            return search_page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                 [],
                 pagination_dict,
                 total=0,
@@ -366,14 +361,10 @@ async def materialize_offset_page[M: BaseModel](
         trust_source=trust_source,
     )
 
-    result: Any = page_from_limit_offset(
+    return search_page_from_limit_offset(
         page,
         pagination_dict,
         total=total if return_count else None,
-        snapshot=None,
+        facets=facets,
+        highlights=highlights,
     )
-
-    if facets is None and highlights is None:
-        return result
-
-    return attrs.evolve(result, facets=facets, highlights=highlights)

@@ -8,7 +8,10 @@ from typing import Any, Sequence, TypeVar, cast
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CursorPage, page_from_limit_offset
+from forze.application.contracts.search import (
+    SearchCursorPage,
+    search_page_from_limit_offset,
+)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -311,13 +314,13 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         )
 
         if return_count:
-            return page_from_limit_offset(
+            return search_page_from_limit_offset(
                 page,
                 pagination_dict,
                 total=total if count_policy != "none" else None,
             )
 
-        return page_from_limit_offset(page, pagination_dict, total=None)
+        return search_page_from_limit_offset(page, pagination_dict, total=None)
 
     # ....................... #
 
@@ -403,7 +406,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
 
         if return_fields is not None:
             rj = [{k: r.get(k, None) for k in return_fields} for r in mat_rows]
-            return CursorPage(
+            return SearchCursorPage(
                 hits=rj, next_cursor=nxt, prev_cursor=prv, has_more=has_more
             )
 
@@ -415,4 +418,4 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             trust_source=trust,
         )
 
-        return CursorPage(hits=hits, next_cursor=nxt, prev_cursor=prv, has_more=has_more)
+        return SearchCursorPage(hits=hits, next_cursor=nxt, prev_cursor=prv, has_more=has_more)

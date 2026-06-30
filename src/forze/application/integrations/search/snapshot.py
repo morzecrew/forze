@@ -16,11 +16,11 @@ from typing import Any, Mapping, Sequence, TypeVar, cast
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import (
-    CountlessPage,
-    Page,
+from forze.application.contracts.search import (
+    SearchCountlessPage,
+    SearchPage,
     SearchSnapshotHandle,
-    page_from_limit_offset,
+    search_page_from_limit_offset,
 )
 from forze.application.contracts.crypto import KeyringPort
 from forze.application.contracts.querying import (
@@ -91,7 +91,7 @@ def _shape_snapshot_page(
             to_return_rows(items)
         )
 
-        return page_from_limit_offset(
+        return search_page_from_limit_offset(
             decoded,
             pagination,
             total=total,
@@ -101,14 +101,14 @@ def _shape_snapshot_page(
     if return_fields is not None:
         raw = [{k: getattr(it, k, None) for k in return_fields} for it in items]
 
-        return page_from_limit_offset(
+        return search_page_from_limit_offset(
             raw,
             pagination,
             total=total,
             snapshot=snapshot,
         )
 
-    return page_from_limit_offset(
+    return search_page_from_limit_offset(
         cast(list[Any], items),
         pagination,
         total=total,
@@ -590,12 +590,12 @@ class SearchResultSnapshot:
         return_fields: Sequence[str] | None,
         return_count: bool,
     ) -> (
-        Page[M_co]
-        | CountlessPage[M_co]
-        | Page[T_co]
-        | CountlessPage[T_co]
-        | Page[JsonDict]
-        | CountlessPage[JsonDict]
+        SearchPage[M_co]
+        | SearchCountlessPage[M_co]
+        | SearchPage[T_co]
+        | SearchCountlessPage[T_co]
+        | SearchPage[JsonDict]
+        | SearchCountlessPage[JsonDict]
         | None
     ):
         return await self._read_projection_snapshot_page(
@@ -622,12 +622,12 @@ class SearchResultSnapshot:
         return_fields: Sequence[str] | None,
         return_count: bool,
     ) -> (
-        Page[M_co]
-        | CountlessPage[M_co]
-        | Page[T_co]
-        | CountlessPage[T_co]
-        | Page[JsonDict]
-        | CountlessPage[JsonDict]
+        SearchPage[M_co]
+        | SearchCountlessPage[M_co]
+        | SearchPage[T_co]
+        | SearchCountlessPage[T_co]
+        | SearchPage[JsonDict]
+        | SearchCountlessPage[JsonDict]
         | None
     ):
         return await self._read_projection_snapshot_page(
@@ -653,12 +653,12 @@ class SearchResultSnapshot:
         return_fields: Sequence[str] | None,
         return_count: bool,
     ) -> (
-        Page[M_co]
-        | CountlessPage[M_co]
-        | Page[T_co]
-        | CountlessPage[T_co]
-        | Page[JsonDict]
-        | CountlessPage[JsonDict]
+        SearchPage[M_co]
+        | SearchCountlessPage[M_co]
+        | SearchPage[T_co]
+        | SearchCountlessPage[T_co]
+        | SearchPage[JsonDict]
+        | SearchCountlessPage[JsonDict]
         | None
     ):
         return await self._read_snapshot_page(
@@ -822,10 +822,10 @@ class SearchResultSnapshot:
         return_type: type[T_co] | None,
         return_count: bool,
     ) -> (
-        CountlessPage[FederatedSearchReadModel[M_co]]
-        | CountlessPage[T_co]
-        | Page[FederatedSearchReadModel[M_co]]
-        | Page[T_co]
+        SearchCountlessPage[FederatedSearchReadModel[M_co]]
+        | SearchCountlessPage[T_co]
+        | SearchPage[FederatedSearchReadModel[M_co]]
+        | SearchPage[T_co]
         | None
     ):
         if rs_spec is None:

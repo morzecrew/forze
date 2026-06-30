@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from forze.application.contracts.base import HitHighlights
-from forze.application.contracts.search import FederatedSearchReadModel
+from forze.application.contracts.search import (
+    FederatedSearchReadModel,
+    HitHighlights,
+)
 
 from .snapshot import SearchResultSnapshot
 

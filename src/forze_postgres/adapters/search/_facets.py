@@ -16,7 +16,7 @@ from typing import Any, Sequence
 
 from psycopg import sql
 
-from forze.application.contracts.base import FacetBucket, FacetResults
+from forze.application.contracts.search import FacetBucket, FacetResults
 
 from ...kernel.client import PostgresClientPort
 

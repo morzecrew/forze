@@ -28,7 +28,7 @@ Pcsr = ProjectedCursorSearchRequestDTO
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class Search[Out: Bm, Opt: SearchOptions](Handler[Sr[Opt], SearchPaginated[Out]]):
+class Search[Out: Bm, Opt: SearchOptions = SearchOptions](Handler[Sr[Opt], SearchPaginated[Out]]):
     """Operation handler that searches with typed results."""
 
     search: SearchQueryPort[Out, Opt]
@@ -60,14 +60,14 @@ class Search[Out: Bm, Opt: SearchOptions](Handler[Sr[Opt], SearchPaginated[Out]]
             snapshot=body.snapshot,
         )
 
-        return SearchPaginated.from_page(res)
+        return SearchPaginated.from_search_page(res)
 
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ProjectedSearch[Opt: SearchOptions](Handler[Psr[Opt], ProjectedSearchPaginated]):
+class ProjectedSearch[Opt: SearchOptions = SearchOptions](Handler[Psr[Opt], ProjectedSearchPaginated]):
     """Operation handler that searches with field-projected raw results."""
 
     search: SearchQueryPort[Any, Opt]
@@ -100,14 +100,14 @@ class ProjectedSearch[Opt: SearchOptions](Handler[Psr[Opt], ProjectedSearchPagin
             snapshot=body.snapshot,
         )
 
-        return ProjectedSearchPaginated.from_page(res)
+        return ProjectedSearchPaginated.from_search_page(res)
 
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class CursorSearch[Out: Bm, Opt: SearchOptions](
+class CursorSearch[Out: Bm, Opt: SearchOptions = SearchOptions](
     Handler[Csr[Opt], CursorPaginated[Out]]
 ):
     """Operation handler that searches with typed results and cursor (keyset) pagination."""
@@ -141,7 +141,7 @@ class CursorSearch[Out: Bm, Opt: SearchOptions](
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ProjectedCursorSearch[Opt: SearchOptions](
+class ProjectedCursorSearch[Opt: SearchOptions = SearchOptions](
     Handler[Pcsr[Opt], ProjectedCursorPaginated]
 ):
     """Operation handler that searches with raw results and cursor (keyset) pagination."""

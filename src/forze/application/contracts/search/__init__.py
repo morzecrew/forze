@@ -63,18 +63,30 @@ from .utils import (
     effective_phrase_combine,
     normalize_search_queries,
 )
+from .pages import (
+    SearchCountlessPage,
+    SearchCursorPage,
+    SearchPage,
+    search_page_from_limit_offset,
+)
 from .value_objects import (
     FacetBucket,
     FacetResults,
     HitHighlights,
     Rrf,
     SearchResultSnapshotMeta,
+    SearchSnapshotHandle,
 )
 
 # ----------------------- #
 
 __all__ = [
     "Rrf",
+    "SearchCountlessPage",
+    "SearchCursorPage",
+    "SearchPage",
+    "SearchSnapshotHandle",
+    "search_page_from_limit_offset",
     "DEFAULT_FACET_SIZE",
     "DEFAULT_HIGHLIGHT_PRE_TAG",
     "DEFAULT_HIGHLIGHT_POST_TAG",

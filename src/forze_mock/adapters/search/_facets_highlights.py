@@ -13,8 +13,10 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from forze.application.contracts.base import FacetBucket, FacetResults, HitHighlights
 from forze.application.contracts.search import (
+    FacetBucket,
+    FacetResults,
+    HitHighlights,
     SearchOptions,
     facet_size_of,
     highlight_tokens,

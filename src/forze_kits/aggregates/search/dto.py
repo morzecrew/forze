@@ -4,10 +4,11 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
-from forze.application.contracts.base import Page, SearchSnapshotHandle
 from forze.application.contracts.search import (
     SearchOptions,
+    SearchPage,
     SearchResultSnapshotOptions,
+    SearchSnapshotHandle,
 )
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
@@ -162,7 +163,7 @@ class SearchPaginated[T: BaseModel](Paginated[T]):
     # ....................... #
 
     @classmethod
-    def from_page[X: BaseModel](cls, page: Page[X]) -> SearchPaginated[X]:
+    def from_search_page[X: BaseModel](cls, page: SearchPage[X]) -> SearchPaginated[X]:
         out = cast(type[SearchPaginated[X]], cls)
 
         return out(
@@ -183,7 +184,7 @@ class ProjectedSearchPaginated(ProjectedPaginated):
     # ....................... #
 
     @classmethod
-    def from_page(cls, page: Page[JsonDict]) -> ProjectedSearchPaginated:
+    def from_search_page(cls, page: SearchPage[JsonDict]) -> ProjectedSearchPaginated:
         return cls(
             **offset_page_fields(page),
             snapshot=SearchSnapshotHandleDTO.from_handle(page.snapshot),

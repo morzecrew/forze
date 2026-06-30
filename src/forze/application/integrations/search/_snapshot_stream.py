@@ -10,14 +10,12 @@ from typing import Any, Awaitable, Callable
 
 import attrs
 
-from forze.application.contracts.base import (
+from forze.application.contracts.search import (
     FacetResults,
     HitHighlights,
-    SearchSnapshotHandle,
-)
-from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchResultSnapshotSpec,
+    SearchSnapshotHandle,
 )
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
