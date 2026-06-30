@@ -166,6 +166,107 @@ async def test_federated_snapshot_reread_search_count_none(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_federated_thin_snapshot_write_and_replay(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    """A ``thin_merge`` federated snapshot stores (member, id) keys and replays by re-fetch."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:10]
+    ta, tb = f"fed_tsnap_a_{suffix}", f"fed_tsnap_b_{suffix}"
+    ia, ib = f"idx_tsnap_a_{suffix}", f"idx_tsnap_b_{suffix}"
+    token = "tsnaptok"
+
+    for table, idx in ((ta, ia), (tb, ib)):
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {table} (
+                id uuid PRIMARY KEY,
+                label text NOT NULL
+            );
+            CREATE INDEX {idx} ON {table} USING pgroonga (label);
+            """
+        )
+
+    shared, only_b = uuid4(), uuid4()
+    inserts = (
+        (ta, shared, f"{token} a"),
+        (tb, shared, f"{token} shared"),
+        (tb, only_b, f"{token} b"),
+    )
+    for table, rid, lbl in inserts:
+        await pg_client.execute(
+            f"INSERT INTO {table} (id, label) VALUES (%(id)s, %(lbl)s)",
+            {"id": rid, "lbl": lbl},
+        )
+
+    leg_a, leg_b = f"a_{suffix}", f"b_{suffix}"
+    ns = f"it:fed:tsnap:{uuid4().hex[:10]}"
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                RedisClientDepKey: redis_client,
+                SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
+                    config=RedisSearchResultSnapshotConfig(namespace=ns),
+                ),
+                FederatedSearchQueryDepKey: ConfigurablePostgresFederatedSearch(
+                    config=PostgresFederatedSearchConfig(
+                        members={
+                            leg_a: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", ia),
+                                    read=("public", ta),
+                                    engine="pgroonga",
+                                ),
+                            ),
+                            leg_b: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", ib),
+                                    read=("public", tb),
+                                    engine="pgroonga",
+                                ),
+                            ),
+                        },
+                    ),
+                ),
+            }
+        )
+    )
+
+    spec = FederatedSearchSpec(
+        name=f"fed_tsnap_{suffix}",
+        members=(_mem(leg_a), _mem(leg_b)),
+        snapshot=SearchResultSnapshotSpec(
+            name="snap", enabled=True, ttl=timedelta(minutes=5)
+        ),
+        thin_merge=True,
+    )
+    fed = ctx.search.federated(spec)
+
+    first = await fed.search_page(token, pagination={"limit": 10})
+    assert isinstance(first, Page)
+    assert first.snapshot is not None
+    # shared is a distinct federated identity per member: (a,shared)+(b,shared)+(b,only_b).
+    assert first.count == 3
+    first_ids = sorted((h.member, str(h.hit.id)) for h in first.hits)
+
+    replay = await fed.search_page(
+        token,
+        pagination={"limit": 10},
+        snapshot={
+            "id": first.snapshot.id,
+            "fingerprint": first.snapshot.fingerprint,
+        },
+    )
+    # Replay re-fetches the frozen identities by id from the legs.
+    assert sorted((h.member, str(h.hit.id)) for h in replay.hits) == first_ids
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_federated_thin_merge_matches_full(pg_client: PostgresClient) -> None:
     """``thin_merge=True`` returns the same federated hits as the full-fetch path."""
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")

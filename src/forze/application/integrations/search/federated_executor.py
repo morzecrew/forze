@@ -7,9 +7,14 @@ fetches only ``id`` per leg, fuses on ``(member, id)``, and re-hydrates **just t
 page's** full hits from each member. Peak memory becomes the thin candidate keys plus
 one page of full hits, at the cost of one extra (page-sized) round trip per member.
 
-Gated by :attr:`~forze.application.contracts.search.FederatedSearchSpec.thin_merge` and
-the eligibility check in :func:`federated_thin_eligible`; the adapters fall back to the
-full-fetch path otherwise.
+When a result snapshot is configured, the thin path stores only ``(member, id)`` keys
+(not full records), so the snapshot is tiny and the merge still never holds full hits;
+replay (:meth:`SearchResultSnapshot.read_federated_thin_snapshot_page_if_requested`)
+re-fetches the page's hits from the legs by id — the frozen order/identities replay with
+**current** content, and a since-deleted hit drops out.
+
+Gated by :attr:`~forze.application.contracts.search.FederatedSearchSpec.thin_merge`; the
+adapters fall back to the full-fetch path otherwise (see :func:`federated_thin_eligible`).
 """
 
 from __future__ import annotations
@@ -28,6 +33,8 @@ from forze.application.contracts.search import (
     FederatedSearchReadModel,
     SearchOptions,
     SearchQueryPort,
+    SearchResultSnapshotOptions,
+    SearchResultSnapshotSpec,
     search_page_from_limit_offset,
 )
 from forze.base.serialization import default_model_codec
@@ -43,26 +50,39 @@ RunLegs = Callable[[Sequence[Callable[[], Awaitable[Any]]]], Awaitable[list[Any]
 # ....................... #
 
 
+def federated_thin_format(
+    members: Sequence[FederatedSearchMemberSpec],
+    *,
+    thin_merge: bool,
+) -> bool:
+    """Whether this spec's snapshots use the thin ``(member, id)`` format.
+
+    Spec-level (not request-level): governs the snapshot key format, the replay read
+    path, and the fingerprint marker. Requires the opt-in and that every member read
+    model carries an ``id`` field (the fused identity and re-fetch key)."""
+
+    return thin_merge and all(
+        ID_FIELD in member.model_type.model_fields for member in members
+    )
+
+
 def federated_thin_eligible(
     *,
     members: Sequence[FederatedSearchMemberSpec],
     thin_merge: bool,
     wants_highlights: bool,
     sorts: QuerySortExpression | None,  # type: ignore[valid-type]
-    snapshot_write: bool,
 ) -> bool:
-    """Whether a federated search can use the thin (id-only) merge path.
+    """Whether **this** fresh search can use the thin (id-only) merge path.
 
-    Requires the spec opt-in and a search that needs neither the full leg hits up
-    front (highlights, or a secondary ``sorts`` over hit fields) nor a result-snapshot
-    write (the snapshot stores full records for leg-free replay), and whose every
-    member read model carries an ``id`` field (the fused identity / re-fetch key).
-    """
+    Needs the thin snapshot format (:func:`federated_thin_format`) and a request that
+    needs no full leg hits up front — highlights and a secondary ``sorts`` over hit
+    fields both require them, so they fall back to the full-fetch path."""
 
-    if not thin_merge or wants_highlights or sorts or snapshot_write:
+    if wants_highlights or sorts:
         return False
 
-    return all(ID_FIELD in member.model_type.model_fields for member in members)
+    return federated_thin_format(members, thin_merge=thin_merge)
 
 
 # ....................... #
@@ -82,6 +102,75 @@ def _and_id_filter(
     return {"$and": [filters, id_clause]}
 
 
+async def _hydrate_federated_page(
+    *,
+    ports: dict[str, SearchQueryPort[Any]],
+    ordered_keys: Sequence[tuple[str, str]],
+    query: str | Sequence[str],
+    filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    leg_opts: SearchOptions | None,
+    run_legs: RunLegs,
+) -> list[FederatedSearchReadModel[Any]]:
+    """Re-fetch full hits for ``ordered_keys`` (one query per member, by id), in order.
+
+    A key whose hit is gone (deleted since the candidate fetch / snapshot write) is
+    skipped. Used by both the fresh thin search and thin-snapshot replay.
+    """
+
+    ids_by_member: dict[str, list[str]] = {}
+
+    for member, rid in ordered_keys:
+        ids_by_member.setdefault(member, []).append(rid)
+
+    members_in_order = list(ids_by_member.items())
+    pages = await run_legs(
+        [
+            _hydrate(ports[member], query, filters, ids, leg_opts)
+            for member, ids in members_in_order
+        ]
+    )
+
+    hydrated: dict[tuple[str, str], BaseModel] = {}
+
+    for (member, _ids), page in zip(members_in_order, pages, strict=True):
+        for hit in page.hits:
+            hydrated[(member, str(getattr(hit, ID_FIELD)))] = hit
+
+    return [
+        FederatedSearchReadModel(hit=hydrated[(member, rid)], member=member)
+        for member, rid in ordered_keys
+        if (member, rid) in hydrated
+    ]
+
+
+def federated_snapshot_rehydrator(
+    *,
+    ports: dict[str, SearchQueryPort[Any]],
+    leg_opts: SearchOptions | None,
+    run_legs: RunLegs,
+) -> Callable[
+    [Sequence[tuple[str, str]]], Awaitable[Sequence[FederatedSearchReadModel[Any]]]
+]:
+    """A re-fetch-by-id callback for thin-snapshot replay (current content, by id only).
+
+    Replay re-fetches each key's hit by id (no query/filters: the snapshot froze the
+    identities, not the matcher), so the returned content is current."""
+
+    async def _rehydrate(
+        ordered_keys: Sequence[tuple[str, str]],
+    ) -> Sequence[FederatedSearchReadModel[Any]]:
+        return await _hydrate_federated_page(
+            ports=ports,
+            ordered_keys=ordered_keys,
+            query="",
+            filters=None,
+            leg_opts=leg_opts,
+            run_legs=run_legs,
+        )
+
+    return _rehydrate
+
+
 # ....................... #
 
 
@@ -97,12 +186,19 @@ async def execute_federated_thin_offset(
     return_count: bool,
     return_type: type[BaseModel] | None,
     run_legs: RunLegs,
+    result_snapshot: SearchResultSnapshot | None = None,
+    rs_spec: SearchResultSnapshotSpec | None = None,
+    snapshot: SearchResultSnapshotOptions | None = None,
+    fp_computed: str = "",
+    write_snapshot: bool = False,
 ) -> Any:
     """Thin RRF offset page: id-only fetch, fuse on ``(member, id)``, hydrate the page.
 
     *legs* are the active ``(member, port, weight)`` triples (member weight already
     applied upstream). *run_legs* runs the per-leg thunks under the backend's
-    concurrency rules (pool-aware for Postgres, plain gather otherwise).
+    concurrency rules (pool-aware for Postgres, plain gather otherwise). When
+    *write_snapshot*, the fused ``(member, id)`` keys are streamed into the snapshot
+    store (tiny keys; replay re-fetches by id).
     """
 
     leg_page: PaginationExpression = {"limit": max(1, int(per_leg_limit))}
@@ -119,10 +215,26 @@ async def execute_federated_thin_offset(
         for (name, _port, weight), page in zip(legs, thin_pages, strict=True)
     ]
 
-    # 2. Fuse on (member, id); 3. window to the requested page.
+    # 2. Fuse on (member, id).
     merged = SearchResultSnapshot.weighted_rrf_merge_ids(leg_rows=leg_rows, k=rrf_k)
     total = len(merged)
 
+    # 2b. Snapshot write: stream the tiny (member, id) keys (no full records held).
+    handle = None
+
+    if write_snapshot and result_snapshot is not None and rs_spec is not None:
+        handle = await result_snapshot.put_ordered_snapshot_keys(
+            (
+                SearchResultSnapshot.federated_thin_record_key(member, rid)
+                for member, rid, _score in merged
+            ),
+            snap_opt=snapshot,
+            rs_spec=rs_spec,
+            fp_computed=fp_computed,
+            pool_len_before_cap=total,
+        )
+
+    # 3. Window to the requested page.
     offset = int((pagination or {}).get("offset") or 0)
     limit = (pagination or {}).get("limit")
     window = merged[offset:]
@@ -132,31 +244,14 @@ async def execute_federated_thin_offset(
 
     # 4. Hydrate only the page: re-fetch full hits per member, restricted to its ids.
     ports = {name: port for name, port, _weight in legs}
-    ids_by_member: dict[str, list[str]] = {}
-
-    for member, rid, _score in window:
-        ids_by_member.setdefault(member, []).append(rid)
-
-    members_in_order = list(ids_by_member.items())
-    hydrated_pages = await run_legs(
-        [
-            _hydrate(ports[member], query, filters, ids, leg_opts)
-            for member, ids in members_in_order
-        ]
+    models = await _hydrate_federated_page(
+        ports=ports,
+        ordered_keys=[(member, rid) for member, rid, _score in window],
+        query=query,
+        filters=filters,
+        leg_opts=leg_opts,
+        run_legs=run_legs,
     )
-
-    hydrated: dict[tuple[str, str], BaseModel] = {}
-
-    for (member, _ids), page in zip(members_in_order, hydrated_pages, strict=True):
-        for hit in page.hits:
-            hydrated[(member, str(getattr(hit, ID_FIELD)))] = hit
-
-    # 5. Reassemble in fused order (a hit deleted between fetch and hydrate is skipped).
-    models = [
-        FederatedSearchReadModel(hit=hydrated[(member, rid)], member=member)
-        for member, rid, _score in window
-        if (member, rid) in hydrated
-    ]
 
     if return_type is not None:
         rows = [
@@ -168,11 +263,11 @@ async def execute_federated_thin_offset(
     else:
         hits = models
 
-    # No snapshot / highlights / facets on this path (excluded by eligibility).
     return search_page_from_limit_offset(
         hits,
         pagination,
         total=total if return_count else None,
+        snapshot=handle,
     )
 
 

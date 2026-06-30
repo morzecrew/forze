@@ -9,14 +9,18 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.search import FederatedSearchSpec, SearchSpec
+from forze.application.contracts.search import SearchResultSnapshotSpec
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     execute_federated_thin_offset,
+    federated_snapshot_rehydrator,
     federated_thin_eligible,
+    federated_thin_format,
 )
 from forze_mock.adapters.search.command import MockSearchCommandAdapter
 from forze_mock.adapters.search.federated import MockFederatedSearchAdapter
 from forze_mock.adapters.search.query import MockSearchAdapter
+from forze_mock.adapters.search.snapshot import MockSearchResultSnapshotAdapter
 from forze_mock.state import MockState
 
 # ----------------------- #
@@ -77,7 +81,6 @@ def test_eligibility_gates() -> None:
         "members": members,
         "wants_highlights": False,
         "sorts": None,
-        "snapshot_write": False,
     }
 
     assert federated_thin_eligible(thin_merge=True, **base)
@@ -87,9 +90,6 @@ def test_eligibility_gates() -> None:
     )
     assert not federated_thin_eligible(
         thin_merge=True, **{**base, "sorts": {"title": "asc"}}
-    )
-    assert not federated_thin_eligible(
-        thin_merge=True, **{**base, "snapshot_write": True}
     )
 
     no_id = [
@@ -111,8 +111,13 @@ def test_eligibility_gates() -> None:
         members=no_id,
         wants_highlights=False,
         sorts=None,
-        snapshot_write=False,
     )
+
+    # federated_thin_format is spec-level (governs the snapshot key format): set by the
+    # opt-in + all-members-have-id, independent of per-request highlights/sorts.
+    assert federated_thin_format(members, thin_merge=True)
+    assert not federated_thin_format(members, thin_merge=False)
+    assert not federated_thin_format(no_id, thin_merge=True)
 
 
 # --- executor parity ------------------------------------------------------- #
@@ -202,6 +207,61 @@ async def test_thin_executor_paginates_window() -> None:
     assert len(page1.hits) == 2
     # total counts the full fused candidate set, not just the page.
     assert page1.count == 4
+
+
+@pytest.mark.asyncio
+async def test_thin_snapshot_write_and_replay_round_trip() -> None:
+    state = MockState()
+    leg_a, leg_b = await _two_legs(state)
+    ports_list = [
+        ("a", MockSearchAdapter(state=state, spec=leg_a)),
+        ("b", MockSearchAdapter(state=state, spec=leg_b)),
+    ]
+    active = [("a", ports_list[0][1], 1.0), ("b", ports_list[1][1], 1.0)]
+
+    rs_spec = SearchResultSnapshotSpec(name="snap", enabled=True, chunk_size=2)
+    result_snapshot = SearchResultSnapshot(
+        store=MockSearchResultSnapshotAdapter(state=MockState(), spec=rs_spec)
+    )
+
+    # Write: the thin executor stores tiny (member, id) keys and returns a handle.
+    first = await execute_federated_thin_offset(
+        legs=active,
+        query="alpha",
+        filters=None,
+        pagination={"limit": 10},
+        leg_opts=None,
+        rrf_k=60,
+        per_leg_limit=5000,
+        return_count=True,
+        return_type=None,
+        run_legs=_gather,
+        result_snapshot=result_snapshot,
+        rs_spec=rs_spec,
+        snapshot=None,
+        fp_computed="fp",
+        write_snapshot=True,
+    )
+    assert first.snapshot is not None
+    handle = first.snapshot
+
+    # Replay: re-fetch the page's hits by id from the legs (current content).
+    ports = {name: port for name, port in ports_list}
+    replay = await result_snapshot.read_federated_thin_snapshot_page_if_requested(
+        rs_spec=rs_spec,
+        snapshot={"id": handle.id, "fingerprint": handle.fingerprint},
+        fp_computed="fp",
+        pagination={"limit": 10},
+        return_type=None,
+        return_count=True,
+        rehydrate=federated_snapshot_rehydrator(
+            ports=ports, leg_opts=None, run_legs=_gather
+        ),
+    )
+
+    assert replay is not None
+    assert _idents(replay) == _idents(first)
+    assert replay.count == first.count
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import timedelta
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
@@ -474,6 +474,34 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
+    def federated_thin_record_key(member: str, record_id: str) -> str:
+        """``member \\0 id`` — the thin federated snapshot key (no full record).
+
+        The :attr:`~forze.application.contracts.search.FederatedSearchSpec.thin_merge`
+        snapshot stores these instead of the full-record key, so the snapshot is tiny
+        and the merge never holds full hits; replay re-fetches the page's hits by id
+        from each member."""
+
+        return f"{member}\0{record_id}"
+
+    # ....................... #
+
+    @staticmethod
+    def parse_federated_thin_record_key(key: str) -> tuple[str, str]:
+        """Split a thin federated key into ``(member, id)``."""
+
+        if "\0" not in key:
+            raise exc.internal(
+                "Invalid thin federated snapshot key (missing partition)."
+            )
+
+        member, record_id = key.split("\0", 1)
+
+        return member, record_id
+
+    # ....................... #
+
+    @staticmethod
     def hydrate_federated_record_key(
         key: str,
         federated_spec: FederatedSearchSpec[M_co],
@@ -729,6 +757,41 @@ class SearchResultSnapshot:
         or its id range cannot be served (stale/expired run).
         """
 
+        window = await self._open_snapshot_window(
+            snapshot_opts, fp_computed=fp_computed, pagination=pagination
+        )
+
+        if window is None:
+            return None
+
+        raw_keys, handle, total_snap, pagination_d = window
+
+        return _shape_snapshot_page(
+            [hydrate(k) for k in raw_keys],
+            pagination=pagination_d,
+            total=total_snap if return_count else None,
+            snapshot=handle,
+            return_type=return_type,
+            return_fields=return_fields,
+            to_return_rows=to_return_rows,
+        )
+
+    # ....................... #
+
+    async def _open_snapshot_window(
+        self,
+        snapshot_opts: SearchResultSnapshotOptions | None,
+        *,
+        fp_computed: str,
+        pagination: Mapping[str, Any] | None,
+    ) -> tuple[list[str], SearchSnapshotHandle, int, dict[str, Any]] | None:
+        """Resolve a snapshot read window: the page's ordered record keys + handle.
+
+        Shared by the sync-hydrate read (:meth:`_read_snapshot_page`) and the async
+        re-fetch read (:meth:`read_federated_thin_snapshot_page_if_requested`). Returns
+        ``None`` when the snapshot is absent or its id range cannot be served.
+        """
+
         if snapshot_opts is None or "id" not in snapshot_opts:
             return None
 
@@ -764,15 +827,7 @@ class SearchResultSnapshot:
             expires_at=sm.expires_at if sm else None,
         )
 
-        return _shape_snapshot_page(
-            [hydrate(k) for k in raw_keys],
-            pagination=pagination_d,
-            total=total_snap if return_count else None,
-            snapshot=handle,
-            return_type=return_type,
-            return_fields=return_fields,
-            to_return_rows=to_return_rows,
-        )
+        return raw_keys, handle, total_snap, pagination_d
 
     # ....................... #
 
@@ -878,6 +933,58 @@ class SearchResultSnapshot:
             return_type=return_type,
             return_fields=None,
             return_count=return_count,
+        )
+
+    # ....................... #
+
+    async def read_federated_thin_snapshot_page_if_requested(
+        self,
+        *,
+        rs_spec: SearchResultSnapshotSpec | None,
+        snapshot: SearchResultSnapshotOptions | None,
+        fp_computed: str,
+        pagination: Mapping[str, Any] | None,
+        return_type: type[T_co] | None,
+        return_count: bool,
+        rehydrate: Callable[
+            [Sequence[tuple[str, str]]],
+            Awaitable[Sequence[FederatedSearchReadModel[Any]]],
+        ],
+    ) -> Any:
+        """Replay a thin federated snapshot page by re-fetching its hits from the legs.
+
+        The thin snapshot stores only ``(member, id)`` keys, so replay parses the page's
+        keys and hands them to *rehydrate* (which batch-fetches the full hits from each
+        member by id). Unlike the full-record snapshot, the replayed **content is current**
+        (re-fetched), the order/identities are frozen, and a since-deleted hit drops out.
+        Returns ``None`` when the snapshot is absent or its id range cannot be served.
+        """
+
+        if rs_spec is None:
+            return None
+
+        window = await self._open_snapshot_window(
+            snapshot, fp_computed=fp_computed, pagination=pagination
+        )
+
+        if window is None:
+            return None
+
+        raw_keys, handle, total_snap, pagination_d = window
+        parsed = [self.parse_federated_thin_record_key(k) for k in raw_keys]
+        items = await rehydrate(parsed)
+
+        return _shape_snapshot_page(
+            items,
+            pagination=pagination_d,
+            total=total_snap if return_count else None,
+            snapshot=handle,
+            return_type=return_type,
+            return_fields=None,
+            to_return_rows=lambda hits: [
+                {"hit": it.hit.model_dump(mode="json"), "member": it.member}
+                for it in hits
+            ],
         )
 
 

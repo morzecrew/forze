@@ -49,7 +49,9 @@ from forze.application.integrations.search import (
     build_federated_highlight_index,
     execute_federated_thin_offset,
     federated_highlights_for_hits,
+    federated_snapshot_rehydrator,
     federated_thin_eligible,
+    federated_thin_format,
 )
 from forze.base.exceptions import exc
 from forze.base.serialization import default_model_codec
@@ -448,13 +450,24 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             options,
         )
 
+        # Spec-level (RRF mode only): thin specs store/replay tiny ``(member, id)``
+        # snapshot keys; the marker keeps a thin snapshot from being read as a full one.
+        effective_thin = federated_thin_format(
+            self.federated_spec.members, thin_merge=self.federated_spec.thin_merge
+        )
+
+        fp_extras: dict[str, object] = {"merge": "rrf"}
+
+        if effective_thin:
+            fp_extras["thin"] = True
+
         fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,
             sorts,
             spec_name=self.federated_spec.name,
             rrf_k=int(self.rrf_k),
-            extras={"merge": "rrf"},
+            extras=fp_extras,
         )
 
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot
@@ -467,8 +480,23 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             and snapshot is not None
             and "id" in snapshot
         ):
-            maybe_page = (
-                await self.result_snapshot.read_federated_snapshot_page_if_requested(
+            if effective_thin:
+                maybe_page = await self.result_snapshot.read_federated_thin_snapshot_page_if_requested(
+                    rs_spec=rs_spec,
+                    snapshot=snapshot,
+                    fp_computed=fp_computed,
+                    pagination=dict(pagination or {}),
+                    return_type=return_type,
+                    return_count=return_count,
+                    rehydrate=federated_snapshot_rehydrator(
+                        ports={name: port for name, port in self.legs},
+                        leg_opts=leg_opts,
+                        run_legs=self._run_legs,
+                    ),
+                )
+
+            else:
+                maybe_page = await self.result_snapshot.read_federated_snapshot_page_if_requested(
                     federated_spec=self.federated_spec,
                     rs_spec=rs_spec,
                     snapshot=snapshot,
@@ -477,7 +505,6 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                     return_type=return_type,
                     return_count=return_count,
                 )
-            )
 
             if maybe_page is not None:
                 return maybe_page
@@ -512,7 +539,6 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             thin_merge=self.federated_spec.thin_merge,
             wants_highlights=wants_highlights,
             sorts=sorts,
-            snapshot_write=snapshot_write,
         ):
             return await execute_federated_thin_offset(
                 legs=active,
@@ -525,6 +551,11 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 return_count=return_count,
                 return_type=return_type,
                 run_legs=self._run_legs,
+                result_snapshot=self.result_snapshot,
+                rs_spec=rs_spec,
+                snapshot=snapshot,
+                fp_computed=fp_computed,
+                write_snapshot=snapshot_write,
             )
 
         async def _run_leg(
@@ -581,6 +612,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             fp_computed=fp_computed,
             merged_for_snap=merged,
             highlights=federated_highlights_for_hits(window_models, hl_index),
+            write_snapshot=not effective_thin,  # thin specs only write the thin format
         )
 
     # ....................... #
@@ -600,11 +632,13 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             tuple[FederatedSearchReadModel[M], float] | tuple[Any, float]
         ],
         highlights: list[Any] | None = None,
+        write_snapshot: bool = True,
     ) -> Any:
         handle_out: SearchSnapshotHandle | None = None
 
         if (
-            self.result_snapshot is not None
+            write_snapshot
+            and self.result_snapshot is not None
             and rs_spec is not None
             and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
         ):
