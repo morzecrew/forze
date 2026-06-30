@@ -1,6 +1,6 @@
 """Resolve a (possibly dotted) sort/field path against a read model's types."""
 
-from collections.abc import Mapping as MappingABC
+from collections.abc import Mapping
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
@@ -54,8 +54,8 @@ def _str_keyed_mapping_value(annotation: Any) -> Any:
     # a bare ``dict``/``Mapping`` annotation has no origin, so fall back to it.
     origin = get_origin(annotation) or annotation
 
-    if origin not in (dict, MappingABC) and not (
-        isinstance(origin, type) and issubclass(origin, MappingABC)
+    if origin not in (dict, Mapping) and not (
+        isinstance(origin, type) and issubclass(origin, Mapping)
     ):
         return _MISSING
 

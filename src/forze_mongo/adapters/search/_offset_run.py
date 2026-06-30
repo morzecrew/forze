@@ -26,7 +26,11 @@ from forze.application.integrations.search.offset_executor import (
 from forze.base.primitives import JsonDict
 from forze_mongo.kernel.client.port import MongoClientPort
 
-from ._pipeline import append_pagination_stages, build_count_pipeline
+from ._pipeline import (
+    append_pagination_stages,
+    build_count_pipeline,
+    thin_ranked_pipeline,
+)
 from .base import MongoSearchGateway
 
 # ----------------------- #
@@ -67,22 +71,51 @@ class _MongoOffsetHooks:
         *,
         want_snap: bool,
     ) -> OffsetRowsResult:
+        _ = want_snap
         coll = await self._collection()
         offset = window.fetch_offset
         limit = int(window.fetch_limit) if window.fetch_limit is not None else None
 
-        data_pipeline = append_pagination_stages(
-            self.ranked_pipeline,
+        thin = thin_ranked_pipeline(self.ranked_pipeline)
+
+        if thin is None:
+            # No $sort to thin (e.g. a bare $vectorSearch ordered by the index):
+            # keep the plain full-document fetch.
+            data_pipeline = append_pagination_stages(
+                self.ranked_pipeline,
+                offset=offset,
+                limit=limit,
+            )
+            rows = await self.client.aggregate(coll, data_pipeline, limit=None)
+
+            return OffsetRowsResult(rows=self._normalize(rows))
+
+        # Late materialization: rank/sort/skip/limit lightweight {_id, sort-key}
+        # docs, then hydrate only this window's full documents by _id — the
+        # server-side sort never runs over the heavy documents.
+        thin_paged = append_pagination_stages(
+            thin,
             offset=offset,
-            limit=int(limit) if limit is not None else None,
+            limit=limit,
+            strip_rank=False,
         )
-        rows = await self.client.aggregate(coll, data_pipeline, limit=None)
-        normalized = [
+        thin_rows = await self.client.aggregate(coll, thin_paged, limit=None)
+        ordered_ids = [r["_id"] for r in thin_rows]
+
+        if not ordered_ids:
+            return OffsetRowsResult(rows=[])
+
+        full = await self.client.find_many(coll, {"_id": {"$in": ordered_ids}})
+        by_id = {doc["_id"]: doc for doc in full}
+        hydrated = [by_id[_id] for _id in ordered_ids if _id in by_id]
+
+        return OffsetRowsResult(rows=self._normalize(hydrated))
+
+    def _normalize(self, rows: list[JsonDict]) -> list[JsonDict]:
+        return [
             self.gw._from_storage_doc(r)  # pyright: ignore[reportPrivateUsage]
             for r in rows
         ]
-
-        return OffsetRowsResult(rows=normalized)
 
 
 # ....................... #

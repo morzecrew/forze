@@ -34,8 +34,8 @@ part. The oracle reads simulated state — it does not itself re-establish that 
 """
 
 from collections import defaultdict
-from collections.abc import Mapping as MappingABC
-from typing import Any, Awaitable, Callable, Iterable, Mapping, cast, final
+from collections.abc import Mapping
+from typing import Any, Awaitable, Callable, Iterable, cast, final
 
 import attrs
 
@@ -227,7 +227,9 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
         # Per-transaction mutations in trace order: an upsert (create/update result event) carries the
         # full post-write entity; a delete (``kill``) carries only its key and removes the row — so the
         # fold drops it rather than letting a deleted document linger and skew the aggregate.
-        mutations: dict[int, list[tuple[Any, Mapping[str, Any] | None]]] = defaultdict(list)
+        mutations: dict[int, list[tuple[Any, Mapping[str, Any] | None]]] = defaultdict(
+            list
+        )
         saw_upsert_op = False
         captured_upsert = False
 
@@ -238,11 +240,13 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
                 continue
 
             tx_id = fields.get("tx_id")
+
             if tx_id is None:
                 continue
 
             if fields.get("op") in _DELETE_OPS:
                 key = fields.get("key")
+
                 if key is None:
                     # A bulk delete (kill_many) records no per-row key, so the fold
                     # cannot drop the removed rows — checking the law against rows
@@ -256,13 +260,14 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
                         "(compile_oracle without per_commit) for runs that bulk-delete",
                         code="per_commit_oracle_cannot_fold_bulk_delete",
                     )
+
                 mutations[int(tx_id)].append((key, None))
                 continue
 
             saw_upsert_op = True
             result = fields.get("result")
 
-            if isinstance(result, MappingABC) and "id" in result:
+            if isinstance(result, Mapping) and "id" in result:
                 captured_upsert = True
                 mutations[int(tx_id)].append(
                     (result["id"], result)  # pyright: ignore[reportUnknownArgumentType]
@@ -298,7 +303,9 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
         for tx_id, _seq in commits:
             for entity_id, entity in mutations.get(tx_id, []):
                 if entity is None:
-                    materialized.pop(entity_id, None)  # a committed delete drops the row
+                    materialized.pop(
+                        entity_id, None
+                    )  # a committed delete drops the row
                 else:
                     materialized[entity_id] = entity
 
