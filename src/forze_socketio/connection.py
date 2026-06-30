@@ -19,7 +19,16 @@ require_socketio()
 from contextlib import AbstractContextManager
 from datetime import datetime
 from inspect import isawaitable
-from typing import Any, Awaitable, Callable, Mapping, Protocol, final, runtime_checkable
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Mapping,
+    Protocol,
+    final,
+    runtime_checkable,
+)
 from uuid import UUID
 
 import attrs
@@ -31,12 +40,37 @@ from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import utcnow
+from forze.base.primitives import HlcTimestamp, utcnow
 
 from .exceptions import GENERIC_INTERNAL_DETAIL, is_server_error_kind, log_server_error
 from .gateway import room_for
-from .mailbox import MailboxCursors, RealtimeMailbox
+from .mailbox import MailboxCursors, MailboxEntry, RealtimeMailbox
 from .routing import IDENTITY_SESSION_KEY, SocketIOConnect
+
+
+async def _iter_replay(
+    mailbox: RealtimeMailbox,
+    *,
+    principal: str,
+    since: HlcTimestamp | None,
+) -> AsyncIterator[MailboxEntry]:
+    """Stream a mailbox's backlog, preferring the paged ``replay_since`` when present.
+
+    ``replay_since`` is optional on the :class:`RealtimeMailbox` protocol, so a mailbox
+    that only implements the buffered :meth:`~RealtimeMailbox.read_since` still works —
+    it just materializes the page at once instead of streaming.
+    """
+
+    stream = getattr(mailbox, "replay_since", None)
+
+    if stream is not None:
+        async for entry in stream(principal=principal, since=since):
+            yield entry
+
+        return
+
+    for entry in await mailbox.read_since(principal=principal, since=since):
+        yield entry
 
 # ----------------------- #
 
@@ -222,6 +256,10 @@ class _ConnectionLifecycle:
 
         client_key = connection.client_key(sid)
 
+        # Stream the backlog page-by-page inside the scope and emit as we go, so peak
+        # memory is one page rather than the whole (up to ``cap``) backlog per
+        # reconnecting device. The scope stays open during the emits, but the document
+        # query ports do not pin a connection between paged reads.
         async with self.runtime.scope():
             ctx = self.runtime.get_context()
             with _bind_connection(
@@ -234,17 +272,16 @@ class _ConnectionLifecycle:
                 since = await cursors.get(
                     principal=connection.principal, client_key=client_key
                 )
-                entries = await mailbox.read_since(
-                    principal=connection.principal, since=since
-                )
 
-        for entry in entries:
-            await self.sio.emit(
-                entry.event,
-                {"id": entry.event_id, "data": entry.payload},
-                to=sid,
-                namespace=self.namespace,
-            )
+                async for entry in _iter_replay(
+                    mailbox, principal=connection.principal, since=since
+                ):
+                    await self.sio.emit(
+                        entry.event,
+                        {"id": entry.event_id, "data": entry.payload},
+                        to=sid,
+                        namespace=self.namespace,
+                    )
 
     # ....................... #
 

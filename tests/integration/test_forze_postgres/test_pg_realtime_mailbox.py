@@ -175,6 +175,32 @@ async def test_store_read_since_and_tenant_isolation(
 
 
 @pytest.mark.asyncio
+async def test_replay_since_keyset_pages_over_postgres(
+    mailbox_ctx: ExecutionContext,
+) -> None:
+    """``replay_since`` HLC keyset-pages correctly against real Postgres."""
+    ctx = mailbox_ctx
+
+    with _bind(ctx, _T1):
+        mb = build_realtime_mailbox(ctx, replay_page_size=2)
+        for n in range(1, 6):
+            await mb.store(
+                principal="u1", event_id=_eid(n), hlc=_hlc(n), signal=_signal(f"s{n}")
+            )
+
+        streamed = [
+            e.event_id async for e in mb.replay_since(principal="u1", since=None)
+        ]
+        after = [
+            e.event_id async for e in mb.replay_since(principal="u1", since=_hlc(3))
+        ]
+
+    # 5 rows streamed oldest-first across 3 keyset (`hlc > cursor`) pages of size 2.
+    assert streamed == [_eid(n) for n in range(1, 6)]
+    assert after == [_eid(4), _eid(5)]
+
+
+@pytest.mark.asyncio
 async def test_cursors_monotonic_min_and_ack_trim(
     mailbox_ctx: ExecutionContext,
 ) -> None:

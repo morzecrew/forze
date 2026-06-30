@@ -55,6 +55,19 @@ async def test_store_read_since_is_ordered_and_filtered() -> None:
     assert [e.event_id for e in after_e1] == ["e2", "e3"]  # strictly after
 
 
+async def test_replay_since_streams_same_order_as_read_since() -> None:
+    mb = InMemoryRealtimeMailbox()
+    await mb.store(principal="u1", event_id="e2", hlc=_hlc(2), signal=_signal("b"))
+    await mb.store(principal="u1", event_id="e1", hlc=_hlc(1), signal=_signal("a"))
+    await mb.store(principal="u1", event_id="e3", hlc=_hlc(3), signal=_signal("c"))
+
+    streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
+    after = [e.event_id async for e in mb.replay_since(principal="u1", since=_hlc(1))]
+
+    assert streamed == ["e1", "e2", "e3"]
+    assert after == ["e2", "e3"]
+
+
 async def test_store_is_idempotent_on_event_id() -> None:
     mb = InMemoryRealtimeMailbox()
 

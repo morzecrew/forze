@@ -16,7 +16,7 @@ one row. Ordering/cursor values are the HLC the durable path carries, stored
 packed (monotonic int, range-queryable). Encryption is whatever the app sets on the spec.
 """
 
-from typing import Any, Final, final
+from typing import Any, AsyncIterator, Final, final
 from uuid import UUID, uuid5
 
 import attrs
@@ -39,6 +39,9 @@ from .specs import DEFAULT_REALTIME_CHANNEL
 
 _DEFAULT_CAP: Final = 1000
 """Max entries replayed per principal (newest-first retention bound)."""
+
+_DEFAULT_REPLAY_PAGE_SIZE: Final = 100
+"""Per-query page size for streamed replay (kept well below ``_DEFAULT_CAP``)."""
 
 _CURSOR_NS: Final = UUID("1d3e0b5a-7c9f-4e2a-8b6d-0a1c2e4f6a8b")
 """Fixed namespace for deriving a cursor's id from ``(principal, client_key)``."""
@@ -191,6 +194,9 @@ class DocumentRealtimeMailbox:
     cap: int = _DEFAULT_CAP
     """The max entries replayed per principal (newest-first retention bound)."""
 
+    replay_page_size: int = _DEFAULT_REPLAY_PAGE_SIZE
+    """Per-query page size for :meth:`replay_since` (keyset-paged, well below :attr:`cap`)."""
+
     # ....................... #
 
     _stored: int = attrs.field(default=0, init=False)
@@ -264,6 +270,54 @@ class DocumentRealtimeMailbox:
             )
             for row in page.hits
         ]
+
+    # ....................... #
+
+    async def replay_since(
+        self, *, principal: str, since: HlcTimestamp | None
+    ) -> AsyncIterator[MailboxEntry]:
+        """Stream entries after *since*, keyset-paged by HLC, bounded by :attr:`cap`.
+
+        The HLC is the monotonic per-principal position (the cursor value), so
+        ``hlc > last`` advances the keyset without an offset rescan. Only one page of
+        rows is materialized at a time, so peak memory is one page per reconnecting
+        device instead of the whole (up to :attr:`cap`) backlog.
+        """
+
+        cursor = since
+        remaining = self.cap
+
+        while remaining > 0:
+            values: dict[str, Any] = {"principal": principal}
+
+            if cursor is not None:
+                values["hlc"] = {"$gt": cursor.pack()}
+
+            limit = min(self.replay_page_size, remaining)
+            page = await self.query.find_many(
+                filters={"$values": values},
+                sorts={"hlc": "asc"},
+                pagination={"limit": limit},
+            )
+
+            if not page.hits:
+                return
+
+            for row in page.hits:
+                self._replayed += 1
+                yield MailboxEntry(
+                    event_id=row.event_id,
+                    hlc=HlcTimestamp.unpack(row.hlc),
+                    event=row.event,
+                    payload=row.payload,
+                )
+
+            cursor = HlcTimestamp.unpack(page.hits[-1].hlc)
+            remaining -= len(page.hits)
+
+            # A short page means the backend has no more rows past the cursor.
+            if len(page.hits) < limit:
+                return
 
     # ....................... #
 
@@ -411,6 +465,7 @@ def build_realtime_mailbox(
     *,
     spec: DocumentSpec[_MailboxRead, _MailboxDoc, _MailboxCreate, Any] | None = None,
     cap: int = _DEFAULT_CAP,
+    replay_page_size: int = _DEFAULT_REPLAY_PAGE_SIZE,
 ) -> DocumentRealtimeMailbox:
     """Resolve the mailbox's document ports once and build it — the publisher pattern.
 
@@ -429,6 +484,7 @@ def build_realtime_mailbox(
         command=ctx.document.command(resolved),
         query=ctx.document.query(resolved),
         cap=cap,
+        replay_page_size=replay_page_size,
     )
 
 
