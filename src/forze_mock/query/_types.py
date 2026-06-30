@@ -6,9 +6,7 @@ from typing import (
     TypeVar,
 )
 from pydantic import BaseModel
-from forze.application.contracts.querying.internal.matching import (
-    _MISSING,  # type: ignore[reportPrivateUsage]
-)
+from forze.base.primitives.projection import MISSING as _MISSING
 from forze.domain.models import BaseDTO, Document, ReadDocument
 
 R = TypeVar("R", bound=ReadDocument)

@@ -27,7 +27,7 @@ from forze.application.integrations.search import (
     SearchResultSnapshot,
     decrypt_search_rows,
 )
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, build_projection
 
 from .._cursor_run import parse_search_cursor
 from .._materialize_hits import decode_search_hits, materialize_search_page, search_trust_source
@@ -441,7 +441,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         )
 
         if return_fields is not None:
-            rj = [{k: r.get(k, None) for k in return_fields} for r in mat_rows]
+            rj = [build_projection(r, return_fields) for r in mat_rows]
             return SearchCursorPage(
                 hits=rj, next_cursor=nxt, prev_cursor=prv, has_more=has_more
             )

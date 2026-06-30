@@ -24,10 +24,12 @@ def assert_cursor_projection_includes_sort_keys(
     A nested/dotted sort key is satisfied by projecting its **root** column (``address``
     for ``address.city``): the whole JSON column is fetched and the cursor token reads the
     nested value out of it, so the caller need only include the root in ``return_fields``.
+    A dotted *return field* (``address.city``) likewise contributes its root column, so the
+    membership test compares roots on both sides.
     """
     if return_fields is None:
         return
-    projected = set(return_fields)
+    projected = {f.split(".", 1)[0] for f in return_fields}
     if all(k.split(".", 1)[0] in projected for k in sort_keys):
         return
     raise exc.precondition(

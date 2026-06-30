@@ -31,7 +31,12 @@ from forze.application.integrations.persistence import (
     TenantResolvedRelationMixin,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, OnceCell
+from forze.base.primitives import (
+    JsonDict,
+    OnceCell,
+    build_projection,
+    projection_roots,
+)
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD
 
@@ -385,19 +390,29 @@ class MongoGateway[M: BaseModel](
     # ....................... #
 
     def render_projection(self, return_fields: Sequence[str] | None) -> JsonDict | None:
-        """Build a Mongo projection dict, excluding ``_id``."""
+        """Build a Mongo projection dict, excluding ``_id``.
+
+        A dotted projection path (``contract.reg_number``) is fetched via its **root** field:
+        Mongo returns the whole root document and :meth:`return_subset` reshapes the requested
+        nested leaves out of it. Projecting by root (not the dotted leaf) also sidesteps Mongo's
+        path-collision error when a root and one of its leaves are both requested.
+        """
 
         if return_fields is None:
             return None
 
-        return {**{field: 1 for field in return_fields}, "_id": 0}
+        return {**{root: 1 for root in projection_roots(return_fields)}, "_id": 0}
 
     # ....................... #
 
     def return_subset(self, raw: JsonDict, return_fields: Sequence[str]) -> JsonDict:
-        """Extract only the requested fields from a document dict."""
+        """Reshape *raw* to the requested (possibly dotted) projection fields.
 
-        return {k: raw.get(k, None) for k in return_fields}
+        Shares the cross-backend reshaper so a dotted path yields the nested
+        ``{"contract": {"reg_number": ...}}`` shape, matching the mock oracle and Postgres.
+        """
+
+        return build_projection(raw, return_fields)
 
     # ....................... #
 

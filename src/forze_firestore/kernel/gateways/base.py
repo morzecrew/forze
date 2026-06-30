@@ -30,7 +30,7 @@ from forze.application.integrations.persistence import (
     TenantResolvedRelationMixin,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, OnceCell
+from forze.base.primitives import JsonDict, OnceCell, build_projection
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD
 
@@ -285,7 +285,10 @@ class FirestoreGateway[M: BaseModel](
     # ....................... #
 
     def return_subset(self, raw: JsonDict, return_fields: Sequence[str]) -> JsonDict:
-        return {k: raw.get(k, None) for k in return_fields}
+        # Shared reshaper: a dotted path yields nested ``{"contract": {"reg_number": ...}}``,
+        # matching the mock oracle and the other backends (Firestore fetches the whole document,
+        # so the nested leaf is already present to reshape out of).
+        return build_projection(raw, return_fields)
 
     # ....................... #
 

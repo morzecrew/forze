@@ -433,7 +433,8 @@ def test_project_passthrough_and_missing_skip() -> None:
     doc = {"a": 1, "b": {"c": 2}}
     assert _project(doc, None) == doc  # no return_fields → full copy
     out = _project(doc, ["a", "b.c", "missing"])
-    assert out == {"a": 1, "b.c": 2}  # missing field skipped
+    # A dotted path reshapes into the nested output; a missing field is skipped.
+    assert out == {"a": 1, "b": {"c": 2}}
 
 
 def test_sort_docs_empty_keys_passthrough() -> None:

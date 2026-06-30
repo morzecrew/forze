@@ -30,7 +30,7 @@ from forze.application.integrations.persistence import (
     TenantResolvedRelationMixin,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, OnceCell
+from forze.base.primitives import JsonDict, OnceCell, projection_roots
 from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
@@ -409,14 +409,19 @@ class PostgresGateway[M: BaseModel](
         use: list[str],
         table_alias: str | None,
     ) -> sql.Composable:
-        if bad := [f for f in use if f not in self.read_fields]:
+        # A dotted projection path (``contract.reg_number``) selects its whole root column;
+        # the nested leaf is reshaped out of the fetched JSONB in Python afterwards (the
+        # caller materializes rows via ``build_projection``). So validate and emit by root.
+        roots = projection_roots(use)
+
+        if bad := [f for f in roots if f not in self.read_fields]:
             raise exc.precondition(
                 f"Unknown projection field(s): {bad}.", code="field_not_on_read_model"
             )
 
         return sql.SQL(", ").join(
             sql.Identifier(f) if table_alias is None else sql.Identifier(table_alias, f)
-            for f in use
+            for f in roots
         )
 
     # ....................... #

@@ -114,7 +114,13 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         *,
         for_update: RowLockMode = False,
     ) -> Awaitable[JsonDict | None]:
-        """Find a single document by filters and project ``fields`` to a JSON mapping."""
+        """Find a single document by filters and project ``fields`` to a JSON mapping.
+
+        ``fields`` accepts dotted paths: ``contract.reg_number`` returns the nested
+        ``{"contract": {"reg_number": ...}}`` shape (sibling leaves merge under one parent,
+        a requested root subsumes its leaves, an absent leaf is omitted). The same rule
+        applies to every ``project_*`` method on this port.
+        """
         ...  # pragma: no cover
 
     def select(

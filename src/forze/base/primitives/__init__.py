@@ -65,6 +65,12 @@ from .time_source import (
     bind_time_source,
     current_time_source,
 )
+from .projection import (
+    MISSING,
+    build_projection,
+    path_get,
+    projection_roots,
+)
 from .types import JsonDict, StrKey
 from .uuid import uuid4, uuid7
 
@@ -119,6 +125,10 @@ __all__ = [
     "ContextVarTrace",
     "OnceCell",
     "normalize_string",
+    "MISSING",
+    "build_projection",
+    "path_get",
+    "projection_roots",
     "JsonDict",
     "StrKey",
     "StrKeyMapping",

@@ -5,6 +5,7 @@ from typing import Any, Sequence, TypeVar, cast
 from pydantic import BaseModel
 
 from ..primitives import JsonDict
+from ..primitives.projection import build_projection
 from .defaults import default_model_codec
 from .model_codec import ModelCodec
 
@@ -85,7 +86,7 @@ def materialize_mapping_rows[M: BaseModel](
     """Build a search/document page from row dicts (shared materialization rules)."""
 
     if return_fields is not None:
-        return [{k: r.get(k, None) for k in return_fields} for r in page_rows]
+        return [build_projection(r, return_fields) for r in page_rows]
 
     if return_type is not None:
         if pool is not None and return_type == model_type:
