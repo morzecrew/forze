@@ -183,6 +183,26 @@ class RoutedFirestoreClient(
             start_before_id=start_before_id,
         )
 
+    async def query_stream_batched(
+        self,
+        coll: AsyncCollectionReference,
+        *,
+        filters: BaseFilter | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[list[JsonDict]]:
+        inner = await self._get_client()
+
+        async for batch in inner.query_stream_batched(
+            coll,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            fetch_batch_size=fetch_batch_size,
+        ):
+            yield batch
+
     async def count_documents(
         self,
         coll: AsyncCollectionReference,
