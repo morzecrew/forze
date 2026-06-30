@@ -26,8 +26,13 @@ from forze_kits.dto.querying import (
 # ----------------------- #
 
 
-class BaseSearchRequestDTO(BaseDTO):
-    """Base search request payload."""
+class BaseSearchRequestDTO[O: SearchOptions = SearchOptions](BaseDTO):
+    """Base search request payload, generic over the per-request options shape.
+
+    ``O`` defaults to :class:`SearchOptions` for single-index search; hub and federated
+    requests parametrize it with :class:`MultiSourceSearchOptions` so their ``options`` body
+    also accepts the member-selection and merge-pool keys.
+    """
 
     query: str | list[str] = ""
     """Full-text query string, or list of phrases (combined per ``phrase_combine``)."""
@@ -38,7 +43,7 @@ class BaseSearchRequestDTO(BaseDTO):
     sorts: OptionalSortExpression = None
     """Optional sort expression (field name to `"asc"` or `"desc"`); a bare `{}` is treated as no sort."""
 
-    options: SearchOptions | None = None
+    options: O | None = None
     """Optional search options."""
 
     snapshot: SearchResultSnapshotOptions | None = None
@@ -48,7 +53,9 @@ class BaseSearchRequestDTO(BaseDTO):
 # ....................... #
 
 
-class SearchRequestDTO(Pagination, BaseSearchRequestDTO):
+class SearchRequestDTO[O: SearchOptions = SearchOptions](
+    Pagination, BaseSearchRequestDTO[O]
+):
     """Search request payload for typed document search.
 
     When `query` is non-empty (or a non-empty list of phrases), backends run
@@ -62,7 +69,7 @@ class SearchRequestDTO(Pagination, BaseSearchRequestDTO):
 # ....................... #
 
 
-class ProjectedSearchRequestDTO(SearchRequestDTO):
+class ProjectedSearchRequestDTO[O: SearchOptions = SearchOptions](SearchRequestDTO[O]):
     """Search request with required field projection for raw results
 
     Extends `SearchRequestDTO` with `return_fields`.
@@ -77,14 +84,18 @@ class ProjectedSearchRequestDTO(SearchRequestDTO):
 # ....................... #
 
 
-class CursorSearchRequestDTO(CursorPagination, BaseSearchRequestDTO):
+class CursorSearchRequestDTO[O: SearchOptions = SearchOptions](
+    CursorPagination, BaseSearchRequestDTO[O]
+):
     """Cursor search request payload for typed document search."""
 
 
 # ....................... #
 
 
-class ProjectedCursorSearchRequestDTO(CursorSearchRequestDTO):
+class ProjectedCursorSearchRequestDTO[O: SearchOptions = SearchOptions](
+    CursorSearchRequestDTO[O]
+):
     """Cursor search request with required field projection for raw results."""
 
     return_fields: set[str] = Field(min_length=1)
@@ -113,6 +124,11 @@ class SearchSnapshotHandleDTO(BaseDTO):
     capped: bool = False
     """Whether the result set was truncated to ``max_ids`` when the snapshot was written."""
 
+    expires_at: int | None = None
+    """Unix timestamp (UTC seconds) when the snapshot expires and replay stops serving it,
+    or ``None`` for a legacy run written before expiry was tracked. Read it to know how long
+    ``id`` / ``fingerprint`` stay valid before the query must be re-run."""
+
     # ....................... #
 
     @classmethod
@@ -130,6 +146,7 @@ class SearchSnapshotHandleDTO(BaseDTO):
             fingerprint=handle.fingerprint,
             total=handle.total,
             capped=handle.capped,
+            expires_at=handle.expires_at,
         )
 
 
