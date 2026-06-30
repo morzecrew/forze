@@ -7,7 +7,16 @@ require_clickhouse()
 import asyncio
 from datetime import timedelta
 from operator import itemgetter
-from typing import Any, Awaitable, Callable, Sequence, TypeVar, cast, final
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Sequence,
+    TypeVar,
+    cast,
+    final,
+)
 
 import attrs
 from clickhouse_connect.driver import (  # type: ignore[import-untyped]
@@ -267,50 +276,120 @@ class ClickHouseClient(ClickHouseClientPort):
         settings["max_block_size"] = fetch_batch_size
 
         # Single retry layer: the streaming execution below does not go
-        # through ``run_query`` (which retries itself), so a transient
-        # failure restarts at most ``read_retry_attempts`` times total.
+        # through ``run_query`` (which retries itself). ``__stream_blocks`` is
+        # re-entered from scratch on each attempt (a fresh stream), so a
+        # transient failure restarts at most ``read_retry_attempts`` times total
+        # while the result is still buffered as one list.
         async def _run() -> list[JsonDict]:
-            ch = self.__require_client()
             all_rows: list[JsonDict] = []
 
-            stream = await ch.query_row_block_stream(  # type: ignore[untyped-call]
-                query_sql,
-                parameters=bound_params,
-                settings=settings,
-            )
-
-            async with stream:
-                # ``StreamContext.source`` is typed as a bare ``Closable``; for a
-                # query row-block stream it is the underlying ``QueryResult``,
-                # whose first block is parsed eagerly so ``column_names`` is set.
-                source = cast(QueryResult, stream.source)
-                column_names: tuple[str, ...] = source.column_names
-
-                # Badly typed...
-                async for block in stream:  # pyright: ignore[reportUnknownVariableType]
-                    for (
-                        row
-                    ) in (  # pyright: ignore[reportOptionalIterable, reportUnknownVariableType]
-                        block
-                    ):  # pyright: ignore[reportOptionalIterable, reportUnknownVariableType]
-                        all_rows.append(
-                            dict(
-                                zip(
-                                    column_names,
-                                    row,  # pyright: ignore[reportUnknownArgumentType]
-                                )
-                            )
-                        )
-
-                    # ``LIMIT`` already caps the result server-side; this is a
-                    # defensive client-side stop that also ends consumption early.
-                    if max_rows is not None and len(all_rows) >= max_rows:
-                        del all_rows[max_rows:]
-                        break
+            async for batch in self.__stream_blocks(
+                query_sql, bound_params, settings, max_rows
+            ):
+                all_rows.extend(batch)
 
             return all_rows
 
         return await self.__maybe_read_retry(_run)
+
+    # ....................... #
+
+    async def __stream_blocks(
+        self,
+        query_sql: str,
+        bound_params: Any,
+        settings: dict[str, Any],
+        max_rows: int | None,
+    ) -> AsyncGenerator[list[JsonDict]]:
+        """Yield rows one result block at a time, capped at *max_rows*.
+
+        The single source of block-consumption truth shared by
+        :meth:`run_query_all_pages` (which buffers the batches) and
+        :meth:`run_query_streamed` (which forwards them). Holds at most one block
+        of rows in memory at a time.
+        """
+
+        ch = self.__require_client()
+        yielded = 0
+
+        stream = await ch.query_row_block_stream(  # type: ignore[untyped-call]
+            query_sql,
+            parameters=bound_params,
+            settings=settings,
+        )
+
+        async with stream:
+            # ``StreamContext.source`` is typed as a bare ``Closable``; for a
+            # query row-block stream it is the underlying ``QueryResult``,
+            # whose first block is parsed eagerly so ``column_names`` is set.
+            source = cast(QueryResult, stream.source)
+            column_names: tuple[str, ...] = source.column_names
+
+            # Badly typed...
+            async for block in stream:  # pyright: ignore[reportUnknownVariableType]
+                rows: list[JsonDict] = [
+                    dict(
+                        zip(
+                            column_names,
+                            row,  # pyright: ignore[reportUnknownArgumentType]
+                        )
+                    )
+                    for row in block  # pyright: ignore[reportOptionalIterable, reportUnknownVariableType]
+                ]
+
+                # ``LIMIT`` already caps the result server-side; this is a
+                # defensive client-side stop that also ends consumption early.
+                if max_rows is not None and yielded + len(rows) >= max_rows:
+                    yield rows[: max_rows - yielded]
+                    return
+
+                yielded += len(rows)
+
+                if rows:
+                    yield rows
+
+    # ....................... #
+
+    async def run_query_streamed(
+        self,
+        sql: str,
+        params: BaseModel | JsonDict | Sequence[Any] | None = None,
+        *,
+        database: str | None = None,
+        max_rows: int | None = None,
+        timeout: timedelta | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        """Stream result rows block by block without buffering the whole set.
+
+        Same single-execution, exactly-once semantics as
+        :meth:`run_query_all_pages`, but each block is yielded to the caller
+        instead of accumulated — so peak memory is one block, not the full
+        result. The trade-off is resilience: because rows are already in flight,
+        a transient mid-stream failure is **not** retried (unlike the buffered
+        ``run_query_all_pages``, which restarts the whole execution).
+        """
+
+        if fetch_batch_size < 1:
+            raise exc.internal("fetch_batch_size must be >= 1")
+
+        query_sql = apply_limit_offset(sql, limit=max_rows, offset=None)
+
+        if isinstance(params, BaseModel):
+            bound_params = parameters_from_model(params)
+
+        else:
+            bound_params = params  # type: ignore[assignment]
+
+        timeout_sec = self.__timeout_sec(timeout)
+        target_db = self.__database(database)
+        settings = self.__query_settings(database=target_db, timeout_sec=timeout_sec)
+        settings["max_block_size"] = fetch_batch_size
+
+        async for batch in self.__stream_blocks(
+            query_sql, bound_params, settings, max_rows
+        ):
+            yield batch
 
     # ....................... #
 

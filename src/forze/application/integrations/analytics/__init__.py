@@ -17,6 +17,7 @@ from .adapter_common import (
     parse_keyset_cursor_after,
     parse_offset_cursor_after,
     shape_rows,
+    stream_shaped_chunks,
     timeout_seconds,
     validated_params,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "parse_keyset_cursor_after",
     "parse_offset_cursor_after",
     "shape_rows",
+    "stream_shaped_chunks",
     "timeout_seconds",
     "validated_params",
 ]

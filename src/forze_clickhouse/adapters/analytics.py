@@ -18,6 +18,7 @@ from forze.application.integrations.analytics import (
     AnalyticsQueryPortMixin,
     decrypt_and_shape_rows,
     encode_ingest_payloads,
+    stream_shaped_chunks,
 )
 from forze.application.integrations.analytics.adapter_common import (
     bind_tenant_param,
@@ -302,7 +303,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             return
 
         max_rows = (options or {}).get("max_rows")
-        rows = await self.client.run_query_all_pages(
+        raw = self.client.run_query_streamed(
             self._sql(query_key),
             self._bind_tenant(params),
             database=await self._database(),
@@ -311,16 +312,15 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             fetch_batch_size=fetch_batch_size,
         )
 
-        typed = await decrypt_and_shape_rows(
-            rows,
+        async for chunk in stream_shaped_chunks(
+            raw,
+            fetch_batch_size=fetch_batch_size,
             read_codec=self.spec.resolved_read_codec,
             read_type=self.spec.read,
             return_type=None,
             return_fields=None,
-        )
-
-        for offset in range(0, len(typed), fetch_batch_size):
-            yield typed[offset : offset + fetch_batch_size]
+        ):
+            yield chunk
 
     # ....................... #
 
@@ -341,7 +341,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             return
 
         max_rows = (options or {}).get("max_rows")
-        rows = await self.client.run_query_all_pages(
+        raw = self.client.run_query_streamed(
             self._sql(query_key),
             self._bind_tenant(params),
             database=await self._database(),
@@ -349,16 +349,16 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
         )
-        typed = await decrypt_and_shape_rows(
-            rows,
+
+        async for chunk in stream_shaped_chunks(
+            raw,
+            fetch_batch_size=fetch_batch_size,
             read_codec=self.spec.resolved_read_codec,
             read_type=self.spec.read,
             return_type=return_type,
             return_fields=None,
-        )
-
-        for offset in range(0, len(typed), fetch_batch_size):
-            yield typed[offset : offset + fetch_batch_size]
+        ):
+            yield chunk
 
     # ....................... #
 

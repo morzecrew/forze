@@ -1,7 +1,7 @@
 """ClickHouse client that resolves connection settings per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
 from datetime import timedelta
-from typing import Callable, Mapping, cast, final
+from typing import AsyncGenerator, Callable, Mapping, Sequence, cast, final
 from uuid import UUID
 
 import attrs
@@ -153,6 +153,28 @@ class RoutedClickHouseClient(
             timeout=timeout,
             fetch_batch_size=fetch_batch_size,
         )
+
+    async def run_query_streamed(
+        self,
+        sql: str,
+        params: BaseModel | JsonDict | None = None,
+        *,
+        database: str | None = None,
+        max_rows: int | None = None,
+        timeout: timedelta | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        inner = await self._get_client()
+
+        async for batch in inner.run_query_streamed(
+            sql,
+            params,
+            database=database,
+            max_rows=max_rows,
+            timeout=timeout,
+            fetch_batch_size=fetch_batch_size,
+        ):
+            yield batch
 
     async def insert_rows(
         self,

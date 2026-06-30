@@ -97,6 +97,22 @@ class _MockClient:
         result = await self.run_query(sql, params)
         return result.rows
 
+    async def run_query_streamed(
+        self,
+        sql: str,
+        params: BaseModel | None = None,
+        *,
+        database: str | None = None,
+        max_rows: int | None = None,
+        timeout: int | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> Any:
+        _ = database, max_rows, timeout
+        result = await self.run_query(sql, params)
+        rows = result.rows
+        for start in range(0, len(rows), fetch_batch_size):
+            yield rows[start : start + fetch_batch_size]
+
     async def insert_rows(
         self,
         database: str,
@@ -118,6 +134,22 @@ async def test_run_page_uses_count_wrapper() -> None:
     assert page.count == 2
     assert len(page.hits) == 2
     assert any("count()" in q.lower() for q in mock.queries)
+
+
+@pytest.mark.asyncio
+async def test_run_chunked_streams_typed_rows() -> None:
+    mock = _MockClient()
+    adapter = _adapter(mock)
+
+    chunks = [
+        [row.value for row in chunk]
+        async for chunk in adapter.run_chunked(
+            "counts", _Params(), fetch_batch_size=1
+        )
+    ]
+
+    assert chunks == [[10], [20]]
+    assert all("count()" not in q.lower() for q in mock.queries)
 
 
 @pytest.mark.asyncio
