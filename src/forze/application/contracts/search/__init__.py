@@ -44,6 +44,7 @@ from .specs import (
     FederatedSearchMemberSpec,
     FederatedSearchSpec,
     HubSearchSpec,
+    SearchFuzzySpec,
     SearchResultSnapshotSpec,
     SearchSpec,
 )
@@ -93,6 +94,7 @@ __all__ = [
     "cursor_return_fields_for_select",
     "FederatedSearchMemberSpec",
     "HubSearchSpec",
+    "SearchFuzzySpec",
     "SearchOptions",
     "SearchResultSnapshotMeta",
     "SearchResultSnapshotPort",

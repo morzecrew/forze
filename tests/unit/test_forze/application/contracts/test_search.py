@@ -9,6 +9,7 @@ from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchQueryDepKey,
     HubSearchSpec,
+    SearchFuzzySpec,
     SearchQueryDepKey,
     SearchSpec,
 )
@@ -372,3 +373,36 @@ class TestExecutionContextSearchQuery:
         port = stub_ctx.search.query(spec)
         assert port is not None
         assert hasattr(port, "search")
+
+
+# ----------------------- #
+
+
+class TestSearchFuzzySpec:
+    """`SearchFuzzySpec` is an immutable value object (RFC 0009 sibling cleanup)."""
+
+    def test_default_ratio(self) -> None:
+        assert SearchFuzzySpec().max_distance_ratio == 0.34
+
+    def test_explicit_ratio(self) -> None:
+        assert SearchFuzzySpec(max_distance_ratio=0.1).max_distance_ratio == 0.1
+
+    def test_frozen(self) -> None:
+        spec = SearchFuzzySpec()
+        with pytest.raises(AttributeError):
+            spec.max_distance_ratio = 0.9  # type: ignore[misc]
+
+    @pytest.mark.parametrize("ratio", [-0.1, 1.1, 2.0])
+    def test_rejects_out_of_range_ratio(self, ratio: float) -> None:
+        with pytest.raises(CoreException, match="between 0.0 and 1.0"):
+            SearchFuzzySpec(max_distance_ratio=ratio)
+
+    def test_usable_on_search_spec(self) -> None:
+        spec = SearchSpec(
+            name="fz",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+            fuzzy=SearchFuzzySpec(max_distance_ratio=0.2),
+        )
+        assert spec.fuzzy is not None
+        assert spec.fuzzy.max_distance_ratio == 0.2

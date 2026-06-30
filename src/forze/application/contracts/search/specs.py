@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import Any, Mapping, Sequence, TypeAlias, TypedDict
+from typing import Any, Mapping, Sequence, TypeAlias
 
 import attrs
 from pydantic import BaseModel
@@ -207,14 +207,18 @@ def _validate_search_default_sort(
 # ....................... #
 
 
-class SearchFuzzySpec(TypedDict, total=False):
-    """Fuzzy matching configuration for a search index."""
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class SearchFuzzySpec:
+    """Fuzzy matching configuration for a search index (immutable value object)."""
 
-    max_distance_ratio: float
-    """Maximum edit-distance ratio (0.0–1.0) for fuzzy matches."""
+    max_distance_ratio: float = 0.34
+    """Maximum edit-distance ratio (``0.0``–``1.0``) for fuzzy matches; higher is more lenient."""
 
-    prefix_length: int
-    """Number of leading characters that must match exactly."""
+    def __attrs_post_init__(self) -> None:
+        if not 0.0 <= self.max_distance_ratio <= 1.0:
+            raise exc.configuration(
+                "SearchFuzzySpec.max_distance_ratio must be between 0.0 and 1.0.",
+            )
 
 
 # ....................... #

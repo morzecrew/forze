@@ -114,11 +114,7 @@ async def pgroonga_match_clause(
 
     use_fuzzy = options.get("fuzzy", False)
 
-    if search.fuzzy is not None:
-        ratio = search.fuzzy.get("max_distance_ratio", 0.34)
-
-    else:
-        ratio = 0.34
+    ratio = search.fuzzy.max_distance_ratio if search.fuzzy is not None else 0.34
 
     if not uses_array:
         col = heap_cols[0]
