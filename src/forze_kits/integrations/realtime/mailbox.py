@@ -280,9 +280,12 @@ class DocumentRealtimeMailbox:
 
     async def trim(self, *, principal: str, before: HlcTimestamp) -> None:
         # Drain in pages until none remain — a single ``cap``-bounded page would leave stale
-        # rows behind when more than ``cap`` have accumulated.
+        # rows behind when more than ``cap`` have accumulated. Project only ``id``: the rows
+        # are deleted, so hydrating each one's ``payload`` / ``event`` (potentially large
+        # signal bodies) just to read its id is wasted memory and transfer.
         while True:
-            stale = await self.query.find_many(
+            stale = await self.query.project_many(
+                ["id"],
                 filters={
                     "$values": {"principal": principal, "hlc": {"$lte": before.pack()}}
                 },
@@ -292,7 +295,9 @@ class DocumentRealtimeMailbox:
             if not stale.hits:
                 return
 
-            await self.command.kill_many([row.id for row in stale.hits])
+            await self.command.kill_many(
+                [UUID(str(row["id"])) for row in stale.hits]
+            )
             self._trimmed += len(stale.hits)
 
 

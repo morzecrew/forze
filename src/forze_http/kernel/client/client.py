@@ -42,6 +42,7 @@ class HttpClient(HttpClientPort):
 
     __client: httpx.AsyncClient | None = attrs.field(default=None, init=False)
     __base_url: str | None = attrs.field(default=None, init=False)
+    __max_response_bytes: int | None = attrs.field(default=None, init=False)
     __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
@@ -57,6 +58,7 @@ class HttpClient(HttpClientPort):
         async def setup() -> None:
             cfg = config or HttpConfig()
             self.__base_url = base_url
+            self.__max_response_bytes = cfg.max_response_bytes
             timeout = httpx.Timeout(cfg.timeout.total_seconds())
             client_kwargs: dict[str, Any] = {
                 "timeout": timeout,
@@ -128,15 +130,45 @@ class HttpClient(HttpClientPort):
             raise exc.configuration("Relative HTTP URL requires a configured base_url")
 
         request_timeout = timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT
+        max_bytes = self.__max_response_bytes
 
-        response = await client.request(
+        # Stream the response so an oversized body can be refused before (or while)
+        # it is buffered, instead of httpx materializing the whole body in memory
+        # first. With no cap configured this reads the full body exactly as before.
+        async with client.stream(
             method,
             request_url,
             params=params,
             json=json,
             headers=headers,
             timeout=request_timeout,
-        )
+        ) as streaming:
+            if max_bytes is not None:
+                declared = streaming.headers.get("content-length")
+
+                if declared is not None and int(declared) > max_bytes:
+                    raise exc.infrastructure(
+                        f"HTTP response Content-Length {declared} exceeds "
+                        f"max_response_bytes {max_bytes}"
+                    )
+
+            body = bytearray()
+
+            async for chunk in streaming.aiter_bytes():
+                body.extend(chunk)
+
+                if max_bytes is not None and len(body) > max_bytes:
+                    raise exc.infrastructure(
+                        f"HTTP response body exceeded max_response_bytes {max_bytes}"
+                    )
+
+            response = httpx.Response(
+                status_code=streaming.status_code,
+                headers=streaming.headers,
+                content=bytes(body),
+                request=streaming.request,
+            )
+
         response.raise_for_status()
 
         return response

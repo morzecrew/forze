@@ -214,16 +214,17 @@ async def test_list_objects_filters_multipart_scaffolding() -> None:
     """Compose-based multipart temp parts must not surface as listed objects."""
 
     fake = MagicMock()
-    bucket_ref = MagicMock()
-    bucket_ref.list_blobs = AsyncMock(
-        return_value=[
-            "docs/a.txt",
-            "docs/b.txt.__forze_mpu__/sess-1/1",
-            "docs/b.txt.__forze_mpu__/sess-1/2",
-            "docs/c.txt",
-        ],
+    fake.list_objects = AsyncMock(
+        return_value={
+            "items": [
+                {"name": "docs/a.txt"},
+                {"name": "docs/b.txt.__forze_mpu__/sess-1/1"},
+                {"name": "docs/b.txt.__forze_mpu__/sess-1/2"},
+                {"name": "docs/c.txt"},
+            ],
+            "nextPageToken": "",
+        },
     )
-    fake.get_bucket = MagicMock(return_value=bucket_ref)
     client = _client(fake)
 
     items, total = await client.list_objects("b", prefix="docs/")

@@ -591,8 +591,6 @@ class GCSClient(GCSClientPort):
         _limit, _offset = normalize_list_window(limit, offset)
 
         storage = self.__require_storage()
-        bucket_ref = storage.get_bucket(bucket)
-        keys = await bucket_ref.list_blobs(prefix=_prefix)
 
         # Drop in-flight/orphaned multipart scaffolding: compose-based MPU stores
         # temp parts at ``<key>.__forze_mpu__/<session>/<n>`` (no metadata
@@ -614,13 +612,38 @@ class GCSClient(GCSClientPort):
 
             return suffix.isdigit() or suffix == "__compose__"
 
-        keys = [k for k in keys if not _is_mpu_scaffold(k)]
+        # Stream the listing page by page instead of materializing every key under
+        # the prefix at once: only the requested ``[offset, offset+limit)`` window
+        # and the current page are held, so peak memory is bounded regardless of how
+        # many objects share the prefix. ``total_count`` stays the exact (filtered)
+        # count, so the full listing is still walked — just never all resident.
+        items: list[ObjectStorageListedObject] = []
+        total_count = 0
+        window_end = _offset + _limit
+        page_token = ""  # nosec B105 - GCS pagination cursor, not a credential
 
-        total_count = len(keys)
-        window = keys[_offset : _offset + _limit]
-        items: list[ObjectStorageListedObject] = [
-            ObjectStorageListedObject(key=key) for key in window
-        ]
+        while True:
+            content = await storage.list_objects(
+                bucket,
+                params={"prefix": _prefix, "pageToken": page_token},
+                timeout=self.__timeout(),
+            )
+
+            for obj in content.get("items", []):
+                key = obj.get("name")
+
+                if not key or _is_mpu_scaffold(key):
+                    continue
+
+                if _offset <= total_count < window_end:
+                    items.append(ObjectStorageListedObject(key=key))
+
+                total_count += 1
+
+            page_token = content.get("nextPageToken", "")
+
+            if not page_token:
+                break
 
         return items, total_count
 
