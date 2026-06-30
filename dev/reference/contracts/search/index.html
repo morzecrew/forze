@@ -5703,7 +5703,7 @@ raises <code>query_feature_unsupported</code>; <strong>—</strong> means not ap
 <tr>
 <td>Postgres — PGroonga</td>
 <td>✅</td>
-<td>✅ (<code>pgroonga_snippet_html</code>)</td>
+<td>✅</td>
 </tr>
 <tr>
 <td>Postgres — FTS</td>
@@ -5738,8 +5738,8 @@ raises <code>query_feature_unsupported</code>; <strong>—</strong> means not ap
 </tr>
 <tr>
 <td>Hub — Postgres</td>
-<td>fail-closed</td>
-<td>fail-closed</td>
+<td>✅ (<code>sql</code> exec) / fail-closed (<code>parallel</code>)</td>
+<td>✅</td>
 </tr>
 <tr>
 <td>Federated — <abbr title="Reciprocal Rank Fusion">RRF</abbr> merge (mock, Postgres, Meilisearch)</td>
@@ -5754,8 +5754,14 @@ raises <code>query_feature_unsupported</code>; <strong>—</strong> means not ap
 </tbody>
 </table>
 <ul>
+<li><strong>PGroonga / hub highlights</strong> are marked in process (case-insensitive substring over the
+  raw field text), so they fold case for any script and keep the original casing; FTS uses
+  <code>ts_headline</code> for language-aware stemming.</li>
 <li><strong>Vector</strong> ranks by distance with no lexical match, so there is no snippet to highlight
   (facets still group over the ranked set).</li>
+<li><strong>Hub</strong> highlights apply in both <code>sql</code> and <code>parallel</code> execution; hub facets run as a
+  companion <code>GROUP BY</code> over the merged set under <code>sql</code> execution and fail closed under
+  <code>parallel</code> (the Python merge can't dedup-count the facet field).</li>
 <li><strong>Federated facets</strong> are deferred — per-member distributions don't compose under the
   reciprocal-rank merge, so every federated search fails closed on facets. Highlights
   survive only the <abbr title="Reciprocal Rank Fusion">RRF</abbr>-merge path (each merged hit keeps its originating leg's snippet),
