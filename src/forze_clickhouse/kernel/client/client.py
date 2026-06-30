@@ -340,7 +340,9 @@ class ClickHouseClient(ClickHouseClientPort):
                 # ``LIMIT`` already caps the result server-side; this is a
                 # defensive client-side stop that also ends consumption early.
                 if max_rows is not None and yielded + len(rows) >= max_rows:
-                    yield rows[: max_rows - yielded]
+                    if remaining := rows[: max_rows - yielded]:
+                        yield remaining
+
                     return
 
                 yielded += len(rows)
