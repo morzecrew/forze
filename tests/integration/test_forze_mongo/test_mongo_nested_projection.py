@@ -21,6 +21,11 @@ from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
 from tests.support.scenarios.document_nested_filters import (
+    NestedArrayItem as Item,
+    NestedArrayRowCreate as ArrCreate,
+    NestedArrayRowDoc as ArrDoc,
+    NestedArrayRowRead as ArrRead,
+    NestedArrayRowUpdate as ArrUpdate,
     NestedFilterMeta as Meta,
     NestedFilterRowCreate as RowCreate,
     NestedFilterRowDoc as RowDoc,
@@ -97,3 +102,36 @@ async def test_project_root_subsumes_leaf(mongo_client: MongoClient) -> None:
     out = await query.project({"$values": {"title": "a"}}, ["meta", "meta.score"])
 
     assert out == {"meta": {"score": 10, "tag": "x"}}
+
+
+@pytest.mark.asyncio
+async def test_project_array_leaf_maps_over_bson_list(mongo_client: MongoClient) -> None:
+    col = f"mn_arr_{uuid4().hex[:8]}"
+    db = (await mongo_client.db()).name
+    fac = ConfigurableMongoDocument(
+        config=MongoDocumentConfig(read=(db, col), write=(db, col))
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MongoClientDepKey: mongo_client,
+                DocumentQueryDepKey: fac,
+                DocumentCommandDepKey: fac,
+            }
+        )
+    )
+    spec = DocumentSpec(
+        name="nested_mongo_arr_ns",
+        read=ArrRead,
+        write={"domain": ArrDoc, "create_cmd": ArrCreate, "update_cmd": ArrUpdate},
+    )
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
+
+    await cmd.create(
+        ArrCreate(ref="o1", items=[Item(sku="A", qty=2), Item(sku="B", qty=1)])
+    )
+
+    out = await query.project({"$values": {"ref": "o1"}}, ["items.sku", "items.qty"])
+
+    assert out == {"items": [{"sku": "A", "qty": 2}, {"sku": "B", "qty": 1}]}

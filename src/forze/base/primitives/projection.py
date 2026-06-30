@@ -66,69 +66,99 @@ def projection_roots(fields: Sequence[str]) -> tuple[str, ...]:
 # ....................... #
 
 
-def _is_prefix_path(ancestor: list[str], path: list[str]) -> bool:
-    """Whether *ancestor* is a strict label-prefix of *path* (``a.b`` of ``a.b.c``)."""
+class _PathNode:
+    """One node of the projection trie: a requested segment and its descendants.
 
-    return len(ancestor) < len(path) and path[: len(ancestor)] == ancestor
-
-
-# ....................... #
-
-
-def _retained_projection_paths(fields: Sequence[str]) -> list[str]:
-    """Dedup *fields* and drop any path subsumed by a requested ancestor.
-
-    Requesting both a root and one of its leaves (``contract`` and ``contract.reg_number``)
-    keeps only ``contract`` — the whole object wins over the narrower leaf. Order is preserved.
+    ``terminal`` marks a path that ended here — the whole value is taken, subsuming any
+    deeper children (so ``contract`` wins over ``contract.reg_number``). ``children`` holds
+    the next segments, insertion-ordered so the output mirrors the requested field order.
     """
 
-    unique: list[str] = []
+    __slots__ = ("terminal", "children")
+
+    def __init__(self) -> None:
+        self.terminal: bool = False
+        self.children: dict[str, _PathNode] = {}
+
+
+def _build_path_trie(fields: Sequence[str]) -> dict[str, _PathNode]:
+    """Group dotted *fields* into a segment trie (order preserved, duplicates merged)."""
+
+    root: dict[str, _PathNode] = {}
+
     for field in fields:
-        if field not in unique:
-            unique.append(field)
+        children = root
+        segments = field.split(".")
+        last = len(segments) - 1
 
-    split = {field: field.split(".") for field in unique}
+        for i, segment in enumerate(segments):
+            node = children.get(segment)
+            if node is None:
+                node = _PathNode()
+                children[segment] = node
+            if i == last:
+                node.terminal = True
+            children = node.children
 
-    return [
-        field
-        for field in unique
-        if not any(
-            other != field and _is_prefix_path(split[other], split[field])
-            for other in unique
-        )
-    ]
-
-
-# ....................... #
-
-
-def _set_path(out: JsonDict, labels: Sequence[str], value: Any) -> None:
-    cur = out
-
-    for label in labels[:-1]:
-        nxt = cur.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            label
-        )
-
-        if not isinstance(nxt, dict):
-            nxt = {}
-            cur[label] = nxt
-        cur = nxt  # pyright: ignore[reportUnknownVariableType]
-
-    cur[labels[-1]] = value
+    return root
 
 
 # ....................... #
+
+
+_OMIT = object()
+"""A projected value that resolved to nothing (a sub-field requested on a scalar)."""
+
+
+def _project_value(value: Any, children: dict[str, _PathNode]) -> Any:
+    """Reshape *value* to the sub-fields in *children*, mirroring its dict/list structure.
+
+    A ``dict`` is pruned to the requested keys; a ``list`` maps the same selection over every
+    element (preserving length, so positional alignment across multiple leaves holds); a scalar
+    with sub-fields requested resolves to :data:`_OMIT`. An element that contributes no requested
+    field becomes ``{}`` rather than dropping, matching the structure-preserving array shape.
+    """
+
+    if isinstance(value, list):
+        out_list: list[Any] = []
+        for element in value:  # pyright: ignore[reportUnknownVariableType]
+            projected = _project_value(element, children)
+            out_list.append({} if projected is _OMIT else projected)
+        return out_list
+
+    if isinstance(value, dict):
+        out: JsonDict = {}
+        for segment, node in children.items():
+            if segment not in value:
+                continue
+            child_value = value[segment]  # pyright: ignore[reportUnknownVariableType]
+            if node.terminal or not node.children:
+                out[segment] = child_value
+                continue
+            sub = _project_value(child_value, node.children)
+            if sub is _OMIT:
+                continue
+            # An empty *dict* from a non-list branch means nothing resolved — omit it (a
+            # requested array leaf still yields its length-preserving list, kept above).
+            if isinstance(sub, dict) and not sub:
+                continue
+            out[segment] = sub
+        return out
+
+    return _OMIT
 
 
 def build_projection(doc: JsonDict, fields: Sequence[str] | None) -> JsonDict:
     """Reshape *doc* to only the requested (possibly dotted) projection *fields*.
 
     ``None`` *fields* returns a shallow copy of the whole document. Otherwise each path is
-    resolved against *doc* and written back into a **nested** output, so ``contract.reg_number``
-    yields ``{"contract": {"reg_number": ...}}`` and sibling leaves (``contract.reg_number`` +
-    ``contract.signed_at``) merge under one ``contract`` object. A path whose value is absent is
-    skipped (the key is omitted, not set to ``None``); a requested root subsumes its leaves.
+    resolved against *doc* into a **nested** output: ``contract.reg_number`` yields
+    ``{"contract": {"reg_number": ...}}`` and sibling leaves merge under one ``contract``
+    object. A dotted path that crosses a **list** maps the selection over each element,
+    preserving structure and length — ``items.sku`` + ``items.qty`` over a list of items
+    yields ``{"items": [{"sku": ..., "qty": ...}, ...]}``, and nested lists recurse. A path
+    whose value is absent is skipped (the key omitted, not set to ``None``); a requested root
+    subsumes its leaves.
     """
 
     if fields is None:
@@ -136,12 +166,18 @@ def build_projection(doc: JsonDict, fields: Sequence[str] | None) -> JsonDict:
 
     out: JsonDict = {}
 
-    for path in _retained_projection_paths(fields):
-        value = path_get(doc, path)
-
-        if value is MISSING:
+    for segment, node in _build_path_trie(fields).items():
+        if segment not in doc:
             continue
-
-        _set_path(out, path.split("."), value)
+        value = doc[segment]
+        if node.terminal or not node.children:
+            out[segment] = value
+            continue
+        projected = _project_value(value, node.children)
+        if projected is _OMIT:
+            continue
+        if isinstance(projected, dict) and not projected:
+            continue
+        out[segment] = projected
 
     return out

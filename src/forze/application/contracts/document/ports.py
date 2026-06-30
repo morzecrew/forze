@@ -118,8 +118,9 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
 
         ``fields`` accepts dotted paths: ``contract.reg_number`` returns the nested
         ``{"contract": {"reg_number": ...}}`` shape (sibling leaves merge under one parent,
-        a requested root subsumes its leaves, an absent leaf is omitted). The same rule
-        applies to every ``project_*`` method on this port.
+        a requested root subsumes its leaves, an absent leaf is omitted). A path through a
+        list maps the selection over each element (``items.sku`` → ``{"items": [{"sku": ...}]}``,
+        length preserved). The same rule applies to every ``project_*`` method on this port.
         """
         ...  # pragma: no cover
 

@@ -41,3 +41,31 @@ class NestedFilterRowRead(ReadDocument):
 
 def expected_scores_ascending() -> list[int]:
     return [10, 20, 30]
+
+
+# Array-element projection scenario: a row carries a list of sub-objects so a dotted
+# projection path (``items.sku``) can map over the list across backends.
+
+
+class NestedArrayItem(BaseModel):
+    sku: str
+    qty: int = 0
+
+
+class NestedArrayRowDoc(Document):
+    ref: str
+    items: list[NestedArrayItem]
+
+
+class NestedArrayRowCreate(CreateDocumentCmd):
+    ref: str
+    items: list[NestedArrayItem]
+
+
+class NestedArrayRowUpdate(BaseDTO):
+    ref: str | None = None
+
+
+class NestedArrayRowRead(ReadDocument):
+    ref: str
+    items: list[NestedArrayItem]

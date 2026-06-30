@@ -142,3 +142,81 @@ async def test_project_cursor_with_dotted_field_and_id_concatenates() -> None:
         cursor = {"limit": 2, "after": page.next_cursor}
 
     assert collected == ["berlin", "delhi", "paris"]
+
+
+# ....................... #
+# Array element projection: a dotted path through a list of sub-models maps over each
+# element, preserving structure and length.
+
+
+class _Item(BaseModel):
+    sku: str
+    qty: int = 0
+
+
+class _OrderDoc(DocWithSoftDeletion):
+    ref: str
+    items: list[_Item]
+
+
+class _OrderCreate(CreateDocumentCmd):
+    ref: str
+    items: list[_Item]
+
+
+class _OrderUpdate(BaseDTO):
+    ref: str | None = None
+
+
+class _OrderRead(ReadDocument):
+    ref: str
+    items: list[_Item]
+    is_deleted: bool = False
+
+
+def _order_adapter() -> (
+    MockDocumentAdapter[_OrderRead, _OrderDoc, _OrderCreate, _OrderUpdate]
+):
+    spec = DocumentSpec(
+        name="orders",
+        read=_OrderRead,
+        write=DocumentWriteTypes(
+            domain=_OrderDoc,
+            create_cmd=_OrderCreate,
+            update_cmd=_OrderUpdate,
+        ),
+    )
+    return MockDocumentAdapter(
+        spec=spec,
+        state=MockState(),
+        namespace="orders",
+        read_model=_OrderRead,
+        domain_model=_OrderDoc,
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_array_leaf_maps_over_elements() -> None:
+    doc = _order_adapter()
+    await doc.create(
+        _OrderCreate(ref="o1", items=[_Item(sku="A", qty=2), _Item(sku="B", qty=1)])
+    )
+
+    out = await doc.project({"$values": {"ref": "o1"}}, ["items.sku"])
+
+    assert out == {"items": [{"sku": "A"}, {"sku": "B"}]}
+
+
+@pytest.mark.asyncio
+async def test_project_array_multi_leaf_merges_per_element() -> None:
+    doc = _order_adapter()
+    await doc.create(
+        _OrderCreate(ref="o1", items=[_Item(sku="A", qty=2), _Item(sku="B", qty=1)])
+    )
+
+    out = await doc.project({"$values": {"ref": "o1"}}, ["ref", "items.sku", "items.qty"])
+
+    assert out == {
+        "ref": "o1",
+        "items": [{"sku": "A", "qty": 2}, {"sku": "B", "qty": 1}],
+    }

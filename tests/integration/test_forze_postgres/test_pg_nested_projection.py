@@ -26,6 +26,11 @@ from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
 from tests.support.scenarios.document_nested_filters import (
+    NestedArrayItem as Item,
+    NestedArrayRowCreate as ArrCreate,
+    NestedArrayRowDoc as ArrDoc,
+    NestedArrayRowRead as ArrRead,
+    NestedArrayRowUpdate as ArrUpdate,
     NestedFilterMeta as Meta,
     NestedFilterRowCreate as RowCreate,
     NestedFilterRowDoc as RowDoc,
@@ -128,3 +133,52 @@ async def test_project_many_nested_over_rows(pg_client: PostgresClient) -> None:
     page = await query.project_many(["meta.score"], sorts={"meta.score": "asc"})
 
     assert list(page.hits) == [{"meta": {"score": 10}}, {"meta": {"score": 20}}]
+
+
+@pytest.mark.asyncio
+async def test_project_array_leaf_maps_over_jsonb_list(pg_client: PostgresClient) -> None:
+    t = f"nest_arr_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            ref text NOT NULL,
+            items jsonb NOT NULL
+        );
+        """
+    )
+    doc = ConfigurablePostgresDocument(
+        config=PostgresDocumentConfig(
+            read=("public", t),
+            write=("public", t),
+            bookkeeping_strategy="application",
+        )
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: doc,
+                DocumentCommandDepKey: doc,
+            }
+        )
+    )
+    spec = DocumentSpec(
+        name="nested_pg_arr_ns",
+        read=ArrRead,
+        write={"domain": ArrDoc, "create_cmd": ArrCreate, "update_cmd": ArrUpdate},
+    )
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
+
+    await cmd.create(
+        ArrCreate(ref="o1", items=[Item(sku="A", qty=2), Item(sku="B", qty=1)])
+    )
+
+    out = await query.project({"$values": {"ref": "o1"}}, ["items.sku", "items.qty"])
+
+    assert out == {"items": [{"sku": "A", "qty": 2}, {"sku": "B", "qty": 1}]}

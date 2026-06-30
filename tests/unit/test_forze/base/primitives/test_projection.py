@@ -73,3 +73,67 @@ def test_build_projection_deep_nested_path() -> None:
     out = build_projection(doc, ["a.b.c.d"])
 
     assert out == {"a": {"b": {"c": {"d": 9}}}}
+
+
+# ....................... #
+# Array element projection: a dotted path through a list maps over each element,
+# preserving structure (list of pruned sub-objects) and length (Mongo-aligned).
+
+
+def test_build_projection_array_single_leaf_keeps_element_dicts() -> None:
+    doc = {"items": [{"sku": "A", "qty": 2}, {"sku": "B", "qty": 1}]}
+
+    out = build_projection(doc, ["items.sku"])
+
+    assert out == {"items": [{"sku": "A"}, {"sku": "B"}]}
+
+
+def test_build_projection_array_multi_leaf_merges_per_element() -> None:
+    doc = {"items": [{"sku": "A", "qty": 2, "price": 10}, {"sku": "B", "qty": 1}]}
+
+    out = build_projection(doc, ["items.sku", "items.qty"])
+
+    assert out == {"items": [{"sku": "A", "qty": 2}, {"sku": "B", "qty": 1}]}
+
+
+def test_build_projection_array_root_subsumes_leaf() -> None:
+    doc = {"items": [{"sku": "A", "qty": 2}]}
+
+    out = build_projection(doc, ["items", "items.sku"])
+
+    assert out == {"items": [{"sku": "A", "qty": 2}]}
+
+
+def test_build_projection_array_missing_in_element_preserves_length() -> None:
+    doc = {"items": [{"sku": "A"}, {"qty": 9}]}
+
+    out = build_projection(doc, ["items.sku"])
+
+    # Length preserved: the element lacking ``sku`` yields an empty object, not a drop.
+    assert out == {"items": [{"sku": "A"}, {}]}
+
+
+def test_build_projection_nested_list_recurses() -> None:
+    doc = {
+        "orders": [
+            {"items": [{"sku": "A", "x": 1}, {"sku": "C"}]},
+            {"items": [{"sku": "B"}]},
+        ]
+    }
+
+    out = build_projection(doc, ["orders.items.sku"])
+
+    assert out == {
+        "orders": [
+            {"items": [{"sku": "A"}, {"sku": "C"}]},
+            {"items": [{"sku": "B"}]},
+        ]
+    }
+
+
+def test_build_projection_array_with_sibling_top_level_field() -> None:
+    doc = {"id": 7, "items": [{"sku": "A", "qty": 2}]}
+
+    out = build_projection(doc, ["id", "items.sku"])
+
+    assert out == {"id": 7, "items": [{"sku": "A"}]}
