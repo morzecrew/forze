@@ -332,6 +332,7 @@ class ClickHouseClient(ClickHouseClientPort):
                         zip(
                             column_names,
                             row,  # pyright: ignore[reportUnknownArgumentType]
+                            strict=True,
                         )
                     )
                     for row in block  # pyright: ignore[reportOptionalIterable, reportUnknownVariableType]

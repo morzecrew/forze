@@ -498,6 +498,7 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
+    @exc_interceptor.asyncgenerator("firestore.query_stream_batched")  # type: ignore[untyped-decorator]
     async def query_stream_batched(
         self,
         coll: AsyncCollectionReference,

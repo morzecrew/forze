@@ -117,8 +117,9 @@ async def test_update_matching_bumps_rev_and_returns_rows(
 @pytest.mark.asyncio
 async def test_update_matching_chunks_by_batch_size(
     pg_client: PostgresClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A small ``batch_size`` keyset-chunks the update; every row is updated exactly once."""
+    """A small ``batch_size`` chunks the update; every row is updated exactly once."""
 
     write = await _make_gw(pg_client)
     read = write.read_gw
@@ -126,7 +127,18 @@ async def test_update_matching_chunks_by_batch_size(
     created = [await write.create(WmCreate(name=f"n{i}", category="x")) for i in range(5)]
     other = await write.create(WmCreate(name="z", category="y"))
 
-    # 5 matches with batch_size=2 -> 3 chunks (2, 2, 1).
+    # Spy on the per-chunk history write so the chunking is observable: a single
+    # unbounded UPDATE would satisfy the outcome assertions below all the same.
+    chunk_sizes: list[int] = []
+    gw_cls = type(write)
+    original_write_history = gw_cls._write_history
+
+    async def _spy(self: object, *doms: object) -> None:
+        chunk_sizes.append(len(doms))
+        await original_write_history(self, *doms)
+
+    monkeypatch.setattr(gw_cls, "_write_history", _spy)
+
     count, rows = await write.update_matching(
         {"$values": {"category": "x"}},
         WmUpdate(category="patched"),
@@ -138,6 +150,8 @@ async def test_update_matching_chunks_by_batch_size(
     assert all(r.category == "patched" for r in rows)
     # rev bumped exactly once — no chunk re-processed an already-updated row.
     assert all(r.rev == 2 for r in rows)
+    # 5 matches with batch_size=2 -> 3 chunks of (2, 2, 1).
+    assert chunk_sizes == [2, 2, 1]
 
     fresh = await read.get(other.id)
     assert fresh.category == "y"

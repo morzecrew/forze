@@ -218,6 +218,11 @@ async def stream_shaped_chunks(
     the whole result set before the first yield.
     """
 
+    if fetch_batch_size < 1:
+        # A non-positive window never drains the buffer — the re-chunking loop
+        # below would spin forever yielding empty slices.
+        raise exc.precondition("fetch_batch_size must be a positive integer.")
+
     buffer: list[JsonDict] = []
 
     async for batch in raw_batches:

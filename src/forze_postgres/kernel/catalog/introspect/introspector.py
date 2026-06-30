@@ -78,7 +78,7 @@ class PostgresIntrospector:
     (FIFO by insertion order). ``None`` means unbounded per-kind growth.
 
     These lanes are keyed by ``(schema, relation, partition)``, so their cardinality
-    is bounded by the schema (× tenant); they default to unbounded for that reason.
+    is bounded by the schema (x tenant); they default to unbounded for that reason.
     The filtered-row-estimate lane is the exception — see
     :attr:`max_filtered_estimate_entries`.
     """

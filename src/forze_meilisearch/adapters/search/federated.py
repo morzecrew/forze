@@ -474,26 +474,35 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         offset = int((pagination or {}).get("offset") or 0)
         limit = (pagination or {}).get("limit")
 
+        _hl = (options or {}).get("highlight")
+        wants_highlights = _hl is not None and _hl is not False
+
         if (
             self.result_snapshot is not None
             and rs_spec is not None
             and snapshot is not None
             and "id" in snapshot
         ):
+            maybe_page: Any = None
+
             if effective_thin:
-                maybe_page = await self.result_snapshot.read_federated_thin_snapshot_page_if_requested(
-                    rs_spec=rs_spec,
-                    snapshot=snapshot,
-                    fp_computed=fp_computed,
-                    pagination=dict(pagination or {}),
-                    return_type=return_type,
-                    return_count=return_count,
-                    rehydrate=federated_snapshot_rehydrator(
-                        ports={name: port for name, port in self.legs},
-                        leg_opts=leg_opts,
-                        run_legs=self._run_legs,
-                    ),
-                )
+                # A thin snapshot replays by re-fetching hits by id only, so it
+                # carries no match highlights. A highlights request must skip the
+                # replay and fall through to the live merge below, which builds them.
+                if not wants_highlights:
+                    maybe_page = await self.result_snapshot.read_federated_thin_snapshot_page_if_requested(
+                        rs_spec=rs_spec,
+                        snapshot=snapshot,
+                        fp_computed=fp_computed,
+                        pagination=dict(pagination or {}),
+                        return_type=return_type,
+                        return_count=return_count,
+                        rehydrate=federated_snapshot_rehydrator(
+                            ports={name: port for name, port in self.legs},
+                            leg_opts=leg_opts,
+                            run_legs=self._run_legs,
+                        ),
+                    )
 
             else:
                 maybe_page = await self.result_snapshot.read_federated_snapshot_page_if_requested(
@@ -526,8 +535,6 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         leg_cap = max(1, int(self.rrf_per_leg_limit))
         leg_page: PaginationExpression = {"limit": leg_cap}
 
-        _hl = (options or {}).get("highlight")
-        wants_highlights = _hl is not None and _hl is not False
         snapshot_write = (
             self.result_snapshot is not None
             and rs_spec is not None

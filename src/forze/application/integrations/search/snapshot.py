@@ -796,18 +796,17 @@ class SearchResultSnapshot:
             return None
 
         run_id = str(snapshot_opts["id"])
-        sub_fp = (
-            str(snapshot_opts["fingerprint"])
-            if "fingerprint" in snapshot_opts
-            else None
-        )
         pagination_d = dict(pagination or {})
         offset = int(pagination_d.get("offset") or 0)
         limit = pagination_d.get("limit")
         page_limit = max(1, int(limit)) if limit is not None else 20
 
+        # Bind the stored snapshot to *this* request's server-computed fingerprint,
+        # not the client-supplied one: a caller passing a stale snapshot id (or no
+        # fingerprint at all) must not replay another request's results. A mismatch
+        # returns ``None`` and the caller recomputes live.
         raw_keys = await self.store.get_id_range(
-            run_id, offset, page_limit, expected_fingerprint=sub_fp
+            run_id, offset, page_limit, expected_fingerprint=fp_computed
         )
 
         if raw_keys is None:

@@ -1173,56 +1173,51 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             sets = sql.SQL(", ").join(set_parts)
             ret = self.return_clause()
 
-            # Mirror the Mongo path: keyset-page the matched rows by primary key and
-            # update one ``batch_size`` chunk per statement (history written per chunk),
-            # so a broad filter never drives a single unbounded ``UPDATE … RETURNING``.
-            # The whole loop runs in one transaction (``_write_tx``), so it stays atomic.
+            def _pk_from_row(r: JsonDict) -> UUID:
+                v = r[ID_FIELD]
+
+                return v if isinstance(v, UUID) else UUID(str(v))
+
+            # Snapshot the matching primary keys once, then update them in
+            # ``batch_size`` chunks (history written per chunk) so a broad filter
+            # never drives a single unbounded ``UPDATE … RETURNING``. Freezing the id
+            # set up front keeps the matched set stable across chunks: re-evaluating
+            # ``WHERE filters`` per chunk under READ COMMITTED would drift as rows are
+            # concurrently inserted/updated, unlike the prior single statement. The
+            # whole thing runs in one transaction (``_write_tx``), so it stays atomic.
+            id_rows = await self.client.fetch_all(
+                sql.SQL("SELECT {pk} FROM {table} WHERE {where} ORDER BY {pk}").format(
+                    pk=pk, table=table, where=where_sql
+                ),
+                list(where_params),
+                row_factory="dict",
+                commit=False,
+            )
+            ids = [_pk_from_row(r) for r in id_rows]
+
             total = 0
             out_domains: list[D] = []
-            last_id: Any = None
 
-            while True:
-                if last_id is None:
-                    chunk_where = where_sql
-                    chunk_params: list[Any] = list(where_params)
-
-                else:
-                    chunk_where = sql.SQL("({}) AND {} > {}").format(
-                        where_sql, pk, sql.Placeholder()
-                    )
-                    chunk_params = [*where_params, last_id]
-
+            for start in range(0, len(ids), batch_size):
+                chunk = ids[start : start + batch_size]
                 stmt = sql.SQL(
-                    "UPDATE {table} SET {sets} WHERE {pk} IN "
-                    "(SELECT {pk} FROM {table} WHERE {where} ORDER BY {pk} LIMIT {lim}) "
-                    "RETURNING {ret}"
-                ).format(
-                    table=table,
-                    sets=sets,
-                    pk=pk,
-                    where=chunk_where,
-                    lim=sql.Placeholder(),
-                    ret=ret,
-                )
+                    "UPDATE {table} SET {sets} WHERE {pk} = ANY({ids}) RETURNING {ret}"
+                ).format(table=table, sets=sets, pk=pk, ids=sql.Placeholder(), ret=ret)
 
                 rows = await self.client.fetch_all(
                     stmt,
-                    [*set_params, *chunk_params, batch_size],
+                    [*set_params, chunk],
                     row_factory="dict",
                     commit=False,
                 )
 
                 if not rows:
-                    break
+                    continue
 
                 doms = self._decode_rows(rows)
                 await self._write_history(*doms)
                 out_domains.extend(doms)
                 total += len(doms)
-                last_id = max(getattr(d, ID_FIELD) for d in doms)
-
-                if len(rows) < batch_size:
-                    break
 
             return total, out_domains
 

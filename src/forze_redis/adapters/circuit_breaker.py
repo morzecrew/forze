@@ -49,10 +49,11 @@ class RedisCircuitBreakerStore(CircuitBreakerStore):
     client: RedisClientPort
     namespace: str = _DEFAULT_NAMESPACE
     local_cache_ttl: float = 0.25
-    max_cache_entries: int = 4096
+    max_cache_entries: int = attrs.field(default=4096, validator=attrs.validators.ge(1))
     """Cap on the local fast-path cache. Bounds memory if ``route`` is derived from
     per-host / per-tenant / per-URL values (otherwise key cardinality is static).
-    Evicting an entry only costs one extra Redis ``admit`` read, never correctness."""
+    Evicting an entry only costs one extra Redis ``admit`` read, never correctness.
+    Must be ``>= 1`` — a non-positive cap would break FIFO eviction in :meth:`_remember`."""
     fallback: CircuitBreakerStore = attrs.field(factory=InMemoryCircuitBreakerStore)
     clock: Callable[[], float] = monotonic
 

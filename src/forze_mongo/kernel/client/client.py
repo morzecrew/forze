@@ -496,6 +496,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
+    @exc_interceptor.asyncgenerator("mongo.find_many_streamed")  # type: ignore[untyped-decorator]
     async def find_many_streamed(
         self,
         coll: AsyncCollection[JsonDict],

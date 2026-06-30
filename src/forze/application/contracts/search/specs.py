@@ -715,7 +715,7 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
 
     By default each leg fetches up to ``rrf_per_leg_limit`` **full** hits, and the
     whole candidate union (full hits) is held in memory to fuse and sort — peak
-    grows with ``members × rrf_per_leg_limit × hit size``, independent of page size.
+    grows with ``members x rrf_per_leg_limit x hit size``, independent of page size.
     When ``True``, eligible searches instead fetch only ``id`` per leg, fuse on
     ``(member, id)``, and re-hydrate **just the page** from each member — so peak is
     the thin candidate keys plus one page of full hits. The trade-off is one extra
