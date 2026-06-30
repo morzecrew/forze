@@ -197,7 +197,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
             return search_page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                 [],
                 pagination_dict,
-                total=0,
+                total=0 if emit_total else None,
             )
 
     want_snap = (
@@ -300,7 +300,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
             return search_page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                 [],
                 pagination_dict,
-                total=0,
+                total=0 if emit_total else None,
             )
 
     return await materialize_offset_page(

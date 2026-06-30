@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import (
     Any,
     Literal,
-    NoReturn,
     Sequence,
     cast,
     final,
@@ -342,10 +341,25 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-        return_count: bool,
+        return_count: Literal[False],
         return_type: None = None,
         return_fields: Sequence[str],
-    ) -> NoReturn: ...
+    ) -> SearchCountlessPage[JsonDict]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[True],
+        return_type: None = None,
+        return_fields: Sequence[str],
+    ) -> SearchPage[JsonDict]: ...
 
     async def _offset_search_impl(
         self,

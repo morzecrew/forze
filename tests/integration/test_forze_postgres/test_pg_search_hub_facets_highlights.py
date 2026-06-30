@@ -146,6 +146,23 @@ async def test_hub_cursor_facets_and_highlights(pg_client: PostgresClient) -> No
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_hub_projected_search_fails_closed_on_unprojected_highlight_field(
+    pg_client: PostgresClient,
+) -> None:
+    adapter = await _adapter(pg_client)
+
+    # Project only 'category'; the default highlight resolves to the searchable 'name', which
+    # was projected away — fail closed rather than return silently partial highlights.
+    with pytest.raises(CoreException) as ei:
+        await adapter.project_search(
+            ["category"], "book", options={"highlight": True}
+        )
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert ei.value.code == "query_feature_unsupported"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_hub_parallel_highlights_work_but_facets_fail_closed(
     pg_client: PostgresClient,
 ) -> None:
@@ -162,3 +179,4 @@ async def test_hub_parallel_highlights_work_but_facets_fail_closed(
     with pytest.raises(CoreException) as ei:
         await adapter.search_page("book", options={"facets": ["category"]})
     assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert ei.value.code == "query_feature_unsupported"

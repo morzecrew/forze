@@ -143,6 +143,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 hub_spec=self.hub_spec,
                 query=query,
                 options=options,
+                return_fields=return_fields,
             )
 
         # ``sql`` execution: facets via a companion GROUP BY over the merged set; highlights
@@ -228,5 +229,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
         )
 
         return attach_hub_highlights(
-            page, hub_spec=self.hub_spec, query=query, options=options
+            page,
+            hub_spec=self.hub_spec,
+            query=query,
+            options=options,
+            return_fields=return_fields,
         )

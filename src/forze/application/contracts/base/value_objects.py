@@ -72,7 +72,9 @@ def offset_page_coords(
     limit = p.get("limit")
     offset = int(p.get("offset") or 0)
 
-    if limit is None:
+    # A missing/empty/zero limit takes the unlimited fallback (mirrors the ``offset or 0``
+    # tolerance); only a positive limit casts, so ``""`` never reaches ``int()`` and raises.
+    if not limit:
         return 1, (max(hit_count, 1) if hit_count else 1)
 
     size = max(int(limit), 1)

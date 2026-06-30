@@ -115,16 +115,29 @@ def resolve_highlight(
 # ....................... #
 
 
+def _casefold(text: str) -> str:
+    """Lowercase *text* preserving length — one code point per input character.
+
+    ``str.lower()`` can change length for a few code points (e.g. ``İ`` → ``i̇``), which would
+    shift the offsets of a folded string away from the original and corrupt slicing. Folding
+    per character and keeping the first code point keeps a 1:1 position mapping, so spans found
+    in the folded text index the original text correctly.
+    """
+
+    return "".join(ch.lower()[:1] for ch in text)
+
+
 def highlight_tokens(terms: Sequence[str]) -> tuple[str, ...]:
-    """Lowercased, whitespace-split, deduped query tokens for substring highlighting.
+    """Length-preserving-folded, whitespace-split, deduped query tokens for highlighting.
 
     Ordered longest-first so a shorter token nested in a longer one can't pre-empt the
-    longer match when spans are merged.
+    longer match when spans are merged. Tokens fold the same way as the text (see
+    :func:`_casefold`) so a match's length maps 1:1 onto the original characters.
     """
 
     return tuple(
         sorted(
-            {tok.lower() for term in terms for tok in term.split() if tok},
+            {_casefold(tok) for term in terms for tok in term.split() if tok},
             key=len,
             reverse=True,
         )
@@ -134,12 +147,12 @@ def highlight_tokens(terms: Sequence[str]) -> tuple[str, ...]:
 def _match_spans(text: str, tokens: Sequence[str]) -> list[tuple[int, int]]:
     """Merged, sorted ``(start, end)`` spans of every case-insensitive substring match.
 
-    Matching runs on ``text.lower()`` but the offsets index the **original** *text*, so a
-    fragment sliced by them keeps the source casing (e.g. ``бета`` in ``БетаМед``). Overlapping
-    matches merge into one span.
+    Matching runs on a length-preserving fold (see :func:`_casefold`) but the offsets index the
+    **original** *text*, so a fragment sliced by them keeps the source casing (e.g. ``бета`` in
+    ``БетаМед``) with offsets that stay aligned. Overlapping matches merge into one span.
     """
 
-    lowered = text.lower()
+    lowered = _casefold(text)
     spans: list[tuple[int, int]] = []
 
     for token in tokens:

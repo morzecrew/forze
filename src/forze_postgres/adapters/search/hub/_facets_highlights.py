@@ -10,7 +10,7 @@ merged candidate set (see :func:`..._facets.fetch_hub_facets`).
 """
 
 from collections.abc import Mapping
-from typing import Any, Sequence
+from typing import Any, Protocol, Sequence
 
 import attrs
 
@@ -21,8 +21,16 @@ from forze.application.contracts.search import (
     highlight_fragment_bounds,
     resolve_highlight,
 )
+from forze.base.exceptions import exc
 
 # ----------------------- #
+
+
+class _HasHits(Protocol):
+    """A page exposing the materialized ``hits`` the highlighter marks."""
+
+    @property
+    def hits(self) -> Sequence[Any]: ...
 
 
 def _query_terms(query: str | Sequence[str]) -> tuple[str, ...]:
@@ -44,18 +52,23 @@ def _hit_text(hit: Any, field: str) -> Any:
 # ....................... #
 
 
-def attach_hub_highlights[P](
+def attach_hub_highlights[P: _HasHits](
     page: P,
     *,
     hub_spec: HubSearchSpec[Any],
     query: str | Sequence[str],
     options: SearchOptions | None,
+    return_fields: Sequence[str] | None = None,
 ) -> P:
     """Return *page* with per-hit highlights, or unchanged when none were requested.
 
     Marks the highlightable fields on the already-materialized ``page.hits`` (typed models or
     projected dicts), so it works for every hub execution mode and pagination shape. The
     highlightable-field validation runs in :func:`resolve_highlight`.
+
+    Because the hit text is read off the returned page, a **projected** search (``return_fields``)
+    can only highlight projected fields; if a resolved highlight field was projected away, fail
+    closed rather than return silently partial highlights.
     """
 
     resolved = resolve_highlight(hub_spec, options)
@@ -63,9 +76,19 @@ def attach_hub_highlights[P](
         return page
 
     fields, pre_tag, post_tag = resolved
+
+    if return_fields is not None and (
+        unprojected := [f for f in fields if f not in return_fields]
+    ):
+        raise exc.precondition(
+            f"Hub search cannot highlight field(s) {sorted(set(unprojected))} that are not in "
+            "return_fields; include them in the projection or drop return_fields.",
+            code="query_feature_unsupported",
+        )
+
     fragment_size, max_fragments = highlight_fragment_bounds(options)
     highlights = compute_highlights(
-        getattr(page, "hits"),
+        page.hits,
         _query_terms(query),
         fields,
         pre_tag=pre_tag,

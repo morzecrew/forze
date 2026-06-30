@@ -77,6 +77,8 @@ def test_projected_dtos_default_to_none_when_absent() -> None:
 
 
 def test_facets_serialize_to_plain_json() -> None:
+    import json
+
     page = SearchPage(
         hits=[_Hit(id=1, title="x")],
         page=1,
@@ -86,7 +88,8 @@ def test_facets_serialize_to_plain_json() -> None:
         highlights=_HIGHLIGHTS,
     )
 
-    dumped = SearchPaginated.from_search_page(page).model_dump()
+    # The real wire payload (JSON mode): fragment tuples become arrays, facet buckets objects.
+    dumped = json.loads(SearchPaginated.from_search_page(page).model_dump_json())
 
     assert dumped["facets"] == {"category": [{"value": "books", "count": 2}]}
-    assert dumped["highlights"] == [{"title": ("Rust <em>Book</em>",)}]
+    assert dumped["highlights"] == [{"title": ["Rust <em>Book</em>"]}]

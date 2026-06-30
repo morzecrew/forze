@@ -109,6 +109,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 hub_spec=self._hub_host.hub_spec,
                 query=query,
                 options=options,
+                return_fields=return_fields,
             )
 
         # ``sql`` execution: facets via a companion over the merged set; highlights marked
@@ -308,6 +309,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 hub_spec=self._hub_host.hub_spec,
                 query=query,
                 options=options,
+                return_fields=return_fields,
             )
 
         hits = decode_search_hits(

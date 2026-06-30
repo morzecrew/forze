@@ -223,6 +223,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         # Facets are computed live per page; an id-only snapshot replay would drop them, so a
         # facet request runs live (no snapshot read or write).
         facet_fields = resolve_facet_fields(self.spec, options)
+        count_policy = effective_search_count(options)
         fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
             query,
             filters,
@@ -241,7 +242,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 pagination=dict(pagination or {}),
                 return_type=return_type,
                 return_fields=return_fields,
-                return_count=return_count,
+                return_count=return_count and count_policy != "none",
             )
 
             if maybe_snap is not None:
@@ -274,7 +275,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         params_base = list(fp)
         total = 0
-        count_policy = effective_search_count(options)
 
         if return_count and count_policy != "none":
             if count_policy == "exact":
@@ -283,10 +283,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 )
 
                 if total == 0:
+                    # No matches: the facet distribution is empty buckets per requested field,
+                    # not ``None`` — keep the sidecar shape the live path returns.
                     return search_page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                         [],
                         pagination or {},
                         total=0,
+                        facets={f: () for f in facet_fields} if facet_fields else None,
                     )
             else:
                 total = await resolve_ranked_approximate_total(

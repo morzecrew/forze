@@ -21,7 +21,7 @@ from .operations import SearchKernelOp
 
 @namespaced_facade
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchFacade[M: BaseModel, Opt: SearchOptions](OperationFacade):
+class SearchFacade[M: BaseModel, Opt: SearchOptions = SearchOptions](OperationFacade):
     """Typed facade for search operations."""
 
     projected_search = facade_op(
