@@ -318,7 +318,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             candidate_limit=getattr(pipeline_sql, "candidate_limit", None),
         )
 
-        # Late materialization (RFC 0008 P4): when the read relation is a distinct projection
+        # Late materialization: when the read relation is a distinct projection
         # from the index heap (typically a heavy view), rank an id-only scan and hydrate the
         # page's read-model columns by id. No-op when read == heap (plain table search) or
         # when highlights are requested (snippets need the projection row in the SELECT).

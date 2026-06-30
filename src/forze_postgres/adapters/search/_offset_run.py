@@ -99,7 +99,7 @@ class RankedOffsetPlan:
     """Table alias passed to :meth:`~PostgresGateway.return_clause`."""
 
     highlight: "HighlightSelect | None" = None
-    """Synthetic highlight columns to splice into the data SELECT (RFC 0006)."""
+    """Synthetic highlight columns to splice into the data SELECT."""
 
     from_outer_param_count: int = 0
     """Trailing :attr:`params` that belong to :attr:`from_outer` (highlight params splice
@@ -122,7 +122,7 @@ class _PostgresSimpleOffsetHooks:
     facet_size: int = 0
     thin_read_qname: PostgresQualifiedName | None = None
     """When set, the non-snapshot page ranks over an id-only projection and hydrates the
-    read-model columns from this relation by id (RFC 0008 P4). Set only when the read
+    read-model columns from this relation by id. Set only when the read
     relation differs from the index heap (a distinct, potentially heavy projection)."""
 
     async def fetch_count(self) -> int | None:
@@ -235,7 +235,7 @@ class _PostgresSimpleOffsetHooks:
         return OffsetRowsResult(rows=rows, facets=facets, highlights=highlights)
 
     async def _fetch_rows_thin(self, window: OffsetFetchWindow) -> OffsetRowsResult:
-        """Late materialization (RFC 0008 P4): rank an id-only projection, hydrate by id.
+        """Late materialization: rank an id-only projection, hydrate by id.
 
         Only reached for the non-snapshot page when :attr:`thin_read_qname` is set (read
         relation distinct from the index heap, no highlights). The ranked scan projects only
@@ -613,7 +613,7 @@ async def execute_hub_ranked_offset_search(
     # path. Sound only when the data scan reads the uncapped ``combo`` (``data_relation`` ==
     # ``count_relation``, i.e. no ``combo_top`` cap / no active legs) and the first page is
     # requested (a past-the-end offset returns no rows and would lose the window count). The
-    # thin (non-snapshot) branch reads the folded total from Phase A. RFC 0008 P3.
+    # thin (non-snapshot) branch reads the folded total from Phase A.
     fold_count = (
         plan.thin
         and not want_sn
@@ -654,7 +654,7 @@ async def execute_hub_ranked_offset_search(
         # Stream the merged combo result window-by-window into the snapshot store so peak
         # memory is one chunk, never the whole (up to ``max_ids``) decoded pool at once.
         # When thin, each window is ranked over the id-only pipeline and hydrated by id, so
-        # the heavy projection runs only for actually-stored windows (RFC 0008 P1.5).
+        # the heavy projection runs only for actually-stored windows.
         page_limit = SearchResultSnapshot.snapshot_pagination(
             True, 0, pagination_dict
         )[2]

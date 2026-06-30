@@ -30,6 +30,8 @@ result-set snapshots.
 | `fuzzy` | `SearchFuzzySpec \| None` | `None` | fuzzy-matching configuration |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts` (required if the model has no `id`) |
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names that are real columns on the search relation, so results can be filtered/sorted by the derived value (mirror of [`DocumentSpec.materialized`](document.md#spec); relational in-place only, **not** startup-validated) |
+| `facetable_fields` | `frozenset[str]` | `∅` | fields a query may compute term (value) facet distributions over (must be real, non-lenient, non-encrypted columns) |
+| `highlightable_fields` | `frozenset[str] \| None` | `None` | searchable fields a query may highlight; `None` = all searchable `fields`, `∅` = none |
 | `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` (every statically-defaulted, non-identity, non-indexed, non-`materialized` field); explicit fields added on top |
 | `lenient_read_fields` | `frozenset[str]` | `∅` | returned read-model fields with **no** backing column: dropped from the result projection, hydrated from their default, and excluded from sort keys (mirror of [`DocumentSpec.lenient_read_fields`](document.md#lenient-read-fields); must **not** be an indexed `fields` member) |
 | `snapshot` | `SearchResultSnapshotSpec \| None` | `None` | result-ID snapshotting defaults (stable re-pagination) |
@@ -60,8 +62,22 @@ argument; everything else mirrors the document side:
 | `select_search` / `select_search_page` / `select_search_cursor` `(return_type, query, …)` | pages of `T` |
 
 `query` is a string (or a sequence of strings); `filters` and `sorts` use the
-[query DSL](../query-syntax.md). `options: SearchOptions` tunes relevance,
-highlighting, etc.
+[query DSL](../query-syntax.md). `options: SearchOptions` is the backend- and
+topology-agnostic per-request surface — relevance weights, fuzzy matching, the count
+policy (`search_count`), an advisory candidate cap (`max_candidates`), and the facet /
+highlight requests below. Hub and federated searches resolve to a `MultiSourceSearchOptions`
+port that also carries member selection (`member_weights` / `members`) and a post-merge cap
+(`merge_candidates`); passing those keys to a single-index `query(...)` port is a type error.
+
+### Facets and highlights
+
+A query requests term facet distributions with `options={"facets": [...]}` and per-hit
+match snippets with `options={"highlight": True}` (or a `HighlightOptions` mapping to narrow
+fields / customize the `<em>` markers), over the spec's `facetable_fields` /
+`highlightable_fields`. Results ride the page as optional `page.facets` (one set per query,
+over the full matching set) and `page.highlights` (per hit, index-aligned with `hits`),
+`None` when not requested. A field or backend that cannot serve a request fails closed with
+`query_feature_unsupported`.
 
 ## Command port
 

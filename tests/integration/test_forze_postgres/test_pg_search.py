@@ -580,7 +580,7 @@ class _ProjModel(BaseModel):
 async def test_postgres_search_read_view_defers_heavy_column(
     pg_client: PostgresClient,
 ) -> None:
-    """RFC 0008 P4: when the read relation is a view distinct from the index heap, the ranked
+    """When the read relation is a view distinct from the index heap, the ranked
     scan projects only the id and the heavy column is hydrated by id."""
 
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")

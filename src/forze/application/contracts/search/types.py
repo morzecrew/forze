@@ -21,7 +21,7 @@ to the search surface defaults (e.g. :class:`~.SearchResultSnapshotSpec`).
 
 
 class HighlightOptions(TypedDict, total=False):
-    """Per-request highlighting options (see RFC 0006).
+    """Per-request highlighting options.
 
     Used as the value of :attr:`SearchOptions.highlight` when finer control than
     ``True`` is needed. Omitted keys fall back to backend defaults; the marker tags
@@ -114,7 +114,7 @@ class SearchOptions(TypedDict, total=False):
     """Ranked search total: ``exact`` (``COUNT(*)``), ``approximate`` (planner/stats), ``none``."""
 
     facets: Sequence[str]
-    """Field names to compute term (value) distributions over for this query (see RFC 0006).
+    """Field names to compute term (value) distributions over for this query.
 
     Each must be a :attr:`~.SearchSpec.facetable_fields` member; an unservable field
     fails with a ``precondition``. Distributions are returned on the page
@@ -126,7 +126,7 @@ class SearchOptions(TypedDict, total=False):
     count). Backend default applies when omitted."""
 
     highlight: bool | HighlightOptions
-    """Request highlighting of matched fragments per hit (see RFC 0006). ``True`` highlights
+    """Request highlighting of matched fragments per hit. ``True`` highlights
     all highlightable fields with default markers; a :class:`HighlightOptions` narrows the
     fields / customizes markers. Returned index-aligned on the page
     (:attr:`~forze.application.contracts.base.value_objects.CountlessPage.highlights`)."""

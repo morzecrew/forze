@@ -1,4 +1,4 @@
-"""Postgres multi-leg facets/highlights (RFC 0006, P6): federated highlights + fail-closed."""
+"""Postgres multi-leg facets/highlights: federated highlights + fail-closed."""
 
 from __future__ import annotations
 

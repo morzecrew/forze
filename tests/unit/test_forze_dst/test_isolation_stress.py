@@ -1,6 +1,6 @@
 """The isolation oracle *pays off* — a generated, contended workload that actually fires it.
 
-The serializability oracle (`serializable(complete=True)`, RFC 0013 P1+P2) can detect anti-dependency
+The serializability oracle (`serializable(complete=True)`) can detect anti-dependency
 cycles and predicate phantoms, but only if a workload *produces* them. These tests drive the reusable
 contended stress scenario (`tests.support.dst_isolation_stress`) and prove the end-to-end payoff:
 

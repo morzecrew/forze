@@ -1,4 +1,4 @@
-"""Per-hit highlight snippet columns for Postgres ranked search (RFC 0006).
+"""Per-hit highlight snippet columns for Postgres ranked search.
 
 Highlights are added to the ranked data ``SELECT`` as synthetic columns (one per
 highlightable field), captured from the raw rows, then stripped before codec decode.

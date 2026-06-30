@@ -379,7 +379,7 @@ class TestExecutionContextSearchQuery:
 
 
 class TestSearchFuzzySpec:
-    """`SearchFuzzySpec` is an immutable value object (RFC 0009 sibling cleanup)."""
+    """`SearchFuzzySpec` is an immutable value object."""
 
     def test_default_ratio(self) -> None:
         assert SearchFuzzySpec().max_distance_ratio == 0.34

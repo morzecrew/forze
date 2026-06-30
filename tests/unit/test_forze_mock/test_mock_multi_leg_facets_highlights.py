@@ -1,4 +1,4 @@
-"""Mock hub + federated facets & highlights (RFC 0006, P6 multi-leg)."""
+"""Mock hub + federated facets & highlights."""
 
 from pydantic import BaseModel
 

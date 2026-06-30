@@ -1,4 +1,4 @@
-"""Integration tests for Meilisearch facets & highlights (RFC 0006)."""
+"""Integration tests for Meilisearch facets & highlights."""
 
 from __future__ import annotations
 

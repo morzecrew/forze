@@ -1,4 +1,4 @@
-"""Shared resolution of facet & highlight requests against a search spec (RFC 0006).
+"""Shared resolution of facet & highlight requests against a search spec.
 
 Backend-agnostic: every adapter (mock, Postgres, Meilisearch, OpenSearch) validates a
 caller's :class:`~.types.SearchOptions` ``facets`` / ``highlight`` request the same way

@@ -225,8 +225,8 @@ async def test_hub_result_snapshot_reread_thin_per_window(
     pg_client: PostgresClient,
     redis_client: RedisClient,
 ) -> None:
-    """Hub snapshot write streams the thin id pipeline per window and hydrates by id
-    (RFC 0008 P1.5), then replays identically."""
+    """Hub snapshot write streams the thin id pipeline per window, hydrates by id,
+    then replays identically."""
 
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
     suffix = uuid4().hex[:12]

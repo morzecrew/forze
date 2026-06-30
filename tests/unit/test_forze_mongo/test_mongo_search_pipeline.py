@@ -59,7 +59,7 @@ def test_atlas_pipeline_starts_with_search_stage() -> None:
 
 
 # ----------------------- #
-# RFC 0009 P6: `max_candidates` -> Mongo `$vectorSearch.numCandidates`
+# `max_candidates` -> Mongo `$vectorSearch.numCandidates`
 
 
 from unittest.mock import MagicMock

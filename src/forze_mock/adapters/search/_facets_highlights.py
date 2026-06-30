@@ -1,4 +1,4 @@
-"""In-memory facet & highlight computation for the mock search adapter (RFC 0006).
+"""In-memory facet & highlight computation for the mock search adapter.
 
 This is the **reference oracle**: the simplest correct semantics every other backend
 (Postgres, Meilisearch, OpenSearch) is held to by the cross-backend parity harness.

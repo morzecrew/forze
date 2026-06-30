@@ -1,4 +1,4 @@
-"""Mock search facets & highlights — the reference-oracle behavior (RFC 0006)."""
+"""Mock search facets & highlights — the reference-oracle behavior."""
 
 from uuid import UUID
 

@@ -1,4 +1,4 @@
-"""Threading per-leg highlights through the federated RRF merge (RFC 0006).
+"""Threading per-leg highlights through the federated RRF merge.
 
 Each federated leg is run as a full ``SearchQueryPort`` (so it computes its own
 ``page.highlights``); the coordinator merges/dedupes hits with

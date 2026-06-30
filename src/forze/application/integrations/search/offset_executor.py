@@ -84,7 +84,7 @@ class OffsetRowsResult:
     """When set and counting is enabled, used as the result total."""
 
     facets: FacetResults | None = None
-    """Optional facet distributions for this search (result-level; see RFC 0006)."""
+    """Optional facet distributions for this search (result-level)."""
 
     highlights: list[HitHighlights] | None = None
     """Optional per-hit highlighted fragments, index-aligned with :attr:`rows`

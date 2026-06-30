@@ -1,4 +1,4 @@
-"""Companion ``GROUP BY`` facet queries for Postgres ranked + browse search (RFC 0006).
+"""Companion ``GROUP BY`` facet queries for Postgres ranked + browse search.
 
 Facets are computed over the **full matching set** (uncapped), independent of the page
 window, by reusing the same filtered/scored SQL the page query runs over. Term semantics

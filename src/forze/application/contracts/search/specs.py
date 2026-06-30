@@ -119,7 +119,7 @@ def _validate_search_facetable_highlightable(
     lenient_read_fields: frozenset[str],
     encryption: FieldEncryption | None,
 ) -> None:
-    """Validate a search spec's facet/highlight field declarations (see RFC 0006).
+    """Validate a search spec's facet/highlight field declarations.
 
     A **facetable** field must be a real read column (exists on the model, not lenient,
     not sealed) — a value distribution needs a stored value. A **highlightable** field
@@ -315,7 +315,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
         converter=frozenset,
     )
     """Read-model field names that may be **faceted** (value-distribution aggregated) when
-    a caller passes :attr:`~.types.SearchOptions.facets` (see RFC 0006). Each must be a real
+    a caller passes :attr:`~.types.SearchOptions.facets`. Each must be a real
     stored read field (not :attr:`lenient_read_fields`, not field-encrypted); analyzed-text
     :attr:`fields` are poor facet targets but are not rejected. Empty by default — faceting
     is opt-in because it has index/mapping implications (e.g. an external index must declare
@@ -323,7 +323,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
 
     highlightable_fields: frozenset[str] | None = attrs.field(default=None)
     """Searchable field names that may be **highlighted** (matched fragments returned) when
-    a caller passes :attr:`~.types.SearchOptions.highlight` (see RFC 0006). ``None`` (default)
+    a caller passes :attr:`~.types.SearchOptions.highlight`. ``None`` (default)
     means all searchable :attr:`fields`; an explicit set narrows it. Each named field must be
     an indexed :attr:`fields` member (only analyzed text can be highlighted) and not
     field-encrypted."""
@@ -511,12 +511,12 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
         converter=frozenset,
     )
     """Hub-row field names that may be **faceted** when a caller passes
-    :attr:`~.types.SearchOptions.facets` (see RFC 0006). A hub facet distribution is computed
+    :attr:`~.types.SearchOptions.facets`. A hub facet distribution is computed
     over the merged hub rows (homogeneous model), so it is a flat :class:`FacetResults` like
     single-index. Each must be a real, non-lenient, non-encrypted hub-row field. Empty = opt-out."""
 
     highlightable_fields: frozenset[str] | None = attrs.field(default=None)
-    """Hub-row field names that may be **highlighted** (see RFC 0006). ``None`` = the union of
+    """Hub-row field names that may be **highlighted**. ``None`` = the union of
     all member legs' searchable :attr:`SearchSpec.fields`. Each named field must be searchable
     on at least one member leg and not field-encrypted. (Highlighting a merged hub row is
     backend-dependent — see the adapter docs.)"""

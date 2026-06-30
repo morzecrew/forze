@@ -1,4 +1,4 @@
-"""Integration tests for Postgres search facets (RFC 0006) — PGroonga + FTS."""
+"""Integration tests for Postgres search facets — PGroonga + FTS."""
 
 from __future__ import annotations
 

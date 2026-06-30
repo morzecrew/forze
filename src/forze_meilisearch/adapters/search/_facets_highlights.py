@@ -1,4 +1,4 @@
-"""Facet & highlight planning/extraction for Meilisearch search (RFC 0006).
+"""Facet & highlight planning/extraction for Meilisearch search.
 
 Maps the contract-resolved *logical* facet/highlight request onto Meilisearch's native
 ``facetDistribution`` and ``_formatted`` (``attributesToHighlight``), then back to logical

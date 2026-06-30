@@ -101,7 +101,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
 
         combo_cap = plan.resolved_combo if plan.terms else None
 
-        # Late materialization (RFC 0008 P2): keyset-paginate over the thin id pipeline and
+        # Late materialization: keyset-paginate over the thin id pipeline and
         # hydrate the heavy read-model columns for the returned page by id. Cursor search
         # never writes a result snapshot, so it is always eligible when the shape is thinnable.
         thin_fields = self._hub_thin_projection(plan)

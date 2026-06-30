@@ -2371,7 +2371,7 @@ async def test_hub_sql_offset_and_cursor_agree_with_explicit_sort(
 async def test_postgres_hub_search_thin_projection_defers_heavy_columns(
     pg_client: PostgresClient,
 ):
-    """RFC 0008 P1: the ranked pipeline projects only key/sort columns and the heavy
+    """The ranked pipeline projects only key/sort columns and the heavy
     read-model columns are hydrated for the page by primary key — not carried through
     every candidate row of the hub relation."""
 
@@ -2468,7 +2468,7 @@ async def test_postgres_hub_search_thin_projection_defers_heavy_columns(
     # ... and `body` is hydrated by primary key for the page only.
     assert any('"body"' in q for q in hydration)
 
-    # Cursor pagination (RFC 0008 P2) defers the same way: keyset over the thin row,
+    # Cursor pagination defers the same way: keyset over the thin row,
     # heavy columns hydrated by id.
     captured.clear()
     pg_client.fetch_all = _capturing_fetch_all  # type: ignore[method-assign]
@@ -2493,7 +2493,7 @@ async def test_postgres_hub_search_thin_projection_defers_heavy_columns(
 async def test_postgres_hub_filter_only_count_folds_into_thin_scan(
     pg_client: PostgresClient,
 ):
-    """RFC 0008 P3: on the filter-only (no-leg) first page, the exact count rides the thin
+    """On the filter-only (no-leg) first page, the exact count rides the thin
     id scan via ``count(*) OVER ()`` — no separate ``COUNT(*)`` statement is issued."""
 
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")

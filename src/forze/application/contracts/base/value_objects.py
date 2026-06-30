@@ -34,7 +34,7 @@ class SearchSnapshotHandle:
 
 
 # ----------------------- #
-# Facets & highlights (optional search-result metadata; see RFC 0006). Defined
+# Facets & highlights (optional search-result metadata). Defined
 # here for the same reason as SearchSnapshotHandle: the page value objects below
 # carry them, and the base contract must not import from the search contract.
 # Re-exported from forze.application.contracts.search.value_objects.
@@ -86,12 +86,12 @@ class CountlessPage[T]:
 
     facets: FacetResults | None = None
     """Optional facet (term) distributions for this search, when facets were requested
-    (search surfaces only; ``None`` for document queries and when not requested). See RFC 0006."""
+    (search surfaces only; ``None`` for document queries and when not requested)."""
 
     highlights: list[HitHighlights] | None = None
     """Optional per-hit highlighted fragments, index-aligned with :attr:`hits`
     (``highlights[i]`` describes ``hits[i]``), when highlighting was requested. ``None`` when
-    not requested or unavailable (e.g. snapshot-continuation pages). See RFC 0006."""
+    not requested or unavailable (e.g. snapshot-continuation pages)."""
 
 
 # ....................... #
@@ -128,11 +128,11 @@ class CursorPage[T]:
     """Whether there are more pages after this one."""
 
     facets: FacetResults | None = None
-    """Optional facet (term) distributions for this search, when facets were requested. See RFC 0006."""
+    """Optional facet (term) distributions for this search, when facets were requested."""
 
     highlights: list[HitHighlights] | None = None
     """Optional per-hit highlighted fragments, index-aligned with :attr:`hits`, when
-    highlighting was requested. ``None`` when not requested or unavailable. See RFC 0006."""
+    highlighting was requested. ``None`` when not requested or unavailable."""
 
 
 # ....................... #

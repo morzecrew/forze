@@ -43,7 +43,7 @@ class RankedPipelineSql:
     candidate_limit: int | None = None
     """Effective ranked-row cap when applicable."""
     highlight: "HighlightSelect | None" = None
-    """Synthetic highlight columns for the ranked data SELECT (RFC 0006); ``None`` if unrequested."""
+    """Synthetic highlight columns for the ranked data SELECT; ``None`` if unrequested."""
     from_outer_param_count: int = 0
     """Trailing params of :attr:`params_body` that belong to :attr:`from_outer` (vs the
     ``WITH`` clause). Highlight column params are spliced in *before* these so positional
