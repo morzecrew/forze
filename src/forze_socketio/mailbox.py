@@ -25,7 +25,7 @@ require_socketio()
 
 # ....................... #
 
-from typing import Awaitable, Protocol, final, runtime_checkable
+from typing import AsyncIterator, Awaitable, Protocol, final, runtime_checkable
 
 import attrs
 
@@ -58,6 +58,20 @@ class RealtimeMailbox(Protocol):
         self, *, principal: str, since: HlcTimestamp | None
     ) -> Awaitable[list[MailboxEntry]]:
         """The retained entries strictly after *since* (all when ``None``), oldest-first."""
+
+        ...  # pragma: no cover
+
+    def replay_since(
+        self, *, principal: str, since: HlcTimestamp | None
+    ) -> AsyncIterator[MailboxEntry]:
+        """Stream the retained entries strictly after *since*, oldest-first.
+
+        The streaming counterpart of :meth:`read_since`: the connection replay
+        consumes it page-by-page (the document-backed store keyset-pages by HLC), so
+        peak memory is one page rather than the whole retained backlog of every
+        reconnecting device at once. Optional — the connection layer falls back to
+        :meth:`read_since` for a mailbox that does not implement it.
+        """
 
         ...  # pragma: no cover
 
@@ -142,6 +156,14 @@ class InMemoryRealtimeMailbox(RealtimeMailbox):
             return list(log)
 
         return [entry for entry in log if entry.hlc > since]
+
+    async def replay_since(
+        self, *, principal: str, since: HlcTimestamp | None
+    ) -> AsyncIterator[MailboxEntry]:
+        # Single-node test aid: the log is already in memory, so this just yields in
+        # order — the paging win is the durable store's (see ``DocumentRealtimeMailbox``).
+        for entry in await self.read_since(principal=principal, since=since):
+            yield entry
 
     async def position_of(
         self, *, principal: str, event_id: str

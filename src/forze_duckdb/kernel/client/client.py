@@ -9,7 +9,7 @@ require_duckdb()
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from typing import Any, Callable, Mapping, Sequence, TypeVar, final
+from typing import Any, AsyncGenerator, Callable, Mapping, Sequence, TypeVar, final
 
 import attrs
 import duckdb
@@ -288,6 +288,39 @@ class DuckDbClient(DuckDbClientPort):
         )
 
         return result.rows
+
+    # ....................... #
+
+    async def run_query_streamed(
+        self,
+        sql: str,
+        params: BaseModel | JsonDict | None = None,
+        *,
+        max_rows: int | None = None,
+        timeout: timedelta | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        """Yield result rows in ``fetch_batch_size`` windows without a full pylist.
+
+        DuckDB computes the result as a native Arrow table (held columnar and
+        compact), but only one record batch is converted to plain dict rows at a
+        time, so the Python-heap footprint stays at a single window instead of the
+        whole result materialized as a ``list[dict]``.
+        """
+
+        if fetch_batch_size < 1:
+            raise exc.internal("fetch_batch_size must be >= 1")
+
+        result = await self.run_query(
+            sql,
+            params,
+            limit=max_rows,
+            max_rows=max_rows,
+            timeout=timeout,
+        )
+
+        for batch in result.arrow.to_batches(max_chunksize=fetch_batch_size):
+            yield batch.to_pylist()
 
     # ....................... #
 

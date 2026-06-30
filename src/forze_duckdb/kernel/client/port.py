@@ -1,7 +1,7 @@
 """Structural protocol for DuckDB clients."""
 
 from datetime import timedelta
-from typing import Awaitable, Protocol
+from typing import AsyncGenerator, Awaitable, Protocol, Sequence
 
 from pydantic import BaseModel
 
@@ -39,6 +39,16 @@ class DuckDbClientPort(Protocol):
         timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
     ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
+
+    def run_query_streamed(
+        self,
+        sql: str,
+        params: BaseModel | JsonDict | None = None,
+        *,
+        max_rows: int | None = None,
+        timeout: timedelta | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[Sequence[JsonDict]]: ...  # pragma: no cover
 
     def run_command(
         self,

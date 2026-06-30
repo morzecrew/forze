@@ -27,6 +27,12 @@ class OutboxStagingContext:
     safe because an ``OutboxStagingContext`` is a per-runtime-scope singleton (one per
     execution context), never created per request; see
     :class:`~forze.base.primitives.ContextualBuffer` for the rationale.
+
+    **Invariant:** ``route`` is a static ``OutboxSpec.name`` — a finite, registry-bounded
+    set — so ``_buffers`` / ``_flushed_vars`` and the ``ContextVar``s they create stay
+    bounded. A ``ContextVar`` is never reclaimed by the contextvars machinery, so a
+    per-tenant or otherwise dynamic ``route`` would leak one per distinct value. Any future
+    dynamic-route feature must key these by a bounded id (not the raw route) or cap them.
     """
 
     _buffers: dict[str, ContextualBuffer[StagedOutboxEntry]] = attrs.field(

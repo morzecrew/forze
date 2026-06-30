@@ -496,6 +496,53 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
+    @exc_interceptor.asyncgenerator("mongo.find_many_streamed")  # type: ignore[untyped-decorator]
+    async def find_many_streamed(
+        self,
+        coll: AsyncCollection[JsonDict],
+        filter: Mapping[str, Any],
+        *,
+        projection: Mapping[str, Any] | None = None,
+        sort: Sequence[tuple[str, int]] | None = None,
+        limit: int | None = None,
+        skip: int | None = None,
+        batch_size: int = 2000,
+    ) -> AsyncGenerator[list[JsonDict]]:
+        """Stream matching documents in ``batch_size`` batches, never buffering all.
+
+        Iterates the driver cursor (with a matching network ``batch_size``) and yields
+        one app-level batch at a time, so peak memory is a single batch regardless of
+        how many documents match — unlike :meth:`find_many`, which drains the cursor to
+        a list. ``limit`` still caps the total when set.
+        """
+
+        if batch_size < 1:
+            raise exc.internal("batch_size must be >= 1")
+
+        session = await self._session_for_op()
+        cur = coll.find(filter, projection=projection, sort=sort, session=session)
+
+        if skip is not None:
+            cur = cur.skip(skip)
+
+        if limit is not None:
+            cur = cur.limit(limit)
+
+        cur = cur.batch_size(batch_size)
+        out: list[JsonDict] = []
+
+        async for doc in cur:
+            out.append(doc)
+
+            if len(out) >= batch_size:
+                yield out
+                out = []
+
+        if out:
+            yield out
+
+    # ....................... #
+
     @exc_interceptor.coroutine("mongo.aggregate")  # type: ignore[untyped-decorator]
     async def aggregate(
         self,

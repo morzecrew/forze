@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping
+from typing import Any, Sequence
 
 from forze.application.contracts.search import (
     PhraseCombine,
@@ -41,11 +42,14 @@ def _sort_dict(
     return out
 
 
-def _pre_match_stages(pre_filter: JsonDict) -> list[JsonDict]:
-    if not pre_filter:
-        return []
+# ....................... #
 
-    return [{"$match": pre_filter}]
+
+def _pre_match_stages(pre_filter: JsonDict) -> list[JsonDict]:
+    return [{"$match": pre_filter}] if pre_filter else []
+
+
+# ....................... #
 
 
 def build_browse_pipeline(
@@ -56,18 +60,18 @@ def build_browse_pipeline(
 ) -> list[JsonDict]:
     """Filter-only browse pipeline (empty text query)."""
 
-    stages: list[JsonDict] = [*_pre_match_stages(pre_filter)]
-
-    stages.append({"$addFields": {rank_field: 1}})
-    stages.append(
+    return [
+        *_pre_match_stages(pre_filter),
+        {"$addFields": {rank_field: 1}},
         {
             "$sort": _sort_dict(
                 ranked=False, user_sorts=user_sorts, rank_field=rank_field
             )
-        }
-    )
+        },
+    ]
 
-    return stages
+
+# ....................... #
 
 
 def build_text_ranked_pipeline(
@@ -84,13 +88,15 @@ def build_text_ranked_pipeline(
     stages: list[JsonDict] = [*_pre_match_stages(pre_filter)]
 
     if search_str:
-        stages.append({"$match": {"$text": {"$search": search_str}}})
-        stages.append(
-            {
-                "$addFields": {
-                    rank_field: {"$meta": "textScore"},
-                }
-            }
+        stages.extend(
+            (
+                {"$match": {"$text": {"$search": search_str}}},
+                {
+                    "$addFields": {
+                        rank_field: {"$meta": "textScore"},
+                    }
+                },
+            )
         )
     else:
         return build_browse_pipeline(
@@ -104,6 +110,9 @@ def build_text_ranked_pipeline(
     )
 
     return stages
+
+
+# ....................... #
 
 
 def build_atlas_ranked_pipeline(
@@ -173,6 +182,9 @@ def build_atlas_ranked_pipeline(
     return stages
 
 
+# ....................... #
+
+
 def build_vector_ranked_pipeline(
     *,
     pre_filter: JsonDict,
@@ -218,6 +230,9 @@ def build_vector_ranked_pipeline(
     return stages
 
 
+# ....................... #
+
+
 def append_pagination_stages(
     pipeline: list[JsonDict],
     *,
@@ -242,7 +257,71 @@ def append_pagination_stages(
     return out
 
 
-def build_count_pipeline(pipeline: list[JsonDict]) -> list[JsonDict]:
-    """Wrap a ranked pipeline in ``$count`` for total hits."""
+# ....................... #
 
-    return [*pipeline, {"$count": "total"}]
+
+def _is_rank_only_stage(stage: JsonDict, rank_field: str) -> bool:
+    """A ``$sort`` or the internal rank ``$addFields`` — pure ordering work."""
+
+    if "$sort" in stage:
+        return True
+
+    added = stage.get("$addFields")
+
+    return isinstance(added, Mapping) and set(
+        added.keys()  # pyright: ignore[reportUnknownArgumentType]
+    ) == {rank_field}
+
+
+# ....................... #
+
+
+def thin_ranked_pipeline(
+    pipeline: list[JsonDict],
+) -> list[JsonDict] | None:
+    """Insert a thin ``$project`` (only the sort keys) just before the ``$sort``.
+
+    Late materialization for ranked search: the server then sorts / skips / limits
+    lightweight ``{_id, sort-key, rank}`` documents instead of the full heavy
+    documents, so a large match set no longer pushes the whole result through the
+    100 MB in-memory sort (which otherwise spills to disk). The caller paginates
+    this thin pipeline and hydrates only the page's full documents by ``_id``.
+
+    Returns ``None`` when there is no ``$sort`` to thin (e.g. a bare
+    ``$vectorSearch`` ordered by the index), so the caller keeps the plain
+    full-document fetch.
+    """
+
+    for index, stage in enumerate(pipeline):
+        sort = stage.get("$sort")
+
+        if sort is not None:
+            projection: JsonDict = {key: 1 for key in sort}
+            projection["_id"] = 1
+
+            return [*pipeline[:index], {"$project": projection}, *pipeline[index:]]
+
+    return None
+
+
+# ....................... #
+
+
+def build_count_pipeline(
+    pipeline: list[JsonDict],
+    *,
+    rank_field: str = MONGO_RANK_FIELD,
+) -> list[JsonDict]:
+    """Wrap a ranked pipeline in ``$count`` for total hits.
+
+    Counting needs only the match stages, so the rank ``$addFields`` and the
+    ``$sort`` are dropped first: ordering the full matched set just to count it is
+    pure server-side work (and can spill the in-memory sort on a large match). The
+    matcher itself (``$match`` / ``$search`` / ``$vectorSearch``) is kept.
+    """
+
+    counted = [
+        stage for stage in pipeline if not _is_rank_only_stage(stage, rank_field)
+    ]
+
+    return [*counted, {"$count": "total"}]

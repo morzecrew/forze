@@ -1,6 +1,16 @@
 """Shared helpers for warehouse analytics adapters."""
 
-from typing import Any, Awaitable, Callable, Mapping, Sequence, TypeVar, cast
+from typing import (
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Mapping,
+    Sequence,
+    TypeVar,
+    cast,
+)
 
 from pydantic import BaseModel
 
@@ -183,6 +193,60 @@ async def decrypt_and_shape_rows(
         return_type=return_type,
         return_fields=return_fields,
     )
+
+
+# ....................... #
+
+
+async def stream_shaped_chunks(
+    raw_batches: AsyncIterator[Sequence[JsonDict]],
+    *,
+    fetch_batch_size: int,
+    read_codec: ModelCodec[Any, Any] | None,
+    read_type: type[BaseModel],
+    return_type: type[T] | None,
+    return_fields: Sequence[str] | None,
+) -> AsyncGenerator[Sequence[Any]]:
+    """Re-chunk a stream of raw row batches into shaped output windows.
+
+    The streaming counterpart of :func:`decrypt_and_shape_rows`. A backend yields
+    rows in its own native unit (a ClickHouse block, a BigQuery page, an Arrow
+    record batch); this regroups them into stable ``fetch_batch_size`` windows and
+    decrypts+decodes **one window at a time**. Peak memory stays at a single chunk
+    of rows regardless of the total result size — so the ``run_chunked`` generator
+    actually delivers the bounded memory its shape promises, instead of buffering
+    the whole result set before the first yield.
+    """
+
+    if fetch_batch_size < 1:
+        # A non-positive window never drains the buffer — the re-chunking loop
+        # below would spin forever yielding empty slices.
+        raise exc.precondition("fetch_batch_size must be a positive integer.")
+
+    buffer: list[JsonDict] = []
+
+    async for batch in raw_batches:
+        buffer.extend(batch)
+
+        while len(buffer) >= fetch_batch_size:
+            window = buffer[:fetch_batch_size]
+            del buffer[:fetch_batch_size]
+            yield await decrypt_and_shape_rows(
+                window,
+                read_codec=read_codec,
+                read_type=read_type,
+                return_type=return_type,
+                return_fields=return_fields,
+            )
+
+    if buffer:
+        yield await decrypt_and_shape_rows(
+            buffer,
+            read_codec=read_codec,
+            read_type=read_type,
+            return_type=return_type,
+            return_fields=return_fields,
+        )
 
 
 # ....................... #

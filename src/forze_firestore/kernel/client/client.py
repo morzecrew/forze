@@ -498,6 +498,50 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
+    @exc_interceptor.asyncgenerator("firestore.query_stream_batched")  # type: ignore[untyped-decorator]
+    async def query_stream_batched(
+        self,
+        coll: AsyncCollectionReference,
+        *,
+        filters: BaseFilter | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[list[JsonDict]]:
+        """Stream a query's documents in ``fetch_batch_size`` batches.
+
+        Consumes the native Firestore document stream and yields one batch at a time,
+        so peak memory is a single batch regardless of how many documents match —
+        unlike :meth:`query_stream`, which materializes the whole result. ``limit``
+        still caps the total when set.
+        """
+
+        if fetch_batch_size < 1:
+            raise exc.internal("fetch_batch_size must be >= 1")
+
+        tx = await self._transaction_for_op()
+        query = await self._build_query(
+            coll,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            start_after_id=None,
+            start_before_id=None,
+        )
+        batch: list[JsonDict] = []
+
+        async for snap in query.stream(transaction=tx):
+            batch.append(_snapshot_to_dict(snap))
+
+            if len(batch) >= fetch_batch_size:
+                yield batch
+                batch = []
+
+        if batch:
+            yield batch
+
+    # ....................... #
+
     @exc_interceptor.coroutine("firestore.count_documents")  # type: ignore[untyped-decorator]
     async def count_documents(
         self,

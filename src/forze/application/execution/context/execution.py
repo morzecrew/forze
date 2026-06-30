@@ -96,7 +96,11 @@ class ExecutionContext:
         hash=False,
     )
     """Per-scope resolved-port memo: ``(dep key, route) -> (spec, port)`` (``None`` when
-    caching is disabled)."""
+    caching is disabled).
+
+    Has no max size; it stays bounded because ``route`` is a static registered spec name
+    and the whole context (this dict included) is discarded when the scope ends. A future
+    dynamic / per-tenant route under a long-lived scope would grow this — bound it then."""
 
     _resolved_simple_cache: dict[Any, Any] | None = attrs.field(
         default=attrs.Factory(

@@ -7,7 +7,7 @@ require_bigquery()
 import asyncio
 import os
 from datetime import timedelta
-from typing import Any, Awaitable, Callable, TypeVar, final
+from typing import Any, AsyncGenerator, Awaitable, Callable, Sequence, TypeVar, final
 
 import attrs
 from aiohttp import ClientSession
@@ -410,6 +410,62 @@ class BigQueryClient(BigQueryClientPort):
             return all_rows
 
         return await self.__maybe_read_retry(_run)
+
+    # ....................... #
+
+    async def run_query_streamed(
+        self,
+        sql: str,
+        params: BaseModel | JsonDict | None = None,
+        *,
+        maximum_bytes_billed: int | None = None,
+        max_rows: int | None = None,
+        timeout: timedelta | None = None,
+        fetch_batch_size: int = 2000,
+        default_dataset: str | None = None,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        """Yield result rows one BigQuery result page at a time.
+
+        Bounded-memory counterpart of :meth:`run_query_all_pages`: each page
+        (sized by ``fetch_batch_size``) is yielded to the caller instead of
+        accumulated, so peak memory is one page rather than the full table. Each
+        underlying page fetch still retries independently via :meth:`run_query`,
+        so per-page resilience is preserved.
+        """
+
+        if fetch_batch_size < 1:
+            raise exc.internal("fetch_batch_size must be >= 1")
+
+        yielded = 0
+        page_token: str | None = None
+
+        while True:
+            result = await self.run_query(
+                sql,
+                params,
+                maximum_bytes_billed=maximum_bytes_billed,
+                max_results=fetch_batch_size,
+                page_token=page_token,
+                timeout=timeout,
+                default_dataset=default_dataset,
+            )
+            rows = result.rows
+
+            if max_rows is not None and yielded + len(rows) >= max_rows:
+                if remaining := rows[: max_rows - yielded]:
+                    yield remaining
+
+                return
+
+            yielded += len(rows)
+
+            if rows:
+                yield rows
+
+            page_token = result.page_token
+
+            if not page_token:
+                break
 
     # ....................... #
 

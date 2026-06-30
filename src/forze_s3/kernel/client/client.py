@@ -8,7 +8,7 @@ require_s3()
 
 import asyncio
 import io
-from collections.abc import Mapping as MappingABC
+from collections.abc import Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta
@@ -18,7 +18,6 @@ from typing import (
     AsyncContextManager,
     AsyncGenerator,
     Final,
-    Mapping,
     Sequence,
     cast,
     final,
@@ -1292,7 +1291,7 @@ def _decode_tag_set(resp: Mapping[str, Any]) -> dict[str, str]:
 
     for entry in tag_set:
         if not isinstance(
-            entry, MappingABC
+            entry, Mapping
         ):  # pyright: ignore[reportUnnecessaryIsInstance]
             continue
 

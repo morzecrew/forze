@@ -12,6 +12,12 @@ from ._snapshot_stream import (
     SnapshotWindow,
     build_snapshot_pool_streaming,
 )
+from .federated_executor import (
+    execute_federated_thin_offset,
+    federated_snapshot_rehydrator,
+    federated_thin_eligible,
+    federated_thin_format,
+)
 from .multi_leg import (
     build_federated_highlight_index,
     federated_highlights_for_hits,
@@ -26,6 +32,10 @@ __all__ = [
     "SnapshotWindow",
     "build_snapshot_pool_streaming",
     "build_federated_highlight_index",
+    "execute_federated_thin_offset",
+    "federated_snapshot_rehydrator",
+    "federated_thin_eligible",
+    "federated_thin_format",
     "federated_highlights_for_hits",
     "decrypt_search_rows",
     "reject_encrypted_sort_fields",

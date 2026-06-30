@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import timedelta
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
@@ -474,6 +474,34 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
+    def federated_thin_record_key(member: str, record_id: str) -> str:
+        """``member \\0 id`` — the thin federated snapshot key (no full record).
+
+        The :attr:`~forze.application.contracts.search.FederatedSearchSpec.thin_merge`
+        snapshot stores these instead of the full-record key, so the snapshot is tiny
+        and the merge never holds full hits; replay re-fetches the page's hits by id
+        from each member."""
+
+        return f"{member}\0{record_id}"
+
+    # ....................... #
+
+    @staticmethod
+    def parse_federated_thin_record_key(key: str) -> tuple[str, str]:
+        """Split a thin federated key into ``(member, id)``."""
+
+        if "\0" not in key:
+            raise exc.internal(
+                "Invalid thin federated snapshot key (missing partition)."
+            )
+
+        member, record_id = key.split("\0", 1)
+
+        return member, record_id
+
+    # ....................... #
+
+    @staticmethod
     def hydrate_federated_record_key(
         key: str,
         federated_spec: FederatedSearchSpec[M_co],
@@ -543,6 +571,41 @@ class SearchResultSnapshot:
         )
 
         return [(models[rk], scores[rk]) for rk in ordered]
+
+    # ....................... #
+
+    @staticmethod
+    def weighted_rrf_merge_ids(
+        *,
+        leg_rows: Sequence[tuple[str, Sequence[str], float]],
+        k: int,
+    ) -> list[tuple[str, str, float]]:
+        """Thin (id-only) weighted RRF: fuse ordered ``(member, ids, weight)`` legs.
+
+        The late-materialization counterpart of :meth:`weighted_rrf_merge_rows`: it
+        fuses on the ``(member, id)`` identity instead of the full-record key, so the
+        caller never has to hold the full hits to merge. Each leg's ``ids`` are in
+        relevance order (rank = 1-based position); the contribution per hit is
+        ``weight / (k + rank)``. Returns ``(member, id, score)`` ordered by descending
+        score, breaking ties by ``(member, id)`` (deterministic; the full-record path's
+        tie-break by serialized record differs only among identical-score hits).
+        """
+
+        scores: dict[tuple[str, str], float] = {}
+
+        for member, ids, weight in leg_rows:
+            if weight <= 0.0:
+                continue
+
+            for rank, rid in enumerate(ids, start=1):
+                key = (member, rid)
+                scores[key] = scores.get(key, 0.0) + float(weight) / (
+                    float(k) + float(rank)
+                )
+
+        ordered = sorted(scores.keys(), key=lambda kk: (-scores[kk], kk[0], kk[1]))
+
+        return [(member, rid, scores[(member, rid)]) for member, rid in ordered]
 
     # ....................... #
 
@@ -694,22 +757,56 @@ class SearchResultSnapshot:
         or its id range cannot be served (stale/expired run).
         """
 
+        window = await self._open_snapshot_window(
+            snapshot_opts, fp_computed=fp_computed, pagination=pagination
+        )
+
+        if window is None:
+            return None
+
+        raw_keys, handle, total_snap, pagination_d = window
+
+        return _shape_snapshot_page(
+            [hydrate(k) for k in raw_keys],
+            pagination=pagination_d,
+            total=total_snap if return_count else None,
+            snapshot=handle,
+            return_type=return_type,
+            return_fields=return_fields,
+            to_return_rows=to_return_rows,
+        )
+
+    # ....................... #
+
+    async def _open_snapshot_window(
+        self,
+        snapshot_opts: SearchResultSnapshotOptions | None,
+        *,
+        fp_computed: str,
+        pagination: Mapping[str, Any] | None,
+    ) -> tuple[list[str], SearchSnapshotHandle, int, dict[str, Any]] | None:
+        """Resolve a snapshot read window: the page's ordered record keys + handle.
+
+        Shared by the sync-hydrate read (:meth:`_read_snapshot_page`) and the async
+        re-fetch read (:meth:`read_federated_thin_snapshot_page_if_requested`). Returns
+        ``None`` when the snapshot is absent or its id range cannot be served.
+        """
+
         if snapshot_opts is None or "id" not in snapshot_opts:
             return None
 
         run_id = str(snapshot_opts["id"])
-        sub_fp = (
-            str(snapshot_opts["fingerprint"])
-            if "fingerprint" in snapshot_opts
-            else None
-        )
         pagination_d = dict(pagination or {})
         offset = int(pagination_d.get("offset") or 0)
         limit = pagination_d.get("limit")
         page_limit = max(1, int(limit)) if limit is not None else 20
 
+        # Bind the stored snapshot to *this* request's server-computed fingerprint,
+        # not the client-supplied one: a caller passing a stale snapshot id (or no
+        # fingerprint at all) must not replay another request's results. A mismatch
+        # returns ``None`` and the caller recomputes live.
         raw_keys = await self.store.get_id_range(
-            run_id, offset, page_limit, expected_fingerprint=sub_fp
+            run_id, offset, page_limit, expected_fingerprint=fp_computed
         )
 
         if raw_keys is None:
@@ -729,15 +826,7 @@ class SearchResultSnapshot:
             expires_at=sm.expires_at if sm else None,
         )
 
-        return _shape_snapshot_page(
-            [hydrate(k) for k in raw_keys],
-            pagination=pagination_d,
-            total=total_snap if return_count else None,
-            snapshot=handle,
-            return_type=return_type,
-            return_fields=return_fields,
-            to_return_rows=to_return_rows,
-        )
+        return raw_keys, handle, total_snap, pagination_d
 
     # ....................... #
 
@@ -843,6 +932,58 @@ class SearchResultSnapshot:
             return_type=return_type,
             return_fields=None,
             return_count=return_count,
+        )
+
+    # ....................... #
+
+    async def read_federated_thin_snapshot_page_if_requested(
+        self,
+        *,
+        rs_spec: SearchResultSnapshotSpec | None,
+        snapshot: SearchResultSnapshotOptions | None,
+        fp_computed: str,
+        pagination: Mapping[str, Any] | None,
+        return_type: type[T_co] | None,
+        return_count: bool,
+        rehydrate: Callable[
+            [Sequence[tuple[str, str]]],
+            Awaitable[Sequence[FederatedSearchReadModel[Any]]],
+        ],
+    ) -> Any:
+        """Replay a thin federated snapshot page by re-fetching its hits from the legs.
+
+        The thin snapshot stores only ``(member, id)`` keys, so replay parses the page's
+        keys and hands them to *rehydrate* (which batch-fetches the full hits from each
+        member by id). Unlike the full-record snapshot, the replayed **content is current**
+        (re-fetched), the order/identities are frozen, and a since-deleted hit drops out.
+        Returns ``None`` when the snapshot is absent or its id range cannot be served.
+        """
+
+        if rs_spec is None:
+            return None
+
+        window = await self._open_snapshot_window(
+            snapshot, fp_computed=fp_computed, pagination=pagination
+        )
+
+        if window is None:
+            return None
+
+        raw_keys, handle, total_snap, pagination_d = window
+        parsed = [self.parse_federated_thin_record_key(k) for k in raw_keys]
+        items = await rehydrate(parsed)
+
+        return _shape_snapshot_page(
+            items,
+            pagination=pagination_d,
+            total=total_snap if return_count else None,
+            snapshot=handle,
+            return_type=return_type,
+            return_fields=None,
+            to_return_rows=lambda hits: [
+                {"hit": it.hit.model_dump(mode="json"), "member": it.member}
+                for it in hits
+            ],
         )
 
 

@@ -81,6 +81,50 @@ async def test_store_read_since_ordered_and_idempotent() -> None:
     assert [e.event_id for e in after_e1] == [_eid(2)]
 
 
+async def test_replay_since_streams_in_order_across_pages() -> None:
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx, replay_page_size=2)
+            for n in range(1, 6):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(n), signal=_signal(f"s{n}")
+                )
+
+            streamed = [
+                e.event_id async for e in mb.replay_since(principal="u1", since=None)
+            ]
+            after = [
+                e.event_id async for e in mb.replay_since(principal="u1", since=_hlc(3))
+            ]
+
+    # 5 entries streamed oldest-first across 3 keyset pages of size 2.
+    assert streamed == [_eid(1), _eid(2), _eid(3), _eid(4), _eid(5)]
+    assert after == [_eid(4), _eid(5)]
+    assert mb.stats().replayed == 7  # 5 + 2, counted per yielded entry
+
+
+async def test_replay_since_bounded_by_cap() -> None:
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx, cap=3, replay_page_size=2)
+            for n in range(1, 6):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(n), signal=_signal(f"s{n}")
+                )
+
+            streamed = [
+                e.event_id async for e in mb.replay_since(principal="u1", since=None)
+            ]
+
+    # The cap bounds the stream regardless of page size (first 3 after the cursor).
+    assert streamed == [_eid(1), _eid(2), _eid(3)]
+    assert mb.stats().replayed == 3
+
+
 async def test_stored_counter_tracks_real_writes_not_redeliveries() -> None:
     # a redelivered signal (same event_id) is idempotent and must NOT recount
     runtime = _runtime()

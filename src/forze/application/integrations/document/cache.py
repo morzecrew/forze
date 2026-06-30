@@ -81,6 +81,15 @@ class DocumentCache[R: BaseModel]:
     """Cache spec backing :attr:`cache` — supplies the TTL and the opt-in
     probabilistic early-refresh beta (see ``CacheSpec.early_refresh_beta``)."""
 
+    max_inflight_refresh: int = attrs.field(default=64, kw_only=True)
+    """Cap on concurrent background early-refresh tasks for this coordinator.
+
+    Early refresh is best-effort: once this many refreshes are in flight a new
+    election is dropped (the entry re-warms on its next read) instead of spawning an
+    unbounded fan-out — each task holds a fetch closure, a ContextVar snapshot, and
+    an eventual decoded model. A wide simultaneous expiry across many distinct hot
+    keys would otherwise pile them up. The same-key dedup is unaffected."""
+
     tenant_key: Callable[[], str | None] | None = None
     """Current-tenant discriminator for L1 keys (e.g. the bound tenant id).
 
@@ -520,6 +529,12 @@ class DocumentCache[R: BaseModel]:
 
         async def _spawn() -> None:
             if key in self._inflight:
+                return
+
+            # Best-effort: drop the election when saturated rather than fan out an
+            # unbounded number of concurrent refresh tasks. The entry refreshes on
+            # its next read.
+            if len(self._bg_tasks) >= self.max_inflight_refresh:
                 return
 
             task = asyncio.get_running_loop().create_task(

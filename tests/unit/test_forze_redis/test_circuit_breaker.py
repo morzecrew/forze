@@ -83,6 +83,45 @@ class TestLocalCacheFastPath:
         assert rs.await_count == 2
 
 
+class TestLocalCacheBound:
+    async def test_cache_size_is_capped_with_fifo_eviction(self) -> None:
+        rs = AsyncMock(return_value="1:closed:none")
+        client = AsyncMock()
+        client.run_script = rs
+        store = RedisCircuitBreakerStore(
+            client=client, clock=lambda: 100.0, max_cache_entries=3
+        )
+        strat = _strat()
+
+        # Five distinct routes (e.g. per-host) admitted; the fast-path cache holds
+        # at most the cap, evicting the oldest inserted entries.
+        for i in range(5):
+            await store.admit(("p", f"route-{i}"), strat)
+
+        cache = store._cache  # noqa: SLF001
+        assert len(cache) == 3
+        # FIFO: the two oldest (route-0, route-1) were evicted.
+        assert ("p", "route-0") not in cache
+        assert ("p", "route-4") in cache
+
+    async def test_existing_key_update_does_not_grow_cache(self) -> None:
+        rs = AsyncMock(return_value="1:closed:none")
+        client = AsyncMock()
+        client.run_script = rs
+        now = [100.0]
+        store = RedisCircuitBreakerStore(
+            client=client, clock=lambda: now[0], max_cache_entries=2
+        )
+        strat = _strat()
+
+        await store.admit(("p", "a"), strat)
+        now[0] += 1.0  # expire the fast-path so admit re-runs and re-remembers
+        await store.admit(("p", "a"), strat)
+
+        cache = store._cache  # noqa: SLF001
+        assert len(cache) == 1
+
+
 class TestFailOpen:
     async def test_admit_falls_back_to_local_on_redis_error(self) -> None:
         rs = AsyncMock(side_effect=exc.infrastructure("redis down"))

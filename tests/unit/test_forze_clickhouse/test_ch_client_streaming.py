@@ -216,3 +216,64 @@ async def test_invalid_fetch_batch_size_raises_before_execution() -> None:
         await client.run_query_all_pages("SELECT 1", fetch_batch_size=0)
 
     assert driver.calls == []
+
+
+# ....................... #
+
+
+async def _collect_streamed(client: ClickHouseClient, **kwargs: Any) -> list[list[Any]]:
+    return [list(batch) async for batch in client.run_query_streamed("SELECT 1", **kwargs)]
+
+
+@pytest.mark.asyncio
+async def test_streamed_yields_blocks_one_at_a_time() -> None:
+    rows = [(f"e{i}", i) for i in range(7)]
+    driver = _StreamingAsyncClient(rows)
+    client = _client(driver)
+
+    batches = await _collect_streamed(client, fetch_batch_size=3)
+
+    # One execution; blocks yielded incrementally (3 + 3 + 1), never one big list.
+    assert len(driver.calls) == 1
+    assert driver.calls[0]["settings"]["max_block_size"] == 3
+    assert [len(b) for b in batches] == [3, 3, 1]
+    assert [row for batch in batches for row in batch] == [
+        {"event": f"e{i}", "value": i} for i in range(7)
+    ]
+    assert driver.streams[0].entered and driver.streams[0].exited
+
+
+@pytest.mark.asyncio
+async def test_streamed_enforces_max_rows_and_stops_early() -> None:
+    rows = [(f"e{i}", i) for i in range(10)]
+    driver = _StreamingAsyncClient(rows)
+    client = _client(driver)
+
+    batches = await _collect_streamed(client, max_rows=4, fetch_batch_size=3)
+
+    assert "LIMIT 4" in driver.calls[0]["query"]
+    assert [row for batch in batches for row in batch] == [
+        {"event": f"e{i}", "value": i} for i in range(4)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_streamed_empty_result_yields_nothing() -> None:
+    driver = _StreamingAsyncClient([])
+    client = _client(driver)
+
+    batches = await _collect_streamed(client, fetch_batch_size=5)
+
+    assert batches == []
+    assert len(driver.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_streamed_invalid_fetch_batch_size_raises_before_execution() -> None:
+    driver = _StreamingAsyncClient([])
+    client = _client(driver)
+
+    with pytest.raises(CoreException):
+        await _collect_streamed(client, fetch_batch_size=0)
+
+    assert driver.calls == []

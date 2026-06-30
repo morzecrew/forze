@@ -133,3 +133,43 @@ def test_pgroonga_highlight_none_when_not_requested() -> None:
         )
         is None
     )
+
+
+def _spec_scan(limit: int) -> Any:
+    from forze.application.contracts.search import SearchSpec
+
+    return SearchSpec(
+        name="orgs", model_type=_Row, fields=["name"], highlight_scan_limit=limit
+    )
+
+
+def test_pgroonga_highlight_applies_scan_limit() -> None:
+    select = build_pgroonga_highlight(
+        spec=_spec_scan(64), options={"highlight": True}, terms=("beta",), alias="t"
+    )
+    assert select is not None
+
+    rendered = _rendered(select).lower()
+    # The raw-text column is bounded server-side to the first 64 characters.
+    assert "left(" in rendered
+    assert "64" in rendered
+
+
+def test_pgroonga_highlight_no_scan_limit_leaves_field_unbounded() -> None:
+    select = build_pgroonga_highlight(
+        spec=_spec(), options={"highlight": True}, terms=("beta",), alias="t"
+    )
+    assert select is not None
+    # Default: no left() wrapper — the whole field is scanned (current behaviour).
+    assert "left(" not in _rendered(select).lower()
+
+
+def test_fts_highlight_applies_scan_limit() -> None:
+    select = build_fts_highlight(
+        spec=_spec_scan(64), options={"highlight": True}, terms=("beta",), alias="t"
+    )
+    assert select is not None
+
+    rendered = _rendered(select).lower()
+    assert "ts_headline" in rendered
+    assert "left(" in rendered

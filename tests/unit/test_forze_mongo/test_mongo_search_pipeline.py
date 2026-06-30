@@ -2,7 +2,9 @@
 
 from forze_mongo.adapters.search._pipeline import (
     build_atlas_ranked_pipeline,
+    build_count_pipeline,
     build_text_ranked_pipeline,
+    thin_ranked_pipeline,
 )
 from forze_mongo.adapters.search.constants import MONGO_RANK_FIELD
 from forze.application.contracts.search import SearchSpec
@@ -56,6 +58,51 @@ def test_atlas_pipeline_starts_with_search_stage() -> None:
 
     assert "$search" in pipeline[0]
     assert pipeline[0]["$search"]["index"] == "default"
+
+
+def test_count_pipeline_strips_rank_and_sort() -> None:
+    pipeline = build_text_ranked_pipeline(
+        pre_filter={"status": "active"},
+        terms=("hello",),
+        combine="any",
+        user_sorts=[("title", 1)],
+    )
+
+    count = build_count_pipeline(pipeline)
+
+    # Matchers survive; the rank $addFields and $sort (pure ordering) are dropped.
+    assert {"$match": {"status": "active"}} in count
+    assert {"$match": {"$text": {"$search": "hello"}}} in count
+    assert all("$sort" not in stage for stage in count)
+    assert all("$addFields" not in stage for stage in count)
+    assert count[-1] == {"$count": "total"}
+
+
+def test_thin_ranked_pipeline_projects_only_sort_keys_before_sort() -> None:
+    pipeline = build_text_ranked_pipeline(
+        pre_filter={},
+        terms=("hello",),
+        combine="any",
+        user_sorts=[("title", 1)],
+    )
+
+    thin = thin_ranked_pipeline(pipeline)
+    assert thin is not None
+
+    sort_index = next(i for i, stage in enumerate(thin) if "$sort" in stage)
+    projected = thin[sort_index - 1]["$project"]
+
+    # Only the sort keys (rank + user sort + _id) carry into sort/skip/limit.
+    assert set(projected) == {MONGO_RANK_FIELD, "title", "_id"}
+    # The $sort itself is unchanged and still follows the thin projection.
+    assert thin[sort_index] == pipeline[-1]
+
+
+def test_thin_ranked_pipeline_is_none_without_sort() -> None:
+    # A bare $vectorSearch (no $sort) cannot be thinned — caller keeps full fetch.
+    unsorted = [{"$vectorSearch": {}}, {"$addFields": {MONGO_RANK_FIELD: 1}}]
+
+    assert thin_ranked_pipeline(unsorted) is None
 
 
 # ----------------------- #

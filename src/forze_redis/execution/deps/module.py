@@ -1,12 +1,19 @@
 """Redis dependency module for the application kernel."""
 
-from collections.abc import Mapping as MappingABC
-from typing import Any, Mapping, TypeGuard, cast, final
+from collections.abc import Mapping
+from typing import Any, TypeGuard, cast, final
 
 import attrs
 
 from forze.application.contracts.cache import CacheDepKey
 from forze.application.contracts.counter import CounterDepKey
+from forze.application.contracts.deps import (
+    Deps,
+    DepsModule,
+    merge_deps,
+    routed_from_mapping,
+    routed_shared_factories,
+)
 from forze.application.contracts.dlock import (
     DistributedLockCommandDepKey,
     DistributedLockQueryDepKey,
@@ -28,12 +35,6 @@ from forze.application.contracts.tenancy import (
     TenantIsolationMode,
     validate_module_tenancy,
     warn_integration_routes,
-)
-from forze.application.contracts.deps import Deps, DepsModule
-from forze.application.contracts.deps import (
-    merge_deps,
-    routed_from_mapping,
-    routed_shared_factories,
 )
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
@@ -82,7 +83,7 @@ def _is_idem_route_value(value: Any) -> bool:
 def _is_idem_routed(
     config: Any,
 ) -> TypeGuard[Mapping[Any, RedisIdempotencyConfig | RedisUniversalConfig]]:
-    if not isinstance(config, MappingABC):
+    if not isinstance(config, Mapping):
         return False
 
     routes = cast(Mapping[Any, Any], config)  # type: ignore[redundant-cast]

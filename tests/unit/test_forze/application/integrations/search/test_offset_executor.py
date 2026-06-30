@@ -242,6 +242,49 @@ async def test_execute_simple_offset_search_with_nonzero_offset() -> None:
     assert hooks.fetch_rows_calls == 1
 
 
+# --- max_results cap ------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_no_limit_request_is_capped_by_spec_max_results() -> None:
+    """An unbounded (no-``limit``) request fetches at most ``spec.max_results`` rows."""
+
+    spec = SearchSpec(
+        name="t", model_type=_Hit, fields=["id", "label"], max_results=3
+    )
+    hooks = _WindowedHooks(_make_rows(10))
+
+    page = await _run_offset(
+        spec=spec,
+        hooks=hooks,
+        result_snapshot=None,
+        pagination={},  # no limit -> would otherwise fetch all 10
+    )
+
+    assert hooks.windows == [(0, 3)]
+    assert len(page.hits) == 3
+
+
+@pytest.mark.asyncio
+async def test_explicit_limit_is_not_raised_by_max_results() -> None:
+    """An explicit caller limit below the cap is honoured, never raised to it."""
+
+    spec = SearchSpec(
+        name="t", model_type=_Hit, fields=["id", "label"], max_results=3
+    )
+    hooks = _WindowedHooks(_make_rows(10))
+
+    page = await _run_offset(
+        spec=spec,
+        hooks=hooks,
+        result_snapshot=None,
+        pagination={"limit": 2},
+    )
+
+    assert hooks.windows == [(0, 2)]
+    assert len(page.hits) == 2
+
+
 # --- streaming snapshot build --------------------------------------------- #
 
 

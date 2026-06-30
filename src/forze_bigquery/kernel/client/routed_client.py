@@ -1,7 +1,7 @@
 """BigQuery client that resolves GCP credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
 from datetime import timedelta
-from typing import Any, Callable, Mapping, cast, final
+from typing import Any, AsyncGenerator, Callable, Mapping, Sequence, cast, final
 from uuid import UUID
 
 import attrs
@@ -157,6 +157,30 @@ class RoutedBigQueryClient(
             fetch_batch_size=fetch_batch_size,
             default_dataset=default_dataset,
         )
+
+    async def run_query_streamed(
+        self,
+        sql: str,
+        params: BaseModel | JsonDict | None = None,
+        *,
+        maximum_bytes_billed: int | None = None,
+        max_rows: int | None = None,
+        timeout: timedelta | None = None,
+        fetch_batch_size: int = 2000,
+        default_dataset: str | None = None,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        inner = await self._get_client()
+
+        async for batch in inner.run_query_streamed(
+            sql,
+            params,
+            maximum_bytes_billed=maximum_bytes_billed,
+            max_rows=max_rows,
+            timeout=timeout,
+            fetch_batch_size=fetch_batch_size,
+            default_dataset=default_dataset,
+        ):
+            yield batch
 
     async def insert_rows(
         self,

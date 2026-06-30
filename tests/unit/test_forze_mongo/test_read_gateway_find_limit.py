@@ -91,3 +91,61 @@ async def test_find_many_aggregates_applies_implicit_limit() -> None:
 def test_invalid_cap_rejected() -> None:
     with pytest.raises(CoreException, match="at least 1"):
         _gw(find_many_implicit_limit=0)
+
+
+# ....................... #
+# find_many_chunked (streaming)
+
+
+async def _agen(*batches: list[dict]):
+    for batch in batches:
+        yield batch
+
+
+@pytest.mark.asyncio
+async def test_find_many_chunked_streams_batches_uncapped() -> None:
+    gw, client = _gw()
+    captured: dict[str, object] = {}
+
+    def _streamed(
+        coll, filter, *, projection=None, sort=None, limit=None, skip=None, batch_size=2000
+    ):
+        captured["limit"] = limit
+        captured["skip"] = skip
+        captured["batch_size"] = batch_size
+        return _agen(
+            [{"_id": "1", "title": "a"}],
+            [{"_id": "2", "title": "b"}, {"_id": "3", "title": "c"}],
+        )
+
+    client.find_many_streamed = _streamed
+
+    chunks = [
+        chunk
+        async for chunk in gw.find_many_chunked(
+            None, fetch_batch_size=2, return_fields=["title"]
+        )
+    ]
+
+    assert [[row["title"] for row in chunk] for chunk in chunks] == [["a"], ["b", "c"]]
+    # Chunked passes the limit through unchanged — no implicit cap (stream everything).
+    assert captured["limit"] is None
+    assert captured["batch_size"] == 2
+
+
+@pytest.mark.asyncio
+async def test_find_many_chunked_passes_offset_as_skip() -> None:
+    gw, client = _gw()
+    captured: dict[str, object] = {}
+
+    def _streamed(
+        coll, filter, *, projection=None, sort=None, limit=None, skip=None, batch_size=2000
+    ):
+        captured["skip"] = skip
+        return _agen()
+
+    client.find_many_streamed = _streamed
+
+    _ = [chunk async for chunk in gw.find_many_chunked(None, offset=5)]
+
+    assert captured["skip"] == 5

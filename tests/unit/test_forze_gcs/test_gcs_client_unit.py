@@ -63,13 +63,15 @@ async def test_initialize_uses_service_file_from_config() -> None:
     )
 
 
+def _page(names: list[str], next_token: str = "") -> dict[str, object]:
+    return {"items": [{"name": n} for n in names], "nextPageToken": next_token}
+
+
 @pytest.mark.asyncio
 async def test_list_objects_applies_offset_and_limit() -> None:
     client = GCSClient()
     fake_storage = MagicMock()
-    bucket_ref = MagicMock()
-    bucket_ref.list_blobs = AsyncMock(return_value=["a", "b", "c", "d"])
-    fake_storage.get_bucket.return_value = bucket_ref
+    fake_storage.list_objects = AsyncMock(return_value=_page(["a", "b", "c", "d"]))
     client._GCSClient__storage = fake_storage
 
     items, total_count = await client.list_objects(
@@ -81,7 +83,33 @@ async def test_list_objects_applies_offset_and_limit() -> None:
 
     assert [item.key for item in items] == ["b", "c"]
     assert total_count == 4
-    bucket_ref.list_blobs.assert_awaited_once_with(prefix="")
+
+
+@pytest.mark.asyncio
+async def test_list_objects_streams_pages_and_windows_without_buffering_all() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    # Three pages; the window (offset 2, limit 3) spans the page boundary, and the
+    # exact total counts every key across all pages.
+    fake_storage.list_objects = AsyncMock(
+        side_effect=[
+            _page(["a", "b", "c"], next_token="t1"),
+            _page(["d", "e", "f"], next_token="t2"),
+            _page(["g", "h"], next_token=""),
+        ]
+    )
+    client._GCSClient__storage = fake_storage
+
+    items, total_count = await client.list_objects(
+        bucket="bucket",
+        prefix="docs/",
+        limit=3,
+        offset=2,
+    )
+
+    assert [item.key for item in items] == ["c", "d", "e"]
+    assert total_count == 8
+    assert fake_storage.list_objects.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -290,9 +318,7 @@ async def test_list_objects_include_tags_is_a_free_no_op() -> None:
 
     client = GCSClient()
     fake_storage = MagicMock()
-    bucket_ref = MagicMock()
-    bucket_ref.list_blobs = AsyncMock(return_value=["a", "b"])
-    fake_storage.get_bucket.return_value = bucket_ref
+    fake_storage.list_objects = AsyncMock(return_value=_page(["a", "b"]))
     client._GCSClient__storage = fake_storage
 
     without_flag = await client.list_objects(bucket="bucket", prefix="")
@@ -300,7 +326,7 @@ async def test_list_objects_include_tags_is_a_free_no_op() -> None:
 
     assert with_flag == without_flag
     # One list call per invocation -- the flag triggered no extra requests.
-    assert bucket_ref.list_blobs.await_count == 2
+    assert fake_storage.list_objects.await_count == 2
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,19 @@
 
 import asyncio
 from functools import partial
-from typing import Any, Final, Literal, NoReturn, Sequence, TypeVar, cast, final, overload
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Final,
+    Literal,
+    NoReturn,
+    Sequence,
+    TypeVar,
+    cast,
+    final,
+    overload,
+)
 
 import attrs
 from pydantic import BaseModel
@@ -32,7 +44,11 @@ from forze.application.contracts.search import (
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     build_federated_highlight_index,
+    execute_federated_thin_offset,
     federated_highlights_for_hits,
+    federated_snapshot_rehydrator,
+    federated_thin_eligible,
+    federated_thin_format,
 )
 from forze.base.exceptions import exc
 from forze.base.serialization import default_model_codec
@@ -238,12 +254,19 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         _hl = (options or {}).get("highlight")
         wants_highlights = _hl is not None and _hl is not False
 
+        # Spec-level: thin specs store/replay tiny ``(member, id)`` snapshot keys; the
+        # marker keeps a thin snapshot from ever being read as a full-record one.
+        effective_thin = federated_thin_format(
+            self.federated_spec.members, thin_merge=self.federated_spec.thin_merge
+        )
+
         fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,
             sorts,
             spec_name=self.federated_spec.name,
             rrf_k=int(self.rrf_k),
+            extras={"thin": True} if effective_thin else None,
         )
 
         if (
@@ -253,8 +276,23 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             and snapshot is not None
             and "id" in snapshot
         ):
-            maybe_page = (
-                await self.result_snapshot.read_federated_snapshot_page_if_requested(
+            if effective_thin:
+                maybe_page = await self.result_snapshot.read_federated_thin_snapshot_page_if_requested(
+                    rs_spec=rs_spec,
+                    snapshot=snapshot,
+                    fp_computed=fp_computed,
+                    pagination=dict(pagination or {}),
+                    return_type=return_type,
+                    return_count=snapshot_return_count,
+                    rehydrate=federated_snapshot_rehydrator(
+                        ports={name: port for name, port in self.legs},
+                        leg_opts=leg_opts,
+                        run_legs=self._run_legs,
+                    ),
+                )
+
+            else:
+                maybe_page = await self.result_snapshot.read_federated_snapshot_page_if_requested(
                     federated_spec=self.federated_spec,
                     rs_spec=rs_spec,
                     snapshot=snapshot,
@@ -263,7 +301,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                     return_type=return_type,
                     return_count=snapshot_return_count,
                 )
-            )
+
             if maybe_page is not None:
                 return maybe_page
 
@@ -286,6 +324,36 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
 
         leg_cap = max(1, int(self.rrf_per_leg_limit))
         leg_page: PaginationExpression = {"limit": leg_cap}
+
+        snapshot_write = (
+            self.result_snapshot is not None
+            and rs_spec is not None
+            and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
+        )
+
+        if federated_thin_eligible(
+            members=self.federated_spec.members,
+            thin_merge=self.federated_spec.thin_merge,
+            wants_highlights=wants_highlights,
+            sorts=sorts,
+        ):
+            return await execute_federated_thin_offset(
+                legs=active,
+                query=query,
+                filters=filters,
+                pagination=pagination,
+                leg_opts=leg_opts,
+                rrf_k=int(self.rrf_k),
+                per_leg_limit=leg_cap,
+                return_count=return_count,
+                return_type=return_type,
+                run_legs=self._run_legs,
+                result_snapshot=self.result_snapshot,
+                rs_spec=rs_spec,
+                snapshot=snapshot,
+                fp_computed=fp_computed,
+                write_snapshot=snapshot_write,
+            )
 
         async def _run_leg(
             name: str,
@@ -339,6 +407,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             self.result_snapshot is not None
             and rs_spec is not None
             and not wants_highlights
+            and not effective_thin  # thin specs only ever write the thin format
             and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
         ):
             handle_out = await self.result_snapshot.put_ordered_snapshot_keys(
@@ -394,6 +463,19 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return _finish(v)
 
         return _finish([it[0] for it in window])
+
+    # ....................... #
+
+    async def _run_legs(
+        self,
+        makers: Sequence[Callable[[], Awaitable[Any]]],
+    ) -> list[Any]:
+        """Run leg thunks honouring pool/transaction concurrency when a client is set."""
+
+        if self.postgres_client is not None:
+            return await gather_db_work(self.postgres_client, list(makers))
+
+        return list(await asyncio.gather(*(maker() for maker in makers)))
 
     # ....................... #
 

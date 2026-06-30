@@ -77,3 +77,49 @@ async def test_find_many_cap_none_disables() -> None:
 def test_invalid_cap_rejected() -> None:
     with pytest.raises(CoreException, match="at least 1"):
         _gw(find_many_implicit_limit=0)
+
+
+# ....................... #
+# find_many_chunked (streaming)
+
+
+async def _agen(*batches: list[dict]):
+    for batch in batches:
+        yield batch
+
+
+@pytest.mark.asyncio
+async def test_find_many_chunked_streams_batches_uncapped() -> None:
+    gw, client = _gw()
+    captured: dict[str, object] = {}
+
+    def _batched(coll, *, filters=None, order_by=None, limit=None, fetch_batch_size=2000):
+        captured["limit"] = limit
+        captured["fetch_batch_size"] = fetch_batch_size
+        return _agen(
+            [{"id": "1", "title": "a"}],
+            [{"id": "2", "title": "b"}, {"id": "3", "title": "c"}],
+        )
+
+    client.query_stream_batched = _batched
+
+    chunks = [
+        chunk
+        async for chunk in gw.find_many_chunked(
+            None, fetch_batch_size=2, return_fields=["title"]
+        )
+    ]
+
+    assert [[row["title"] for row in chunk] for chunk in chunks] == [["a"], ["b", "c"]]
+    # Chunked passes the limit through unchanged — no implicit cap (stream everything).
+    assert captured["limit"] is None
+    assert captured["fetch_batch_size"] == 2
+
+
+@pytest.mark.asyncio
+async def test_find_many_chunked_rejects_offset() -> None:
+    gw, _ = _gw()
+
+    with pytest.raises(CoreException, match="offset"):
+        async for _chunk in gw.find_many_chunked(None, offset=5):
+            pass

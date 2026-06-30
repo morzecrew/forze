@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping as MappingABC
+from collections.abc import Mapping
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Mapping, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 from uuid import UUID
 
 from psycopg import sql
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
-
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
 from forze_postgres.kernel.sql.type_cast import cast_sql_for_column_type
 
@@ -32,7 +31,7 @@ def _mapping_key_value_types(annotation: Any) -> tuple[Any, Any] | None:
     """If *annotation* is ``dict[K, V]`` or ``Mapping[K, V]``, return ``(K, V)``."""
 
     origin = get_origin(annotation)
-    if origin is not dict and origin is not MappingABC:
+    if origin is not dict and origin is not Mapping:
         return None
     args = get_args(annotation)
     if len(args) < 2:
@@ -240,7 +239,7 @@ def resolve_leaf_python_type(
                 "not supported yet; use a top-level Postgres array column.",
             )
 
-        if origin is dict or origin is MappingABC:
+        if origin is dict or origin is Mapping:
             raise exc.internal(
                 f"Nested filter path {path!r}: cannot infer scalar type from mapping "
                 f"annotation on {model_type.__name__}. Set nested_field_hints[{path!r}].",

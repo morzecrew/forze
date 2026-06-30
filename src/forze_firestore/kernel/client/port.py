@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import (
     Any,
     AsyncContextManager,
+    AsyncGenerator,
     Awaitable,
     Mapping,
     Protocol,
@@ -70,6 +71,16 @@ class FirestoreClientPort(Protocol):
         start_after_id: str | None = None,
         start_before_id: str | None = None,
     ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
+
+    def query_stream_batched(
+        self,
+        coll: AsyncCollectionReference,
+        *,
+        filters: BaseFilter | None = None,
+        order_by: Sequence[tuple[str, str]] | None = None,
+        limit: int | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[list[JsonDict]]: ...  # pragma: no cover
 
     def count_documents(
         self,

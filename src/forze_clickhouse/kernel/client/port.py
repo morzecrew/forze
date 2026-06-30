@@ -1,7 +1,7 @@
 """Structural protocol for ClickHouse clients."""
 
 from datetime import timedelta
-from typing import Awaitable, Protocol
+from typing import AsyncGenerator, Awaitable, Protocol, Sequence
 
 from pydantic import BaseModel
 
@@ -42,6 +42,23 @@ class ClickHouseClientPort(Protocol):
         fetch_batch_size: int = 2000,
     ) -> Awaitable[list[JsonDict]]:
         """Fetch all rows (single streaming execution, capped by *max_rows*)."""
+        ...  # pragma: no cover
+
+    def run_query_streamed(
+        self,
+        sql: str,
+        params: BaseModel | JsonDict | None = None,
+        *,
+        database: str | None = None,
+        max_rows: int | None = None,
+        timeout: timedelta | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        """Yield result rows in batches from a single streaming execution.
+
+        Bounded-memory counterpart of :meth:`run_query_all_pages`: rows are
+        delivered block by block instead of accumulated into one list.
+        """
         ...  # pragma: no cover
 
     def insert_rows(

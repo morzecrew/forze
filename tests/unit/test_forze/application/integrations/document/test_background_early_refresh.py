@@ -227,3 +227,33 @@ class TestBackgroundRefresh:
         # The elected reader awaited the recompute, exactly as before.
         assert result.payload == "fresh"
         assert not coord._bg_tasks  # noqa: SLF001
+
+
+class TestRefreshFanoutCap:
+    async def test_saturated_coordinator_drops_new_election(self) -> None:
+        cache = AsyncMock()
+        coord = DocumentCache(
+            read_model_type=DocModel,
+            read_codec=_CODEC,
+            document_name="widgets",
+            cache=cache,
+            after_commit=None,
+            cache_spec=_spec(True),
+            max_inflight_refresh=1,
+        )
+
+        # Saturate with one in-flight refresh task.
+        blocker = asyncio.Event()
+        held = asyncio.get_running_loop().create_task(blocker.wait())
+        coord._bg_tasks.add(held)  # noqa: SLF001
+        held.add_done_callback(coord._bg_tasks.discard)  # noqa: SLF001
+
+        async def fetch() -> DocModel:
+            return _FRESH
+
+        # A distinct key cannot spawn while at the cap — dropped, not queued.
+        await coord._schedule_background_refresh("other-key", fetch)  # noqa: SLF001
+        assert len(coord._bg_tasks) == 1  # noqa: SLF001
+
+        blocker.set()
+        await asyncio.gather(held, return_exceptions=True)

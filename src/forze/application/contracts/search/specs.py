@@ -348,6 +348,17 @@ class SearchSpec[M: BaseModel](BaseSpec):
     an indexed :attr:`fields` member (only analyzed text can be highlighted) and not
     field-encrypted."""
 
+    highlight_scan_limit: int | None = None
+    """Cap on the characters of each field scanned for highlighting (relational search).
+
+    Highlighting a PGroonga field fetches the field's **raw text** to mark matches in
+    Python (PGroonga's own snippet can't case-fold non-ASCII scripts correctly), so a
+    very large text field can transfer a lot per hit. When set, only the field's first
+    ``highlight_scan_limit`` characters are scanned (server-side ``left(...)``) — a match
+    beyond the cap is not highlighted, but the hit and its read fields are unaffected.
+    Defense in depth for pathological fields; ``None`` (default) scans the whole field.
+    A field shorter than the cap highlights identically."""
+
     read_codec: ModelCodec[M, Any] | None = attrs.field(
         default=None,
         eq=False,
@@ -363,9 +374,29 @@ class SearchSpec[M: BaseModel](BaseSpec):
     ``DocumentSpec.encryption`` so in-place search reproduces the document write's AAD and
     decrypts its ciphertext. ``None`` (default) = no field encryption."""
 
+    max_results: int | None = None
+    """Server-side cap on offset-search results when a caller passes **no** ``limit``.
+
+    A simple offset search with no pagination ``limit`` otherwise fetches the entire
+    matched set into memory — a latent OOM on a large index. When set, an unbounded
+    request is fetched at most this many rows (an explicit caller ``limit`` is honoured
+    as-is, never raised). Defense in depth; ``None`` (default) keeps the previous
+    fetch-everything behaviour. Independent of result-snapshot ``max_ids`` (which already
+    bounds the snapshot pool)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.max_results is not None and self.max_results < 1:
+            raise exc.configuration(
+                f"SearchSpec {self.name!r}: max_results must be at least 1 when set."
+            )
+
+        if self.highlight_scan_limit is not None and self.highlight_scan_limit < 1:
+            raise exc.configuration(
+                f"SearchSpec {self.name!r}: highlight_scan_limit must be at least 1 when set."
+            )
+
         _validate_search_materialized(
             spec_name=self.name,
             model_type=self.model_type,
@@ -678,6 +709,22 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
 
     snapshot: SearchResultSnapshotSpec | None = None
     """Optional defaults for result-ID snapshotting (outer federated adapter)."""
+
+    thin_merge: bool = False
+    """Opt into late-materialized RRF merge to bound merge-time memory.
+
+    By default each leg fetches up to ``rrf_per_leg_limit`` **full** hits, and the
+    whole candidate union (full hits) is held in memory to fuse and sort — peak
+    grows with ``members x rrf_per_leg_limit x hit size``, independent of page size.
+    When ``True``, eligible searches instead fetch only ``id`` per leg, fuse on
+    ``(member, id)``, and re-hydrate **just the page** from each member — so peak is
+    the thin candidate keys plus one page of full hits. The trade-off is one extra
+    (page-sized) round trip per member, so it is opt-in.
+
+    Falls back to the full-fetch path for a search that requests highlights or a
+    secondary ``sorts`` (both need the full leg hits up front), writes a result
+    snapshot (the snapshot stores full records for leg-free replay), or whose member
+    read models lack an ``id`` field. Default ``False`` keeps the previous behaviour."""
 
     # ....................... #
 

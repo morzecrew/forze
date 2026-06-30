@@ -76,6 +76,22 @@ class PostgresIntrospector:
 
     When a cap is exceeded, the oldest inserted key in that cache is evicted
     (FIFO by insertion order). ``None`` means unbounded per-kind growth.
+
+    These lanes are keyed by ``(schema, relation, partition)``, so their cardinality
+    is bounded by the schema (x tenant); they default to unbounded for that reason.
+    The filtered-row-estimate lane is the exception — see
+    :attr:`max_filtered_estimate_entries`.
+    """
+
+    max_filtered_estimate_entries: int | None = 2048
+    """Cap on the filtered-row-estimate cache, defaulting to a bounded value.
+
+    Unlike the schema-keyed metadata lanes, this lane is keyed by a hash of the
+    ``WHERE`` clause and its parameters, so every distinct filter is a new,
+    permanent key — left uncapped it grows without bound in a long-lived,
+    high-filter-cardinality (or multi-tenant) process. A FIFO eviction here just
+    re-runs one ``EXPLAIN`` estimate. ``None`` disables this dedicated cap, falling
+    back to :attr:`max_cache_entries_per_kind`. When both are set the tighter wins.
     """
 
     # ....................... #
@@ -106,6 +122,22 @@ class PostgresIntrospector:
             raise exc.configuration(
                 "max_cache_entries_per_kind must be at least 1 when set"
             )
+
+        mfe = self.max_filtered_estimate_entries
+
+        if mfe is not None and mfe < 1:
+            raise exc.configuration(
+                "max_filtered_estimate_entries must be at least 1 when set"
+            )
+
+        # The filtered-row-estimate lane honours its own (bounded-by-default) cap;
+        # when a per-kind cap is also set, the tighter of the two applies.
+        if mfe is None:
+            filtered_cap = mx
+        elif mx is None:
+            filtered_cap = mfe
+        else:
+            filtered_cap = min(mx, mfe)
 
         ttl = self._ttl_seconds()
 
@@ -138,7 +170,7 @@ class PostgresIntrospector:
             ttl_seconds=ttl,
         )
         self.__filtered_row_estimate_lane = CacheLane(
-            max_entries=mx,
+            max_entries=filtered_cap,
             ttl_seconds=ttl,
         )
 

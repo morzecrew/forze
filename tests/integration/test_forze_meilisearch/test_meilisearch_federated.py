@@ -124,6 +124,67 @@ async def test_federated_rrf_merge(meilisearch_client) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_federated_rrf_thin_merge_matches_full(meilisearch_client) -> None:
+    """``thin_merge=True`` returns the same federated hits as the full-fetch path."""
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                FederatedSearchQueryDepKey: ConfigurableMeilisearchFederatedSearch(
+                    config=MeilisearchFederatedSearchConfig(
+                        merge="rrf",
+                        members={
+                            "a": MeilisearchSearchConfig(index_uid="thin_a"),
+                            "b": MeilisearchSearchConfig(index_uid="thin_b"),
+                        },
+                    ),
+                ),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
+                    config=MeilisearchSearchConfig(index_uid="unused"),
+                ),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=MeilisearchSearchConfig(index_uid="unused"),
+                ),
+            }
+        )
+    )
+
+    docs = {
+        ("a", "thin_a"): [Hit(id="1", label="zeta shared"), Hit(id="2", label="zeta a")],
+        ("b", "thin_b"): [Hit(id="1", label="zeta shared"), Hit(id="3", label="zeta b")],
+    }
+    for (member, uid), member_docs in docs.items():
+        cmd = ConfigurableMeilisearchSearchCommand(
+            config=MeilisearchSearchConfig(index_uid=uid),
+        )(ctx, _mem(member))
+        mgmt = ConfigurableMeilisearchSearchManagement(
+            config=MeilisearchSearchConfig(index_uid=uid),
+        )(ctx, _mem(member))
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
+        await cmd.upsert(member_docs)
+
+    members = (_mem("a"), _mem("b"))
+    full_spec = FederatedSearchSpec(name="fed_full", members=members)
+    thin_spec = FederatedSearchSpec(name="fed_thin", members=members, thin_merge=True)
+
+    full = await ctx.search.federated(full_spec).search_page(
+        "zeta", pagination={"limit": 10}
+    )
+    thin = await ctx.search.federated(thin_spec).search_page(
+        "zeta", pagination={"limit": 10}
+    )
+
+    def idents(page: object) -> list[tuple[str, str]]:
+        return sorted((h.member, h.hit.id) for h in page.hits)  # type: ignore[attr-defined]
+
+    assert idents(thin) == idents(full)
+    assert thin.count == full.count
+    assert ("a", "1") in idents(thin) and ("b", "1") in idents(thin)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_federated_with_filters_and_cursor(meilisearch_client) -> None:
     spec = FederatedSearchSpec(name="fed_adv", members=(_mem("a"), _mem("b")))
     member_cfg = {

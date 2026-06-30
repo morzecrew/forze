@@ -201,21 +201,57 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             leg_maps = await asyncio.gather(
                 *[_fetch_leg_ranked(i, leg) for i, leg, _ in active],
             )
-            hub_stmt = sql.SQL(
-                """
-                WITH {hub_cte}
-                SELECT {hub_cols}
-                FROM {hf} {ha}
-                """
-            ).format(
-                hub_cte=hub_cte_body,
-                hub_cols=hub_cols,
-                hf=sql.Identifier(HUB_CTE),
-                ha=sql.Identifier(HUB_ROW_ALIAS),
-            )
-            hub_rows = await host.client.fetch_all(
-                hub_stmt, list(fp), row_factory="dict"
-            )
+
+            # Restrict the hub scan to rows at least one leg actually matched (its FK
+            # equals a leg eid). ``merge_hub_combo_rows`` drops rows matching no leg
+            # anyway, so this only avoids hydrating the heavy read-field columns for
+            # rows that cannot survive — bounding the fetch to the union of the per-leg
+            # (``per_leg_limit``-capped) result sets instead of the entire filtered hub
+            # relation. Each placeholder binds one leg's eid array.
+            restrict_parts: list[sql.Composable] = []
+            restrict_params: list[Any] = []
+
+            for (_, leg, _), leg_map in zip(active, leg_maps, strict=True):
+                if not leg_map:
+                    continue
+
+                eids = list(leg_map.keys())
+
+                for col in leg.hub_fk_columns:
+                    restrict_parts.append(
+                        sql.SQL("{ha}.{col} = ANY({ph})").format(
+                            ha=sql.Identifier(HUB_ROW_ALIAS),
+                            col=sql.Identifier(col),
+                            ph=sql.Placeholder(),
+                        )
+                    )
+                    restrict_params.append(eids)
+
+            hub_rows: list[dict[str, Any]]
+
+            if not restrict_parts:
+                # No leg matched anything — no hub row can survive the merge.
+                hub_rows = []
+
+            else:
+                hub_stmt = sql.SQL(
+                    """
+                    WITH {hub_cte}
+                    SELECT {hub_cols}
+                    FROM {hf} {ha}
+                    WHERE {restrict}
+                    """
+                ).format(
+                    hub_cte=hub_cte_body,
+                    hub_cols=hub_cols,
+                    hf=sql.Identifier(HUB_CTE),
+                    ha=sql.Identifier(HUB_ROW_ALIAS),
+                    restrict=sql.SQL(" OR ").join(restrict_parts),
+                )
+                hub_rows = await host.client.fetch_all(
+                    hub_stmt, [*fp, *restrict_params], row_factory="dict"
+                )
+
             leg_ranked = [
                 (leg, m) for (_, leg, _), m in zip(active, leg_maps, strict=True)
             ]
