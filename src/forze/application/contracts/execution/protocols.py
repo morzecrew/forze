@@ -134,10 +134,30 @@ class ProvidesIdempotency(Protocol):  # pragma: no cover
     """Marker: a middleware factory that deduplicates an operation's effects.
 
     Detected structurally at freeze time (the validator is contracts-only and cannot
-    import the hook classes) to satisfy the hedging safety gate.
+    import the hook classes) to satisfy the hedging safety gate. Deliberately minimal — a
+    hook the framework has never seen is detected by this one method alone.
     """
 
     def provides_idempotency(self) -> bool: ...
+
+
+# ....................... #
+
+
+@runtime_checkable
+class SuppliesTransactionCommit(Protocol):  # pragma: no cover
+    """A middleware factory that supplies a paired in-transaction record-write hook.
+
+    Kept separate from :class:`ProvidesIdempotency` so that marker stays minimal (a custom
+    structural idempotency wrap need not implement this). The plan compiler injects
+    :meth:`commit_on_success` as an ``on_success`` step on the transaction scope (when the
+    operation has a transaction route), so a co-located store commits the result record
+    atomically with the business writes — closing the crash window an out-of-transaction
+    ``commit`` leaves open. A no-op at runtime for a non-transactional store, which records
+    the result out of transaction instead.
+    """
+
+    def commit_on_success(self) -> "OnSuccessFactory": ...
 
 
 # ....................... #

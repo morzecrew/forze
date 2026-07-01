@@ -12,7 +12,6 @@ from forze.application.contracts.execution import (
     MiddlewareStep,
     OnSuccess,
     OnSuccessFactory,
-    OnSuccessStep,
 )
 from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.idempotency import (
@@ -225,17 +224,6 @@ class IdempotencyWrap(MiddlewareFactory):
             return _hook
 
         return _factory
-
-    # ....................... #
-
-    def to_on_success_step(
-        self,
-        *,
-        step_id: StrKey = "idempotency_commit",
-    ) -> OnSuccessStep:
-        """Build the paired in-transaction commit :class:`OnSuccessStep` (see :meth:`commit_on_success`)."""
-
-        return OnSuccessStep(id=step_id, factory=self.commit_on_success())
 
     # ....................... #
 
