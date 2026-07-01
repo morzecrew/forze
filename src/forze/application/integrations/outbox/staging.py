@@ -45,6 +45,13 @@ class OutboxStaging[M: BaseModel]:
     payload_cipher: BytesCipherPort | None = None
     """Keyring for whole-payload encryption when ``spec.encrypt`` is set (else ``None``)."""
 
+    tx_depth: Callable[[], int] | None = None
+    """Current transaction nesting depth, injected by the execution-boundary builder.
+
+    When ``spec.require_transaction`` is set, :meth:`flush` uses it to reject a flush that
+    runs outside an open transaction (depth 0). ``None`` (direct construction, e.g. tests)
+    leaves the guard inert — there is no transaction context to consult."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -143,13 +150,35 @@ class OutboxStaging[M: BaseModel]:
 
     # ....................... #
 
+    def _outside_transaction(self) -> bool:
+        """Whether a transaction depth is known and reports no open transaction."""
+
+        return self.tx_depth is not None and self.tx_depth() == 0
+
+    # ....................... #
+
     async def flush(self) -> int:
-        """Persist events buffered for this spec's route only."""
+        """Persist events buffered for this spec's route only.
+
+        :raises CoreException: ``configuration`` when ``spec.require_transaction``
+            is set and the flush runs outside an open transaction — its rows would
+            be persisted separately from the business writes (a dual-write).
+        """
 
         route = self._route
 
         if self.staging.flushed_for(route):
             return 0
+
+        if self.spec.require_transaction and self._outside_transaction():
+            raise exc.configuration(
+                f"Outbox route {route!r} declares require_transaction=True but flush() "
+                "ran outside an open transaction; its rows would be persisted in a "
+                "separate transaction from the business writes (dual-write). Flush "
+                "inside the operation's transaction (e.g. a tx-scoped on_success hook), "
+                "or unset require_transaction for a deliberately standalone flush.",
+                code="core.outbox.flush_outside_transaction",
+            )
 
         rows = self.staging.buffer_for(route).pop()
 

@@ -87,6 +87,18 @@ class OutboxSpec[M](BaseSpec):
     keyring (``CryptoDepsModule``) wired wherever decryption happens — the relay for
     ``at_rest``, the consumer for ``end_to_end``. See :data:`EncryptionReach`."""
 
+    require_transaction: bool = False
+    """Reject a :meth:`flush` that runs outside an open transaction (default ``False``).
+
+    The transactional-outbox guarantee holds only when the rows are persisted in the
+    *same* transaction as the business writes; a flush with no open transaction persists
+    them separately — the classic dual-write (business state commits, events lost, or the
+    reverse). Set ``True`` for a route that must be atomic with the operation's writes and
+    the flush becomes a checked precondition (``exc.configuration`` when it runs at
+    transaction depth 0). Left ``False`` for routes deliberately flushed outside a
+    transaction — e.g. the stage-then-relay pattern (``OutboxRelay``) or a standalone
+    event emitter — which is why it is opt-in rather than the default."""
+
     # ....................... #
 
     @property

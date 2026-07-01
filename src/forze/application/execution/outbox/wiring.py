@@ -62,6 +62,7 @@ def build_staging_outbox_command[M: BaseModel](
         enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
         flush_rows=flush_rows,
         payload_cipher=_resolve_payload_cipher(ctx, spec),
+        tx_depth=ctx.tx_ctx.depth,
     )
     return StagingOutboxCommand(spec=spec, staging=staging)
 
