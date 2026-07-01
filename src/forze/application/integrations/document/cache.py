@@ -212,6 +212,39 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
+    async def aclose(self) -> None:
+        """Cancel in-flight background refreshes and release the invalidation subscription.
+
+        Registered with the runtime's background-owner registry at construction, so it runs
+        at shutdown *before* the backing clients close: a detached early refresh would
+        otherwise run on against a closing cache/gateway. Cancellation is clean —
+        :meth:`_background_refresh` re-raises ``CancelledError`` — and the method is
+        idempotent (a second call finds no tasks and no live subscription).
+        """
+
+        tasks = [task for task in self._bg_tasks if not task.done()]
+
+        for task in tasks:
+            task.cancel()
+
+        if tasks:
+            await asyncio.wait(tasks)
+
+        unsubscribe = self._l1_push.pop("unsubscribe", None)
+
+        if unsubscribe is not None:
+            try:
+                await unsubscribe()
+
+            except Exception:
+                logger.debug(
+                    "L1 invalidation-push unsubscribe failed for '%s' during close",
+                    self.document_name,
+                    exc_info=True,
+                )
+
+    # ....................... #
+
     def _build_l1(self) -> L1Store | None:
         if self.cache is None:
             return None
@@ -707,8 +740,17 @@ class DocumentCache[R: BaseModel]:
             await self.cache.delete_many([str(pk) for pk in pks], hard=True)
 
         except Exception:
-            logger.debug(
-                "Cache clear failed for %s '%s' document(s), continuing",
+            # Unlike a failed cache *warm* (which self-heals on the next read, hence its
+            # debug-level swallow), a failed hard-delete invalidation is a correctness
+            # hazard: the distributed cache keeps serving the deleted document to other
+            # replicas until the entry's TTL expires (this replica's L1 was already dropped
+            # above). Surface it at error level so it can be alerted on and the delete
+            # re-driven once the backend recovers — kept best-effort so a cache outage never
+            # blocks a delete (the store is the source of truth), but never silent.
+            logger.error(
+                "Hard-delete cache invalidation failed for %s '%s' document(s); the "
+                "deleted document(s) may still be served from the distributed cache until "
+                "their TTL expires — re-drive the delete once the cache backend recovers",
                 len(pks),
                 self.document_name,
                 exc_info=True,

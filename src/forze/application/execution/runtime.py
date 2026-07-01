@@ -273,12 +273,25 @@ class ExecutionRuntime:
             ctx = self.__ctx.get()
 
             if not await ctx.drain_gate.drain(self.drain_timeout.total_seconds()):
-                logger.warning(
-                    "Drain timeout (%.1fs) expired with %d operation(s) still "
-                    "in flight; proceeding with lifecycle shutdown",
-                    self.drain_timeout.total_seconds(),
-                    ctx.drain_gate.in_flight,
+                # Drain expired with work still running. Cancel the stragglers and let them
+                # unwind (rollback, release connections) *before* lifecycle teardown closes
+                # the clients they hold — otherwise they run on against closing resources.
+                cancelled = await ctx.drain_gate.cancel_in_flight(
+                    grace=self.shutdown_step_timeout.total_seconds()
                 )
+                logger.warning(
+                    "Drain timeout (%.1fs) expired with %d operation(s) still in flight; "
+                    "cancelled them before lifecycle shutdown",
+                    self.drain_timeout.total_seconds(),
+                    cancelled,
+                )
+
+            # Cancel detached background work (e.g. document-cache early refreshes) before
+            # teardown closes the clients it uses — a straggler would otherwise run on
+            # against a closing cache/gateway. Always runs, drain-timeout or not.
+            await ctx.background_owners.close(
+                grace=self.shutdown_step_timeout.total_seconds()
+            )
 
             await self.lifecycle.shutdown(
                 ctx, step_timeout=self.shutdown_step_timeout.total_seconds()

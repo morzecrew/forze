@@ -31,6 +31,7 @@ from ..tracing import (
     tx_tracer_from_runtime,
 )
 from .active_operation import warn_if_constructed_in_operation
+from .background import BackgroundOwners
 from .drain import OperationDrainGate
 from .invocation import InvocationContext
 from forze.application.contracts.outbox import OutboxStagingContext
@@ -147,6 +148,15 @@ class ExecutionContext:
     )
     """In-flight operation accounting for graceful shutdown (see
     :mod:`~forze.application.execution.context.drain`)."""
+
+    background_owners: BackgroundOwners = attrs.field(
+        factory=BackgroundOwners,
+        init=False,
+        repr=False,
+    )
+    """Registry of detached-background-work owners (e.g. document caches with early-refresh
+    tasks), cancelled at shutdown before lifecycle teardown closes their clients (see
+    :mod:`~forze.application.execution.context.background`)."""
 
     outbox_staging: OutboxStagingContext = attrs.field(
         factory=OutboxStagingContext,

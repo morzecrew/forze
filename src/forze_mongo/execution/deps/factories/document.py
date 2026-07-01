@@ -144,6 +144,11 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             cipher_tenant=ctx.inv_ctx.get_tenant,
         )
 
+        if cache is not None:
+            # Cancel this cache's detached early-refresh tasks at shutdown before the
+            # backing clients close (a cacheless coordinator spawns none, so skip it).
+            ctx.background_owners.register(cc)
+
         return MongoDocumentAdapter(
             spec=spec,
             read_gw=read,
@@ -243,6 +248,11 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             cipher=_cache_cipher(ctx, spec),
             cipher_tenant=ctx.inv_ctx.get_tenant,
         )
+
+        if cache is not None:
+            # Cancel this cache's detached early-refresh tasks at shutdown before the
+            # backing clients close (a cacheless coordinator spawns none, so skip it).
+            ctx.background_owners.register(cc)
 
         return MongoDocumentAdapter(
             spec=spec,

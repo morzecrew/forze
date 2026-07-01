@@ -1,5 +1,6 @@
 """Tests for :class:`forze.application.integrations.document.DocumentCache`."""
 
+import asyncio
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -372,3 +373,69 @@ async def test_get_read_through_fallback_when_cache_raises() -> None:
     fb.assert_awaited_once()
 
     miss.assert_not_awaited()
+
+
+class _RecordingLogger:
+    """Records the level name of each log call (``error``/``debug``/…)."""
+
+    def __init__(self) -> None:
+        self.levels: list[str] = []
+
+    def __getattr__(self, name: str):
+        def _record(*_a, **_k) -> None:
+            self.levels.append(name)
+
+        return _record
+
+
+@pytest.mark.asyncio
+async def test_clear_surfaces_invalidation_failure_loudly(monkeypatch) -> None:
+    """A failed hard-delete invalidation is a correctness hazard (the deleted document is
+    served from cache until TTL), so it is surfaced at ERROR — not swallowed at debug like
+    a benign warm — while staying best-effort (never propagates to block the delete)."""
+
+    from forze.application.integrations.document import cache as cache_module
+
+    backend = AsyncMock()
+    backend.delete_many.side_effect = RuntimeError("cache backend down")
+    coord = _coord(cache=backend)
+
+    rec = _RecordingLogger()
+    monkeypatch.setattr(cache_module, "logger", rec)
+
+    # Best-effort: the failing invalidation must not propagate.
+    await coord.clear(_pk)
+
+    backend.delete_many.assert_awaited_once()
+    assert rec.levels == ["error"]  # surfaced loudly, not swallowed at debug
+
+
+@pytest.mark.asyncio
+async def test_aclose_cancels_bg_tasks_and_releases_subscription() -> None:
+    """Shutdown-time close cancels detached refreshes and drops the push subscription so a
+    task never runs on against a closing client; idempotent on a second call."""
+
+    coord = _coord(cache=AsyncMock())
+
+    async def _stuck() -> None:
+        await asyncio.Event().wait()  # only cancellation ends it
+
+    task = asyncio.create_task(_stuck())
+    coord._bg_tasks.add(task)  # pyright: ignore[reportPrivateUsage]
+    await asyncio.sleep(0)  # let the task start
+
+    unsubscribed = asyncio.Event()
+
+    async def _unsub() -> None:
+        unsubscribed.set()
+
+    coord._l1_push["unsubscribe"] = _unsub  # pyright: ignore[reportPrivateUsage]
+
+    await coord.aclose()
+
+    assert task.cancelled()  # the detached refresh was cancelled and unwound
+    assert unsubscribed.is_set()  # the push subscription was released
+    assert "unsubscribe" not in coord._l1_push  # pyright: ignore[reportPrivateUsage]
+
+    # Idempotent: a second close finds no live task and no subscription.
+    await coord.aclose()
