@@ -27,6 +27,23 @@ class PostgresTransactionOptions:
 
 
 @final
+@attrs.define(frozen=True, slots=True)
+class DeadlinePushdownPolicy:
+    """Postgres invocation-deadline push-down policy (see ``PostgresConfig.push_invocation_deadline``).
+
+    A client returns this when the push-down is enabled (``None`` means disabled); the
+    transaction manager combines it with the remaining deadline budget to set a per-transaction
+    ``statement_timeout``."""
+
+    statement_timeout_cap: timedelta | None = None
+    """Static ``statement_timeout`` to tighten against — the effective per-tx bound is the min of
+    this and the remaining deadline budget. ``None`` for no static cap."""
+
+
+# ....................... #
+
+
+@final
 @attrs.define(frozen=True, slots=True, kw_only=True)
 class PostgresConfig:
     """Connection pool configuration for :class:`PostgresClient`."""
@@ -60,6 +77,16 @@ class PostgresConfig:
 
     statement_timeout: timedelta | None = None
     """If set, ``SET statement_timeout`` on each new pool connection (milliseconds)."""
+
+    push_invocation_deadline: bool = True
+    """Push a bound invocation deadline down as a per-transaction ``statement_timeout`` backstop.
+
+    When ``True`` (default) and an operation runs under a deadline, the data-plane transaction
+    is bounded by ``SET LOCAL statement_timeout`` = the remaining budget (plus a small grace,
+    tighten-only against :attr:`statement_timeout`), so the server cancels a query the
+    invocation deadline would kill anyway — freeing the connection cleanly instead of leaving
+    it stuck behind an asyncio-cancelled-but-server-running query. A kill switch: set ``False``
+    to keep deadline enforcement asyncio-only."""
 
     lock_timeout: timedelta | None = None
     """If set, ``SET lock_timeout`` on each new pool connection (milliseconds)."""

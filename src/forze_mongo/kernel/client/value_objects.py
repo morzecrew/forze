@@ -49,6 +49,15 @@ class MongoConfig:
     server_selection_timeout: timedelta = timedelta(seconds=10)
     """Server selection timeout."""
 
+    push_invocation_deadline: bool = True
+    """Push a bound invocation deadline down as a per-operation client-side timeout (CSOT).
+
+    When ``True`` (default) and an operation runs under a deadline, each data-plane query is
+    wrapped in ``pymongo.timeout(remaining + grace)`` — bounding the server ``maxTimeMS``, the
+    socket, and the retry budget — so the server cancels a query the invocation deadline would
+    kill anyway, freeing the connection cleanly. A kill switch: set ``False`` to keep deadline
+    enforcement asyncio-only."""
+
     max_pool_size: int = 100
     """Maximum pool size."""
 

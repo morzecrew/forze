@@ -272,3 +272,49 @@ class TestPlanDeadline:
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "deadline_exceeded"
+
+
+class TestDriverDeadlineBudget:
+    """Budget handed to a driver-side timeout backstop (Postgres statement_timeout / Mongo CSOT)."""
+
+    def test_none_when_unbound(self) -> None:
+        from forze.base.primitives import driver_deadline_budget
+
+        assert driver_deadline_budget() is None
+
+    def test_remaining_plus_grace_when_bound(self) -> None:
+        from forze.base.primitives import (
+            DEFAULT_DRIVER_DEADLINE_GRACE,
+            driver_deadline_budget,
+        )
+
+        with bind_deadline(5.0):
+            budget = driver_deadline_budget()
+            remaining = remaining_time()
+
+        assert budget is not None and remaining is not None
+        # Looser than the authoritative asyncio deadline (so that fires first).
+        assert budget > remaining
+        assert budget == pytest.approx(
+            remaining + DEFAULT_DRIVER_DEADLINE_GRACE, abs=0.05
+        )
+
+    def test_positive_even_at_expiry(self) -> None:
+        # A (near-)expired deadline still yields a positive budget (the grace), never 0 —
+        # a driver timeout of 0 means *unlimited*, the opposite of intended.
+        from forze.base.primitives import driver_deadline_budget
+
+        with bind_deadline(0.0):
+            budget = driver_deadline_budget()
+
+        assert budget is not None and budget > 0.0
+
+    def test_custom_grace(self) -> None:
+        from forze.base.primitives import driver_deadline_budget
+
+        with bind_deadline(5.0):
+            zero = driver_deadline_budget(grace=0.0)
+            one = driver_deadline_budget(grace=1.0)
+
+        assert zero is not None and one is not None
+        assert one == pytest.approx(zero + 1.0, abs=0.05)

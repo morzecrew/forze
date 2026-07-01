@@ -16,9 +16,11 @@ from .cpu import (
 )
 from .datetime import monotonic, utcnow
 from .deadline import (
+    DEFAULT_DRIVER_DEADLINE_GRACE,
     bind_deadline,
     clear_deadline,
     current_deadline,
+    driver_deadline_budget,
     remaining_time,
     reset_deadline,
     set_deadline,
@@ -80,7 +82,9 @@ from .uuid import uuid4, uuid7
 __all__ = [
     "utcnow",
     "monotonic",
+    "DEFAULT_DRIVER_DEADLINE_GRACE",
     "current_deadline",
+    "driver_deadline_budget",
     "remaining_time",
     "set_deadline",
     "reset_deadline",

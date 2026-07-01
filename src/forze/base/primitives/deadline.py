@@ -57,6 +57,31 @@ def remaining_time() -> float | None:
 
 # ....................... #
 
+DEFAULT_DRIVER_DEADLINE_GRACE = 0.1
+"""Slack (seconds) a driver-side timeout backstop adds to the remaining budget.
+
+Keeps the driver bound (Postgres ``statement_timeout`` / Mongo CSOT) slightly **looser** than
+the authoritative :func:`asyncio.timeout` armed at the invocation boundary, so that fires
+first and classifies the expiry (deadline / commit-ambiguous). The driver bound only ever
+fires as a backstop — cleanly cancelling an in-flight query the asyncio cancellation could
+not — and, being positive, avoids the ``statement_timeout``/``maxTimeMS`` trap where **0
+means unlimited**."""
+
+
+def driver_deadline_budget(grace: float = DEFAULT_DRIVER_DEADLINE_GRACE) -> float | None:
+    """Seconds for a driver-side timeout backstop: remaining budget + *grace*, or ``None``.
+
+    ``None`` when no invocation deadline is bound (the caller then sets no driver timeout).
+    See :data:`DEFAULT_DRIVER_DEADLINE_GRACE` for why it is looser than the asyncio deadline
+    and always positive."""
+
+    remaining = remaining_time()
+
+    return None if remaining is None else remaining + grace
+
+
+# ....................... #
+
 
 def set_deadline(timeout: float) -> Token[float | None]:
     """Set a deadline of *timeout* seconds from now; reset with :func:`reset_deadline`.

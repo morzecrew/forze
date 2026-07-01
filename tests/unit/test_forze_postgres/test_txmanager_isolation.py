@@ -16,6 +16,12 @@ class _FakeClient:
     def __init__(self) -> None:
         self.options: PostgresTransactionOptions | None = None
 
+    def is_in_transaction(self) -> bool:
+        return False
+
+    def deadline_pushdown(self) -> None:
+        return None  # push-down disabled for this isolation-only stub
+
     @asynccontextmanager
     async def transaction(
         self, *, options: PostgresTransactionOptions

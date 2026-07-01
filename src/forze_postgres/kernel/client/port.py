@@ -24,7 +24,7 @@ from psycopg.abc import Params, QueryNoTemplate
 from forze.base.primitives import JsonDict
 
 from .types import RowFactory
-from .value_objects import PostgresTransactionOptions
+from .value_objects import DeadlinePushdownPolicy, PostgresTransactionOptions
 
 # ----------------------- #
 
@@ -52,6 +52,12 @@ class PostgresClientPort(Protocol):
     def is_in_transaction(self) -> bool: ...  # pragma: no cover
 
     def query_concurrency_limit(self) -> int: ...  # pragma: no cover
+
+    def deadline_pushdown(self) -> DeadlinePushdownPolicy | None:
+        """The invocation-deadline ``statement_timeout`` push-down policy, or ``None`` when
+        disabled (see ``PostgresConfig.push_invocation_deadline``)."""
+
+        ...  # pragma: no cover
 
     def gather_concurrency_semaphore(self) -> asyncio.Semaphore:
         """Shared semaphore for :func:`~forze_postgres.kernel.client.gather_db_work`."""

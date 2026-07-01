@@ -38,7 +38,11 @@ from .errors import exc_interceptor
 from .helpers import isolation_level_enum
 from .port import PostgresClientPort
 from .types import RowFactory
-from .value_objects import PostgresConfig, PostgresTransactionOptions
+from .value_objects import (
+    DeadlinePushdownPolicy,
+    PostgresConfig,
+    PostgresTransactionOptions,
+)
 
 # ----------------------- #
 
@@ -202,6 +206,12 @@ class PostgresClient(PostgresClientPort):
     __max_concurrent_queries: int = attrs.field(default=1, init=False)
     """Cap for parallel operations that each checkout a pool connection."""
 
+    __deadline_pushdown: DeadlinePushdownPolicy | None = attrs.field(
+        default=None, init=False
+    )
+    """Invocation-deadline ``statement_timeout`` push-down policy, or ``None`` when disabled
+    (set from config in :meth:`initialize`)."""
+
     __gather_sem: asyncio.Semaphore | None = attrs.field(default=None, init=False)
     """Pool-wide limiter for :func:`~forze_postgres.kernel.client.gather_db_work`."""
 
@@ -241,6 +251,12 @@ class PostgresClient(PostgresClientPort):
                 )
 
             self.__lazy_tx = config.lazy_transaction
+
+            self.__deadline_pushdown = (
+                DeadlinePushdownPolicy(statement_timeout_cap=config.statement_timeout)
+                if config.push_invocation_deadline
+                else None
+            )
 
             configure = _pool_configure_for_config(config)
 
@@ -488,6 +504,11 @@ class PostgresClient(PostgresClientPort):
         """
 
         return self.__max_concurrent_queries
+
+    # ....................... #
+
+    def deadline_pushdown(self) -> DeadlinePushdownPolicy | None:
+        return self.__deadline_pushdown
 
     # ....................... #
 
