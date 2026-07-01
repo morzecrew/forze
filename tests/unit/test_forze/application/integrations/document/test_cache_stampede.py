@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+import weakref
 from datetime import timedelta
+from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -47,6 +49,25 @@ def _xf_spec(beta: float = 1.0) -> CacheSpec:
 
 
 # ----------------------- #
+
+
+class TestOwnerRegistration:
+    def test_registers_in_weakset_with_unhashable_backing(self) -> None:
+        """The coordinator is registered in the shutdown ``BackgroundOwners`` WeakSet, which
+        hashes it. It is a service (identity semantics), so registration works even when its
+        backing cache client is unhashable — a real ``RedisClient`` is an unhashable attrs
+        class. A field-based hash would raise ``unhashable type`` on that field.
+        """
+
+        class _UnhashableCache:
+            __hash__ = None  # type: ignore[assignment]  # like a real client
+
+        coord = _coord(cache=cast(Any, _UnhashableCache()))
+
+        owners: weakref.WeakSet[Any] = weakref.WeakSet()
+        owners.add(coord)  # the BackgroundOwners.register path
+
+        assert coord in owners
 
 
 class TestSingleflight:

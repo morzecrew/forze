@@ -48,7 +48,7 @@ class _ReadModelWithIdAndRev(Protocol):
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
+@attrs.define(slots=True, kw_only=True, frozen=True, eq=False)
 class DocumentCache[R: BaseModel]:
     """Coordinates versioned cache reads/writes and post-commit deferral for documents.
 
