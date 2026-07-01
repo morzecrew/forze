@@ -13,6 +13,7 @@ from forze.base.primitives import StrKey
 from ...context.active_operation import active_operation_var
 from ...context.deadline import remaining_time, reset_deadline, set_deadline
 from ...context.drain import OperationDrainGate
+from ...context.commit_state import commit_started, reset_commit_started
 from ...tracing.emit import record
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import TransactionRunner, run_resolved_operation_plan
@@ -99,6 +100,20 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
                     )
 
             except TimeoutError as error:
+                if commit_started():
+                    # The deadline fired at or after the transaction commit point:
+                    # the commit may have (or has) landed, so the outcome is
+                    # ambiguous. Surface a non-retryable error instead of a
+                    # retryable deadline, so an at-least-once caller does not retry
+                    # into a duplicate execution.
+                    raise exc.internal(
+                        f"Operation {str(self.op)!r} deadline fired at or after its "
+                        "transaction commit; the commit outcome is ambiguous (it may "
+                        "have committed). Surfaced as non-retryable so a retry cannot "
+                        "double-execute — reconcile before re-running.",
+                        code="commit_ambiguous",
+                    ) from error
+
                 raise exc.timeout(
                     f"Operation {str(self.op)!r} exceeded the invocation deadline",
                     code="deadline_exceeded",
@@ -156,6 +171,12 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
 
             if gate is not None:
                 gate.release()
+                # Top-level invocation only: clear the commit-reached flag so a
+                # committed operation cannot leak a false ``commit_ambiguous`` onto a
+                # later top-level operation sharing this task's context. Nested
+                # invocations leave it set so a nested commit still reaches the
+                # top-level boundary.
+                reset_commit_started()
 
 
 # ....................... #
