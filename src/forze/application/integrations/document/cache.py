@@ -21,6 +21,7 @@ from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
 from forze.base.primitives import (
     JsonDict,
+    LeaderFollowerLane,
     current_entropy_source,
     current_time_source,
     monotonic,
@@ -115,14 +116,16 @@ class DocumentCache[R: BaseModel]:
     implementation). When unset and ``cache_spec.l1`` is configured, a default
     LRU+TTL store is built from the spec."""
 
-    _inflight: dict[str, asyncio.Future[Any]] = attrs.field(
-        factory=dict,
+    _inflight: LeaderFollowerLane[Any] = attrs.field(
+        factory=LeaderFollowerLane,
         init=False,
         repr=False,
         eq=False,
     )
-    """Singleflight: in-flight miss/refresh loads keyed by cache key, so
-    concurrent readers of one key collapse into a single gateway fetch."""
+    """Singleflight: in-flight miss/refresh loads keyed by cache key, so concurrent
+    readers of one key collapse into a single gateway fetch (the leader; followers
+    await it). Membership (``key in self._inflight``) lets a stale-key early refresh
+    skip a key already loading."""
 
     _l1: L1Store | None = attrs.field(
         default=attrs.Factory(
@@ -836,57 +839,30 @@ class DocumentCache[R: BaseModel]:
     ) -> R:
         """Collapse concurrent loads of one key into a single gateway fetch.
 
-        Followers await the leader's result (errors are shared too — every
-        caller would have hit the same failure) and do not re-write the cache.
-        A leader cancelled mid-fetch cancels its future; followers observing
-        that retry for leadership rather than failing with the leader's
-        cancellation. Process-local by design — cross-replica desynchronization
-        is the early-refresh election's job.
+        Delegates the leader/follower coalescing to the shared
+        :class:`~forze.base.primitives.LeaderFollowerLane`: followers await the leader's
+        result (errors are shared too — every caller would have hit the same failure) and
+        do not re-write the cache, and a leader cancelled mid-fetch cancels its future so a
+        waiting follower retries for leadership rather than inheriting the cancellation.
+        Only the leader warms the cache — via ``on_result``, which runs *after* followers
+        unblock, so the write never gates them. Process-local by design; cross-replica
+        desynchronization is the early-refresh election's job.
         """
 
-        while True:
-            existing = self._inflight.get(key)
+        timing: dict[str, float] = {}
 
-            if existing is None:
-                break
-
-            try:
-                return cast(R, await existing)
-
-            except asyncio.CancelledError:
-                if existing.cancelled():
-                    # The leader's request died, not ours: retry for leadership.
-                    continue
-
-                raise
-
-        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        self._inflight[key] = future
-
-        try:
+        async def _load() -> R:
             start = monotonic()
             res = await fetch()
-            delta = monotonic() - start
-            future.set_result(res)
+            timing["delta"] = monotonic() - start
+            return res
 
-        except BaseException as error:
-            if isinstance(error, asyncio.CancelledError):
-                future.cancel()
+        async def _warm(res: R) -> None:
+            await self.after_commit_or_now(
+                lambda: self.set_one(res, delta=timing["delta"])
+            )
 
-            else:
-                future.set_exception(error)
-                # The leader re-raises its own exception; mark the future's
-                # copy retrieved so follower-less failures do not warn on GC.
-                future.exception()
-
-            raise
-
-        finally:
-            self._inflight.pop(key, None)
-
-        await self.after_commit_or_now(lambda: self.set_one(res, delta=delta))
-
-        return res
+        return cast(R, await self._inflight.run(key, _load, on_result=_warm))
 
     # ....................... #
 

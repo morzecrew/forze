@@ -92,12 +92,19 @@ class OtelSpanPortProxy(PortProxy):
     # ....................... #
 
     def _wrap_async(self, name: str, attr: Any) -> Any:
+        # The span name and attributes are fixed for this (port, method) — domain/surface/
+        # route/phase are frozen on the proxy and ``op`` is this ``name`` — so build them once
+        # at wrap time (this wrap is memoized per method) rather than on every call. OTel reads
+        # and copies the attributes synchronously, so a shared dict is safe.
+        span_name = f"{self.surface}.{name}"
+        attributes = self._attributes(name)
+
         @wraps(attr)
         async def traced(*args: Any, **kwargs: Any) -> Any:
             with self.tracer.start_as_current_span(
-                f"{self.surface}.{name}",
+                span_name,
                 kind=SpanKind.CLIENT,
-                attributes=self._attributes(name),
+                attributes=attributes,
                 # We classify the exception ourselves (an expected CoreException must not mark the
                 # client span an error), so disable OTel's auto record/status-on-exception.
                 record_exception=False,
@@ -115,12 +122,16 @@ class OtelSpanPortProxy(PortProxy):
     # ....................... #
 
     def _wrap_sync(self, name: str, attr: Any) -> Any:
+        # Constant per (port, method) — built once at wrap time (see :meth:`_wrap_async`).
+        span_name = f"{self.surface}.{name}"
+        attributes = self._attributes(name)
+
         @wraps(attr)
         def traced(*args: Any, **kwargs: Any) -> Any:
             with self.tracer.start_as_current_span(
-                f"{self.surface}.{name}",
+                span_name,
                 kind=SpanKind.CLIENT,
-                attributes=self._attributes(name),
+                attributes=attributes,
                 # We classify the exception ourselves (an expected CoreException must not mark the
                 # client span an error), so disable OTel's auto record/status-on-exception.
                 record_exception=False,

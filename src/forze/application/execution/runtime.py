@@ -1,6 +1,6 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from datetime import timedelta
 from enum import StrEnum
 from typing import AsyncGenerator, final
@@ -9,7 +9,13 @@ import attrs
 
 from forze.application._logger import logger
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import CpuExecutor, RuntimeVar, bind_cpu_executor
+from forze.base.primitives import (
+    CpuExecutor,
+    RuntimeVar,
+    ThreadPoolCpuExecutor,
+    bind_cpu_executor,
+    cpu_executor_bound,
+)
 
 from .context import ExecutionContext
 from .deps import FrozenDepsRegistry
@@ -120,14 +126,23 @@ class ExecutionRuntime:
     """
 
     cpu_executor: CpuExecutor | None = None
-    """Optional CPU-offload executor (see :func:`~forze.base.primitives.run_cpu`).
+    """CPU-offload executor to bind for this scope (see :func:`~forze.base.primitives.run_cpu`).
 
-    ``None`` (default) uses the process-wide default pool — zero config, cleaned up
-    at interpreter exit. Pass a ``ThreadPoolCpuExecutor(max_workers=…)`` to size the
-    pool ``run_cpu`` uses within this scope: it is bound as the ambient executor for
-    the scope's startup, body, and shutdown. The runtime does **not** close it — the
-    caller owns its lifecycle (close it yourself, or let it clean up at process exit;
-    register a shutdown hook to drain it on teardown).
+    ``None`` (default): unless an executor is already bound in the surrounding context,
+    the runtime creates a scope-lifetime :class:`ThreadPoolCpuExecutor`, binds it for
+    startup/body/shutdown, and **closes it on scope exit** — a bounded pool this runtime
+    owns and releases with the rest of its resources, not a shared process-global one
+    (size it with :attr:`cpu_workers`). Pass an executor to inject your own instead; the
+    runtime then binds but never closes it (you own its lifecycle). An executor already
+    bound around the scope (e.g. a simulation's) is always respected, never overridden;
+    with no runtime scope active at all, ``run_cpu`` runs inline.
+    """
+
+    cpu_workers: int | None = None
+    """Worker count for the runtime-owned CPU pool (ignored when :attr:`cpu_executor` is set).
+
+    ``None`` uses the default sizing (``min(32, os.cpu_count() + 4)``), letting you size the
+    pool without constructing and owning a :class:`ThreadPoolCpuExecutor` yourself.
     """
 
     # ....................... #
@@ -315,22 +330,40 @@ class ExecutionRuntime:
         logger.info("Entering execution runtime scope")
         self.create_context()
 
-        # Bind the scope's CPU-offload executor (if any) for startup, body, and
-        # shutdown. The caller owns its lifecycle — the runtime never closes it.
-        bind = (
-            bind_cpu_executor(self.cpu_executor)
-            if self.cpu_executor is not None
-            else nullcontext()
-        )
+        # Bind a CPU-offload executor for startup, body, and shutdown, by priority:
+        #   1. an injected executor     -> bound, caller-owned (never closed here);
+        #   2. one already bound upstack -> deferred to, never overridden (e.g. a
+        #      simulation's inline executor — overriding it would break determinism);
+        #   3. nothing bound            -> a scope-lifetime pool this runtime owns,
+        #      created now and closed on exit (no shared process-global pool).
+        owned_pool: ThreadPoolCpuExecutor | None = None
+        bind: AbstractContextManager[None]
 
-        with bind:
-            try:
-                await self.startup()
+        if self.cpu_executor is not None:
+            bind = bind_cpu_executor(self.cpu_executor)
+        elif cpu_executor_bound():
+            bind = nullcontext()
+        else:
+            owned_pool = (
+                ThreadPoolCpuExecutor(max_workers=self.cpu_workers)
+                if self.cpu_workers is not None
+                else ThreadPoolCpuExecutor()
+            )
+            bind = bind_cpu_executor(owned_pool)
 
-                yield
+        try:
+            with bind:
+                try:
+                    await self.startup()
 
-            finally:
-                logger.info("Leaving execution runtime scope")
-                await self.shutdown()
+                    yield
+
+                finally:
+                    logger.info("Leaving execution runtime scope")
+                    await self.shutdown()
+
+        finally:
+            if owned_pool is not None:
+                owned_pool.close()
 
         logger.info("Execution runtime scope exited")

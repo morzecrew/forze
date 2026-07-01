@@ -10,6 +10,7 @@ from .cpu import (
     ThreadPoolCpuExecutor,
     bind_cpu_executor,
     checkpoint,
+    cpu_executor_bound,
     current_cpu_executor,
     run_cpu,
     run_cpu_map,
@@ -47,7 +48,7 @@ from .fingerprint import (
 from .bounded_lru_map import BoundedLruMap
 from .graph import DirectedAcyclicGraph
 from .hlc import HlcTimestamp, HybridLogicalClock
-from .lanes import CachedInflightLane, CacheLane, InflightLane
+from .lanes import CachedInflightLane, CacheLane, InflightLane, LeaderFollowerLane
 from .lifecycle_guard import GuardedLifecycle
 from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
 from .mapping import (
@@ -98,6 +99,7 @@ __all__ = [
     "run_cpu_map",
     "checkpoint",
     "current_cpu_executor",
+    "cpu_executor_bound",
     "bind_cpu_executor",
     "TimeSource",
     "SystemTimeSource",
@@ -113,6 +115,7 @@ __all__ = [
     "token_urlsafe",
     "CacheLane",
     "InflightLane",
+    "LeaderFollowerLane",
     "CachedInflightLane",
     "stable_fingerprint",
     "stable_json_bytes",

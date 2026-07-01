@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Callable, Coroutine, Hashable, final
+from typing import Any, Callable, Coroutine, Hashable, cast, final
 
 import attrs
 
@@ -176,6 +176,103 @@ class InflightLane[T]:
         """Drop tracked in-flight tasks without cancelling them."""
 
         self._tasks.clear()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True)
+class LeaderFollowerLane[T]:
+    """Single-flight where the leader runs the factory *inline* — no detached task.
+
+    Concurrent callers of one key collapse into one execution: the first caller (the
+    leader) runs ``factory`` in its own coroutine and shares the result through a future
+    followers await (its error is shared too — they would hit the same failure). Unlike
+    :class:`InflightLane`, which runs the factory in a detached task that survives caller
+    cancellation, a leader cancelled mid-flight cancels the shared future and a waiting
+    follower retries for leadership — so no orphaned execution outlives the caller that
+    started it (the right model for request-scoped work such as a cache load).
+
+    Lock-free by design: the check-then-register is one synchronous step with no ``await``
+    between, so on a single event loop it is atomic. ``on_result`` runs for the leader
+    only, *after* the future resolves (followers have already unblocked) — the seam for a
+    leader-only post-step whose timing must not gate followers (e.g. a cache write).
+    """
+
+    _inflight: dict[Hashable, asyncio.Future[Any]] = attrs.field(
+        factory=dict,
+        init=False,
+        repr=False,
+    )
+
+    # ....................... #
+
+    async def run(
+        self,
+        key: Hashable,
+        factory: Callable[[], Coroutine[Any, Any, T]],
+        *,
+        on_result: Callable[[T], Coroutine[Any, Any, None]] | None = None,
+    ) -> T:
+        """Lead *key* (run *factory*) or follow an in-flight leader and share its result."""
+
+        while True:
+            existing = self._inflight.get(key)
+
+            if existing is None:
+                break
+
+            try:
+                return cast(T, await existing)
+
+            except asyncio.CancelledError:
+                if existing.cancelled():
+                    # The leader's execution died, not ours: retry for leadership.
+                    continue
+
+                raise
+
+        future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
+        self._inflight[key] = future
+
+        try:
+            result = await factory()
+            future.set_result(result)
+
+        except BaseException as error:
+            if isinstance(error, asyncio.CancelledError):
+                future.cancel()
+
+            else:
+                future.set_exception(error)
+                # Mark the future's exception retrieved so a follower-less failure
+                # does not warn on GC.
+                future.exception()
+
+            raise
+
+        finally:
+            self._inflight.pop(key, None)
+
+        if on_result is not None:
+            await on_result(result)
+
+        return result
+
+    # ....................... #
+
+    def __contains__(self, key: Hashable) -> bool:
+        """Whether a leader is currently in flight for *key*."""
+
+        return key in self._inflight
+
+    # ....................... #
+
+    def clear(self) -> None:
+        """Drop tracked in-flight futures without cancelling them."""
+
+        self._inflight.clear()
 
 
 # ....................... #

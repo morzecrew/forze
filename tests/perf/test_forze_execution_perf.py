@@ -28,7 +28,7 @@ Save a baseline (optional)::
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 from uuid import UUID
 
 import attrs
@@ -497,6 +497,35 @@ def test_wrap_fold_cost_benchmark(benchmark: Any, n: int) -> None:
     pipeline = _wrap_pipeline(n)
 
     benchmark(lambda: _compose_wrap(pipeline, _wrap_inner))
+
+
+# ----------------------- #
+# OTel port-span per-call constant build (does hoisting the span name + attributes
+# dict off the per-call path pay off?). The proxy wrap is memoized per method, and
+# domain/surface/route/phase/op are all fixed for a wrapped method — so the span-name
+# f-string and the attributes dict are identical on every call. Building them per call
+# (the old path) vs once at wrap time (the new path) differs by exactly this — the span
+# machinery itself is untouched, so this number IS the per-call win.
+# ----------------------- #
+
+
+@pytest.mark.perf
+def test_otel_span_constant_build_benchmark(benchmark: Any) -> None:
+    """Per-call span-name + attributes build for one port method — the saving hoisting gives."""
+
+    from forze.application.execution.tracing.otel_port_proxy import OtelSpanPortProxy
+
+    # The tracer is never called here — we isolate only the constant build the wrap now hoists.
+    proxy = OtelSpanPortProxy(
+        inner=object(),
+        tracer=cast(Any, None),
+        domain="document",
+        surface="document_command",
+        route="orders",
+        phase="command",
+    )
+
+    benchmark(lambda: (f"{proxy.surface}.create", proxy._attributes("create")))
 
 
 # ----------------------- #

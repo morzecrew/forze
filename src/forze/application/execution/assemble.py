@@ -26,6 +26,7 @@ def build_runtime(
     drain_timeout: timedelta | None = None,
     deployment: DeploymentProfile = DeploymentProfile.SINGLE_PROCESS,
     cpu_executor: CpuExecutor | None = None,
+    cpu_workers: int | None = None,
 ) -> ExecutionRuntime:
     """Assemble an :class:`ExecutionRuntime` in one call.
 
@@ -67,9 +68,12 @@ def build_runtime(
     :param deployment: Passed through to :attr:`ExecutionRuntime.deployment`
         (``FLEET`` validates that shared-state-mutating lifecycle steps are
         singleton-guarded; ``SERVERLESS`` forbids ``requires_long_running`` steps).
-    :param cpu_executor: Optional CPU-offload executor bound for the scope (see
-        :attr:`ExecutionRuntime.cpu_executor`); the caller owns its lifecycle — the
-        runtime does not close it. ``None`` uses the process-wide default pool.
+    :param cpu_executor: CPU-offload executor to inject for the scope (see
+        :attr:`ExecutionRuntime.cpu_executor`); caller-owned — the runtime binds but
+        does not close it. ``None`` (default) lets the runtime own a scope-lifetime pool
+        it closes on exit, unless one is already bound in the surrounding context.
+    :param cpu_workers: Size of the runtime-owned CPU pool when ``cpu_executor`` is
+        ``None`` (see :attr:`ExecutionRuntime.cpu_workers`); ``None`` uses default sizing.
     :returns: Runtime ready for :meth:`ExecutionRuntime.scope`.
     """
 
@@ -95,4 +99,5 @@ def build_runtime(
         drain_timeout=drain_timeout,
         deployment=deployment,
         cpu_executor=cpu_executor,
+        cpu_workers=cpu_workers,
     )

@@ -4,8 +4,10 @@ Run a blocking or CPU-bound callable off the event loop via the **active**
 :class:`CpuExecutor`, bound per context exactly like :class:`TimeSource` and
 :class:`EntropySource`:
 
-- production binds :class:`ThreadPoolCpuExecutor` (a bounded, dedicated pool);
-- plain unit tests use :class:`InlineCpuExecutor` (synchronous, no threads);
+- an :class:`ExecutionRuntime` scope binds a bounded :class:`ThreadPoolCpuExecutor`
+  it owns and closes on exit (production), unless one is already bound or injected;
+- with nothing bound (no runtime, no explicit bind) the work runs inline via
+  :class:`InlineCpuExecutor` — no hidden process-global pool is ever created;
 - Deterministic Simulation Testing binds an inline executor so the work stays
   deterministic and never trips ``RealIOForbidden`` (DST swaps it in itself).
 
@@ -174,20 +176,39 @@ class InlineCpuExecutor:
 
 # ....................... #
 
-_DEFAULT_EXECUTOR: CpuExecutor = ThreadPoolCpuExecutor()
+# The fallback when nothing is bound (no runtime scope, no explicit bind): run inline.
+# It is stateless, immutable, and holds no resources, so there is no hidden process-global
+# thread pool created at import — a real offload comes from a runtime scope (which owns a
+# scope-lifetime ThreadPoolCpuExecutor) or an explicit bind_cpu_executor.
+_FALLBACK_EXECUTOR: CpuExecutor = InlineCpuExecutor()
 
-_CPU_EXECUTOR: ContextVar[CpuExecutor] = ContextVar(
+_CPU_EXECUTOR: ContextVar[CpuExecutor | None] = ContextVar(
     "forze_cpu_executor",
-    default=_DEFAULT_EXECUTOR,
+    default=None,
 )
 
 # ....................... #
 
 
 def current_cpu_executor() -> CpuExecutor:
-    """Return the CPU executor active in the current context."""
+    """Return the CPU executor active in the current context (the inline fallback if none)."""
 
-    return _CPU_EXECUTOR.get()
+    bound = _CPU_EXECUTOR.get()
+
+    return bound if bound is not None else _FALLBACK_EXECUTOR
+
+
+# ....................... #
+
+
+def cpu_executor_bound() -> bool:
+    """Whether an executor is explicitly bound in this context (vs the inline fallback).
+
+    A runtime scope uses this to defer to an executor an outer context already bound
+    (e.g. a simulation's inline executor) instead of overriding it with its own pool.
+    """
+
+    return _CPU_EXECUTOR.get() is not None
 
 
 # ....................... #
