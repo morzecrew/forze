@@ -171,3 +171,30 @@ class TestCommitAmbiguousClassification:
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "deadline_exceeded"
+
+    @pytest.mark.asyncio
+    async def test_stale_flag_from_out_of_operation_commit_does_not_false_positive(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # Simulate a root transaction that committed OUTSIDE an operation boundary (the
+        # inbox consumer's per-message tx, cross-aggregate invariant enforcement): the
+        # flag is left set. The next operation must reset it at entry, so a body-timeout
+        # stays a retryable deadline rather than a false ``commit_ambiguous``.
+        reset_commit_started()
+        mark_commit_started()  # stale, from before this operation
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class StallHandler(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                await asyncio.Event().wait()  # times out in the body; never commits
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: StallHandler()}).freeze()
+        resolved = reg.resolve("op", ctx)
+
+        with bind_deadline(0.05):
+            with pytest.raises(CoreException) as ei:
+                await resolved("x")
+
+        assert ei.value.kind is ExceptionKind.TIMEOUT
+        assert ei.value.code == "deadline_exceeded"

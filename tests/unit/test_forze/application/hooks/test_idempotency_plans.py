@@ -221,3 +221,33 @@ class TestInvocationIdempotencyKey:
             assert ctx.inv_ctx.get_idempotency_key() == "abc"
 
         assert ctx.inv_ctx.get_idempotency_key() is None
+
+
+class TestRecordingScopeIsolation:
+    """A nested idempotent op's in-tx mark must not leak into the enclosing invocation."""
+
+    def test_nested_mark_does_not_leak_to_outer_scope(self) -> None:
+        from forze.application.hooks.idempotency._state import (
+            close_recording_scope,
+            mark_recorded_in_tx,
+            open_recording_scope,
+            recorded_in_tx,
+        )
+
+        outer = open_recording_scope()
+        try:
+            assert recorded_in_tx() is False
+
+            # A nested idempotent operation opens its own scope, its on_success hook
+            # marks, then the nested middleware closes the scope on the way out.
+            nested = open_recording_scope()
+            mark_recorded_in_tx()
+            assert recorded_in_tx() is True
+            close_recording_scope(nested)
+
+            # Back in the outer scope: the nested mark was undone, so an outer op that
+            # relies on its out-of-transaction commit still sees "not recorded" (and
+            # therefore performs it) instead of wrongly skipping it.
+            assert recorded_in_tx() is False
+        finally:
+            close_recording_scope(outer)

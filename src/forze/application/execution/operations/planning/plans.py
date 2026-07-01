@@ -250,13 +250,22 @@ class OperationPlan:
         if tx.route is None:
             return tx
 
+        suppliers = [
+            step.factory
+            for step in self.iter_wrap_steps()
+            if isinstance(step.factory, SuppliesTransactionCommit)
+        ]
+
+        # Stable id keyed by position among the *idempotency* wraps only (not all wraps),
+        # so it does not shift when unrelated wraps are added; the common single-wrap case
+        # is just ``idempotency_commit``. Multiple idempotency wraps are unusual (each dedups
+        # the whole op) but get distinct steps rather than colliding.
         injected = [
             OnSuccessStep(
-                id=f"idempotency_commit_{index}",
-                factory=step.factory.commit_on_success(),
+                id="idempotency_commit" if index == 0 else f"idempotency_commit_{index}",
+                factory=factory.commit_on_success(),
             )
-            for index, step in enumerate(self.iter_wrap_steps())
-            if isinstance(step.factory, SuppliesTransactionCommit)
+            for index, factory in enumerate(suppliers)
         ]
 
         if not injected:

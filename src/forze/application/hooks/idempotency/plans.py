@@ -25,7 +25,12 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, stable_payload_fingerprint
 from forze.base.serialization import default_model_codec
 
-from ._state import mark_recorded_in_tx, recorded_in_tx, reset_recorded_in_tx
+from ._state import (
+    close_recording_scope,
+    mark_recorded_in_tx,
+    open_recording_scope,
+    recorded_in_tx,
+)
 
 # ----------------------- #
 
@@ -121,60 +126,67 @@ class IdempotencyWrap(MiddlewareFactory):
             if key is None:
                 return await next(args)
 
-            reset_recorded_in_tx()
-            payload_hash = _hash_args(args)
-            existing = await port.begin(self.op, key, payload_hash)
-
-            if existing is not None:
-                return codec.decode_json_bytes(existing.result)
+            # Bracket this invocation in its own recording scope so a nested idempotent
+            # operation's in-transaction mark cannot leak into (or out of) this op's read.
+            recording = open_recording_scope()
 
             try:
-                result = await next(args)
+                payload_hash = _hash_args(args)
+                existing = await port.begin(self.op, key, payload_hash)
 
-            except Exception:
-                # Release the pending claim so a legitimate retry of the failed
-                # request can re-execute. Best-effort: a fail() error must not mask
-                # the handler error. For a transactional store the in-transaction
-                # record write (if any) already rolled back with the business tx.
+                if existing is not None:
+                    return codec.decode_json_bytes(existing.result)
+
                 try:
-                    await port.fail(self.op, key, payload_hash)
+                    result = await next(args)
+
+                except Exception:
+                    # Release the pending claim so a legitimate retry of the failed
+                    # request can re-execute. Best-effort: a fail() error must not mask
+                    # the handler error. For a transactional store the in-transaction
+                    # record write (if any) already rolled back with the business tx.
+                    try:
+                        await port.fail(self.op, key, payload_hash)
+
+                    except Exception:
+                        logger.exception(
+                            "Idempotency fail() errored for op '%s'; the pending "
+                            "claim may persist until its TTL",
+                            self.op,
+                        )
+
+                    raise
+
+                if recorded_in_tx():
+                    # A co-located store recorded the result inside the business
+                    # transaction (via the paired on_success hook), so it committed
+                    # atomically with the business writes — nothing to record here.
+                    return result
+
+                # Out-of-transaction store (or no in-tx hook ran): record the result
+                # now. The business effect already committed inside ``next``, so a
+                # failure to cache must not turn the successful operation into a failure
+                # — log and return (the claim then stays pending until its TTL: the
+                # documented at-least-once gap of an out-of-transaction store).
+                try:
+                    await port.commit(
+                        self.op,
+                        key,
+                        payload_hash,
+                        IdempotencyRecord(result=codec.encode_json_bytes(result)),
+                    )
 
                 except Exception:
                     logger.exception(
-                        "Idempotency fail() errored for op '%s'; the pending "
-                        "claim may persist until its TTL",
+                        "Idempotency commit failed after a successful operation '%s'; "
+                        "the result was not cached and a duplicate may re-execute",
                         self.op,
                     )
 
-                raise
-
-            if recorded_in_tx():
-                # A co-located store recorded the result inside the business
-                # transaction (via the paired on_success hook), so it committed
-                # atomically with the business writes — nothing to record here.
                 return result
 
-            # Out-of-transaction store (or no in-tx hook ran): record the result
-            # now. The business effect already committed inside ``next``, so a
-            # failure to cache must not turn the successful operation into a failure
-            # — log and return (the claim then stays pending until its TTL: the
-            # documented at-least-once gap of an out-of-transaction store).
-            try:
-                await port.commit(
-                    self.op,
-                    key,
-                    payload_hash,
-                    IdempotencyRecord(result=codec.encode_json_bytes(result)),
-                )
-
-            except Exception:
-                logger.exception(
-                    "Idempotency commit failed after a successful operation '%s'; "
-                    "the result was not cached and a duplicate may re-execute",
-                    self.op,
-                )
-
-            return result
+            finally:
+                close_recording_scope(recording)
 
         return _wrap
 

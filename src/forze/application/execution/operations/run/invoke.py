@@ -151,6 +151,13 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
 
         if gate is not None:
             gate.admit(self.op)
+            # Top-level entry: clear any stale commit-reached flag left by a root
+            # transaction that committed *outside* an operation boundary (e.g. the inbox
+            # consumer's per-message tx, cross-aggregate invariant enforcement), so it
+            # cannot misclassify this operation's body-timeout as ``commit_ambiguous``.
+            # Nested invocations (gate is None) skip this so a nested commit still
+            # propagates to the top-level boundary.
+            reset_commit_started()
 
         marker_token = active_operation_var.set(True)
 

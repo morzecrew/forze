@@ -180,6 +180,24 @@ async def run_lifecycle_startup(
 # ....................... #
 
 
+def _drop_pending_result(task: "asyncio.Task[None]") -> None:
+    """Retrieve an abandoned shutdown task's eventual outcome.
+
+    A hook abandoned on timeout may keep running (if it ignores cancellation); attaching
+    this callback retrieves its result/exception when it finally settles, so asyncio does
+    not warn about an unretrieved exception.
+    """
+
+    def _drain(finished: "asyncio.Future[None]") -> None:
+        if not finished.cancelled():
+            finished.exception()
+
+    task.add_done_callback(_drain)
+
+
+# ....................... #
+
+
 async def _run_shutdown_step_logged(
     step: LifecycleStep,
     ctx: "ExecutionContext",
@@ -207,25 +225,32 @@ async def _run_shutdown_step_logged(
 
         return
 
-    # Bounded teardown: a hung shutdown hook is abandoned after *step_timeout* so
-    # a single wedged hook (a broker flush that never returns, a connection that
-    # will not drain) can never block teardown of the remaining steps — and thus
-    # process exit — indefinitely. The drain window bounds in-flight work; this
-    # bounds the teardown that follows it.
-    try:
-        async with asyncio.timeout(step_timeout):
-            await _run_shutdown_step(step, ctx)
+    # Bounded teardown: run the hook as a task and abandon it if it exceeds *step_timeout*
+    # so a single wedged hook (a broker flush that never returns, a connection that will not
+    # drain) can never block teardown of the remaining steps — and thus process exit. Run
+    # detached and move on rather than ``asyncio.timeout``: a hook that swallows the
+    # cancellation would still block the latter, whereas not awaiting the abandoned task
+    # guarantees progress (it leaks the task, acceptable during shutdown).
+    task = asyncio.ensure_future(_run_shutdown_step(step, ctx))
+    done, _pending = await asyncio.wait({task}, timeout=step_timeout)
 
-    except TimeoutError:
+    if task not in done:
+        task.cancel()  # best-effort; the hook may ignore it
+        _drop_pending_result(task)
         logger.error(
             "Lifecycle shutdown hook '%s' exceeded its %.1fs timeout; "
             "abandoning it and continuing teardown",
             step.id,
             step_timeout,
         )
+        return
 
-    except Exception:
-        logger.exception("Lifecycle shutdown failed for '%s'", step.id)
+    error = task.exception()
+
+    if error is not None:
+        logger.error(
+            "Lifecycle shutdown failed for '%s'", step.id, exc_info=error
+        )
 
 
 # ....................... #

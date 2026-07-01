@@ -78,49 +78,55 @@ class PostgresIdempotencyStore(TenancyMixin, IdempotencyPort):
 
         table = await self._table()
 
-        # Claim a fresh key or re-claim an expired one (``WHERE ... expires_at <= now()``):
-        # a live row does not update, so ``rowcount`` distinguishes "we own a fresh claim"
-        # from "a live claim/record already exists". Out of transaction -> auto-committed,
-        # so the pending row is immediately visible to a concurrent duplicate.
-        claim = sql.SQL(
+        # Claim a fresh key or re-claim an expired one (``WHERE ... expires_at <= now()``),
+        # and read back the outcome in a single statement so claim-and-read share one
+        # snapshot (no window for a concurrent commit/fail to slip between them, unlike a
+        # separate INSERT then SELECT). The data-modifying CTE returns a row iff we now own
+        # a pending claim (fresh insert or expired reclaim); otherwise a live row exists and
+        # the ``UNION ALL`` branch reads it. Out of transaction -> auto-committed, so a
+        # pending claim is immediately visible to a concurrent duplicate.
+        stmt = sql.SQL(
             """
-            INSERT INTO {table} (op, idem_key, payload_hash, status, result, expires_at)
-            VALUES ({op}, {key}, {hash}, 'pending', NULL, now() + {ttl})
-            ON CONFLICT (op, idem_key) DO UPDATE
-              SET payload_hash = EXCLUDED.payload_hash,
-                  status = 'pending',
-                  result = NULL,
-                  expires_at = EXCLUDED.expires_at
-              WHERE {table}.expires_at <= now()
+            WITH ins AS (
+                INSERT INTO {table} (op, idem_key, payload_hash, status, result, expires_at)
+                VALUES ({op}, {key}, {hash}, 'pending', NULL, now() + {ttl})
+                ON CONFLICT (op, idem_key) DO UPDATE
+                  SET payload_hash = EXCLUDED.payload_hash,
+                      status = 'pending',
+                      result = NULL,
+                      expires_at = EXCLUDED.expires_at
+                  WHERE {table}.expires_at <= now()
+                RETURNING status, payload_hash, result
+            )
+            SELECT status, payload_hash, result, true AS claimed FROM ins
+            UNION ALL
+            SELECT status, payload_hash, result, false AS claimed
+            FROM {table}
+            WHERE op = {op} AND idem_key = {key} AND expires_at > now()
+              AND NOT EXISTS (SELECT 1 FROM ins)
             """
         ).format(
             table=table.ident(),
-            op=sql.Placeholder(),
-            key=sql.Placeholder(),
-            hash=sql.Placeholder(),
-            ttl=sql.Placeholder(),
+            op=sql.Placeholder("op"),
+            key=sql.Placeholder("key"),
+            hash=sql.Placeholder("hash"),
+            ttl=sql.Placeholder("ttl"),
         )
 
-        claimed = await self.client.execute(
-            claim,
-            [op, key, payload_hash, self.spec.ttl],
-            return_rowcount=True,
+        row = await self.client.fetch_one(
+            stmt,
+            {"op": op, "key": key, "hash": payload_hash, "ttl": self.spec.ttl},
+            row_factory="tuple",
         )
-
-        if claimed:
-            return None
-
-        read = sql.SQL(
-            "SELECT status, payload_hash, result FROM {table} "
-            "WHERE op = {op} AND idem_key = {key} AND expires_at > now()"
-        ).format(table=table.ident(), op=sql.Placeholder(), key=sql.Placeholder())
-
-        row = await self.client.fetch_one(read, [op, key], row_factory="tuple")
 
         if row is None:
+            # No claim and no live row (a concurrent fail/expiry emptied it): in-progress.
             raise exc.conflict("Idempotency is in progress")
 
-        status, existing_hash, result = row
+        status, existing_hash, result, claimed = row
+
+        if claimed:
+            return None  # fresh or reclaimed pending claim
 
         if existing_hash != payload_hash:
             raise exc.conflict("Payload hash mismatch")
