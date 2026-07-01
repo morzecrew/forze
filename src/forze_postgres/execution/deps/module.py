@@ -16,6 +16,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
@@ -45,6 +46,7 @@ from .configs import (
     PostgresDocumentConfig,
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
+    PostgresHlcCheckpointConfig,
     PostgresHubSearchConfig,
     PostgresIdempotencyConfig,
     PostgresInboxConfig,
@@ -57,6 +59,7 @@ from .factories import (
     ConfigurablePostgresAnalytics,
     ConfigurablePostgresDocument,
     ConfigurablePostgresFederatedSearch,
+    ConfigurablePostgresHlcCheckpoint,
     ConfigurablePostgresHubSearch,
     ConfigurablePostgresIdempotency,
     ConfigurablePostgresInbox,
@@ -178,6 +181,14 @@ class PostgresDepsModule(DepsModule):
 
     Co-located store: the result record commits inside the business transaction, so a
     duplicate cannot re-execute after a crash between the business commit and the record."""
+
+    hlc_checkpoint: PostgresHlcCheckpointConfig | None = attrs.field(default=None)
+    """Optional Postgres HLC high-water-mark store (node-global; default unwired).
+
+    When set, the outbox flush persists the runtime's clock mark in the business
+    transaction so ``hlc_checkpoint_recovery_lifecycle_step`` can resume the clock above its
+    prior emissions after a restart, keeping HLC monotonicity across process boundaries.
+    Unset leaves the clock resuming from ``(0, 0)`` (the prior behavior)."""
 
     # ....................... #
 
@@ -551,6 +562,18 @@ class PostgresDepsModule(DepsModule):
                 }
             )
 
+        hlc_checkpoint_deps = Deps()
+
+        if self.hlc_checkpoint is not None:
+            # Node-global singleton (SimpleDepPort), so a plain registration — not routed.
+            hlc_checkpoint_deps = Deps.plain(
+                {
+                    HlcCheckpointDepKey: ConfigurablePostgresHlcCheckpoint(
+                        config=self.hlc_checkpoint
+                    ),
+                }
+            )
+
         return plain_deps.merge(
             doc_deps,
             search_deps,
@@ -562,4 +585,5 @@ class PostgresDepsModule(DepsModule):
             outbox_deps,
             inbox_deps,
             idempotency_deps,
+            hlc_checkpoint_deps,
         )

@@ -16,11 +16,25 @@ from forze.application.execution.outbox import (
 )
 from forze.application.integrations.outbox import OutboxStaging
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import HlcTimestamp
 from forze.base.serialization import PydanticModelCodec
 
 
 class _Payload(BaseModel):
     value: str
+
+
+class _RecordingCheckpoint:
+    """Fake :class:`HlcCheckpointPort` recording every ``advance`` mark."""
+
+    def __init__(self) -> None:
+        self.marks: list[HlcTimestamp] = []
+
+    async def load(self) -> HlcTimestamp | None:
+        return max(self.marks) if self.marks else None
+
+    async def advance(self, mark: HlcTimestamp) -> None:
+        self.marks.append(mark)
 
 
 def _coord(
@@ -425,3 +439,79 @@ class TestRequireTransactionGuard:
             await command.flush()
 
         assert ei.value.code == "core.outbox.flush_outside_transaction"
+
+
+# ....................... #
+
+
+class TestCheckpointAdvance:
+    """The flush persists the node's HLC high-water mark when a checkpoint is wired."""
+
+    @pytest.mark.asyncio
+    async def test_flush_advances_checkpoint_with_max_staged_hlc(self) -> None:
+        checkpoint = _RecordingCheckpoint()
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        spec = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload))
+
+        async def _flush(rows: list[StagedOutboxEntry]) -> int:
+            return len(rows)
+
+        coord = OutboxStaging(
+            staging=ctx.outbox_staging,
+            spec=spec,
+            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
+            flush_rows=_flush,
+            checkpoint=checkpoint,
+        )
+
+        await coord.stage("demo.created", _Payload(value="a"))
+        await coord.stage("demo.created", _Payload(value="b"))
+        # The clock's last-issued stamp is the max among the two staged rows.
+        expected = ctx.outbox_clock.last
+
+        await coord.flush()
+
+        assert checkpoint.marks == [expected]
+
+    @pytest.mark.asyncio
+    async def test_flush_without_a_checkpoint_is_unaffected(self) -> None:
+        # Default wiring (no checkpoint): flush behaves exactly as before.
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        spec = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload))
+        flushed: list[StagedOutboxEntry] = []
+
+        async def _flush(rows: list[StagedOutboxEntry]) -> int:
+            flushed.extend(rows)
+            return len(rows)
+
+        coord = OutboxStaging(
+            staging=ctx.outbox_staging,
+            spec=spec,
+            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
+            flush_rows=_flush,
+        )
+
+        await coord.stage("demo.created", _Payload(value="a"))
+
+        assert await coord.flush() == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_flush_does_not_advance_the_checkpoint(self) -> None:
+        checkpoint = _RecordingCheckpoint()
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        spec = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload))
+
+        async def _flush(rows: list[StagedOutboxEntry]) -> int:  # pragma: no cover
+            return len(rows)
+
+        coord = OutboxStaging(
+            staging=ctx.outbox_staging,
+            spec=spec,
+            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
+            flush_rows=_flush,
+            checkpoint=checkpoint,
+        )
+
+        # Nothing staged → nothing flushed → no mark written.
+        assert await coord.flush() == 0
+        assert checkpoint.marks == []

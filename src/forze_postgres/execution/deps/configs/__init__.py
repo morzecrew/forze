@@ -8,6 +8,7 @@ from .federated import (
     PostgresFederatedSearchLegHub,
     PostgresFederatedSearchLegSearch,
 )
+from .hlc_checkpoint import PostgresHlcCheckpointConfig
 from .hub import PostgresHubSearchConfig, PostgresHubSearchMemberConfig
 from .idempotency import PostgresIdempotencyConfig
 from .inbox import PostgresInboxConfig
@@ -41,6 +42,7 @@ __all__ = [
     "PostgresFederatedSearchLeg",
     "PostgresFederatedSearchLegHub",
     "PostgresFederatedSearchLegSearch",
+    "PostgresHlcCheckpointConfig",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
     "PostgresIdempotencyConfig",

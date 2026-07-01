@@ -139,6 +139,13 @@ class MockState:
     )
     analytics_ingest_log: dict[str, list[dict[str, Any]]] = attrs.field(factory=dict)
     outbox_rows: dict[str, list[Any]] = attrs.field(factory=dict)
+    hlc_checkpoint: dict[str, int] = attrs.field(factory=dict)
+    """Node key → packed HLC high-water mark (the max timestamp a node's outbox clock has
+    emitted). Written by :class:`~forze_mock.adapters.hlc_checkpoint.MockHlcCheckpointAdapter`
+    on outbox flush and read at startup so a rebuilt clock resumes above its prior
+    emissions. Transactional via the undo journal (reverts on rollback), like
+    ``idempotency`` — not the tx snapshot."""
+
     dlocks: dict[str, dict[str, tuple[str, float]]] = attrs.field(factory=dict)
     """Route → lock key → (owner, expires_at monotonic)."""
 

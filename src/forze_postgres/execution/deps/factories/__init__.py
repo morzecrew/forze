@@ -13,6 +13,7 @@ from .document import (
     ConfigurablePostgresReadOnlyDocument,
 )
 from .federated import ConfigurablePostgresFederatedSearch
+from .hlc_checkpoint import ConfigurablePostgresHlcCheckpoint
 from .hub import ConfigurablePostgresHubSearch
 from .hub_builder import build_hub_leg_runtimes
 from .procedure import ConfigurablePostgresProcedure
@@ -33,6 +34,7 @@ __all__ = [
     "ConfigurablePostgresOutboxQuery",
     "ConfigurablePostgresDocument",
     "ConfigurablePostgresFederatedSearch",
+    "ConfigurablePostgresHlcCheckpoint",
     "ConfigurablePostgresHubSearch",
     "ConfigurablePostgresProcedure",
     "ConfigurablePostgresReadOnlyDocument",

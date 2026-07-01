@@ -72,6 +72,34 @@ CREATE INDEX outbox_claim_hlc_idx
     ON app.outbox (outbox_route, status, available_at, hlc, created_at, id);
 ```
 
+#### Restart monotonicity (clock high-water mark)
+
+The `hlc` column keeps causal order *within* a run, but a runtime's clock lives
+in memory: a restart resets it to `(0, 0)`, after which it can re-issue a stamp
+at or below one it already relayed whenever wall time had regressed or a peer
+merge had carried the clock ahead. Persist the clock's high-water mark so a
+restart resumes above its prior emissions. The table is optional and
+node-global — one clock per runtime, spanning every tenant, so it is *not*
+tenant-partitioned:
+
+```sql
+CREATE TABLE app.hlc_checkpoint (
+    node_key TEXT   NOT NULL,
+    hlc      BIGINT NOT NULL,   -- packed HlcTimestamp: physical_ms << 16 | logical
+    PRIMARY KEY (node_key)
+);
+```
+
+Wire it with `PostgresDepsModule(hlc_checkpoint=PostgresHlcCheckpointConfig(relation=("app", "hlc_checkpoint")))`
+and add `hlc_checkpoint_recovery_lifecycle_step()` to the runtime's lifecycle.
+The outbox flush then advances the mark (the max HLC among the rows it stamps)
+*inside the business transaction* — so a committed stamp is never durable without
+a mark covering it, and a rolled-back flush never advances it — while the
+lifecycle step loads the mark at startup and resumes the clock. Unwired, the
+clock resumes from `(0, 0)` as before. A single shared `node_key` (the default)
+records one deployment-wide mark; distinct per-replica keys avoid write
+contention on one row, and recovery reads the max across all keys either way.
+
 ## Mongo
 
 For Mongo (`MongoOutboxConfig`), documents mirror these fields; recommended

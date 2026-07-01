@@ -8,6 +8,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import BytesCipherPort
+from forze.application.contracts.hlc import HlcCheckpointPort
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxSpec,
@@ -51,6 +52,13 @@ class OutboxStaging[M: BaseModel]:
     When ``spec.require_transaction`` is set, :meth:`flush` uses it to reject a flush that
     runs outside an open transaction (depth 0). ``None`` (direct construction, e.g. tests)
     leaves the guard inert — there is no transaction context to consult."""
+
+    checkpoint: HlcCheckpointPort | None = None
+    """Optional co-located HLC high-water-mark store (``None`` when unwired).
+
+    When set, :meth:`flush` advances it to the max HLC among the rows it just persisted,
+    in the same transaction — so the node's clock can resume above its emissions after a
+    restart. Unwired leaves the clock resuming from ``(0, 0)`` (the prior behavior)."""
 
     # ....................... #
 
@@ -187,5 +195,17 @@ class OutboxStaging[M: BaseModel]:
             return 0
 
         written = await self.flush_rows(rows)
+
+        # Persist the clock's high-water mark (the max HLC among the rows just flushed) in
+        # the same transaction as those rows, when a co-located checkpoint store is wired.
+        # Atomic with the flush: a committed stamp is never durable without a mark covering
+        # it, so a restart cannot re-issue below it (and a rolled-back flush does not
+        # advance it). ``advance`` is a monotonic max, so a concurrent or earlier flush's
+        # mark is never lowered.
+        if self.checkpoint is not None and (
+            marks := [entry.event.hlc for entry in rows if entry.event.hlc is not None]
+        ):
+            await self.checkpoint.advance(max(marks))
+
         self.staging.set_flushed(route, True)
         return written

@@ -225,6 +225,66 @@ def test_update_skew_guard_allows_within_drift() -> None:
 
 
 # ----------------------- #
+# resume()
+
+
+def test_resume_raises_the_floor_so_next_now_exceeds_the_mark() -> None:
+    # A fresh clock (as after a restart) seeded from a persisted high-water mark must
+    # not re-issue at or below it, even when wall time is now behind that mark.
+    clock = HybridLogicalClock()
+    clock.resume(HlcTimestamp(9000, 4))
+
+    with bind_time_source(_at(1000)):  # wall behind the persisted mark
+        issued = clock.now()
+
+    assert issued > HlcTimestamp(9000, 4)
+    assert issued == HlcTimestamp(9000, 5)
+
+
+def test_resume_is_a_no_op_for_an_older_or_equal_mark() -> None:
+    clock = HybridLogicalClock()
+    clock._last = HlcTimestamp(5000, 2)
+
+    clock.resume(HlcTimestamp(5000, 2))  # equal
+    assert clock.last == HlcTimestamp(5000, 2)
+
+    clock.resume(HlcTimestamp(3000, 9))  # older physical
+    assert clock.last == HlcTimestamp(5000, 2)  # never lowered
+
+
+def test_resume_restores_monotonicity_across_a_simulated_restart() -> None:
+    # A peer merge drags the pre-restart clock's physical ahead of local wall; the node
+    # emits from there, persists its last, then restarts. Resuming from the mark keeps the
+    # restarted clock above what it already emitted — the regression this fix prevents.
+    before = HybridLogicalClock()
+
+    with bind_time_source(_at(1000)):
+        before.update(HlcTimestamp(8000, 0))  # peer ahead → last.physical jumps to 8000
+        emitted = before.now()  # emitted at (8000, k), persisted as the mark
+
+    restarted = HybridLogicalClock()  # _last resets to (0, 0)
+    restarted.resume(before.last)
+
+    with bind_time_source(_at(1500)):  # wall still far behind 8000
+        after = restarted.now()
+
+    assert after > emitted  # no regression below the pre-restart emission
+
+
+def test_resume_applies_no_drift_guard() -> None:
+    # Unlike update(), resume() trusts the mark (this node's own prior emission), so a
+    # far-future physical is accepted without the skew guard rejecting it.
+    clock = HybridLogicalClock(max_drift=timedelta(seconds=1))
+
+    clock.resume(HlcTimestamp(10_000_000, 0))
+
+    with bind_time_source(_at(1000)):
+        issued = clock.now()
+
+    assert issued > HlcTimestamp(10_000_000, 0)
+
+
+# ----------------------- #
 # Property-based
 
 

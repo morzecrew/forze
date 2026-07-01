@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import BytesCipherPort, KeyringDepKey
+from forze.application.contracts.hlc import HlcCheckpointDepKey, HlcCheckpointPort
 from forze.application.contracts.outbox import OutboxRowPersistPort, OutboxSpec
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.crypto import enforce_required_reach
@@ -48,6 +49,22 @@ def _resolve_payload_cipher(
 # ....................... #
 
 
+def _resolve_hlc_checkpoint(ctx: ExecutionContext) -> HlcCheckpointPort | None:
+    """The node's HLC high-water-mark store, or ``None`` when unwired (optional).
+
+    A node-global :class:`SimpleDepPort` (one clock per runtime), so it is resolved once
+    per scope. Absent by default — recovery is then a no-op and the clock resumes from
+    ``(0, 0)`` as before, not an error."""
+
+    if not ctx.deps.exists(HlcCheckpointDepKey):
+        return None
+
+    return ctx.deps.resolve_simple(ctx, HlcCheckpointDepKey)
+
+
+# ....................... #
+
+
 def build_staging_outbox_command[M: BaseModel](
     ctx: ExecutionContext,
     spec: OutboxSpec[M],
@@ -63,6 +80,7 @@ def build_staging_outbox_command[M: BaseModel](
         flush_rows=flush_rows,
         payload_cipher=_resolve_payload_cipher(ctx, spec),
         tx_depth=ctx.tx_ctx.depth,
+        checkpoint=_resolve_hlc_checkpoint(ctx),
     )
     return StagingOutboxCommand(spec=spec, staging=staging)
 
