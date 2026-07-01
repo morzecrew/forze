@@ -144,6 +144,33 @@ class TestIdempotencyWrapDirect:
                 with pytest.raises(RuntimeError, match="handler boom"):
                     await mw(handler, _Args(n=1))
 
+    async def test_commit_failure_does_not_fail_successful_operation(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from forze_mock.adapters.idempotency import MockIdempotencyAdapter
+
+        ctx = _ctx()
+        mw = IdempotencyWrap(op="op", spec=_SPEC, result_type=_Result)(ctx)
+        calls = 0
+
+        async def handler(args: _Args) -> _Result:
+            nonlocal calls
+            calls += 1
+            return _Result(value=args.n)
+
+        # The business effect already committed inside the handler; a store failure
+        # recording the result must not turn the successful operation into a failure.
+        with patch.object(
+            MockIdempotencyAdapter,
+            "commit",
+            AsyncMock(side_effect=RuntimeError("commit store down")),
+        ):
+            with ctx.inv_ctx.bind_idempotency("key-commit-fail"):
+                result = await mw(handler, _Args(n=8))
+
+        assert calls == 1
+        assert result.value == 8  # returned despite the record-write failure
+
 
 # ....................... #
 

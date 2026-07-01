@@ -51,7 +51,7 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
     request can re-execute before the TTL expires.
     """
 
-    ttl: timedelta = timedelta(seconds=30)
+    ttl: timedelta = timedelta(hours=24)
     """TTL for the idempotency keys."""
 
     # ....................... #
@@ -59,6 +59,14 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
     def __attrs_post_init__(self) -> None:
         if int(self.ttl.total_seconds()) < 1:
             raise exc.configuration("TTL must be at least 1 second")
+
+    # ....................... #
+
+    @property
+    def commits_in_transaction(self) -> bool:
+        """Always ``False``: Redis is not co-located with the business transaction."""
+
+        return False
 
     # ....................... #
 

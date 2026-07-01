@@ -14,7 +14,28 @@ class IdempotencyPort(Protocol):
     Implementations store a result record keyed by an operation identifier, an
     idempotency key, and a payload hash, and replay it when a duplicate request
     is detected.
+
+    Guarantee: **at-least-once with a dedup window**, not exactly-once. A duplicate
+    within the record's TTL replays the stored result without re-executing; one that
+    arrives after the TTL re-executes — so ``IdempotencySpec.ttl`` must be at least the
+    operation's maximum retry / redelivery horizon. A co-located store
+    (:attr:`commits_in_transaction`) closes the crash window; an out-of-transaction store
+    (the Redis / mock adapters) leaves a crash between the business commit and
+    :meth:`commit` uncached, whose retry re-executes (see :meth:`commit`).
     """
+
+    @property
+    def commits_in_transaction(self) -> bool:
+        """Whether :meth:`commit` writes on the caller's *business* transaction connection.
+
+        ``True`` for a co-located store (e.g. Postgres) whose ``commit`` runs inside the
+        business transaction, so the result record and the business writes commit
+        atomically — the record write is then driven from an in-transaction ``on_success``
+        hook and the middleware skips its out-of-transaction commit. ``False`` (Redis, the
+        mock default) keeps the out-of-transaction commit with its documented at-least-once
+        crash gap.
+        """
+        ...  # pragma: no cover
 
     def begin(
         self,
