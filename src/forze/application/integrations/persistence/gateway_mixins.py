@@ -19,7 +19,7 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, run_cpu_map
 from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.models import Document
 
@@ -29,6 +29,23 @@ M = TypeVar("M", bound=BaseModel)
 TModel = TypeVar("TModel", bound=BaseModel)
 D = TypeVar("D", bound=Document)
 ReadValidation = Literal["strict", "trusted"]
+
+_DECRYPT_OFFLOAD_THRESHOLD = 64
+"""Row count at/above which an encrypting codec's batch decrypt runs off the event loop
+(``run_cpu_map``): below it the per-row AEAD is cheaper than a worker hand-off plus context
+copy, so it stays inline. A benchmark-tunable default — see ``tests/perf``."""
+
+
+def _frozen_read_codec(codec: Any, rows: Sequence[JsonDict]) -> Any:
+    """The codec's thread-safe decrypt snapshot for *rows*, or ``None`` to decrypt inline.
+
+    ``None`` for a plain (non-encrypting) codec, or when the wired ciphers cannot snapshot —
+    the caller then decrypts on the event loop as before."""
+
+    freeze = getattr(codec, "freeze_for_decrypt", None)
+
+    return freeze(rows) if freeze is not None else None
+
 
 # ....................... #
 
@@ -304,11 +321,42 @@ class ReadValidationCodecMixin(Generic[M]):
         model: type[BaseModel] | None = None,
         trust_source: bool | None = None,
     ) -> Any:
-        """Async decrypt pre-pass + synchronous multi-row decode."""
+        """Async decrypt pre-pass + multi-row decode, offloaded off the loop for big batches.
+
+        A large result set of encrypted rows is decrypted through ``run_cpu_map`` against a
+        thread-safe codec snapshot (:meth:`~...EncryptingModelCodec.freeze_for_decrypt`), so
+        the back-to-back AEAD work does not stall the event loop; a small batch (or a plain,
+        non-encrypting codec) decodes inline as before.
+        """
 
         await self._prepare_decode(rows)
-        rows = [self._predecrypt_for_projection(r, model) for r in rows]
-        return self._decode_rows(rows, model=model, trust_source=trust_source)
+        read_codec = self._codec_for()
+        frozen = (
+            _frozen_read_codec(read_codec, rows)
+            if len(rows) >= _DECRYPT_OFFLOAD_THRESHOLD
+            else None
+        )
+
+        if frozen is None:
+            rows = [self._predecrypt_for_projection(r, model) for r in rows]
+            return self._decode_rows(rows, model=model, trust_source=trust_source)
+
+        ts = bool(trust_source)
+
+        if model is not None and self._codec_for(model) is not read_codec:
+            # Projection: frozen-decrypt the selected encrypted fields, then plaintext-decode.
+            plain = self._codec_for(model)
+            return await run_cpu_map(
+                rows,
+                lambda r: plain.decode_mapping(
+                    frozen.decrypt_mapping(dict(r)), trust_source=ts
+                ),
+            )
+
+        # Full read: frozen decrypt + inner decode, per row, off the loop.
+        return await run_cpu_map(
+            rows, lambda r: frozen.decode_mapping(dict(r), trust_source=ts)
+        )
 
     # ....................... #
 
@@ -327,14 +375,24 @@ class ReadValidationCodecMixin(Generic[M]):
         ``id``) — so a projection of a bound encrypted field must also select ``id``.
         """
 
-        decrypt = getattr(self._codec_for(), "decrypt_mapping", None)
+        read_codec = self._codec_for()
+        decrypt = getattr(read_codec, "decrypt_mapping", None)
 
         if decrypt is None:
             return list(rows)
 
         await self._prepare_decode(rows)
 
-        return [decrypt(dict(row)) for row in rows]
+        frozen = (
+            _frozen_read_codec(read_codec, rows)
+            if len(rows) >= _DECRYPT_OFFLOAD_THRESHOLD
+            else None
+        )
+
+        if frozen is None:
+            return [decrypt(dict(row)) for row in rows]
+
+        return await run_cpu_map(rows, lambda row: frozen.decrypt_mapping(dict(row)))
 
 
 # ....................... #

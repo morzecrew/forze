@@ -16,7 +16,7 @@ fields where equality search is worth that exposure.
 """
 
 from collections import OrderedDict
-from typing import final
+from typing import Iterable, final
 
 import attrs
 from cryptography.exceptions import InvalidTag
@@ -28,6 +28,34 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import exc
 
 # ----------------------- #
+
+
+def _aessiv_decrypt(key: bytes, previous: bytes | None, ciphertext: bytes) -> bytes:
+    """Decrypt an AES-SIV *ciphertext* under *key*, falling back to *previous* on auth failure.
+
+    Shared by the live cipher and its frozen decrypt snapshot so both apply identical
+    current-then-previous-root semantics."""
+
+    try:
+        return AESSIV(key).decrypt(ciphertext, [])
+
+    except InvalidTag:
+        pass
+
+    if previous is not None:
+        try:
+            return AESSIV(previous).decrypt(ciphertext, [])
+
+        except InvalidTag:
+            pass
+
+    raise exc.validation(
+        "Deterministic decrypt failed (wrong key, tenant, or field)",
+        code="core.crypto.deterministic_auth_failed",
+    )
+
+
+# ....................... #
 
 # AES-SIV uses a double-length key: 64 bytes selects AES-256-SIV (two 256-bit
 # subkeys), matching the AES-256 security level of the randomized envelope path.
@@ -163,25 +191,35 @@ class DeterministicFieldCipher:
             ``(tenant, field)``).
         """
 
-        try:
-            return AESSIV(self._key(tenant, field)).decrypt(ciphertext, [])
-
-        except InvalidTag:
-            pass
-
-        previous = self._previous_key(tenant, field)
-
-        if previous is not None:
-            try:
-                return AESSIV(previous).decrypt(ciphertext, [])
-
-            except InvalidTag:
-                pass
-
-        raise exc.validation(
-            "Deterministic decrypt failed (wrong key, tenant, or field)",
-            code="core.crypto.deterministic_auth_failed",
+        return _aessiv_decrypt(
+            self._key(tenant, field),
+            self._previous_key(tenant, field),
+            ciphertext,
         )
+
+    # ....................... #
+
+    def freeze_decryptor(
+        self,
+        tenant: TenantIdentity | None,
+        fields: Iterable[str],
+    ) -> "_FrozenDeterministicFieldCipher":
+        """Pre-derive the ``(tenant, field)`` keys for *fields* into a thread-local snapshot.
+
+        Resolves every key on the event loop (mutating the shared derivation LRU here, where
+        it is safe) so the returned cipher's :meth:`decrypt` derives nothing and touches no
+        shared cache — safe to call from a worker thread (e.g. under ``run_cpu_map``). A batch
+        is single-tenant (the codec resolves one tenant per decode), so keys are held by
+        field alone."""
+
+        keys = {field: self._key(tenant, field) for field in fields}
+        prev = {
+            field: pk
+            for field in keys
+            if (pk := self._previous_key(tenant, field)) is not None
+        }
+
+        return _FrozenDeterministicFieldCipher(keys=keys, prev=prev)
 
     # ....................... #
 
@@ -206,3 +244,68 @@ class DeterministicFieldCipher:
             return (primary,)
 
         return (primary, AESSIV(previous).encrypt(plaintext, []))
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True)
+class _FrozenDeterministicFieldCipher:
+    """Thread-safe, decrypt-only snapshot of a :class:`DeterministicFieldCipher`.
+
+    Built by :meth:`DeterministicFieldCipher.freeze_decryptor` from pre-derived per-field
+    keys, so :meth:`decrypt` derives nothing and reads no shared LRU — safe to call off the
+    event loop (e.g. under ``run_cpu_map``). A :class:`~forze.application.contracts.crypto.\
+DeterministicFieldCipherPort` structurally; encrypt/search are not on the decrypt path and
+    are unsupported."""
+
+    keys: dict[str, bytes]
+    """Field → current-root derived key (single-tenant batch)."""
+
+    prev: dict[str, bytes]
+    """Field → previous-root derived key, present only during a rotation overlap."""
+
+    # ....................... #
+
+    def decrypt(
+        self,
+        *,
+        tenant: TenantIdentity | None,
+        field: str,
+        ciphertext: bytes,
+    ) -> bytes:
+        key = self.keys.get(field)
+
+        if key is None:
+            # Not in the snapshot (freeze resolves every searchable field, so this is
+            # defensive): fail closed like an auth failure, so the codec treats the value as
+            # legacy plaintext exactly as the live path would.
+            raise exc.validation(
+                "Deterministic decrypt failed (field not resolved in snapshot)",
+                code="core.crypto.deterministic_auth_failed",
+            )
+
+        return _aessiv_decrypt(key, self.prev.get(field), ciphertext)
+
+    # ....................... #
+
+    def encrypt(
+        self,
+        *,
+        tenant: TenantIdentity | None,
+        field: str,
+        plaintext: bytes,
+    ) -> bytes:
+        raise exc.internal("frozen deterministic cipher is decrypt-only")
+
+    # ....................... #
+
+    def search_variants(
+        self,
+        *,
+        tenant: TenantIdentity | None,
+        field: str,
+        plaintext: bytes,
+    ) -> tuple[bytes, ...]:
+        raise exc.internal("frozen deterministic cipher is decrypt-only")
