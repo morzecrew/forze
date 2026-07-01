@@ -11,6 +11,15 @@ makes ``permits/per`` mean the *fleet's* rate instead of ``permits × replicas``
 
 The seams live in contracts so an adapter depends only on the contract, never on
 the execution engine; the engine ships the default in-memory implementations.
+
+Store-failure semantics: the executor treats any exception raised by ``admit`` /
+``try_acquire`` as a store outage and **fails open by default** (admits the call),
+so an unreachable distributed store can never make the resilience layer itself the
+outage; a policy may opt into fail-closed via
+``ResiliencePolicy.fail_open_on_store_error``. A ``record`` failure is always
+swallowed — bookkeeping must never turn a successful call into a failure. Both are
+surfaced as ``breaker_store_error`` / ``rate_limit_store_error`` metrics. The
+in-memory defaults never raise, so single-process deployments see none of this.
 """
 
 from typing import Awaitable, Literal, Protocol, runtime_checkable

@@ -594,7 +594,16 @@ class InProcessResilienceExecutor:
         route: StrKey | None,
     ) -> T:
         key = (pol.name, route)
-        allowed, transition = await self.breaker_store.admit(key, strat)
+
+        try:
+            allowed, transition = await self.breaker_store.admit(key, strat)
+
+        except Exception as error:
+            # Store unreachable (e.g. a distributed breaker's Redis is down):
+            # fail open by default so the breaker can't become the outage, or
+            # fail closed if the policy demands it.
+            self._on_store_unavailable("breaker_store_error", pol, route, error)
+            allowed, transition = True, None
 
         if transition == "half_open":
             self._emit("breaker_half_open", pol, route)
@@ -608,28 +617,16 @@ class InProcessResilienceExecutor:
 
         except CoreException as error:
             ok = not exception_egress_policy(error.kind).retryable
-            self._breaker_outcome(
-                await self.breaker_store.record(key, strat, ok),
-                pol,
-                route,
-            )
+            await self._record_breaker_outcome(key, strat, ok, pol, route)
 
             raise
 
         except Exception:
-            self._breaker_outcome(
-                await self.breaker_store.record(key, strat, False),
-                pol,
-                route,
-            )
+            await self._record_breaker_outcome(key, strat, False, pol, route)
 
             raise
 
-        self._breaker_outcome(
-            await self.breaker_store.record(key, strat, True),
-            pol,
-            route,
-        )
+        await self._record_breaker_outcome(key, strat, True, pol, route)
 
         return result
 
@@ -684,7 +681,16 @@ class InProcessResilienceExecutor:
         pol: ResiliencePolicy,
         route: StrKey | None,
     ) -> T:
-        if not await self.rate_limit_store.try_acquire((pol.name, route), strat):
+        try:
+            acquired = await self.rate_limit_store.try_acquire((pol.name, route), strat)
+
+        except Exception as error:
+            # Store unreachable: fail open by default (don't let a down limiter
+            # store shed live traffic), or fail closed if the policy demands it.
+            self._on_store_unavailable("rate_limit_store_error", pol, route, error)
+            acquired = True
+
+        if not acquired:
             self._emit("rate_limit_reject", pol, route)
             raise exc.throttled(
                 f"Rate limit exceeded for policy {pol.name!r}",
@@ -876,6 +882,58 @@ class InProcessResilienceExecutor:
 
         elif transition == "closed":
             self._emit("breaker_close", pol, route)
+
+    # ....................... #
+
+    def _on_store_unavailable(
+        self,
+        event: str,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+        error: Exception,
+    ) -> None:
+        """Handle a breaker/rate-limit *store* failure on the admission path.
+
+        Emits *event* as an always-on metric, then honours the policy's
+        :attr:`ResiliencePolicy.fail_open_on_store_error`: returns (the caller
+        admits the call — the resilience layer never becomes the outage) when
+        failing open, or raises a retryable ``infrastructure`` error when failing
+        closed. A store outage is never allowed to surface as an opaque 500.
+        """
+
+        self._emit(event, pol, route)
+
+        if not pol.fail_open_on_store_error:
+            raise exc.infrastructure(
+                f"Resilience store unavailable for policy {pol.name!r}",
+                code="resilience_store_unavailable",
+            ) from error
+
+    # ....................... #
+
+    async def _record_breaker_outcome(
+        self,
+        key: _StateKey,
+        strat: CircuitBreakerStrategy,
+        ok: bool,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> None:
+        """Record a breaker outcome, swallowing a store failure.
+
+        Recording is bookkeeping: a store error here must never turn a
+        successful call into a failure, nor mask the in-flight domain error on
+        the failure paths. The failure is surfaced as a metric only.
+        """
+
+        try:
+            transition = await self.breaker_store.record(key, strat, ok)
+
+        except Exception:
+            self._emit("breaker_store_error", pol, route)
+            return
+
+        self._breaker_outcome(transition, pol, route)
 
     # ....................... #
 

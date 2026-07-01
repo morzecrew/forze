@@ -187,7 +187,22 @@ class FrozenLifecyclePlan:
 
     # ....................... #
 
-    async def shutdown(self, ctx: "ExecutionContext") -> None:
-        """Run shutdown hooks in reverse wave order."""
+    async def shutdown(
+        self,
+        ctx: "ExecutionContext",
+        *,
+        step_timeout: float | None = None,
+    ) -> None:
+        """Run shutdown hooks in reverse wave order.
 
-        await run_lifecycle_shutdown(self.graph, ctx, concurrent=self.concurrent)
+        *step_timeout* bounds each shutdown hook (seconds); ``None`` leaves it
+        unbounded. :meth:`ExecutionRuntime.shutdown` passes its configured
+        ``shutdown_step_timeout`` so a wedged hook cannot hang process exit.
+        """
+
+        await run_lifecycle_shutdown(
+            self.graph,
+            ctx,
+            concurrent=self.concurrent,
+            step_timeout=step_timeout,
+        )

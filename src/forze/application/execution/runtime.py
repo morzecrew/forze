@@ -92,6 +92,18 @@ class ExecutionRuntime:
     never blocks shutdown indefinitely. No in-flight work exits immediately.
     """
 
+    shutdown_step_timeout: timedelta = timedelta(seconds=10)
+    """Bounded wait for each lifecycle shutdown hook during :meth:`shutdown`.
+
+    The drain window bounds in-flight *work*; this bounds the *teardown* that
+    follows it. Each shutdown hook (client ``close()``, broker flush, poller
+    stop) gets this long to finish; a hook that exceeds it is abandoned with a
+    logged error and teardown moves on to the next step — so one wedged hook
+    (a connection that will not drain, a flush that never returns) can never
+    hang process exit. Raise it for hooks with legitimately long flushes; a
+    very large value effectively restores unbounded teardown.
+    """
+
     cache_resolved_ports: bool = True
     """Memoize resolved configurable ports (document/search/cache/storage/... adapters)
     per scope, so each ``ctx.<x>.query(spec)`` reuses one gateway/adapter (and its codecs,
@@ -245,8 +257,10 @@ class ExecutionRuntime:
         bounded window to finish before lifecycle teardown closes the clients
         they depend on. A drain-timeout expiry is logged and shutdown proceeds.
 
-        Shutdown runs in reverse wave order. Context is reset in a
-        ``finally`` block so it is cleared even if shutdown raises.
+        Shutdown runs in reverse wave order, each hook bounded by
+        :attr:`shutdown_step_timeout` so a wedged hook cannot hang process
+        exit. Context is reset in a ``finally`` block so it is cleared even if
+        shutdown raises.
 
         Only steps whose startup completed and that were not already shut down
         (e.g. rolled back after a partial startup failure) are shut down, so each
@@ -266,7 +280,9 @@ class ExecutionRuntime:
                     ctx.drain_gate.in_flight,
                 )
 
-            await self.lifecycle.shutdown(ctx)
+            await self.lifecycle.shutdown(
+                ctx, step_timeout=self.shutdown_step_timeout.total_seconds()
+            )
 
         finally:
             self.__ctx.reset()

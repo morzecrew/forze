@@ -183,6 +183,8 @@ async def run_lifecycle_startup(
 async def _run_shutdown_step_logged(
     step: LifecycleStep,
     ctx: "ExecutionContext",
+    *,
+    step_timeout: float | None = None,
 ) -> None:
     if step.id not in ctx.lifecycle_started:
         logger.trace(
@@ -195,8 +197,32 @@ async def _run_shutdown_step_logged(
     # it fails.
     ctx.lifecycle_started.discard(step.id)
 
+    if step_timeout is None:
+        # Unbounded (direct callers / tests): swallow-and-log, never a timeout.
+        try:
+            await _run_shutdown_step(step, ctx)
+
+        except Exception:
+            logger.exception("Lifecycle shutdown failed for '%s'", step.id)
+
+        return
+
+    # Bounded teardown: a hung shutdown hook is abandoned after *step_timeout* so
+    # a single wedged hook (a broker flush that never returns, a connection that
+    # will not drain) can never block teardown of the remaining steps — and thus
+    # process exit — indefinitely. The drain window bounds in-flight work; this
+    # bounds the teardown that follows it.
     try:
-        await _run_shutdown_step(step, ctx)
+        async with asyncio.timeout(step_timeout):
+            await _run_shutdown_step(step, ctx)
+
+    except TimeoutError:
+        logger.error(
+            "Lifecycle shutdown hook '%s' exceeded its %.1fs timeout; "
+            "abandoning it and continuing teardown",
+            step.id,
+            step_timeout,
+        )
 
     except Exception:
         logger.exception("Lifecycle shutdown failed for '%s'", step.id)
@@ -210,8 +236,14 @@ async def run_lifecycle_shutdown(
     ctx: "ExecutionContext",
     *,
     concurrent: bool,
+    step_timeout: float | None = None,
 ) -> None:
-    """Run shutdown hooks in reverse wave order."""
+    """Run shutdown hooks in reverse wave order.
+
+    Each step is bounded by *step_timeout* seconds when set (``None`` leaves it
+    unbounded); a hook that exceeds it is abandoned and logged so teardown of
+    the remaining steps is never blocked by one wedged hook.
+    """
 
     if graph.is_empty():
         return
@@ -232,7 +264,9 @@ async def run_lifecycle_shutdown(
             # gather results carry no step errors to inspect here.
             await asyncio.gather(
                 *(
-                    _run_shutdown_step_logged(graph.steps[step_id], ctx)
+                    _run_shutdown_step_logged(
+                        graph.steps[step_id], ctx, step_timeout=step_timeout
+                    )
                     for step_id in wave
                 ),
                 return_exceptions=True,
@@ -245,6 +279,6 @@ async def run_lifecycle_shutdown(
 
     await run_graph_waves_reverse(
         graph,
-        lambda step: _run_shutdown_step_logged(step, ctx),
+        lambda step: _run_shutdown_step_logged(step, ctx, step_timeout=step_timeout),
         concurrent=False,
     )

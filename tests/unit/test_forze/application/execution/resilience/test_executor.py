@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 
+import attrs
 import pytest
 
 from forze.application.contracts.resilience import (
@@ -736,3 +737,132 @@ class TestDeadline:
 
         assert await executor.run(fn, policy="p") == "ok"
         assert counter.calls == 3
+
+
+# ....................... #
+
+
+class _FlakyBreakerStore:
+    """Breaker store stub that can raise on ``admit`` and/or ``record``."""
+
+    def __init__(self, *, fail_admit: bool = False, fail_record: bool = False) -> None:
+        self.fail_admit = fail_admit
+        self.fail_record = fail_record
+
+    async def admit(self, key: object, strat: object) -> tuple[bool, None]:
+        if self.fail_admit:
+            raise ConnectionError("breaker store down")
+
+        return (True, None)
+
+    async def record(self, key: object, strat: object, ok: bool) -> None:
+        if self.fail_record:
+            raise ConnectionError("breaker store down")
+
+        return None
+
+
+class _FlakyRateLimitStore:
+    """Rate-limit store stub whose ``try_acquire`` raises."""
+
+    def __init__(self, *, fail: bool = True) -> None:
+        self.fail = fail
+
+    async def try_acquire(self, key: object, strat: object) -> bool:
+        if self.fail:
+            raise ConnectionError("rate-limit store down")
+
+        return True
+
+
+class TestStoreFailureFailsOpen:
+    """A distributed breaker / rate-limit store outage must not fail live traffic."""
+
+    async def test_breaker_admit_failure_fails_open_by_default(self) -> None:
+        executor = _executor(
+            _breaker_policy(), breaker_store=_FlakyBreakerStore(fail_admit=True)
+        )
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            return "ok"
+
+        # Store down on admit -> fail open -> the call still runs.
+        assert await executor.run(fn, policy="p") == "ok"
+        assert counter.calls == 1
+
+    async def test_breaker_admit_failure_fails_closed_when_configured(self) -> None:
+        executor = _executor(
+            attrs.evolve(_breaker_policy(), fail_open_on_store_error=False),
+            breaker_store=_FlakyBreakerStore(fail_admit=True),
+        )
+        counter = _Counter()
+
+        async def fn() -> str:  # pragma: no cover - must not run
+            counter.calls += 1
+            return "ok"
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(fn, policy="p")
+
+        assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert ei.value.code == "resilience_store_unavailable"
+        assert counter.calls == 0
+
+    async def test_breaker_record_failure_does_not_mask_domain_error(self) -> None:
+        executor = _executor(
+            _breaker_policy(), breaker_store=_FlakyBreakerStore(fail_record=True)
+        )
+
+        async def fn() -> str:
+            raise exc.validation("bad input")
+
+        # record() blows up, but the caller must still see the domain error.
+        with pytest.raises(CoreException) as ei:
+            await executor.run(fn, policy="p")
+
+        assert ei.value.kind is ExceptionKind.VALIDATION
+
+    async def test_breaker_record_failure_preserves_success(self) -> None:
+        executor = _executor(
+            _breaker_policy(), breaker_store=_FlakyBreakerStore(fail_record=True)
+        )
+
+        # A record() failure on the success path must not fail the call.
+        assert await executor.run(_ok, policy="p") == "ok"
+
+    async def test_rate_limit_store_failure_fails_open_by_default(self) -> None:
+        executor = _executor(
+            _rate_limit_policy(), rate_limit_store=_FlakyRateLimitStore()
+        )
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            return "ok"
+
+        assert await executor.run(fn, policy="p") == "ok"
+        assert counter.calls == 1
+
+    async def test_rate_limit_store_failure_fails_closed_when_configured(self) -> None:
+        executor = _executor(
+            attrs.evolve(_rate_limit_policy(), fail_open_on_store_error=False),
+            rate_limit_store=_FlakyRateLimitStore(),
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(_ok, policy="p")
+
+        assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert ei.value.code == "resilience_store_unavailable"
+
+    async def test_store_error_is_surfaced_as_metric(self) -> None:
+        executor = _executor(
+            _breaker_policy(), breaker_store=_FlakyBreakerStore(fail_admit=True)
+        )
+        events: list[str] = []
+        executor.set_metrics_sink(lambda event, _pol, _route: events.append(event))
+
+        assert await executor.run(_ok, policy="p") == "ok"
+        assert "breaker_store_error" in events
