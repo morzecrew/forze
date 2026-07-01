@@ -7,7 +7,10 @@ from datetime import timedelta
 import pytest
 
 from forze.application.contracts.deps import DepKey
-from forze.application.contracts.document import DocumentQueryDepKey
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+)
 from forze.application.contracts.http import HttpServiceDepKey
 from forze.application.contracts.resilience import (
     BackoffStrategy,
@@ -117,7 +120,14 @@ class TestPortPolicies:
             spec=_rl_spec(),
             port_policies=(
                 PortPolicy(key=DocumentQueryDepKey, policy="rl"),
-                PortPolicy(key=HttpServiceDepKey, policy="transient", route="vendor"),
+                # ``transient`` retries infrastructure faults, so it must name the
+                # idempotent methods it may retry (blanket retrying is refused).
+                PortPolicy(
+                    key=HttpServiceDepKey,
+                    policy="transient",
+                    route="vendor",
+                    methods=("get",),
+                ),
             ),
         )()
 
@@ -146,6 +156,39 @@ class TestPortPolicies:
 
         with pytest.raises(CoreException, match="unknown resilience policies"):
             module()
+
+    def test_blanket_infrastructure_retry_is_rejected(self) -> None:
+        # ``transient`` retries infrastructure faults (ambiguous outcome); applying it to
+        # every method would retry non-idempotent writes and risk duplicating them.
+        module = ResilienceDepsModule(
+            port_policies=(PortPolicy(key=DocumentCommandDepKey, policy="transient"),),
+        )
+
+        with pytest.raises(CoreException) as ei:
+            module()
+
+        assert ei.value.code == "resilience.blanket_write_retry"
+
+    def test_explicit_methods_allow_a_retrying_policy(self) -> None:
+        # Opting in per method is fine — the author confirmed these are safe to retry.
+        module = ResilienceDepsModule(
+            port_policies=(
+                PortPolicy(
+                    key=DocumentCommandDepKey, policy="transient", methods=("upsert",)
+                ),
+            ),
+        )
+
+        assert ResiliencePortPoliciesDepKey in module().plain_deps
+
+    def test_blanket_concurrency_only_retry_is_allowed(self) -> None:
+        # ``occ`` retries only concurrency conflicts (the write was rejected, not
+        # ambiguous), so blanket application is safe and unrestricted.
+        module = ResilienceDepsModule(
+            port_policies=(PortPolicy(key=DocumentCommandDepKey, policy="occ"),),
+        )
+
+        assert ResiliencePortPoliciesDepKey in module().plain_deps
 
     def test_port_policy_empty_methods_rejected(self) -> None:
         with pytest.raises(CoreException, match="empty"):

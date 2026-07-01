@@ -304,6 +304,69 @@ class TestCircuitBreaker:
         with pytest.raises(CoreException, match="Circuit breaker open"):
             await executor.run(unexpected, policy="p")
 
+    async def test_throttled_downstream_does_not_open_breaker(self) -> None:
+        # A downstream returning 429 is backpressure, not a health failure: it must not
+        # trip the breaker, however many times it happens.
+        clock = _Clock()
+        executor = _executor(_breaker_policy(min_throughput=1), clock=clock)
+
+        async def throttled() -> str:
+            raise exc.throttled("downstream 429", code="rate_limited")
+
+        for _ in range(5):
+            with pytest.raises(CoreException):
+                await executor.run(throttled, policy="p")
+
+        # The breaker is still closed: a following call reaches fn (not fast-failed).
+        counter = _Counter()
+
+        async def ok() -> str:
+            counter.calls += 1
+            return "ok"
+
+        assert await executor.run(ok, policy="p") == "ok"
+        assert counter.calls == 1
+
+    async def test_concurrency_conflict_does_not_open_breaker(self) -> None:
+        # OCC contention is not a downstream-health signal either.
+        clock = _Clock()
+        executor = _executor(_breaker_policy(min_throughput=1), clock=clock)
+
+        async def conflict() -> str:
+            raise exc.concurrency("revision mismatch")
+
+        for _ in range(5):
+            with pytest.raises(CoreException):
+                await executor.run(conflict, policy="p")
+
+        counter = _Counter()
+
+        async def ok() -> str:
+            counter.calls += 1
+            return "ok"
+
+        assert await executor.run(ok, policy="p") == "ok"
+        assert counter.calls == 1
+
+    async def test_timeout_counts_as_a_failure(self) -> None:
+        # A timeout means the downstream did not respond — a breaker failure, even though
+        # a deadline timeout is not retryable.
+        clock = _Clock()
+        executor = _executor(_breaker_policy(min_throughput=1), clock=clock)
+
+        async def slow() -> str:
+            raise exc.timeout("no response", code="deadline_exceeded")
+
+        with pytest.raises(CoreException):
+            await executor.run(slow, policy="p")
+
+        # The breaker opened: a following call is fast-failed without running.
+        async def unexpected() -> str:  # pragma: no cover - must not run
+            raise AssertionError("breaker should have short-circuited")
+
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await executor.run(unexpected, policy="p")
+
 
 # ....................... #
 

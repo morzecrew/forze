@@ -22,8 +22,19 @@ from forze.application.contracts.resilience import (
     TimeoutStrategy,
     Transition,
 )
-from forze.base.exceptions import CoreException, exc, exception_egress_policy
-from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping, monotonic
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionKind,
+    exc,
+    exception_egress_policy,
+)
+from forze.base.primitives import (
+    BoundedLruMap,
+    MappingConverter,
+    StrKey,
+    StrKeyMapping,
+    monotonic,
+)
 
 from ..context.deadline import remaining_time
 from ..tracing import record
@@ -36,6 +47,7 @@ from .state import (
     HedgeDelayState,
 )
 from .store import (
+    DEFAULT_MAX_STATE_ENTRIES,
     InMemoryCircuitBreakerStore,
     InMemoryLatencyDigestStore,
     InMemoryRateLimitStore,
@@ -52,6 +64,40 @@ Unlike the tracing emitter, the sink is **not** gated behind tracing — attach
 one (e.g. via ``instrument_resilience``) to export breaker transitions and
 rejection counts as always-on metrics in production.
 """
+
+# ....................... #
+
+_BREAKER_FAILURE_KINDS = frozenset(
+    {ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT}
+)
+"""Kinds that mean the downstream is unreachable / unresponsive — a breaker *failure*."""
+
+_BREAKER_NEUTRAL_KINDS = frozenset(
+    {ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY}
+)
+"""Kinds the breaker ignores: throttling is backpressure and concurrency is contention —
+neither is a downstream *health* signal, so they are recorded as neither success nor failure."""
+
+
+def _breaker_outcome(kind: ExceptionKind) -> bool | None:
+    """Classify a failed call for the circuit breaker by downstream **health**.
+
+    The breaker opens on an unhealthy *downstream*, which is a different question from
+    whether the error is retryable. Returns ``False`` for a failure (infrastructure /
+    timeout), ``None`` to not record the call at all (throttling / concurrency — backpressure
+    and contention, not health), and ``True`` for a success (any other error is caller-caused;
+    the downstream answered fine). Using retryability instead would wrongly trip the breaker
+    open on a downstream's ``429`` and count a timeout as a success.
+    """
+
+    if kind in _BREAKER_FAILURE_KINDS:
+        return False
+
+    if kind in _BREAKER_NEUTRAL_KINDS:
+        return None
+
+    return True
+
 
 # ....................... #
 
@@ -102,42 +148,85 @@ class InProcessResilienceExecutor:
     instead of one replica's). Only consulted when a policy sets
     ``AdaptiveBulkheadStrategy.latency_quantile``."""
 
+    max_state_entries: int = DEFAULT_MAX_STATE_ENTRIES
+    """LRU cap on this instance's per-``(policy, route)`` state maps — bounds memory when
+    ``route`` is high-cardinality (per-tenant, per-object). Evicting an idle entry is safe:
+    it is recreated fresh on next access (a bulkhead/budget/throttle starts empty). The
+    breaker and rate-limit *stores* have their own caps."""
+
     # ....................... #
 
-    _bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
-        factory=dict,
+    _bulkheads: BoundedLruMap[_StateKey, AdaptiveBulkheadState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, AdaptiveBulkheadState](
+                self.max_state_entries
+            ),
+            takes_self=True,
+        ),
     )
     """Fixed bulkhead state: the unified admission machinery with a constant
     limit (the AIMD controller is simply never consulted)."""
 
-    _adaptive_bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
-        factory=dict,
+    _adaptive_bulkheads: BoundedLruMap[_StateKey, AdaptiveBulkheadState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, AdaptiveBulkheadState](
+                self.max_state_entries
+            ),
+            takes_self=True,
+        ),
     )
     """Adaptive (AIMD) bulkhead state for the executor."""
 
-    _gradient_bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
-        factory=dict,
+    _gradient_bulkheads: BoundedLruMap[_StateKey, AdaptiveBulkheadState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, AdaptiveBulkheadState](
+                self.max_state_entries
+            ),
+            takes_self=True,
+        ),
     )
     """Delay-based (Gradient2) bulkhead state for the executor."""
 
-    _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
+    _budgets: BoundedLruMap[_StateKey, BudgetState] = attrs.field(
+        init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, BudgetState](self.max_state_entries),
+            takes_self=True,
+        ),
+    )
     """Budget state for the executor."""
 
-    _hedge_budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
+    _hedge_budgets: BoundedLruMap[_StateKey, BudgetState] = attrs.field(
+        init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, BudgetState](self.max_state_entries),
+            takes_self=True,
+        ),
+    )
     """Hedge budget state for the executor."""
 
-    _throttles: dict[_StateKey, AdaptiveThrottleState] = attrs.field(
-        factory=dict,
+    _throttles: BoundedLruMap[_StateKey, AdaptiveThrottleState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, AdaptiveThrottleState](
+                self.max_state_entries
+            ),
+            takes_self=True,
+        ),
     )
     """Adaptive client-throttle counters (requests/accepts per policy/route)."""
 
-    _hedge_delays: dict[_StateKey, HedgeDelayState] = attrs.field(
-        factory=dict,
+    _hedge_delays: BoundedLruMap[_StateKey, HedgeDelayState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, HedgeDelayState](
+                self.max_state_entries
+            ),
+            takes_self=True,
+        ),
     )
     """Adaptive hedge-delay state (windowed P² quantile per policy/route)."""
 
@@ -616,8 +705,12 @@ class InProcessResilienceExecutor:
             result = await inner()
 
         except CoreException as error:
-            ok = not exception_egress_policy(error.kind).retryable
-            await self._record_breaker_outcome(key, strat, ok, pol, route)
+            # Classify by downstream health, not retryability: a throttle (429) or a
+            # concurrency conflict is not a breaker failure, and a timeout is not a success.
+            ok = _breaker_outcome(error.kind)
+
+            if ok is not None:
+                await self._record_breaker_outcome(key, strat, ok, pol, route)
 
             raise
 

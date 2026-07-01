@@ -42,6 +42,7 @@ from .fingerprint import (
     stable_json_bytes,
     stable_payload_fingerprint,
 )
+from .bounded_lru_map import BoundedLruMap
 from .graph import DirectedAcyclicGraph
 from .hlc import HlcTimestamp, HybridLogicalClock
 from .lanes import CachedInflightLane, CacheLane, InflightLane
@@ -117,6 +118,7 @@ __all__ = [
     "combine_fingerprint",
     "gcp_credential_dedup_tag",
     "connection_string_fingerprint",
+    "BoundedLruMap",
     "GuardedLifecycle",
     "GuardedLruRegistry",
     "SimpleLruRegistry",

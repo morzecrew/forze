@@ -23,11 +23,16 @@ from forze.application.contracts.resilience import (
     RateLimitStrategy,
     Transition,
 )
-from forze.base.primitives import WindowedP2Quantile, monotonic
+from forze.base.primitives import BoundedLruMap, WindowedP2Quantile, monotonic
 
 from .state import BreakerState, RateLimitState
 
 # ----------------------- #
+
+DEFAULT_MAX_STATE_ENTRIES = 4096
+"""Default per-store cap on ``(policy, route)`` entries — bounds memory when ``route`` is
+high-cardinality (per-tenant, per-object). Evicting an idle entry is safe: it is recreated
+fresh on next access (a breaker resets to closed, a bucket refills)."""
 
 
 @final
@@ -37,7 +42,16 @@ class InMemoryCircuitBreakerStore(CircuitBreakerStore):
 
     clock: Callable[[], float] = attrs.field(default=monotonic)
 
-    _states: dict[BreakerKey, BreakerState] = attrs.field(factory=dict, init=False)
+    max_entries: int = DEFAULT_MAX_STATE_ENTRIES
+    """LRU cap on ``(policy, route)`` breaker states (see :data:`DEFAULT_MAX_STATE_ENTRIES`)."""
+
+    _states: BoundedLruMap[BreakerKey, BreakerState] = attrs.field(
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[BreakerKey, BreakerState](self.max_entries),
+            takes_self=True,
+        ),
+        init=False,
+    )
 
     # ....................... #
 
@@ -93,9 +107,18 @@ class InMemoryRateLimitStore(RateLimitStore):
 
     clock: Callable[[], float] = attrs.field(default=monotonic)
 
+    max_entries: int = DEFAULT_MAX_STATE_ENTRIES
+    """LRU cap on ``(policy, route)`` token buckets (see :data:`DEFAULT_MAX_STATE_ENTRIES`)."""
+
     # ....................... #
 
-    _states: dict[RateLimitKey, RateLimitState] = attrs.field(factory=dict, init=False)
+    _states: BoundedLruMap[RateLimitKey, RateLimitState] = attrs.field(
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[RateLimitKey, RateLimitState](self.max_entries),
+            takes_self=True,
+        ),
+        init=False,
+    )
 
     # ....................... #
 
@@ -139,8 +162,16 @@ class InMemoryLatencyDigestStore(LatencyDigestStore):
     ``latency_quantile`` (which is set whenever this store is consulted).
     """
 
-    _estimators: dict[LatencyDigestKey, WindowedP2Quantile] = attrs.field(
-        factory=dict,
+    max_entries: int = DEFAULT_MAX_STATE_ENTRIES
+    """LRU cap on ``(policy, route)`` latency digests (see :data:`DEFAULT_MAX_STATE_ENTRIES`)."""
+
+    _estimators: BoundedLruMap[LatencyDigestKey, WindowedP2Quantile] = attrs.field(
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[LatencyDigestKey, WindowedP2Quantile](
+                self.max_entries
+            ),
+            takes_self=True,
+        ),
         init=False,
     )
 
