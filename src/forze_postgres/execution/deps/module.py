@@ -16,6 +16,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
 from forze.application.contracts.search import (
@@ -45,6 +46,7 @@ from .configs import (
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
     PostgresHubSearchConfig,
+    PostgresIdempotencyConfig,
     PostgresInboxConfig,
     PostgresOutboxConfig,
     PostgresProcedureConfig,
@@ -56,6 +58,7 @@ from .factories import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHubSearch,
+    ConfigurablePostgresIdempotency,
     ConfigurablePostgresInbox,
     ConfigurablePostgresOutboxCommand,
     ConfigurablePostgresOutboxQuery,
@@ -166,6 +169,15 @@ class PostgresDepsModule(DepsModule):
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from inbox route names to their Postgres-specific configurations."""
+
+    idempotencies: StrKeyMapping[PostgresIdempotencyConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from idempotency route names to their Postgres-specific configurations.
+
+    Co-located store: the result record commits inside the business transaction, so a
+    duplicate cannot re-execute after a crash between the business commit and the record."""
 
     # ....................... #
 
@@ -527,6 +539,18 @@ class PostgresDepsModule(DepsModule):
                 }
             )
 
+        idempotency_deps = Deps()
+
+        if self.idempotencies:
+            idempotency_deps = Deps.routed(
+                {
+                    IdempotencyDepKey: {
+                        name: ConfigurablePostgresIdempotency(config=config)
+                        for name, config in self.idempotencies.items()
+                    },
+                }
+            )
+
         return plain_deps.merge(
             doc_deps,
             search_deps,
@@ -537,4 +561,5 @@ class PostgresDepsModule(DepsModule):
             procedures_deps,
             outbox_deps,
             inbox_deps,
+            idempotency_deps,
         )

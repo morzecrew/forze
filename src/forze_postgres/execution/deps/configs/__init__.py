@@ -9,6 +9,7 @@ from .federated import (
     PostgresFederatedSearchLegSearch,
 )
 from .hub import PostgresHubSearchConfig, PostgresHubSearchMemberConfig
+from .idempotency import PostgresIdempotencyConfig
 from .inbox import PostgresInboxConfig
 from .outbox import PostgresOutboxConfig
 from .procedure import PostgresProcedureConfig
@@ -42,6 +43,7 @@ __all__ = [
     "PostgresFederatedSearchLegSearch",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
+    "PostgresIdempotencyConfig",
     "PostgresInboxConfig",
     "PostgresOutboxConfig",
     "PostgresProcedureConfig",
