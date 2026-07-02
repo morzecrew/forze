@@ -56,6 +56,7 @@ from .mapping import (
     StrKeyMapping,
 )
 from .namespace import StrKeyNamespace
+from .numeric import clamp
 from .quantile import P2Quantile, WindowedP2Quantile
 from .runtime import RuntimeVar
 from .selector import StrKeySelector, str_key_selector
@@ -134,6 +135,7 @@ __all__ = [
     "ContextVarTrace",
     "OnceCell",
     "normalize_string",
+    "clamp",
     "MISSING",
     "build_projection",
     "path_get",

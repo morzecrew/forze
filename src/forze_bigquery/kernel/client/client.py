@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from forze.application.execution.resilience.read_retry import retry_read
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, clamp
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from .._logger import logger
@@ -275,10 +275,7 @@ class BigQueryClient(BigQueryClientPort):
     async def __poll_job_done(self, job_id: str, *, timeout: int) -> None:
         cfg = self.__require_config()
         poll_interval = max(0.05, cfg.poll_interval.total_seconds())
-        attempts = min(
-            cfg.max_poll_attempts,
-            max(1, int(timeout / poll_interval) if poll_interval else 1),
-        )
+        attempts = clamp(int(timeout / poll_interval), 1, cfg.max_poll_attempts)
         job = self.job(job_id)
 
         for _ in range(attempts):
