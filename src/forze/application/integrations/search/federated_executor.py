@@ -35,6 +35,7 @@ from forze.application.contracts.search import (
     SearchQueryPort,
     SearchResultSnapshotOptions,
     SearchResultSnapshotSpec,
+    normalize_search_queries,
     search_page_from_limit_offset,
 )
 from forze.base.primitives import MISSING, path_get
@@ -294,9 +295,11 @@ async def execute_federated_thin_offset(
         leg_opts=leg_opts,
         run_legs=run_legs,
     )
-    scores = [
-        score_by_key[(fm.member, str(getattr(fm.hit, ID_FIELD)))] for fm in models
-    ]
+    scores = (
+        [score_by_key[(fm.member, str(getattr(fm.hit, ID_FIELD)))] for fm in models]
+        if normalize_search_queries(query)
+        else None
+    )
 
     if return_type is not None:
         rows = [

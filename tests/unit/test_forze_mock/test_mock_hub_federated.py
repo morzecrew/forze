@@ -174,6 +174,10 @@ async def test_federated_search_surfaces_rrf_scores() -> None:
     assert counted.scores is not None
     assert len(counted.scores) == len(counted.hits)
 
+    # Filter-only browse (empty query) has no meaningful fused score.
+    browse = await adapter.search("", pagination={"limit": 10})
+    assert browse.scores is None
+
 
 @pytest.mark.asyncio
 async def test_federated_weighted_fusion_supported_on_mock() -> None:

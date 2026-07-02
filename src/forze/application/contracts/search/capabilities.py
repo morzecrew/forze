@@ -88,6 +88,15 @@ class SearchCapabilities:
     app embedding via :class:`~forze.application.contracts.embeddings.EmbeddingsProviderPort`
     before the call. ``False`` is the bring-your-own-vector default (e.g. pgvector)."""
 
+    def __attrs_post_init__(self) -> None:
+        # A filtered-ANN strategy only exists where there is a vector stage; a keyword-only
+        # adapter (supports_vector=False) must keep filtered_ann="none".
+        if self.filtered_ann != "none" and not self.supports_vector:
+            raise exc.configuration(
+                f"SearchCapabilities.filtered_ann={self.filtered_ann!r} requires "
+                "supports_vector=True.",
+            )
+
 
 # ....................... #
 

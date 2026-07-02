@@ -48,6 +48,18 @@ class TestDefaults:
         with pytest.raises(attrs.exceptions.FrozenInstanceError):
             FULL_SEARCH_CAPABILITIES.supports_vector = False  # type: ignore[misc]
 
+    def test_filtered_ann_requires_vector(self) -> None:
+        # A keyword-only adapter cannot declare a filtered-ANN strategy.
+        with pytest.raises(CoreException, match="requires supports_vector") as ei:
+            SearchCapabilities(supports_vector=False, filtered_ann="prefilter")
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_vector_without_filtered_ann_is_allowed(self) -> None:
+        # A vector adapter that does not support filtering is a valid declaration.
+        caps = SearchCapabilities(supports_vector=True, filtered_ann="none")
+        assert caps.supports_vector is True
+
 
 # ....................... #
 

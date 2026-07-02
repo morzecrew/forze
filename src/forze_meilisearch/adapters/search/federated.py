@@ -247,13 +247,17 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             )
 
         reject_federated_facets(options)
+        requested_fusion = cast("MultiSourceSearchOptions", options or {}).get("fusion")
         resolve_fusion(
-            cast("MultiSourceSearchOptions", options or {}).get("fusion"),
+            requested_fusion,
             self.search_capabilities,
             backend="meilisearch_federated",
         )
 
-        if self.merge == "federation":
+        # ``merge`` is the construction default; an explicit ``fusion="rrf"`` request selects
+        # the RRF path even on a native-federation-configured adapter (weighted is rejected
+        # above), so the requested strategy is honoured rather than silently ignored.
+        if self.merge == "federation" and requested_fusion != "rrf":
             return await self._search_federation(
                 query,
                 filters,
@@ -614,7 +618,12 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             window = window[: int(limit)]
 
         window_models = [it[0] for it in window]
-        window_scores = [float(it[1]) for it in window]
+        # A filter-only browse (no query terms) has no meaningful relevance score.
+        window_scores = (
+            [float(it[1]) for it in window]
+            if normalize_search_queries(query)
+            else None
+        )
 
         return await self._finalize_page(
             window_models,

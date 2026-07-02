@@ -25,6 +25,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
+    normalize_search_queries,
     prepare_federated_search_options,
     reject_federated_facets,
     resolve_fusion,
@@ -161,7 +162,11 @@ class MockFederatedSearchAdapter[M: BaseModel](
         merged, hl_index = await self._merge_legs(query, filters, sorts, options)
         window = self._window(merged, pagination)
         hits = [hit for hit, _ in window]
-        scores = [score for _, score in window]
+        scores = (
+            [score for _, score in window]
+            if normalize_search_queries(query)
+            else None
+        )
         highlights = federated_highlights_for_hits(hits, hl_index)
         return search_page_from_limit_offset(
             hits, pagination or {}, total=None, highlights=highlights, scores=scores
@@ -181,7 +186,11 @@ class MockFederatedSearchAdapter[M: BaseModel](
         merged, hl_index = await self._merge_legs(query, filters, sorts, options)
         window = self._window(merged, pagination)
         hits = [hit for hit, _ in window]
-        scores = [score for _, score in window]
+        scores = (
+            [score for _, score in window]
+            if normalize_search_queries(query)
+            else None
+        )
         highlights = federated_highlights_for_hits(hits, hl_index)
         return search_page_from_limit_offset(
             hits, pagination or {}, total=len(merged), highlights=highlights, scores=scores

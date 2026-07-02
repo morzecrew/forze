@@ -40,6 +40,7 @@ from forze.application.contracts.search import (
     SearchQueryPort,
     SearchResultSnapshotOptions,
     SearchResultSnapshotSpec,
+    normalize_search_queries,
     prepare_federated_search_options,
     reject_federated_facets,
     resolve_fusion,
@@ -440,8 +441,13 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         highlights = federated_highlights_for_hits(
             [it[0] for it in window], hl_index
         )
-        # Fused RRF score per windowed hit (index-aligned with the hits either branch builds).
-        scores = [float(it[1]) for it in window]
+        # Fused RRF score per windowed hit (index-aligned with the hits either branch builds);
+        # a filter-only browse (no query terms) has no meaningful relevance score.
+        scores = (
+            [float(it[1]) for it in window]
+            if normalize_search_queries(query)
+            else None
+        )
 
         def _finish(hits: list[Any]) -> Any:
             result = search_page_from_limit_offset(

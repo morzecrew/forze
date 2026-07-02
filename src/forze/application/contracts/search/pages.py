@@ -20,6 +20,7 @@ from forze.application.contracts.base import (
     Page,
     offset_page_coords,
 )
+from forze.base.exceptions import exc
 
 from .value_objects import FacetResults, HitHighlights, SearchSnapshotHandle
 
@@ -59,6 +60,13 @@ class SearchCountlessPage[T](CountlessPage[T]):
     backend- and strategy-specific (RRF scores in particular cluster near the top of the list),
     so treat scores as ordinal within one response rather than comparable across queries."""
 
+    def __attrs_post_init__(self) -> None:
+        if self.scores is not None and len(self.scores) != len(self.hits):
+            raise exc.internal(
+                "Search page scores must be index-aligned with hits "
+                f"(scores={len(self.scores)}, hits={len(self.hits)}).",
+            )
+
 
 # ....................... #
 
@@ -87,6 +95,13 @@ class SearchCursorPage[T](CursorPage[T]):
     scores: list[float] | None = None
     """Optional per-hit relevance / similarity scores, index-aligned with :attr:`hits`.
     See :attr:`SearchCountlessPage.scores`."""
+
+    def __attrs_post_init__(self) -> None:
+        if self.scores is not None and len(self.scores) != len(self.hits):
+            raise exc.internal(
+                "Search page scores must be index-aligned with hits "
+                f"(scores={len(self.scores)}, hits={len(self.hits)}).",
+            )
 
 
 # ....................... #
