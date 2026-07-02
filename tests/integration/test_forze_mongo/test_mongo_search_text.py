@@ -99,17 +99,13 @@ async def test_mongo_text_search_stream_exports_in_bounded_chunks(
     coll = await mongo_client.collection(collection, db_name=db_name)
     await coll.create_index([("title", "text"), ("body", "text")])
 
-    # Distinct relevance per doc (varying term frequency) so the keyset advances cleanly —
-    # a realistic export set rather than fully-tied scores (which the max_pages guard bounds).
+    # Fully-tied textScore (identical body) exercises the keyset id tiebreak: with Forze's
+    # storage invariant (``_id == id``) the cursor still advances one _id at a time and
+    # terminates. Documents must be stored the canonical way (``_id`` equals the domain id).
     await coll.insert_many(
         [
-            {
-                "_id": str(uuid4()),
-                "id": str(uuid4()),
-                "title": f"search doc {i}",
-                "body": " ".join(["search"] * (i + 1)),
-            }
-            for i in range(7)
+            {"_id": (doc_id := str(uuid4())), "id": doc_id, "title": "search doc", "body": "full text search"}
+            for _ in range(7)
         ]
     )
 
