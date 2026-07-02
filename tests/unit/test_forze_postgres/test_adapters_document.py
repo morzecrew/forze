@@ -14,6 +14,12 @@ from forze.base.serialization import PydanticModelCodec
 from tests.unit._gateway_codec_helpers import codec_for
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.application.integrations.document._limits import (
+    MAX_BATCH_SIZE,
+    MAX_STREAM_CHUNK_SIZE,
+    MIN_BATCH_SIZE,
+    MIN_STREAM_CHUNK_SIZE,
+)
 from forze_postgres.adapters.document import PostgresDocumentAdapter
 from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 
@@ -306,38 +312,37 @@ class TestPostgresDocumentAdapterInit:
             )
 
 class TestPostgresDocumentAdapterEffBatchSize:
-    def test_clamps_too_small(self) -> None:
+    def _adapter(self, *, batch_size: int) -> PostgresDocumentAdapter:
         rg = _read_gw_full()
         ds = _full_spec()
-        a = PostgresDocumentAdapter(
+        return PostgresDocumentAdapter(
             spec=ds,
             read_gw=rg,
             document_cache=_pg_cc(rg, ds),
-            batch_size=5,
+            batch_size=batch_size,
         )
-        assert a.eff_batch_size == 200
 
-    def test_clamps_too_large(self) -> None:
-        rg = _read_gw_full()
-        ds = _full_spec()
-        a = PostgresDocumentAdapter(
-            spec=ds,
-            read_gw=rg,
-            document_cache=_pg_cc(rg, ds),
-            batch_size=500000,
-        )
-        assert a.eff_batch_size == 200
+    @pytest.mark.parametrize("bad", [MIN_BATCH_SIZE - 1, MAX_BATCH_SIZE + 1, 0])
+    def test_out_of_range_rejected_at_construction(self, bad: int) -> None:
+        with pytest.raises(CoreException, match="batch_size must be between"):
+            self._adapter(batch_size=bad)
 
     def test_uses_in_range_value(self) -> None:
-        rg = _read_gw_full()
-        ds = _full_spec()
-        a = PostgresDocumentAdapter(
-            spec=ds,
-            read_gw=rg,
-            document_cache=_pg_cc(rg, ds),
-            batch_size=150,
+        assert self._adapter(batch_size=150).eff_batch_size == 150
+
+    def test_stream_chunk_below_min_clamps_up(self) -> None:
+        adapter = self._adapter(batch_size=200)
+        assert adapter._eff_stream_chunk_size(1) == MIN_STREAM_CHUNK_SIZE
+
+    def test_stream_chunk_above_max_clamps_down(self) -> None:
+        adapter = self._adapter(batch_size=200)
+        assert (
+            adapter._eff_stream_chunk_size(MAX_STREAM_CHUNK_SIZE + 5000)
+            == MAX_STREAM_CHUNK_SIZE
         )
-        assert a.eff_batch_size == 150
+
+    def test_stream_chunk_within_bounds_passes_through(self) -> None:
+        assert self._adapter(batch_size=200)._eff_stream_chunk_size(500) == 500
 
 class TestPostgresDocumentAdapterGetPaths:
     @pytest.mark.asyncio

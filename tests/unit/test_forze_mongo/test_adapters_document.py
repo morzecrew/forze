@@ -133,19 +133,30 @@ class TestMongoDocumentAdapter:
                 document_cache=_mongo_cc(read_gw, ms),
             )
 
-    def test_eff_batch_size_clamps_extremes(self) -> None:
+    def test_eff_batch_size_rejects_out_of_range(self) -> None:
         rg = _build_read_gateway()
         ms = _doc_spec()
-        small = MongoDocumentAdapter(
-            spec=ms, read_gw=rg, document_cache=_mongo_cc(rg, ms), batch_size=5
-        )
-        assert small.eff_batch_size == 200
+        with pytest.raises(CoreException, match="batch_size must be between"):
+            MongoDocumentAdapter(
+                spec=ms, read_gw=rg, document_cache=_mongo_cc(rg, ms), batch_size=5
+            )
         rg = _build_read_gateway()
         ms = _doc_spec()
-        large = MongoDocumentAdapter(
-            spec=ms, read_gw=rg, document_cache=_mongo_cc(rg, ms), batch_size=200000
+        with pytest.raises(CoreException, match="batch_size must be between"):
+            MongoDocumentAdapter(
+                spec=ms,
+                read_gw=rg,
+                document_cache=_mongo_cc(rg, ms),
+                batch_size=200000,
+            )
+
+    def test_eff_batch_size_in_range_passes_through(self) -> None:
+        rg = _build_read_gateway()
+        ms = _doc_spec()
+        adapter = MongoDocumentAdapter(
+            spec=ms, read_gw=rg, document_cache=_mongo_cc(rg, ms), batch_size=150
         )
-        assert large.eff_batch_size == 200
+        assert adapter.eff_batch_size == 150
 
     @pytest.mark.asyncio
     async def test_get_continues_when_cache_set_fails(self) -> None:

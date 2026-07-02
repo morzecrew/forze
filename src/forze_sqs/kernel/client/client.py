@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_delay
 from forze.base.exceptions import exc
-from forze.base.primitives import uuid4
+from forze.base.primitives import clamp, uuid4
 
 from .._logger import logger
 from .constants import SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES
@@ -197,9 +197,8 @@ class SQSClient(SQSClientPort):
             else:
                 aio_config = None
 
-            self.__enqueue_batch_concurrency = max(
-                1,
-                min(pool_cap, _MAX_ENQUEUE_BATCH_CONCURRENCY),
+            self.__enqueue_batch_concurrency = clamp(
+                pool_cap, 1, _MAX_ENQUEUE_BATCH_CONCURRENCY
             )
 
             self.__opts = SQSConnectionOpts(
@@ -1011,7 +1010,7 @@ class SQSClient(SQSClientPort):
 
         wait_time = 0
         if timeout is not None:
-            wait_time = int(max(0, min(timeout.total_seconds(), 20)))
+            wait_time = clamp(int(timeout.total_seconds()), 0, 20)
 
         queue_url = await self.__resolve_queue_url(queue)
         c = self.__require_client()

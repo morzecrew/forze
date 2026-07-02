@@ -157,6 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Empty filter/sort maps are no-ops** on list/search requests; a structured-but-empty envelope is still rejected.
 
+- **Document sizing bounds clamp/reject instead of silently resetting** — an out-of-range document-adapter `batch_size` (outside `[10, 20000]`) is now rejected with `exc.configuration` at wiring instead of being replaced with `200` on first use; a per-call stream `chunk_size` is clamped to the nearest bound (`[10, 20000]`) instead of reset to `500`, so an over-large request runs at the ceiling rather than shrinking.
+
 - **Integration logger namespaces unified to `forze_<pkg>.*`** — `forze_redis` / `forze_postgres` / `forze_http` / `forze_firestore` / `forze_temporal` no longer log under bare prefixes; update log filters keyed on the old ones.
 
 - **Hot-path micro-optimizations** (byte-identical output) — faster `normalize_string`, keyset sort-value canonicalization, once-per-struct msgspec exclude-flag resolution, allocation-free trusted bulk decode, compile-once in-memory scans, `forze.base.crypto.ENVELOPE_B64_PREFIX`, and per-wrapped-method (not per-call) construction of the OpenTelemetry port-span name/attributes and the port-interceptor terminal.

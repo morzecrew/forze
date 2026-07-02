@@ -9,6 +9,14 @@ DEFAULT_MAX_STREAM_PAGES = 100_000
 DEFAULT_MAX_CHUNKED_COMMAND_PAGES = 100_000
 DEFAULT_MAX_FETCH_ALL_PAGES = 100_000
 
+# Inclusive bounds for gateway batch/stream sizing. ``batch_size`` is static
+# adapter config (rejected at construction when out of range); stream chunk size
+# is a per-call argument (clamped to the nearest bound).
+MIN_BATCH_SIZE = 10
+MAX_BATCH_SIZE = 20_000
+MIN_STREAM_CHUNK_SIZE = 10
+MAX_STREAM_CHUNK_SIZE = 20_000
+
 # ....................... #
 
 

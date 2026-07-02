@@ -25,6 +25,7 @@ from forze.application.contracts.querying import (
     resolve_effective_sorts,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import clamp
 
 
 from ..._logger import logger
@@ -34,6 +35,10 @@ from ._limits import (
     DEFAULT_MAX_CHUNKED_COMMAND_PAGES,
     DEFAULT_MAX_SCAN_PAGES,
     DEFAULT_MAX_STREAM_PAGES,
+    MAX_BATCH_SIZE,
+    MAX_STREAM_CHUNK_SIZE,
+    MIN_BATCH_SIZE,
+    MIN_STREAM_CHUNK_SIZE,
 )
 from ._query import DocumentQueryMixin
 from ._types import C, D, R, U
@@ -114,6 +119,12 @@ class DocumentAdapter(
                 "Document document cache name mismatches document specification name."
             )
 
+        if not MIN_BATCH_SIZE <= self.batch_size <= MAX_BATCH_SIZE:
+            raise exc.configuration(
+                f"batch_size must be between {MIN_BATCH_SIZE} and "
+                f"{MAX_BATCH_SIZE}, got {self.batch_size}."
+            )
+
     # ....................... #
 
     @property
@@ -171,30 +182,25 @@ class DocumentAdapter(
 
     @cached_property
     def eff_batch_size(self) -> int:  # type: ignore[override]
-        if self.batch_size < 10:
-            logger.warning("Batch size is too small, using default value of 200")
-
-            return 200
-
-        if self.batch_size > 20000:
-            logger.warning("Batch size is too large, using default value of 200")
-
-            return 200
-
+        # Bounds are enforced at construction (see ``__attrs_post_init__``), so a
+        # resolved adapter always carries a legal ``batch_size``.
         return self.batch_size
 
     # ....................... #
 
     def _eff_stream_chunk_size(self, chunk_size: int) -> int:
-        if chunk_size < 10:
-            logger.warning("Stream chunk size is too small, using default value of 500")
-            return 500
+        effective = clamp(chunk_size, MIN_STREAM_CHUNK_SIZE, MAX_STREAM_CHUNK_SIZE)
 
-        if chunk_size > 20000:
-            logger.warning("Stream chunk size is too large, using default value of 500")
-            return 500
+        if effective != chunk_size:
+            logger.warning(
+                "Stream chunk size %d out of bounds [%d, %d]; clamped to %d",
+                chunk_size,
+                MIN_STREAM_CHUNK_SIZE,
+                MAX_STREAM_CHUNK_SIZE,
+                effective,
+            )
 
-        return chunk_size
+        return effective
 
     # ....................... #
 
