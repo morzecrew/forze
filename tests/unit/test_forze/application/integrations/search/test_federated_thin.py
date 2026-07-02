@@ -70,20 +70,26 @@ def test_merge_ids_fuses_top_ranks_highest() -> None:
     assert {(m, i) for m, i, _ in merged[:2]} == {("a", "x"), ("b", "x")}
 
 
-def test_order_federated_secondary_sorts_handles_none_values() -> None:
+def test_order_federated_secondary_sorts_none_and_dict_direction() -> None:
     # Equal scores so the sort field fully orders; one item's field is None (optional/missing).
-    merged = [("a", "1", 0.5), ("b", "2", 0.5), ("c", "3", 0.5)]
     values = {("a", "1"): "x", ("b", "2"): None, ("c", "3"): "y"}
 
-    SearchResultSnapshot.order_federated_secondary_sorts(
-        merged,
-        {"title": "asc"},
-        value_of=lambda it, field: values[(it[0], it[1])],
-        score_of=lambda it: -it[2],
-    )
+    def _run(sort_value: Any) -> list[str]:
+        merged = [("a", "1", 0.5), ("b", "2", 0.5), ("c", "3", 0.5)]
+        SearchResultSnapshot.order_federated_secondary_sorts(
+            merged,
+            {"title": sort_value},
+            value_of=lambda it, field: values[(it[0], it[1])],
+            score_of=lambda it: -it[2],
+        )
+        return [m[1] for m in merged]
 
-    # No TypeError comparing None with str; None sorts last ascending.
-    assert [m[1] for m in merged] == ["1", "3", "2"]
+    # Ascending: a null is the smallest value → sorts first; no TypeError on None vs str.
+    assert _run("asc") == ["2", "1", "3"]
+    # Descending: a null sorts last (the contract's nulls-last-for-desc default).
+    assert _run("desc") == ["3", "1", "2"]
+    # Explicit ``{"dir": ...}`` spec resolves direction (previously misread as ascending).
+    assert _run({"dir": "desc"}) == ["3", "1", "2"]
 
 
 def test_merge_ids_skips_nonpositive_weight() -> None:

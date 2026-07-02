@@ -11,6 +11,7 @@ import binascii
 import json
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import timedelta
+from functools import cmp_to_key
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
 import attrs
@@ -26,6 +27,8 @@ from forze.application.contracts.crypto import KeyringPort
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
+    compare_keyset_sort_values,
+    parse_sort_value,
 )
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
@@ -665,17 +668,19 @@ class SearchResultSnapshot:
         """
 
         if sorts:
-            for field, direction in reversed(list(sorts.items())):
+            for field, sort_value in reversed(list(sorts.items())):
+                # Resolve the shorthand (``"desc"``) or explicit (``{"dir","nulls"}``) spec, then
+                # order via the canonical keyset comparator: it places a null as the smallest
+                # value (so a null sorts first ascending, last descending — the contract default)
+                # and turns a cross-type/``None`` comparison into a validation error, not a raw
+                # ``TypeError``. Same comparator the hub in-memory sort uses, so all paths agree.
+                direction, _nulls = parse_sort_value(sort_value)
 
-                def _key(item: Item, field: str = field) -> Any:
-                    value = value_of(item, field)
-                    # Keep a ``None`` (optional/missing field) sortable: the leading flag groups
-                    # None apart from real values so ``sort`` never applies ``<`` across the two
-                    # (and ``None == None`` short-circuits within the group). None sorts last
-                    # ascending — consistent across the full-fetch and thin paths.
-                    return (value is None, value)
+                def _cmp(a: Item, b: Item, field: str = field, direction: str = direction) -> int:
+                    cmp = compare_keyset_sort_values(value_of(a, field), value_of(b, field))
+                    return cmp if direction == "asc" else -cmp
 
-                merged.sort(key=_key, reverse=(direction == "desc"))
+                merged.sort(key=cmp_to_key(_cmp))
 
         merged.sort(key=score_of)
 
