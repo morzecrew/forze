@@ -65,9 +65,13 @@ class MockFederatedSearchAdapter[M: BaseModel](
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None,
+        sorts: QuerySortExpression | None,
         options: SearchOptions | None,
     ) -> tuple[list[FederatedSearchReadModel[M]], dict[str, Any]]:
-        """Run each leg (with facet/highlight options), RRF-merge, and index leg highlights."""
+        """Run each leg (with facet/highlight options), RRF-merge, and index leg highlights.
+
+        ``sorts`` order the fused set as tie-breakers under the RRF score, mirroring the
+        Postgres/Meilisearch federated adapters (and the thin executor)."""
 
         reject_federated_facets(options)
         leg_opts, member_weights = prepare_federated_search_options(
@@ -95,6 +99,14 @@ class MockFederatedSearchAdapter[M: BaseModel](
         merged = SearchResultSnapshot.weighted_rrf_merge_rows(
             leg_rows=leg_rows,
             k=int(self.rrf_k),
+        )
+        SearchResultSnapshot.order_federated_secondary_sorts(
+            merged,
+            sorts,
+            value_of=lambda item, field: SearchResultSnapshot.federated_merged_hit_field(
+                item, field=field
+            ),
+            score_of=lambda item: -item[1],
         )
         hits = [item[0] for item in merged]
         return hits, build_federated_highlight_index(leg_pages)
@@ -126,8 +138,8 @@ class MockFederatedSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> SearchCountlessPage[FederatedSearchReadModel[M]]:
-        _ = snapshot, sorts
-        hits, hl_index = await self._merge_legs(query, filters, options)
+        _ = snapshot
+        hits, hl_index = await self._merge_legs(query, filters, sorts, options)
         window = self._window(hits, pagination)
         highlights = federated_highlights_for_hits(window, hl_index)
         return search_page_from_limit_offset(
@@ -144,8 +156,8 @@ class MockFederatedSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> SearchPage[FederatedSearchReadModel[M]]:
-        _ = snapshot, sorts
-        hits, hl_index = await self._merge_legs(query, filters, options)
+        _ = snapshot
+        hits, hl_index = await self._merge_legs(query, filters, sorts, options)
         window = self._window(hits, pagination)
         highlights = federated_highlights_for_hits(window, hl_index)
         return search_page_from_limit_offset(

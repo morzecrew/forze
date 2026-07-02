@@ -1,7 +1,6 @@
 """Federated multi-index Meilisearch search (native federation or RRF merge)."""
 
 import asyncio
-from functools import partial
 from typing import (
     Any,
     Awaitable,
@@ -552,6 +551,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 query=query,
                 filters=filters,
                 pagination=pagination,
+                sorts=sorts,
                 leg_opts=leg_opts,
                 rrf_k=int(self.rrf_k),
                 per_leg_limit=leg_cap,
@@ -591,17 +591,14 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             k=int(self.rrf_k),
         )
 
-        if sorts:
-            for field, direction in reversed(list(sorts.items())):
-                merged.sort(
-                    key=partial(
-                        SearchResultSnapshot.federated_merged_hit_field,
-                        field=field,
-                    ),
-                    reverse=(direction == "desc"),
-                )
-
-        merged.sort(key=lambda it: -it[1])
+        SearchResultSnapshot.order_federated_secondary_sorts(
+            merged,
+            sorts,
+            value_of=lambda item, field: SearchResultSnapshot.federated_merged_hit_field(
+                item, field=field
+            ),
+            score_of=lambda item: -item[1],
+        )
 
         window_models = [it[0] for it in merged[offset:]]
 

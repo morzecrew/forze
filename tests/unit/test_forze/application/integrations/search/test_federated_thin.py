@@ -88,8 +88,18 @@ def test_eligibility_gates() -> None:
     assert not federated_thin_eligible(
         thin_merge=True, **{**base, "wants_highlights": True}
     )
-    assert not federated_thin_eligible(
+    # A top-level sort field present on every member is thin-eligible (projected
+    # alongside ``id`` and applied as a tie-break under the RRF score).
+    assert federated_thin_eligible(
         thin_merge=True, **{**base, "sorts": {"title": "asc"}}
+    )
+    # Dotted keys (the full path reads via ``getattr``, no traversal) and keys absent
+    # on a member fall back to the full-fetch path.
+    assert not federated_thin_eligible(
+        thin_merge=True, **{**base, "sorts": {"nested.field": "asc"}}
+    )
+    assert not federated_thin_eligible(
+        thin_merge=True, **{**base, "sorts": {"absent": "asc"}}
     )
 
     no_id = [
@@ -145,6 +155,10 @@ def _idents(page: Any) -> list[tuple[str, str]]:
     return sorted((h.member, h.hit.id) for h in page.hits)
 
 
+def _ordered(page: Any) -> list[tuple[str, str]]:
+    return [(h.member, h.hit.id) for h in page.hits]
+
+
 @pytest.mark.asyncio
 async def test_thin_executor_matches_full_merge() -> None:
     state = MockState()
@@ -180,6 +194,46 @@ async def test_thin_executor_matches_full_merge() -> None:
     # The shared doc "1" appears once per member (distinct federated identities).
     assert ("a", "1") in _idents(thin_page)
     assert ("b", "1") in _idents(thin_page)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+async def test_thin_executor_matches_full_merge_with_sorts(direction: str) -> None:
+    state = MockState()
+    leg_a, leg_b = await _two_legs(state)
+    ports = [
+        ("a", MockSearchAdapter(state=state, spec=leg_a)),
+        ("b", MockSearchAdapter(state=state, spec=leg_b)),
+    ]
+    sorts = {"title": direction}
+
+    full = MockFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(name="fed", members=[leg_a, leg_b]),
+        legs=ports,
+    )
+    full_page = await full.search_page(
+        "alpha", pagination={"limit": 10}, sorts=sorts
+    )
+
+    active = [("a", ports[0][1], 1.0), ("b", ports[1][1], 1.0)]
+    thin_page = await execute_federated_thin_offset(
+        legs=active,
+        query="alpha",
+        filters=None,
+        pagination={"limit": 10},
+        sorts=sorts,
+        leg_opts=None,
+        rrf_k=60,
+        per_leg_limit=5000,
+        return_count=True,
+        return_type=None,
+        run_legs=_gather,
+    )
+
+    # Identical ORDER (not just identity set): both paths run the same ordering helper
+    # (RRF score primary, ``title`` tie-break), so late materialization must not reorder.
+    assert _ordered(thin_page) == _ordered(full_page)
+    assert thin_page.count == full_page.count
 
 
 @pytest.mark.asyncio

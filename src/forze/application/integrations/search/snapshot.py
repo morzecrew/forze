@@ -622,6 +622,35 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
+    def order_federated_secondary_sorts[Item](
+        merged: list[Item],
+        sorts: QuerySortExpression | None,
+        *,
+        value_of: Callable[[Item, str], Any],
+        score_of: Callable[[Item], Any],
+    ) -> None:
+        """Order a merged federated result in place: RRF score primary, ``sorts`` tie-break.
+
+        Shared by the full-fetch and thin (id-only) paths so both produce identical order.
+        The ``sorts`` fields are applied least-significant-first and the fused score last, so
+        (stable sort) the RRF score dominates and each ``sorts`` field only breaks ties among
+        equal-score hits. ``value_of``/``score_of`` read from whatever tuple shape the caller
+        holds (full-record ``(model, score)`` vs. thin ``(member, id, score)``).
+        """
+
+        if sorts:
+            for field, direction in reversed(list(sorts.items())):
+
+                def _key(item: Item, field: str = field) -> Any:
+                    return value_of(item, field)
+
+                merged.sort(key=_key, reverse=(direction == "desc"))
+
+        merged.sort(key=score_of)
+
+    # ....................... #
+
+    @staticmethod
     def snapshot_pagination(
         want_snap: bool,
         max_ids: int,

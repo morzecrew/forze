@@ -37,6 +37,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     search_page_from_limit_offset,
 )
+from forze.base.primitives import MISSING, path_get
 from forze.base.serialization import default_model_codec
 from forze.domain.constants import ID_FIELD
 
@@ -75,14 +76,27 @@ def federated_thin_eligible(
 ) -> bool:
     """Whether **this** fresh search can use the thin (id-only) merge path.
 
-    Needs the thin snapshot format (:func:`federated_thin_format`) and a request that
-    needs no full leg hits up front — highlights and a secondary ``sorts`` over hit
-    fields both require them, so they fall back to the full-fetch path."""
+    Needs the thin snapshot format (:func:`federated_thin_format`). Highlights need the
+    full leg hits up front, so they always fall back to the full-fetch path. Secondary
+    ``sorts`` are supported thin by also projecting the sort fields, but only when every
+    key is a top-level field present on all members: the full path reads sort values via
+    ``getattr(hit, field)`` (no dotted traversal), so a dotted or member-missing key would
+    order differently thin vs. full — those keep falling back."""
 
-    if wants_highlights or sorts:
+    if wants_highlights:
         return False
 
-    return federated_thin_format(members, thin_merge=thin_merge)
+    if not federated_thin_format(members, thin_merge=thin_merge):
+        return False
+
+    if sorts:
+        for field in sorts:
+            if "." in field:
+                return False
+            if any(field not in member.model_type.model_fields for member in members):
+                return False
+
+    return True
 
 
 # ....................... #
@@ -180,6 +194,7 @@ async def execute_federated_thin_offset(
     query: str | Sequence[str],
     filters: QueryFilterExpression | None,  # type: ignore[valid-type]
     pagination: PaginationExpression | None,
+    sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
     leg_opts: SearchOptions | None,
     rrf_k: int,
     per_leg_limit: int,
@@ -196,30 +211,56 @@ async def execute_federated_thin_offset(
 
     *legs* are the active ``(member, port, weight)`` triples (member weight already
     applied upstream). *run_legs* runs the per-leg thunks under the backend's
-    concurrency rules (pool-aware for Postgres, plain gather otherwise). When
-    *write_snapshot*, the fused ``(member, id)`` keys are streamed into the snapshot
-    store (tiny keys; replay re-fetches by id).
+    concurrency rules (pool-aware for Postgres, plain gather otherwise). *sorts* (when
+    present) are projected alongside ``id`` per leg and applied to the fused set as
+    stable tie-breakers under the RRF score — matching the full-fetch path exactly (the
+    caller only routes eligible sorts here; see :func:`federated_thin_eligible`). When
+    *write_snapshot*, the fused (and sorted) ``(member, id)`` keys are streamed into the
+    snapshot store (tiny keys; replay re-fetches by id in the frozen order).
     """
 
     leg_page: PaginationExpression = {"limit": max(1, int(per_leg_limit))}
+    sort_fields = tuple(sorts) if sorts else ()
 
-    # 1. Thin candidate fetch: only ``id`` per leg, kept in each leg's relevance order.
+    # 1. Thin candidate fetch: ``id`` (+ any sort fields) per leg, in relevance order.
     thin_pages = await run_legs(
         [
-            _thin_fetch(port, query, filters, leg_page, leg_opts)
+            _thin_fetch(port, query, filters, leg_page, leg_opts, sort_fields)
             for _name, port, _weight in legs
         ]
     )
-    leg_rows = [
-        (name, [str(row[ID_FIELD]) for row in page.hits], weight)
-        for (name, _port, weight), page in zip(legs, thin_pages, strict=True)
-    ]
 
-    # 2. Fuse on (member, id).
+    leg_rows: list[tuple[str, list[str], float]] = []
+    values_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for (name, _port, weight), page in zip(legs, thin_pages, strict=True):
+        ids: list[str] = []
+
+        for row in page.hits:
+            rid = str(row[ID_FIELD])
+            ids.append(rid)
+
+            if sort_fields:
+                values_by_key[(name, rid)] = {
+                    field: (None if (v := path_get(row, field)) is MISSING else v)
+                    for field in sort_fields
+                }
+
+        leg_rows.append((name, ids, weight))
+
+    # 2. Fuse on (member, id), then order (RRF score primary, sorts tie-break).
     merged = SearchResultSnapshot.weighted_rrf_merge_ids(leg_rows=leg_rows, k=rrf_k)
     total = len(merged)
 
-    # 2b. Snapshot write: stream the tiny (member, id) keys (no full records held).
+    SearchResultSnapshot.order_federated_secondary_sorts(
+        merged,
+        sorts,
+        value_of=lambda item, field: values_by_key[(item[0], item[1])][field],
+        score_of=lambda item: -item[2],
+    )
+
+    # 2b. Snapshot write: stream the tiny (member, id) keys in final order (no full
+    # records held); replay re-fetches by id and reproduces this order.
     handle = None
 
     if write_snapshot and result_snapshot is not None and rs_spec is not None:
@@ -280,10 +321,13 @@ def _thin_fetch(
     filters: QueryFilterExpression | None,  # type: ignore[valid-type]
     leg_page: PaginationExpression,
     leg_opts: SearchOptions | None,
+    sort_fields: Sequence[str],
 ) -> Callable[[], Awaitable[Any]]:
     async def _run() -> Any:
+        # Legs stay in relevance order (no ``sorts`` passed); the sort fields ride along
+        # only so the merged set can be ordered by them after fusion.
         return await port.project_search(
-            [ID_FIELD], query, filters, leg_page, options=leg_opts
+            [ID_FIELD, *sort_fields], query, filters, leg_page, options=leg_opts
         )
 
     return _run

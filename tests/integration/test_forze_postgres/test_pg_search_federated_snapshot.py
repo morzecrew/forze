@@ -350,3 +350,103 @@ async def test_federated_thin_merge_matches_full(pg_client: PostgresClient) -> N
     # The shared id is a distinct federated identity per member, preserved by the thin path.
     assert (leg_a, str(shared)) in idents(thin)
     assert (leg_b, str(shared)) in idents(thin)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_federated_thin_merge_matches_full_with_sort(
+    pg_client: PostgresClient,
+) -> None:
+    """A secondary ``sort`` produces the same ORDER thin vs. full (thin projects the field).
+
+    Each leg contributes one rank-1 hit, so the two fuse to an equal RRF score and the
+    ``label`` sort alone decides the order — a thin path that failed to project ``label``
+    would fall back to the score tie-break and diverge from the full path.
+    """
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:10]
+    ta, tb = f"fed_sort_a_{suffix}", f"fed_sort_b_{suffix}"
+    ia, ib = f"idx_sort_a_{suffix}", f"idx_sort_b_{suffix}"
+    token = "sorttok"
+
+    for table, idx in ((ta, ia), (tb, ib)):
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {table} (
+                id uuid PRIMARY KEY,
+                label text NOT NULL
+            );
+            CREATE INDEX {idx} ON {table} USING pgroonga (label);
+            """
+        )
+
+    id_a, id_b = uuid4(), uuid4()
+    # Distinct labels, one matching doc per leg → equal rank → the sort drives order.
+    await pg_client.execute(
+        f"INSERT INTO {ta} (id, label) VALUES (%(id)s, %(lbl)s)",
+        {"id": id_a, "lbl": f"{token} zzz"},
+    )
+    await pg_client.execute(
+        f"INSERT INTO {tb} (id, label) VALUES (%(id)s, %(lbl)s)",
+        {"id": id_b, "lbl": f"{token} aaa"},
+    )
+
+    leg_a, leg_b = f"a_{suffix}", f"b_{suffix}"
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                FederatedSearchQueryDepKey: ConfigurablePostgresFederatedSearch(
+                    config=PostgresFederatedSearchConfig(
+                        members={
+                            leg_a: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", ia),
+                                    read=("public", ta),
+                                    engine="pgroonga",
+                                ),
+                            ),
+                            leg_b: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", ib),
+                                    read=("public", tb),
+                                    engine="pgroonga",
+                                ),
+                            ),
+                        },
+                    ),
+                ),
+            }
+        )
+    )
+
+    members = (_mem(leg_a), _mem(leg_b))
+    full_spec = FederatedSearchSpec(name=f"fed_sfull_{suffix}", members=members)
+    thin_spec = FederatedSearchSpec(
+        name=f"fed_sthin_{suffix}", members=members, thin_merge=True
+    )
+
+    def ordered(page: object) -> list[tuple[str, str]]:
+        return [(h.member, str(h.hit.id)) for h in page.hits]  # type: ignore[attr-defined]
+
+    for direction in ("asc", "desc"):
+        full = await ctx.search.federated(full_spec).search_page(
+            token, pagination={"limit": 10}, sorts={"label": direction}
+        )
+        thin = await ctx.search.federated(thin_spec).search_page(
+            token, pagination={"limit": 10}, sorts={"label": direction}
+        )
+        assert ordered(thin) == ordered(full), direction
+
+    # The label sort actually reorders (i.e. the projected value is read, not None):
+    # asc yields "aaa" (leg_b) first, desc yields "zzz" (leg_a) first.
+    asc = await ctx.search.federated(thin_spec).search_page(
+        token, pagination={"limit": 10}, sorts={"label": "asc"}
+    )
+    desc = await ctx.search.federated(thin_spec).search_page(
+        token, pagination={"limit": 10}, sorts={"label": "desc"}
+    )
+    assert ordered(asc) == [(leg_b, str(id_b)), (leg_a, str(id_a))]
+    assert ordered(desc) == [(leg_a, str(id_a)), (leg_b, str(id_b))]
