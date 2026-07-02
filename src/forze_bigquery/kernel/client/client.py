@@ -82,7 +82,7 @@ class BigQueryClient(BigQueryClientPort):
                 self.__api_root = host.rstrip("/")
 
             self.__session = ClientSession()
-            logger.debug("BigQuery client connected", project_id=project_id)
+            logger.trace("BigQuery client connected", project_id=project_id)
 
     # ....................... #
 
@@ -125,7 +125,7 @@ class BigQueryClient(BigQueryClientPort):
                     "BigQuery client close failed", errors
                 ) from errors[0]
 
-            logger.debug("BigQuery client closed")
+            logger.trace("BigQuery client closed")
 
     # ....................... #
 

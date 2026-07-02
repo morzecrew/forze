@@ -147,7 +147,7 @@ class DuckDbClient(DuckDbClientPort):
                 max_workers=cfg.max_concurrent_queries,
                 thread_name_prefix="forze-duckdb",
             )
-            logger.debug("DuckDB connection opened")
+            logger.trace("DuckDB connection opened")
 
     # ....................... #
 
@@ -173,7 +173,7 @@ class DuckDbClient(DuckDbClientPort):
                 await asyncio.to_thread(conn.close)
 
             if executor is not None or conn is not None:
-                logger.debug("DuckDB connection closed")
+                logger.trace("DuckDB connection closed")
 
     # ....................... #
     # Helpers

@@ -142,7 +142,7 @@ class GCSClient(GCSClientPort):
             setup,
             ready=lambda: self.__storage is not None,
         )
-        logger.debug("GCS client connected", project_id=project_id)
+        logger.trace("GCS client connected", project_id=project_id)
 
     # ....................... #
 
@@ -150,7 +150,7 @@ class GCSClient(GCSClientPort):
         """Release the underlying storage client and HTTP session."""
 
         await self.__lifecycle.close(self.__teardown)
-        logger.debug("GCS client closed")
+        logger.trace("GCS client closed")
 
     # ....................... #
 

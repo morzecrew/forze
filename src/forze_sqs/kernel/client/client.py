@@ -226,6 +226,7 @@ class SQSClient(SQSClientPort):
                 raise
 
             self.__exit_stack = stack
+            logger.trace("SQS client connected", endpoint=endpoint)
 
     # ....................... #
 
@@ -254,6 +255,8 @@ class SQSClient(SQSClientPort):
 
                 async with self.__pending_lock:
                     self.__pending.clear()
+
+                logger.trace("SQS client closed")
 
     # ....................... #
 

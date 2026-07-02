@@ -87,7 +87,7 @@ class TemporalClient(TemporalClientPort):
             setup,
             ready=lambda: self.__client is not None,
         )
-        logger.debug("Temporal client connected", host=host, namespace=config.namespace)
+        logger.trace("Temporal client connected", host=host, namespace=config.namespace)
 
     # ....................... #
 
@@ -96,7 +96,7 @@ class TemporalClient(TemporalClientPort):
             self.__client = None
 
         await self.__lifecycle.close(teardown)
-        logger.debug("Temporal client closed")
+        logger.trace("Temporal client closed")
 
     # ....................... #
 

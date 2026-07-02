@@ -15,6 +15,7 @@ import attrs
 from forze.base.exceptions import exc
 from forze.base.primitives import GuardedLifecycle, JsonDict
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import HttpClientPort
 from .value_objects import HttpConfig
@@ -78,6 +79,7 @@ class HttpClient(HttpClientPort):
             setup,
             ready=lambda: self.__client is not None,
         )
+        logger.trace("HTTP client connected", base_url=base_url)
 
     # ....................... #
 
@@ -95,6 +97,7 @@ class HttpClient(HttpClientPort):
             await self.__client.aclose()
             self.__client = None
             self.__base_url = None
+            logger.trace("HTTP client closed")
 
     # ....................... #
 

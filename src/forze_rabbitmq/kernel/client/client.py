@@ -124,11 +124,13 @@ class RabbitMQClient(RabbitMQClientPort):
                 self.__connection is not None and not self.__connection.is_closed
             ),
         )
+        logger.trace("RabbitMQ connection opened")
 
     # ....................... #
 
     async def close(self) -> None:
         await self.__lifecycle.close(self.__teardown)
+        logger.trace("RabbitMQ connection closed")
 
     # ....................... #
 

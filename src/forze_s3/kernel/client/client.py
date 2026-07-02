@@ -167,7 +167,7 @@ class S3Client(S3ClientPort):
                 raise
 
             self.__exit_stack = stack
-            logger.debug("S3 client connected", endpoint=endpoint)
+            logger.trace("S3 client connected", endpoint=endpoint)
 
     # ....................... #
 
@@ -192,7 +192,7 @@ class S3Client(S3ClientPort):
             finally:
                 self.__session = None
                 self.__opts = None
-                logger.debug("S3 client closed")
+                logger.trace("S3 client closed")
 
     # ....................... #
 

@@ -41,6 +41,7 @@ from pymongo.asynchronous.mongo_client import AsyncMongoClient
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, driver_deadline_budget
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import MongoClientPort
 from .value_objects import MongoConfig, MongoTransactionOptions
@@ -188,6 +189,7 @@ class MongoClient(MongoClientPort):
                 minPoolSize=config.min_pool_size,
                 document_class=JsonDict,
             )
+            logger.trace("Mongo client connected", db=db_name)
 
             # Optionally force initial server selection early:
             # await self.health()
@@ -204,6 +206,7 @@ class MongoClient(MongoClientPort):
             await self.__client.close()
 
             self.__client = None
+            logger.trace("Mongo client closed")
 
     # ....................... #
 

@@ -85,8 +85,10 @@ class ClickHouseClient(ClickHouseClientPort):
                 connector_limit_per_host=config.connector_limit_per_host,
                 keepalive_timeout=config.keepalive_timeout.total_seconds(),
             )
-            logger.debug(
-                "ClickHouse client connected", host=config.host, database=config.database
+            logger.trace(
+                "ClickHouse client connected",
+                host=config.host,
+                database=config.database,
             )
 
     # ....................... #
@@ -98,7 +100,7 @@ class ClickHouseClient(ClickHouseClientPort):
             if client is not None:
                 await client.close()
                 self.__client = None
-                logger.debug("ClickHouse client closed")
+                logger.trace("ClickHouse client closed")
 
             self.__config = None
 

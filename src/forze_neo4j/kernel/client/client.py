@@ -83,7 +83,7 @@ class Neo4jClient(Neo4jClientPort):
                 connection_timeout=config.connection_timeout.total_seconds(),
                 max_transaction_retry_time=config.max_transaction_retry_time.total_seconds(),
             )
-            logger.debug("Neo4j driver connected")
+            logger.trace("Neo4j driver connected")
 
     # ....................... #
 
@@ -92,7 +92,7 @@ class Neo4jClient(Neo4jClientPort):
             if self._driver is not None:
                 await self._driver.close()
                 self._driver = None
-                logger.debug("Neo4j driver closed")
+                logger.trace("Neo4j driver closed")
 
     # ....................... #
 

@@ -62,6 +62,7 @@ class VaultClient(VaultClientPort):
             setup,
             ready=lambda: self._client is not None,
         )
+        logger.trace("Vault client connected")
 
     # ....................... #
 
@@ -80,6 +81,7 @@ class VaultClient(VaultClientPort):
             self._client = None
 
         await self._lifecycle.close(teardown)
+        logger.trace("Vault client closed")
 
     # ....................... #
     # Token renewal

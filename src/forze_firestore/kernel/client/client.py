@@ -16,6 +16,7 @@ from google.cloud.firestore_v1.base_query import BaseFilter
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import FirestoreClientPort
 
@@ -167,6 +168,7 @@ class FirestoreClient(FirestoreClientPort):
             self.__database_id = database
             self.__lazy_tx = lazy_transaction
             self.__client = AsyncClient(project=project_id, database=database)
+            logger.trace("Firestore client connected", project_id=project_id)
 
     # ....................... #
 
@@ -177,6 +179,7 @@ class FirestoreClient(FirestoreClientPort):
 
             self.__client.close()  # type: ignore[no-untyped-call]
             self.__client = None
+            logger.trace("Firestore client closed")
 
     # ....................... #
 

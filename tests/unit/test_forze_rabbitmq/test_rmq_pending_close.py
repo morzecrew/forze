@@ -54,6 +54,12 @@ class _LoggerStub:
     def error(self, event: str, *sub: Any, **extras: Any) -> None:
         self.errors.append((event, *sub))
 
+    def trace(self, event: str, *sub: Any, **extras: Any) -> None:
+        pass
+
+    def debug(self, event: str, *sub: Any, **extras: Any) -> None:
+        pass
+
 
 # ....................... #
 
