@@ -1,5 +1,7 @@
 from typing import Literal, Sequence, TypeAlias, TypedDict
 
+from .capabilities import FusionStrategy
+
 # ----------------------- #
 
 PhraseCombine = Literal["any", "all"]
@@ -157,3 +159,10 @@ class MultiSourceSearchOptions(SearchOptions, total=False):
     """Advisory upper bound on the merged candidate pool kept across members before the final
     rank and pagination. Same recall/cost trade as :attr:`SearchOptions.max_candidates`, one
     stage later (the post-merge pool)."""
+
+    fusion: FusionStrategy
+    """How to fuse the ranked member legs into one order. ``rrf`` (default) — Reciprocal Rank
+    Fusion, rank-only and scale-invariant; the portable default every capable backend expresses.
+    ``weighted`` — normalized relative-score fusion (preserves per-leg score magnitude); only
+    available on a backend whose :attr:`~.SearchCapabilities.hybrid_fusion` advertises it, else
+    the request fails closed with ``query_feature_unsupported``."""

@@ -27,10 +27,27 @@ class PipelineAliases:
 # ....................... #
 
 
+SEARCH_SCORE_ALIAS = "_score"
+"""SELECT alias carrying the per-hit relevance score out of the ranked data query; read
+into the page's ``scores`` and stripped before the read model is decoded."""
+
+
 def scored_order_by_rank_alias(rank_column: str) -> sql.Composable:
     """``ORDER BY`` target for capped ``scored`` CTEs (output alias, not a heap column)."""
 
     return sql.Identifier(rank_column)
+
+
+def build_rank_select(aliases: PipelineAliases) -> sql.Composable:
+    """``, s.<rank> AS _score`` — appended to a ranked data SELECT to return the score.
+
+    References the scored CTE's rank column (the same ``s.<rank>`` :func:`build_rank_first_order`
+    orders by), so it is valid wherever the rank-first ``ORDER BY`` is."""
+
+    return sql.SQL(", {} AS {}").format(
+        sql.Identifier(aliases.scored, aliases.rank_column),
+        sql.Identifier(SEARCH_SCORE_ALIAS),
+    )
 
 
 # ....................... #

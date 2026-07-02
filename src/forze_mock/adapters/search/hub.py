@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Sequence, final
+from typing import Any, Literal, Sequence, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -19,6 +19,8 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.search import (
     HubSearchSpec,
+    MultiSourceSearchOptions,
+    SearchCapabilities,
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
@@ -26,6 +28,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     prepare_hub_search_options,
     resolve_facet_fields,
+    resolve_fusion,
     resolve_highlight,
 )
 from forze.application.integrations.search import SearchResultSnapshot
@@ -60,13 +63,29 @@ class MockHubSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # Single-store hybrid: the hub's own rank-based leg merge (score_merge) is the
+        # ``rrf`` fusion family. Weighted relative-score fusion is a federated concept and
+        # is refused here rather than silently treated as the default merge.
+        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
+
+    # ....................... #
+
     async def _merged_docs(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None,
         sorts: QuerySortExpression | None,
         options: SearchOptions | None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[tuple[dict[str, Any], float]]:
+        """Merge the legs and return ``(doc, hub_score)`` pairs in descending score order."""
+
+        resolve_fusion(
+            cast("MultiSourceSearchOptions", options or {}).get("fusion"),
+            self.search_capabilities,
+            backend="mock_hub",
+        )
         leg_opts, weights = prepare_hub_search_options(self.hub_spec, options)
         scores: dict[str, float] = {}
         docs: dict[str, dict[str, Any]] = {}
@@ -96,7 +115,7 @@ class MockHubSearchAdapter[M: BaseModel](
                     scores[key] += contrib
 
         ranked = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
-        return [docs[k] for k in ranked]
+        return [(docs[k], scores[k]) for k in ranked]
 
     # ....................... #
 
@@ -141,8 +160,10 @@ class MockHubSearchAdapter[M: BaseModel](
     # ....................... #
 
     def _window(
-        self, ordered: list[dict[str, Any]], pagination: PaginationExpression | None
-    ) -> list[dict[str, Any]]:
+        self,
+        ordered: list[tuple[dict[str, Any], float]],
+        pagination: PaginationExpression | None,
+    ) -> list[tuple[dict[str, Any], float]]:
         pg = pagination or {}
         limit = pg.get("limit")
         offset = int(pg.get("offset") or 0)
@@ -150,6 +171,13 @@ class MockHubSearchAdapter[M: BaseModel](
         if limit is not None:
             page = page[: int(limit)]
         return page
+
+    # ....................... #
+
+    def _decode_hits(self, page_docs: Sequence[dict[str, Any]]) -> list[M]:
+        allowed = set(self.hub_spec.model_type.model_fields.keys())
+        typed = [{k: v for k, v in doc.items() if k in allowed} for doc in page_docs]
+        return self.hub_spec.resolved_read_codec.decode_mapping_many(typed)
 
     # ....................... #
 
@@ -165,15 +193,23 @@ class MockHubSearchAdapter[M: BaseModel](
     ) -> SearchCountlessPage[M]:
         _ = snapshot
         ordered = await self._merged_docs(query, filters, sorts, options)
-        page = self._window(ordered, pagination)
-        facets, highlights = self._facets_and_highlights(
-            query, options, all_docs=ordered, page_docs=page
+        window = self._window(ordered, pagination)
+        page_docs = [doc for doc, _ in window]
+        scores = (
+            [score for _, score in window]
+            if normalize_search_queries(query)
+            else None
         )
-        allowed = set(self.hub_spec.model_type.model_fields.keys())
-        typed = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
-        hits = self.hub_spec.resolved_read_codec.decode_mapping_many(typed)
+        facets, highlights = self._facets_and_highlights(
+            query, options, all_docs=[doc for doc, _ in ordered], page_docs=page_docs
+        )
         return search_page_from_limit_offset(
-            hits, pagination or {}, total=None, facets=facets, highlights=highlights
+            self._decode_hits(page_docs),
+            pagination or {},
+            total=None,
+            facets=facets,
+            highlights=highlights,
+            scores=scores,
         )
 
     async def search_page(
@@ -188,17 +224,21 @@ class MockHubSearchAdapter[M: BaseModel](
     ) -> SearchPage[M]:
         _ = snapshot
         ordered = await self._merged_docs(query, filters, sorts, options)
-        page = self._window(ordered, pagination)
-        facets, highlights = self._facets_and_highlights(
-            query, options, all_docs=ordered, page_docs=page
+        window = self._window(ordered, pagination)
+        page_docs = [doc for doc, _ in window]
+        scores = (
+            [score for _, score in window]
+            if normalize_search_queries(query)
+            else None
         )
-        allowed = set(self.hub_spec.model_type.model_fields.keys())
-        typed = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
-        hits = self.hub_spec.resolved_read_codec.decode_mapping_many(typed)
+        facets, highlights = self._facets_and_highlights(
+            query, options, all_docs=[doc for doc, _ in ordered], page_docs=page_docs
+        )
         return search_page_from_limit_offset(
-            hits,
+            self._decode_hits(page_docs),
             pagination or {},
             total=len(ordered),
             facets=facets,
             highlights=highlights,
+            scores=scores,
         )

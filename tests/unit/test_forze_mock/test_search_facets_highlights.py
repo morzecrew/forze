@@ -195,3 +195,42 @@ async def test_no_facets_or_highlights_when_not_requested() -> None:
 
     assert page.facets is None
     assert page.highlights is None
+
+
+@pytest.mark.asyncio
+async def test_ranked_search_surfaces_scores() -> None:
+    state = MockState()
+    await _seed(state)
+    search = _search_adapter(state)
+
+    page = await search.search_page("book")
+
+    # Scores are index-aligned with hits, non-increasing (relevance order), positive.
+    assert page.scores is not None
+    assert len(page.scores) == len(page.hits)
+    assert all(a >= b for a, b in zip(page.scores, page.scores[1:]))
+    assert all(s > 0.0 for s in page.scores)
+
+
+@pytest.mark.asyncio
+async def test_cursor_search_surfaces_scores() -> None:
+    state = MockState()
+    await _seed(state)
+    search = _search_adapter(state)
+
+    page = await search.search_cursor("book")
+
+    assert page.scores is not None
+    assert len(page.scores) == len(page.hits)
+
+
+@pytest.mark.asyncio
+async def test_filter_only_browse_has_no_scores() -> None:
+    state = MockState()
+    await _seed(state)
+    search = _search_adapter(state)
+
+    # Empty query = filter-only browse: no meaningful relevance score.
+    page = await search.search_page("", pagination={"limit": 10})
+
+    assert page.scores is None

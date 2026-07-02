@@ -79,6 +79,10 @@ async def test_mongo_text_search_ranks_and_paginates(mongo_client: MongoClient) 
     assert page.count == 1
     assert len(page.hits) == 1
     assert page.hits[0].title == "MongoDB text search"
+    # Per-hit textScore is surfaced, index-aligned with hits.
+    assert page.scores is not None
+    assert len(page.scores) == len(page.hits)
+    assert page.scores[0] > 0.0
 
     empty = await adapter.search_page("zzznotfound")
     assert empty.count == 0

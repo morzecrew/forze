@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
 
+from .capabilities import DEFAULT_SEARCH_CAPABILITIES, SearchCapabilities
 from .pages import SearchCountlessPage, SearchCursorPage, SearchPage
 from ..querying import (
     CursorPaginationExpression,
@@ -39,6 +40,14 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
     member-selection keys. ``O`` is an input-only (contravariant) param, so an adapter whose
     methods accept the base :class:`~.SearchOptions` still satisfies the multi-source port.
     """
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        """What retrieval features this adapter can serve (vector, fusion, filtered-ANN,
+        engine-side embedding). Lets a caller introspect — and the adapter fail closed on —
+        a feature the backend does not support, instead of a silent empty page. Defaults to
+        the plain keyword single-index surface (:data:`.DEFAULT_SEARCH_CAPABILITIES`)."""
+        return DEFAULT_SEARCH_CAPABILITIES
 
     def search(
         self,

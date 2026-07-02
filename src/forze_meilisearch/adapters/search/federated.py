@@ -19,6 +19,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
+    SearchCapabilities,
     SearchCountlessPage,
     SearchPage,
     SearchSnapshotHandle,
@@ -33,6 +34,7 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
+    MultiSourceSearchOptions,
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
@@ -40,6 +42,7 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
+    resolve_fusion,
     prepare_federated_search_options,
     reject_federated_facets,
 )
@@ -116,6 +119,13 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         default=cast("type[FederatedSearchReadModel[M]]", FederatedSearchReadModel),
         init=False,
     )
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # Cross-index fusion; reciprocal rank fusion is the advertised strategy.
+        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
 
     # ....................... #
 
@@ -237,8 +247,17 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             )
 
         reject_federated_facets(options)
+        requested_fusion = cast("MultiSourceSearchOptions", options or {}).get("fusion")
+        resolve_fusion(
+            requested_fusion,
+            self.search_capabilities,
+            backend="meilisearch_federated",
+        )
 
-        if self.merge == "federation":
+        # ``merge`` is the construction default; an explicit ``fusion="rrf"`` request selects
+        # the RRF path even on a native-federation-configured adapter (weighted is rejected
+        # above), so the requested strategy is honoured rather than silently ignored.
+        if self.merge == "federation" and requested_fusion != "rrf":
             return await self._search_federation(
                 query,
                 filters,
@@ -593,10 +612,18 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
         SearchResultSnapshot.order_federated_full_merge(merged, sorts)
 
-        window_models = [it[0] for it in merged[offset:]]
+        window = merged[offset:]
 
         if limit is not None:
-            window_models = window_models[: int(limit)]
+            window = window[: int(limit)]
+
+        window_models = [it[0] for it in window]
+        # A filter-only browse (no query terms) has no meaningful relevance score.
+        window_scores = (
+            [float(it[1]) for it in window]
+            if normalize_search_queries(query)
+            else None
+        )
 
         return await self._finalize_page(
             window_models,
@@ -609,6 +636,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             fp_computed=fp_computed,
             merged_for_snap=merged,
             highlights=federated_highlights_for_hits(window_models, hl_index),
+            scores=window_scores,
             write_snapshot=not effective_thin,  # thin specs only write the thin format
         )
 
@@ -629,6 +657,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             tuple[FederatedSearchReadModel[M], float] | tuple[Any, float]
         ],
         highlights: list[Any] | None = None,
+        scores: list[float] | None = None,
         write_snapshot: bool = True,
     ) -> Any:
         handle_out: SearchSnapshotHandle | None = None
@@ -667,23 +696,27 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             if return_count:
                 return _attach(
                     search_page_from_limit_offset(
-                        v, pagination, total=total, snapshot=handle_out
+                        v, pagination, total=total, snapshot=handle_out, scores=scores
                     )
                 )
 
             return _attach(
-                search_page_from_limit_offset(v, pagination, total=None, snapshot=handle_out)
+                search_page_from_limit_offset(
+                    v, pagination, total=None, snapshot=handle_out, scores=scores
+                )
             )
 
         if return_count:
             return _attach(
                 search_page_from_limit_offset(
-                    hits, pagination, total=total, snapshot=handle_out
+                    hits, pagination, total=total, snapshot=handle_out, scores=scores
                 )
             )
 
         return _attach(
-            search_page_from_limit_offset(hits, pagination, total=None, snapshot=handle_out)
+            search_page_from_limit_offset(
+                hits, pagination, total=None, snapshot=handle_out, scores=scores
+            )
         )
 
     # ....................... #

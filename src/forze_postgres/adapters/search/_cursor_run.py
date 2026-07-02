@@ -359,6 +359,10 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
     # keyset slicing, so they stay aligned with the returned hits).
     highlights = extract_and_strip_highlights(rows, hl) if hl is not None else None
 
+    # This path only runs for a ranked (non-browse) query, so every row carries the rank
+    # column; surface it as the per-hit score (decode ignores the extra key).
+    scores = [float(r[rank_col]) for r in rows]
+
     return await _cursor_page_from_rows(
         rows,
         return_type=return_type,
@@ -370,6 +374,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         has_more=has_more,
         trust_source=trust_source,
         highlights=highlights,
+        scores=scores,
     )
 
 
@@ -388,6 +393,7 @@ async def _cursor_page_from_rows(
     has_more: bool,
     trust_source: bool = False,
     highlights: list[HitHighlights] | None = None,
+    scores: list[float] | None = None,
 ) -> SearchCursorPage[Any]:
     # Decrypt sealed fields out of the raw rows once, so the spec model, a custom
     # return_type, and raw field projections all read plaintext (no-op for a plain codec).
@@ -413,4 +419,5 @@ async def _cursor_page_from_rows(
         prev_cursor=prev_cursor,
         has_more=has_more,
         highlights=highlights,
+        scores=scores,
     )

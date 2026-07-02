@@ -75,6 +75,7 @@ def prepare_hub_search_options(
     leg_opts = dict(opts)
     leg_opts.pop("member_weights", None)
     leg_opts.pop("members", None)
+    leg_opts.pop("fusion", None)
     _strip_result_snapshot_leg_options(leg_opts)
 
     return cast(SearchOptions, leg_opts), weights_list
@@ -110,6 +111,7 @@ def prepare_federated_search_options(
     leg_opts = dict(opts)
     leg_opts.pop("member_weights", None)
     leg_opts.pop("members", None)
+    leg_opts.pop("fusion", None)
     _strip_result_snapshot_leg_options(leg_opts)
 
     return cast(SearchOptions, leg_opts), weights_list

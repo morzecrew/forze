@@ -50,11 +50,21 @@ from forze.domain.constants import ID_FIELD
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ._facets import fetch_hub_facets, fetch_pg_facets
 from ._highlights import extract_and_strip_highlights
+from ._pipeline_sql import SEARCH_SCORE_ALIAS
 from ._search_count import effective_search_count
 
 # ----------------------- #
 
 M = TypeVar("M", bound=BaseModel)
+
+# ....................... #
+
+
+def _take_score_column(rows: list[JsonDict]) -> list[float]:
+    """Pop the ``_score`` alias off each ranked row into an index-aligned score list."""
+
+    return [float(row.pop(SEARCH_SCORE_ALIAS)) for row in rows]
+
 
 # ....................... #
 
@@ -98,6 +108,11 @@ class RankedOffsetPlan:
 
     select_table_alias: str
     """Table alias passed to :meth:`~PostgresGateway.return_clause`."""
+
+    rank_select: sql.Composable | None = None
+    """When set, a ``, <scored>.<rank> AS _score`` fragment spliced into the ranked data
+    SELECT so the per-hit relevance score is returned; read into the page and stripped before
+    the read model is decoded. ``None`` for a filter-only browse (no meaningful score)."""
 
     highlight: "HighlightSelect | None" = None
     """Synthetic highlight columns to splice into the data SELECT."""
@@ -185,17 +200,23 @@ class _PostgresSimpleOffsetHooks:
 
         hl = self.plan.highlight
         hl_cols = hl.select_fragment() if hl is not None else sql.SQL("")
+        rank_cols = (
+            self.plan.rank_select
+            if self.plan.rank_select is not None
+            else sql.SQL("")
+        )
 
         data_stmt = sql.SQL(
             """
             {with_clause}
-            SELECT {cols}{hl_cols} {from_outer}
+            SELECT {cols}{hl_cols}{rank_cols} {from_outer}
             ORDER BY {order}
             """
         ).format(
             with_clause=self.plan.with_clause,
             cols=cols,
             hl_cols=hl_cols,
+            rank_cols=rank_cols,
             from_outer=self.plan.from_outer,
             order=self.plan.order_sql,
         )
@@ -228,12 +249,15 @@ class _PostgresSimpleOffsetHooks:
             )
         ]
 
+        scores = _take_score_column(rows) if self.plan.rank_select is not None else None
         highlights = (
             extract_and_strip_highlights(rows, hl) if hl is not None else None
         )
         facets = await self._fetch_facets()
 
-        return OffsetRowsResult(rows=rows, facets=facets, highlights=highlights)
+        return OffsetRowsResult(
+            rows=rows, facets=facets, highlights=highlights, scores=scores
+        )
 
     async def _fetch_rows_thin(self, window: OffsetFetchWindow) -> OffsetRowsResult:
         """Late materialization: rank an id-only projection, hydrate by id.
@@ -248,10 +272,16 @@ class _PostgresSimpleOffsetHooks:
         if read_qname is None:
             return await self.fetch_rows(window, want_snap=False)
 
+        rank_cols = (
+            self.plan.rank_select
+            if self.plan.rank_select is not None
+            else sql.SQL("")
+        )
+
         id_stmt = sql.SQL(
             """
             {with_clause}
-            SELECT {idcol} AS {idf} {from_outer}
+            SELECT {idcol} AS {idf}{rank_cols} {from_outer}
             ORDER BY {order}
             """
         ).format(
@@ -261,6 +291,7 @@ class _PostgresSimpleOffsetHooks:
                 sql.Identifier(ID_FIELD),
             ),
             idf=sql.Identifier(ID_FIELD),
+            rank_cols=rank_cols,
             from_outer=self.plan.from_outer,
             order=self.plan.order_sql,
         )
@@ -286,9 +317,16 @@ class _PostgresSimpleOffsetHooks:
             relation=read_qname,
         )
 
+        # The id scan carries the rank; the heavy columns are hydrated by id separately, so
+        # re-align the score to the hydrated (page-id-ordered, missing-dropped) rows.
+        scores = None
+        if self.plan.rank_select is not None:
+            score_by_id = {row[ID_FIELD]: row[SEARCH_SCORE_ALIAS] for row in id_rows}
+            scores = [float(score_by_id[row[ID_FIELD]]) for row in rows]
+
         facets = await self._fetch_facets()
 
-        return OffsetRowsResult(rows=rows, facets=facets, highlights=None)
+        return OffsetRowsResult(rows=rows, facets=facets, highlights=None, scores=scores)
 
     async def _fetch_facets(self) -> Any:
         """Companion ``GROUP BY`` over the uncapped matched set (mirrors :meth:`fetch_count`)."""
@@ -489,11 +527,12 @@ async def _hydrate_thin_hub_page(
         if fold_count
         else sql.SQL("")
     )
+    rank_col = plan.rank_select if plan.rank_select is not None else sql.SQL("")
 
     id_stmt = sql.SQL(
         """
             {with_clause}
-            SELECT {ca}.{idf} AS {idf}{total_col} FROM {combo} {ca}
+            SELECT {ca}.{idf} AS {idf}{total_col}{rank_col} FROM {combo} {ca}
             ORDER BY {order}
             """
     ).format(
@@ -501,6 +540,7 @@ async def _hydrate_thin_hub_page(
         ca=sql.Identifier(combo_alias),
         idf=sql.Identifier(ID_FIELD),
         total_col=total_col,
+        rank_col=rank_col,
         combo=sql.Identifier(plan.data_relation),
         order=plan.order_sql,
     )
@@ -529,6 +569,13 @@ async def _hydrate_thin_hub_page(
         return_fields=return_fields,
     )
 
+    # The thin id scan carries the rank; hydration reorders to page-id order (dropping any
+    # vanished id), so re-align the score to the hydrated rows by id.
+    scores = None
+    if plan.rank_select is not None:
+        score_by_id = {row[ID_FIELD]: row[SEARCH_SCORE_ALIAS] for row in id_rows}
+        scores = [float(score_by_id[row[ID_FIELD]]) for row in ordered]
+
     return await materialize_offset_page(
         rows=ordered,
         pagination_dict=pagination_dict,
@@ -540,6 +587,7 @@ async def _hydrate_thin_hub_page(
         codec=codec,
         trust_source=trust_source,
         facets=facets,
+        scores=scores,
     )
 
 
@@ -825,16 +873,18 @@ async def execute_hub_ranked_offset_search(
         return_fields,
         table_alias=plan.select_table_alias,
     )
+    rank_cols = plan.rank_select if plan.rank_select is not None else sql.SQL("")
 
     data_stmt = sql.SQL(
         """
             {with_clause}
-            SELECT {cols} FROM {combo} {ca}
+            SELECT {cols}{rank_cols} FROM {combo} {ca}
             ORDER BY {order}
             """
     ).format(
         with_clause=plan.with_clause,
         cols=cols,
+        rank_cols=rank_cols,
         combo=sql.Identifier(plan.data_relation),
         ca=sql.Identifier(combo_alias),
         order=plan.order_sql,
@@ -851,10 +901,13 @@ async def execute_hub_ranked_offset_search(
         data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
         params.append(offset_from_dict(pagination_dict))
 
-    rows = await gw.client.fetch_all(data_stmt, params, row_factory="dict")
+    rows = [dict(row) for row in await gw.client.fetch_all(
+        data_stmt, params, row_factory="dict"
+    )]
+    scores = _take_score_column(rows) if plan.rank_select is not None else None
 
     return await materialize_offset_page(
-        rows=list(rows),
+        rows=rows,
         pagination_dict=pagination_dict,
         return_count=return_count,
         total=total if count_policy != "none" else None,
@@ -864,4 +917,5 @@ async def execute_hub_ranked_offset_search(
         codec=read_codec,
         trust_source=trust_source,
         facets=facets,
+        scores=scores,
     )

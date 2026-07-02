@@ -117,6 +117,12 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
     assert total == 1
     assert len(res) == 1
     assert res[0].title == "PostgreSQL FTS"
+    # Per-hit relevance score is surfaced, index-aligned with hits, non-negative and in
+    # non-increasing rank order (ts_rank_cd can legitimately be 0 for a cover-less match).
+    assert __p.scores is not None
+    assert len(__p.scores) == len(res)
+    assert all(s >= 0.0 for s in __p.scores)
+    assert all(a >= b for a, b in zip(__p.scores, __p.scores[1:]))
 
     __p = await adapter.search_page(
         "text",
@@ -220,6 +226,8 @@ async def test_fts_search_with_filters_and_empty_query(
     cnt = __p.count
     assert cnt == 1
     assert rows[0].title == "keep"
+    # Filter-only browse (empty query) has no meaningful relevance score.
+    assert __p.scores is None
 
 
 @pytest.mark.asyncio

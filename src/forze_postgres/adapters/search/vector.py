@@ -17,6 +17,7 @@ from forze.application.contracts.embeddings import (
     EmbeddingsSpec,
 )
 from forze.application.contracts.search import (
+    SearchCapabilities,
     SearchOptions,
     SearchSpec,
     effective_phrase_combine,
@@ -84,6 +85,18 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
     pipeline: PipelineAliases = attrs.field(default=_PIPELINE, init=False)
     search_rank_column: str = attrs.field(default=_RANK_COLUMN, init=False)
     projection_alias: str = attrs.field(default="v", init=False)
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # pgvector: bring-your-own vector (embedder-encoded query), filters applied around
+        # the ANN scan so recall follows post-filter semantics under selective predicates.
+        return SearchCapabilities(
+            supports_vector=True,
+            filtered_ann="postfilter",
+            auto_embed=False,
+        )
 
     # ....................... #
 
