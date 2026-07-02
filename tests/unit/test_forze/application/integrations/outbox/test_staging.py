@@ -3,20 +3,38 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.outbox import OutboxSpec, StagedOutboxEntry
 from forze.application.execution import DepsRegistry, ExecutionContext
-from forze.application.execution.outbox import InvocationOutboxEnricher
+from forze.application.execution.outbox import (
+    InvocationOutboxEnricher,
+    build_staging_outbox_command,
+)
 from forze.application.integrations.outbox import OutboxStaging
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import HlcTimestamp
 from forze.base.serialization import PydanticModelCodec
 
 
 class _Payload(BaseModel):
     value: str
+
+
+class _RecordingCheckpoint:
+    """Fake :class:`HlcCheckpointPort` recording every ``advance`` mark."""
+
+    def __init__(self) -> None:
+        self.marks: list[HlcTimestamp] = []
+
+    async def load(self) -> HlcTimestamp | None:
+        return max(self.marks) if self.marks else None
+
+    async def advance(self, mark: HlcTimestamp) -> None:
+        self.marks.append(mark)
 
 
 def _coord(
@@ -314,3 +332,200 @@ async def test_concurrent_tasks_same_route_have_isolated_buffers() -> None:
     assert count_b == 1
     values = sorted(e.event.payload.value for e in flushed)
     assert values == ["a", "b"]
+
+
+class TestRequireTransactionGuard:
+    """``OutboxSpec.require_transaction`` makes flush-in-a-transaction a checked precondition."""
+
+    @staticmethod
+    def _staging(
+        ctx: ExecutionContext,
+        sink: list[StagedOutboxEntry],
+        *,
+        require_transaction: bool,
+        tx_depth: Callable[[], int] | None,
+    ) -> OutboxStaging[_Payload]:
+        async def _flush(rows: list[StagedOutboxEntry]) -> int:
+            sink.extend(rows)
+            return len(rows)
+
+        spec = OutboxSpec(
+            name="events",
+            codec=PydanticModelCodec(_Payload),
+            require_transaction=require_transaction,
+        )
+        return OutboxStaging(
+            staging=ctx.outbox_staging,
+            spec=spec,
+            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
+            flush_rows=_flush,
+            tx_depth=tx_depth,
+        )
+
+    @pytest.mark.asyncio
+    async def test_flush_outside_transaction_is_refused_when_required(self) -> None:
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        flushed: list[StagedOutboxEntry] = []
+        coord = self._staging(
+            ctx, flushed, require_transaction=True, tx_depth=lambda: 0
+        )
+
+        await coord.stage("demo.created", _Payload(value="a"))
+
+        with pytest.raises(CoreException) as ei:
+            await coord.flush()
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert ei.value.code == "core.outbox.flush_outside_transaction"
+        assert flushed == []  # nothing persisted
+
+    @pytest.mark.asyncio
+    async def test_flush_inside_transaction_is_allowed_when_required(self) -> None:
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        flushed: list[StagedOutboxEntry] = []
+        coord = self._staging(
+            ctx, flushed, require_transaction=True, tx_depth=lambda: 1
+        )
+
+        await coord.stage("demo.created", _Payload(value="a"))
+
+        assert await coord.flush() == 1
+        assert len(flushed) == 1
+
+    @pytest.mark.asyncio
+    async def test_default_allows_flush_outside_transaction(self) -> None:
+        # Opt-in: the default must not break the standalone / stage-then-relay pattern.
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        flushed: list[StagedOutboxEntry] = []
+        coord = self._staging(
+            ctx, flushed, require_transaction=False, tx_depth=lambda: 0
+        )
+
+        await coord.stage("demo.created", _Payload(value="a"))
+
+        assert await coord.flush() == 1
+
+    @pytest.mark.asyncio
+    async def test_guard_inert_without_tx_probe(self) -> None:
+        # Direct construction with no tx context (isolated tests) can't consult depth,
+        # so the guard stays inert even when the spec requires a transaction.
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        flushed: list[StagedOutboxEntry] = []
+        coord = self._staging(ctx, flushed, require_transaction=True, tx_depth=None)
+
+        await coord.stage("demo.created", _Payload(value="a"))
+
+        assert await coord.flush() == 1
+
+    @pytest.mark.asyncio
+    async def test_builder_wires_tx_probe_so_guard_is_active(self) -> None:
+        # The production builder injects ctx.tx_ctx.depth, so a require_transaction
+        # route flushed outside a transaction (depth 0) is refused end-to-end.
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+
+        async def _flush(rows: list[StagedOutboxEntry]) -> int:  # pragma: no cover
+            return len(rows)
+
+        spec = OutboxSpec(
+            name="events",
+            codec=PydanticModelCodec(_Payload),
+            require_transaction=True,
+        )
+        command = build_staging_outbox_command(ctx, spec, flush_rows=_flush)
+
+        await command.stage("demo.created", _Payload(value="a"))
+
+        with pytest.raises(CoreException) as ei:
+            await command.flush()
+
+        assert ei.value.code == "core.outbox.flush_outside_transaction"
+
+
+# ....................... #
+
+
+class TestCheckpointAdvance:
+    """The flush persists the node's HLC high-water mark when a checkpoint is wired."""
+
+    @pytest.mark.asyncio
+    async def test_flush_advances_checkpoint_with_max_staged_hlc(self) -> None:
+        checkpoint = _RecordingCheckpoint()
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        # A checkpoint only advances atomically inside the business transaction, so a
+        # checkpoint-wired route must require one (enforced at construction).
+        spec = OutboxSpec(
+            name="events",
+            codec=PydanticModelCodec(_Payload),
+            require_transaction=True,
+        )
+
+        async def _flush(rows: list[StagedOutboxEntry]) -> int:
+            return len(rows)
+
+        coord = OutboxStaging(
+            staging=ctx.outbox_staging,
+            spec=spec,
+            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
+            flush_rows=_flush,
+            tx_depth=lambda: 1,  # flush runs inside the business transaction
+            checkpoint=checkpoint,
+        )
+
+        await coord.stage("demo.created", _Payload(value="a"))
+        await coord.stage("demo.created", _Payload(value="b"))
+        # The clock's last-issued stamp is the max among the two staged rows.
+        expected = ctx.outbox_clock.last
+
+        await coord.flush()
+
+        assert checkpoint.marks == [expected]
+
+    @pytest.mark.asyncio
+    async def test_flush_without_a_checkpoint_is_unaffected(self) -> None:
+        # Default wiring (no checkpoint): flush behaves exactly as before.
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        spec = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload))
+        flushed: list[StagedOutboxEntry] = []
+
+        async def _flush(rows: list[StagedOutboxEntry]) -> int:
+            flushed.extend(rows)
+            return len(rows)
+
+        coord = OutboxStaging(
+            staging=ctx.outbox_staging,
+            spec=spec,
+            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
+            flush_rows=_flush,
+        )
+
+        await coord.stage("demo.created", _Payload(value="a"))
+
+        assert await coord.flush() == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_flush_does_not_advance_the_checkpoint(self) -> None:
+        checkpoint = _RecordingCheckpoint()
+        ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+        # A checkpoint only advances atomically inside the business transaction, so a
+        # checkpoint-wired route must require one (enforced at construction).
+        spec = OutboxSpec(
+            name="events",
+            codec=PydanticModelCodec(_Payload),
+            require_transaction=True,
+        )
+
+        async def _flush(rows: list[StagedOutboxEntry]) -> int:  # pragma: no cover
+            return len(rows)
+
+        coord = OutboxStaging(
+            staging=ctx.outbox_staging,
+            spec=spec,
+            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
+            flush_rows=_flush,
+            tx_depth=lambda: 1,  # flush runs inside the business transaction
+            checkpoint=checkpoint,
+        )
+
+        # Nothing staged → nothing flushed → no mark written.
+        assert await coord.flush() == 0
+        assert checkpoint.marks == []

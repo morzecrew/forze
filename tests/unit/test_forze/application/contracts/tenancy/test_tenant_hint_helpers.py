@@ -70,3 +70,29 @@ class TestCoalesceTenantRequestHints:
 
     def test_malformed_hints_ignored(self) -> None:
         assert coalesce_tenant_request_hints(issuer_hint="acme", header_hint="x") is None
+
+
+class TestRequireTenantId:
+    def test_returns_bound_tenant_id(self) -> None:
+        from forze.application.contracts.tenancy import require_tenant_id
+
+        assert require_tenant_id(lambda: _TID, message="need tenant") == _TID
+
+    def test_unwraps_tenant_identity(self) -> None:
+        from forze.application.contracts.tenancy import TenantIdentity, require_tenant_id
+
+        got = require_tenant_id(lambda: TenantIdentity(tenant_id=_TID), message="need")
+        assert got == _TID
+
+    def test_missing_tenant_raises_authentication_not_internal(self) -> None:
+        # A missing bound tenant is caller-caused (401-class), matching the sibling
+        # ``require_tenant_if_aware`` — not a server fault (500-class ``internal``).
+        from forze.base.exceptions import ExceptionKind
+
+        from forze.application.contracts.tenancy import require_tenant_id
+
+        with pytest.raises(CoreException) as ei:
+            require_tenant_id(lambda: None, message="Tenant ID is required")
+
+        assert ei.value.kind is ExceptionKind.AUTHENTICATION
+        assert ei.value.code == "tenant_required"

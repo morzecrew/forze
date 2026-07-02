@@ -14,11 +14,23 @@ require_mongo()
 # ....................... #
 
 import asyncio
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
-from typing import Any, AsyncGenerator, Mapping, Sequence, final
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Concatenate,
+    Mapping,
+    ParamSpec,
+    Sequence,
+    TypeVar,
+    final,
+)
 
 import attrs
+import pymongo
 from bson import ObjectId
 from pymongo import ReturnDocument, UpdateOne
 from pymongo.asynchronous.client_session import AsyncClientSession
@@ -27,11 +39,46 @@ from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.asynchronous.mongo_client import AsyncMongoClient
 
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, driver_deadline_budget
 
 from .errors import exc_interceptor
 from .port import MongoClientPort
 from .value_objects import MongoConfig, MongoTransactionOptions
+
+# ----------------------- #
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _deadline_bounded(
+    fn: Callable[Concatenate["MongoClient", _P], Awaitable[_R]],
+) -> Callable[Concatenate["MongoClient", _P], Awaitable[_R]]:
+    """Wrap a coroutine op in ``pymongo.timeout`` for the remaining invocation deadline.
+
+    A loose CSOT backstop (``remaining + grace``): the authoritative :func:`asyncio.timeout`
+    at the invocation boundary is tighter and fires first, while this bounds the server
+    ``maxTimeMS`` / socket so a stuck query is cancelled and the connection recovers. A no-op
+    when the push-down is disabled or no deadline is bound. Not ``functools.wraps``-ed: the
+    outer ``exc_interceptor`` relabels the op, so the wrapper's identity is not observed."""
+
+    async def _wrapped(
+        self: "MongoClient", /, *args: _P.args, **kwargs: _P.kwargs
+    ) -> _R:
+        budget = (
+            driver_deadline_budget()
+            if self._push_deadline  # pyright: ignore[reportPrivateUsage]
+            else None
+        )
+
+        if budget is None:
+            return await fn(self, *args, **kwargs)
+
+        with pymongo.timeout(budget):
+            return await fn(self, *args, **kwargs)
+
+    return _wrapped
+
 
 # ----------------------- #
 
@@ -92,6 +139,11 @@ class MongoClient(MongoClientPort):
     __lazy_tx: bool = attrs.field(default=False, init=False)
     """Whether root transaction scopes defer the session + ``startTransaction``."""
 
+    _push_deadline: bool = attrs.field(default=True, init=False)
+    """Whether to push a bound invocation deadline down as a per-op CSOT (set from config).
+
+    Single-underscore so the module-level :func:`_deadline_bounded` decorator can read it."""
+
     __db_name: str | None = attrs.field(default=None, init=False, repr=False)
 
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
@@ -124,6 +176,7 @@ class MongoClient(MongoClientPort):
 
             self.__db_name = db_name
             self.__lazy_tx = config.lazy_transaction
+            self._push_deadline = config.push_invocation_deadline
             self.__client = AsyncMongoClient(
                 uri,
                 appname=config.appname,
@@ -422,6 +475,7 @@ class MongoClient(MongoClientPort):
     # Query API (minimal)
 
     @exc_interceptor.coroutine("mongo.find_one")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def find_one(
         self,
         coll: AsyncCollection[JsonDict],
@@ -447,6 +501,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.find_one_and_update")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def find_one_and_update(
         self,
         coll: AsyncCollection[Any],
@@ -470,6 +525,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.find_many")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def find_many(
         self,
         coll: AsyncCollection[JsonDict],
@@ -519,31 +575,37 @@ class MongoClient(MongoClientPort):
         if batch_size < 1:
             raise exc.internal("batch_size must be >= 1")
 
-        session = await self._session_for_op()
-        cur = coll.find(filter, projection=projection, sort=sort, session=session)
+        # CSOT bounds the whole stream (initial find + every getMore) by the remaining
+        # invocation deadline; the decorator can't wrap a generator, so scope it here.
+        budget = driver_deadline_budget() if self._push_deadline else None
 
-        if skip is not None:
-            cur = cur.skip(skip)
+        with pymongo.timeout(budget) if budget is not None else nullcontext():
+            session = await self._session_for_op()
+            cur = coll.find(filter, projection=projection, sort=sort, session=session)
 
-        if limit is not None:
-            cur = cur.limit(limit)
+            if skip is not None:
+                cur = cur.skip(skip)
 
-        cur = cur.batch_size(batch_size)
-        out: list[JsonDict] = []
+            if limit is not None:
+                cur = cur.limit(limit)
 
-        async for doc in cur:
-            out.append(doc)
+            cur = cur.batch_size(batch_size)
+            out: list[JsonDict] = []
 
-            if len(out) >= batch_size:
+            async for doc in cur:
+                out.append(doc)
+
+                if len(out) >= batch_size:
+                    yield out
+                    out = []
+
+            if out:
                 yield out
-                out = []
-
-        if out:
-            yield out
 
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.aggregate")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def aggregate(
         self,
         coll: AsyncCollection[JsonDict],
@@ -561,6 +623,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.insert_one")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def insert_one(
         self,
         coll: AsyncCollection[Any],
@@ -575,6 +638,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.insert_many")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def insert_many(
         self,
         coll: AsyncCollection[Any],
@@ -606,6 +670,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.bulk_write")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def bulk_write(
         self,
         coll: AsyncCollection[Any],
@@ -621,6 +686,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.update_one_upsert")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def update_one_upsert(
         self,
         coll: AsyncCollection[Any],
@@ -640,6 +706,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.update_one")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def update_one(
         self,
         coll: AsyncCollection[Any],
@@ -657,6 +724,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.bulk_update")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def bulk_update(
         self,
         coll: AsyncCollection[Any],
@@ -691,6 +759,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.update_many")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def update_many(
         self,
         coll: AsyncCollection[Any],
@@ -708,6 +777,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.delete_one")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def delete_one(
         self,
         coll: AsyncCollection[Any],
@@ -723,6 +793,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.delete_many")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def delete_many(
         self,
         coll: AsyncCollection[Any],
@@ -742,6 +813,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("mongo.count")  # type: ignore[untyped-decorator]
+    @_deadline_bounded
     async def count(
         self,
         coll: AsyncCollection[Any],

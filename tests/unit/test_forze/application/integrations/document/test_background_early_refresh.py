@@ -133,8 +133,17 @@ class TestBackgroundRefresh:
         coord = _coord(cache)
 
         # Another reader is already leading a load for this key.
-        pending: asyncio.Future = asyncio.get_running_loop().create_future()
-        coord._inflight[str(_PK)] = pending  # noqa: SLF001
+        gate = asyncio.Event()
+
+        async def leader_load() -> DocModel:
+            await gate.wait()
+            return _FRESH
+
+        leader = asyncio.create_task(
+            coord._inflight.run(str(_PK), leader_load)  # noqa: SLF001
+        )
+        await asyncio.sleep(0)  # let the leader register in flight
+        assert str(_PK) in coord._inflight  # noqa: SLF001
 
         async def fetch() -> DocModel:  # pragma: no cover — must not run
             raise AssertionError("spawned despite in-flight load")
@@ -144,8 +153,8 @@ class TestBackgroundRefresh:
         assert result.payload == "stale"
         assert not coord._bg_tasks  # noqa: SLF001
 
-        pending.cancel()
-        coord._inflight.pop(str(_PK))  # noqa: SLF001
+        gate.set()
+        await leader
 
     async def test_spawn_deferred_until_after_commit(self) -> None:
         captured: list = []

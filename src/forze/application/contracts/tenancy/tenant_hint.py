@@ -68,12 +68,20 @@ def require_tenant_id(
     message: str,
     code: str = "tenant_required",
 ) -> UUID:
-    """Return the current tenant id from *provider* or raise :class:`exc.internal`."""
+    """Return the current tenant id from *provider*, or raise :class:`exc.authentication`.
+
+    A missing bound tenant is a **caller-caused** condition — the invocation context carries
+    no tenant identity — not a server fault, so it egresses as an authentication failure
+    (401-class), matching the ``TenantRequired`` before-hook and the adapter-level
+    :meth:`~forze.application.contracts.tenancy.TenancyMixin.require_tenant_if_aware` guard
+    (same ``tenant_required`` code). Raising ``internal`` here would surface a 500 for what
+    is really an unauthenticated / tenant-less request.
+    """
 
     value = provider()
 
     if value is None:
-        raise exc.internal(message, code=code)
+        raise exc.authentication(message, code=code)
 
     if isinstance(value, TenantIdentity):
         return value.tenant_id

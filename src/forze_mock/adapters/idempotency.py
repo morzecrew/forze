@@ -10,6 +10,7 @@ import attrs
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencyRecord
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
+from forze_mock.adapters._journal import record_undo
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
@@ -43,14 +44,27 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
     state: MockState
     namespace: str
 
-    ttl: timedelta = timedelta(seconds=30)
+    ttl: timedelta = timedelta(hours=24)
     """TTL for idempotency entries (pending claims and done records alike)."""
+
+    transactional: bool = False
+    """When ``True``, model a co-located store: :meth:`commit` participates in the mock
+    transaction (its write reverts on rollback), so the result record and the business
+    writes are atomic. Drives :attr:`commits_in_transaction`."""
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if self.ttl.total_seconds() <= 0:
             raise exc.configuration("TTL must be positive")
+
+    # ....................... #
+
+    @property
+    def commits_in_transaction(self) -> bool:
+        """Whether :meth:`commit` participates in the caller's transaction (see :attr:`transactional`)."""
+
+        return self.transactional
 
     # ....................... #
 
@@ -142,6 +156,26 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
                 raise exc.conflict("Payload hash mismatch")
 
             done = _MockIdemEntry(expires_at=now + self.ttl, record=record)
+
+            if self.transactional:
+                # Participate in the mock transaction: record how to revert this write so
+                # a business rollback reverts the record too (atomic). A no-op outside a
+                # transaction (``record_undo`` has no journal to append to), which is the
+                # non-transactional path.
+                prior = self.state.idempotency.get(k)
+
+                def _revert() -> None:
+                    # Runs later (journal replay), so take the lock like every other
+                    # mutation path — the reentrant lock makes it safe if already held.
+                    with self.state.lock:
+                        if prior is None:
+                            self.state.idempotency.pop(k, None)
+
+                        else:
+                            self.state.idempotency[k] = prior
+
+                record_undo(_revert)
+
             self.state.idempotency[k] = ("done", payload_hash, done)
 
     # ....................... #

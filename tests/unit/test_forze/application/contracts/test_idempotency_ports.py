@@ -9,6 +9,10 @@ class _StubIdempotency:
     def __init__(self) -> None:
         self._store: dict[str, IdempotencyRecord] = {}
 
+    @property
+    def commits_in_transaction(self) -> bool:
+        return False
+
     async def begin(
         self,
         op: str,

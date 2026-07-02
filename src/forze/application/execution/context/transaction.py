@@ -16,6 +16,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ..tracing import NOOP_TX_TRACER, TxTracer, next_tx_id
+from .commit_state import mark_commit_started
 
 # ----------------------- #
 
@@ -208,12 +209,16 @@ class TransactionContext:
         the same value or ``None`` (unspecified) is fine.
 
         Cancellation semantics: cancellation during the body follows the
-        rollback path as usual. Once the root transaction has committed, the
-        deferred post-commit callbacks are a critical section — they run to
-        completion even if the task is cancelled, and the cancellation is
-        re-raised afterwards. Cancellation landing inside the driver commit
-        itself is outside the engine's control (the adapter rolls back
-        best-effort; the server-side outcome can be ambiguous).
+        rollback path as usual (safely retryable — nothing committed). Once the
+        body completes, the scope marks the commit imminent (see
+        :func:`commit_started`); the deferred post-commit callbacks are a
+        critical section — they run to completion even if the task is cancelled,
+        and the cancellation is re-raised afterwards. Cancellation landing inside
+        the driver commit itself is still outside the engine's control (the
+        adapter rolls back best-effort; the server-side outcome can be
+        ambiguous), but because the commit was marked, the invocation boundary
+        surfaces it as a non-retryable ``commit_ambiguous`` error rather than a
+        retryable deadline, so an at-least-once caller does not double-execute.
         """
 
         if self.resolver is None:
@@ -306,6 +311,18 @@ class TransactionContext:
         try:
             async with self._open_root(tx, read_only=root_read_only, isolation=isolation):
                 yield
+
+                # Body completed cleanly; leaving this block runs the driver commit.
+                # No await sits between the yield returning and here, so this always
+                # runs *before* the commit. Marking now means a cancellation
+                # (deadline / disconnect) landing inside that commit — or the shielded
+                # post-commit drain below — surfaces as a non-retryable
+                # ``commit_ambiguous`` at the boundary rather than a retryable
+                # deadline, so an at-least-once caller cannot double-execute an
+                # operation that may have (or has) committed. A body failure/cancel
+                # throws into the yield, skips this, and follows the rollback path
+                # (safely retryable). Not reset here: it must survive to the boundary.
+                mark_commit_started()
 
             # Reached only on a clean exit (no exception thrown into the scope) — capture the
             # after-commit callbacks to drain below, and mark the transaction committed. An escaping

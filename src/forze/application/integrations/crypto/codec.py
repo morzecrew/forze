@@ -25,7 +25,16 @@ is not an envelope is passed through untouched, tolerating legacy plaintext.
 import base64
 import binascii
 from collections.abc import Callable
-from typing import Any, Iterator, Literal, Sequence, final
+from typing import (
+    Any,
+    Iterable,
+    Iterator,
+    Literal,
+    Protocol,
+    Sequence,
+    final,
+    runtime_checkable,
+)
 
 import attrs
 import orjson
@@ -45,7 +54,12 @@ from forze.application.contracts.querying import (
     QueryOr,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.crypto import ENVELOPE_B64_PREFIX, is_envelope, unpack_envelope
+from forze.base.crypto import (
+    ENVELOPE_B64_PREFIX,
+    EncryptedEnvelope,
+    is_envelope,
+    unpack_envelope,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization.model_codec import ModelCodec, ModelDumpExcludeOptions
@@ -77,6 +91,27 @@ def _maybe_envelope(value: str) -> bytes | None:
         return None
 
     return blob if is_envelope(blob) else None
+
+
+# ....................... #
+
+
+@runtime_checkable
+class _SupportsFieldDecryptSnapshot(Protocol):
+    """A field cipher that can snapshot resolved data keys for thread-safe offloaded decrypt."""
+
+    def freeze_decryptor(
+        self, envelopes: Iterable[EncryptedEnvelope]
+    ) -> FieldCipherPort: ...
+
+
+@runtime_checkable
+class _SupportsDetDecryptSnapshot(Protocol):
+    """A deterministic cipher that can snapshot resolved keys for offloaded decrypt."""
+
+    def freeze_decryptor(
+        self, tenant: TenantIdentity | None, fields: Iterable[str]
+    ) -> DeterministicFieldCipherPort: ...
 
 
 # ....................... #
@@ -276,6 +311,43 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         """
 
         return self._decrypt_fields(mapping)
+
+    def freeze_for_decrypt(
+        self, rows: Sequence[JsonDict]
+    ) -> "EncryptingModelCodec[T] | None":
+        """Return a thread-safe copy of this codec for offloaded batch decrypt, or ``None``.
+
+        Resolves every data key and deterministic key these *rows* need on the event loop
+        (after :meth:`prepare_decrypt` warmed them) into thread-local snapshots, then swaps in
+        decrypt-only frozen ciphers — so the copy's decode/decrypt touch no shared,
+        LRU-mutating cipher cache and can run under ``run_cpu_map``. Returns ``None`` when a
+        wired cipher cannot snapshot (the caller then decrypts inline). The copy is
+        decrypt-only; use it for reads, never writes.
+        """
+
+        if not isinstance(self.cipher, _SupportsFieldDecryptSnapshot):
+            return None
+
+        envelopes = [
+            unpack_envelope(blob)
+            for mapping in rows
+            for field in self.fields
+            if isinstance((value := mapping.get(field)), str)
+            and (blob := _maybe_envelope(value)) is not None
+        ]
+        frozen_cipher = self.cipher.freeze_decryptor(envelopes)
+
+        frozen_det = self.deterministic
+
+        if self.deterministic is not None and self.searchable_fields:
+            if not isinstance(self.deterministic, _SupportsDetDecryptSnapshot):
+                return None
+
+            frozen_det = self.deterministic.freeze_decryptor(
+                self.tenant_provider(), self.searchable_fields
+            )
+
+        return attrs.evolve(self, cipher=frozen_cipher, deterministic=frozen_det)
 
     def _decrypt_fields(self, mapping: JsonDict) -> JsonDict:
         if not self.fields and not self.searchable_fields:

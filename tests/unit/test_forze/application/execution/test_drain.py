@@ -94,6 +94,36 @@ class TestOperationDrainGate:
 
         gate.release()
 
+    async def test_cancel_in_flight_is_a_noop_when_idle(self) -> None:
+        gate = OperationDrainGate()
+
+        assert await gate.cancel_in_flight(grace=1.0) == 0
+
+    async def test_cancel_in_flight_cancels_tracked_operation_tasks(self) -> None:
+        gate = OperationDrainGate()
+        started = asyncio.Event()
+
+        async def _op() -> None:
+            gate.admit("op")
+
+            try:
+                started.set()
+                await asyncio.sleep(3600)  # stuck; only cancellation ends it
+
+            finally:
+                gate.release()
+
+        task = asyncio.create_task(_op())
+        await started.wait()
+
+        assert await gate.drain(0.01) is False  # times out with the op in flight
+
+        cancelled = await gate.cancel_in_flight(grace=1.0)
+
+        assert cancelled == 1
+        assert task.cancelled()  # the abandoned op was cancelled and unwound
+        assert gate.in_flight == 0  # its release ran
+
 
 class TestEngineGateIntegration:
     @pytest.mark.asyncio
@@ -219,14 +249,21 @@ class TestRuntimeDrain:
         await releaser
 
     @pytest.mark.asyncio
-    async def test_scope_exit_proceeds_after_drain_timeout(self) -> None:
+    async def test_scope_exit_cancels_abandoned_ops_after_drain_timeout(self) -> None:
         rt = ExecutionRuntime(drain_timeout=timedelta(seconds=0.01))
         stall = asyncio.Event()
+        saw_cancel = asyncio.Event()
 
         @attrs.define(slots=True, kw_only=True, frozen=True)
         class StuckHandler(Handler[str, str]):
             async def __call__(self, args: str) -> str:
-                await stall.wait()
+                try:
+                    await stall.wait()  # never set — only cancellation ends it
+
+                except asyncio.CancelledError:
+                    saw_cancel.set()
+                    raise
+
                 return args
 
         reg = OperationRegistry(handlers={"op": lambda _ctx: StuckHandler()}).freeze()
@@ -236,12 +273,32 @@ class TestRuntimeDrain:
             task = asyncio.create_task(reg.resolve("op", ctx)("x"))
             await asyncio.sleep(0)
 
-        # Scope exited despite the stuck operation; clean it up.
-        assert not task.done()
-        task.cancel()
+        # The drain window expired, so the runtime cancelled the abandoned operation and
+        # let it unwind *before* lifecycle teardown — no manual cleanup, no orphan task
+        # running against closing clients.
+        assert task.done()
+        assert task.cancelled()
+        assert saw_cancel.is_set()
 
-        with pytest.raises(asyncio.CancelledError):
-            await task
+    @pytest.mark.asyncio
+    async def test_scope_exit_closes_background_owners(self) -> None:
+        rt = ExecutionRuntime()
+
+        class _Owner:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        owner = _Owner()
+
+        async with rt.scope():
+            rt.get_context().background_owners.register(owner)
+
+        # Shutdown cancelled/closed the registered owner (before lifecycle teardown) so its
+        # detached work never runs on against a closing client.
+        assert owner.closed
 
     def test_build_runtime_passes_drain_timeout(self) -> None:
         assert build_runtime(

@@ -62,6 +62,55 @@ def _not_warm(operation: str) -> Exception:
     )
 
 
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True)
+class _FrozenFieldCipher:
+    """Thread-safe, decrypt-only snapshot of a :class:`Keyring`'s field-cipher path.
+
+    Built by :meth:`Keyring.freeze_decryptor` from pre-resolved data keys, so
+    :meth:`decrypt_sync` does pure AEAD against a plain dict — no shared, LRU-mutating cache —
+    and is safe to call off the event loop (e.g. under ``run_cpu_map``). A
+    :class:`~forze.application.contracts.crypto.FieldCipherPort` structurally: ``warm`` /
+    ``ensure_unwrapped`` are no-ops (already resolved) and encrypt is unsupported."""
+
+    aead: Aead
+    """The AEAD, shared with the source keyring (stateless, thread-safe)."""
+
+    deks: dict[bytes, bytes]
+    """Resolved ``wrapped_dek → data key`` snapshot for this batch."""
+
+    # ....................... #
+
+    async def warm(self, tenant: TenantIdentity | None) -> None:
+        return None
+
+    async def ensure_unwrapped(self, envelopes: Iterable[EncryptedEnvelope]) -> None:
+        return None
+
+    def encrypt_sync(
+        self, plaintext: bytes, *, tenant: TenantIdentity | None, aad: bytes = b""
+    ) -> bytes:
+        raise exc.internal("frozen field cipher is decrypt-only")
+
+    def decrypt_sync(self, blob: bytes, *, aad: bytes = b"") -> bytes:
+        envelope = unpack_envelope(blob)
+        ensure_algorithm(envelope, self.aead.algorithm)
+        dek = self.deks.get(envelope.wrapped_dek)
+
+        if dek is None:
+            raise _not_warm("decrypt")
+
+        return self.aead.open(
+            key=dek,
+            nonce=envelope.nonce,
+            ciphertext=envelope.ciphertext,
+            aad=aad,
+        )
+
+
 def _lru_get(cache: OrderedDict[Any, Any], key: Any) -> Any:
     value = cache.get(key)
 
@@ -323,6 +372,32 @@ class Keyring:
             ciphertext=envelope.ciphertext,
             aad=aad,
         )
+
+    # ....................... #
+
+    def freeze_decryptor(
+        self, envelopes: Iterable[EncryptedEnvelope]
+    ) -> _FrozenFieldCipher:
+        """Resolve *envelopes*' data keys into a thread-local snapshot for offloaded decrypt.
+
+        Called on the event loop after :meth:`ensure_unwrapped`: reads each warmed data key
+        out of the shared decrypt cache into a plain dict, so the returned cipher's
+        :meth:`~_FrozenFieldCipher.decrypt_sync` does pure AEAD with no cache mutation — safe
+        from a worker thread. A key still missing (never warmed) is left out; decrypting its
+        blob then raises ``cipher_not_warm``, exactly as the live path would."""
+
+        deks: dict[bytes, bytes] = {}
+
+        for envelope in envelopes:
+            wrapped = envelope.wrapped_dek
+
+            if wrapped not in deks:
+                dek = _lru_get(self._dec_cache, wrapped)
+
+                if dek is not None:
+                    deks[wrapped] = dek
+
+        return _FrozenFieldCipher(aead=self.aead, deks=deks)
 
     # ....................... #
 

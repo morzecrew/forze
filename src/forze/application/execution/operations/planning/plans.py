@@ -13,7 +13,9 @@ from forze.application.contracts.execution import (
     DispatchStep,
     MiddlewareStep,
     OnSuccess,
+    OnSuccessStep,
     ProvidesIdempotency,
+    SuppliesTransactionCommit,
 )
 from forze.application.contracts.transaction import IsolationLevel
 from forze.base.descriptors import hybridmethod
@@ -234,9 +236,48 @@ class OperationPlan:
 
     # ....................... #
 
+    def _inject_idempotency_commit(self, tx: TransactionScope) -> TransactionScope:
+        """Auto-inject the paired in-transaction record-write hook for an idempotency wrap.
+
+        When the plan carries an idempotency wrap (:class:`ProvidesIdempotency`) *and* has a
+        transaction route, add its ``commit_on_success`` factory as an ``on_success`` step on
+        the transaction scope, so a co-located store commits the result record atomically
+        with the business writes (closing the crash window). No route means nothing to be
+        atomic with — the middleware records out of transaction — so nothing is injected;
+        adding a tx-scope stage to a routeless plan would also wrongly require a route.
+        """
+
+        if tx.route is None:
+            return tx
+
+        suppliers = [
+            step.factory
+            for step in self.iter_wrap_steps()
+            if isinstance(step.factory, SuppliesTransactionCommit)
+        ]
+
+        # Stable id keyed by position among the *idempotency* wraps only (not all wraps),
+        # so it does not shift when unrelated wraps are added; the common single-wrap case
+        # is just ``idempotency_commit``. Multiple idempotency wraps are unusual (each dedups
+        # the whole op) but get distinct steps rather than colliding.
+        injected = [
+            OnSuccessStep(
+                id="idempotency_commit" if index == 0 else f"idempotency_commit_{index}",
+                factory=factory.commit_on_success(),
+            )
+            for index, factory in enumerate(suppliers)
+        ]
+
+        if not injected:
+            return tx
+
+        return attrs.evolve(tx, on_success=tx.on_success.add(*injected))
+
+    # ....................... #
+
     def freeze(self) -> FrozenOperationPlan:
         frozen_outer = self._outer.freeze()
-        frozen_tx = self._tx.freeze()
+        frozen_tx = self._inject_idempotency_commit(self._tx).freeze()
 
         return FrozenOperationPlan(
             outer=frozen_outer,

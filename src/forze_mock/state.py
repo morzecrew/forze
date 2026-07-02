@@ -27,6 +27,8 @@ class MockTxSnapshot:
     outbox_rows: dict[str, list[Any]]
     inbox: set[tuple[str, str, str]]
     identity: dict[str, Any]
+    hlc_checkpoint: dict[str, int]
+    idempotency: dict[tuple[str, str, str], tuple[str, str, Any | None]]
     """Deep copies of the participating identity sub-stores only (see
     :data:`MockState.TX_IDENTITY_SUBSTORES`)."""
 
@@ -60,6 +62,10 @@ class MockState:
       back mark must allow redelivery to re-process)
     - ``identity["authn"|"authz"|"tenants"]`` — identity/tenancy planes that are
       document-backed in production
+    - ``hlc_checkpoint`` — the node's HLC high-water mark; the outbox flush advances
+      it inside the business transaction (co-located store)
+    - ``idempotency`` — dedup records for the co-located (transactional) store; the
+      Redis variant is non-transactional, but the mock models the transactional path
 
     NOT participating (non-transactional backends in production; survive rollback):
 
@@ -67,7 +73,7 @@ class MockState:
     - ``streams`` / ``stream_ack`` — stream backends
     - ``storage`` / ``storage_bytes`` — object storage (S3/GCS)
     - ``cache_kv`` / ``cache_pointers`` / ``cache_bodies`` — cache (Redis)
-    - ``counters``, ``idempotency``, ``dlocks`` / ``dlock_fences`` — Redis-backed
+    - ``counters``, ``dlocks`` / ``dlock_fences`` — Redis-backed
     - ``search_snapshots`` / ``search_snapshot_chunks`` — search engine
       (Meilisearch); search reads in mock project off ``documents`` anyway
     - ``analytics_query_hits`` / ``analytics_ingest_log`` — warehouses
@@ -139,6 +145,13 @@ class MockState:
     )
     analytics_ingest_log: dict[str, list[dict[str, Any]]] = attrs.field(factory=dict)
     outbox_rows: dict[str, list[Any]] = attrs.field(factory=dict)
+    hlc_checkpoint: dict[str, int] = attrs.field(factory=dict)
+    """Node key → packed HLC high-water mark (the max timestamp a node's outbox clock has
+    emitted). Written by :class:`~forze_mock.adapters.hlc_checkpoint.MockHlcCheckpointAdapter`
+    on outbox flush and read at startup so a rebuilt clock resumes above its prior
+    emissions. Transactional: reverts on rollback under both mock managers — the journal
+    manager via an undo thunk, the strict manager via the tx snapshot — like ``idempotency``."""
+
     dlocks: dict[str, dict[str, tuple[str, float]]] = attrs.field(factory=dict)
     """Route → lock key → (owner, expires_at monotonic)."""
 
@@ -282,6 +295,10 @@ class MockState:
                     key: copy.deepcopy(self.identity.get(key, {}))
                     for key in self.TX_IDENTITY_SUBSTORES
                 },
+                # Journal-participating stores with immutable values: a shallow copy of the
+                # key→value mapping is a faithful undo (values are ints / immutable tuples).
+                hlc_checkpoint=dict(self.hlc_checkpoint),
+                idempotency=dict(self.idempotency),
             )
 
     # ....................... #
@@ -303,6 +320,12 @@ class MockState:
 
             self.inbox.clear()
             self.inbox.update(snapshot.inbox)
+
+            self.hlc_checkpoint.clear()
+            self.hlc_checkpoint.update(snapshot.hlc_checkpoint)
+
+            self.idempotency.clear()
+            self.idempotency.update(snapshot.idempotency)
 
             for key in self.TX_IDENTITY_SUBSTORES:
                 self.identity[key] = copy.deepcopy(snapshot.identity.get(key, {}))

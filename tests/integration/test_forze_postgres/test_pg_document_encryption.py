@@ -21,6 +21,9 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import CryptoDepsModule, Deps, ExecutionContext
+from forze.application.integrations.persistence.gateway_mixins import (
+    _DECRYPT_OFFLOAD_THRESHOLD,
+)
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockKeyManagement
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
@@ -327,3 +330,53 @@ async def test_pg_record_id_binding_refuses_bulk_update_matching(
 
     assert ei.value.kind is ExceptionKind.PRECONDITION
     assert ei.value.code == "core.crypto.record_id_required"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_large_batch_decrypt_offloads_and_stays_correct(
+    pg_client: PostgresClient,
+) -> None:
+    # A result set at/above the offload threshold decrypts off the event loop (run_cpu_map
+    # against a frozen codec snapshot) and must stay byte-for-byte correct — across full
+    # reads, typed projections, and raw field-dict projections.
+    await pg_client.execute("DROP TABLE IF EXISTS people CASCADE;")
+    await pg_client.execute(
+        """
+        CREATE TABLE people (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            email text NOT NULL
+        );
+        """
+    )
+
+    n = _DECRYPT_OFFLOAD_THRESHOLD + 6  # exceed the gateway's decrypt-offload threshold
+    writer = _ctx(pg_client).document.command(_SPEC)
+    for i in range(n):
+        await writer.create(_PersonCreate(name=f"p{i}", email=f"p{i}@example.com"))
+
+    expected = {f"p{i}@example.com" for i in range(n)}
+
+    # Full read on a fresh (cold-keyring) context: ensure_unwrapped pre-pass, then offloaded
+    # decrypt+decode.
+    full = await _ctx(pg_client).document.query(_SPEC).find_many(
+        pagination={"limit": 200}
+    )
+    assert len(full.hits) == n
+    assert {p.email for p in full.hits} == expected
+
+    # Typed projection over the encrypted field (frozen decrypt + plaintext decode).
+    typed = await _ctx(pg_client).document.query(_SPEC).select_many(
+        _PersonEmailView, pagination={"limit": 200}
+    )
+    assert {v.email for v in typed.hits} == expected
+
+    # Raw field-dict projection (frozen decrypt only).
+    raw = await _ctx(pg_client).document.query(_SPEC).project_many(
+        ["id", "email"], pagination={"limit": 200}
+    )
+    assert {r["email"] for r in raw.hits} == expected

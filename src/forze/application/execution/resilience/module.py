@@ -14,13 +14,21 @@ from forze.application.contracts.resilience import (
     ResiliencePortPoliciesDepKey,
     ResilienceSpec,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import ExceptionKind, exc
 
 from forze.application.contracts.deps import Deps
 from .executor import InProcessResilienceExecutor
 from .policies import builtin_default_policies
 
 # ----------------------- #
+
+_AMBIGUOUS_RETRY_KINDS = frozenset(
+    {ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT}
+)
+"""Retry-triggering kinds whose outcome is *ambiguous* — an infrastructure error or a
+per-attempt timeout can leave a write applied-but-unacknowledged, so retrying may duplicate
+it. Concurrency conflicts and throttles are unambiguous (the call did not take effect), so
+they are safe to retry on any method."""
 
 
 @final
@@ -84,6 +92,32 @@ class ResilienceDepsModule:
                 "Port policies reference unknown resilience policies: "
                 + ", ".join(unknown),
             )
+
+        # A retrying policy applied to *every* method (``methods=None``) will retry writes
+        # too. Retrying an ambiguous failure (an infrastructure error or a per-attempt
+        # timeout) can duplicate a non-idempotent write, so require the author to opt in per
+        # method — list the operations they have confirmed are safe to retry. Concurrency /
+        # throttle-only retries (e.g. the ``occ`` policy) are unambiguous and stay unrestricted.
+        for pp in self.port_policies:
+            if pp.methods is not None:
+                continue
+
+            retry = policies[pp.policy].retry
+
+            if retry is None:
+                continue
+
+            if ambiguous := sorted(
+                kind.value for kind in retry.retry_on & _AMBIGUOUS_RETRY_KINDS
+            ):
+                raise exc.configuration(
+                    f"Port policy for {pp.key.name!r} applies retrying policy "
+                    f"{str(pp.policy)!r} (retries {ambiguous}) to every method: this would "
+                    "retry a non-idempotent write on an ambiguous failure and risk "
+                    "duplicating it. Declare an explicit `methods` list of the operations "
+                    "that are safe to retry.",
+                    code="resilience.blanket_write_retry",
+                )
 
         # Stores fall back to the executor's process-local defaults when not
         # provided; only pass what was configured so the default Factory wiring

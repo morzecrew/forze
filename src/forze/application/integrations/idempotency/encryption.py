@@ -40,6 +40,14 @@ class EncryptingIdempotencyPort:
 
     # ....................... #
 
+    @property
+    def commits_in_transaction(self) -> bool:
+        """Delegate the co-located/atomic capability to the wrapped store."""
+
+        return self.inner.commits_in_transaction
+
+    # ....................... #
+
     async def begin(
         self, op: str, key: str | None, payload_hash: str
     ) -> IdempotencyRecord | None:

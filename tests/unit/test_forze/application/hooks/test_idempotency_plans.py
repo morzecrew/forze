@@ -144,6 +144,33 @@ class TestIdempotencyWrapDirect:
                 with pytest.raises(RuntimeError, match="handler boom"):
                     await mw(handler, _Args(n=1))
 
+    async def test_commit_failure_does_not_fail_successful_operation(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from forze_mock.adapters.idempotency import MockIdempotencyAdapter
+
+        ctx = _ctx()
+        mw = IdempotencyWrap(op="op", spec=_SPEC, result_type=_Result)(ctx)
+        calls = 0
+
+        async def handler(args: _Args) -> _Result:
+            nonlocal calls
+            calls += 1
+            return _Result(value=args.n)
+
+        # The business effect already committed inside the handler; a store failure
+        # recording the result must not turn the successful operation into a failure.
+        with patch.object(
+            MockIdempotencyAdapter,
+            "commit",
+            AsyncMock(side_effect=RuntimeError("commit store down")),
+        ):
+            with ctx.inv_ctx.bind_idempotency("key-commit-fail"):
+                result = await mw(handler, _Args(n=8))
+
+        assert calls == 1
+        assert result.value == 8  # returned despite the record-write failure
+
 
 # ....................... #
 
@@ -194,3 +221,33 @@ class TestInvocationIdempotencyKey:
             assert ctx.inv_ctx.get_idempotency_key() == "abc"
 
         assert ctx.inv_ctx.get_idempotency_key() is None
+
+
+class TestRecordingScopeIsolation:
+    """A nested idempotent op's in-tx mark must not leak into the enclosing invocation."""
+
+    def test_nested_mark_does_not_leak_to_outer_scope(self) -> None:
+        from forze.application.hooks.idempotency._state import (
+            close_recording_scope,
+            mark_recorded_in_tx,
+            open_recording_scope,
+            recorded_in_tx,
+        )
+
+        outer = open_recording_scope()
+        try:
+            assert recorded_in_tx() is False
+
+            # A nested idempotent operation opens its own scope, its on_success hook
+            # marks, then the nested middleware closes the scope on the way out.
+            nested = open_recording_scope()
+            mark_recorded_in_tx()
+            assert recorded_in_tx() is True
+            close_recording_scope(nested)
+
+            # Back in the outer scope: the nested mark was undone, so an outer op that
+            # relies on its out-of-transaction commit still sees "not recorded" (and
+            # therefore performs it) instead of wrongly skipping it.
+            assert recorded_in_tx() is False
+        finally:
+            close_recording_scope(outer)

@@ -780,6 +780,18 @@ class ResiliencePolicy:
     hedge: HedgeStrategy | None = None
     """Optional hedging meta-strategy applied outer to the pipeline by ``run_hedged``."""
 
+    fail_open_on_store_error: bool = True
+    """How to treat a failure of the breaker / rate-limit *store* itself.
+
+    The in-memory default stores never fail; this matters only for a distributed
+    store (e.g. Redis) that can be unreachable. ``True`` (default) **fails open**:
+    a store error on admission admits the call, so a store outage can never make
+    the resilience layer itself the outage — the convention for circuit breakers.
+    ``False`` **fails closed**: admission raises a retryable ``infrastructure``
+    error instead. Either way a post-call ``record`` failure is always swallowed
+    (bookkeeping must never turn a successful call into a failure).
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

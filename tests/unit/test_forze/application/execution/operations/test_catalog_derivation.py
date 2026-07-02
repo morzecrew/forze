@@ -22,6 +22,7 @@ from forze.application.contracts.execution import (
 from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.contracts.resilience import HedgeSafety
 from forze.application.execution.operations import OperationKind
+from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
 from forze.application.hooks.authz import (
@@ -383,3 +384,40 @@ class TestDeadlineDerivation:
         reg = _registry().freeze()
 
         assert reg.catalog()["op"].deadline is None
+
+
+class TestIdempotencyCommitInjection:
+    """The paired in-transaction record-write hook is auto-injected at plan freeze."""
+
+    @staticmethod
+    def _injected(plan: OperationPlan) -> list[str]:
+        frozen = plan.freeze()
+        return [
+            str(sid)
+            for sid in frozen.tx.on_success.steps
+            if str(sid).startswith("idempotency_commit")
+        ]
+
+    def test_injected_when_op_has_a_transaction_route(self) -> None:
+        # An idempotency wrap + a transaction route -> the in-tx commit hook is added to
+        # the transaction scope, so a co-located store commits the record atomically.
+        plan = (
+            OperationPlan()
+            .bind_tx()
+            .set_route("mock")
+            .wrap(_idempotency_step())
+            .finish(deep=False)
+        )
+
+        assert len(self._injected(plan)) == 1
+
+    def test_not_injected_without_a_transaction_route(self) -> None:
+        # No route -> nothing to be atomic with -> the middleware records out of tx.
+        plan = OperationPlan().bind_outer().wrap(_idempotency_step()).finish(deep=False)
+
+        assert self._injected(plan) == []
+
+    def test_not_injected_without_an_idempotency_wrap(self) -> None:
+        plan = OperationPlan().bind_tx().set_route("mock").finish(deep=False)
+
+        assert self._injected(plan) == []

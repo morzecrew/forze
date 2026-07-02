@@ -180,14 +180,52 @@ class TestScopeCpuExecutor:
         ex.close()  # caller cleans up
 
     @pytest.mark.asyncio
-    async def test_no_executor_leaves_ambient_default_untouched(self) -> None:
-        from forze.base.primitives import current_cpu_executor
+    async def test_unbound_scope_owns_and_closes_a_pool(self) -> None:
+        from forze.base.primitives import (
+            ThreadPoolCpuExecutor,
+            current_cpu_executor,
+            run_cpu,
+        )
 
-        before = current_cpu_executor()
         rt = ExecutionRuntime(deps=DepsRegistry().freeze())
 
         async with rt.scope():
-            assert current_cpu_executor() is before
+            owned = current_cpu_executor()
+            # With nothing bound, the runtime owns a scope-lifetime thread pool.
+            assert isinstance(owned, ThreadPoolCpuExecutor)
+            assert await run_cpu(lambda: 6 * 7) == 42  # materializes the pool
+            assert owned._pool is not None
+
+        # The runtime-owned pool is closed on scope exit (unlike a caller-injected one).
+        assert owned._pool is None
+
+    @pytest.mark.asyncio
+    async def test_ambient_executor_is_not_overridden(self) -> None:
+        from forze.base.primitives import (
+            InlineCpuExecutor,
+            bind_cpu_executor,
+            current_cpu_executor,
+        )
+
+        ambient = InlineCpuExecutor()
+        rt = ExecutionRuntime(deps=DepsRegistry().freeze())
+
+        # An executor already bound around the scope (e.g. a simulation's) wins: the
+        # runtime defers to it and never binds a pool of its own.
+        with bind_cpu_executor(ambient):
+            async with rt.scope():
+                assert current_cpu_executor() is ambient
+
+    @pytest.mark.asyncio
+    async def test_cpu_workers_sizes_the_owned_pool(self) -> None:
+        from forze.base.primitives import ThreadPoolCpuExecutor, current_cpu_executor
+
+        rt = ExecutionRuntime(deps=DepsRegistry().freeze(), cpu_workers=3)
+
+        async with rt.scope():
+            owned = current_cpu_executor()
+            assert isinstance(owned, ThreadPoolCpuExecutor)
+            assert owned.max_workers == 3
 
     def test_build_runtime_threads_cpu_executor(self) -> None:
         from forze.application.execution import build_runtime

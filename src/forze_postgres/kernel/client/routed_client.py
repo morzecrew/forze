@@ -30,7 +30,11 @@ from forze.base.primitives import JsonDict
 from .client import PostgresClient
 from .port import PostgresClientPort
 from .types import RowFactory
-from .value_objects import PostgresConfig, PostgresTransactionOptions
+from .value_objects import (
+    DeadlinePushdownPolicy,
+    PostgresConfig,
+    PostgresTransactionOptions,
+)
 
 # ----------------------- #
 
@@ -169,6 +173,17 @@ class RoutedPostgresClient(
             return cfg.max_concurrent_queries
 
         return max(1, cfg.max_size - cfg.pool_headroom)
+
+    # ....................... #
+
+    def deadline_pushdown(self) -> DeadlinePushdownPolicy | None:
+        # Deployment-global policy (same for every tenant): read the shared pool config.
+        cfg = self.pool_config
+
+        if not cfg.push_invocation_deadline:
+            return None
+
+        return DeadlinePushdownPolicy(statement_timeout_cap=cfg.statement_timeout)
 
     # ....................... #
 

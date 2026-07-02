@@ -57,6 +57,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.contracts.domain import DomainEventDispatcherDepKey
+from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepKey,
     DurableFunctionStepDepKey,
@@ -143,6 +144,7 @@ from forze_mock.adapters import (
     MockState,
 )
 from forze_mock.adapters.events import RecordingAuthnEventSink
+from forze_mock.adapters.hlc_checkpoint import MockHlcCheckpointAdapter
 from forze_mock.adapters.identity import (
     MockApiKeyLifecyclePort,
     MockApiKeyVerifierPort,
@@ -264,6 +266,14 @@ class MockDepsModule(DepsModule):
     resilience: Literal["passthrough", "real"] = "passthrough"
     domain_events: DomainEventRegistry | None = attrs.field(default=None)
 
+    hlc_checkpoint: bool = False
+    """Wire the in-memory HLC high-water-mark store (default off).
+
+    When ``True``, the outbox flush persists the node's clock mark into :class:`MockState`,
+    so ``hlc_checkpoint_recovery_lifecycle_step`` can resume a rebuilt clock above its prior
+    emissions — letting a test exercise restart monotonicity in-process. Off by default so
+    existing scenarios are unperturbed (the outbox flush then resolves no checkpoint)."""
+
     transactions: Literal["journal", "none", "strict"] = attrs.field(default="journal")
     """Which mock transaction manager to wire (default ``"journal"``):
 
@@ -331,6 +341,9 @@ class MockDepsModule(DepsModule):
 
         def _domain_dispatcher(ctx: ExecutionContext) -> InProcessDomainEventDispatcher:
             return InProcessDomainEventDispatcher(registry=domain_registry, ctx=ctx)
+
+        def _hlc_checkpoint(ctx: ExecutionContext) -> MockHlcCheckpointAdapter:
+            return MockHlcCheckpointAdapter(state=self.state)
 
         deps: dict[DepKey[Any], Any] = {
             MockStateDepKey: self.state,
@@ -401,6 +414,9 @@ class MockDepsModule(DepsModule):
 
         if self.routed_state is not None:
             deps[MockRoutedStateDepKey] = self.routed_state
+
+        if self.hlc_checkpoint:
+            deps[HlcCheckpointDepKey] = _hlc_checkpoint
 
         id_cfg = self.identity or MockIdentityConfig()
         authn_keys = id_cfg.authn_routes

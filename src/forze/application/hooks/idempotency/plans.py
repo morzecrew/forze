@@ -10,14 +10,27 @@ from forze.application.contracts.execution import (
     Middleware,
     MiddlewareFactory,
     MiddlewareStep,
+    OnSuccess,
+    OnSuccessFactory,
 )
 from forze.application.contracts.crypto import KeyringDepKey
-from forze.application.contracts.idempotency import IdempotencyRecord, IdempotencySpec
+from forze.application.contracts.idempotency import (
+    IdempotencyPort,
+    IdempotencyRecord,
+    IdempotencySpec,
+)
 from forze.application.execution.context import ExecutionContext
 from forze.application.integrations.idempotency import encrypting_idempotency_port
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, stable_payload_fingerprint
 from forze.base.serialization import default_model_codec
+
+from ._state import (
+    close_recording_scope,
+    mark_recorded_in_tx,
+    open_recording_scope,
+    recorded_in_tx,
+)
 
 # ----------------------- #
 
@@ -65,7 +78,7 @@ class IdempotencyWrap(MiddlewareFactory):
 
     # ....................... #
 
-    def __call__(self, ctx: ExecutionContext) -> Middleware[Any, Any]:
+    def _require_model_result(self) -> None:
         if not (
             isinstance(self.result_type, type)  # pyright: ignore[reportUnnecessaryIsInstance]
             and issubclass(self.result_type, BaseModel)
@@ -74,6 +87,11 @@ class IdempotencyWrap(MiddlewareFactory):
                 f"IdempotencyWrap result_type must be a Pydantic model, "
                 f"got {self.result_type!r}",
             )
+
+    # ....................... #
+
+    def _resolve_port(self, ctx: ExecutionContext) -> IdempotencyPort:
+        """Resolve the idempotency port for *ctx*, sealing results when the spec opts in."""
 
         port = ctx.idempotency(self.spec)
 
@@ -89,6 +107,14 @@ class IdempotencyWrap(MiddlewareFactory):
                 spec_name=str(self.spec.name),
             )
 
+        return port
+
+    # ....................... #
+
+    def __call__(self, ctx: ExecutionContext) -> Middleware[Any, Any]:
+        self._require_model_result()
+
+        port = self._resolve_port(ctx)
         codec = default_model_codec(self.result_type)
 
         async def _wrap(
@@ -100,39 +126,67 @@ class IdempotencyWrap(MiddlewareFactory):
             if key is None:
                 return await next(args)
 
-            payload_hash = _hash_args(args)
-            existing = await port.begin(self.op, key, payload_hash)
-
-            if existing is not None:
-                return codec.decode_json_bytes(existing.result)
+            # Bracket this invocation in its own recording scope so a nested idempotent
+            # operation's in-transaction mark cannot leak into (or out of) this op's read.
+            recording = open_recording_scope()
 
             try:
-                result = await next(args)
+                payload_hash = _hash_args(args)
+                existing = await port.begin(self.op, key, payload_hash)
 
-            except Exception:
-                # Release the pending claim so a legitimate retry of the failed
-                # request can re-execute. Best-effort: a fail() error must not
-                # mask the handler error.
+                if existing is not None:
+                    return codec.decode_json_bytes(existing.result)
+
                 try:
-                    await port.fail(self.op, key, payload_hash)
+                    result = await next(args)
+
+                except Exception:
+                    # Release the pending claim so a legitimate retry of the failed
+                    # request can re-execute. Best-effort: a fail() error must not mask
+                    # the handler error. For a transactional store the in-transaction
+                    # record write (if any) already rolled back with the business tx.
+                    try:
+                        await port.fail(self.op, key, payload_hash)
+
+                    except Exception:
+                        logger.exception(
+                            "Idempotency fail() errored for op '%s'; the pending "
+                            "claim may persist until its TTL",
+                            self.op,
+                        )
+
+                    raise
+
+                if recorded_in_tx():
+                    # A co-located store recorded the result inside the business
+                    # transaction (via the paired on_success hook), so it committed
+                    # atomically with the business writes — nothing to record here.
+                    return result
+
+                # Out-of-transaction store (or no in-tx hook ran): record the result
+                # now. The business effect already committed inside ``next``, so a
+                # failure to cache must not turn the successful operation into a failure
+                # — log and return (the claim then stays pending until its TTL: the
+                # documented at-least-once gap of an out-of-transaction store).
+                try:
+                    await port.commit(
+                        self.op,
+                        key,
+                        payload_hash,
+                        IdempotencyRecord(result=codec.encode_json_bytes(result)),
+                    )
 
                 except Exception:
                     logger.exception(
-                        "Idempotency fail() errored for op '%s'; the pending "
-                        "claim may persist until its TTL",
+                        "Idempotency commit failed after a successful operation '%s'; "
+                        "the result was not cached and a duplicate may re-execute",
                         self.op,
                     )
 
-                raise
+                return result
 
-            await port.commit(
-                self.op,
-                key,
-                payload_hash,
-                IdempotencyRecord(result=codec.encode_json_bytes(result)),
-            )
-
-            return result
+            finally:
+                close_recording_scope(recording)
 
         return _wrap
 
@@ -142,6 +196,46 @@ class IdempotencyWrap(MiddlewareFactory):
         """Marker (``ProvidesIdempotency``): this wrap deduplicates the op's effects."""
 
         return True
+
+    # ....................... #
+
+    def commit_on_success(self) -> OnSuccessFactory:
+        """Paired in-transaction record-write hook for a co-located (transactional) store.
+
+        Runs inside the business transaction with the operation result: for a store whose
+        :attr:`~forze.application.contracts.idempotency.IdempotencyPort.commits_in_transaction`
+        is set, the result record and the business writes commit atomically, closing the
+        crash window that an out-of-transaction ``commit`` leaves open. It marks the result
+        recorded so the middleware skips its out-of-transaction commit. A no-op for a
+        non-transactional store or when no idempotency key is bound.
+        """
+
+        self._require_model_result()
+
+        def _factory(ctx: ExecutionContext) -> OnSuccess[Any, Any]:
+            port = self._resolve_port(ctx)
+            codec = default_model_codec(self.result_type)
+
+            async def _hook(args: Any, result: Any) -> None:
+                if not port.commits_in_transaction:
+                    return
+
+                key = ctx.inv_ctx.get_idempotency_key()
+
+                if key is None:
+                    return
+
+                await port.commit(
+                    self.op,
+                    key,
+                    _hash_args(args),
+                    IdempotencyRecord(result=codec.encode_json_bytes(result)),
+                )
+                mark_recorded_in_tx()
+
+            return _hook
+
+        return _factory
 
     # ....................... #
 

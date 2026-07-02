@@ -125,3 +125,28 @@ class TestInMemoryRateLimitStore:
         assert await store.try_acquire(("p", "a"), strat) is True
         assert await store.try_acquire(("p", "a"), strat) is False
         assert await store.try_acquire(("p", "b"), strat) is True
+
+
+# ....................... #
+
+
+class TestStoreEntryBounding:
+    """Per-``(policy, route)`` state is LRU-bounded so a high-cardinality route can't OOM."""
+
+    async def test_breaker_store_evicts_over_the_cap(self) -> None:
+        store = InMemoryCircuitBreakerStore(clock=_Clock(), max_entries=4)
+        strat = _strat()
+
+        for i in range(50):
+            await store.admit(("p", f"route-{i}"), strat)  # 50 distinct routes
+
+        assert len(store._states) == 4  # pyright: ignore[reportPrivateUsage]
+
+    async def test_rate_limit_store_evicts_over_the_cap(self) -> None:
+        store = InMemoryRateLimitStore(clock=_Clock(), max_entries=4)
+        strat = RateLimitStrategy(permits=1, per=timedelta(seconds=1))
+
+        for i in range(50):
+            await store.try_acquire(("p", f"route-{i}"), strat)
+
+        assert len(store._states) == 4  # pyright: ignore[reportPrivateUsage]

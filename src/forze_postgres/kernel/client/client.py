@@ -38,7 +38,11 @@ from .errors import exc_interceptor
 from .helpers import isolation_level_enum
 from .port import PostgresClientPort
 from .types import RowFactory
-from .value_objects import PostgresConfig, PostgresTransactionOptions
+from .value_objects import (
+    DeadlinePushdownPolicy,
+    PostgresConfig,
+    PostgresTransactionOptions,
+)
 
 # ----------------------- #
 
@@ -155,6 +159,10 @@ class _PendingTx:
     options: PostgresTransactionOptions
     stack: AsyncExitStack
     conn: AsyncConnection | None = None
+    statement_timeout_ms: int | None = None
+    """A deadline-derived ``statement_timeout`` (ms) to set right after ``BEGIN``, carried
+    here so applying the backstop never forces this lazy scope to check out early — it is
+    applied at materialization, on the first real statement's connection."""
     lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
     """Serializes materialization so concurrent first statements in one scope open
     a single transaction (not one each)."""
@@ -202,6 +210,12 @@ class PostgresClient(PostgresClientPort):
     __max_concurrent_queries: int = attrs.field(default=1, init=False)
     """Cap for parallel operations that each checkout a pool connection."""
 
+    __deadline_pushdown: DeadlinePushdownPolicy | None = attrs.field(
+        default=None, init=False
+    )
+    """Invocation-deadline ``statement_timeout`` push-down policy, or ``None`` when disabled
+    (set from config in :meth:`initialize`)."""
+
     __gather_sem: asyncio.Semaphore | None = attrs.field(default=None, init=False)
     """Pool-wide limiter for :func:`~forze_postgres.kernel.client.gather_db_work`."""
 
@@ -241,6 +255,12 @@ class PostgresClient(PostgresClientPort):
                 )
 
             self.__lazy_tx = config.lazy_transaction
+
+            self.__deadline_pushdown = (
+                DeadlinePushdownPolicy(statement_timeout_cap=config.statement_timeout)
+                if config.push_invocation_deadline
+                else None
+            )
 
             configure = _pool_configure_for_config(config)
 
@@ -374,6 +394,15 @@ class PostgresClient(PostgresClientPort):
 
             await pending.stack.enter_async_context(conn.transaction())
 
+            # Apply a carried deadline backstop as the first statement after BEGIN — here,
+            # at real checkout, so binding it never forced this lazy scope to open early.
+            if pending.statement_timeout_ms is not None:
+                await conn.execute(
+                    sql.SQL("SET LOCAL statement_timeout = {}").format(
+                        sql.Literal(pending.statement_timeout_ms)
+                    )
+                )
+
             # The connection is reachable via __current_conn through the pending
             # object — NOT bound to __ctx_conn here: this runs in the first query's
             # context, and the matching reset would land in the generator's
@@ -381,6 +410,27 @@ class PostgresClient(PostgresClientPort):
             pending.conn = conn
 
             return conn
+
+    # ....................... #
+
+    async def apply_statement_timeout(self, ms: int) -> None:
+        """Set ``statement_timeout`` on the current root transaction.
+
+        A lazy root scope that has not materialized carries the value on its pending state
+        and applies it right after ``BEGIN`` at first checkout, so the backstop never forces
+        an early pool checkout; an eager transaction (or an already-materialized lazy scope)
+        sets it now on the live connection.
+        """
+
+        pending = self.__ctx_pending.get()
+
+        if pending is not None and pending.conn is None:
+            pending.statement_timeout_ms = ms
+            return
+
+        await self.execute(
+            sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(ms))
+        )
 
     # ....................... #
 
@@ -488,6 +538,11 @@ class PostgresClient(PostgresClientPort):
         """
 
         return self.__max_concurrent_queries
+
+    # ....................... #
+
+    def deadline_pushdown(self) -> DeadlinePushdownPolicy | None:
+        return self.__deadline_pushdown
 
     # ....................... #
 

@@ -10,15 +10,18 @@ from .cpu import (
     ThreadPoolCpuExecutor,
     bind_cpu_executor,
     checkpoint,
+    cpu_executor_bound,
     current_cpu_executor,
     run_cpu,
     run_cpu_map,
 )
 from .datetime import monotonic, utcnow
 from .deadline import (
+    DEFAULT_DRIVER_DEADLINE_GRACE,
     bind_deadline,
     clear_deadline,
     current_deadline,
+    driver_deadline_budget,
     remaining_time,
     reset_deadline,
     set_deadline,
@@ -42,9 +45,10 @@ from .fingerprint import (
     stable_json_bytes,
     stable_payload_fingerprint,
 )
+from .bounded_lru_map import BoundedLruMap
 from .graph import DirectedAcyclicGraph
 from .hlc import HlcTimestamp, HybridLogicalClock
-from .lanes import CachedInflightLane, CacheLane, InflightLane
+from .lanes import CachedInflightLane, CacheLane, InflightLane, LeaderFollowerLane
 from .lifecycle_guard import GuardedLifecycle
 from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
 from .mapping import (
@@ -79,7 +83,9 @@ from .uuid import uuid4, uuid7
 __all__ = [
     "utcnow",
     "monotonic",
+    "DEFAULT_DRIVER_DEADLINE_GRACE",
     "current_deadline",
+    "driver_deadline_budget",
     "remaining_time",
     "set_deadline",
     "reset_deadline",
@@ -93,6 +99,7 @@ __all__ = [
     "run_cpu_map",
     "checkpoint",
     "current_cpu_executor",
+    "cpu_executor_bound",
     "bind_cpu_executor",
     "TimeSource",
     "SystemTimeSource",
@@ -108,6 +115,7 @@ __all__ = [
     "token_urlsafe",
     "CacheLane",
     "InflightLane",
+    "LeaderFollowerLane",
     "CachedInflightLane",
     "stable_fingerprint",
     "stable_json_bytes",
@@ -117,6 +125,7 @@ __all__ = [
     "combine_fingerprint",
     "gcp_credential_dedup_tag",
     "connection_string_fingerprint",
+    "BoundedLruMap",
     "GuardedLifecycle",
     "GuardedLruRegistry",
     "SimpleLruRegistry",

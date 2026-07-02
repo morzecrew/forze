@@ -99,6 +99,19 @@ class TestBindCpuExecutor:
 
         assert current_cpu_executor() is before
 
+    async def test_default_is_inline_and_unbound(self) -> None:
+        from forze.base.primitives import cpu_executor_bound
+
+        # Nothing bound: the fallback is inline (no hidden global pool) and the
+        # context reports unbound, so a runtime knows it may own its own pool.
+        assert isinstance(current_cpu_executor(), InlineCpuExecutor)
+        assert cpu_executor_bound() is False
+
+        with bind_cpu_executor(ThreadPoolCpuExecutor(max_workers=1)):
+            assert cpu_executor_bound() is True
+
+        assert cpu_executor_bound() is False
+
 
 class TestDeadline:
     async def test_already_passed_deadline_raises_at_entry(self) -> None:

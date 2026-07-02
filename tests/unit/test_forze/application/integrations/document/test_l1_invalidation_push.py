@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import Any, Awaitable, Callable
 from unittest.mock import AsyncMock
@@ -63,6 +64,23 @@ class _PushCache:
         return _unsubscribe
 
 
+class _YieldingPushCache(_PushCache):
+    """A push cache whose ``subscribe`` suspends mid-call, widening any race window."""
+
+    async def subscribe_invalidations(
+        self,
+        callback: InvalidationCallback,
+    ) -> Callable[[], Awaitable[None]] | None:
+        self.subscriptions += 1
+        await asyncio.sleep(0)  # suspend so a concurrent first-reader can interleave here
+        self.callback = callback
+
+        async def _unsubscribe() -> None:
+            self.callback = None
+
+        return _unsubscribe
+
+
 def _coord(cache: Any, *, tenant: str | None = None) -> DocumentCache[DocModel]:
     return DocumentCache(
         read_model_type=DocModel,
@@ -105,6 +123,17 @@ class TestSubscription:
 
         assert cache.subscriptions == 1
         assert cache.callback is not None
+
+    async def test_concurrent_first_reads_subscribe_once(self) -> None:
+        # Two first-readers race. The guard sets its ``started`` flag synchronously *before*
+        # the subscribe await, so the reader that runs second — while the first is suspended
+        # mid-subscribe — sees the subscription already claimed and does not double-subscribe.
+        cache = _YieldingPushCache()
+        coord = _coord(cache)
+
+        await asyncio.gather(_read(coord), _read(coord))
+
+        assert cache.subscriptions == 1  # exactly one subscription despite the race
 
     async def test_unavailable_push_degrades_to_ttl_only(self) -> None:
         cache = _PushCache(available=False)

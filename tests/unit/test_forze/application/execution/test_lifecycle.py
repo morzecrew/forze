@@ -1,6 +1,7 @@
 """Tests for forze.application.execution.lifecycle."""
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
@@ -10,7 +11,8 @@ from forze.application.execution.lifecycle import (
     FrozenLifecyclePlan,
     LifecyclePlan,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from forze.application.execution.runtime import ExecutionRuntime
+from tests.support.execution_context import context_from_deps
 from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
@@ -329,3 +331,78 @@ class TestLifecyclePlan:
         plan = LifecyclePlan.from_modules(_A()).with_modules(_B())
 
         assert len(plan.modules) == 2
+
+
+class TestLifecycleShutdownTimeout:
+    """A wedged shutdown hook must not block teardown of the remaining steps."""
+
+    @pytest.mark.asyncio
+    async def test_hung_shutdown_hook_is_abandoned_and_sibling_runs(
+        self, ctx: ExecutionContext
+    ) -> None:
+        shut: list[str] = []
+        hang = asyncio.Event()  # never set
+
+        async def down_hang(_ctx: ExecutionContext) -> None:
+            shut.append("hang_started")
+            await hang.wait()
+            shut.append("hang_finished")  # unreachable: abandoned by the timeout
+
+        async def down_quick(_ctx: ExecutionContext) -> None:
+            shut.append("quick")
+
+        frozen = LifecyclePlan.from_steps(
+            LifecycleStep(id="hang", shutdown=down_hang),
+            LifecycleStep(id="quick", shutdown=down_quick),
+        ).freeze()
+
+        await frozen.startup(ctx)
+
+        # wait_for guards the property under test: a regression to unbounded
+        # teardown would hang here and fail loudly rather than wedge the suite.
+        await asyncio.wait_for(frozen.shutdown(ctx, step_timeout=0.05), timeout=5.0)
+
+        assert "quick" in shut  # sibling ran despite the wedged hook
+        assert "hang_finished" not in shut  # wedged hook was abandoned
+
+    @pytest.mark.asyncio
+    async def test_step_timeout_leaves_fast_hooks_untouched(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order: list[str] = []
+
+        async def down(_ctx: ExecutionContext) -> None:
+            order.append("down")
+
+        frozen = LifecyclePlan.from_steps(
+            LifecycleStep(id="s", shutdown=down),
+        ).freeze()
+
+        await frozen.startup(ctx)
+        await frozen.shutdown(ctx, step_timeout=5.0)
+
+        assert order == ["down"]
+
+    @pytest.mark.asyncio
+    async def test_runtime_scope_exit_not_blocked_by_hung_shutdown_hook(self) -> None:
+        hang = asyncio.Event()  # never set
+
+        async def down_hang(_ctx: ExecutionContext) -> None:
+            await hang.wait()
+
+        plan = LifecyclePlan.from_steps(
+            LifecycleStep(id="hang", shutdown=down_hang),
+        ).freeze()
+        rt = ExecutionRuntime(
+            lifecycle=plan,
+            drain_timeout=timedelta(0),
+            shutdown_step_timeout=timedelta(seconds=0.05),
+        )
+
+        async def _run() -> None:
+            async with rt.scope():
+                pass
+
+        # Scope exit runs shutdown in its ``finally``; the wedged hook is
+        # abandoned after ``shutdown_step_timeout`` so exit completes.
+        await asyncio.wait_for(_run(), timeout=5.0)

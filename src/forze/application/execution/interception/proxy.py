@@ -75,6 +75,12 @@ class InterceptingPortProxy(PortProxy):
     # ....................... #
 
     def _wrap_async_gen(self, name: str, attr: Any) -> Any:
+        # The terminal closes over only ``attr`` (fixed for this method), so build it once
+        # at wrap time rather than allocating a fresh closure on every call.
+        async def terminal(c: PortCall) -> Any:
+            # Honor the (possibly interceptor-rewritten) call, not the original args.
+            return attr(*c.args, **c.kwargs)
+
         @wraps(attr)
         async def intercepted_async_gen(*args: Any, **kwargs: Any) -> Any:
             call = PortCall(
@@ -84,10 +90,6 @@ class InterceptingPortProxy(PortProxy):
                 args=args,
                 kwargs=kwargs,
             )
-
-            async def terminal(c: PortCall) -> Any:
-                # Honor the (possibly interceptor-rewritten) call, not the original args.
-                return attr(*c.args, **c.kwargs)
 
             gen = await run_chain(self._chain(), call, terminal)
 
@@ -99,6 +101,12 @@ class InterceptingPortProxy(PortProxy):
     # ....................... #
 
     def _wrap_async(self, name: str, attr: Any) -> Any:
+        # The terminal closes over only ``attr`` (fixed for this method), so build it once
+        # at wrap time rather than allocating a fresh closure on every call.
+        async def terminal(c: PortCall) -> Any:
+            # Honor the (possibly interceptor-rewritten) call, not the original args.
+            return await attr(*c.args, **c.kwargs)
+
         @wraps(attr)
         async def intercepted_async(*args: Any, **kwargs: Any) -> Any:
             call = PortCall(
@@ -108,10 +116,6 @@ class InterceptingPortProxy(PortProxy):
                 args=args,
                 kwargs=kwargs,
             )
-
-            async def terminal(c: PortCall) -> Any:
-                # Honor the (possibly interceptor-rewritten) call, not the original args.
-                return await attr(*c.args, **c.kwargs)
 
             return await run_chain(self._chain(), call, terminal)
 

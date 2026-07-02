@@ -24,6 +24,7 @@ from .protocols import (
     OperationHandler,
     OperationHandlerFactory,
     ProvidesIdempotency,
+    SuppliesTransactionCommit,
     TwoPhaseHandler,
     TwoPhaseHandlerFactory,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "DeclaresAuthz",
     "DeclaresHedge",
     "ProvidesIdempotency",
+    "SuppliesTransactionCommit",
     "Middleware",
     "MiddlewareFactory",
     "Before",

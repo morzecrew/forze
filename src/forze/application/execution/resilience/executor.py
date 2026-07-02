@@ -22,8 +22,19 @@ from forze.application.contracts.resilience import (
     TimeoutStrategy,
     Transition,
 )
-from forze.base.exceptions import CoreException, exc, exception_egress_policy
-from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping, monotonic
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionKind,
+    exc,
+    exception_egress_policy,
+)
+from forze.base.primitives import (
+    BoundedLruMap,
+    MappingConverter,
+    StrKey,
+    StrKeyMapping,
+    monotonic,
+)
 
 from ..context.deadline import remaining_time
 from ..tracing import record
@@ -36,6 +47,7 @@ from .state import (
     HedgeDelayState,
 )
 from .store import (
+    DEFAULT_MAX_STATE_ENTRIES,
     InMemoryCircuitBreakerStore,
     InMemoryLatencyDigestStore,
     InMemoryRateLimitStore,
@@ -45,6 +57,17 @@ from .store import (
 
 _StateKey = tuple[StrKey, StrKey | None]
 
+
+def _bulkhead_idle(state: AdaptiveBulkheadState) -> bool:
+    """A bulkhead is safe to evict only when it holds no permits and has no waiters.
+
+    Evicting a live bulkhead would recreate it empty on the next access, so its in-flight
+    calls go uncounted and concurrency control is reset — over-admitting past the limit.
+    """
+
+    return state.in_use == 0 and state.waiting == 0
+
+
 MetricsSink = Callable[[str, str, str | None], None]
 """Callback receiving every resilience event as ``(event, policy, route)``.
 
@@ -52,6 +75,40 @@ Unlike the tracing emitter, the sink is **not** gated behind tracing — attach
 one (e.g. via ``instrument_resilience``) to export breaker transitions and
 rejection counts as always-on metrics in production.
 """
+
+# ....................... #
+
+_BREAKER_FAILURE_KINDS = frozenset(
+    {ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT}
+)
+"""Kinds that mean the downstream is unreachable / unresponsive — a breaker *failure*."""
+
+_BREAKER_NEUTRAL_KINDS = frozenset(
+    {ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY}
+)
+"""Kinds the breaker ignores: throttling is backpressure and concurrency is contention —
+neither is a downstream *health* signal, so they are recorded as neither success nor failure."""
+
+
+def _classify_breaker_outcome(kind: ExceptionKind) -> bool | None:
+    """Classify a failed call for the circuit breaker by downstream **health**.
+
+    The breaker opens on an unhealthy *downstream*, which is a different question from
+    whether the error is retryable. Returns ``False`` for a failure (infrastructure /
+    timeout), ``None`` to not record the call at all (throttling / concurrency — backpressure
+    and contention, not health), and ``True`` for a success (any other error is caller-caused;
+    the downstream answered fine). Using retryability instead would wrongly trip the breaker
+    open on a downstream's ``429`` and count a timeout as a success.
+    """
+
+    if kind in _BREAKER_FAILURE_KINDS:
+        return False
+
+    if kind in _BREAKER_NEUTRAL_KINDS:
+        return None
+
+    return True
+
 
 # ....................... #
 
@@ -102,42 +159,86 @@ class InProcessResilienceExecutor:
     instead of one replica's). Only consulted when a policy sets
     ``AdaptiveBulkheadStrategy.latency_quantile``."""
 
+    max_state_entries: int = DEFAULT_MAX_STATE_ENTRIES
+    """LRU cap on this instance's per-``(policy, route)`` state maps — bounds memory when
+    ``route`` is high-cardinality (per-tenant, per-object). A budget/throttle/hedge entry is
+    safe to drop (recreated fresh on next access); the bulkhead maps evict **only idle**
+    entries (no permits held, no waiters), so eviction never resets live concurrency control.
+    The breaker and rate-limit *stores* have their own caps."""
+
     # ....................... #
 
-    _bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
-        factory=dict,
+    _bulkheads: BoundedLruMap[_StateKey, AdaptiveBulkheadState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, AdaptiveBulkheadState](
+                self.max_state_entries, evictable=_bulkhead_idle
+            ),
+            takes_self=True,
+        ),
     )
     """Fixed bulkhead state: the unified admission machinery with a constant
     limit (the AIMD controller is simply never consulted)."""
 
-    _adaptive_bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
-        factory=dict,
+    _adaptive_bulkheads: BoundedLruMap[_StateKey, AdaptiveBulkheadState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, AdaptiveBulkheadState](
+                self.max_state_entries, evictable=_bulkhead_idle
+            ),
+            takes_self=True,
+        ),
     )
     """Adaptive (AIMD) bulkhead state for the executor."""
 
-    _gradient_bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
-        factory=dict,
+    _gradient_bulkheads: BoundedLruMap[_StateKey, AdaptiveBulkheadState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, AdaptiveBulkheadState](
+                self.max_state_entries, evictable=_bulkhead_idle
+            ),
+            takes_self=True,
+        ),
     )
     """Delay-based (Gradient2) bulkhead state for the executor."""
 
-    _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
+    _budgets: BoundedLruMap[_StateKey, BudgetState] = attrs.field(
+        init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, BudgetState](self.max_state_entries),
+            takes_self=True,
+        ),
+    )
     """Budget state for the executor."""
 
-    _hedge_budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
+    _hedge_budgets: BoundedLruMap[_StateKey, BudgetState] = attrs.field(
+        init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, BudgetState](self.max_state_entries),
+            takes_self=True,
+        ),
+    )
     """Hedge budget state for the executor."""
 
-    _throttles: dict[_StateKey, AdaptiveThrottleState] = attrs.field(
-        factory=dict,
+    _throttles: BoundedLruMap[_StateKey, AdaptiveThrottleState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, AdaptiveThrottleState](
+                self.max_state_entries
+            ),
+            takes_self=True,
+        ),
     )
     """Adaptive client-throttle counters (requests/accepts per policy/route)."""
 
-    _hedge_delays: dict[_StateKey, HedgeDelayState] = attrs.field(
-        factory=dict,
+    _hedge_delays: BoundedLruMap[_StateKey, HedgeDelayState] = attrs.field(
         init=False,
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[_StateKey, HedgeDelayState](
+                self.max_state_entries
+            ),
+            takes_self=True,
+        ),
     )
     """Adaptive hedge-delay state (windowed P² quantile per policy/route)."""
 
@@ -594,7 +695,16 @@ class InProcessResilienceExecutor:
         route: StrKey | None,
     ) -> T:
         key = (pol.name, route)
-        allowed, transition = await self.breaker_store.admit(key, strat)
+
+        try:
+            allowed, transition = await self.breaker_store.admit(key, strat)
+
+        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
+            # Store unreachable (e.g. a distributed breaker's Redis is down):
+            # fail open by default so the breaker can't become the outage, or
+            # fail closed if the policy demands it.
+            self._on_store_unavailable("breaker_store_error", pol, route, error)
+            allowed, transition = True, None
 
         if transition == "half_open":
             self._emit("breaker_half_open", pol, route)
@@ -607,29 +717,21 @@ class InProcessResilienceExecutor:
             result = await inner()
 
         except CoreException as error:
-            ok = not exception_egress_policy(error.kind).retryable
-            self._breaker_outcome(
-                await self.breaker_store.record(key, strat, ok),
-                pol,
-                route,
-            )
+            # Classify by downstream health, not retryability: a throttle (429) or a
+            # concurrency conflict is not a breaker failure, and a timeout is not a success.
+            ok = _classify_breaker_outcome(error.kind)
+
+            if ok is not None:
+                await self._record_breaker_outcome(key, strat, ok, pol, route)
 
             raise
 
         except Exception:
-            self._breaker_outcome(
-                await self.breaker_store.record(key, strat, False),
-                pol,
-                route,
-            )
+            await self._record_breaker_outcome(key, strat, False, pol, route)
 
             raise
 
-        self._breaker_outcome(
-            await self.breaker_store.record(key, strat, True),
-            pol,
-            route,
-        )
+        await self._record_breaker_outcome(key, strat, True, pol, route)
 
         return result
 
@@ -684,7 +786,16 @@ class InProcessResilienceExecutor:
         pol: ResiliencePolicy,
         route: StrKey | None,
     ) -> T:
-        if not await self.rate_limit_store.try_acquire((pol.name, route), strat):
+        try:
+            acquired = await self.rate_limit_store.try_acquire((pol.name, route), strat)
+
+        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
+            # Store unreachable: fail open by default (don't let a down limiter
+            # store shed live traffic), or fail closed if the policy demands it.
+            self._on_store_unavailable("rate_limit_store_error", pol, route, error)
+            acquired = True
+
+        if not acquired:
             self._emit("rate_limit_reject", pol, route)
             raise exc.throttled(
                 f"Rate limit exceeded for policy {pol.name!r}",
@@ -719,6 +830,9 @@ class InProcessResilienceExecutor:
 
         finally:
             state.release()
+            # Reclaim any idle overshoot the LRU kept while every entry was live (oldest
+            # first, so this just-used state — now newest — survives).
+            self._bulkheads.prune()
 
     # ....................... #
 
@@ -788,6 +902,8 @@ class InProcessResilienceExecutor:
         if elapsed > 0.0:
             await self._adaptive_on_complete(state, strat, pol, route, elapsed)
 
+        # Reclaim idle overshoot after the AIMD update (oldest first; this state is newest).
+        self._adaptive_bulkheads.prune()
         return result
 
     # ....................... #
@@ -861,6 +977,8 @@ class InProcessResilienceExecutor:
         ):
             self._emit("bulkhead_backoff", pol, route)
 
+        # Reclaim idle overshoot after the gradient update (oldest first; this state is newest).
+        self._gradient_bulkheads.prune()
         return result
 
     # ....................... #
@@ -876,6 +994,58 @@ class InProcessResilienceExecutor:
 
         elif transition == "closed":
             self._emit("breaker_close", pol, route)
+
+    # ....................... #
+
+    def _on_store_unavailable(
+        self,
+        event: str,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+        error: Exception,
+    ) -> None:
+        """Handle a breaker/rate-limit *store* failure on the admission path.
+
+        Emits *event* as an always-on metric, then honours the policy's
+        :attr:`ResiliencePolicy.fail_open_on_store_error`: returns (the caller
+        admits the call — the resilience layer never becomes the outage) when
+        failing open, or raises a retryable ``infrastructure`` error when failing
+        closed. A store outage is never allowed to surface as an opaque 500.
+        """
+
+        self._emit(event, pol, route)
+
+        if not pol.fail_open_on_store_error:
+            raise exc.infrastructure(
+                f"Resilience store unavailable for policy {pol.name!r}",
+                code="resilience_store_unavailable",
+            ) from error
+
+    # ....................... #
+
+    async def _record_breaker_outcome(
+        self,
+        key: _StateKey,
+        strat: CircuitBreakerStrategy,
+        ok: bool,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> None:
+        """Record a breaker outcome, swallowing a store failure.
+
+        Recording is bookkeeping: a store error here must never turn a
+        successful call into a failure, nor mask the in-flight domain error on
+        the failure paths. The failure is surfaced as a metric only.
+        """
+
+        try:
+            transition = await self.breaker_store.record(key, strat, ok)
+
+        except Exception:
+            self._emit("breaker_store_error", pol, route)
+            return
+
+        self._breaker_outcome(transition, pol, route)
 
     # ....................... #
 

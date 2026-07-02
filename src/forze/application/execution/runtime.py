@@ -1,6 +1,6 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from datetime import timedelta
 from enum import StrEnum
 from typing import AsyncGenerator, final
@@ -9,7 +9,13 @@ import attrs
 
 from forze.application._logger import logger
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import CpuExecutor, RuntimeVar, bind_cpu_executor
+from forze.base.primitives import (
+    CpuExecutor,
+    RuntimeVar,
+    ThreadPoolCpuExecutor,
+    bind_cpu_executor,
+    cpu_executor_bound,
+)
 
 from .context import ExecutionContext
 from .deps import FrozenDepsRegistry
@@ -43,6 +49,20 @@ class DeploymentProfile(StrEnum):
     SINGLE_PROCESS = "single_process"
     FLEET = "fleet"
     SERVERLESS = "serverless"
+
+
+# ....................... #
+
+
+def _positive_cpu_workers(_instance: object, _attribute: object, value: int | None) -> None:
+    """Reject a non-positive ``cpu_workers`` at construction, not later on first offload."""
+
+    if value is not None and value < 1:
+        raise exc.configuration(
+            f"cpu_workers must be a positive integer when set (got {value!r}); "
+            "leave it None for default sizing.",
+            code="core.runtime.cpu_workers_invalid",
+        )
 
 
 # ....................... #
@@ -92,6 +112,18 @@ class ExecutionRuntime:
     never blocks shutdown indefinitely. No in-flight work exits immediately.
     """
 
+    shutdown_step_timeout: timedelta = timedelta(seconds=10)
+    """Bounded wait for each lifecycle shutdown hook during :meth:`shutdown`.
+
+    The drain window bounds in-flight *work*; this bounds the *teardown* that
+    follows it. Each shutdown hook (client ``close()``, broker flush, poller
+    stop) gets this long to finish; a hook that exceeds it is abandoned with a
+    logged error and teardown moves on to the next step — so one wedged hook
+    (a connection that will not drain, a flush that never returns) can never
+    hang process exit. Raise it for hooks with legitimately long flushes; a
+    very large value effectively restores unbounded teardown.
+    """
+
     cache_resolved_ports: bool = True
     """Memoize resolved configurable ports (document/search/cache/storage/... adapters)
     per scope, so each ``ctx.<x>.query(spec)`` reuses one gateway/adapter (and its codecs,
@@ -108,14 +140,24 @@ class ExecutionRuntime:
     """
 
     cpu_executor: CpuExecutor | None = None
-    """Optional CPU-offload executor (see :func:`~forze.base.primitives.run_cpu`).
+    """CPU-offload executor to bind for this scope (see :func:`~forze.base.primitives.run_cpu`).
 
-    ``None`` (default) uses the process-wide default pool — zero config, cleaned up
-    at interpreter exit. Pass a ``ThreadPoolCpuExecutor(max_workers=…)`` to size the
-    pool ``run_cpu`` uses within this scope: it is bound as the ambient executor for
-    the scope's startup, body, and shutdown. The runtime does **not** close it — the
-    caller owns its lifecycle (close it yourself, or let it clean up at process exit;
-    register a shutdown hook to drain it on teardown).
+    ``None`` (default): unless an executor is already bound in the surrounding context,
+    the runtime creates a scope-lifetime :class:`ThreadPoolCpuExecutor`, binds it for
+    startup/body/shutdown, and **closes it on scope exit** — a bounded pool this runtime
+    owns and releases with the rest of its resources, not a shared process-global one
+    (size it with :attr:`cpu_workers`). Pass an executor to inject your own instead; the
+    runtime then binds but never closes it (you own its lifecycle). An executor already
+    bound around the scope (e.g. a simulation's) is always respected, never overridden;
+    with no runtime scope active at all, ``run_cpu`` runs inline.
+    """
+
+    cpu_workers: int | None = attrs.field(default=None, validator=_positive_cpu_workers)
+    """Worker count for the runtime-owned CPU pool (ignored when :attr:`cpu_executor` is set).
+
+    ``None`` uses the default sizing (``min(32, os.cpu_count() + 4)``), letting you size the
+    pool without constructing and owning a :class:`ThreadPoolCpuExecutor` yourself. Must be a
+    positive integer when set (validated at construction).
     """
 
     # ....................... #
@@ -245,8 +287,10 @@ class ExecutionRuntime:
         bounded window to finish before lifecycle teardown closes the clients
         they depend on. A drain-timeout expiry is logged and shutdown proceeds.
 
-        Shutdown runs in reverse wave order. Context is reset in a
-        ``finally`` block so it is cleared even if shutdown raises.
+        Shutdown runs in reverse wave order, each hook bounded by
+        :attr:`shutdown_step_timeout` so a wedged hook cannot hang process
+        exit. Context is reset in a ``finally`` block so it is cleared even if
+        shutdown raises.
 
         Only steps whose startup completed and that were not already shut down
         (e.g. rolled back after a partial startup failure) are shut down, so each
@@ -259,14 +303,29 @@ class ExecutionRuntime:
             ctx = self.__ctx.get()
 
             if not await ctx.drain_gate.drain(self.drain_timeout.total_seconds()):
+                # Drain expired with work still running. Cancel the stragglers and let them
+                # unwind (rollback, release connections) *before* lifecycle teardown closes
+                # the clients they hold — otherwise they run on against closing resources.
+                cancelled = await ctx.drain_gate.cancel_in_flight(
+                    grace=self.shutdown_step_timeout.total_seconds()
+                )
                 logger.warning(
-                    "Drain timeout (%.1fs) expired with %d operation(s) still "
-                    "in flight; proceeding with lifecycle shutdown",
+                    "Drain timeout (%.1fs) expired with %d operation(s) still in flight; "
+                    "cancelled them before lifecycle shutdown",
                     self.drain_timeout.total_seconds(),
-                    ctx.drain_gate.in_flight,
+                    cancelled,
                 )
 
-            await self.lifecycle.shutdown(ctx)
+            # Cancel detached background work (e.g. document-cache early refreshes) before
+            # teardown closes the clients it uses — a straggler would otherwise run on
+            # against a closing cache/gateway. Always runs, drain-timeout or not.
+            await ctx.background_owners.close(
+                grace=self.shutdown_step_timeout.total_seconds()
+            )
+
+            await self.lifecycle.shutdown(
+                ctx, step_timeout=self.shutdown_step_timeout.total_seconds()
+            )
 
         finally:
             self.__ctx.reset()
@@ -286,22 +345,40 @@ class ExecutionRuntime:
         logger.info("Entering execution runtime scope")
         self.create_context()
 
-        # Bind the scope's CPU-offload executor (if any) for startup, body, and
-        # shutdown. The caller owns its lifecycle — the runtime never closes it.
-        bind = (
-            bind_cpu_executor(self.cpu_executor)
-            if self.cpu_executor is not None
-            else nullcontext()
-        )
+        # Bind a CPU-offload executor for startup, body, and shutdown, by priority:
+        #   1. an injected executor     -> bound, caller-owned (never closed here);
+        #   2. one already bound upstack -> deferred to, never overridden (e.g. a
+        #      simulation's inline executor — overriding it would break determinism);
+        #   3. nothing bound            -> a scope-lifetime pool this runtime owns,
+        #      created now and closed on exit (no shared process-global pool).
+        owned_pool: ThreadPoolCpuExecutor | None = None
+        bind: AbstractContextManager[None]
 
-        with bind:
-            try:
-                await self.startup()
+        if self.cpu_executor is not None:
+            bind = bind_cpu_executor(self.cpu_executor)
+        elif cpu_executor_bound():
+            bind = nullcontext()
+        else:
+            owned_pool = (
+                ThreadPoolCpuExecutor(max_workers=self.cpu_workers)
+                if self.cpu_workers is not None
+                else ThreadPoolCpuExecutor()
+            )
+            bind = bind_cpu_executor(owned_pool)
 
-                yield
+        try:
+            with bind:
+                try:
+                    await self.startup()
 
-            finally:
-                logger.info("Leaving execution runtime scope")
-                await self.shutdown()
+                    yield
+
+                finally:
+                    logger.info("Leaving execution runtime scope")
+                    await self.shutdown()
+
+        finally:
+            if owned_pool is not None:
+                owned_pool.close()
 
         logger.info("Execution runtime scope exited")

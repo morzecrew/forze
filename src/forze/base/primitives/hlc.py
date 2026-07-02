@@ -230,3 +230,22 @@ class HybridLogicalClock:
         self._last = issued
 
         return issued
+
+    # ....................... #
+
+    def resume(self, observed: HlcTimestamp) -> None:
+        """Raise this clock's floor to at least *observed* (monotonic; never lowers).
+
+        Seeds a freshly built clock from a persisted high-water mark at startup so it
+        never re-issues a timestamp at or below one it emitted before a restart:
+        :meth:`now` and :meth:`update` both build on :attr:`last`, which a new instance
+        otherwise resets to ``(0, 0)`` — losing any physical component a peer merge or a
+        since-corrected wall clock had carried it to, so a restart could issue below an
+        already-emitted (and possibly relayed) stamp. Unlike :meth:`update` it issues
+        nothing and applies no drift guard: the mark is this node's own trusted prior
+        emission, not an untrusted remote timestamp. An older or equal *observed* is a
+        no-op, so it is safe to call repeatedly.
+        """
+
+        if observed > self._last:
+            self._last = observed

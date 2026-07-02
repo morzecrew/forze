@@ -180,9 +180,29 @@ async def run_lifecycle_startup(
 # ....................... #
 
 
+def _drop_pending_result(task: "asyncio.Task[None]") -> None:
+    """Retrieve an abandoned shutdown task's eventual outcome.
+
+    A hook abandoned on timeout may keep running (if it ignores cancellation); attaching
+    this callback retrieves its result/exception when it finally settles, so asyncio does
+    not warn about an unretrieved exception.
+    """
+
+    def _drain(finished: "asyncio.Future[None]") -> None:
+        if not finished.cancelled():
+            finished.exception()
+
+    task.add_done_callback(_drain)
+
+
+# ....................... #
+
+
 async def _run_shutdown_step_logged(
     step: LifecycleStep,
     ctx: "ExecutionContext",
+    *,
+    step_timeout: float | None = None,
 ) -> None:
     if step.id not in ctx.lifecycle_started:
         logger.trace(
@@ -195,11 +215,51 @@ async def _run_shutdown_step_logged(
     # it fails.
     ctx.lifecycle_started.discard(step.id)
 
-    try:
-        await _run_shutdown_step(step, ctx)
+    if step_timeout is None:
+        # Unbounded (direct callers / tests): swallow-and-log, never a timeout.
+        try:
+            await _run_shutdown_step(step, ctx)
 
-    except Exception:
-        logger.exception("Lifecycle shutdown failed for '%s'", step.id)
+        except Exception:
+            logger.exception("Lifecycle shutdown failed for '%s'", step.id)
+
+        return
+
+    # Bounded teardown: run the hook as a task and abandon it if it exceeds *step_timeout*
+    # so a single wedged hook (a broker flush that never returns, a connection that will not
+    # drain) can never block teardown of the remaining steps — and thus process exit. Run
+    # detached and move on rather than ``asyncio.timeout``: a hook that swallows the
+    # cancellation would still block the latter, whereas not awaiting the abandoned task
+    # guarantees progress (it leaks the task, acceptable during shutdown).
+    task = asyncio.ensure_future(_run_shutdown_step(step, ctx))
+
+    try:
+        done, _pending = await asyncio.wait({task}, timeout=step_timeout)
+
+    except asyncio.CancelledError:
+        # Our wait was cancelled: don't leave the hook running detached — cancel it,
+        # drain its result so it can't warn on GC, then propagate the cancellation.
+        task.cancel()
+        _drop_pending_result(task)
+        raise
+
+    if task not in done:
+        task.cancel()  # best-effort; the hook may ignore it
+        _drop_pending_result(task)
+        logger.error(
+            "Lifecycle shutdown hook '%s' exceeded its %.1fs timeout; "
+            "abandoning it and continuing teardown",
+            step.id,
+            step_timeout,
+        )
+        return
+
+    error = task.exception()
+
+    if error is not None:
+        logger.error(
+            "Lifecycle shutdown failed for '%s'", step.id, exc_info=error
+        )
 
 
 # ....................... #
@@ -210,8 +270,14 @@ async def run_lifecycle_shutdown(
     ctx: "ExecutionContext",
     *,
     concurrent: bool,
+    step_timeout: float | None = None,
 ) -> None:
-    """Run shutdown hooks in reverse wave order."""
+    """Run shutdown hooks in reverse wave order.
+
+    Each step is bounded by *step_timeout* seconds when set (``None`` leaves it
+    unbounded); a hook that exceeds it is abandoned and logged so teardown of
+    the remaining steps is never blocked by one wedged hook.
+    """
 
     if graph.is_empty():
         return
@@ -232,7 +298,9 @@ async def run_lifecycle_shutdown(
             # gather results carry no step errors to inspect here.
             await asyncio.gather(
                 *(
-                    _run_shutdown_step_logged(graph.steps[step_id], ctx)
+                    _run_shutdown_step_logged(
+                        graph.steps[step_id], ctx, step_timeout=step_timeout
+                    )
                     for step_id in wave
                 ),
                 return_exceptions=True,
@@ -245,6 +313,6 @@ async def run_lifecycle_shutdown(
 
     await run_graph_waves_reverse(
         graph,
-        lambda step: _run_shutdown_step_logged(step, ctx),
+        lambda step: _run_shutdown_step_logged(step, ctx, step_timeout=step_timeout),
         concurrent=False,
     )

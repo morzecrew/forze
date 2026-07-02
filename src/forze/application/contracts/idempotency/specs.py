@@ -13,8 +13,15 @@ from ..base import BaseSpec
 class IdempotencySpec(BaseSpec):
     """Specification for idempotency behavior."""
 
-    ttl: timedelta = timedelta(seconds=30)
-    """Time-to-live for the idempotency snapshot."""
+    ttl: timedelta = timedelta(hours=24)
+    """Dedup window: how long a claim / cached result is retained for replay (default 24h).
+
+    A duplicate that arrives after the TTL **re-executes**, so the TTL must be at least the
+    operation's maximum retry / redelivery horizon. For at-least-once queue consumers that
+    can redeliver minutes or hours later, set it accordingly. The previous 30s default was
+    safe only for immediate synchronous retries and silently let the guarantee lapse for
+    async workloads; 24h covers the common cases, but a long-delay queue still needs an
+    explicit, larger value."""
 
     encrypt_result: bool = False
     """Seal the cached operation **result** at rest (default ``False``).
