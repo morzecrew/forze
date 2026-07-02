@@ -70,6 +70,22 @@ def test_merge_ids_fuses_top_ranks_highest() -> None:
     assert {(m, i) for m, i, _ in merged[:2]} == {("a", "x"), ("b", "x")}
 
 
+def test_order_federated_secondary_sorts_handles_none_values() -> None:
+    # Equal scores so the sort field fully orders; one item's field is None (optional/missing).
+    merged = [("a", "1", 0.5), ("b", "2", 0.5), ("c", "3", 0.5)]
+    values = {("a", "1"): "x", ("b", "2"): None, ("c", "3"): "y"}
+
+    SearchResultSnapshot.order_federated_secondary_sorts(
+        merged,
+        {"title": "asc"},
+        value_of=lambda it, field: values[(it[0], it[1])],
+        score_of=lambda it: -it[2],
+    )
+
+    # No TypeError comparing None with str; None sorts last ascending.
+    assert [m[1] for m in merged] == ["1", "3", "2"]
+
+
 def test_merge_ids_skips_nonpositive_weight() -> None:
     merged = SearchResultSnapshot.weighted_rrf_merge_ids(
         leg_rows=[("a", ["x"], 0.0), ("b", ["y"], 1.0)],

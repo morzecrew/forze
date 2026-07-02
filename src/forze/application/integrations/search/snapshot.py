@@ -668,7 +668,12 @@ class SearchResultSnapshot:
             for field, direction in reversed(list(sorts.items())):
 
                 def _key(item: Item, field: str = field) -> Any:
-                    return value_of(item, field)
+                    value = value_of(item, field)
+                    # Keep a ``None`` (optional/missing field) sortable: the leading flag groups
+                    # None apart from real values so ``sort`` never applies ``<`` across the two
+                    # (and ``None == None`` short-circuits within the group). None sorts last
+                    # ascending — consistent across the full-fetch and thin paths.
+                    return (value is None, value)
 
                 merged.sort(key=_key, reverse=(direction == "desc"))
 

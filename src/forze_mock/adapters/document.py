@@ -605,15 +605,17 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         filtered = [doc for doc in docs if _match_filters(doc, filters)]
 
         pagination = pagination or {}
-        limit = pagination.get("limit")
-        offset = pagination.get("offset")
+        limit_raw = pagination.get("limit")
+        # Normalize to ints up front (callers may pass string limit/offset) so the slicing
+        # arithmetic in ``_page_window`` is always numeric.
+        limit = int(limit_raw) if limit_raw is not None else None
+        offset = int(pagination.get("offset") or 0)
 
         def _page_window(ordered: list[Any]) -> list[Any]:
             # Slice to the requested page *before* projecting/decoding, so only the page's rows
             # are materialized — matching the real adapters' late materialization (the DB
             # applies OFFSET/LIMIT before hydration) rather than decoding the whole match set.
-            start = offset or 0
-            return ordered[start : start + limit] if limit is not None else ordered[start:]
+            return ordered[offset : offset + limit] if limit is not None else ordered[offset:]
 
         rows: list[Any]
 

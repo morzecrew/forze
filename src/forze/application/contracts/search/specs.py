@@ -721,10 +721,13 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
     the thin candidate keys plus one page of full hits. The trade-off is one extra
     (page-sized) round trip per member, so it is opt-in.
 
-    Falls back to the full-fetch path for a search that requests highlights or a
-    secondary ``sorts`` (both need the full leg hits up front), writes a result
-    snapshot (the snapshot stores full records for leg-free replay), or whose member
-    read models lack an ``id`` field. Default ``False`` keeps the previous behaviour."""
+    A secondary ``sorts`` stays on the thin path too — the sort fields (including dotted
+    paths into nested sub-models) are projected alongside ``id`` and applied as a tie-break
+    under the fused score — as long as every sort key's **root** field exists on all members;
+    otherwise it falls back. Falls back to the full-fetch path for a search that requests
+    highlights (needs the full leg hits up front), writes a result snapshot (the snapshot
+    stores full records for leg-free replay), or whose member read models lack an ``id``
+    field. Default ``False`` keeps the previous behaviour."""
 
     # ....................... #
 
