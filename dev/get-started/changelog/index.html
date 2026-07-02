@@ -7258,6 +7258,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Fencing-token capability for distributed locks</strong> — <code>DistributedLockSpec(requires_fencing_token=True)</code> fails closed at resolve against a backend not reporting <code>FencingAware</code> / <code>fencing_tokens</code> (Redis and mock support it; default <code>False</code>).</p>
 </li>
+<li>
+<p><strong>Wiring check (<code>check_wiring</code>)</strong> — opt-in dry-run resolving every registered operation against a throwaway context, so a missing/misrouted dependency surfaces at test/startup instead of first live call; one resolve covers the handler, hooks, tx-scope stages and saga targets (and the QUERY read-only bind). <code>WiringReport.raise_if_failed()</code>; <code>check_facade_factory_wiring</code> for facade factories. Diagnostic only (lifecycle steps are validated by opening a scope).</p>
+</li>
 </ul>
 <p><strong>Querying &amp; read models</strong></p>
 <ul>
@@ -7286,10 +7289,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Search</strong></p>
 <ul>
 <li>
-<p><strong>Facets &amp; highlights</strong> — term facet distributions and per-hit highlights via search options, declared on the spec and returned as optional page sidecars; mock, Meilisearch, Postgres single-index (PGroonga/FTS) and hub over offset/cursor, plus per-hit highlights on federated. Unsupported fields/topologies fail closed; the generated search routes carry them.</p>
+<p><strong>Bounded-memory result streaming</strong> — <code>search_stream</code> / <code>project_search_stream</code> / <code>select_search_stream</code> on <code>SearchQueryPort</code> iterate the whole ranked set in keyset chunks (<code>chunk_size=500</code>, no total count) for large exports; peak memory is one chunk. Capability-gated by <code>SearchCapabilities.supports_stream</code> (<code>validate_stream_supported</code>): Postgres FTS/PGroonga and Mongo text/Atlas stream; Meilisearch, vector (top-k), and hub (<code>per_leg_limit</code>-bounded) fail closed. Filter-only exports use the document port's <code>find_stream</code>; a frozen order uses a snapshot.</p>
 </li>
 <li>
-<p><strong><code>FederatedSearchSpec(thin_merge=True)</code></strong> — late-materialized <abbr title="Reciprocal Rank Fusion">RRF</abbr> merge (fetch <code>id</code> per leg, fuse on <code>(member, id)</code>, hydrate one page); Postgres and Meilisearch, opt-in, results identical to the full path.</p>
+<p><strong>Vector &amp; hybrid search as a declared concept</strong> — <code>SearchCapabilities</code> (<code>supports_vector</code> / <code>hybrid_fusion</code> / <code>filtered_ann</code> / <code>auto_embed</code>) on <code>SearchQueryPort.search_capabilities</code> mirrors <code>QueryCapabilities</code>: an unsupported retrieval feature fails closed (<code>validate_vector_supported</code> / <code>validate_fusion_supported</code>, <code>query_feature_unsupported</code>) instead of an empty page. Pages gain an optional index-aligned <code>scores</code> sidecar (fused <abbr title="Reciprocal Rank Fusion">RRF</abbr> score on federated; engine relevance/similarity on single-index and hub — previously discarded; <code>None</code> for a filter-only browse). <code>MultiSourceSearchOptions.fusion</code> (<code>rrf</code> default / <code>weighted</code>) is capability-gated (mock serves both; Postgres/Meilisearch reject <code>weighted</code>). <code>filtered_ann</code> declares recall (<code>postfilter</code> pgvector, <code>prefilter</code> Atlas); <code>max_candidates</code> is the portable recall dial.</p>
+</li>
+<li>
+<p><strong>Facets &amp; highlights</strong> — term facet distributions and per-hit highlights via search options, declared on the spec, returned as optional page sidecars; mock, Meilisearch, Postgres single-index (PGroonga/FTS) and hub over offset/cursor (<code>sql</code>/<code>parallel</code>), plus federated highlights; generated routes carry them. Unsupported fields/topologies fail closed. In-process highlighting (mock, hub) resolves nested (dotted) fields; flat-field engines fail closed on a dotted field.</p>
+</li>
+<li>
+<p><strong><code>FederatedSearchSpec(thin_merge=True)</code></strong> — late-materialized <abbr title="Reciprocal Rank Fusion">RRF</abbr> merge (fetch <code>id</code> per leg, fuse on <code>(member, id)</code>, hydrate one page); Postgres and Meilisearch, opt-in, results identical to the full path. A member-shared secondary <code>sort</code> (incl. dotted paths) stays on the thin path; a sort whose root field is absent on a member falls back to full-fetch.</p>
 </li>
 <li>
 <p><strong><code>SearchSpec(max_results=…)</code> / <code>SearchSpec(highlight_scan_limit=…)</code></strong> — cap an unbounded offset search (Postgres/Mongo/Meilisearch) and bound the PGroonga highlight text scan; both opt-in, <code>None</code> keeps prior behaviour.</p>
@@ -7428,7 +7437,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Lazy transaction acquisition, default for Postgres/Mongo/Firestore</strong> — a tx scope defers connection checkout to the first operation (no idle-in-transaction); a connect failure surfaces there. Opt out <code>lazy_transaction=False</code>.</p>
 </li>
 <li>
-<p><strong>Runtime owns its CPU-offload pool; no shared import-time global</strong> — an <code>ExecutionRuntime</code> scope binds a scope-lifetime <code>ThreadPoolCpuExecutor</code> it <strong>owns and closes on exit</strong> (sized via <code>cpu_workers</code>) instead of leaning on one process-global pool created at import; an injected <code>cpu_executor</code> stays caller-owned and an executor already bound around the scope (e.g. a simulation's) is respected. With nothing bound at all, <code>run_cpu</code> runs inline (<code>InlineCpuExecutor</code>) — no hidden thread pool is created implicitly.</p>
+<p><strong>Runtime owns its CPU-offload pool; no import-time global</strong> — an <code>ExecutionRuntime</code> scope binds and closes a scope-lifetime <code>ThreadPoolCpuExecutor</code> (sized via <code>cpu_workers</code>) instead of a process-global; an injected <code>cpu_executor</code> stays caller-owned, an already-bound executor (e.g. a simulation's) is respected, and with nothing bound <code>run_cpu</code> runs inline (<code>InlineCpuExecutor</code>).</p>
 </li>
 <li>
 <p><strong>Search snapshots stream their pool</strong> (peak = one chunk) and expose <code>expires_at</code>; Postgres hub (and similar single-index) search defers its heavy projection to per-page hydration.</p>
@@ -7451,7 +7460,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Reliability hardening — durability, shutdown, resilience</strong></p>
 <ul>
 <li>
-<p><strong>Deadlines enforced at the database driver</strong> — a bound deadline sets Postgres <code>SET LOCAL statement_timeout</code> (in-tx) and wraps each Mongo op in <code>pymongo.timeout</code> (CSOT), remaining budget + a small grace, tighten-only. A loose backstop: <code>asyncio.timeout</code> at the boundary still fires first and classifies the expiry, so the server cancels the query and returns the connection clean. <code>push_invocation_deadline</code> kill switch. (PG autocommit statements stay asyncio-only.)</p>
+<p><strong>Deadlines enforced at the database driver</strong> — a bound deadline sets Postgres <code>SET LOCAL statement_timeout</code> (in-tx) and wraps each Mongo op in <code>pymongo.timeout</code> (CSOT), remaining-budget + grace, tighten-only; a loose <code>asyncio.timeout</code> backstop still fires first so the server cancels the query and returns the connection clean. <code>push_invocation_deadline</code> kill switch. (PG autocommit stays asyncio-only.)</p>
 </li>
 <li>
 <p><strong>A deadline that tears a transaction commit is non-retryable</strong> — surfaces <code>internal</code> (<code>commit_ambiguous</code>) rather than retryable <code>deadline_exceeded</code>, so an at-least-once caller can't retry into a duplicate; a deadline during the body still rolls back and stays retryable.</p>
@@ -7463,7 +7472,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Resilience hardening</strong> — the breaker classifies by downstream <em>health</em> (a <code>429</code> / <abbr title="Optimistic Concurrency Control">OCC</abbr> conflict no longer trips it; a timeout now counts as a failure); per-<code>(policy, route)</code> state maps are LRU-bounded (<code>max_state_entries</code> / <code>max_entries</code>, default 4096); a blanket policy retrying an <em>ambiguous</em> failure on every method is refused at build (<code>resilience.blanket_write_retry</code>); a distributed resilience-store outage fails open by default (<code>ResiliencePolicy.fail_open_on_store_error</code>), and a <code>record</code> failure is swallowed.</p>
 </li>
 <li>
-<p><strong>Idempotency</strong> — dedup TTL default 30s → 24h to cover the redelivery horizon; this retains records far longer and so materially raises a Redis-backed store's memory footprint at scale. A store failure recording the result <em>after</em> the business commit no longer fails the succeeded operation. The contract is at-least-once-with-dedup, not exactly-once.</p>
+<p><strong>Idempotency</strong> — dedup TTL default 30s → 24h to cover the redelivery horizon (materially raises a Redis store's footprint at scale); a store failure recording the result <em>after</em> the business commit no longer fails the succeeded op. At-least-once-with-dedup, not exactly-once.</p>
 </li>
 <li>
 <p><strong>Batch field decryption no longer stalls the event loop</strong> — a ≥64-row encrypted result set offloads to <code>run_cpu_map</code> against a thread-safe snapshot (<code>EncryptingModelCodec.freeze_for_decrypt</code>); small batches stay inline, output byte-identical.</p>
@@ -7484,7 +7493,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Unbounded in-process caches gain bounded defaults</strong> — Postgres introspector filtered-estimate lane (<code>max_filtered_estimate_entries=2048</code>), Redis breaker local cache (<code>max_cache_entries=4096</code>), document-cache refresh fan-out (<code>max_inflight_refresh=64</code>), L1 live-store registry weak-ref sweep. All with escape hatches.</p>
 </li>
 <li>
-<p><strong>More read/list paths stream</strong> — GCS <code>list_objects</code> page-by-page (exact total kept); realtime mailbox <code>trim</code> projects only <code>id</code>; Postgres hub <code>execution="parallel"</code> scans only matched hub rows; Postgres <code>update_matching</code> honours <code>batch_size</code> (keyset-pages instead of one unbounded UPDATE).</p>
+<p><strong>More read/list paths stream</strong> — GCS <code>list_objects</code> page-by-page (exact total kept); realtime mailbox <code>trim</code> projects only <code>id</code>; Postgres hub <code>execution="parallel"</code> late-materializes (thin id/sort/key rows, page hydrated by id) and bounds per-leg concurrency with the pool semaphore; Postgres <code>update_matching</code> honours <code>batch_size</code> (keyset pages, not one unbounded UPDATE).</p>
 </li>
 <li>
 <p><strong>Streamed offline-mailbox replay</strong> — <code>RealtimeMailbox.replay_since</code> (<abbr title="Hybrid Logical Clock">HLC</abbr> keyset, <code>replay_page_size=100</code>) emits page-by-page instead of loading a device's whole backlog.</p>

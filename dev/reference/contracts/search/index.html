@@ -4560,6 +4560,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#streaming-exports" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming exports
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#facets-and-highlights" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5368,6 +5379,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#streaming-exports" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming exports
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#facets-and-highlights" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5662,6 +5684,10 @@ argument; everything else mirrors the document side:</p>
 <td><code>select_search</code> / <code>select_search_page</code> / <code>select_search_cursor</code> <code>(return_type, query, …)</code></td>
 <td>pages of <code>T</code></td>
 </tr>
+<tr>
+<td><code>search_stream</code> / <code>project_search_stream</code> / <code>select_search_stream</code> <code>(query, …, chunk_size=500)</code></td>
+<td><code>AsyncGenerator</code> of chunks</td>
+</tr>
 </tbody>
 </table>
 <p><code>query</code> is a string (or a sequence of strings); <code>filters</code> and <code>sorts</code> use the
@@ -5671,6 +5697,24 @@ policy (<code>search_count</code>), an advisory candidate cap (<code>max_candida
 highlight requests below. Hub and federated searches resolve to a <code>MultiSourceSearchOptions</code>
 port that also carries member selection (<code>member_weights</code> / <code>members</code>) and a post-merge cap
 (<code>merge_candidates</code>); passing those keys to a single-index <code>query(...)</code> port is a type error.</p>
+<h3 id="streaming-exports">Streaming exports<a class="headerlink" href="#streaming-exports" title="Permanent link">&para;</a></h3>
+<p><code>search_stream</code> (and the <code>project_</code> / <code>select_</code> variants) iterate the <strong>whole</strong> matching set
+in bounded-memory keyset chunks — peak memory is one chunk, there is no total count. Use it to
+export a ranked result set without loading it all at once:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">search</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span><span class="o">.</span><span class="n">search_stream</span><span class="p">(</span><span class="s2">&quot;annual report&quot;</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">1000</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">write_rows</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+</code></pre></div>
+<p>Streaming is capability-gated (<code>spec</code>'s adapter must advertise <code>SearchCapabilities.supports_stream</code>):
+Postgres FTS / PGroonga and Mongo text / Atlas stream; Meilisearch (offset-only), the top-k
+vector engines, and hub search (each leg is capped at <code>per_leg_limit</code>, so a full walk isn't
+guaranteed) <strong>refuse</strong> rather than truncate. Pick the right export tool for the shape:</p>
+<ul>
+<li><strong>Ranked live export</strong> → <code>search_stream</code>. A concurrent write may shift a hit between chunks.</li>
+<li><strong>Filter-only export</strong> (no query terms) → the <a href="../document/">document port</a>'s <code>find_stream</code> —
+  it's a plain keyset read with no ranking overhead (server-side cursor on Postgres).</li>
+<li><strong>Stable / point-in-time / Meilisearch / very deep</strong> → a <strong>result snapshot</strong> (build the
+  ordered-id pool once, page it by id); works where a live cursor cannot.</li>
+</ul>
 <h3 id="facets-and-highlights">Facets and highlights<a class="headerlink" href="#facets-and-highlights" title="Permanent link">&para;</a></h3>
 <p>A query requests term facet distributions with <code>options={"facets": [...]}</code> and per-hit
 match snippets with <code>options={"highlight": True}</code> (or a <code>HighlightOptions</code> mapping to narrow
