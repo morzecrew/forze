@@ -24,7 +24,6 @@ from forze.application.contracts.search import (
     SearchQueryPort,
     SearchResultSnapshotOptions,
     facet_size_of,
-    reject_unsupported_facets,
     resolve_facet_fields,
 )
 from forze.application.integrations.search import SearchResultSnapshot
@@ -119,11 +118,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
         )
 
         if plan.use_parallel:
-            # Parallel execution merges per-leg results in Python; faceting the merged,
-            # deduped set there is deferred, so facets fail closed. Highlights still apply.
-            reject_unsupported_facets(
-                options, backend="Postgres hub (parallel execution)"
-            )
+            # Parallel execution merges per-leg results in Python; facets reuse the ``sql``
+            # companion GROUP BY (identical distribution across modes), highlights are marked
+            # on the returned hits.
+            facet_fields = resolve_facet_fields(self.hub_spec, options)
             parallel_page = await self._hub_parallel_offset_search(
                 plan=plan,
                 query=query,
@@ -138,6 +136,15 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 hub_spec=self.hub_spec,
                 result_snapshot=self.result_snapshot,
             )
+            if facet_fields:
+                facets = await self._hub_parallel_facets(
+                    plan,
+                    filters=filters,
+                    combo_limit=plan.resolved_combo if plan.do_legs else None,
+                    fields=facet_fields,
+                    size=facet_size_of(options),
+                )
+                parallel_page = attrs.evolve(parallel_page, facets=facets)
             return attach_hub_highlights(
                 parallel_page,
                 hub_spec=self.hub_spec,

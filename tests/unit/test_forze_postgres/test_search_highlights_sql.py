@@ -7,8 +7,10 @@ so a lowercase query silently dropped mixed-case non-ASCII (e.g. Cyrillic) highl
 
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres.adapters.search._highlights import (
     build_fts_highlight,
     build_pgroonga_highlight,
@@ -124,6 +126,43 @@ def test_fts_highlight_still_uses_ts_headline() -> None:
     assert select is not None
     assert select.engine == "fts"
     assert "ts_headline" in _rendered(select)
+
+
+class _Sub(BaseModel):
+    title: str
+
+
+class _Nested(BaseModel):
+    id: int
+    name: str
+    contract: _Sub
+
+
+def _nested_spec() -> Any:
+    from forze.application.contracts.search import SearchSpec
+
+    # ``contract.title`` is a legal searchable + highlightable field; the single-index engine
+    # marks flat columns only, so requesting it must fail closed (not build broken SQL).
+    return SearchSpec(
+        name="orgs",
+        model_type=_Nested,
+        fields=["name", "contract.title"],
+        highlightable_fields=frozenset({"contract.title"}),
+    )
+
+
+@pytest.mark.parametrize("build", [build_fts_highlight, build_pgroonga_highlight])
+def test_nested_highlight_field_rejected(build: Any) -> None:
+    with pytest.raises(CoreException) as ei:
+        build(
+            spec=_nested_spec(),
+            options={"highlight": {"fields": ["contract.title"]}},
+            terms=("beta",),
+            alias="t",
+        )
+
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert "contract.title" in str(ei.value)
 
 
 def test_pgroonga_highlight_none_when_not_requested() -> None:

@@ -163,20 +163,52 @@ async def test_hub_projected_search_fails_closed_on_unprojected_highlight_field(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_hub_parallel_highlights_work_but_facets_fail_closed(
+async def test_hub_parallel_facets_and_highlights(
     pg_client: PostgresClient,
 ) -> None:
     adapter = await _adapter(pg_client, execution="parallel")
 
-    # Highlights still apply in parallel execution (marked on the returned hits).
     page = await adapter.search_page(
-        "book", options={"highlight": {"fields": ["name"]}}
+        "book", options={"facets": ["category"], "highlight": {"fields": ["name"]}}
     )
+
+    # Facets now work in parallel execution (the same companion GROUP BY the sql path runs).
+    assert page.facets is not None
+    assert {b.value for b in page.facets["category"]} == {"books", "gear"}
+    assert dict((b.value, b.count) for b in page.facets["category"]) == {
+        "books": 2,
+        "gear": 1,
+    }
+    # Highlights still apply (marked on the returned hits).
     assert page.highlights is not None
     assert any("name" in hl for hl in page.highlights)
 
-    # Facets fail closed in parallel execution.
-    with pytest.raises(CoreException) as ei:
-        await adapter.search_page("book", options={"facets": ["category"]})
-    assert ei.value.kind is ExceptionKind.PRECONDITION
-    assert ei.value.code == "query_feature_unsupported"
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_hub_parallel_facets_match_sql(pg_client: PostgresClient) -> None:
+    """Parallel and sql execution return the same facet distribution (same companion query)."""
+    sql_adapter = await _adapter(pg_client, execution="sql")
+    par_adapter = await _adapter(pg_client, execution="parallel")
+
+    opts = {"facets": ["category"]}
+    sql_page = await sql_adapter.search_page("book", options=opts)
+    par_page = await par_adapter.search_page("book", options=opts)
+
+    assert sql_page.facets is not None and par_page.facets is not None
+    assert {(b.value, b.count) for b in sql_page.facets["category"]} == {
+        (b.value, b.count) for b in par_page.facets["category"]
+    }
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_hub_parallel_cursor_facets(pg_client: PostgresClient) -> None:
+    adapter = await _adapter(pg_client, execution="parallel")
+
+    page = await adapter.search_cursor(
+        "book", cursor={"limit": 5}, options={"facets": ["category"]}
+    )
+
+    assert page.facets is not None
+    assert {b.value for b in page.facets["category"]} == {"books", "gear"}

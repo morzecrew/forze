@@ -603,16 +603,30 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         docs = self._candidate_docs()
 
         filtered = [doc for doc in docs if _match_filters(doc, filters)]
+
+        pagination = pagination or {}
+        limit_raw = pagination.get("limit")
+        # Normalize to ints up front (callers may pass string limit/offset) so the slicing
+        # arithmetic in ``_page_window`` is always numeric.
+        limit = int(limit_raw) if limit_raw is not None else None
+        offset = int(pagination.get("offset") or 0)
+
+        def _page_window(ordered: list[Any]) -> list[Any]:
+            # Slice to the requested page *before* projecting/decoding, so only the page's rows
+            # are materialized — matching the real adapters' late materialization (the DB
+            # applies OFFSET/LIMIT before hydration) rather than decoding the whole match set.
+            return ordered[offset : offset + limit] if limit is not None else ordered[offset:]
+
         rows: list[Any]
 
         if aggregates is not None:
             aggregate_rows = _aggregate_docs(filtered, aggregates)
             total = len(aggregate_rows)
-            ordered_rows = _sort_docs(aggregate_rows, sorts)
+            page_rows = _page_window(_sort_docs(aggregate_rows, sorts))
             rows = (
-                default_model_codec(return_type).decode_mapping_many(ordered_rows)
+                default_model_codec(return_type).decode_mapping_many(page_rows)
                 if return_type is not None
-                else ordered_rows
+                else page_rows
             )
         else:
             validate_runtime_sort_fields(
@@ -623,15 +637,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 lenient=self.spec.resolved_lenient_read_fields,
             )
             total = len(filtered)
-            ordered_docs = _sort_docs(filtered, sorts)
+            page_docs = _page_window(_sort_docs(filtered, sorts))
             if return_type is not None:
-                projected = [
-                    self._to_read_or_projection(doc, return_fields)
-                    for doc in ordered_docs
-                ]
                 dict_rows: list[dict[str, Any]] = []
 
-                for row in projected:
+                for doc in page_docs:
+                    row = self._to_read_or_projection(doc, return_fields)
                     if isinstance(row, BaseModel):
                         dict_rows.append(row.model_dump(mode="python"))
                     else:
@@ -641,18 +652,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             else:
                 rows = [
                     self._to_read_or_projection(doc, return_fields)
-                    for doc in ordered_docs
+                    for doc in page_docs
                 ]
-
-        pagination = pagination or {}
-        limit = pagination.get("limit")
-        offset = pagination.get("offset")
-
-        if offset:
-            rows = rows[offset:]
-
-        if limit is not None:
-            rows = rows[:limit]
 
         if return_count:
             return page_from_limit_offset(

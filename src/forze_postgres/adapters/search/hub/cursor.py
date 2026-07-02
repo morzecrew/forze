@@ -8,6 +8,7 @@ require_psycopg()
 
 from typing import Any, Sequence, TypeVar, cast
 
+import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
@@ -23,7 +24,6 @@ from forze.application.contracts.search import (
     SearchOptions,
     cursor_return_fields_for_select,
     facet_size_of,
-    reject_unsupported_facets,
     resolve_facet_fields,
 )
 from forze.base.primitives import build_projection
@@ -93,10 +93,9 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         )
 
         if plan.use_parallel:
-            # Parallel execution merges per-leg results in Python; facets fail closed there.
-            reject_unsupported_facets(
-                options, backend="Postgres hub (parallel execution)"
-            )
+            # Parallel execution merges per-leg results in Python; facets reuse the ``sql``
+            # companion GROUP BY (identical distribution), highlights are marked on the hits.
+            facet_fields = resolve_facet_fields(self._hub_host.hub_spec, options)
             parallel_page = await self._hub_parallel_cursor_search(
                 plan=plan,
                 filters=filters,
@@ -105,6 +104,15 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 return_fields=return_fields,
                 hub_spec=self._hub_host.hub_spec,
             )
+            if facet_fields:
+                parallel_facets = await self._hub_parallel_facets(
+                    plan,
+                    filters=filters,
+                    combo_limit=plan.resolved_combo if plan.terms else None,
+                    fields=facet_fields,
+                    size=facet_size_of(options),
+                )
+                parallel_page = attrs.evolve(parallel_page, facets=parallel_facets)
             return attach_hub_highlights(
                 parallel_page,
                 hub_spec=self._hub_host.hub_spec,

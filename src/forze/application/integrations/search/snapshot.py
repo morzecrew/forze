@@ -11,6 +11,7 @@ import binascii
 import json
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import timedelta
+from functools import cmp_to_key
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
 import attrs
@@ -26,6 +27,8 @@ from forze.application.contracts.crypto import KeyringPort
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
+    ordered_compare,
+    parse_sort_value,
 )
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
@@ -41,7 +44,9 @@ from forze.application.integrations.crypto import payload_aad
 from forze.base.crypto import unpack_envelope
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import (
+    MISSING,
     JsonDict,
+    path_get,
     stable_payload_fingerprint,
     utcnow,
     uuid4,
@@ -610,14 +615,85 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
-    def federated_merged_hit_field(
-        item: tuple[FederatedSearchReadModel[Any], float],
-        *,
-        field: str,
-    ) -> Any:
-        """Value of ``field`` on the merged hit (for stable secondary ``sorts``)."""
+    def order_federated_full_merge(
+        merged: list[tuple[FederatedSearchReadModel[Any], float]],
+        sorts: QuerySortExpression | None,
+    ) -> None:
+        """Order a full-record RRF merge in place: RRF score primary, ``sorts`` tie-break.
 
-        return getattr(item[0].hit, field)
+        Reads each (dotted) ``sorts`` value off the hit via a one-per-hit ``model_dump`` +
+        :func:`path_get`, so a nested key resolves identically to the thin path's reads over
+        the projected dict. An absent path reads as ``None`` (same as thin)."""
+
+        dumped: dict[int, JsonDict] = {}
+
+        def _value_of(
+            item: tuple[FederatedSearchReadModel[Any], float],
+            field: str,
+        ) -> Any:
+            doc = dumped.get(id(item))
+
+            if doc is None:
+                doc = item[0].hit.model_dump(mode="python")
+                dumped[id(item)] = doc
+
+            value = path_get(doc, field)
+
+            return None if value is MISSING else value
+
+        SearchResultSnapshot.order_federated_secondary_sorts(
+            merged,
+            sorts,
+            value_of=_value_of,
+            score_of=lambda item: -item[1],
+        )
+
+    # ....................... #
+
+    @staticmethod
+    def order_federated_secondary_sorts[Item](
+        merged: list[Item],
+        sorts: QuerySortExpression | None,
+        *,
+        value_of: Callable[[Item, str], Any],
+        score_of: Callable[[Item], Any],
+    ) -> None:
+        """Order a merged federated result in place: RRF score primary, ``sorts`` tie-break.
+
+        Shared by the full-fetch and thin (id-only) paths so both produce identical order.
+        The ``sorts`` fields are applied least-significant-first and the fused score last, so
+        (stable sort) the RRF score dominates and each ``sorts`` field only breaks ties among
+        equal-score hits. ``value_of``/``score_of`` read from whatever tuple shape the caller
+        holds (full-record ``(model, score)`` vs. thin ``(member, id, score)``).
+        """
+
+        if sorts:
+            for field, sort_value in reversed(list(sorts.items())):
+                # Resolve the shorthand (``"desc"``) or explicit (``{"dir","nulls"}``) spec, then
+                # order via the canonical keyset comparator: it honors the requested null
+                # placement absolutely (``nulls`` first/last, defaulting first-asc/last-desc),
+                # flips only the non-null comparison by direction, and turns a cross-type/``None``
+                # comparison into a validation error rather than a raw ``TypeError`` — the same
+                # order every backend conforms to, so full-fetch, thin, and mock paths agree.
+                direction, nulls = parse_sort_value(sort_value)
+
+                def _cmp(
+                    a: Item,
+                    b: Item,
+                    field: str = field,
+                    direction: str = direction,
+                    nulls: str = nulls,
+                ) -> int:
+                    return ordered_compare(
+                        value_of(a, field),
+                        value_of(b, field),
+                        direction=direction,
+                        nulls=nulls,
+                    )
+
+                merged.sort(key=cmp_to_key(_cmp))
+
+        merged.sort(key=score_of)
 
     # ....................... #
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
+from functools import partial
 from typing import Any, Sequence, TypeVar, cast
 
 from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
+    FacetResults,
     SearchCursorPage,
     search_page_from_limit_offset,
 )
@@ -28,13 +29,18 @@ from forze.application.integrations.search import (
     decrypt_search_rows,
 )
 from forze.base.primitives import JsonDict, build_projection
+from forze.domain.constants import ID_FIELD
 
+from ....kernel.client import gather_db_work
+from ....kernel.gateways import PostgresGateway
 from .._cursor_run import parse_search_cursor
+from .._facets import fetch_hub_facets
 from .._materialize_hits import decode_search_hits, materialize_search_page, search_trust_source
+from .._offset_run import hydrate_rows_by_id
 from .._search_count import resolve_ranked_approximate_total
 from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
 from ._typing_host import HubSearchHost
-from .constants import HUB_CTE, HUB_RANK, HUB_ROW_ALIAS, LEG_EID, LEG_SCORE
+from .constants import COMBO_ALIAS, HUB_CTE, HUB_RANK, HUB_ROW_ALIAS, LEG_EID, LEG_SCORE
 from .merge import hub_row_for_materialize
 from .plan import HubSearchPlan
 from .runtime import HubLegRuntime
@@ -67,8 +73,15 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         active = list(plan.active)
         per_leg_limit = plan.per_leg_limit
 
+        # Late materialization: fetch only the key/sort columns (id + leg FK + sort-key roots)
+        # through the per-leg join / union so the Python merge holds thin rows, then hydrate the
+        # heavy read-model columns for the final page by id. Falls back to the full read-field
+        # projection when the shape can't be thinned (no id column, non-projectable sort key).
+        thin_fields = self._hub_thin_projection(plan)
+        select_fields = thin_fields if thin_fields is not None else sorted(host.read_fields)
+
         hub_cols = sql.SQL(", ").join(
-            sql.Identifier(HUB_ROW_ALIAS, f) for f in sorted(host.read_fields)
+            sql.Identifier(HUB_ROW_ALIAS, f) for f in select_fields
         )
         materialized = bool(getattr(host, "parallel_hub_cte_materialized", True))
 
@@ -184,8 +197,9 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 params = [*fp, *parts.leg_params]
                 return await host.client.fetch_all(stmt, params, row_factory="dict")
 
-            leg_row_lists = await asyncio.gather(
-                *[_run_leg_joined(i, leg) for i, leg, _ in active],
+            leg_row_lists = await gather_db_work(
+                host.client,
+                [partial(_run_leg_joined, i, leg) for i, leg, _ in active],
             )
             weights = [w for _, _, w in active]
             merged = merge_hub_leg_row_lists(
@@ -198,8 +212,9 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             )
 
         else:
-            leg_maps = await asyncio.gather(
-                *[_fetch_leg_ranked(i, leg) for i, leg, _ in active],
+            leg_maps = await gather_db_work(
+                host.client,
+                [partial(_fetch_leg_ranked, i, leg) for i, leg, _ in active],
             )
 
             # Restrict the hub scan to rows at least one leg actually matched (its FK
@@ -271,6 +286,73 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
 
     # ....................... #
 
+    async def _hub_parallel_page_rows(
+        self,
+        plan: HubSearchPlan,
+        page_rows: Sequence[dict[str, Any]],
+        *,
+        return_type: type[BaseModel] | None,
+        return_fields: Sequence[str] | None,
+    ) -> list[dict[str, Any]]:
+        """Full read-model rows for the page. Phase B of late materialization.
+
+        When the merge ran over thin rows (see :meth:`_hub_thin_projection`), the page's rows
+        carry only id/sort/key columns, so hydrate the heavy read-model columns by primary key
+        from the hub relation; otherwise the merged rows already hold every read field.
+        """
+
+        if self._hub_thin_projection(plan) is None:
+            return [hub_row_for_materialize(r) for r in page_rows]
+
+        return await hydrate_rows_by_id(
+            cast(PostgresGateway[Any], self),
+            page_ids=[r[ID_FIELD] for r in page_rows],
+            return_type=return_type,
+            return_fields=return_fields,
+        )
+
+    # ....................... #
+
+    async def _hub_parallel_facets(
+        self,
+        plan: HubSearchPlan,
+        *,
+        filters: QueryFilterExpression | None,
+        combo_limit: int | None,
+        fields: Sequence[str],
+        size: int,
+    ) -> FacetResults:
+        """Term facets for parallel execution via the same companion the ``sql`` path runs.
+
+        The Python merge operates on thin candidate rows that don't carry the facet value
+        column, so faceting reuses :func:`fetch_hub_facets` over an id-only ``WITH`` pipeline
+        joined to the read relation — an independent query whose distribution is byte-for-byte
+        the ``sql`` path's, keeping facets identical across execution modes.
+        """
+
+        host = cast(HubSearchHost[M], self)
+        with_clause, params, _, count_relation, _ = (
+            await self._hub_build_with_clause_from_plan(
+                plan,
+                filters=filters,
+                combo_limit=combo_limit,
+                thin=True,
+            )
+        )
+
+        return await fetch_hub_facets(
+            host.client,
+            with_clause=with_clause,
+            count_relation=count_relation,
+            combo_alias=COMBO_ALIAS,
+            read_relation=await host._qname(),  # type: ignore[protected-access]
+            params=list(params),
+            fields=fields,
+            size=size,
+        )
+
+    # ....................... #
+
     async def _hub_parallel_offset_search(
         self,
         *,
@@ -327,10 +409,12 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         else:
             page_limit = int(cast(int | str, limit_raw))
 
-        page_rows = [
-            hub_row_for_materialize(r)
-            for r in merged[offset : offset + page_limit]
-        ]
+        page_rows = await self._hub_parallel_page_rows(
+            plan,
+            merged[offset : offset + page_limit],
+            return_type=return_type,
+            return_fields=return_fields,
+        )
         trust = search_trust_source(host.read_validation)
         # Decrypt sealed hub-row fields once, before materialization (no-op if plaintext).
         page_rows, decode_codec = await decrypt_search_rows(
@@ -433,11 +517,15 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             prv = None
 
         trust = search_trust_source(host.read_validation)
+        # Phase B: keyset bounds / cursors were computed from the thin sort-key values above;
+        # hydrate the heavy read-model columns for the returned page only (by id when thinned).
+        source_rows = await self._hub_parallel_page_rows(
+            plan, rows, return_type=return_type, return_fields=return_fields
+        )
         # Decrypt sealed hub-row fields once, so a raw field projection and a decoded
         # return_type both read plaintext (no-op if plaintext).
         mat_rows, decode_codec = await decrypt_search_rows(
-            hub_spec.resolved_read_codec,
-            [hub_row_for_materialize(r) for r in rows],
+            hub_spec.resolved_read_codec, source_rows
         )
 
         if return_fields is not None:

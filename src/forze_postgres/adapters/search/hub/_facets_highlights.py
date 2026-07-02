@@ -41,12 +41,29 @@ def _query_terms(query: str | Sequence[str]) -> tuple[str, ...]:
 
 
 def _hit_text(hit: Any, field: str) -> Any:
-    """Read *field* off a hub hit — a hydrated read model or a projected ``JsonDict``."""
+    """Read a (dotted) *field* off a hub hit — a hydrated read model or a projected ``JsonDict``.
 
-    if isinstance(hit, Mapping):
-        return hit.get(field)  # type: ignore[reportOptionalMemberAccess]
+    Traverses ``.`` segments across mappings (projected dicts) and attributes (hydrated
+    models) alike, so a nested highlightable field (``contract.title``) resolves the same way
+    a nested sort key does; a missing or ``None`` segment reads as ``None`` (the highlighter
+    skips any non-text value). A flat field is a single-segment walk — unchanged behavior.
+    """
 
-    return getattr(hit, field, None)
+    value: Any = hit
+
+    for part in field.split("."):
+        if value is None:
+            return None
+
+        value = (  # pyright: ignore[reportUnknownVariableType]
+            value.get(part)  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(value, Mapping)
+            else getattr(
+                value, part, None  # pyright: ignore[reportUnknownArgumentType]
+            )
+        )
+
+    return value  # pyright: ignore[reportUnknownVariableType]
 
 
 # ....................... #

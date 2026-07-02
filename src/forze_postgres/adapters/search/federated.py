@@ -342,6 +342,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 query=query,
                 filters=filters,
                 pagination=pagination,
+                sorts=sorts,
                 leg_opts=leg_opts,
                 rrf_k=int(self.rrf_k),
                 per_leg_limit=leg_cap,
@@ -388,17 +389,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             k=int(self.rrf_k),
         )
 
-        if sorts:
-            for field, direction in reversed(list(sorts.items())):
-                merged.sort(
-                    key=partial(
-                        SearchResultSnapshot.federated_merged_hit_field,
-                        field=field,
-                    ),
-                    reverse=(direction == "desc"),
-                )
-
-        merged.sort(key=lambda it: -it[1])
+        SearchResultSnapshot.order_federated_full_merge(merged, sorts)
 
         total = len(merged)
         handle_out: SearchSnapshotHandle | None = None
