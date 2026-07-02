@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import (
     Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
     Final,
     Literal,
     Sequence,
@@ -31,6 +34,7 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.search import (
     PhraseCombine,
+    SearchCapabilities,
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
@@ -41,8 +45,12 @@ from forze.application.contracts.search import (
     resolve_facet_fields,
     resolve_highlight,
     search_options_for_simple_adapter,
+    validate_stream_supported,
 )
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    stream_search_pages,
+)
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     default_model_codec,
@@ -748,4 +756,79 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             options=options,
             return_type=return_type,
             return_fields=None,
+        )
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # Single-index keyword reference: supports keyset iteration → bounded-memory export.
+        return SearchCapabilities(supports_stream=True)
+
+    async def _stream_impl(
+        self,
+        fetch_page: Callable[
+            [CursorPaginationExpression], Awaitable[SearchCursorPage[Any]]
+        ],
+        *,
+        chunk_size: int,
+    ) -> AsyncGenerator[Sequence[Any]]:
+        """Shared keyset-stream wiring: fail closed on capability, then page the cursor.
+
+        Public ``*_stream`` methods supply only the cursor callback + result shape (mirrors
+        ``_offset_search_impl`` / ``_cursor_search_impl``), so validation and the paging loop
+        live in one place."""
+
+        validate_stream_supported(self.search_capabilities, backend="mock")
+        async for chunk in stream_search_pages(fetch_page, chunk_size=chunk_size):
+            yield chunk
+
+    def search_stream(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[M]]:
+        return self._stream_impl(
+            lambda cursor: self.search_cursor(
+                query, filters, cursor, sorts, options=options
+            ),
+            chunk_size=chunk_size,
+        )
+
+    def project_search_stream(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        return self._stream_impl(
+            lambda cursor: self.project_search_cursor(
+                fields, query, filters, cursor, sorts, options=options
+            ),
+            chunk_size=chunk_size,
+        )
+
+    def select_search_stream(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[T]]:
+        return self._stream_impl(
+            lambda cursor: self.select_search_cursor(
+                return_type, query, filters, cursor, sorts, options=options
+            ),
+            chunk_size=chunk_size,
         )

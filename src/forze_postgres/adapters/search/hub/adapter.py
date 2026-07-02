@@ -102,6 +102,11 @@ class PostgresHubSearchAdapter[M: BaseModel](
         # Single-store hybrid: the hub's rank-based leg merge (score_merge) is the ``rrf``
         # fusion family; weighted relative-score fusion is a federated concept and is refused
         # rather than silently treated as the default merge.
+        #
+        # No ``supports_stream``: the hub fetches only the top ``per_leg_limit`` ranked rows
+        # from each leg before merging, so a keyset walk (and a stream export) cannot go past
+        # that per-leg bound — completeness is not guaranteed. Streaming fails closed; a hub
+        # export uses a result snapshot instead.
         return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
 
     # ....................... #

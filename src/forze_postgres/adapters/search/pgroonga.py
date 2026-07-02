@@ -451,6 +451,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         pagination: PaginationExpression | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
         parsed_filters: Any = None,
+        for_cursor: bool = False,
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
@@ -526,7 +527,10 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         )
 
         candidate_cap = effective_ranked_candidate_limit(
-            config_limit=self.pgroonga_candidate_limit,
+            # Cursor walks the whole ranked set; capping candidates would truncate a deep walk
+            # / stream export. A ``None`` cap also switches an ``index_first`` plan to
+            # ``filter_first`` below (index_first inherently caps via its heap ``LIMIT``).
+            config_limit=None if for_cursor else self.pgroonga_candidate_limit,
             options=options,
             pagination=dict(pagination or {}),
             snapshot=snapshot,

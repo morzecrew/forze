@@ -1,7 +1,14 @@
 """Search query and command port definitions."""
 
 from datetime import timedelta
-from typing import Awaitable, Protocol, Sequence, TypeVar, runtime_checkable
+from typing import (
+    AsyncGenerator,
+    Awaitable,
+    Protocol,
+    Sequence,
+    TypeVar,
+    runtime_checkable,
+)
 
 from pydantic import BaseModel
 
@@ -172,6 +179,51 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         options: O | None = None,
     ) -> Awaitable[SearchCursorPage[T]]:
         """Keyset / cursor page validating each hit as ``return_type``."""
+        ...  # pragma: no cover
+
+    def search_stream(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: O | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[R]]:
+        """Yield keyset chunks of the ranked result set for a bounded-memory export.
+
+        No total count, no snapshot: iterates the whole matching set a chunk at a time
+        (peak memory is one chunk) via the keyset cursor, in relevance order. A concurrent
+        write may shift a hit between chunks — use a result snapshot for a frozen order.
+        Requires :attr:`~.SearchCapabilities.supports_stream`; an offset-only (Meilisearch)
+        or top-k (vector) backend refuses with ``query_feature_unsupported``.
+        """
+        ...  # pragma: no cover
+
+    def project_search_stream(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: O | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        """Yield keyset export chunks with dotted-path field projection (no total count)."""
+        ...  # pragma: no cover
+
+    def select_search_stream(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: O | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[T]]:
+        """Yield keyset export chunks validated as ``return_type`` (no total count)."""
         ...  # pragma: no cover
 
 

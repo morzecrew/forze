@@ -14,6 +14,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.search import (
+    SearchCapabilities,
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
@@ -53,6 +54,14 @@ class MongoSimpleSearchAdapter[M: BaseModel](
 
     search_variant: str = "mongo"
     """Fingerprint variant label for snapshots."""
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # Text / Atlas ``$search`` rank over a full keyset cursor → bounded-memory export.
+        # The ``$vectorSearch`` subclass overrides this (top-k, no whole-corpus stream).
+        return SearchCapabilities(supports_stream=True)
 
     # ....................... #
 

@@ -73,3 +73,30 @@ async def test_build_hub_search_plan_sql_when_user_sorts_on_offset() -> None:
         mode="offset",
     )
     assert plan.use_parallel is False
+
+
+@pytest.mark.asyncio
+async def test_offset_caps_combo_but_cursor_walks_full_set() -> None:
+    """The ``combo_top`` cap is an offset-page top-N bound; a cursor walk (and a hub stream
+    export) must not be capped by it, or it truncates at ``combo_top`` instead of the whole
+    ranked result set."""
+
+    async def _plan(mode: str):
+        return await build_hub_search_plan(
+            _make_host(execution="sql"),
+            query="alpha",
+            options=None,
+            sorts=None,
+            pagination_or_cursor={"limit": 10},
+            snapshot=None,
+            result_snapshot=None,
+            mode=mode,  # type: ignore[arg-type]
+        )
+
+    offset_plan = await _plan("offset")
+    cursor_plan = await _plan("cursor")
+
+    # Offset still bounds the candidate pool for the requested page.
+    assert offset_plan.resolved_combo is not None
+    # Cursor pagination walks the full set: no combo cap → no silent truncation.
+    assert cursor_plan.resolved_combo is None

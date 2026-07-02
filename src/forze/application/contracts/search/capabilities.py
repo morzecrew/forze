@@ -88,6 +88,13 @@ class SearchCapabilities:
     app embedding via :class:`~forze.application.contracts.embeddings.EmbeddingsProviderPort`
     before the call. ``False`` is the bring-your-own-vector default (e.g. pgvector)."""
 
+    supports_stream: bool = False
+    """Whether this adapter can iterate the whole ranked result set in bounded-memory keyset
+    chunks (``search_stream``). ``True`` only for a keyset-capable ranked backend that is not
+    top-k bounded (keyword / text / hub). Offset-only backends (Meilisearch) and top-k vector
+    backends leave it off and refuse the stream methods rather than emulate them via deep
+    offset (which would silently truncate)."""
+
     def __attrs_post_init__(self) -> None:
         # A filtered-ANN strategy only exists where there is a vector stage; a keyword-only
         # adapter (supports_vector=False) must keep filtered_ann="none".
@@ -105,6 +112,7 @@ FULL_SEARCH_CAPABILITIES: Final[SearchCapabilities] = SearchCapabilities(
     hybrid_fusion=frozenset({"rrf", "weighted"}),
     filtered_ann="integrated",
     auto_embed=False,
+    supports_stream=True,
 )
 """The canonical full retrieval surface every backend is a subset of.
 
@@ -154,6 +162,17 @@ def validate_fusion_supported(
         _search_cap_fail(backend, f"{strategy} fusion")
 
 
+def validate_stream_supported(caps: SearchCapabilities, *, backend: str) -> None:
+    """Raise cleanly if a bounded-memory stream is asked of a *backend* that cannot serve it.
+
+    Call it at the top of ``search_stream`` (before the first fetch) so an offset-only or
+    top-k backend refuses up front with a clean precondition, instead of failing partway
+    through iteration or silently truncating a deep offset export."""
+
+    if not caps.supports_stream:
+        _search_cap_fail(backend, "result streaming")
+
+
 def resolve_fusion(
     requested: FusionStrategy | None,
     caps: SearchCapabilities,
@@ -181,5 +200,6 @@ __all__ = [
     "SearchCapabilities",
     "resolve_fusion",
     "validate_fusion_supported",
+    "validate_stream_supported",
     "validate_vector_supported",
 ]

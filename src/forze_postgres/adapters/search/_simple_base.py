@@ -19,6 +19,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.search import (
+    SearchCapabilities,
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
@@ -99,6 +100,14 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     read_validation: Literal["strict", "trusted"] = "strict"
     """Row decode mode for search hits (``trusted`` skips Pydantic validation)."""
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # FTS / PGroonga rank over a full keyset cursor → bounded-memory export. The vector
+        # subclass overrides this (top-k, no whole-corpus stream).
+        return SearchCapabilities(supports_stream=True)
 
     # ....................... #
 
@@ -203,8 +212,16 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         pagination: PaginationExpression | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
         parsed_filters: Any = None,
+        for_cursor: bool = False,
     ) -> RankedPipelineSql:
-        """Assemble pipeline CTEs; engine-specific leg SQL is built inside subclasses."""
+        """Assemble pipeline CTEs; engine-specific leg SQL is built inside subclasses.
+
+        ``for_cursor`` disables the ranked-candidate cap for keyword/text engines: cursor
+        pagination walks the full ranked set one keyset page at a time, and the cap (a top-N
+        bound for a single offset page, applied before the keyset seek) would otherwise
+        truncate a deep cursor walk — and a bounded-memory stream export — at the cap. The
+        top-k vector engine keeps its cap (its bound is the top-k, not an offset optimization).
+        """
 
         raise NotImplementedError
 
@@ -399,6 +416,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             pagination={"limit": lim},
             snapshot=None,
             parsed_filters=parsed_filters,
+            for_cursor=True,
         )
 
         return await execute_ranked_pipeline_cursor(
