@@ -21,10 +21,12 @@ from forze.application.contracts.querying import (
     validate_cursor_token,
 )
 from forze.application.contracts.search import (
+    MultiSourceSearchOptions,
     SearchOptions,
     cursor_return_fields_for_select,
     facet_size_of,
     resolve_facet_fields,
+    resolve_fusion,
 )
 from forze.base.primitives import build_projection
 from forze.domain.constants import ID_FIELD
@@ -81,6 +83,11 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         internally and stripped from the response.
         """
 
+        resolve_fusion(
+            cast("MultiSourceSearchOptions", options or {}).get("fusion"),
+            self._hub_host.search_capabilities,
+            backend="postgres_hub",
+        )
         plan = await build_hub_search_plan(
             self._hub_host,
             query=query,

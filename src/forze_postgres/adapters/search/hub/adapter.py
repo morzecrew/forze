@@ -20,11 +20,14 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.search import (
     HubSearchSpec,
+    MultiSourceSearchOptions,
+    SearchCapabilities,
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
     facet_size_of,
     resolve_facet_fields,
+    resolve_fusion,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -94,6 +97,15 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # Single-store hybrid: the hub's rank-based leg merge (score_merge) is the ``rrf``
+        # fusion family; weighted relative-score fusion is a federated concept and is refused
+        # rather than silently treated as the default merge.
+        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
+
+    # ....................... #
+
     async def _offset_search_impl(
         self,
         query: str | Sequence[str],
@@ -107,6 +119,11 @@ class PostgresHubSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        resolve_fusion(
+            cast("MultiSourceSearchOptions", options or {}).get("fusion"),
+            self.search_capabilities,
+            backend="postgres_hub",
+        )
         plan = await build_hub_search_plan(
             cast(HubSearchHost[Any], self),
             query=query,

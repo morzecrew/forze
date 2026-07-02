@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Sequence, final
+from typing import Any, Literal, Sequence, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -19,6 +19,8 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.search import (
     HubSearchSpec,
+    MultiSourceSearchOptions,
+    SearchCapabilities,
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
@@ -26,6 +28,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     prepare_hub_search_options,
     resolve_facet_fields,
+    resolve_fusion,
     resolve_highlight,
 )
 from forze.application.integrations.search import SearchResultSnapshot
@@ -60,6 +63,15 @@ class MockHubSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # Single-store hybrid: the hub's own rank-based leg merge (score_merge) is the
+        # ``rrf`` fusion family. Weighted relative-score fusion is a federated concept and
+        # is refused here rather than silently treated as the default merge.
+        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
+
+    # ....................... #
+
     async def _merged_docs(
         self,
         query: str | Sequence[str],
@@ -69,6 +81,11 @@ class MockHubSearchAdapter[M: BaseModel](
     ) -> list[tuple[dict[str, Any], float]]:
         """Merge the legs and return ``(doc, hub_score)`` pairs in descending score order."""
 
+        resolve_fusion(
+            cast("MultiSourceSearchOptions", options or {}).get("fusion"),
+            self.search_capabilities,
+            backend="mock_hub",
+        )
         leg_opts, weights = prepare_hub_search_options(self.hub_spec, options)
         scores: dict[str, float] = {}
         docs: dict[str, dict[str, Any]] = {}

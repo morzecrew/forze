@@ -17,7 +17,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
 )
-from forze.application.contracts.search import HubSearchSpec
+from forze.application.contracts.search import HubSearchSpec, SearchCapabilities
 from forze_postgres.kernel.catalog.introspect import (
     PostgresColumnTypes,
     PostgresIntrospector,
@@ -52,6 +52,11 @@ class HubSearchHost(Protocol[M]):
     introspector: PostgresIntrospector
     client: PostgresClientPort
     read_validation: Literal["strict", "trusted"]
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities: ...
 
     # ....................... #
 

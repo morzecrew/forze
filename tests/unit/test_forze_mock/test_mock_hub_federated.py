@@ -82,6 +82,40 @@ async def test_hub_search_surfaces_merged_scores() -> None:
 
 
 @pytest.mark.asyncio
+async def test_hub_fusion_gate_rejects_weighted() -> None:
+    from forze.base.exceptions import CoreException, ExceptionKind
+
+    state = MockState()
+    leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
+    leg_b = SearchSpec(name="b", model_type=_Item, fields=["title"])
+    await MockSearchCommandAdapter(state=state, spec=leg_a).upsert(
+        [_Item(id="1", title="hello world")]
+    )
+    await MockSearchCommandAdapter(state=state, spec=leg_b).upsert(
+        [_Item(id="2", title="hello again")]
+    )
+
+    hub = HubSearchSpec(name="hub", model_type=_Item, members=[leg_a, leg_b])
+    adapter = MockHubSearchAdapter(
+        hub_spec=hub,
+        legs=[
+            ("a", MockSearchAdapter(state=state, spec=leg_a)),
+            ("b", MockSearchAdapter(state=state, spec=leg_b)),
+        ],
+    )
+
+    # The hub advertises rank-based (rrf) fusion only; the default and explicit rrf work.
+    assert adapter.search_capabilities.hybrid_fusion == frozenset({"rrf"})
+    assert (await adapter.search_page("hello", options={"fusion": "rrf"})).count == 2
+    assert (await adapter.search_page("hello")).count == 2
+
+    # Weighted fusion is a federated concept — refused, not silently the default merge.
+    with pytest.raises(CoreException, match="weighted fusion") as ei:
+        await adapter.search_page("hello", options={"fusion": "weighted"})
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+
+
+@pytest.mark.asyncio
 async def test_federated_search_rrf_merge() -> None:
     state = MockState()
     leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
