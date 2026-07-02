@@ -90,6 +90,9 @@ def test_order_federated_secondary_sorts_none_and_dict_direction() -> None:
     assert _run("desc") == ["3", "1", "2"]
     # Explicit ``{"dir": ...}`` spec resolves direction (previously misread as ascending).
     assert _run({"dir": "desc"}) == ["3", "1", "2"]
+    # Explicit ``nulls`` overrides the direction default (absolute placement).
+    assert _run({"dir": "asc", "nulls": "last"}) == ["1", "3", "2"]
+    assert _run({"dir": "desc", "nulls": "first"}) == ["2", "3", "1"]
 
 
 def test_merge_ids_skips_nonpositive_weight() -> None:

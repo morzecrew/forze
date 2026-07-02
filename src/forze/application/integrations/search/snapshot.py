@@ -27,7 +27,7 @@ from forze.application.contracts.crypto import KeyringPort
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
-    compare_keyset_sort_values,
+    ordered_compare,
     parse_sort_value,
 )
 from forze.application.contracts.search import (
@@ -670,15 +670,26 @@ class SearchResultSnapshot:
         if sorts:
             for field, sort_value in reversed(list(sorts.items())):
                 # Resolve the shorthand (``"desc"``) or explicit (``{"dir","nulls"}``) spec, then
-                # order via the canonical keyset comparator: it places a null as the smallest
-                # value (so a null sorts first ascending, last descending — the contract default)
-                # and turns a cross-type/``None`` comparison into a validation error, not a raw
-                # ``TypeError``. Same comparator the hub in-memory sort uses, so all paths agree.
-                direction, _nulls = parse_sort_value(sort_value)
+                # order via the canonical keyset comparator: it honors the requested null
+                # placement absolutely (``nulls`` first/last, defaulting first-asc/last-desc),
+                # flips only the non-null comparison by direction, and turns a cross-type/``None``
+                # comparison into a validation error rather than a raw ``TypeError`` — the same
+                # order every backend conforms to, so full-fetch, thin, and mock paths agree.
+                direction, nulls = parse_sort_value(sort_value)
 
-                def _cmp(a: Item, b: Item, field: str = field, direction: str = direction) -> int:
-                    cmp = compare_keyset_sort_values(value_of(a, field), value_of(b, field))
-                    return cmp if direction == "asc" else -cmp
+                def _cmp(
+                    a: Item,
+                    b: Item,
+                    field: str = field,
+                    direction: str = direction,
+                    nulls: str = nulls,
+                ) -> int:
+                    return ordered_compare(
+                        value_of(a, field),
+                        value_of(b, field),
+                        direction=direction,
+                        nulls=nulls,
+                    )
 
                 merged.sort(key=cmp_to_key(_cmp))
 
