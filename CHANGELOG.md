@@ -12,64 +12,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Reliability & durability**
 
 - **HLC durable high-water mark** — `HybridLogicalClock.resume(mark)` + a co-located `HlcCheckpointPort` so a restart no longer resets the clock to `(0, 0)` and re-issues a stamp it already emitted; the outbox flush advances the mark inside the business transaction. `PostgresDepsModule(hlc_checkpoint=PostgresHlcCheckpointConfig(...))` + `hlc_checkpoint_recovery_lifecycle_step()`; mock `MockDepsModule(hlc_checkpoint=True)`. Opt-in, node-global.
+
 - **Postgres co-located idempotency store** — `PostgresDepsModule(idempotencies={route: PostgresIdempotencyConfig(...)})` commits the dedup record *inside* the business transaction (exactly-once across a crash), driven from an auto-injected `on_success` hook when a store reports `commits_in_transaction`; falls back to out-of-tx commit otherwise. Mock `MockIdempotencyAdapter(transactional=True)`.
+
 - **CPU-offload seam** — `run_cpu` / `run_cpu_map` run blocking or CPU-bound work off the event loop via a context-bound `CpuExecutor` (bounded thread pool in production; inline and deterministic under simulation), honoring the invocation deadline via a cooperative `checkpoint()`.
+
 - **Fencing-token capability for distributed locks** — `DistributedLockSpec(requires_fencing_token=True)` fails closed at resolve against a backend not reporting `FencingAware` / `fencing_tokens` (Redis and mock support it; default `False`).
 
 **Querying & read models**
 
 - **Nested-field projection & sorting** — projection `fields` and sort keys may be dotted paths into nested Pydantic sub-models and `str`-keyed mappings (`project(filters, ["contract.reg_number"])`, `sorts={"addr.city": "asc"}`); a path crossing a list maps the selection over each element. Resolved across `project_*` / `project_search_*` and offset/keyset reads on every backend (mock, Postgres, Mongo, Firestore). *Behavior change:* the mock now nests a dotted projection key instead of emitting it flat. Sorting on a nested path whose root column is field-encrypted is rejected.
+
 - **Materialized derived fields** — `DocumentSpec(materialized=…)` persists selected `@computed_field`s as filterable/sortable columns (create/update collisions rejected, startup column check); `SearchSpec` / `HubSearchSpec` accept it for in-place search (Postgres, Mongo; not startup-validated there).
+
 - **Lenient read & write-omit fields** — `DocumentSpec(lenient_read_fields=…)` (or `read_conformity="lenient"` to auto-derive) lets a read-model field have no backing column; `write_omit_fields=…` is the write-side counterpart. Honored on Postgres, Mongo, Firestore documents (and Postgres/Mongo search). For expand/contract migrations.
+
 - **Streaming reads on Mongo & Firestore (`find_many_chunked`)** — bounded-memory validated batches of ≤`fetch_batch_size` via `find_many_streamed` (Mongo, supports `offset`) and `query_stream_batched` (Firestore, cursor-only); all three document backends now at parity.
+
 - **Procedures port** — `ctx.procedure.command(spec).run(params)` runs a spec-named parametrized statement (function / `CALL`, set-based recompute, `REFRESH MATERIALIZED VIEW`); one `ProcedureSpec[In, Out]`, command-only, Postgres plus a programmable mock. Tenant-aware routes fail closed at wiring unless the SQL binds `%(tenant)s`.
+
 - **Query parameters** — `ctx.document.query(spec).with_parameters(P(...))` binds a typed `query_params` contract as query-scoped session settings (Postgres documents plus a programmable mock); capability-gated and fail-closed.
+
 - **`QueryCapabilities.supports_aggregates`** — a backend that can't compile aggregates (the Firestore MVP) rejects `find_many(aggregates=…)` / `find_many_aggregates` / `count_aggregates` with `precondition` (`query_feature_unsupported`) instead of an opaque `internal`.
 
 **Search**
 
 - **Facets & highlights** — term facet distributions and per-hit highlights via search options, declared on the spec and returned as optional page sidecars; mock, Meilisearch, Postgres single-index (PGroonga/FTS) and hub over offset/cursor, plus per-hit highlights on federated. Unsupported fields/topologies fail closed; the generated search routes carry them.
+
 - **`FederatedSearchSpec(thin_merge=True)`** — late-materialized RRF merge (fetch `id` per leg, fuse on `(member, id)`, hydrate one page); Postgres and Meilisearch, opt-in, results identical to the full path.
+
 - **`SearchSpec(max_results=…)` / `SearchSpec(highlight_scan_limit=…)`** — cap an unbounded offset search (Postgres/Mongo/Meilisearch) and bound the PGroonga highlight text scan; both opt-in, `None` keeps prior behaviour.
 
 **Execution & handlers**
 
 - **Two-phase prepare/apply handlers** — `TwoPhaseHandler` (plus a kit base): `prepare(args)` runs outside the transaction (read-only) and `apply(args, payload)` inside it. A tx route is required.
+
 - **Transaction isolation as a fail-closed contract** — operations declare an isolation level, verified against the route's manager (`exc.configuration`, never silently weaker); declaring isolation without a tx route is rejected at freeze. `TransactionContext.current_isolation()`; the `tx` `exit` trace event carries `outcome` (`commit`/`rollback`).
+
 - **Cross-aggregate (system) invariants** — `SystemInvariant` (`ReadSet`, `SumOf`, `CountAll`) in `forze.application.contracts`; `forze_kits.invariants` adds `evaluate` / `enforce` (detective) / `enforce_preventive` (in-tx rollback) / `propose`; `forze_dst.compile_oracle(*laws[, per_commit=True])`.
 
 **Observability & encryption**
 
 - **Per-port OpenTelemetry client spans** — `DepsRegistry.with_otel_port_spans()` opts every resolved port into a per-call `CLIENT` span inside the resilience policy; opt-in, zero-cost off.
+
 - **W3C trace-context propagation** — a published event carries its span outbox→broker→inbox; opt in with `OutboxIntegrationConfig.propagate_trace` (add a nullable `traceparent` column on relational backends first), `forze_http` injects outbound. Trace-parenting only.
+
 - **`EncryptionReach` ladder (`none < at_rest < end_to_end`)** — names the outbox/messaging reach; `OutboxEncryptionTier` is now a back-compat alias and `MessageEncryptionTier` its transport subset. `CryptoDepsModule(required_reach="end_to_end"|"at_rest")` refuses a weaker outbox/transport route at resolve (opt-in).
 
 **Realtime**
 
 - **Server push (egress) + offline store-and-forward** — a handler publishes a `RealtimeSignal` to a principal/topic through messaging ports; the Socket.IO gateway bridges to a tenant-scoped room (ephemeral at-most-once or durable exactly-once), and a durable principal-addressed signal is mailboxed for an offline recipient and replayed per-device on reconnect. Read-only operations cannot publish.
+
 - **Tenant-aware & multi-node hardening** — `TenantShardedSignalSource` / `RealtimeShard` run one consume loop per tenant, scoped by a trusted tenant from the stream (not the header); pass `tenants=` to the background relay step for a tenant-sharded outbox relay. TTL-backed presence with heartbeat, credential-expiry eviction, and a per-emit timeout.
+
 - **BREAKING — realtime delivery envelope** — every Socket.IO frame is now the uniform `{id, data}` envelope (durable carries the event id, ephemeral null); no transitional dual-emit. Clients read `data` and dedup by `id`.
 
 **Transports & DX**
 
 - **Redis stream & pub-sub transports** — `RedisDepsModule` wires `StreamSpec` / `PubSubSpec` via `RedisStreamConfig` / `RedisStreamGroupConfig` / `RedisPubSubConfig`; `encryption="end_to_end"` seals through the broker, `tenant_aware` adds a key prefix. The stream consumer-group adapter splits into a data-plane query adapter and a control-plane `*StreamGroupAdminAdapter` (`ensure_group`), for Redis and the mock.
+
 - **Top-level front door** — the most-used names re-export lazily (PEP 562) from `forze` / `forze_kits` (`from forze import DocumentSpec, build_runtime`; `from forze_kits import DocumentFacade, build_document_registry`); deep paths keep working, the core never imports kits.
+
 - **Less CRUD boilerplate** — `build_document_registry(spec)` derives `DocumentDTOs` when `dtos` is omitted (`create=None` / `update=None` to disable an op); `document_facade(runtime, registry, spec)` returns a per-call typed factory.
+
 - **Shared error helpers** — `error_envelope()` and `guard_frame()` give one client-safe `CoreException` projection and a shared guarded boundary; `http_status_for_kind(kind)` maps an `ExceptionKind` to its HTTP status. FastAPI and Socket.IO render through them.
+
 - **Mock document adapter — tenant scoping on every write** — the in-memory mock injects the tenant column on ensure/upsert/update/touch (not only create), matching Postgres.
 
 **Deterministic Simulation Testing (`forze_dst`)** — new package
 
 - **Point-at-a-real-app simulation** — `Simulation` / `SimulationConfig`, `Simulation.run(config, ...)`: one master seed reproduces a whole run (schedule, faults, latency, inputs, crashes, partitions) over real registries and runtimes, single-process or N-node, with no app changes; a violation minimizes to a reproducible counterexample.
+
 - **Deterministic runtime + ambient seams** — `SimulationEventLoop` / `SimulationTimeSource` / `run_simulation(...)` (wall-ms, byte-identical replay; `RealIOForbidden`, `SimulationDeadlock`); new seams `EntropySource` / `bind_entropy_source`, `TimeSource.monotonic()` / free `monotonic()`, and `DepsRegistry.with_interceptors(...)`. A determinism gate bans raw time/entropy outside the seams.
+
 - **Faults, latency, crash & partitions** — `FaultPolicy` / `FaultRule` and `LatencyProfile` (`Constant` / `Uniform` / `Exponential` / `LogNormal` / `Pareto`) on `SimulationConfig`; `SimulationConfig.crash` (crash-restart-recovery over persisted `MockState`), `SimulationConfig.runtime=True` (real `ExecutionRuntime`), `Cluster` / `Partition` / `PartitionSchedule` (lossy/asymmetric links).
+
 - **Workload generation** — `Scenario` / `Rule` / `ModelState` / `derive_scenario`; a fuzzer (`OpSpec`, `generate_workload`, `simulate_workload`); `PCTScheduler` / `SystematicScheduler`; coverage-guided exploration (`behavioral_coverage`, `Simulation.coverage`, `Simulation.coverage_guided`).
+
 - **Oracle & invariants** — `Recorder` / `record_event` / `History`; built-ins `no_duplicate_effect` / `mutual_exclusion` / `linearizable` / `RegisterSpec`; `explore` + `minimize` → `ViolationReport`; reachability (`reached`, `sometimes`, `reachability_targets`); value-level behind `capture_values=True` (`read_your_writes`, `expect_value`).
+
 - **Transactional-isolation oracles** — `snapshot_isolation()` / `serializable(complete=True)` (and kernel `find_snapshot_isolation_violations` / `find_serializable_violations` / `find_serializability_cycle` over `TxRecord` / `VersionedTxRecord`) detect lost update, write skew, and ≥3-transaction anti-dependency cycles; `had_isolation_conflict`, `isolation_oracle_for(level)`. Shared `evaluate_filter` / `compile_filter` in `forze.application.contracts.querying`.
+
 - **Commutativity** — `OperationDescriptor.commutative` + `commutative_convergence(build, *, final_state, schedule_seeds)`.
+
 - **Trace, reporting & sweeps** — `RuntimeTracer`, `operation_fingerprint` / `FrozenOperationRegistry.fingerprint()`; `forze_dst.report` (`CausalGraph`, `format_report`, `ViolationReport.format()`), `timeline()` / `build_timeline` / `render_timeline`; regression corpus (`RegressionEntry`, `append_regression`, `load_regressions`, `behavioral_fingerprint` / `strict_behavior`); `FailureBundle` / `replay_bundle`; `parallel_sweep(run, seeds, workers=…)` / `SimulationSeedRunner` → `SweepResult` (`SeedOutcome.reached`, `SweepResult.reachability`).
+
 - **Mock substrate** *(behavior change)* — `MockDepsModule(transactions="journal")` is now the default (undo journal + MVCC isolation; `exc.concurrency` / `serialization_failure`; `none` / `strict` opt-in); in-memory outbound HTTP (`MockHttpServicePort` / `MockHttpServiceAdapter` / `MockHttpRegistry`, `MockDepsModule(http=…)`).
+
 - **CLI** (`forze[cli]`) — `forze dst run module:sim` (exit 1 on a violation) plus `replay`, `coverage`, `topology`, `derive`.
+
 - **Adapter conformance** — `forze_dst.conformance`: a backend-agnostic isolation-anomaly battery over the `Conductor` (a known verdict per `IsolationLevel`; `CONTRACT_STRENGTHENINGS` / `MECHANISM_DIVERGENCES`), run against the mock and real Postgres (every level) and a real Mongo replica set (`SNAPSHOT`) over testcontainers, asserting `mock ≡ real`.
 
 ### Changed
@@ -77,26 +108,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Breaking — search**
 
 - **Search pages split from the base pagination contract** — `SearchPage` / `SearchCountlessPage` / `SearchCursorPage` now carry facets, highlights, and the snapshot handle (off `Page` / `CountlessPage` / `CursorPage`); `FacetBucket`, `FacetResults`, `HitHighlights`, `SearchSnapshotHandle` move to the search contract.
+
 - **`SearchFuzzySpec` is a frozen value object** — was a dict; edit-distance ratio defaults to 0.34 (validated 0.0–1.0), prefix-length removed. No shim.
+
 - **Search options de-leaked** — raw-Groonga override removed, the PGroonga plan is adapter-config only, candidate caps renamed `max_candidates` / `merge_candidates`; hub/federated member keys move to a multi-source options type single-index search rejects at type-check.
+
 - **Search index provisioning → `SearchManagementPort`** (`forze_meilisearch`) — `ensure_index` / `delete_all` move off `SearchCommandPort` onto `ctx.search.management(spec)` (`SearchManagementDepKey`).
+
 - **Typed value-object configs** — search `engine` is a tagged union (`forze_postgres`, `forze_mongo`; bare strings still shorthand); federated merge takes a shared `Rrf`; warehouse analytics take a shared `IngestSpec` (Postgres drops legacy `schema`) — `forze_postgres` / `forze_bigquery` / `forze_clickhouse`.
 
 **Breaking — imports & DSL**
 
 - **Application contracts surface consolidation** *(no runtime change)* — removed `contracts.codecs` (→ `forze.base.serialization`); `contracts.lenient_read` / `contracts.materialized` → `contracts.conformity`; `RowLockMode` / `row_lock_requires_transaction` → `contracts.document.value_objects`; `Sum` / `Count` → `SumOf` / `CountAll`; new `TenantSecretResolver` (`contracts.secrets`) replaces `resolve_dsn_for_tenant` / `resolve_structured_for_tenant`, `ensure_dsn_fingerprint(resolver=)`.
+
 - **Contract value types import from their contracts home, not the execution layer** — `BreakerKey` / `CircuitBreakerStore` / `RateLimitStore` / `RateLimitKey` / `LatencyDigestStore` / `LatencyDigestKey` / `Transition` from `contracts.resilience`; `LifecycleModule` / `LifecycleStep` from `contracts.execution`; `RoutedDeps` / `PlainDepsMap` from `contracts.deps`; `OutboxStagingContext` from `contracts.outbox`.
+
 - **`update_many` takes `Sequence[KeyedUpdate[U]]`** (document command port) — not `Sequence[tuple[UUID, int, U]]`; `KeyedUpdate` (`id`, `rev`, `dto`) from `contracts.document`. Single-item `update` unchanged.
+
 - **`GroupRef` (query grouping) → `GroupField`** — resolves the clash with the authz `GroupRef` (unchanged).
+
 - **Package restructures** — `forze_dst` splits into a thin `Simulation` facade over `engines/` / `oracle/` / `artifacts/` (`SchedulerKind` removed); `forze_mock` root modules → `adapters/`, factories → `execution.factories` (top-level imports unchanged); notify kit's `NotificationRouter` is now a mutable builder (`register()` → `freeze()`) with resolution on `FrozenNotificationRouter`, reorganized into `routing` / `events` / `consumer` / `lifecycle`.
 
 **Behavior**
 
 - **Lazy transaction acquisition, default for Postgres/Mongo/Firestore** — a tx scope defers connection checkout to the first operation (no idle-in-transaction); a connect failure surfaces there. Opt out `lazy_transaction=False`.
+
 - **Runtime owns its CPU-offload pool; no shared import-time global** — an `ExecutionRuntime` scope binds a scope-lifetime `ThreadPoolCpuExecutor` it **owns and closes on exit** (sized via `cpu_workers`) instead of leaning on one process-global pool created at import; an injected `cpu_executor` stays caller-owned and an executor already bound around the scope (e.g. a simulation's) is respected. With nothing bound at all, `run_cpu` runs inline (`InlineCpuExecutor`) — no hidden thread pool is created implicitly.
+
 - **Search snapshots stream their pool** (peak = one chunk) and expose `expires_at`; Postgres hub (and similar single-index) search defers its heavy projection to per-page hydration.
+
 - **Empty filter/sort maps are no-ops** on list/search requests; a structured-but-empty envelope is still rejected.
+
 - **Integration logger namespaces unified to `forze_<pkg>.*`** — `forze_redis` / `forze_postgres` / `forze_http` / `forze_firestore` / `forze_temporal` no longer log under bare prefixes; update log filters keyed on the old ones.
+
 - **Hot-path micro-optimizations** (byte-identical output) — faster `normalize_string`, keyset sort-value canonicalization, once-per-struct msgspec exclude-flag resolution, allocation-free trusted bulk decode, compile-once in-memory scans, `forze.base.crypto.ENVELOPE_B64_PREFIX`, and per-wrapped-method (not per-call) construction of the OpenTelemetry port-span name/attributes and the port-interceptor terminal.
 
 ### Removed
@@ -108,46 +152,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Reliability hardening — durability, shutdown, resilience**
 
 - **Deadlines enforced at the database driver** — a bound deadline sets Postgres `SET LOCAL statement_timeout` (in-tx) and wraps each Mongo op in `pymongo.timeout` (CSOT), remaining budget + a small grace, tighten-only. A loose backstop: `asyncio.timeout` at the boundary still fires first and classifies the expiry, so the server cancels the query and returns the connection clean. `push_invocation_deadline` kill switch. (PG autocommit statements stay asyncio-only.)
+
 - **A deadline that tears a transaction commit is non-retryable** — surfaces `internal` (`commit_ambiguous`) rather than retryable `deadline_exceeded`, so an at-least-once caller can't retry into a duplicate; a deadline during the body still rolls back and stays retryable.
+
 - **Shutdown reliability** — the drain-timeout now cancels still-running ops and awaits their unwind before teardown closes the clients they hold; detached document-cache early-refresh tasks are cancelled via a per-runtime background-owner registry; each shutdown hook gets `ExecutionRuntime.shutdown_step_timeout` (default 10s) so a wedged hook can't hang process exit.
+
 - **Resilience hardening** — the breaker classifies by downstream *health* (a `429` / OCC conflict no longer trips it; a timeout now counts as a failure); per-`(policy, route)` state maps are LRU-bounded (`max_state_entries` / `max_entries`, default 4096); a blanket policy retrying an *ambiguous* failure on every method is refused at build (`resilience.blanket_write_retry`); a distributed resilience-store outage fails open by default (`ResiliencePolicy.fail_open_on_store_error`), and a `record` failure is swallowed.
-- **Idempotency** — dedup TTL default 30s → 24h (must cover the redelivery horizon); a store failure recording the result *after* the business commit no longer fails the succeeded operation. The contract states at-least-once-with-dedup, not exactly-once. **Migration:** a Redis-backed idempotency store with no explicit `ttl` now retains records 2880× longer — review its memory ceiling and eviction policy (or set an explicit shorter `ttl`) before upgrading.
+
+- **Idempotency** — dedup TTL default 30s → 24h to cover the redelivery horizon; this retains records far longer and so materially raises a Redis-backed store's memory footprint at scale. A store failure recording the result *after* the business commit no longer fails the succeeded operation. The contract is at-least-once-with-dedup, not exactly-once.
+
 - **Batch field decryption no longer stalls the event loop** — a ≥64-row encrypted result set offloads to `run_cpu_map` against a thread-safe snapshot (`EncryptingModelCodec.freeze_for_decrypt`); small batches stay inline, output byte-identical.
+
 - **`require_tenant_id` raises `authentication`, not `internal`** — a missing bound tenant is caller-caused.
+
 - **Hard-delete cache-invalidation failures surface at error level** — a deleted document served from the distributed cache until its TTL is a correctness hazard; stays best-effort so a cache outage can't block a delete.
+
 - **Opt-in guard against outbox dual-writes** — `OutboxSpec(require_transaction=True)` makes flush-inside-a-transaction a checked precondition (`exc.configuration`, `core.outbox.flush_outside_transaction`); default off (stage-then-relay flushes outside a tx by design).
 
 **Bounded memory**
 
 - **Unbounded in-process caches gain bounded defaults** — Postgres introspector filtered-estimate lane (`max_filtered_estimate_entries=2048`), Redis breaker local cache (`max_cache_entries=4096`), document-cache refresh fan-out (`max_inflight_refresh=64`), L1 live-store registry weak-ref sweep. All with escape hatches.
+
 - **More read/list paths stream** — GCS `list_objects` page-by-page (exact total kept); realtime mailbox `trim` projects only `id`; Postgres hub `execution="parallel"` scans only matched hub rows; Postgres `update_matching` honours `batch_size` (keyset-pages instead of one unbounded UPDATE).
+
 - **Streamed offline-mailbox replay** — `RealtimeMailbox.replay_since` (HLC keyset, `replay_page_size=100`) emits page-by-page instead of loading a device's whole backlog.
+
 - **Mongo ranked search late-materialization** — projects to thin `{_id, sort-key, rank}` before `$sort`/`$skip`/`$limit` and hydrates the page by `_id`.
+
 - **Analytics `run_chunked` truly streams** — `run_chunked` / `select_run_chunked` / `project_run_chunked` (DuckDB, ClickHouse, BigQuery) consume `run_query_streamed` through a shared `stream_shaped_chunks`, one window at a time.
+
 - **`HttpConfig(max_response_bytes=…)`** caps the in-memory response body (streams, refuses an over-`Content-Length` response, aborts an oversized chunked one); default `None`.
 
 **Error taxonomy**
 
 - **Client-caused errors no longer masquerade as 500s** — across query / cursor / aggregate / storage / search, an unsupported feature → `precondition` (400) and a malformed/out-of-range value → `validation` (422), uniform across mock ≡ Postgres ≡ Mongo ≡ Firestore; genuine server faults stay `internal`.
+
 - **Bad query fields are a client error** — a sort/filter/direction naming an absent field → `precondition` (`field_not_on_read_model` / `invalid_sort_value`); a spec's own bad `default_sort` stays `configuration` (author misconfiguration).
+
 - **Encryption fail-closed** — filtering a randomized-encrypted field raises `precondition` (`core.crypto.encrypted_field_not_filterable`); encrypted-sort rejection now covers every search backend (`core.search.encrypted_sort_field`).
+
 - **Consistent adapter errors** — the mock rev-conflict raises `exc.precondition(..., code="revision_mismatch")` like the real adapters; a missing dependency reports a legible `configuration` error naming what *is* registered; database error classification keys on codes (Postgres SQLSTATE, ClickHouse numeric, Mongo op code, Redis RESP token), not message text.
 
 **Correctness & consistency**
 
 - **Faithful read-committed in the mock** — writes are buffered and published at commit (no dirty reads); removes a class of DST false positives, production adapters unchanged.
+
 - **CQRS read-only guard covers eager (factory-time) write-port acquisition** — an eager `ctx.document.command(spec)` in a QUERY factory now hits the same guard as a call-time one.
+
 - **Notifications route through `QueueConsumer`** — `notification_consumer_lifecycle_step` / `notification_queue_consumer_handler` dedup redelivery on the event id and park poison messages; the consumer warns once per run when `max_deliveries` is set but the backend can't report a delivery count.
+
 - **Outbox relay tenancy** — binds each claim's tenant before publishing; a tenant-aware outbox on the plain relay fails closed (`outbox_relay_tenant_unbound`).
+
 - **Keyring fill-lock stripe uses a stable hash** — PYTHONHASHSEED-independent, for deterministic-simulation replay; a guard bans `hash(x) % n`.
 
 **Adapters & security**
 
 - **VK login** no longer copies the untrusted introspection envelope into claims (keeps only the masked `user`).
+
 - **Mongo** query renderer rejects `$`-prefixed field names (injection); index introspection keeps string index directions verbatim (text/2dsphere/2d/hashed/vector).
+
 - **FastAPI `X-API-Key`** splits `prefix:secret` on the first colon (matching `forze_mcp`); bare keys still authenticate.
+
 - **Per-tenant routed clients** fingerprint the full host list — multi-host DSNs (Mongo replica set, Redis Sentinel, AMQP cluster) no longer raise.
+
 - **Postgres** schema validation accepts parameterized column types (`NUMERIC(10,2)`, `TIMESTAMP(3) WITH TIME ZONE`); search index-definition parsing hardened (balanced-delimiter, dollar-quote-aware).
+
 - **Misc** — BigQuery empty-array/null params typed from annotations; Meilisearch strips embedded quotes; numeric timezone offsets validated; `forze dst --seeds` parsing fails loud; S3 multipart-ETag normalization and unknown-total range downloads; `If-None-Match` parsed per RFC 7232; `forze_http` suppresses its default bearer when an `Authorization` header is set; GCS rejects reserved `forze-tag-` metadata keys; log scrubbing requires a secret-bearing shape (ordinary paths survive).
 
 ## [0.4.1] - 2026-06-17
