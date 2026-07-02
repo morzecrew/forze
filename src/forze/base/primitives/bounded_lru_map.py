@@ -49,13 +49,51 @@ class BoundedLruMap[K: Hashable, V](OrderedDict[K, V]):
             self.popitem(last=False)
             return
 
-        # Drop the oldest entry that is currently evictable; never a live one (whose
-        # eviction would reset active concurrency control). ``items()`` is oldest-first
-        # and does not reorder.
-        for key, value in list(self.items()):
-            if self._evictable(value):
-                del self[key]
+        # Drop the oldest evictable entry, never a live one (its eviction would reset active
+        # concurrency control) and never the just-inserted newest key (``__setitem__`` moved
+        # it to the end) — evicting that would discard the entry we were asked to store.
+        newest = next(reversed(self), None)
+        key = self._oldest_evictable_key(exclude=newest)
+
+        if key is not None:
+            del self[key]
+
+    def _oldest_evictable_key(self, *, exclude: K | None = None) -> K | None:
+        """The oldest key whose value is currently evictable, skipping *exclude*.
+
+        ``items()`` is oldest-first and does not reorder; this reads only, so the caller
+        deletes after it returns. ``None`` when nothing (other than *exclude*) is evictable.
+        """
+
+        if self._evictable is None:
+            return None
+
+        for key, value in self.items():
+            if key != exclude and self._evictable(value):
+                return key
+
+        return None
+
+    def prune(self) -> None:
+        """Bring the map back to ``max_entries`` by dropping the oldest evictable entries.
+
+        A no-op at or under capacity. Call it once an entry may have become evictable (e.g. a
+        bulkhead released its last permit) so a transient over-capacity overshoot — one
+        ``__setitem__`` kept because every entry was live when a new key arrived — is
+        reclaimed without waiting for the next insertion. Stops as soon as nothing is evictable.
+        """
+
+        while len(self) > self._max_entries:
+            if self._evictable is None:
+                self.popitem(last=False)
+                continue
+
+            key = self._oldest_evictable_key()
+
+            if key is None:
                 return
+
+            del self[key]
 
     def __getitem__(self, key: K) -> V:
         value = super().__getitem__(key)

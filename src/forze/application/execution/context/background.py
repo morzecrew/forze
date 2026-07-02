@@ -73,20 +73,23 @@ class BackgroundOwners:
 
         tasks = [asyncio.ensure_future(owner.aclose()) for owner in owners]
 
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + grace
+
         try:
-            async with asyncio.timeout(grace):
+            async with asyncio.timeout_at(deadline):
                 await asyncio.gather(*tasks, return_exceptions=True)
 
         except TimeoutError:
-            # The grace elapsed: cancel any aclose still running and await its unwind (a
-            # transaction rollback, a bg-task cancel) before returning — so it finishes
-            # before lifecycle teardown closes the clients it holds, not merely a scheduling
-            # slot behind. A still-wedged one lands in ``pending`` and is abandoned, matching
-            # the bounded-shutdown intent.
+            # The grace elapsed: cancel any aclose still running and let it unwind (a
+            # transaction rollback, a bg-task cancel) within whatever remains of the *same*
+            # overall deadline — never a second grace window. A full-grace timeout leaves
+            # only a scheduling slot, so a well-behaved owner that unwinds in one step
+            # finishes before teardown while a wedged one is abandoned.
             for task in tasks:
                 task.cancel()
 
-            await asyncio.wait(tasks, timeout=grace)
+            await asyncio.wait(tasks, timeout=max(0.0, deadline - loop.time()))
 
             logger.warning(
                 "Background-owner shutdown exceeded %.1fs; cancelled remaining owners",
@@ -95,7 +98,7 @@ class BackgroundOwners:
 
         # Failures are isolated, but must not vanish: log each one against its owner so a
         # broken aclose is diagnosable, not silently swallowed (cancelled / wedged skipped).
-        for owner, task in zip(owners, tasks):
+        for owner, task in zip(owners, tasks, strict=True):
             if not task.done() or task.cancelled():
                 continue
 

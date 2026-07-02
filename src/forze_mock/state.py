@@ -62,6 +62,10 @@ class MockState:
       back mark must allow redelivery to re-process)
     - ``identity["authn"|"authz"|"tenants"]`` — identity/tenancy planes that are
       document-backed in production
+    - ``hlc_checkpoint`` — the node's HLC high-water mark; the outbox flush advances
+      it inside the business transaction (co-located store)
+    - ``idempotency`` — dedup records for the co-located (transactional) store; the
+      Redis variant is non-transactional, but the mock models the transactional path
 
     NOT participating (non-transactional backends in production; survive rollback):
 
@@ -69,7 +73,7 @@ class MockState:
     - ``streams`` / ``stream_ack`` — stream backends
     - ``storage`` / ``storage_bytes`` — object storage (S3/GCS)
     - ``cache_kv`` / ``cache_pointers`` / ``cache_bodies`` — cache (Redis)
-    - ``counters``, ``idempotency``, ``dlocks`` / ``dlock_fences`` — Redis-backed
+    - ``counters``, ``dlocks`` / ``dlock_fences`` — Redis-backed
     - ``search_snapshots`` / ``search_snapshot_chunks`` — search engine
       (Meilisearch); search reads in mock project off ``documents`` anyway
     - ``analytics_query_hits`` / ``analytics_ingest_log`` — warehouses

@@ -830,6 +830,9 @@ class InProcessResilienceExecutor:
 
         finally:
             state.release()
+            # Reclaim any idle overshoot the LRU kept while every entry was live (oldest
+            # first, so this just-used state — now newest — survives).
+            self._bulkheads.prune()
 
     # ....................... #
 
@@ -899,6 +902,8 @@ class InProcessResilienceExecutor:
         if elapsed > 0.0:
             await self._adaptive_on_complete(state, strat, pol, route, elapsed)
 
+        # Reclaim idle overshoot after the AIMD update (oldest first; this state is newest).
+        self._adaptive_bulkheads.prune()
         return result
 
     # ....................... #
@@ -972,6 +977,8 @@ class InProcessResilienceExecutor:
         ):
             self._emit("bulkhead_backoff", pol, route)
 
+        # Reclaim idle overshoot after the gradient update (oldest first; this state is newest).
+        self._gradient_bulkheads.prune()
         return result
 
     # ....................... #
