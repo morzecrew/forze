@@ -120,6 +120,19 @@ class TestFailClosed:
         assert ei.value.kind is ExceptionKind.PRECONDITION
 
     @pytest.mark.asyncio
+    async def test_hub_refuses_project_and_select_stream(self) -> None:
+        state = MockState()
+        hub = await self._hub(state)
+
+        with pytest.raises(CoreException):
+            async for _ in hub.project_search_stream(["title"], "alpha", chunk_size=5):
+                pass
+
+        with pytest.raises(CoreException):
+            async for _ in hub.select_search_stream(_Item, "alpha", chunk_size=5):
+                pass
+
+    @pytest.mark.asyncio
     async def test_federated_refuses_stream(self) -> None:
         state = MockState()
         leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
