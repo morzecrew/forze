@@ -14,6 +14,8 @@ from forze.base.codecs import JsonCodec, TextCodec
 from forze.base.exceptions import exc
 from forze.base.serialization import ModelCodec
 
+from ._logger import logger
+
 # ----------------------- #
 
 default_json_codec = JsonCodec()
@@ -145,6 +147,10 @@ def _decode_headers(raw: object) -> dict[str, str]:
     try:
         decoded = default_json_codec.loads(raw)
     except Exception:
+        # Best-effort: a malformed headers envelope drops to empty rather than failing
+        # the message. Trace-gated so it's visible when investigating without adding
+        # per-message noise in production.
+        logger.trace("Dropping malformed message headers envelope", exc_info=True)
         return {}
 
     if not isinstance(decoded, dict):

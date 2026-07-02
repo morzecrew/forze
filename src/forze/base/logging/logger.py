@@ -1,11 +1,17 @@
 from enum import StrEnum
+from functools import lru_cache
 from typing import Any, Final, Self, cast, final
 
 import attrs
-from structlog import get_logger
+from structlog import get_logger as _structlog_get_logger
 from structlog.typing import ExcInfo, FilteringBoundLogger
 
-from .constants import TRACE_LEVEL_KEY, LogLevel, LogLevelToRank
+from .constants import (
+    INTEGRATION_LOGGER_PREFIX,
+    TRACE_LEVEL_KEY,
+    LogLevel,
+    LogLevelToRank,
+)
 
 # ----------------------- #
 
@@ -68,7 +74,7 @@ class Logger:
 
     @property
     def backend(self) -> FilteringBoundLogger:
-        log = cast(FilteringBoundLogger, get_logger(self.name))
+        log = cast(FilteringBoundLogger, _structlog_get_logger(self.name))
 
         if self.bound:
             log = log.bind(**self.bound)
@@ -177,3 +183,50 @@ class Logger:
         """Log at the given level."""
 
         self.backend.log(LogLevelToRank.get(level, 0), event, *sub, **extras)
+
+
+# ----------------------- #
+
+
+def get_logger(name: str | StrEnum) -> Logger:
+    """Return a :class:`Logger` for *name* — the convenience factory for app code.
+
+    A thin, discoverable front door over ``Logger(name)`` so callers do not have to
+    import the class directly. Prefer a namespaced name (``"myapp.orders"``) so the
+    logger can be configured and filtered independently.
+    """
+
+    return Logger(name)
+
+
+# ....................... #
+
+
+@lru_cache(maxsize=None)
+def _integration_logger(domain: str) -> Logger:
+    """Memoized default logger for shared adapter/port machinery serving *domain*.
+
+    ``Logger`` is frozen and immutable, so one cached instance per domain is safe to
+    share and keeps the hot resolve path allocation-free after warm-up.
+    """
+
+    return Logger(f"{INTEGRATION_LOGGER_PREFIX}.{domain}")
+
+
+# ....................... #
+
+
+def resolve_logger(override: Logger | None, *, domain: str) -> Logger:
+    """Resolve the logger for generic machinery: *override* if given, else the default.
+
+    Shared code assembled across integrations (port proxies, base adapters, resilience)
+    has no package-local logger of its own. It logs under ``forze.integrations.<domain>``
+    by default so all such output is filterable as a group (``forze.integrations.*``) or
+    per domain (``forze.integrations.cache``). A concrete adapter that wants its own
+    identity passes *override* (e.g. its ``forze_postgres.adapters`` logger).
+    """
+
+    if override is not None:
+        return override
+
+    return _integration_logger(domain)

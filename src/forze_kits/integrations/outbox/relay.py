@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
-from forze.application._logger import logger
 from forze.application.contracts.base import BaseSpec
+from forze_kits.integrations._logger import logger
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.envelope import (
     HEADER_CAUSATION_ID,

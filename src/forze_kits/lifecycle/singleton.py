@@ -4,8 +4,8 @@ from typing import final
 
 import attrs
 
-from forze.application._logger import logger
 from forze.application.contracts.dlock import DistributedLockSpec
+from forze_kits.lifecycle._logger import logger
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution.context import ExecutionContext
 

@@ -6,7 +6,7 @@ Some code taken from: https://gist.github.com/nymous/f138c7f06062b7c43c060bf0375
 import logging
 import sys
 from enum import StrEnum
-from typing import Any, Callable, Literal, Sequence, TextIO, TypedDict
+from typing import Any, Callable, Final, Literal, Sequence, TextIO, TypedDict
 
 import orjson
 import structlog
@@ -19,6 +19,7 @@ from .constants import (
     LogLevelToRank,
     RenderMode,
 )
+from .excepthook import install_excepthook
 from .logger import set_configured_min_rank
 from .processors import (
     EventDictSanitizer,
@@ -26,6 +27,7 @@ from .processors import (
     ExceptionInfoFormatter,
     OpenTelemetryContextInjector,
     RedundantKeysDropper,
+    SamplingDeduplicator,
     TraceLevelResolver,
 )
 from .renderers import ForzeConsoleRenderer
@@ -219,6 +221,8 @@ def configure_logging(
     sanitize_logs: bool = True,
     text_scrub: bool = True,
     include_exception_stack: bool = True,
+    enable_sampling: bool = True,
+    dedup_window: float = 60.0,
 ) -> None:
     """Configure logging for the application.
 
@@ -233,6 +237,9 @@ def configure_logging(
     :param sanitize_logs: Scrub sensitive keys (and optionally text PII) from log event fields.
     :param text_scrub: Apply scrub to string values in log extras when ``sanitize_logs`` is true.
     :param include_exception_stack: When false, omit ``error.stack`` from structured logs.
+    :param enable_sampling: Honor per-event ``_sample`` / ``_dedup_key`` controls to collapse
+        high-volume events; a no-op for events that carry neither.
+    :param dedup_window: Default dedup window in seconds for ``_dedup_key`` events.
     """
 
     set_configured_min_rank(level)
@@ -243,6 +250,10 @@ def configure_logging(
         else structlog.make_filtering_bound_logger("debug")
     )
 
+    sampling: list[Processor] = (
+        [SamplingDeduplicator(default_window=dedup_window)] if enable_sampling else []
+    )
+
     structlog.configure(
         processors=[
             *build_common_processors(
@@ -251,6 +262,7 @@ def configure_logging(
                 include_exception_stack=include_exception_stack,
             ),
             *build_structlog_processors(level),
+            *sampling,
             *_event_sanitizer_processors(
                 sanitize_logs=sanitize_logs,
                 text_scrub=text_scrub,
@@ -332,3 +344,75 @@ def attach_foreign_loggers(
         handler = logging.StreamHandler(stream)
         handler.setFormatter(formatter)
         logger.addHandler(handler)
+
+
+# ....................... #
+
+# The framework's own logger roots. Configuring a parent (e.g. ``forze.integrations``)
+# captures its dynamic children (``forze.integrations.cache``, ``forze_kits.outbox``, …)
+# through the stdlib logger hierarchy, so app authors need not enumerate every child.
+CORE_LOGGER_NAMES: Final[tuple[str, ...]] = ("forze", "forze_kits")
+
+
+def bootstrap_logging(
+    *,
+    level: LogLevel = "info",
+    render_mode: RenderMode = "console",
+    custom_console_renderer: structlog.types.Processor | None = None,
+    logger_names: _LoggerNames = (),
+    third_party: _LoggerNames = (),
+    stream: TextIO = sys.stdout,
+    otel_config: OpenTelemetryConfig | None = None,
+    sanitize_logs: bool = True,
+    text_scrub: bool = True,
+    include_exception_stack: bool = True,
+    enable_sampling: bool = True,
+    dedup_window: float = 60.0,
+    install_uncaught: bool = True,
+) -> None:
+    """One-call logging setup: framework loggers + integrations + foreign + excepthook.
+
+    Wraps the three steps an app otherwise wires by hand — :func:`configure_logging`
+    over the framework's own logger roots (plus any integration ``FORZE_*_LOGGER_NAMES``
+    passed in ``logger_names``), :func:`attach_foreign_loggers` for third-party stdlib
+    loggers (uvicorn, sqlalchemy, …), and :func:`install_excepthook`.
+
+    :param logger_names: Integration logger names/enums to configure alongside the core,
+        e.g. ``[FORZE_POSTGRES_LOGGER_NAMES, FORZE_REDIS_LOGGER_NAMES]``.
+    :param third_party: Foreign stdlib logger names to route through the Forze formatter.
+    :param install_uncaught: Install the ``forze.uncaught`` excepthook for unhandled errors.
+
+    See :func:`configure_logging` for the shared rendering/sanitizing parameters.
+    """
+
+    names: list[str | StrEnum | type[StrEnum]] = [*CORE_LOGGER_NAMES, *logger_names]
+
+    configure_logging(
+        level=level,
+        render_mode=render_mode,
+        custom_console_renderer=custom_console_renderer,
+        logger_names=names,
+        stream=stream,
+        otel_config=otel_config,
+        sanitize_logs=sanitize_logs,
+        text_scrub=text_scrub,
+        include_exception_stack=include_exception_stack,
+        enable_sampling=enable_sampling,
+        dedup_window=dedup_window,
+    )
+
+    if third_party:
+        attach_foreign_loggers(
+            third_party,
+            level=level,
+            render_mode=render_mode,
+            custom_console_renderer=custom_console_renderer,
+            stream=stream,
+            otel_config=otel_config,
+            sanitize_logs=sanitize_logs,
+            text_scrub=text_scrub,
+            include_exception_stack=include_exception_stack,
+        )
+
+    if install_uncaught:
+        install_excepthook()

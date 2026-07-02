@@ -8,6 +8,7 @@ run-scoped via :func:`bind_interceptors` — for cooperative yielding, I/O laten
 """
 
 from .builtin import CooperativeInterceptor, LatencyModel
+from .logging import LoggingInterceptor
 from .protocol import (
     PortCall,
     PortInterceptor,
@@ -24,6 +25,7 @@ __all__ = [
     "CooperativeInterceptor",
     "InterceptingPortProxy",
     "LatencyModel",
+    "LoggingInterceptor",
     "PortCall",
     "PortInterceptor",
     "PortInterceptorChain",

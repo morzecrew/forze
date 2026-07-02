@@ -10,6 +10,8 @@ from forze.application._logger import logger
 if TYPE_CHECKING:
     from opentelemetry.trace import Tracer
 
+    from forze.base.logging import Logger
+
 from ..interception import PortInterceptor, PortInterceptorChain
 from ..tracing import RuntimeTracer, runtime_tracer_from_flag
 from forze.application.contracts.deps import Deps
@@ -206,9 +208,23 @@ class DepsRegistry:
         port-policy wrap. Production registers none (the port is returned bare).
         """
 
-        return attrs.evolve(
-            self, interceptors=(*self.interceptors, *interceptors)
-        )
+        return attrs.evolve(self, interceptors=(*self.interceptors, *interceptors))
+
+    # ....................... #
+
+    def with_port_logging(self, *, logger: "Logger | None" = None) -> Self:
+        """Return a registry that logs every resolved configurable port call.
+
+        Registers a :class:`~forze.application.execution.interception.LoggingInterceptor`
+        so all outbound I/O logs uniformly ``(surface, route, op, duration)`` under
+        ``forze.integrations.<domain>`` (or *logger*). Volume-safe: a successful call
+        logs at ``trace`` (a no-op in production unless trace is configured). Opt in once
+        at assembly, alongside ``with_otel_port_spans``.
+        """
+
+        from ..interception import LoggingInterceptor
+
+        return self.with_interceptors(LoggingInterceptor(logger=logger))
 
     # ....................... #
 

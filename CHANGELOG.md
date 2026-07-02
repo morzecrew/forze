@@ -59,7 +59,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Observability & encryption**
 
+- **One-call logging setup** — `bootstrap_logging(...)` wires the framework loggers, named integration loggers, third-party stdlib loggers, and the uncaught-exception hook in one call; `Logger`, `get_logger`, and `configure_logging` are now re-exported from the top-level `forze`. `configure_logging(enable_sampling=…)` adds per-event volume controls: `_sample=N` (keep 1-in-N) and `_dedup_key=` (emit once per window) collapse high-volume events, stripped before rendering.
+
+- **Integration logger naming** — shared adapter/port machinery logs under `forze.integrations.<domain>` (overridable per adapter via `resolve_logger` / the `LoggerAware` mixin); `forze_kits` now logs under `forze_kits.*` instead of borrowing `forze.application`; `forze_sqs`, `forze_rabbitmq`, and `forze_identity` gained typed `Forze*Logger` name enums.
+
+- **Sampled access logs** — the FastAPI and MCP request-logging middlewares are quiet by default via `AccessLogSampler`: health/readiness probes dropped, error responses always logged, successful ones sampled 1-in-N. *Behavior change:* successful requests are no longer all logged at INFO; pass `access_log=AccessLogSampler(mode="full")` to restore, or `mode="off"` to silence.
+
 - **Per-port OpenTelemetry client spans** — `DepsRegistry.with_otel_port_spans()` opts every resolved port into a per-call `CLIENT` span inside the resilience policy; opt-in, zero-cost off.
+
+- **Per-port logging** — `DepsRegistry.with_port_logging()` registers a `LoggingInterceptor` on the interception seam that logs every resolved port call `(surface, route, op, duration_ms)` under `forze.integrations.<domain>`: `trace` on success (zero-cost off), `debug` on a domain failure, `warning` with a traceback on an unexpected one. Opt-in.
 
 - **W3C trace-context propagation** — a published event carries its span outbox→broker→inbox; opt in with `OutboxIntegrationConfig.propagate_trace` (add a nullable `traceparent` column on relational backends first), `forze_http` injects outbound. Trace-parenting only.
 

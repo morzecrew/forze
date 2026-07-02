@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.base.exceptions import CoreException
-from forze.base.logging import Logger
+from forze.base.logging import DEFAULT_HEALTH_PATHS, AccessLogSampler, Logger
 from forze_fastapi._logging import ForzeFastAPILogger
 from forze_fastapi.exceptions import build_core_exception_response
 
@@ -23,18 +23,35 @@ from forze_fastapi.exceptions import build_core_exception_response
 logger = Logger(ForzeFastAPILogger.ACCESS)
 """The logger for the logging middleware."""
 
+
+def _default_access_sampler() -> AccessLogSampler:
+    """Quiet-by-default access logging: sample successes, always log errors, skip probes."""
+
+    return AccessLogSampler(exclude=DEFAULT_HEALTH_PATHS)
+
+
 # ....................... #
 
 
 @attrs.define(slots=True, frozen=True)
 class LoggingMiddleware:
-    """Middleware that logs the access to the API."""
+    """Middleware that logs the access to the API.
+
+    Access logs are sampled and health-probe-excluded by default (see
+    :class:`~forze.base.logging.AccessLogSampler`); pass ``access_log=`` to log every
+    request (``AccessLogSampler(mode="full")``) or disable them (``mode="off"``).
+    """
 
     app: ASGIApp
     """The next ASGI application."""
 
     process_time_header: str = attrs.field(kw_only=True, default="X-Process-Time")
     """The header name for the process time."""
+
+    access_log: AccessLogSampler = attrs.field(
+        kw_only=True, factory=_default_access_sampler
+    )
+    """Access-log volume policy (sampled + health-excluded by default)."""
 
     # ....................... #
 
@@ -143,6 +160,11 @@ class LoggingMiddleware:
         status_code: int,
         process_time_ms: int,
     ) -> None:
+        if not self.access_log.should_log(
+            subject=scope.get("path"), is_error=status_code >= 400
+        ):
+            return
+
         log_extra = self._prepare_log_extra(
             request, scope, status_code, process_time_ms
         )

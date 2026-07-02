@@ -24,7 +24,7 @@ from fastmcp.server.middleware import (  # noqa: E402
 )
 
 from forze.base.exceptions import CoreException  # noqa: E402
-from forze.base.logging import Logger  # noqa: E402
+from forze.base.logging import AccessLogSampler, Logger  # noqa: E402
 from forze_mcp._logging import ForzeMCPLogger  # noqa: E402
 
 # ----------------------- #
@@ -52,7 +52,17 @@ def _target(message: Any) -> str | None:
 
 
 class LoggingMiddleware(Middleware):
-    """Log each MCP message: method, target, direction, duration, and outcome."""
+    """Log each MCP message: method, target, direction, duration, and outcome.
+
+    Successful requests are sampled (see :class:`~forze.base.logging.AccessLogSampler`);
+    errors are always logged. Pass ``access_log=`` to change the volume policy.
+    """
+
+    def __init__(self, *, access_log: AccessLogSampler | None = None) -> None:
+        super().__init__()
+        self.access_log = access_log if access_log is not None else AccessLogSampler()
+
+    # ....................... #
 
     def _extra(
         self,
@@ -104,6 +114,10 @@ class LoggingMiddleware(Middleware):
             raise
 
         duration_ms = int((time.perf_counter() - start_time) * 1000)
-        logger.info("Processed MCP request", **self._extra(context, duration_ms, "ok"))
+
+        if self.access_log.should_log(subject=context.method, is_error=False):
+            logger.info(
+                "Processed MCP request", **self._extra(context, duration_ms, "ok")
+            )
 
         return result

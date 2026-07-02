@@ -47,6 +47,11 @@ _EXPORTS: dict[str, str] = {
     "ReadSet": "forze.application.contracts.invariants",
     "SumOf": "forze.application.contracts.invariants",
     "CountAll": "forze.application.contracts.invariants",
+    # logging front door
+    "Logger": "forze.base.logging",
+    "get_logger": "forze.base.logging",
+    "configure_logging": "forze.base.logging",
+    "bootstrap_logging": "forze.base.logging",
 }
 
 __all__ = [
@@ -71,6 +76,10 @@ __all__ = [
     "ReadSet",
     "SumOf",
     "CountAll",
+    "Logger",
+    "get_logger",
+    "configure_logging",
+    "bootstrap_logging",
 ]
 
 
@@ -80,6 +89,12 @@ __getattr__, __dir__ = lazy_exports(__name__, _EXPORTS)
 if TYPE_CHECKING:
     # Eager imports for IDEs and type checkers only
     from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+    from forze.base.logging import (
+        Logger,
+        bootstrap_logging,
+        configure_logging,
+        get_logger,
+    )
     from forze.application.contracts.invariants import (
         CountAll,
         ReadSet,

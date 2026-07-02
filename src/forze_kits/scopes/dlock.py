@@ -6,7 +6,7 @@ from typing import Any, AsyncGenerator, Callable, Final
 
 import attrs
 
-from forze.application._logger import logger
+from forze_kits.scopes._logger import logger
 from forze.application.contracts.dlock import (
     AcquiredLock,
     DistributedLockCommandPort,
@@ -130,7 +130,9 @@ class DistributedLockScope:
                     jitter_max_ns = int(jitter_s * 1_000_000_000)
 
                     extra_s = (
-                        current_entropy_source().as_random().randrange(jitter_max_ns + 1)
+                        current_entropy_source()
+                        .as_random()
+                        .randrange(jitter_max_ns + 1)
                         / 1_000_000_000
                         if jitter_max_ns > 0
                         else 0.0

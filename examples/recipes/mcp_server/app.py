@@ -44,7 +44,11 @@ from forze.application.execution.operations.registry import FrozenOperationRegis
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.aggregates.document.factories import build_document_registry
 from forze_kits.aggregates.document.operations import DocumentKernelOp
-from forze.base.logging import attach_foreign_loggers, configure_logging
+from forze.base.logging import (
+    AccessLogSampler,
+    attach_foreign_loggers,
+    configure_logging,
+)
 from forze_mcp import (
     LoggingMiddleware,
     ResourceTemplateSpec,
@@ -167,7 +171,9 @@ def build_server(
         [ResourceTemplateSpec(op=NS.key(DocumentKernelOp.GET), scheme="notes")],
     )
     # Structured access log per MCP message (method, tool/resource target, duration, outcome).
-    server.add_middleware(LoggingMiddleware())
+    # Full mode here so the demo shows a line for every message; production defaults to
+    # sampled (errors always, successes 1-in-N).
+    server.add_middleware(LoggingMiddleware(access_log=AccessLogSampler(mode="full")))
 
     return server
 

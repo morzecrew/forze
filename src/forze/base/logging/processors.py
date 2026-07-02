@@ -1,4 +1,5 @@
 import sys
+import threading
 import traceback
 from typing import Any, cast
 
@@ -7,12 +8,15 @@ from structlog import DropEvent
 from structlog.typing import EventDict, ExcInfo
 
 from .constants import (
+    DEDUP_KEY,
+    DEDUP_WINDOW_KEY,
     ERR_MESSAGE_KEY,
     ERR_STACK_KEY,
     ERR_TYPE_KEY,
     OTEL_DEFAULT_SPAN_ID_KEY,
     OTEL_DEFAULT_TRACE_ID_KEY,
     RICH_EXC_INFO_KEY,
+    SAMPLE_KEY,
     TRACE_LEVEL_KEY,
     LogLevel,
     LogLevelToRank,
@@ -244,3 +248,91 @@ class EventDictSanitizer:
                 event_dict["event"] = scrub_log_string(event_value)
 
         return event_dict
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, eq=False)
+class SamplingDeduplicator:
+    """Collapse high-volume events via opt-in per-event sampling and time-window dedup.
+
+    A no-op for ordinary events: only events carrying a control key are affected, and an
+    event without one passes straight through (two ``pop`` checks). This generalizes the
+    hand-rolled "warn once" guards scattered across integrations into one pipeline stage.
+
+    Callers opt in per event via reserved extras (stripped before rendering):
+
+    - ``_sample=N`` — keep 1 in ``N`` events sharing the same ``(logger, event)`` bucket;
+      the rest are dropped. Use for uniformly high-volume, low-signal events.
+    - ``_dedup_key=key`` — emit at most one event per ``key`` per window; repeats within
+      the window are dropped. Use for a flapping condition (a dependency retrying) that
+      would otherwise log identically thousands of times.
+    - ``_dedup_window=seconds`` — override the default dedup window for this event.
+
+    State is bounded implicitly by the number of distinct buckets/keys in use (each is a
+    stable literal in code, not user input), so it does not grow with traffic.
+    """
+
+    default_window: float = 60.0
+    """Default dedup window in seconds when ``_dedup_window`` is not given."""
+
+    _counts: dict[tuple[str, str], int] = attrs.field(factory=dict, init=False)
+    _last_emit: dict[str, float] = attrs.field(factory=dict, init=False)
+    _lock: "threading.Lock" = attrs.field(factory=threading.Lock, init=False)
+
+    # ....................... #
+
+    def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
+        sample = event_dict.pop(SAMPLE_KEY, None)
+        dedup = event_dict.pop(DEDUP_KEY, None)
+        window = event_dict.pop(DEDUP_WINDOW_KEY, None)
+
+        if sample is None and dedup is None:
+            return event_dict
+
+        with self._lock:
+            if sample is not None and self._sampled_out(event_dict, int(sample)):
+                raise DropEvent()
+
+            if dedup is not None and self._deduplicated(str(dedup), window):
+                raise DropEvent()
+
+        return event_dict
+
+    # ....................... #
+
+    def _sampled_out(self, event_dict: EventDict, n: int) -> bool:
+        """Keep the 1st of every ``n`` events in the bucket; drop the rest."""
+
+        if n <= 1:
+            return False
+
+        bucket = (
+            str(event_dict.get("logger_name") or event_dict.get("logger") or ""),
+            str(event_dict.get("event", "")),
+        )
+        count = self._counts.get(bucket, 0)
+        self._counts[bucket] = count + 1
+
+        return count % n != 0
+
+    # ....................... #
+
+    def _deduplicated(self, key: str, window: Any) -> bool:
+        """Drop when *key* was already emitted within its window."""
+
+        # Route through the time seam (not raw ``time.monotonic``) so the dedup window is
+        # deterministic under simulation, tracking virtual time when a source is bound.
+        from forze.base.primitives import monotonic
+
+        span = float(window) if window is not None else self.default_window
+        now = monotonic()
+        last = self._last_emit.get(key)
+
+        if last is not None and (now - last) < span:
+            return True
+
+        self._last_emit[key] = now
+
+        return False

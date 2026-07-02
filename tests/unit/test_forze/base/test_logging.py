@@ -588,7 +588,7 @@ def test_trace_fast_skips_below_configured_level(monkeypatch: pytest.MonkeyPatch
         def bind(self, **_kwargs: object) -> "_Recorder":
             return self
 
-    monkeypatch.setattr(lm, "get_logger", lambda _name: _Recorder())
+    monkeypatch.setattr(lm, "_structlog_get_logger", lambda _name: _Recorder())
 
     log = lm.Logger("trace-gate-test")
     original = lm._configured_min_rank

@@ -1,8 +1,9 @@
 """Authz logger."""
 
 from forze.base.logging import Logger
+from forze_identity._logging import ForzeIdentityLogger
 
 # ----------------------- #
 
-logger = Logger("forze_identity.authz")
+logger = Logger(ForzeIdentityLogger.AUTHZ)
 """Authz logger."""
