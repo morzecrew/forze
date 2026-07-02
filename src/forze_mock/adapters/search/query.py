@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import (
     Any,
     AsyncGenerator,
+    Awaitable,
+    Callable,
     Final,
     Literal,
     Sequence,
@@ -763,7 +765,25 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         # Single-index keyword reference: supports keyset iteration → bounded-memory export.
         return SearchCapabilities(supports_stream=True)
 
-    async def search_stream(
+    async def _stream_impl(
+        self,
+        fetch_page: Callable[
+            [CursorPaginationExpression], Awaitable[SearchCursorPage[Any]]
+        ],
+        *,
+        chunk_size: int,
+    ) -> AsyncGenerator[Sequence[Any]]:
+        """Shared keyset-stream wiring: fail closed on capability, then page the cursor.
+
+        Public ``*_stream`` methods supply only the cursor callback + result shape (mirrors
+        ``_offset_search_impl`` / ``_cursor_search_impl``), so validation and the paging loop
+        live in one place."""
+
+        validate_stream_supported(self.search_capabilities, backend="mock")
+        async for chunk in stream_search_pages(fetch_page, chunk_size=chunk_size):
+            yield chunk
+
+    def search_stream(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -772,16 +792,14 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         options: SearchOptions | None = None,
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[M]]:
-        validate_stream_supported(self.search_capabilities, backend="mock")
-        async for chunk in stream_search_pages(
+        return self._stream_impl(
             lambda cursor: self.search_cursor(
                 query, filters, cursor, sorts, options=options
             ),
             chunk_size=chunk_size,
-        ):
-            yield chunk
+        )
 
-    async def project_search_stream(
+    def project_search_stream(
         self,
         fields: Sequence[str],
         query: str | Sequence[str],
@@ -791,16 +809,14 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         options: SearchOptions | None = None,
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[JsonDict]]:
-        validate_stream_supported(self.search_capabilities, backend="mock")
-        async for chunk in stream_search_pages(
+        return self._stream_impl(
             lambda cursor: self.project_search_cursor(
                 fields, query, filters, cursor, sorts, options=options
             ),
             chunk_size=chunk_size,
-        ):
-            yield chunk
+        )
 
-    async def select_search_stream(
+    def select_search_stream(
         self,
         return_type: type[T],
         query: str | Sequence[str],
@@ -810,11 +826,9 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         options: SearchOptions | None = None,
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[T]]:
-        validate_stream_supported(self.search_capabilities, backend="mock")
-        async for chunk in stream_search_pages(
+        return self._stream_impl(
             lambda cursor: self.select_search_cursor(
                 return_type, query, filters, cursor, sorts, options=options
             ),
             chunk_size=chunk_size,
-        ):
-            yield chunk
+        )

@@ -82,9 +82,9 @@ async for chunk in ctx.search.query(spec).search_stream("annual report", chunk_s
 ```
 
 Streaming is capability-gated (`spec`'s adapter must advertise `SearchCapabilities.supports_stream`):
-Postgres FTS / PGroonga / hub and Mongo text / Atlas stream; Meilisearch (offset-only) and the
-top-k vector engines **refuse** rather than emulate it via deep offset. Pick the right export
-tool for the shape:
+Postgres FTS / PGroonga and Mongo text / Atlas stream; Meilisearch (offset-only), the top-k
+vector engines, and hub search (each leg is capped at `per_leg_limit`, so a full walk isn't
+guaranteed) **refuse** rather than truncate. Pick the right export tool for the shape:
 
 - **Ranked live export** → `search_stream`. A concurrent write may shift a hit between chunks.
 - **Filter-only export** (no query terms) → the [document port](document.md)'s `find_stream` —
