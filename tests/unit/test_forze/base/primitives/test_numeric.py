@@ -22,6 +22,13 @@ class TestClamp:
     def test_degenerate_range_single_value(self) -> None:
         assert clamp(5, 7, 7) == 7
 
+    def test_float_within_range(self) -> None:
+        assert clamp(0.8, 0.5, 1.0) == 0.8
+
+    def test_float_clamped_to_bounds(self) -> None:
+        assert clamp(2.0, 0.5, 1.0) == 1.0
+        assert clamp(0.1, 0.5, 1.0) == 0.5
+
     def test_inverted_bounds_raise(self) -> None:
         with pytest.raises(ValueError, match="inverted"):
             clamp(5, 20, 10)

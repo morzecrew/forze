@@ -60,6 +60,9 @@ class BigQueryConfig:
         if self.poll_interval.total_seconds() <= 0:
             raise exc.configuration("Poll interval must be positive")
 
+        if self.max_poll_attempts < 1:
+            raise exc.configuration("max_poll_attempts must be >= 1")
+
 
 # ....................... #
 

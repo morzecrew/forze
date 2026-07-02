@@ -27,6 +27,7 @@ context, so it is fully deterministic under test.
 import attrs
 
 from forze.base.exceptions import exc
+from forze.base.primitives import clamp
 
 # ----------------------- #
 
@@ -142,7 +143,7 @@ class Gradient2Limiter:
         if inflight * 2 < self._limit:
             return self._limit
 
-        gradient = max(0.5, min(1.0, self.rtt_tolerance * self._long_rtt / rtt))
+        gradient = clamp(self.rtt_tolerance * self._long_rtt / rtt, 0.5, 1.0)
         new_limit = self._limit * gradient + self.queue_size
 
         if new_limit > self._limit:

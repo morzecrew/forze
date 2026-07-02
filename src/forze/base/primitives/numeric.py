@@ -1,15 +1,20 @@
 """Numeric helpers shared across the application."""
 
+from typing import TypeVar
+
 # ----------------------- #
 
+Numeric = TypeVar("Numeric", int, float)
 
-def clamp(value: int, lo: int, hi: int) -> int:
+
+def clamp(value: Numeric, lo: Numeric, hi: Numeric) -> Numeric:
     """Constrain *value* to the inclusive ``[lo, hi]`` range.
 
     Returns the nearest legal value: *lo* when *value* falls below the range,
     *hi* when it rises above, and *value* unchanged when it already fits. This
     preserves caller intent (the closest permitted magnitude) rather than
-    substituting an unrelated default.
+    substituting an unrelated default. Works on ``int`` or ``float`` (the return
+    type matches the argument type).
 
     Raises:
         ValueError: When ``lo > hi`` (an inverted, unsatisfiable range).

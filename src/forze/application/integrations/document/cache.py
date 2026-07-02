@@ -22,6 +22,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import (
     JsonDict,
     LeaderFollowerLane,
+    clamp,
     current_entropy_source,
     current_time_source,
     monotonic,
@@ -358,8 +359,9 @@ class DocumentCache[R: BaseModel]:
             last_update_at = last_update_at.replace(tzinfo=timezone.utc)
 
         age = max(0.0, (current_time_source().now() - last_update_at).total_seconds())
-        seconds = min(
-            max(cfg.alpha * age, cfg.min_ttl.total_seconds()),
+        seconds = clamp(
+            cfg.alpha * age,
+            cfg.min_ttl.total_seconds(),
             cfg.max_ttl.total_seconds(),
         )
 

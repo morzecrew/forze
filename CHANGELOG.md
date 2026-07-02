@@ -157,7 +157,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Empty filter/sort maps are no-ops** on list/search requests; a structured-but-empty envelope is still rejected.
 
-- **Document sizing bounds clamp/reject instead of silently resetting** — an out-of-range document-adapter `batch_size` (outside `[10, 20000]`) is now rejected with `exc.configuration` at wiring instead of being replaced with `200` on first use; a per-call stream `chunk_size` is clamped to the nearest bound (`[10, 20000]`) instead of reset to `500`, so an over-large request runs at the ceiling rather than shrinking.
+- **Sizing bounds clamp/reject instead of silently resetting** — an out-of-range document-adapter `batch_size` (outside `[10, 20000]`) is now rejected with `exc.configuration` at wiring instead of being replaced with `200` on first use; a per-call stream `chunk_size` is clamped to the nearest bound (`[10, 20000]`) instead of reset to `500`, so an over-large request runs at the ceiling rather than shrinking. A BigQuery `max_poll_attempts < 1` is likewise rejected at wiring. Bounds are enforced through a shared `clamp` primitive.
 
 - **Integration logger namespaces unified to `forze_<pkg>.*`** — `forze_redis` / `forze_postgres` / `forze_http` / `forze_firestore` / `forze_temporal` no longer log under bare prefixes; update log filters keyed on the old ones.
 
