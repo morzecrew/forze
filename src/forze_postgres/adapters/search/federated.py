@@ -389,14 +389,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             k=int(self.rrf_k),
         )
 
-        SearchResultSnapshot.order_federated_secondary_sorts(
-            merged,
-            sorts,
-            value_of=lambda item, field: SearchResultSnapshot.federated_merged_hit_field(
-                item, field=field
-            ),
-            score_of=lambda item: -item[1],
-        )
+        SearchResultSnapshot.order_federated_full_merge(merged, sorts)
 
         total = len(merged)
         handle_out: SearchSnapshotHandle | None = None

@@ -78,10 +78,9 @@ def federated_thin_eligible(
 
     Needs the thin snapshot format (:func:`federated_thin_format`). Highlights need the
     full leg hits up front, so they always fall back to the full-fetch path. Secondary
-    ``sorts`` are supported thin by also projecting the sort fields, but only when every
-    key is a top-level field present on all members: the full path reads sort values via
-    ``getattr(hit, field)`` (no dotted traversal), so a dotted or member-missing key would
-    order differently thin vs. full — those keep falling back."""
+    ``sorts`` are supported thin by also projecting the sort fields (dotted paths allowed —
+    both paths resolve them the same way), but only when every key's **root** field exists
+    on all members; a root absent on a member keeps that request on the full-fetch path."""
 
     if wants_highlights:
         return False
@@ -91,9 +90,8 @@ def federated_thin_eligible(
 
     if sorts:
         for field in sorts:
-            if "." in field:
-                return False
-            if any(field not in member.model_type.model_fields for member in members):
+            root = field.split(".", 1)[0]
+            if any(root not in member.model_type.model_fields for member in members):
                 return False
 
     return True

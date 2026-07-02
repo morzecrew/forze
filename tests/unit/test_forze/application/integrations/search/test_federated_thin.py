@@ -31,6 +31,16 @@ class _Item(BaseModel):
     title: str
 
 
+class _Meta(BaseModel):
+    rank: int
+
+
+class _NestedItem(BaseModel):
+    id: str
+    title: str
+    meta: _Meta
+
+
 class _NoId(BaseModel):
     slug: str
     title: str
@@ -93,10 +103,21 @@ def test_eligibility_gates() -> None:
     assert federated_thin_eligible(
         thin_merge=True, **{**base, "sorts": {"title": "asc"}}
     )
-    # Dotted keys (the full path reads via ``getattr``, no traversal) and keys absent
-    # on a member fall back to the full-fetch path.
+    # A dotted key whose ROOT field exists on every member is eligible too — both paths
+    # resolve nested paths the same way (projected dict vs. ``model_dump`` + ``path_get``).
+    nested_members = [
+        SearchSpec(name="a", model_type=_NestedItem, fields=["title"]),
+        SearchSpec(name="b", model_type=_NestedItem, fields=["title"]),
+    ]
+    assert federated_thin_eligible(
+        members=nested_members,
+        thin_merge=True,
+        wants_highlights=False,
+        sorts={"meta.rank": "asc"},
+    )
+    # A key whose root is absent on a member falls back to the full-fetch path.
     assert not federated_thin_eligible(
-        thin_merge=True, **{**base, "sorts": {"nested.field": "asc"}}
+        thin_merge=True, **{**base, "sorts": {"meta.rank": "asc"}}
     )
     assert not federated_thin_eligible(
         thin_merge=True, **{**base, "sorts": {"absent": "asc"}}
@@ -234,6 +255,58 @@ async def test_thin_executor_matches_full_merge_with_sorts(direction: str) -> No
     # (RRF score primary, ``title`` tie-break), so late materialization must not reorder.
     assert _ordered(thin_page) == _ordered(full_page)
     assert thin_page.count == full_page.count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+async def test_thin_executor_matches_full_merge_with_nested_sort(
+    direction: str,
+) -> None:
+    state = MockState()
+    leg_a = SearchSpec(name="a", model_type=_NestedItem, fields=["title"])
+    leg_b = SearchSpec(name="b", model_type=_NestedItem, fields=["title"])
+    await MockSearchCommandAdapter(state=state, spec=leg_a).upsert(
+        [_NestedItem(id="1", title="alpha one", meta=_Meta(rank=30))]
+    )
+    await MockSearchCommandAdapter(state=state, spec=leg_b).upsert(
+        [_NestedItem(id="2", title="alpha two", meta=_Meta(rank=10))]
+    )
+    ports = [
+        ("a", MockSearchAdapter(state=state, spec=leg_a)),
+        ("b", MockSearchAdapter(state=state, spec=leg_b)),
+    ]
+    sorts = {"meta.rank": direction}
+
+    full = MockFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(name="fed", members=[leg_a, leg_b]),
+        legs=ports,
+    )
+    full_page = await full.search_page(
+        "alpha", pagination={"limit": 10}, sorts=sorts
+    )
+
+    active = [("a", ports[0][1], 1.0), ("b", ports[1][1], 1.0)]
+    thin_page = await execute_federated_thin_offset(
+        legs=active,
+        query="alpha",
+        filters=None,
+        pagination={"limit": 10},
+        sorts=sorts,
+        leg_opts=None,
+        rrf_k=60,
+        per_leg_limit=5000,
+        return_count=True,
+        return_type=None,
+        run_legs=_gather,
+    )
+
+    # Dotted sort resolves identically thin (projected nested dict) vs. full (model_dump +
+    # path_get). One rank-1 hit per leg → equal RRF score → nested rank decides the order.
+    assert _ordered(thin_page) == _ordered(full_page)
+    expected = (
+        [("b", "2"), ("a", "1")] if direction == "asc" else [("a", "1"), ("b", "2")]
+    )
+    assert _ordered(thin_page) == expected
 
 
 @pytest.mark.asyncio

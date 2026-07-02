@@ -100,14 +100,7 @@ class MockFederatedSearchAdapter[M: BaseModel](
             leg_rows=leg_rows,
             k=int(self.rrf_k),
         )
-        SearchResultSnapshot.order_federated_secondary_sorts(
-            merged,
-            sorts,
-            value_of=lambda item, field: SearchResultSnapshot.federated_merged_hit_field(
-                item, field=field
-            ),
-            score_of=lambda item: -item[1],
-        )
+        SearchResultSnapshot.order_federated_full_merge(merged, sorts)
         hits = [item[0] for item in merged]
         return hits, build_federated_highlight_index(leg_pages)
 

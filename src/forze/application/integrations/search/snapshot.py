@@ -41,7 +41,9 @@ from forze.application.integrations.crypto import payload_aad
 from forze.base.crypto import unpack_envelope
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import (
+    MISSING,
     JsonDict,
+    path_get,
     stable_payload_fingerprint,
     utcnow,
     uuid4,
@@ -610,14 +612,38 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
-    def federated_merged_hit_field(
-        item: tuple[FederatedSearchReadModel[Any], float],
-        *,
-        field: str,
-    ) -> Any:
-        """Value of ``field`` on the merged hit (for stable secondary ``sorts``)."""
+    def order_federated_full_merge(
+        merged: list[tuple[FederatedSearchReadModel[Any], float]],
+        sorts: QuerySortExpression | None,
+    ) -> None:
+        """Order a full-record RRF merge in place: RRF score primary, ``sorts`` tie-break.
 
-        return getattr(item[0].hit, field)
+        Reads each (dotted) ``sorts`` value off the hit via a one-per-hit ``model_dump`` +
+        :func:`path_get`, so a nested key resolves identically to the thin path's reads over
+        the projected dict. An absent path reads as ``None`` (same as thin)."""
+
+        dumped: dict[int, JsonDict] = {}
+
+        def _value_of(
+            item: tuple[FederatedSearchReadModel[Any], float],
+            field: str,
+        ) -> Any:
+            doc = dumped.get(id(item))
+
+            if doc is None:
+                doc = item[0].hit.model_dump(mode="python")
+                dumped[id(item)] = doc
+
+            value = path_get(doc, field)
+
+            return None if value is MISSING else value
+
+        SearchResultSnapshot.order_federated_secondary_sorts(
+            merged,
+            sorts,
+            value_of=_value_of,
+            score_of=lambda item: -item[1],
+        )
 
     # ....................... #
 
