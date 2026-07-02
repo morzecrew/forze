@@ -152,6 +152,14 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     if use_before:
         next_c, prev_c = prev_c, next_c
 
+    # Per-hit engine score for the page window (ranked queries only); read before the
+    # rank column is popped ahead of decode.
+    scores = (
+        [float(doc.get(MONGO_RANK_FIELD, 0.0)) for doc in page_rows_with_rank]
+        if terms
+        else None
+    )
+
     for doc in page_rows_with_rank:
         doc.pop(MONGO_RANK_FIELD, None)
 
@@ -177,4 +185,5 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         next_cursor=next_c,
         prev_cursor=prev_c,
         has_more=has_more,
+        scores=scores,
     )

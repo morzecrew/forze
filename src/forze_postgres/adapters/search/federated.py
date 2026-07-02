@@ -20,6 +20,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
+    SearchCapabilities,
     SearchCountlessPage,
     SearchPage,
     SearchSnapshotHandle,
@@ -34,12 +35,14 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
+    MultiSourceSearchOptions,
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
     SearchResultSnapshotSpec,
     prepare_federated_search_options,
     reject_federated_facets,
+    resolve_fusion,
 )
 from forze.application.integrations.search import (
     SearchResultSnapshot,
@@ -121,6 +124,14 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         init=False,
     )
     """Read model for port mixin typing."""
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # Cross-index fusion by weighted reciprocal rank fusion (rank-only). Weighted
+        # (relative-score) fusion is not offered here, so it is not advertised.
+        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
 
     # ....................... #
 
@@ -236,6 +247,11 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             )
 
         reject_federated_facets(options)
+        resolve_fusion(
+            cast("MultiSourceSearchOptions", options or {}).get("fusion"),
+            self.search_capabilities,
+            backend="postgres_federated",
+        )
 
         leg_opts, member_weights = prepare_federated_search_options(
             self.federated_spec,
@@ -424,6 +440,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         highlights = federated_highlights_for_hits(
             [it[0] for it in window], hl_index
         )
+        # Fused RRF score per windowed hit (index-aligned with the hits either branch builds).
+        scores = [float(it[1]) for it in window]
 
         def _finish(hits: list[Any]) -> Any:
             result = search_page_from_limit_offset(
@@ -431,6 +449,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 pagination,
                 total=total if return_count else None,
                 snapshot=handle_out,
+                scores=scores,
             )
             if highlights is None:
                 return result

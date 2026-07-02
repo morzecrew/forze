@@ -15,7 +15,7 @@ from forze.application.contracts.resolution import (
 from forze.base.primitives import OnceCell
 from forze_mongo.kernel.relation import resolve_mongo_named_resource
 from forze.application.contracts.querying import QuerySortExpression
-from forze.application.contracts.search import SearchOptions
+from forze.application.contracts.search import SearchCapabilities, SearchOptions
 
 from ._pipeline import build_browse_pipeline, build_vector_ranked_pipeline
 from forze_mongo.adapters._logger import logger
@@ -69,6 +69,18 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
     """``$vectorSearch`` ``limit`` (must be ``<=`` :attr:`vector_num_candidates`)."""
 
     search_variant: str = attrs.field(default="mongo_vector", init=False)
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # Atlas $vectorSearch: bring-your-own vector (embedder-encoded query); the stage
+        # pre-filters on indexed fields before the ANN traversal.
+        return SearchCapabilities(
+            supports_vector=True,
+            filtered_ann="prefilter",
+            auto_embed=False,
+        )
 
     # ....................... #
 

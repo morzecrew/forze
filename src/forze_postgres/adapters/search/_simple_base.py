@@ -49,7 +49,7 @@ from ._materialize_hits import search_trust_source
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
 from ._search_count import effective_search_count, resolve_ranked_approximate_total
 from ._pgroonga_plan import is_coalesced_read_heap
-from ._pipeline_sql import PipelineAliases, build_rank_first_order
+from ._pipeline_sql import PipelineAliases, build_rank_first_order, build_rank_select
 from ._port import PostgresSearchPortMixin
 
 # ----------------------- #
@@ -308,6 +308,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             count_from_outer=pipeline_sql.count_from_outer,
             approximate_total=approximate_total,
             select_table_alias=self.projection_alias,
+            rank_select=build_rank_select(self.pipeline) if terms else None,
             highlight=pipeline_sql.highlight,
             from_outer_param_count=pipeline_sql.from_outer_param_count,
         )

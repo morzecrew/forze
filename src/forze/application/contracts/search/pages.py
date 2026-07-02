@@ -49,6 +49,16 @@ class SearchCountlessPage[T](CountlessPage[T]):
     (``highlights[i]`` describes ``hits[i]``), when highlighting was requested. ``None`` when
     not requested or unavailable (e.g. snapshot-continuation pages)."""
 
+    scores: list[float] | None = None
+    """Optional per-hit relevance / similarity scores, index-aligned with :attr:`hits`
+    (``scores[i]`` is the score of ``hits[i]``). Populated for ranked surfaces where a score is
+    meaningful — the fused RRF score for federated results, the engine rank/similarity for
+    vector and hybrid search. ``None`` when scoring is not meaningful (e.g. a filter-only
+    browse) or not surfaced by the backend for this page (e.g. snapshot-continuation pages,
+    where order is fixed and scores are not persisted). Higher is more relevant; the scale is
+    backend- and strategy-specific (RRF scores in particular cluster near the top of the list),
+    so treat scores as ordinal within one response rather than comparable across queries."""
+
 
 # ....................... #
 
@@ -74,6 +84,10 @@ class SearchCursorPage[T](CursorPage[T]):
     """Optional per-hit highlighted fragments, index-aligned with :attr:`hits`, when
     highlighting was requested. ``None`` when not requested or unavailable."""
 
+    scores: list[float] | None = None
+    """Optional per-hit relevance / similarity scores, index-aligned with :attr:`hits`.
+    See :attr:`SearchCountlessPage.scores`."""
+
 
 # ....................... #
 
@@ -87,6 +101,7 @@ def search_page_from_limit_offset[T](
     snapshot: SearchSnapshotHandle | None = None,
     facets: FacetResults | None = None,
     highlights: list[HitHighlights] | None = None,
+    scores: list[float] | None = None,
 ) -> SearchCountlessPage[T]: ...
 
 
@@ -99,6 +114,7 @@ def search_page_from_limit_offset[T](
     snapshot: SearchSnapshotHandle | None = None,
     facets: FacetResults | None = None,
     highlights: list[HitHighlights] | None = None,
+    scores: list[float] | None = None,
 ) -> SearchPage[T]: ...
 
 
@@ -110,11 +126,13 @@ def search_page_from_limit_offset[T](
     snapshot: SearchSnapshotHandle | None = None,
     facets: FacetResults | None = None,
     highlights: list[HitHighlights] | None = None,
+    scores: list[float] | None = None,
 ) -> SearchPage[T] | SearchCountlessPage[T]:
     """Build a ``SearchPage`` / ``SearchCountlessPage`` from offset/limit window params.
 
     The search counterpart to :func:`~forze.application.contracts.base.page_from_limit_offset`:
-    same one-based page numbering, plus the optional snapshot handle / facets / highlights.
+    same one-based page numbering, plus the optional snapshot handle / facets / highlights /
+    per-hit scores.
     """
 
     page_num, size = offset_page_coords(pagination, len(hits))
@@ -127,6 +145,7 @@ def search_page_from_limit_offset[T](
             snapshot=snapshot,
             facets=facets,
             highlights=highlights,
+            scores=scores,
         )
 
     return SearchPage(
@@ -137,4 +156,5 @@ def search_page_from_limit_offset[T](
         snapshot=snapshot,
         facets=facets,
         highlights=highlights,
+        scores=scores,
     )

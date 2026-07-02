@@ -282,6 +282,9 @@ async def execute_federated_thin_offset(
         window = window[: int(limit)]
 
     # 4. Hydrate only the page: re-fetch full hits per member, restricted to its ids.
+    #    Hydration reorders and may drop keys whose hit vanished, so the fused RRF score is
+    #    re-aligned to the surviving models by (member, id) rather than by the window order.
+    score_by_key = {(member, rid): score for member, rid, score in window}
     ports = {name: port for name, port, _weight in legs}
     models = await _hydrate_federated_page(
         ports=ports,
@@ -291,6 +294,9 @@ async def execute_federated_thin_offset(
         leg_opts=leg_opts,
         run_legs=run_legs,
     )
+    scores = [
+        score_by_key[(fm.member, str(getattr(fm.hit, ID_FIELD)))] for fm in models
+    ]
 
     if return_type is not None:
         rows = [
@@ -307,6 +313,7 @@ async def execute_federated_thin_offset(
         pagination,
         total=total if return_count else None,
         snapshot=handle,
+        scores=scores,
     )
 
 

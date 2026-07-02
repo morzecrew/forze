@@ -90,6 +90,12 @@ class OffsetRowsResult:
     """Optional per-hit highlighted fragments, index-aligned with :attr:`rows`
     (sliced in lockstep with the rows when a snapshot pool is paginated)."""
 
+    scores: list[float] | None = None
+    """Optional per-hit relevance / similarity scores, index-aligned with :attr:`rows`.
+    A ranked backend reads its rank column (``_fts_rank`` / ``_mongo_rank`` / vector
+    similarity) into this list and strips it from :attr:`rows` before returning. ``None``
+    when the backend has no per-hit score for this query (e.g. a filter-only browse)."""
+
 
 # ....................... #
 
@@ -322,6 +328,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         trust_source=trust_source,
         facets=outcome.facets,
         highlights=outcome.highlights,
+        scores=outcome.scores,
     )
 
 
@@ -341,12 +348,13 @@ async def materialize_offset_page[M: BaseModel](
     trust_source: bool = False,
     facets: FacetResults | None = None,
     highlights: list[HitHighlights] | None = None,
+    scores: list[float] | None = None,
 ) -> Any:
     """Materialize already-fetched rows into a paginated page (no snapshot write).
 
     The non-snapshot tail shared by the offset adapters: snapshot writes now stream the pool
     straight into the store (see :func:`build_snapshot_pool_streaming`), so this only decodes
-    the fetched page rows and wraps them with pagination and optional facets/highlights.
+    the fetched page rows and wraps them with pagination and optional facets/highlights/scores.
     """
 
     page_offset = offset_from_dict(pagination_dict)
@@ -374,4 +382,5 @@ async def materialize_offset_page[M: BaseModel](
         total=total if return_count else None,
         facets=facets,
         highlights=highlights,
+        scores=scores,
     )

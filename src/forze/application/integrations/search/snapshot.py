@@ -580,6 +580,49 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
+    def weighted_relative_merge_rows(
+        *,
+        leg_rows: Sequence[tuple[str, Sequence[BaseModel], Sequence[float], float]],
+    ) -> list[tuple[FederatedSearchReadModel[Any], float]]:
+        """Merge ranked hit lists with weighted **relative-score** fusion.
+
+        The score-magnitude counterpart to :meth:`weighted_rrf_merge_rows`: each leg is
+        ``(member, hits, per-hit scores, member_weight)``; each leg's scores are min-max
+        normalized to ``[0, 1]`` (so heterogeneous leg scales — BM25 vs cosine — become
+        comparable) and combined as ``Σ member_weight · normalized_score``. Unlike RRF this
+        preserves how *confident* each leg is, so a strong hit can dominate. Legs with
+        non-positive weight are skipped; a leg whose scores are all equal contributes ``1.0``
+        (normalized) to each of its hits. Dedupes on the same string keys as snapshot storage.
+        """
+
+        fused: dict[str, float] = {}
+        models: dict[str, FederatedSearchReadModel[Any]] = {}
+
+        for member, hits, hit_scores, weight in leg_rows:
+            if weight <= 0.0 or not hits:
+                continue
+
+            lo = min(hit_scores)
+            span = max(hit_scores) - lo
+
+            for hit, raw in zip(hits, hit_scores, strict=True):
+                normalized = 1.0 if span == 0.0 else (float(raw) - lo) / span
+                key = SearchResultSnapshot.federated_record_key_string(member, hit)
+                fused[key] = fused.get(key, 0.0) + float(weight) * normalized
+
+                if key not in models:
+                    models[key] = FederatedSearchReadModel(hit=hit, member=member)
+
+        ordered = sorted(
+            fused.keys(),
+            key=lambda rk: (-fused[rk], models[rk].member, rk),
+        )
+
+        return [(models[rk], fused[rk]) for rk in ordered]
+
+    # ....................... #
+
+    @staticmethod
     def weighted_rrf_merge_ids(
         *,
         leg_rows: Sequence[tuple[str, Sequence[str], float]],

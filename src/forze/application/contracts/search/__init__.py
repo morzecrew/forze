@@ -1,3 +1,13 @@
+from .capabilities import (
+    DEFAULT_SEARCH_CAPABILITIES,
+    FULL_SEARCH_CAPABILITIES,
+    FilteredAnnKind,
+    FusionStrategy,
+    SearchCapabilities,
+    resolve_fusion,
+    validate_fusion_supported,
+    validate_vector_supported,
+)
 from .cursor_keyset import (
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
@@ -85,6 +95,14 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "DEFAULT_SEARCH_CAPABILITIES",
+    "FULL_SEARCH_CAPABILITIES",
+    "FilteredAnnKind",
+    "FusionStrategy",
+    "SearchCapabilities",
+    "resolve_fusion",
+    "validate_fusion_supported",
+    "validate_vector_supported",
     "Rrf",
     "SearchCountlessPage",
     "SearchCursorPage",

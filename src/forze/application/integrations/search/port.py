@@ -14,6 +14,8 @@ from typing import Any, Literal, Sequence, TypeVar, overload
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
+    DEFAULT_SEARCH_CAPABILITIES,
+    SearchCapabilities,
     SearchCountlessPage,
     SearchCursorPage,
     SearchPage,
@@ -42,6 +44,15 @@ class SimpleSearchPortMixin[M: BaseModel]:
 
     spec: Any
     model_type: type[M]
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        """Plain keyword single-index surface. Adapters that serve vector / fusion /
+        filtered-ANN (or engine-side embedding) override this with a widened
+        :class:`~forze.application.contracts.search.SearchCapabilities`."""
+        return DEFAULT_SEARCH_CAPABILITIES
 
     # ....................... #
 

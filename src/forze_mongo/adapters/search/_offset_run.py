@@ -16,6 +16,7 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
+    normalize_search_queries,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.application.integrations.search.offset_executor import (
@@ -43,6 +44,7 @@ class _MongoOffsetHooks:
     ranked_pipeline: list[JsonDict]
     pagination_dict: dict[str, Any]
     return_count: bool
+    is_ranked: bool = True
 
     _coll: Any = attrs.field(default=None, init=False)
 
@@ -75,20 +77,24 @@ class _MongoOffsetHooks:
         coll = await self._collection()
         offset = window.fetch_offset
         limit = int(window.fetch_limit) if window.fetch_limit is not None else None
+        rank_field = self.gw.rank_field
 
         thin = thin_ranked_pipeline(self.ranked_pipeline)
 
         if thin is None:
             # No $sort to thin (e.g. a bare $vectorSearch ordered by the index):
-            # keep the plain full-document fetch.
+            # keep the plain full-document fetch. Keep the rank column so the per-hit
+            # score can be surfaced, then strip it before normalizing to the read model.
             data_pipeline = append_pagination_stages(
                 self.ranked_pipeline,
                 offset=offset,
                 limit=limit,
+                strip_rank=not self.is_ranked,
             )
             rows = await self.client.aggregate(coll, data_pipeline, limit=None)
+            scores = self._take_scores(rows, rank_field)
 
-            return OffsetRowsResult(rows=self._normalize(rows))
+            return OffsetRowsResult(rows=self._normalize(rows), scores=scores)
 
         # Late materialization: rank/sort/skip/limit lightweight {_id, sort-key}
         # docs, then hydrate only this window's full documents by _id — the
@@ -109,7 +115,32 @@ class _MongoOffsetHooks:
         by_id = {doc["_id"]: doc for doc in full}
         hydrated = [by_id[_id] for _id in ordered_ids if _id in by_id]
 
-        return OffsetRowsResult(rows=self._normalize(hydrated))
+        # The heavy documents were fetched by ``find_many`` (no rank); re-align the thin
+        # scan's rank to the hydrated order by ``_id`` (same ``_id in by_id`` filter as
+        # ``hydrated``, so the two stay index-aligned).
+        thin_scores = None
+        if self.is_ranked:
+            rank_by_id = {r["_id"]: r.get(rank_field, 0.0) for r in thin_rows}
+            thin_scores = [float(rank_by_id[_id]) for _id in ordered_ids if _id in by_id]
+
+        return OffsetRowsResult(rows=self._normalize(hydrated), scores=thin_scores)
+
+    def _take_scores(
+        self, rows: list[JsonDict], rank_field: str
+    ) -> list[float] | None:
+        """Pop the rank column off each row into an index-aligned score list."""
+
+        if not self.is_ranked:
+            for row in rows:
+                row.pop(rank_field, None)
+            return None
+
+        scores = [float(row.get(rank_field, 0.0)) for row in rows]
+
+        for row in rows:
+            row.pop(rank_field, None)
+
+        return scores
 
     def _normalize(self, rows: list[JsonDict]) -> list[JsonDict]:
         return [
@@ -164,5 +195,6 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
             ranked_pipeline=ranked_pipeline,
             pagination_dict=pagination_dict,
             return_count=return_count,
+            is_ranked=bool(normalize_search_queries(query)),
         ),
     )

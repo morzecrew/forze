@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import (
     Any,
+    Final,
     Literal,
     Sequence,
     cast,
@@ -65,6 +66,20 @@ from forze_mock.query.matching import (
 )
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
+
+# ----------------------- #
+
+_MOCK_RANK: Final[str] = "_mock_rank"
+"""Transient per-doc relevance score, tagged during the ranked scan and read out at
+page-build (mirrors the real backends' ``_fts_rank`` / ``_mongo_rank`` columns). Stripped
+before model decode / projection so it never leaks into a hit."""
+
+
+def _without_mock_rank(doc: JsonDict) -> JsonDict:
+    return {k: v for k, v in doc.items() if k != _MOCK_RANK}
+
+
+# ....................... #
 
 
 @final
@@ -221,7 +236,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             )
             if score <= 0.0:
                 continue
-            ranked.append((score, doc))
+            ranked.append((score, {**doc, _MOCK_RANK: score}))
 
         ranked.sort(key=lambda x: x[0], reverse=True)
         ordered = [d for _, d in ranked]
@@ -408,6 +423,15 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         if limit is not None:
             ordered = ordered[:limit]
 
+        # Per-hit relevance score for the page window (ranked queries only; a filter-only
+        # browse has no meaningful score). Strip the transient tag before decode/projection.
+        scores = (
+            [float(doc.get(_MOCK_RANK, 0.0)) for doc in ordered]
+            if normalize_search_queries(query)
+            else None
+        )
+        ordered = [_without_mock_rank(doc) for doc in ordered]
+
         facets, highlights = self._facets_and_highlights(
             query, options, all_rows=all_rows, page_rows=ordered
         )
@@ -432,6 +456,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             total=total if return_count else None,
             facets=facets,
             highlights=highlights,
+            scores=scores,
         )
 
     # ....................... #
@@ -631,6 +656,13 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         page_rows = window[:lim]
         next_c, prev_c = _mock_cursor_tokens(start, len(page_rows), has_more=has_more)
 
+        scores = (
+            [float(doc.get(_MOCK_RANK, 0.0)) for doc in page_rows]
+            if normalize_search_queries(query)
+            else None
+        )
+        page_rows = [_without_mock_rank(doc) for doc in page_rows]
+
         facets, highlights = self._facets_and_highlights(
             query, options, all_rows=ordered, page_rows=page_rows
         )
@@ -656,6 +688,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             has_more=has_more,
             facets=facets,
             highlights=highlights,
+            scores=scores,
         )
 
     async def search_cursor(

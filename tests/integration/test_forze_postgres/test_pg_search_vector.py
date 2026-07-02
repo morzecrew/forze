@@ -140,6 +140,10 @@ async def test_vector_l2_knn_orders_by_nearest(pgvector_client: PostgresClient) 
     assert total == 2
     assert hits[0].id == a_id
     assert hits[1].id == b_id
+    # Vector similarity score is surfaced (higher = nearer), index-aligned and ordered.
+    assert __p.scores is not None
+    assert len(__p.scores) == len(hits)
+    assert __p.scores[0] >= __p.scores[1]
 
     __p = await port.search_page(["alpha", "beta"])
     disj = __p.hits
@@ -332,6 +336,8 @@ async def test_vector_empty_query_zero_rank_includes_all_filtered_rows(
     _rows = __p.hits
     total = __p.count
     assert total == 2
+    # Whitespace-only query is a filter-only browse: no meaningful score.
+    assert __p.scores is None
 
 
 @pytest.mark.asyncio
