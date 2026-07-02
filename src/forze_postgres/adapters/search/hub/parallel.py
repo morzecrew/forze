@@ -409,9 +409,15 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         else:
             page_limit = int(cast(int | str, limit_raw))
 
+        page_slice = merged[offset : offset + page_limit]
+        # The merged rows carry the hub score (``_hub_rank``); capture it before hydration
+        # strips it. A filter-only browse (``not do_legs``) has no meaningful score.
+        scores = (
+            [float(r[HUB_RANK]) for r in page_slice] if plan.do_legs else None
+        )
         page_rows = await self._hub_parallel_page_rows(
             plan,
-            merged[offset : offset + page_limit],
+            page_slice,
             return_type=return_type,
             return_fields=return_fields,
         )
@@ -438,9 +444,10 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 page,
                 pagination_dict,
                 total=total if count_policy != "none" else None,
+                scores=scores,
             )
 
-        return search_page_from_limit_offset(page, pagination_dict, total=None)
+        return search_page_from_limit_offset(page, pagination_dict, total=None, scores=scores)
 
     # ....................... #
 
@@ -493,6 +500,10 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         if use_before:
             rows = list(reversed(rows))
 
+        # Capture the hub score off the page rows before hydration strips ``_hub_rank``
+        # (aligned with the final hit order; browse has no score).
+        scores = [float(r[HUB_RANK]) for r in rows] if plan.do_legs else None
+
         def _row_token_vals(row: JsonDict) -> list[Any]:
             return [row_value_for_sort_key(row, k) for k in sort_keys]
 
@@ -531,7 +542,11 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         if return_fields is not None:
             rj = [build_projection(r, return_fields) for r in mat_rows]
             return SearchCursorPage(
-                hits=rj, next_cursor=nxt, prev_cursor=prv, has_more=has_more
+                hits=rj,
+                next_cursor=nxt,
+                prev_cursor=prv,
+                has_more=has_more,
+                scores=scores,
             )
 
         hits = decode_search_hits(
@@ -542,4 +557,10 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             trust_source=trust,
         )
 
-        return SearchCursorPage(hits=hits, next_cursor=nxt, prev_cursor=prv, has_more=has_more)
+        return SearchCursorPage(
+            hits=hits,
+            next_cursor=nxt,
+            prev_cursor=prv,
+            has_more=has_more,
+            scores=scores,
+        )

@@ -202,6 +202,12 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     cnt = __p.count
     assert cnt == 2
     assert {h.id for h in hits} == {lid1, lid3}
+    # Merged hub score is surfaced, index-aligned with hits, non-increasing, non-negative
+    # (a leg ts_rank_cd can legitimately be 0, so the merged score can be 0 too).
+    assert __p.scores is not None
+    assert len(__p.scores) == len(hits)
+    assert all(a >= b for a, b in zip(__p.scores, __p.scores[1:]))
+    assert all(s >= 0.0 for s in __p.scores)
 
     __p = await adapter.search_page("alpha", sorts={"quantity": "asc"})
     sorted_by_qty = __p.hits
@@ -413,6 +419,12 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
     cnt = __p.count
     assert cnt == 2
     assert {h.id for h in hits} == {lid1, lid3}
+    # Merged hub score is surfaced, index-aligned with hits, non-increasing, non-negative
+    # (a leg ts_rank_cd can legitimately be 0, so the merged score can be 0 too).
+    assert __p.scores is not None
+    assert len(__p.scores) == len(hits)
+    assert all(a >= b for a, b in zip(__p.scores, __p.scores[1:]))
+    assert all(s >= 0.0 for s in __p.scores)
 
     __p = await adapter.search_page("gamma", filters={"$values": {"spec_id": str(s1)}})
     hits2 = __p.hits

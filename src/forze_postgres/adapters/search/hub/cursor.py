@@ -289,6 +289,10 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
             use_before=use_before,
         )
 
+        # The page rows still carry the hub rank (selected for keyset when do_legs); surface it
+        # as the per-hit score before hydration/projection drops it. Browse has no score.
+        scores = [float(r[HUB_RANK]) for r in rows] if do_legs else None
+
         trust = search_trust_source(self._hub_host.read_validation)
 
         # Phase B: the keyset bounds (and next/prev cursors) were computed from the thin
@@ -314,6 +318,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                     prev_cursor=prv,
                     has_more=has_more,
                     facets=facets,
+                    scores=scores,
                 ),
                 hub_spec=self._hub_host.hub_spec,
                 query=query,
@@ -336,6 +341,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 prev_cursor=prv,
                 has_more=has_more,
                 facets=facets,
+                scores=scores,
             ),
             hub_spec=self._hub_host.hub_spec,
             query=query,

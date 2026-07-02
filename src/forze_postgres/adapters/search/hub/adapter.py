@@ -32,11 +32,12 @@ from forze.base.exceptions import exc
 from ....kernel.gateways import PostgresGateway
 from .._materialize_hits import search_trust_source
 from .._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
+from .._pipeline_sql import SEARCH_SCORE_ALIAS
 from .._port import PostgresSearchPortMixin
 from .._search_count import resolve_ranked_approximate_total
 from ._typing_host import HubSearchHost
 from ._facets_highlights import attach_hub_highlights
-from .constants import COMBO_ALIAS
+from .constants import COMBO_ALIAS, HUB_RANK
 from .cursor import HubSearchCursorMixin
 from .plan import build_hub_search_plan, hub_members_weighted
 from .runtime import HubLegRuntime
@@ -191,6 +192,18 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 combo_limit=combo_cap,
             )
 
+        # Surface the merged hub score (``_hub_rank``) as ``_score`` on ranked queries; a
+        # filter-only browse (``not do_legs``) has no meaningful score.
+        rank_select = (
+            sql.SQL(", {}.{} AS {}").format(
+                sql.Identifier(COMBO_ALIAS),
+                sql.Identifier(HUB_RANK),
+                sql.Identifier(SEARCH_SCORE_ALIAS),
+            )
+            if plan.do_legs
+            else None
+        )
+
         ranked_plan = RankedOffsetPlan(
             with_clause=with_clause,
             from_outer=sql.SQL(""),
@@ -201,6 +214,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             data_relation=data_relation,
             thin=thin,
             select_table_alias=COMBO_ALIAS,
+            rank_select=rank_select,
         )
 
         members_weighted = hub_members_weighted(

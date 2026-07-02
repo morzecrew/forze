@@ -49,6 +49,39 @@ async def test_hub_search_merges_two_legs() -> None:
 
 
 @pytest.mark.asyncio
+async def test_hub_search_surfaces_merged_scores() -> None:
+    state = MockState()
+    leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
+    leg_b = SearchSpec(name="b", model_type=_Item, fields=["title"])
+    await MockSearchCommandAdapter(state=state, spec=leg_a).upsert(
+        [_Item(id="1", title="hello world"), _Item(id="3", title="hello there")]
+    )
+    await MockSearchCommandAdapter(state=state, spec=leg_b).upsert(
+        [_Item(id="2", title="hello again")]
+    )
+
+    hub = HubSearchSpec(name="hub", model_type=_Item, members=[leg_a, leg_b])
+    adapter = MockHubSearchAdapter(
+        hub_spec=hub,
+        legs=[
+            ("a", MockSearchAdapter(state=state, spec=leg_a)),
+            ("b", MockSearchAdapter(state=state, spec=leg_b)),
+        ],
+    )
+
+    page = await adapter.search_page("hello", pagination={"limit": 10})
+    # Merged hub score is surfaced, index-aligned with hits, non-increasing, positive.
+    assert page.scores is not None
+    assert len(page.scores) == len(page.hits)
+    assert all(a >= b for a, b in zip(page.scores, page.scores[1:]))
+    assert all(s > 0.0 for s in page.scores)
+
+    # Filter-only browse (empty query) has no score.
+    browse = await adapter.search_page("", pagination={"limit": 10})
+    assert browse.scores is None
+
+
+@pytest.mark.asyncio
 async def test_federated_search_rrf_merge() -> None:
     state = MockState()
     leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])

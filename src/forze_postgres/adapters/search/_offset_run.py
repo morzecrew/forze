@@ -527,11 +527,12 @@ async def _hydrate_thin_hub_page(
         if fold_count
         else sql.SQL("")
     )
+    rank_col = plan.rank_select if plan.rank_select is not None else sql.SQL("")
 
     id_stmt = sql.SQL(
         """
             {with_clause}
-            SELECT {ca}.{idf} AS {idf}{total_col} FROM {combo} {ca}
+            SELECT {ca}.{idf} AS {idf}{total_col}{rank_col} FROM {combo} {ca}
             ORDER BY {order}
             """
     ).format(
@@ -539,6 +540,7 @@ async def _hydrate_thin_hub_page(
         ca=sql.Identifier(combo_alias),
         idf=sql.Identifier(ID_FIELD),
         total_col=total_col,
+        rank_col=rank_col,
         combo=sql.Identifier(plan.data_relation),
         order=plan.order_sql,
     )
@@ -567,6 +569,13 @@ async def _hydrate_thin_hub_page(
         return_fields=return_fields,
     )
 
+    # The thin id scan carries the rank; hydration reorders to page-id order (dropping any
+    # vanished id), so re-align the score to the hydrated rows by id.
+    scores = None
+    if plan.rank_select is not None:
+        score_by_id = {row[ID_FIELD]: row[SEARCH_SCORE_ALIAS] for row in id_rows}
+        scores = [float(score_by_id[row[ID_FIELD]]) for row in ordered]
+
     return await materialize_offset_page(
         rows=ordered,
         pagination_dict=pagination_dict,
@@ -578,6 +587,7 @@ async def _hydrate_thin_hub_page(
         codec=codec,
         trust_source=trust_source,
         facets=facets,
+        scores=scores,
     )
 
 
@@ -863,16 +873,18 @@ async def execute_hub_ranked_offset_search(
         return_fields,
         table_alias=plan.select_table_alias,
     )
+    rank_cols = plan.rank_select if plan.rank_select is not None else sql.SQL("")
 
     data_stmt = sql.SQL(
         """
             {with_clause}
-            SELECT {cols} FROM {combo} {ca}
+            SELECT {cols}{rank_cols} FROM {combo} {ca}
             ORDER BY {order}
             """
     ).format(
         with_clause=plan.with_clause,
         cols=cols,
+        rank_cols=rank_cols,
         combo=sql.Identifier(plan.data_relation),
         ca=sql.Identifier(combo_alias),
         order=plan.order_sql,
@@ -889,10 +901,13 @@ async def execute_hub_ranked_offset_search(
         data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
         params.append(offset_from_dict(pagination_dict))
 
-    rows = await gw.client.fetch_all(data_stmt, params, row_factory="dict")
+    rows = [dict(row) for row in await gw.client.fetch_all(
+        data_stmt, params, row_factory="dict"
+    )]
+    scores = _take_score_column(rows) if plan.rank_select is not None else None
 
     return await materialize_offset_page(
-        rows=list(rows),
+        rows=rows,
         pagination_dict=pagination_dict,
         return_count=return_count,
         total=total if count_policy != "none" else None,
@@ -902,4 +917,5 @@ async def execute_hub_ranked_offset_search(
         codec=read_codec,
         trust_source=trust_source,
         facets=facets,
+        scores=scores,
     )
