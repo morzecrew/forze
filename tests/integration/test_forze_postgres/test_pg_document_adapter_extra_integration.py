@@ -778,10 +778,10 @@ async def test_pg_adapter_find_for_update_in_transaction(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_pg_adapter_uses_clamped_batch_size(
+async def test_pg_adapter_rejects_out_of_range_batch_size(
     pg_client: PostgresClient,
 ) -> None:
-    """Config ``batch_size`` below minimum is clamped (``eff_batch_size`` in adapter)."""
+    """Config ``batch_size`` below the minimum is rejected at wiring, not reset to a default."""
     t = f"pg_bs_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
     spec = DocumentSpec(
@@ -810,14 +810,8 @@ async def test_pg_adapter_uses_clamped_batch_size(
             }
         )
     )
-    ad = ctx.document.command(spec)
-    assert ad.eff_batch_size == 200
-    await ad.create_many(
-        [
-            _CxCreate(sku="b1"),
-            _CxCreate(sku="b2"),
-        ],
-    )
+    with pytest.raises(CoreException, match="batch_size must be between"):
+        ctx.document.command(spec)
 
 
 @pytest.mark.integration

@@ -152,9 +152,6 @@ class Gradient2Limiter:
 
         # Fast down: a contraction (gradient < 1) applies directly, bounded by
         # the 0.5 gradient floor so a single step can at most roughly halve.
-        self._limit = min(
-            float(self.max_limit),
-            max(float(self.min_limit), new_limit),
-        )
+        self._limit = clamp(new_limit, float(self.min_limit), float(self.max_limit))
 
         return self._limit
