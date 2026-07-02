@@ -60,6 +60,7 @@ argument; everything else mirrors the document side:
 | `search_cursor(query, filters=None, cursor=None, sorts=None, *, options=None)` | `CursorPage[R]` |
 | `project_search` / `project_search_page` / `project_search_cursor` `(fields, query, …)` | pages of `JsonDict` |
 | `select_search` / `select_search_page` / `select_search_cursor` `(return_type, query, …)` | pages of `T` |
+| `search_stream` / `project_search_stream` / `select_search_stream` `(query, …, chunk_size=500)` | `AsyncGenerator` of chunks |
 
 `query` is a string (or a sequence of strings); `filters` and `sorts` use the
 [query DSL](../query-syntax.md). `options: SearchOptions` is the backend- and
@@ -68,6 +69,28 @@ policy (`search_count`), an advisory candidate cap (`max_candidates`), and the f
 highlight requests below. Hub and federated searches resolve to a `MultiSourceSearchOptions`
 port that also carries member selection (`member_weights` / `members`) and a post-merge cap
 (`merge_candidates`); passing those keys to a single-index `query(...)` port is a type error.
+
+### Streaming exports
+
+`search_stream` (and the `project_` / `select_` variants) iterate the **whole** matching set
+in bounded-memory keyset chunks — peak memory is one chunk, there is no total count. Use it to
+export a ranked result set without loading it all at once:
+
+```python
+async for chunk in ctx.search.query(spec).search_stream("annual report", chunk_size=1000):
+    await write_rows(chunk)
+```
+
+Streaming is capability-gated (`spec`'s adapter must advertise `SearchCapabilities.supports_stream`):
+Postgres FTS / PGroonga / hub and Mongo text / Atlas stream; Meilisearch (offset-only) and the
+top-k vector engines **refuse** rather than emulate it via deep offset. Pick the right export
+tool for the shape:
+
+- **Ranked live export** → `search_stream`. A concurrent write may shift a hit between chunks.
+- **Filter-only export** (no query terms) → the [document port](document.md)'s `find_stream` —
+  it's a plain keyset read with no ranking overhead (server-side cursor on Postgres).
+- **Stable / point-in-time / Meilisearch / very deep** → a **result snapshot** (build the
+  ordered-id pool once, page it by id); works where a live cursor cannot.
 
 ### Facets and highlights
 

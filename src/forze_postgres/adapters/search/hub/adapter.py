@@ -101,8 +101,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
     def search_capabilities(self) -> SearchCapabilities:
         # Single-store hybrid: the hub's rank-based leg merge (score_merge) is the ``rrf``
         # fusion family; weighted relative-score fusion is a federated concept and is refused
-        # rather than silently treated as the default merge.
-        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
+        # rather than silently treated as the default merge. Hub search ranks over a full
+        # keyset cursor, so it also streams (bounded-memory export).
+        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}), supports_stream=True)
 
     # ....................... #
 

@@ -9,7 +9,7 @@ longer re-declares the identical delegation boilerplate.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Sequence, TypeVar, overload
+from typing import Any, AsyncGenerator, Literal, Sequence, TypeVar, overload
 
 from pydantic import BaseModel
 
@@ -19,6 +19,7 @@ from forze.application.contracts.search import (
     SearchCountlessPage,
     SearchCursorPage,
     SearchPage,
+    validate_stream_supported,
 )
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
@@ -30,6 +31,9 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchResultSnapshotOptions,
 )
+from forze.base.primitives import JsonDict
+
+from .stream import stream_search_pages
 
 # ----------------------- #
 
@@ -358,3 +362,67 @@ class SimpleSearchPortMixin[M: BaseModel]:
             options=options,
             return_type=return_type,
         )
+
+    # ....................... #
+
+    async def search_stream(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[M]]:
+        validate_stream_supported(
+            self.search_capabilities, backend=type(self).__name__
+        )
+        async for chunk in stream_search_pages(
+            lambda cursor: self.search_cursor(
+                query, filters, cursor, sorts, options=options
+            ),
+            chunk_size=chunk_size,
+        ):
+            yield chunk
+
+    async def project_search_stream(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        validate_stream_supported(
+            self.search_capabilities, backend=type(self).__name__
+        )
+        async for chunk in stream_search_pages(
+            lambda cursor: self.project_search_cursor(
+                fields, query, filters, cursor, sorts, options=options
+            ),
+            chunk_size=chunk_size,
+        ):
+            yield chunk
+
+    async def select_search_stream(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[T]]:
+        validate_stream_supported(
+            self.search_capabilities, backend=type(self).__name__
+        )
+        async for chunk in stream_search_pages(
+            lambda cursor: self.select_search_cursor(
+                return_type, query, filters, cursor, sorts, options=options
+            ),
+            chunk_size=chunk_size,
+        ):
+            yield chunk

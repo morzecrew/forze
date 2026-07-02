@@ -798,3 +798,57 @@ async def test_fts_exact_total_exceeds_candidate_cap(
     )
     assert page.count == 12
     assert len(page.hits) == 2
+
+
+@pytest.mark.asyncio
+async def test_fts_search_stream_exports_in_bounded_chunks(
+    pg_client: PostgresClient,
+) -> None:
+    """search_stream loops the keyset cursor, yielding bounded chunks over the whole set."""
+    suffix = uuid4().hex[:12]
+    table = f"fts_stream_{suffix}"
+    index_name = f"idx_fts_stream_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        CREATE INDEX {index_name}
+        ON {table}
+        USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')));
+        """
+    )
+    for i in range(7):
+        await pg_client.execute(
+            f"INSERT INTO {table} (id, title, content) "
+            "VALUES (%(id)s, %(title)s, %(content)s)",
+            {"id": uuid4(), "title": f"search doc {i}", "content": "full text search"},
+        )
+
+    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    spec = SearchSpec(name="fts_stream_ns", model_type=FtsArticle, fields=["title", "content"])
+    adapter = ctx.search.query(spec)
+    assert adapter.search_capabilities.supports_stream is True
+
+    chunks = [chunk async for chunk in adapter.search_stream("search", chunk_size=3)]
+
+    assert [len(c) for c in chunks] == [3, 3, 1]
+    ids = [h.id for chunk in chunks for h in chunk]
+    assert len(ids) == 7
+    assert len(set(ids)) == 7
+
+    # Projection stream yields lean rows over the same set.
+    proj = [
+        row
+        async for c in adapter.project_search_stream(["id"], "search", chunk_size=4)
+        for row in c
+    ]
+    assert len(proj) == 7
+    assert all(set(row.keys()) == {"id"} for row in proj)

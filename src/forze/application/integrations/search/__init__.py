@@ -24,10 +24,13 @@ from .multi_leg import (
 )
 from .port import SimpleSearchPortMixin
 from .snapshot import SearchResultSnapshot
+from .stream import DEFAULT_MAX_SEARCH_STREAM_PAGES, stream_search_pages
 
 __all__ = [
+    "DEFAULT_MAX_SEARCH_STREAM_PAGES",
     "SearchResultSnapshot",
     "SimpleSearchPortMixin",
+    "stream_search_pages",
     "SnapshotStreamResult",
     "SnapshotWindow",
     "build_snapshot_pool_streaming",

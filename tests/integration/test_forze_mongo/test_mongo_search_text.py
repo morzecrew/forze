@@ -87,3 +87,39 @@ async def test_mongo_text_search_ranks_and_paginates(mongo_client: MongoClient) 
     empty = await adapter.search_page("zzznotfound")
     assert empty.count == 0
     assert empty.hits == []
+
+
+@pytest.mark.asyncio
+async def test_mongo_text_search_stream_exports_in_bounded_chunks(
+    mongo_client: MongoClient,
+) -> None:
+    """search_stream loops the Mongo keyset cursor, yielding bounded chunks."""
+    db_name = (await mongo_client.db()).name
+    collection = f"search_stream_{uuid4().hex[:10]}"
+    coll = await mongo_client.collection(collection, db_name=db_name)
+    await coll.create_index([("title", "text"), ("body", "text")])
+
+    # Distinct relevance per doc (varying term frequency) so the keyset advances cleanly —
+    # a realistic export set rather than fully-tied scores (which the max_pages guard bounds).
+    await coll.insert_many(
+        [
+            {
+                "_id": str(uuid4()),
+                "id": str(uuid4()),
+                "title": f"search doc {i}",
+                "body": " ".join(["search"] * (i + 1)),
+            }
+            for i in range(7)
+        ]
+    )
+
+    ctx = _search_ctx(mongo_client, db_name=db_name, collection=collection)
+    spec = SearchSpec(name="stream_articles", model_type=SearchArticle, fields=("title", "body"))
+    adapter = ctx.search.query(spec)
+    assert adapter.search_capabilities.supports_stream is True
+
+    chunks = [chunk async for chunk in adapter.search_stream("search", chunk_size=3)]
+
+    assert [len(c) for c in chunks] == [3, 3, 1]
+    ids = {h.id for chunk in chunks for h in chunk}
+    assert len(ids) == 7

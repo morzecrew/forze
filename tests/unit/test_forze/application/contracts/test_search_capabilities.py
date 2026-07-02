@@ -17,6 +17,7 @@ from forze.application.contracts.search import (
     FULL_SEARCH_CAPABILITIES,
     SearchCapabilities,
     validate_fusion_supported,
+    validate_stream_supported,
     validate_vector_supported,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -59,6 +60,24 @@ class TestDefaults:
         # A vector adapter that does not support filtering is a valid declaration.
         caps = SearchCapabilities(supports_vector=True, filtered_ann="none")
         assert caps.supports_vector is True
+
+
+class TestStreamValidation:
+    def test_default_off_full_on(self) -> None:
+        assert DEFAULT_SEARCH_CAPABILITIES.supports_stream is False
+        assert FULL_SEARCH_CAPABILITIES.supports_stream is True
+
+    def test_supported_passes(self) -> None:
+        validate_stream_supported(
+            SearchCapabilities(supports_stream=True), backend="pg"
+        )
+
+    def test_unsupported_fails_clean(self) -> None:
+        with pytest.raises(CoreException, match="result streaming") as ei:
+            validate_stream_supported(DEFAULT_SEARCH_CAPABILITIES, backend="meili")
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
 
 
 # ....................... #

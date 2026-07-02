@@ -19,6 +19,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.search import (
+    SearchCapabilities,
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
@@ -99,6 +100,14 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     read_validation: Literal["strict", "trusted"] = "strict"
     """Row decode mode for search hits (``trusted`` skips Pydantic validation)."""
+
+    # ....................... #
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # FTS / PGroonga rank over a full keyset cursor → bounded-memory export. The vector
+        # subclass overrides this (top-k, no whole-corpus stream).
+        return SearchCapabilities(supports_stream=True)
 
     # ....................... #
 
