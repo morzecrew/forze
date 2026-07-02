@@ -1992,10 +1992,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#logs-correlate-for-free" class="md-nav__link">
+  <a href="#configure-logging-in-one-call" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Logs correlate for free
+        Configure logging in one call
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#log-levels-and-the-verbosity-budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Log levels and the verbosity budget
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tame-high-volume-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tame high-volume logs
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sensitive-data-is-scrubbed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sensitive data is scrubbed
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#naming-where-a-log-line-comes-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Naming: where a log line comes from
       </span>
     </span>
   </a>
@@ -5460,10 +5504,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#logs-correlate-for-free" class="md-nav__link">
+  <a href="#configure-logging-in-one-call" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Logs correlate for free
+        Configure logging in one call
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#log-levels-and-the-verbosity-budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Log levels and the verbosity budget
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tame-high-volume-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tame high-volume logs
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sensitive-data-is-scrubbed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sensitive data is scrubbed
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#naming-where-a-log-line-comes-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Naming: where a log line comes from
       </span>
     </span>
   </a>
@@ -5672,7 +5760,12 @@ HTTP call now opens a <code>CLIENT</code> span named <code>surface.op</code> (<c
 <code>route</code> attribute, never in the name. The span sits <strong>inside</strong> the resilience
 policy, so a retried call is one span per attempt and a call shed by an open breaker
 or a full bulkhead emits none — the trace shows the work that actually reached the
-backend. Failure status follows the exception <em>kind</em>: an infrastructure, internal,
+backend.</p>
+<p>For a <strong>log line</strong> per outbound call instead of (or alongside) a span, add
+<code>deps.with_port_logging()</code>. It logs every port call uniformly — <code>surface</code>, <code>route</code>,
+<code>op</code>, and <code>duration_ms</code> under <code>forze.integrations.&lt;domain&gt;</code> — at <code>trace</code> on success
+(so it costs nothing in production unless you turn trace on), <code>debug</code> on an expected
+domain failure, and <code>warning</code> with a traceback on an unexpected one. Failure status follows the exception <em>kind</em>: an infrastructure, internal,
 or configuration fault reds the span, while a domain failure the caller can handle —
 not-found, conflict, precondition — leaves it clean, exactly as a 404 does not red an
 HTTP client span. Streaming methods (a cursor, a consume loop, a subscription) pass
@@ -5773,11 +5866,117 @@ counters. The hit rate validates that the L1 is earning its staleness budget,
 and <strong>sustained evictions at full capacity with a sagging hit rate</strong> is the
 scan-pollution signature — the signal to switch the eviction policy to the
 in-box W-TinyLFU store or raise <code>capacity</code>.</p>
-<h2 id="logs-correlate-for-free">Logs correlate for free<a class="headerlink" href="#logs-correlate-for-free" title="Permanent link">&para;</a></h2>
-<p><code>configure_logging(otel_config=...)</code> injects the active span's <code>trace_id</code> and
-<code>span_id</code> into every log line. Because <code>instrument_operations</code> is what starts the
-span, your structured logs line up with the operation trace automatically — no
-extra wiring.</p>
+<h2 id="configure-logging-in-one-call">Configure logging in one call<a class="headerlink" href="#configure-logging-in-one-call" title="Permanent link">&para;</a></h2>
+<p><code>bootstrap_logging</code> wires the whole logging surface: the framework's own loggers
+(<code>forze.*</code>, <code>forze_kits.*</code>, and the <code>forze.integrations.*</code> adapters), any
+integration loggers you name, third-party stdlib loggers routed through the same
+formatter, and the uncaught-exception hook.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze</span><span class="w"> </span><span class="kn">import</span> <span class="n">bootstrap_logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">FORZE_POSTGRES_LOGGER_NAMES</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="n">FORZE_REDIS_LOGGER_NAMES</span>
+
+<span class="n">bootstrap_logging</span><span class="p">(</span>
+    <span class="n">level</span><span class="o">=</span><span class="s2">&quot;info&quot;</span><span class="p">,</span>
+    <span class="n">render_mode</span><span class="o">=</span><span class="s2">&quot;json&quot;</span><span class="p">,</span>  <span class="c1"># &quot;console&quot; for local dev</span>
+    <span class="n">logger_names</span><span class="o">=</span><span class="p">[</span><span class="n">FORZE_POSTGRES_LOGGER_NAMES</span><span class="p">,</span> <span class="n">FORZE_REDIS_LOGGER_NAMES</span><span class="p">],</span>
+    <span class="n">third_party</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;uvicorn&quot;</span><span class="p">,</span> <span class="s2">&quot;sqlalchemy.engine&quot;</span><span class="p">],</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><code>configure_logging</code> remains the lower-level entry point when you want to wire the
+pieces yourself. Either way, pass <code>otel_config=...</code> and the active span's
+<code>trace_id</code> and <code>span_id</code> are injected into every log line — because
+<code>instrument_operations</code> starts that span, your structured logs line up with the
+operation trace automatically, no extra wiring.</p>
+<h2 id="log-levels-and-the-verbosity-budget">Log levels and the verbosity budget<a class="headerlink" href="#log-levels-and-the-verbosity-budget" title="Permanent link">&para;</a></h2>
+<p>The framework holds one rule: <strong>at <code>level="info"</code> it emits almost nothing per
+request.</strong> A quiet default is a feature — you turn detail <em>up</em> when investigating,
+rather than filtering noise <em>out</em> in steady state. Each level has a fixed meaning:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>What the framework logs here</th>
+<th>Steady-state volume</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>trace</code></td>
+<td>per-row / per-message / per-port-call detail</td>
+<td><strong>none in production</strong> — the trace gate is one integer compare unless you configure <code>level="trace"</code></td>
+</tr>
+<tr>
+<td><code>debug</code></td>
+<td>per-operation internals, cache hits, dedup skips</td>
+<td>opt-in</td>
+</tr>
+<tr>
+<td><code>info</code></td>
+<td>lifecycle events only: startup, shutdown, saga pivot, relay batch summaries</td>
+<td>rare</td>
+</tr>
+<tr>
+<td><code>warning</code></td>
+<td>degraded-but-continuing: retries exhausted, breaker open, a callback failed</td>
+<td>rare, deduped</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>an unhandled server-side fault (a bug)</td>
+<td>should be ~zero</td>
+</tr>
+<tr>
+<td><code>critical</code></td>
+<td>data loss or an unrecoverable condition</td>
+<td>~zero</td>
+</tr>
+</tbody>
+</table>
+<p>A <strong>domain failure is never an error.</strong> A validation, not-found, conflict, or
+precondition outcome is the application working as designed — it logs at <code>debug</code>
+or not at all, exactly as it leaves an <a href="#trace-every-outbound-call">HTTP span clean</a>.
+Only an unhandled fault reaches <code>error</code>.</p>
+<h2 id="tame-high-volume-logs">Tame high-volume logs<a class="headerlink" href="#tame-high-volume-logs" title="Permanent link">&para;</a></h2>
+<p>Two per-event controls collapse the events that would otherwise flood a log,
+without dropping the first occurrence you actually need to see. They are a no-op
+for events that don't opt in:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># keep 1 in 100 of a uniformly high-volume event</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;cache miss&quot;</span><span class="p">,</span> <span class="n">_sample</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+
+<span class="c1"># emit a flapping condition at most once per window (default 60s)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;upstream degraded&quot;</span><span class="p">,</span> <span class="n">_dedup_key</span><span class="o">=</span><span class="s2">&quot;upstream-degraded&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>_sample=N</code> keeps one in every <code>N</code> events sharing the same logger and message;
+<code>_dedup_key</code> emits at most one event per key per window (<code>_dedup_window=</code> overrides
+the seconds). The control keys are stripped before rendering. This is on by default
+(<code>configure_logging(enable_sampling=True)</code>).</p>
+<p>For per-request access logs — the largest steady-state source — the FastAPI and <abbr title="Model Context Protocol">MCP</abbr>
+middlewares are quiet by default: successful requests are sampled 1-in-N and error
+responses are always logged. The FastAPI middleware additionally drops health and
+readiness probe <em>paths</em> (<code>DEFAULT_HEALTH_PATHS</code>); <abbr title="Model Context Protocol">MCP</abbr> messages have no such path, so
+its default sampler applies no path exclusion. Configure either with
+<code>access_log=AccessLogSampler(...)</code>: <code>mode="full"</code> logs every request, <code>mode="off"</code>
+disables them, and <code>sample_rate</code> / <code>exclude</code> tune the rate and the excluded subjects
+(request paths for FastAPI, method names for <abbr title="Model Context Protocol">MCP</abbr>).</p>
+<h2 id="sensitive-data-is-scrubbed">Sensitive data is scrubbed<a class="headerlink" href="#sensitive-data-is-scrubbed" title="Permanent link">&para;</a></h2>
+<p>Log output runs through a redaction pass that masks sensitive <strong>keys</strong> (password,
+token, secret, api-key, cookie, authorization, …) and secret-shaped <strong>values</strong>
+(bearer tokens, JWTs, connection DSNs) in both extras and the message text. Extend
+it for deployment-specific patterns once at startup:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.scrubbing.policy</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_sensitive_patterns</span>
+
+<span class="n">register_sensitive_patterns</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;x_internal_token&quot;</span><span class="p">])</span>
+</code></pre></div>
+<p>Disable with <code>configure_logging(sanitize_logs=False)</code> only when you fully control
+the sink and its retention.</p>
+<h2 id="naming-where-a-log-line-comes-from">Naming: where a log line comes from<a class="headerlink" href="#naming-where-a-log-line-comes-from" title="Permanent link">&para;</a></h2>
+<p>Every logger is namespaced so you can raise or lower detail per area without
+touching the rest. Core framework logs sit under <code>forze.*</code> (<code>forze.application</code>,
+<code>forze.domain</code>); pre-built wiring under <code>forze_kits.*</code>; each integration under its
+own <code>forze_&lt;name&gt;.*</code> (<code>forze_postgres.adapters</code>, <code>forze_redis.kernel</code>). Generic
+adapter machinery shared across integrations logs under <code>forze.integrations.&lt;domain&gt;</code>
+(<code>forze.integrations.cache</code>, <code>forze.integrations.document</code>) — filter the whole group
+with <code>forze.integrations.*</code>, or a single domain on its own.</p>
 <h2 id="bring-your-own-exporter">Bring your own exporter<a class="headerlink" href="#bring-your-own-exporter" title="Permanent link">&para;</a></h2>
 <p>Forze emits to the global tracer and meter providers; your application owns the
 SDK and exporter choice — OTLP, Prometheus, console, whatever your backend

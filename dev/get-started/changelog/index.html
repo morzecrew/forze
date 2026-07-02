@@ -7319,7 +7319,25 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Observability &amp; encryption</strong></p>
 <ul>
 <li>
+<p><strong>One-call logging setup</strong> — <code>bootstrap_logging(...)</code> wires the framework loggers, named integration loggers, third-party stdlib loggers, and the uncaught-exception hook in one call; <code>Logger</code>, <code>get_logger</code>, and <code>configure_logging</code> are now re-exported from the top-level <code>forze</code>. <code>configure_logging(enable_sampling=…)</code> adds per-event volume controls: <code>_sample=N</code> (keep 1-in-N) and <code>_dedup_key=</code> (emit once per window) collapse high-volume events, stripped before rendering.</p>
+</li>
+<li>
+<p><strong>Integration logger naming</strong> — shared adapter/port machinery logs under <code>forze.integrations.&lt;domain&gt;</code> (overridable per adapter via <code>resolve_logger</code> / the <code>LoggerAware</code> mixin); <code>forze_kits</code> now logs under <code>forze_kits.*</code> instead of borrowing <code>forze.application</code>; <code>forze_sqs</code>, <code>forze_rabbitmq</code>, and <code>forze_identity</code> gained typed <code>Forze*Logger</code> name enums.</p>
+</li>
+<li>
+<p><strong>Native logging for the previously-silent integrations</strong> — <code>forze_s3</code>, <code>forze_gcs</code>, <code>forze_neo4j</code>, <code>forze_temporal</code>, <code>forze_clickhouse</code>, <code>forze_bigquery</code>, <code>forze_duckdb</code>, and <code>forze_inngest</code> now emit their own logs: previously-swallowed <code>health()</code> failures at <code>debug</code>, read-retry attempts (ClickHouse/BigQuery) at <code>debug</code>, Temporal saga compensation-step failures at <code>warning</code>, and Inngest durable-function invocations at <code>debug</code>. ClickHouse/BigQuery/DuckDB/Inngest gained their <code>Forze*Logger</code> name enums; <code>forze_gcs</code> gained <code>FORZE_GCS_LOGGER_NAMES</code>.</p>
+</li>
+<li>
+<p><strong>Coherent connect/close logging</strong> — every client-based integration (Postgres, Mongo, Firestore, Meilisearch, RabbitMQ, SQS, HTTP, Vault, S3, GCS, Neo4j, Temporal, ClickHouse, BigQuery, DuckDB) now logs client connect and close at <code>trace</code>, matching the existing Redis convention — uniform and off by default in production.</p>
+</li>
+<li>
+<p><strong>Sampled access logs</strong> — the FastAPI and <abbr title="Model Context Protocol">MCP</abbr> request-logging middlewares are quiet by default via <code>AccessLogSampler</code>: successful requests are sampled 1-in-N and error responses are always logged. FastAPI additionally excludes health/readiness probe <strong>paths</strong> (<code>DEFAULT_HEALTH_PATHS</code>) via its default sampler; <abbr title="Model Context Protocol">MCP</abbr> messages have no such path, so its default sampler applies no path exclusion (pass <code>exclude=</code> to skip specific method names). <em>Behavior change:</em> successful requests are no longer all logged at INFO; pass <code>access_log=AccessLogSampler(mode="full")</code> to restore, or <code>mode="off"</code> to silence.</p>
+</li>
+<li>
 <p><strong>Per-port OpenTelemetry client spans</strong> — <code>DepsRegistry.with_otel_port_spans()</code> opts every resolved port into a per-call <code>CLIENT</code> span inside the resilience policy; opt-in, zero-cost off.</p>
+</li>
+<li>
+<p><strong>Per-port logging</strong> — <code>DepsRegistry.with_port_logging()</code> registers a <code>LoggingInterceptor</code> on the interception seam that logs every resolved port call <code>(surface, route, op, duration_ms)</code> under <code>forze.integrations.&lt;domain&gt;</code>: <code>trace</code> on success (zero-cost off), <code>debug</code> on a domain failure, <code>warning</code> with a traceback on an unexpected one. Opt-in.</p>
 </li>
 <li>
 <p><strong>W3C trace-context propagation</strong> — a published event carries its span outbox→broker→inbox; opt in with <code>OutboxIntegrationConfig.propagate_trace</code> (add a nullable <code>traceparent</code> column on relational backends first), <code>forze_http</code> injects outbound. Trace-parenting only.</p>
