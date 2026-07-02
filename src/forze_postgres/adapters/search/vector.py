@@ -144,8 +144,11 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
         pagination: Any = None,
         snapshot: Any = None,
         parsed_filters: Any = None,
+        for_cursor: bool = False,
     ) -> RankedPipelineSql:
-        _ = query, filters
+        # Vector is top-k: its candidate cap is the retrieval bound, not an offset-page
+        # optimization, so cursor pagination keeps it (unlike the keyword/text engines).
+        _ = query, filters, for_cursor
         join = self._safe_join_pairs
         proj_qname = await self._pipeline_read_qname()
         index_heap_qname = await self._pipeline_heap_qname()

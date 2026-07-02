@@ -109,14 +109,22 @@ async def build_hub_search_plan(
     effective_sorts = sorts if sorts else hub_spec.default_sort
     rs_spec = hub_spec.snapshot
 
-    resolved_combo = effective_combo_limit(
-        config_limit=getattr(host, "combo_limit", None),
-        per_leg_limit=host.per_leg_limit,
-        options=leg_options,
-        pagination=pagination_or_cursor,
-        snapshot=snapshot if mode == "offset" else None,
-        result_snapshot=result_snapshot if mode == "offset" else None,
-        rs_spec=rs_spec,
+    # Cursor pagination walks the whole ranked set one keyset page at a time, so the
+    # ``combo_top`` cap — a top-N candidate-pool bound for a single offset page — must not
+    # apply: capping it truncates a deep cursor walk (and a hub stream export) at
+    # ``combo_top`` instead of the full result set. The cap stays on the offset path.
+    resolved_combo = (
+        None
+        if mode == "cursor"
+        else effective_combo_limit(
+            config_limit=getattr(host, "combo_limit", None),
+            per_leg_limit=host.per_leg_limit,
+            options=leg_options,
+            pagination=pagination_or_cursor,
+            snapshot=snapshot,
+            result_snapshot=result_snapshot,
+            rs_spec=rs_spec,
+        )
     )
 
     key_spec = hub_order_key_spec(

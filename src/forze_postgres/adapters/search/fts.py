@@ -122,6 +122,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         pagination: Any = None,
         snapshot: Any = None,
         parsed_filters: Any = None,
+        for_cursor: bool = False,
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
@@ -143,7 +144,9 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
 
         candidate_cap = effective_ranked_candidate_limit(
-            config_limit=self.ranked_candidate_limit,
+            # Cursor walks the whole ranked set; capping candidates would truncate a deep
+            # walk / stream export at the cap (see ``_build_ranked_pipeline_sql``).
+            config_limit=None if for_cursor else self.ranked_candidate_limit,
             options=options,
             pagination=dict(pagination or {}),
             snapshot=snapshot,
