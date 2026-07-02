@@ -71,29 +71,41 @@ class BackgroundOwners:
         if not owners:
             return 0
 
-        async def _close_all() -> None:
-            results = await asyncio.gather(
-                *(owner.aclose() for owner in owners),
-                return_exceptions=True,
-            )
-            # Failures are isolated (return_exceptions), but must not vanish: log each one
-            # against its owner so a broken aclose is diagnosable, not silently swallowed.
-            for owner, result in zip(owners, results):
-                if isinstance(result, BaseException):
-                    logger.error(
-                        "Background owner %s failed to close at shutdown",
-                        type(owner).__name__,
-                        exc_info=result,
-                    )
+        tasks = [asyncio.ensure_future(owner.aclose()) for owner in owners]
 
         try:
             async with asyncio.timeout(grace):
-                await _close_all()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
         except TimeoutError:
+            # The grace elapsed: cancel any aclose still running and await its unwind (a
+            # transaction rollback, a bg-task cancel) before returning — so it finishes
+            # before lifecycle teardown closes the clients it holds, not merely a scheduling
+            # slot behind. A still-wedged one lands in ``pending`` and is abandoned, matching
+            # the bounded-shutdown intent.
+            for task in tasks:
+                task.cancel()
+
+            await asyncio.wait(tasks, timeout=grace)
+
             logger.warning(
-                "Background-owner shutdown exceeded %.1fs; proceeding with teardown",
+                "Background-owner shutdown exceeded %.1fs; cancelled remaining owners",
                 grace,
             )
+
+        # Failures are isolated, but must not vanish: log each one against its owner so a
+        # broken aclose is diagnosable, not silently swallowed (cancelled / wedged skipped).
+        for owner, task in zip(owners, tasks):
+            if not task.done() or task.cancelled():
+                continue
+
+            error = task.exception()
+
+            if error is not None:
+                logger.error(
+                    "Background owner %s failed to close at shutdown",
+                    type(owner).__name__,
+                    exc_info=error,
+                )
 
         return len(owners)

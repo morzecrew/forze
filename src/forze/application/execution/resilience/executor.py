@@ -90,7 +90,7 @@ _BREAKER_NEUTRAL_KINDS = frozenset(
 neither is a downstream *health* signal, so they are recorded as neither success nor failure."""
 
 
-def _breaker_outcome(kind: ExceptionKind) -> bool | None:
+def _classify_breaker_outcome(kind: ExceptionKind) -> bool | None:
     """Classify a failed call for the circuit breaker by downstream **health**.
 
     The breaker opens on an unhealthy *downstream*, which is a different question from
@@ -719,7 +719,7 @@ class InProcessResilienceExecutor:
         except CoreException as error:
             # Classify by downstream health, not retryability: a throttle (429) or a
             # concurrency conflict is not a breaker failure, and a timeout is not a success.
-            ok = _breaker_outcome(error.kind)
+            ok = _classify_breaker_outcome(error.kind)
 
             if ok is not None:
                 await self._record_breaker_outcome(key, strat, ok, pol, route)
