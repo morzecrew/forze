@@ -165,11 +165,14 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
                 prior = self.state.idempotency.get(k)
 
                 def _revert() -> None:
-                    if prior is None:
-                        self.state.idempotency.pop(k, None)
+                    # Runs later (journal replay), so take the lock like every other
+                    # mutation path — the reentrant lock makes it safe if already held.
+                    with self.state.lock:
+                        if prior is None:
+                            self.state.idempotency.pop(k, None)
 
-                    else:
-                        self.state.idempotency[k] = prior
+                        else:
+                            self.state.idempotency[k] = prior
 
                 record_undo(_revert)
 

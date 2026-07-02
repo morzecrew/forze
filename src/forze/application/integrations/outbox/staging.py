@@ -74,6 +74,19 @@ class OutboxStaging[M: BaseModel]:
                 code="core.crypto.payload_cipher_missing",
             )
 
+        # A wired HLC checkpoint only advances atomically with the flushed rows when the
+        # flush runs inside the business transaction. Require that precondition rather than
+        # let ``advance`` diverge from the rows in a separate transaction (a dual-write that
+        # could resume the clock above stamps whose rows rolled back).
+        if self.checkpoint is not None and not self.spec.require_transaction:
+            raise exc.configuration(
+                f"Outbox route {self._route!r} wires an HLC checkpoint but does not set "
+                "require_transaction=True; the mark would advance outside the business "
+                "transaction (a dual-write). Set require_transaction=True, or unwire the "
+                "checkpoint for a deliberately standalone flush.",
+                code="core.outbox.checkpoint_requires_transaction",
+            )
+
     # ....................... #
 
     @property

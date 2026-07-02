@@ -23,11 +23,14 @@ async def test_deadline_sets_a_per_tx_statement_timeout(
 ) -> None:
     tx = PostgresTxManagerAdapter(client=pg_client)
 
+    baseline = await pg_client.fetch_value("SHOW statement_timeout")  # no deadline bound
+
     with bind_deadline(5.0):  # generous — won't fire; just confirm the bound is applied
         async with tx.transaction():
             in_tx = await pg_client.fetch_value("SHOW statement_timeout")
 
     assert in_tx != "0"  # a per-tx statement_timeout (~5.1s) was set from the deadline
+    assert in_tx != baseline  # ...and the bound deadline is what changed it, not a static value
 
 
 @pytest.mark.integration

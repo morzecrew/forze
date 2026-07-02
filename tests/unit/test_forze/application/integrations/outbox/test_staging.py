@@ -451,7 +451,13 @@ class TestCheckpointAdvance:
     async def test_flush_advances_checkpoint_with_max_staged_hlc(self) -> None:
         checkpoint = _RecordingCheckpoint()
         ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
-        spec = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload))
+        # A checkpoint only advances atomically inside the business transaction, so a
+        # checkpoint-wired route must require one (enforced at construction).
+        spec = OutboxSpec(
+            name="events",
+            codec=PydanticModelCodec(_Payload),
+            require_transaction=True,
+        )
 
         async def _flush(rows: list[StagedOutboxEntry]) -> int:
             return len(rows)
@@ -461,6 +467,7 @@ class TestCheckpointAdvance:
             spec=spec,
             enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
             flush_rows=_flush,
+            tx_depth=lambda: 1,  # flush runs inside the business transaction
             checkpoint=checkpoint,
         )
 
@@ -499,7 +506,13 @@ class TestCheckpointAdvance:
     async def test_empty_flush_does_not_advance_the_checkpoint(self) -> None:
         checkpoint = _RecordingCheckpoint()
         ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
-        spec = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload))
+        # A checkpoint only advances atomically inside the business transaction, so a
+        # checkpoint-wired route must require one (enforced at construction).
+        spec = OutboxSpec(
+            name="events",
+            codec=PydanticModelCodec(_Payload),
+            require_transaction=True,
+        )
 
         async def _flush(rows: list[StagedOutboxEntry]) -> int:  # pragma: no cover
             return len(rows)
@@ -509,6 +522,7 @@ class TestCheckpointAdvance:
             spec=spec,
             enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock),
             flush_rows=_flush,
+            tx_depth=lambda: 1,  # flush runs inside the business transaction
             checkpoint=checkpoint,
         )
 

@@ -54,6 +54,20 @@ class DeploymentProfile(StrEnum):
 # ....................... #
 
 
+def _positive_cpu_workers(_instance: object, _attribute: object, value: int | None) -> None:
+    """Reject a non-positive ``cpu_workers`` at construction, not later on first offload."""
+
+    if value is not None and value < 1:
+        raise exc.configuration(
+            f"cpu_workers must be a positive integer when set (got {value!r}); "
+            "leave it None for default sizing.",
+            code="core.runtime.cpu_workers_invalid",
+        )
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ExecutionRuntime:
@@ -138,11 +152,12 @@ class ExecutionRuntime:
     with no runtime scope active at all, ``run_cpu`` runs inline.
     """
 
-    cpu_workers: int | None = None
+    cpu_workers: int | None = attrs.field(default=None, validator=_positive_cpu_workers)
     """Worker count for the runtime-owned CPU pool (ignored when :attr:`cpu_executor` is set).
 
     ``None`` uses the default sizing (``min(32, os.cpu_count() + 4)``), letting you size the
-    pool without constructing and owning a :class:`ThreadPoolCpuExecutor` yourself.
+    pool without constructing and owning a :class:`ThreadPoolCpuExecutor` yourself. Must be a
+    positive integer when set (validated at construction).
     """
 
     # ....................... #

@@ -80,7 +80,12 @@ def build_staging_outbox_command[M: BaseModel](
         flush_rows=flush_rows,
         payload_cipher=_resolve_payload_cipher(ctx, spec),
         tx_depth=ctx.tx_ctx.depth,
-        checkpoint=_resolve_hlc_checkpoint(ctx),
+        # The node-global checkpoint only advances atomically with the rows when the flush
+        # runs inside the business transaction, so wire it only for routes that require one;
+        # a non-transactional route keeps the prior resume-from-(0,0) behavior.
+        checkpoint=(
+            _resolve_hlc_checkpoint(ctx) if spec.require_transaction else None
+        ),
     )
     return StagingOutboxCommand(spec=spec, staging=staging)
 

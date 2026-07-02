@@ -60,12 +60,15 @@ class MockHlcCheckpointAdapter(HlcCheckpointPort):
 
             def _revert() -> None:
                 # A business rollback reverts the mark too (atomic with the flushed rows);
-                # a no-op outside a transaction, where the write is already durable.
-                if prior is None:
-                    self.state.hlc_checkpoint.pop(self.node_key, None)
+                # a no-op outside a transaction, where the write is already durable. Runs
+                # later (journal replay), so take the lock like every other mutation path
+                # (reentrant, so safe if already held).
+                with self.state.lock:
+                    if prior is None:
+                        self.state.hlc_checkpoint.pop(self.node_key, None)
 
-                else:
-                    self.state.hlc_checkpoint[self.node_key] = prior
+                    else:
+                        self.state.hlc_checkpoint[self.node_key] = prior
 
             record_undo(_revert)
             self.state.hlc_checkpoint[self.node_key] = packed

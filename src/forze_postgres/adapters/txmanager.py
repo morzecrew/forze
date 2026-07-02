@@ -10,7 +10,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, final
 
 import attrs
-from psycopg import sql
 
 from forze.application.contracts.transaction import (
     IsolationLevel as CoreIsolationLevel,
@@ -155,6 +154,6 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
         if ms is None:
             return
 
-        await self.client.execute(
-            sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(ms))
-        )
+        # Defer to the client: a lazy root scope carries this until materialization, so
+        # applying the backstop never forces an early connection checkout.
+        await self.client.apply_statement_timeout(ms)

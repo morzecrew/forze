@@ -92,11 +92,14 @@ CREATE TABLE app.hlc_checkpoint (
 
 Wire it with `PostgresDepsModule(hlc_checkpoint=PostgresHlcCheckpointConfig(relation=("app", "hlc_checkpoint")))`
 and add `hlc_checkpoint_recovery_lifecycle_step()` to the runtime's lifecycle.
-The outbox flush then advances the mark (the max HLC among the rows it stamps)
-*inside the business transaction* — so a committed stamp is never durable without
-a mark covering it, and a rolled-back flush never advances it — while the
-lifecycle step loads the mark at startup and resumes the clock. Unwired, the
-clock resumes from `(0, 0)` as before. A single shared `node_key` (the default)
+For an outbox route that flushes inside a transaction
+(`OutboxSpec(require_transaction=True)`), the flush then advances the mark (the max
+HLC among the rows it stamps) *inside that transaction* — so a committed stamp is
+never durable without a mark covering it, and a rolled-back flush never advances it —
+while the lifecycle step loads the mark at startup and resumes the clock. A route that
+flushes standalone keeps resuming from `(0, 0)`: its mark could not advance atomically
+with its rows, so no checkpoint is wired for it. Unwired entirely, every route resumes
+from `(0, 0)` as before. A single shared `node_key` (the default)
 records one deployment-wide mark; distinct per-replica keys avoid write
 contention on one row, and recovery reads the max across all keys either way.
 

@@ -57,6 +57,17 @@ from .store import (
 
 _StateKey = tuple[StrKey, StrKey | None]
 
+
+def _bulkhead_idle(state: AdaptiveBulkheadState) -> bool:
+    """A bulkhead is safe to evict only when it holds no permits and has no waiters.
+
+    Evicting a live bulkhead would recreate it empty on the next access, so its in-flight
+    calls go uncounted and concurrency control is reset — over-admitting past the limit.
+    """
+
+    return state.in_use == 0 and state.waiting == 0
+
+
 MetricsSink = Callable[[str, str, str | None], None]
 """Callback receiving every resilience event as ``(event, policy, route)``.
 
@@ -150,9 +161,10 @@ class InProcessResilienceExecutor:
 
     max_state_entries: int = DEFAULT_MAX_STATE_ENTRIES
     """LRU cap on this instance's per-``(policy, route)`` state maps — bounds memory when
-    ``route`` is high-cardinality (per-tenant, per-object). Evicting an idle entry is safe:
-    it is recreated fresh on next access (a bulkhead/budget/throttle starts empty). The
-    breaker and rate-limit *stores* have their own caps."""
+    ``route`` is high-cardinality (per-tenant, per-object). A budget/throttle/hedge entry is
+    safe to drop (recreated fresh on next access); the bulkhead maps evict **only idle**
+    entries (no permits held, no waiters), so eviction never resets live concurrency control.
+    The breaker and rate-limit *stores* have their own caps."""
 
     # ....................... #
 
@@ -160,7 +172,7 @@ class InProcessResilienceExecutor:
         init=False,
         default=attrs.Factory(
             lambda self: BoundedLruMap[_StateKey, AdaptiveBulkheadState](
-                self.max_state_entries
+                self.max_state_entries, evictable=_bulkhead_idle
             ),
             takes_self=True,
         ),
@@ -172,7 +184,7 @@ class InProcessResilienceExecutor:
         init=False,
         default=attrs.Factory(
             lambda self: BoundedLruMap[_StateKey, AdaptiveBulkheadState](
-                self.max_state_entries
+                self.max_state_entries, evictable=_bulkhead_idle
             ),
             takes_self=True,
         ),
@@ -183,7 +195,7 @@ class InProcessResilienceExecutor:
         init=False,
         default=attrs.Factory(
             lambda self: BoundedLruMap[_StateKey, AdaptiveBulkheadState](
-                self.max_state_entries
+                self.max_state_entries, evictable=_bulkhead_idle
             ),
             takes_self=True,
         ),
@@ -687,7 +699,7 @@ class InProcessResilienceExecutor:
         try:
             allowed, transition = await self.breaker_store.admit(key, strat)
 
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
             # Store unreachable (e.g. a distributed breaker's Redis is down):
             # fail open by default so the breaker can't become the outage, or
             # fail closed if the policy demands it.
@@ -777,7 +789,7 @@ class InProcessResilienceExecutor:
         try:
             acquired = await self.rate_limit_store.try_acquire((pol.name, route), strat)
 
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
             # Store unreachable: fail open by default (don't let a down limiter
             # store shed live traffic), or fail closed if the policy demands it.
             self._on_store_unavailable("rate_limit_store_error", pol, route, error)

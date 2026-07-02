@@ -59,6 +59,12 @@ class PostgresClientPort(Protocol):
 
         ...  # pragma: no cover
 
+    async def apply_statement_timeout(self, ms: int) -> None:
+        """Set ``statement_timeout`` on the current root transaction, deferring to
+        materialization for a not-yet-opened lazy scope (so it forces no early checkout)."""
+
+        ...  # pragma: no cover
+
     def gather_concurrency_semaphore(self) -> asyncio.Semaphore:
         """Shared semaphore for :func:`~forze_postgres.kernel.client.gather_db_work`."""
 

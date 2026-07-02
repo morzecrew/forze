@@ -31,8 +31,11 @@ from .state import BreakerState, RateLimitState
 
 DEFAULT_MAX_STATE_ENTRIES = 4096
 """Default per-store cap on ``(policy, route)`` entries — bounds memory when ``route`` is
-high-cardinality (per-tenant, per-object). Evicting an idle entry is safe: it is recreated
-fresh on next access (a breaker resets to closed, a bucket refills)."""
+high-cardinality (per-tenant, per-object). Eviction is plain LRU, so under high cardinality
+it can drop a *hot* entry, not only an idle one: an evicted OPEN breaker resets to closed
+(a burst then passes until it re-trips) and a saturated bucket refills. Keep the distinct
+``route`` count per policy comfortably under the cap (or raise it) so live control state is
+not churned; an evicted entry is recreated fresh on next access."""
 
 
 @final

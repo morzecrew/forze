@@ -232,7 +232,16 @@ async def _run_shutdown_step_logged(
     # cancellation would still block the latter, whereas not awaiting the abandoned task
     # guarantees progress (it leaks the task, acceptable during shutdown).
     task = asyncio.ensure_future(_run_shutdown_step(step, ctx))
-    done, _pending = await asyncio.wait({task}, timeout=step_timeout)
+
+    try:
+        done, _pending = await asyncio.wait({task}, timeout=step_timeout)
+
+    except asyncio.CancelledError:
+        # Our wait was cancelled: don't leave the hook running detached — cancel it,
+        # drain its result so it can't warn on GC, then propagate the cancellation.
+        task.cancel()
+        _drop_pending_result(task)
+        raise
 
     if task not in done:
         task.cancel()  # best-effort; the hook may ignore it

@@ -72,10 +72,19 @@ class BackgroundOwners:
             return 0
 
         async def _close_all() -> None:
-            await asyncio.gather(
+            results = await asyncio.gather(
                 *(owner.aclose() for owner in owners),
                 return_exceptions=True,
             )
+            # Failures are isolated (return_exceptions), but must not vanish: log each one
+            # against its owner so a broken aclose is diagnosable, not silently swallowed.
+            for owner, result in zip(owners, results):
+                if isinstance(result, BaseException):
+                    logger.error(
+                        "Background owner %s failed to close at shutdown",
+                        type(owner).__name__,
+                        exc_info=result,
+                    )
 
         try:
             async with asyncio.timeout(grace):

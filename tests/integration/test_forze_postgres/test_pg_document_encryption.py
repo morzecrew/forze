@@ -21,6 +21,9 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import CryptoDepsModule, Deps, ExecutionContext
+from forze.application.integrations.persistence.gateway_mixins import (
+    _DECRYPT_OFFLOAD_THRESHOLD,
+)
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockKeyManagement
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
@@ -351,7 +354,7 @@ async def test_pg_large_batch_decrypt_offloads_and_stays_correct(
         """
     )
 
-    n = 70  # >= the gateway's decrypt-offload threshold (64)
+    n = _DECRYPT_OFFLOAD_THRESHOLD + 6  # exceed the gateway's decrypt-offload threshold
     writer = _ctx(pg_client).document.command(_SPEC)
     for i in range(n):
         await writer.create(_PersonCreate(name=f"p{i}", email=f"p{i}@example.com"))

@@ -253,7 +253,10 @@ class LeaderFollowerLane[T]:
             raise
 
         finally:
-            self._inflight.pop(key, None)
+            # Drop only our own registration: a clear() mid-flight can let a new leader
+            # register a fresh future for this key, and that newer entry must survive.
+            if self._inflight.get(key) is future:
+                del self._inflight[key]
 
         if on_result is not None:
             await on_result(result)

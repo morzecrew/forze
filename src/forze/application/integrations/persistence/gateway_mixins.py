@@ -341,7 +341,9 @@ class ReadValidationCodecMixin(Generic[M]):
             rows = [self._predecrypt_for_projection(r, model) for r in rows]
             return self._decode_rows(rows, model=model, trust_source=trust_source)
 
-        ts = bool(trust_source)
+        # Resolve trust the same way the inline path does — a bare bool() would collapse
+        # None to False, dropping read_validation="trusted" for large encrypted batches.
+        ts = self._effective_trust_source(trust_source)
 
         if model is not None and self._codec_for(model) is not read_codec:
             # Projection: frozen-decrypt the selected encrypted fields, then plaintext-decode.
