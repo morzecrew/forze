@@ -1,5 +1,7 @@
 from typing import Final, Literal
 
+from forze._logging import ForzeLogger
+
 # ----------------------- #
 # Keys
 
@@ -24,14 +26,14 @@ OTEL_DEFAULT_SPAN_ID_KEY: Final[str] = "span_id"
 OTEL_DEFAULT_TRACE_ID_KEY: Final[str] = "trace_id"
 """OpenTelemetry trace id key."""
 
-INTEGRATION_LOGGER_PREFIX: Final[str] = "forze.integrations"
+INTEGRATION_LOGGER_PREFIX: Final[str] = str(ForzeLogger.INTEGRATIONS)
 """Default logger-name prefix for shared adapter/port machinery.
 
 Generic code assembled across integrations logs under ``forze.integrations.<domain>``
 (e.g. ``forze.integrations.cache``) unless a concrete adapter supplies its own
 package-local logger (e.g. ``forze_postgres.adapters``). See
-:func:`~forze.base.logging.logger.resolve_logger`. Kept in sync with
-``ForzeLogger.INTEGRATIONS`` in ``forze._logging``.
+:func:`~forze.base.logging.logger.resolve_logger`. Derived from the single source of
+truth, ``ForzeLogger.INTEGRATIONS`` in ``forze._logging``.
 """
 
 SAMPLE_KEY: Final[str] = "_sample"

@@ -244,10 +244,13 @@ the seconds). The control keys are stripped before rendering. This is on by defa
 (`configure_logging(enable_sampling=True)`).
 
 For per-request access logs — the largest steady-state source — the FastAPI and MCP
-middlewares are quiet by default: health and readiness probes are dropped, error
-responses are always logged, and successful ones are sampled 1-in-N. Pass
-`access_log=AccessLogSampler(mode="full")` to log every request, `mode="off"` to
-disable, or tune `sample_rate` / `exclude`.
+middlewares are quiet by default: successful requests are sampled 1-in-N and error
+responses are always logged. The FastAPI middleware additionally drops health and
+readiness probe *paths* (`DEFAULT_HEALTH_PATHS`); MCP messages have no such path, so
+its default sampler applies no path exclusion. Configure either with
+`access_log=AccessLogSampler(...)`: `mode="full"` logs every request, `mode="off"`
+disables them, and `sample_rate` / `exclude` tune the rate and the excluded subjects
+(request paths for FastAPI, method names for MCP).
 
 ## Sensitive data is scrubbed
 

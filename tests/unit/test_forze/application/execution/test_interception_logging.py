@@ -2,31 +2,23 @@
 
 import io
 import json
-import logging
 
 import pytest
-import structlog
 
 from forze._logging import ForzeLogger
 from forze.application.execution.interception import LoggingInterceptor
 from forze.application.execution.interception.protocol import PortCall
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.logging import Logger, configure_logging
+from tests.support.logging import reset_forze_stdlib_loggers
 
 
 @pytest.fixture(autouse=True)
 def _reset_logging():
     yield
-    structlog.reset_defaults()
     # configure_logging leaves handlers + propagate=False on forze* stdlib loggers;
     # clear them so state does not leak into later tests.
-    for name in [
-        n for n in logging.root.manager.loggerDict if n.startswith("forze")
-    ]:
-        logger = logging.getLogger(name)
-        logger.handlers.clear()
-        logger.propagate = True
-        logger.setLevel(logging.NOTSET)
+    reset_forze_stdlib_loggers()
 
 
 def _records(stream: io.StringIO) -> list[dict]:
@@ -88,7 +80,7 @@ class TestLoggingInterceptor:
         stream = io.StringIO()
         _configure(stream, level="debug")
 
-        with pytest.raises(Exception):
+        with pytest.raises(CoreException):
             await LoggingInterceptor().around(_call(), _core)
 
         (record,) = _records(stream)

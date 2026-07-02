@@ -16,6 +16,6 @@ class ForzeLogger(StrEnum):
     UNCAUGHT = "forze.uncaught"
 
     # Parent of the dynamic ``forze.integrations.<domain>`` loggers used by shared
-    # adapter/port machinery. Keep in sync with ``INTEGRATION_LOGGER_PREFIX`` in
-    # ``forze.base.logging.constants``.
+    # adapter/port machinery. Single source of truth for the prefix —
+    # ``forze.base.logging.constants.INTEGRATION_LOGGER_PREFIX`` derives from this.
     INTEGRATIONS = "forze.integrations"

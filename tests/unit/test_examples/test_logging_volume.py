@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import io
 import json
-import logging
 
 import pytest
-import structlog
 
 from forze.base.logging import bootstrap_logging
 
@@ -23,6 +21,7 @@ from examples.recipes.order_fulfillment.app import (
     relay_once,
     run_checkout,
 )
+from tests.support.logging import reset_forze_stdlib_loggers
 
 # The framework should emit at most a handful of info+ lines for a full happy-path flow.
 # Deliberately generous: the point is to catch a hot-path log added at the wrong level,
@@ -39,12 +38,7 @@ def _captured_logs() -> io.StringIO:
 
     yield stream
 
-    structlog.reset_defaults()
-    for name in [n for n in logging.root.manager.loggerDict if n.startswith("forze")]:
-        logger = logging.getLogger(name)
-        logger.handlers.clear()
-        logger.propagate = True
-        logger.setLevel(logging.NOTSET)
+    reset_forze_stdlib_loggers()
 
 
 def _framework_records(stream: io.StringIO) -> list[dict]:
@@ -59,16 +53,23 @@ def _framework_records(stream: io.StringIO) -> list[dict]:
     return records
 
 
+async def _run_happy_path() -> bool:
+    """Drive the full order-fulfillment flow; returns the downstream delivery result."""
+
+    ctx = build_context()
+
+    order_id, inventory_id = await place_order(ctx)
+    await run_checkout(ctx, order_id, inventory_id)
+    messages = await relay_once(ctx)
+
+    return await deliver(ctx, messages[0])
+
+
 class TestLoggingVolume:
     async def test_happy_path_is_quiet_at_info(
         self, _captured_logs: io.StringIO
     ) -> None:
-        ctx = build_context()
-
-        order_id, inventory_id = await place_order(ctx)
-        await run_checkout(ctx, order_id, inventory_id)
-        messages = await relay_once(ctx)
-        assert await deliver(ctx, messages[0]) is True
+        assert await _run_happy_path() is True
 
         records = _framework_records(_captured_logs)
 
@@ -77,12 +78,7 @@ class TestLoggingVolume:
     async def test_happy_path_emits_no_error_lines(
         self, _captured_logs: io.StringIO
     ) -> None:
-        ctx = build_context()
-
-        order_id, inventory_id = await place_order(ctx)
-        await run_checkout(ctx, order_id, inventory_id)
-        messages = await relay_once(ctx)
-        await deliver(ctx, messages[0])
+        await _run_happy_path()
 
         levels = {r.get("level") for r in _framework_records(_captured_logs)}
 

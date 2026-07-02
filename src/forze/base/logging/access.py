@@ -90,7 +90,11 @@ class AccessLogSampler:
         if self.mode is AccessLogMode.FULL:
             return True
 
-        # Sampled: keep the first of every ``sample_rate`` successful requests.
+        # Sampled: a rate of 1 (or less) keeps every request; otherwise keep the
+        # first of every ``sample_rate`` successful requests.
+        if self.sample_rate <= 1:
+            return True
+
         self._count += 1
 
-        return self._count % max(1, self.sample_rate) == 1
+        return self._count % self.sample_rate == 1

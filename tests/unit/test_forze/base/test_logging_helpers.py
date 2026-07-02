@@ -5,7 +5,6 @@ import json
 import logging
 
 import pytest
-import structlog
 from structlog import DropEvent
 
 from forze._logging import ForzeLogger
@@ -22,31 +21,14 @@ from forze.base.logging import (
 from forze.base.logging.constants import INTEGRATION_LOGGER_PREFIX
 from forze.base.logging.logger import _integration_logger
 from forze.base.logging.processors import SamplingDeduplicator
-
-
-def _reset_forze_stdlib_loggers() -> None:
-    """Clear handlers / restore propagation on every ``forze*`` and test stdlib logger.
-
-    ``configure_logging`` / ``bootstrap_logging`` mutate global stdlib logger state
-    (handlers, ``propagate=False``); left in place they leak across tests — a parent
-    configured with ``propagate=False`` then swallows a child's records. Reset broadly.
-    """
-
-    manager_dict = logging.root.manager.loggerDict
-    names = [n for n in manager_dict if n.startswith("forze") or n == "third.party"]
-
-    for name in names:
-        logger = logging.getLogger(name)
-        logger.handlers.clear()
-        logger.propagate = True
-        logger.setLevel(logging.NOTSET)
+from tests.support.logging import reset_forze_stdlib_loggers
 
 
 @pytest.fixture(autouse=True)
 def _reset_logging():
     yield
-    structlog.reset_defaults()
-    _reset_forze_stdlib_loggers()
+    # ``third.party`` is a foreign logger configured by one of the bootstrap tests.
+    reset_forze_stdlib_loggers("third.party")
 
 
 def _json_records(stream: io.StringIO) -> list[dict[str, object]]:
@@ -165,6 +147,13 @@ class TestAccessLogSampler:
         kept = sum(sampler.should_log(subject="/x", is_error=False) for _ in range(100))
 
         assert kept == 10
+
+    @pytest.mark.parametrize("rate", [1, 0, -1])
+    def test_sample_rate_one_or_less_keeps_all(self, rate: int) -> None:
+        # A rate of 1 (or less) means "no sampling" — every success is logged, not none.
+        sampler = AccessLogSampler(sample_rate=rate)
+
+        assert all(sampler.should_log(subject="/x", is_error=False) for _ in range(5))
 
     def test_full_mode_logs_every_success(self) -> None:
         sampler = AccessLogSampler(mode=AccessLogMode.FULL)

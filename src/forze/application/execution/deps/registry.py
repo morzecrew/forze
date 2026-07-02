@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Self, final
 
 import attrs
 
-from forze.application._logger import logger
+from forze.application._logger import logger as _logger
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Tracer
@@ -129,7 +129,7 @@ class DepsRegistry:
     def with_modules(self, *modules: DepsModule) -> Self:
         """Return a new registry with additional modules appended."""
 
-        logger.trace(
+        _logger.trace(
             "Appending %s module(s) to deps registry with %s existing module(s)",
             len(modules),
             len(self.modules),
@@ -142,7 +142,7 @@ class DepsRegistry:
     def with_deps(self, *deps: Deps) -> Self:
         """Return a new registry with additional registration deps appended."""
 
-        logger.trace(
+        _logger.trace(
             "Appending %s deps blob(s) to registry with %s existing blob(s)",
             len(deps),
             len(self.deps),
@@ -236,7 +236,7 @@ class DepsRegistry:
     ) -> FrozenDepsRegistry:
         """Freeze merged providers and tracer policy into a frozen registry."""
 
-        logger.trace(
+        _logger.trace(
             "Freezing dependency registry from %s module(s)",
             len(self.modules),
         )
@@ -254,7 +254,7 @@ class DepsRegistry:
 
         for i, module in enumerate(self.modules, 1):
             module_deps = module()
-            logger.trace(
+            _logger.trace(
                 "Built deps module #%s with %s dependency(ies)",
                 i,
                 module_deps.count(),
@@ -262,7 +262,7 @@ class DepsRegistry:
             built.append(module_deps)
 
         for i, dep in enumerate(self.deps, 1):
-            logger.trace(
+            _logger.trace(
                 "Adding registration deps #%s with %s dependency(ies)",
                 i,
                 dep.count(),

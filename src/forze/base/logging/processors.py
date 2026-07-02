@@ -270,12 +270,18 @@ class SamplingDeduplicator:
       would otherwise log identically thousands of times.
     - ``_dedup_window=seconds`` — override the default dedup window for this event.
 
-    State is bounded implicitly by the number of distinct buckets/keys in use (each is a
-    stable literal in code, not user input), so it does not grow with traffic.
+    Keys are normally stable literals in code, so state stays small; but a caller could pass a
+    high-cardinality ``_dedup_key`` (e.g. per-tenant). Each tracking dict is therefore hard-capped
+    at ``max_tracked_keys`` and cleared when it would overflow, so memory stays bounded regardless
+    — at the cost of resetting the (approximate) sampling/dedup state, which at worst emits one
+    extra event per key.
     """
 
     default_window: float = 60.0
     """Default dedup window in seconds when ``_dedup_window`` is not given."""
+
+    max_tracked_keys: int = 4096
+    """Upper bound on distinct sampling buckets / dedup keys retained before a reset."""
 
     _counts: dict[tuple[str, str], int] = attrs.field(factory=dict, init=False)
     _last_emit: dict[str, float] = attrs.field(factory=dict, init=False)
@@ -313,6 +319,11 @@ class SamplingDeduplicator:
             str(event_dict.get("event", "")),
         )
         count = self._counts.get(bucket, 0)
+
+        if bucket not in self._counts and len(self._counts) >= self.max_tracked_keys:
+            self._counts.clear()
+            count = 0
+
         self._counts[bucket] = count + 1
 
         return count % n != 0
@@ -332,6 +343,15 @@ class SamplingDeduplicator:
 
         if last is not None and (now - last) < span:
             return True
+
+        if key not in self._last_emit and len(self._last_emit) >= self.max_tracked_keys:
+            # Drop entries whose window has elapsed; if still full, reset entirely.
+            self._last_emit = {
+                k: t for k, t in self._last_emit.items() if (now - t) < span
+            }
+
+            if len(self._last_emit) >= self.max_tracked_keys:
+                self._last_emit.clear()
 
         self._last_emit[key] = now
 

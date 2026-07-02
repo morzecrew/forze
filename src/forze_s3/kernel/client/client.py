@@ -192,7 +192,8 @@ class S3Client(S3ClientPort):
             finally:
                 self.__session = None
                 self.__opts = None
-                logger.trace("S3 client closed")
+
+            logger.trace("S3 client closed")
 
     # ....................... #
 

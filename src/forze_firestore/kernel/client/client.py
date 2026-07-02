@@ -168,7 +168,11 @@ class FirestoreClient(FirestoreClientPort):
             self.__database_id = database
             self.__lazy_tx = lazy_transaction
             self.__client = AsyncClient(project=project_id, database=database)
-            logger.trace("Firestore client connected", project_id=project_id)
+            logger.trace(
+                "Firestore client connected",
+                project_id=project_id,
+                database=database,
+            )
 
     # ....................... #
 

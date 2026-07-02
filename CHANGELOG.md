@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Coherent connect/close logging** — every client-based integration (Postgres, Mongo, Firestore, Meilisearch, RabbitMQ, SQS, HTTP, Vault, S3, GCS, Neo4j, Temporal, ClickHouse, BigQuery, DuckDB) now logs client connect and close at `trace`, matching the existing Redis convention — uniform and off by default in production.
 
-- **Sampled access logs** — the FastAPI and MCP request-logging middlewares are quiet by default via `AccessLogSampler`: health/readiness probes dropped, error responses always logged, successful ones sampled 1-in-N. *Behavior change:* successful requests are no longer all logged at INFO; pass `access_log=AccessLogSampler(mode="full")` to restore, or `mode="off"` to silence.
+- **Sampled access logs** — the FastAPI and MCP request-logging middlewares are quiet by default via `AccessLogSampler`: successful requests are sampled 1-in-N and error responses are always logged. FastAPI additionally excludes health/readiness probe **paths** (`DEFAULT_HEALTH_PATHS`) via its default sampler; MCP messages have no such path, so its default sampler applies no path exclusion (pass `exclude=` to skip specific method names). *Behavior change:* successful requests are no longer all logged at INFO; pass `access_log=AccessLogSampler(mode="full")` to restore, or `mode="off"` to silence.
 
 - **Per-port OpenTelemetry client spans** — `DepsRegistry.with_otel_port_spans()` opts every resolved port into a per-call `CLIENT` span inside the resilience policy; opt-in, zero-cost off.
 
