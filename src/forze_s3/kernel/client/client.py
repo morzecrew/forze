@@ -50,6 +50,7 @@ from forze.application.integrations.storage.client import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import S3ClientPort
 from .value_objects import S3Config, S3ConnectionOpts
@@ -166,6 +167,7 @@ class S3Client(S3ClientPort):
                 raise
 
             self.__exit_stack = stack
+            logger.debug("S3 client connected", endpoint=endpoint)
 
     # ....................... #
 
@@ -190,6 +192,7 @@ class S3Client(S3ClientPort):
             finally:
                 self.__session = None
                 self.__opts = None
+                logger.debug("S3 client closed")
 
     # ....................... #
 
@@ -312,6 +315,7 @@ class S3Client(S3ClientPort):
             return "ok", True
 
         except Exception as e:
+            logger.debug("S3 health check failed", exc_info=True)
             return str(e), False
 
     # ....................... #

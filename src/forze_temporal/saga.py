@@ -16,6 +16,8 @@ import attrs
 
 from forze.application.contracts.saga import SagaProgress, SagaStepKind
 
+from .execution._logger import logger
+
 # ----------------------- #
 
 
@@ -104,6 +106,9 @@ class TemporalSaga:
                 await compensation()
 
             except Exception as comp_error:  # noqa: BLE001 — best-effort; collect all
+                logger.warning(
+                    "Saga compensation step failed", step_index=index, exc_info=True
+                )
                 errors.append(comp_error)
 
         return errors

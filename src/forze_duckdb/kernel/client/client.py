@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from .._logger import logger
 from .port import DuckDbClientPort
 from .sql import apply_limit_offset
 from .value_objects import DuckDbConfig, DuckDbQueryResult
@@ -146,6 +147,7 @@ class DuckDbClient(DuckDbClientPort):
                 max_workers=cfg.max_concurrent_queries,
                 thread_name_prefix="forze-duckdb",
             )
+            logger.debug("DuckDB connection opened")
 
     # ....................... #
 
@@ -169,6 +171,9 @@ class DuckDbClient(DuckDbClientPort):
 
             if conn is not None:
                 await asyncio.to_thread(conn.close)
+
+            if executor is not None or conn is not None:
+                logger.debug("DuckDB connection closed")
 
     # ....................... #
     # Helpers
@@ -214,7 +219,7 @@ class DuckDbClient(DuckDbClientPort):
                     cursor.interrupt()
 
                 except Exception:  # noqa: BLE001 # nosec B110 - best-effort cancellation
-                    pass
+                    logger.debug("DuckDB cursor interrupt failed", exc_info=True)
 
             await asyncio.gather(fut, return_exceptions=True)
             # Infrastructure (not internal): timeouts are transient backend
@@ -362,4 +367,5 @@ class DuckDbClient(DuckDbClientPort):
             return "ok", True
 
         except Exception as e:  # noqa: BLE001 - health must not raise
+            logger.debug("DuckDB health check failed", exc_info=True)
             return str(e), False

@@ -9,6 +9,7 @@ from typing import final
 import attrs
 import inngest
 
+from .._logger import logger
 from .config import InngestConfig
 from .port import InngestClientPort
 
@@ -70,4 +71,6 @@ class InngestClient(InngestClientPort):
         self,
         events: inngest.Event | list[inngest.Event],
     ) -> list[str]:
-        return await self._sdk.send(events)
+        ids = await self._sdk.send(events)
+        logger.debug("Inngest events sent", count=len(ids))
+        return ids

@@ -19,6 +19,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import BigQueryClientPort
 from .query import build_sync_query_request, params_to_query_parameters
@@ -81,6 +82,7 @@ class BigQueryClient(BigQueryClientPort):
                 self.__api_root = host.rstrip("/")
 
             self.__session = ClientSession()
+            logger.debug("BigQuery client connected", project_id=project_id)
 
     # ....................... #
 
@@ -122,6 +124,8 @@ class BigQueryClient(BigQueryClientPort):
                 raise ExceptionGroup(
                     "BigQuery client close failed", errors
                 ) from errors[0]
+
+            logger.debug("BigQuery client closed")
 
     # ....................... #
 
@@ -174,6 +178,7 @@ class BigQueryClient(BigQueryClientPort):
             fn,
             attempts=cfg.read_retry_attempts,
             base_delay=cfg.read_retry_base_delay.total_seconds(),
+            on_retry=lambda n: logger.debug("Retrying BigQuery read", attempt=n),
         )
 
     # ....................... #
@@ -237,6 +242,7 @@ class BigQueryClient(BigQueryClientPort):
             return "ok", True
 
         except Exception as e:
+            logger.debug("BigQuery health check failed", exc_info=True)
             return str(e), False
 
     # ....................... #

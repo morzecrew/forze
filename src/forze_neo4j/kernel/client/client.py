@@ -18,6 +18,7 @@ from pydantic import SecretStr
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import Neo4jClientPort
 from .value_objects import Neo4jConfig
@@ -82,6 +83,7 @@ class Neo4jClient(Neo4jClientPort):
                 connection_timeout=config.connection_timeout.total_seconds(),
                 max_transaction_retry_time=config.max_transaction_retry_time.total_seconds(),
             )
+            logger.debug("Neo4j driver connected")
 
     # ....................... #
 
@@ -90,6 +92,7 @@ class Neo4jClient(Neo4jClientPort):
             if self._driver is not None:
                 await self._driver.close()
                 self._driver = None
+                logger.debug("Neo4j driver closed")
 
     # ....................... #
 
@@ -103,6 +106,7 @@ class Neo4jClient(Neo4jClientPort):
             await self._require_driver.verify_connectivity()  # pyright: ignore[reportUnknownMemberType]
 
         except Exception as e:  # noqa: BLE001 - health must not raise
+            logger.debug("Neo4j health check failed", exc_info=True)
             return str(e) or "Neo4j health check failed", False
 
         return "ok", True

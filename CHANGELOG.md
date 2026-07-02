@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Integration logger naming** — shared adapter/port machinery logs under `forze.integrations.<domain>` (overridable per adapter via `resolve_logger` / the `LoggerAware` mixin); `forze_kits` now logs under `forze_kits.*` instead of borrowing `forze.application`; `forze_sqs`, `forze_rabbitmq`, and `forze_identity` gained typed `Forze*Logger` name enums.
 
+- **Native logging for the previously-silent integrations** — `forze_s3`, `forze_gcs`, `forze_neo4j`, `forze_temporal`, `forze_clickhouse`, `forze_bigquery`, `forze_duckdb`, and `forze_inngest` now emit their own logs: connect/close at `debug`, previously-swallowed `health()` failures at `debug`, read-retry attempts (ClickHouse/BigQuery) at `debug`, Temporal saga compensation-step failures at `warning`, and Inngest durable-function invocations at `debug`. ClickHouse/BigQuery/DuckDB/Inngest gained their `Forze*Logger` name enums; `forze_gcs` gained `FORZE_GCS_LOGGER_NAMES`.
+
 - **Sampled access logs** — the FastAPI and MCP request-logging middlewares are quiet by default via `AccessLogSampler`: health/readiness probes dropped, error responses always logged, successful ones sampled 1-in-N. *Behavior change:* successful requests are no longer all logged at INFO; pass `access_log=AccessLogSampler(mode="full")` to restore, or `mode="off"` to silence.
 
 - **Per-port OpenTelemetry client spans** — `DepsRegistry.with_otel_port_spans()` opts every resolved port into a per-call `CLIENT` span inside the resilience policy; opt-in, zero-cost off.

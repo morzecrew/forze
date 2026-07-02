@@ -34,6 +34,7 @@ from forze.application.execution.resilience.read_retry import retry_read
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import ClickHouseClientPort
 from .query import apply_limit_offset, parameters_from_model
@@ -84,6 +85,9 @@ class ClickHouseClient(ClickHouseClientPort):
                 connector_limit_per_host=config.connector_limit_per_host,
                 keepalive_timeout=config.keepalive_timeout.total_seconds(),
             )
+            logger.debug(
+                "ClickHouse client connected", host=config.host, database=config.database
+            )
 
     # ....................... #
 
@@ -94,6 +98,7 @@ class ClickHouseClient(ClickHouseClientPort):
             if client is not None:
                 await client.close()
                 self.__client = None
+                logger.debug("ClickHouse client closed")
 
             self.__config = None
 
@@ -160,6 +165,7 @@ class ClickHouseClient(ClickHouseClientPort):
             fn,
             attempts=cfg.read_retry_attempts,
             base_delay=cfg.read_retry_base_delay.total_seconds(),
+            on_retry=lambda n: logger.debug("Retrying ClickHouse read", attempt=n),
         )
 
     # ....................... #
@@ -180,6 +186,7 @@ class ClickHouseClient(ClickHouseClientPort):
             return "ok", True
 
         except Exception as e:
+            logger.debug("ClickHouse health check failed", exc_info=True)
             return str(e), False
 
     # ....................... #

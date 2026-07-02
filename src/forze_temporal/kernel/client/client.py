@@ -28,6 +28,7 @@ from forze.application.contracts.durable.workflow import (
 from forze.base.exceptions import exc
 from forze.base.primitives import GuardedLifecycle
 
+from .._logger import logger
 from .port import TemporalClientPort
 from .schedule_mapping import (
     build_schedule,
@@ -86,6 +87,7 @@ class TemporalClient(TemporalClientPort):
             setup,
             ready=lambda: self.__client is not None,
         )
+        logger.debug("Temporal client connected", host=host, namespace=config.namespace)
 
     # ....................... #
 
@@ -94,6 +96,7 @@ class TemporalClient(TemporalClientPort):
             self.__client = None
 
         await self.__lifecycle.close(teardown)
+        logger.debug("Temporal client closed")
 
     # ....................... #
 
@@ -111,6 +114,7 @@ class TemporalClient(TemporalClientPort):
             return "ok", True
 
         except Exception as e:
+            logger.debug("Temporal health check failed", exc_info=True)
             return str(e), False
 
     # ....................... #
