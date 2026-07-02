@@ -117,6 +117,7 @@ class RabbitMQClient(RabbitMQClientPort):
                 timeout=config.connect_timeout.total_seconds(),
                 heartbeat=config.heartbeat.total_seconds(),
             )
+            logger.trace("RabbitMQ connection opened")
 
         await self.__lifecycle.initialize(
             setup,
@@ -124,13 +125,11 @@ class RabbitMQClient(RabbitMQClientPort):
                 self.__connection is not None and not self.__connection.is_closed
             ),
         )
-        logger.trace("RabbitMQ connection opened")
 
     # ....................... #
 
     async def close(self) -> None:
         await self.__lifecycle.close(self.__teardown)
-        logger.trace("RabbitMQ connection closed")
 
     # ....................... #
 
@@ -159,6 +158,7 @@ class RabbitMQClient(RabbitMQClientPort):
             logger.warning("RabbitMQ close: connection close failed: %s", e)
 
         self.__connection = None
+        logger.trace("RabbitMQ connection closed")
 
         async with self.__pending_lock:
             self.__pending.clear()

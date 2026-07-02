@@ -137,12 +137,12 @@ class GCSClient(GCSClientPort):
                 service_file=key_file,
                 api_root=api_root,
             )
+            logger.trace("GCS client connected", project_id=project_id)
 
         await self.__lifecycle.initialize(
             setup,
             ready=lambda: self.__storage is not None,
         )
-        logger.trace("GCS client connected", project_id=project_id)
 
     # ....................... #
 
@@ -150,7 +150,6 @@ class GCSClient(GCSClientPort):
         """Release the underlying storage client and HTTP session."""
 
         await self.__lifecycle.close(self.__teardown)
-        logger.trace("GCS client closed")
 
     # ....................... #
 
@@ -185,6 +184,8 @@ class GCSClient(GCSClientPort):
 
         if len(errors) > 1:
             raise ExceptionGroup("GCS client close failed", errors) from errors[0]
+
+        logger.trace("GCS client closed")
 
     # ....................... #
 

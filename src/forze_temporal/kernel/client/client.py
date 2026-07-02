@@ -82,21 +82,23 @@ class TemporalClient(TemporalClientPort):
                 interceptors=config.interceptors or [],
                 **connect_kwargs,
             )
+            logger.trace(
+                "Temporal client connected", host=host, namespace=config.namespace
+            )
 
         await self.__lifecycle.initialize(
             setup,
             ready=lambda: self.__client is not None,
         )
-        logger.trace("Temporal client connected", host=host, namespace=config.namespace)
 
     # ....................... #
 
     async def close(self) -> None:
         async def teardown() -> None:
             self.__client = None
+            logger.trace("Temporal client closed")
 
         await self.__lifecycle.close(teardown)
-        logger.trace("Temporal client closed")
 
     # ....................... #
 

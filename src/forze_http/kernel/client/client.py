@@ -74,12 +74,12 @@ class HttpClient(HttpClientPort):
                 client_kwargs["transport"] = transport
 
             self.__client = httpx.AsyncClient(**client_kwargs)
+            logger.trace("HTTP client connected", base_url=base_url)
 
         await self.__lifecycle.initialize(
             setup,
             ready=lambda: self.__client is not None,
         )
-        logger.trace("HTTP client connected", base_url=base_url)
 
     # ....................... #
 
