@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Search**
 
-- **Facets & highlights** — term facet distributions and per-hit highlights via search options, declared on the spec and returned as optional page sidecars; mock, Meilisearch, Postgres single-index (PGroonga/FTS) and hub over offset/cursor, plus per-hit highlights on federated. Unsupported fields/topologies fail closed; the generated search routes carry them. In-process highlighting (mock, hub) resolves nested (dotted) highlightable fields, matching nested sort/projection.
+- **Facets & highlights** — term facet distributions and per-hit highlights via search options, declared on the spec and returned as optional page sidecars; mock, Meilisearch, Postgres single-index (PGroonga/FTS) and hub over offset/cursor, plus per-hit highlights on federated. Unsupported fields/topologies fail closed; the generated search routes carry them. In-process highlighting (mock, hub) resolves nested (dotted) highlightable fields, matching nested sort/projection; the single-index relational and Meilisearch engines (flat-field highlighting) fail closed on a dotted highlightable field rather than silently dropping it.
 
 - **`FederatedSearchSpec(thin_merge=True)`** — late-materialized RRF merge (fetch `id` per leg, fuse on `(member, id)`, hydrate one page); Postgres and Meilisearch, opt-in, results identical to the full path. A secondary `sort` shared by every member (including a dotted path into nested sub-models) now also stays on the thin path — the field is projected alongside `id` and resolved identically thin vs. full; a sort whose root field is absent on a member falls back to full-fetch.
 

@@ -350,6 +350,31 @@ def reject_unsupported_highlight(
 # ....................... #
 
 
+def reject_nested_highlight_fields(fields: Sequence[str], *, backend: str) -> None:
+    """Fail closed when a **dotted** highlightable field is requested against a *backend* that
+    highlights over flat engine fields only (no nested / JSON-path extraction).
+
+    The mock and Postgres hub highlight in process and resolve nested paths (``contract.title``);
+    the single-index relational and Meilisearch engines mark a flat field — a nested request
+    would reference a non-existent column (Postgres) or miss the nested ``_formatted`` value
+    (Meilisearch), silently returning no highlight. Surfacing the gap keeps the cross-backend
+    contract honest rather than dropping a request the caller can't tell was ignored.
+
+    *fields* are the already-resolved highlight fields (see :func:`resolve_highlight`).
+    """
+
+    if nested := sorted({f for f in fields if "." in f}):
+        raise exc.precondition(
+            f"Nested (dotted) highlightable field(s) {nested} are not supported on the "
+            f"{backend} search backend (it highlights flat fields only); highlight a top-level "
+            "field instead.",
+            code="query_feature_unsupported",
+        )
+
+
+# ....................... #
+
+
 def reject_unsupported_facets(
     options: SearchOptions | None, *, backend: str
 ) -> None:

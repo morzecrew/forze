@@ -17,6 +17,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchSpec,
     facet_size_of,
+    reject_nested_highlight_fields,
     resolve_facet_fields,
     resolve_highlight,
 )
@@ -100,6 +101,7 @@ def plan_highlights(
         return None
 
     logical, pre_tag, post_tag = resolved
+    reject_nested_highlight_fields(logical, backend="Meilisearch")
     physical, phys_to_logical = _phys_map(gw, logical)
 
     return HighlightPlan(

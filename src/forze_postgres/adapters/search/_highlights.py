@@ -33,6 +33,7 @@ from forze.application.contracts.search import (
     highlight_fragment_bounds,
     highlight_fragments,
     highlight_tokens,
+    reject_nested_highlight_fields,
     resolve_highlight,
 )
 
@@ -120,6 +121,7 @@ def build_fts_highlight(
         return None
 
     fields, pre_tag, post_tag = resolved
+    reject_nested_highlight_fields(fields, backend="Postgres")
     query_text = " ".join(t for t in terms if t)
     hl_options = _fts_options(pre_tag, post_tag)
 
@@ -166,6 +168,7 @@ def build_pgroonga_highlight(
         return None
 
     fields, pre_tag, post_tag = resolved
+    reject_nested_highlight_fields(fields, backend="Postgres")
     fragment_size, max_fragments = highlight_fragment_bounds(options)
 
     columns = tuple(
