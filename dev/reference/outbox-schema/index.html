@@ -5085,6 +5085,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Causal ordering (Hybrid Logical Clock)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#restart-monotonicity-clock-high-water-mark" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restart monotonicity (clock high-water mark)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -5332,6 +5349,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Causal ordering (Hybrid Logical Clock)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#restart-monotonicity-clock-high-water-mark" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restart monotonicity (clock high-water mark)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -5501,6 +5535,32 @@ time-ordered <code>id</code> breaks any remaining tie. Add the column first, the
 <span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">outbox_claim_hlc_idx</span>
 <span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="p">(</span><span class="n">outbox_route</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">available_at</span><span class="p">,</span><span class="w"> </span><span class="n">hlc</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">,</span><span class="w"> </span><span class="n">id</span><span class="p">);</span>
 </code></pre></div>
+<h4 id="restart-monotonicity-clock-high-water-mark">Restart monotonicity (clock high-water mark)<a class="headerlink" href="#restart-monotonicity-clock-high-water-mark" title="Permanent link">&para;</a></h4>
+<p>The <code>hlc</code> column keeps causal order <em>within</em> a run, but a runtime's clock lives
+in memory: a restart resets it to <code>(0, 0)</code>, after which it can re-issue a stamp
+at or below one it already relayed whenever wall time had regressed or a peer
+merge had carried the clock ahead. Persist the clock's high-water mark so a
+restart resumes above its prior emissions. The table is optional and
+node-global — one clock per runtime, spanning every tenant, so it is <em>not</em>
+tenant-partitioned:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">hlc_checkpoint</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">node_key</span><span class="w"> </span><span class="nb">TEXT</span><span class="w">   </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">hlc</span><span class="w">      </span><span class="nb">BIGINT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">   </span><span class="c1">-- packed HlcTimestamp: physical_ms &lt;&lt; 16 | logical</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">node_key</span><span class="p">)</span>
+<span class="p">);</span>
+</code></pre></div>
+<p>Wire it with <code>PostgresDepsModule(hlc_checkpoint=PostgresHlcCheckpointConfig(relation=("app", "hlc_checkpoint")))</code>
+and add <code>hlc_checkpoint_recovery_lifecycle_step()</code> to the runtime's lifecycle.
+For an outbox route that flushes inside a transaction
+(<code>OutboxSpec(require_transaction=True)</code>), the flush then advances the mark (the max
+<abbr title="Hybrid Logical Clock">HLC</abbr> among the rows it stamps) <em>inside that transaction</em> — so a committed stamp is
+never durable without a mark covering it, and a rolled-back flush never advances it —
+while the lifecycle step loads the mark at startup and resumes the clock. A route that
+flushes standalone keeps resuming from <code>(0, 0)</code>: its mark could not advance atomically
+with its rows, so no checkpoint is wired for it. Unwired entirely, every route resumes
+from <code>(0, 0)</code> as before. A single shared <code>node_key</code> (the default)
+records one deployment-wide mark; distinct per-replica keys avoid write
+contention on one row, and recovery reads the max across all keys either way.</p>
 <h2 id="mongo">Mongo<a class="headerlink" href="#mongo" title="Permanent link">&para;</a></h2>
 <p>For Mongo (<code>MongoOutboxConfig</code>), documents mirror these fields; recommended
 indexes:</p>
