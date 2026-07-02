@@ -288,6 +288,7 @@ class PostgresClient(PostgresClientPort):
             # satisfied with an unopened pool.
             await pool.open()
             self.__pool = pool  # type: ignore[assignment]
+            logger.trace("Postgres pool opened")
 
     # ....................... #
 
@@ -301,6 +302,7 @@ class PostgresClient(PostgresClientPort):
             await self.__pool.close()
             self.__pool = None
             self.__gather_sem = None
+            logger.trace("Postgres pool closed")
 
     # ....................... #
 

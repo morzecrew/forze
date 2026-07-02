@@ -11,8 +11,8 @@ from uuid import UUID
 
 import attrs
 
-from forze.application._logger import logger
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze_kits.integrations._logger import logger
 from forze.application.contracts.outbox import (
     OutboxDestinationKind,
     OutboxRelayResult,

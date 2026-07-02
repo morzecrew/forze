@@ -10,8 +10,8 @@ from typing import Any, final
 
 import attrs
 
-from forze.application._logger import logger
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze_kits.integrations._logger import logger
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.application.execution.context import ExecutionContext

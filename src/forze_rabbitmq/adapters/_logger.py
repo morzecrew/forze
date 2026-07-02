@@ -1,6 +1,7 @@
 from forze.base.logging import Logger
+from forze_rabbitmq._logging import ForzeRabbitMQLogger
 
 # ----------------------- #
 
-logger = Logger("forze_rabbitmq.adapters")
+logger = Logger(ForzeRabbitMQLogger.ADAPTERS)
 """RabbitMQ adapters logger."""

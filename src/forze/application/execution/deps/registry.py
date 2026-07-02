@@ -5,10 +5,12 @@ from typing import TYPE_CHECKING, Any, Self, final
 
 import attrs
 
-from forze.application._logger import logger
+from forze.application._logger import logger as _logger
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Tracer
+
+    from forze.base.logging import Logger
 
 from ..interception import PortInterceptor, PortInterceptorChain
 from ..tracing import RuntimeTracer, runtime_tracer_from_flag
@@ -127,7 +129,7 @@ class DepsRegistry:
     def with_modules(self, *modules: DepsModule) -> Self:
         """Return a new registry with additional modules appended."""
 
-        logger.trace(
+        _logger.trace(
             "Appending %s module(s) to deps registry with %s existing module(s)",
             len(modules),
             len(self.modules),
@@ -140,7 +142,7 @@ class DepsRegistry:
     def with_deps(self, *deps: Deps) -> Self:
         """Return a new registry with additional registration deps appended."""
 
-        logger.trace(
+        _logger.trace(
             "Appending %s deps blob(s) to registry with %s existing blob(s)",
             len(deps),
             len(self.deps),
@@ -206,9 +208,23 @@ class DepsRegistry:
         port-policy wrap. Production registers none (the port is returned bare).
         """
 
-        return attrs.evolve(
-            self, interceptors=(*self.interceptors, *interceptors)
-        )
+        return attrs.evolve(self, interceptors=(*self.interceptors, *interceptors))
+
+    # ....................... #
+
+    def with_port_logging(self, *, logger: "Logger | None" = None) -> Self:
+        """Return a registry that logs every resolved configurable port call.
+
+        Registers a :class:`~forze.application.execution.interception.LoggingInterceptor`
+        so all outbound I/O logs uniformly ``(surface, route, op, duration)`` under
+        ``forze.integrations.<domain>`` (or *logger*). Volume-safe: a successful call
+        logs at ``trace`` (a no-op in production unless trace is configured). Opt in once
+        at assembly, alongside ``with_otel_port_spans``.
+        """
+
+        from ..interception import LoggingInterceptor
+
+        return self.with_interceptors(LoggingInterceptor(logger=logger))
 
     # ....................... #
 
@@ -220,7 +236,7 @@ class DepsRegistry:
     ) -> FrozenDepsRegistry:
         """Freeze merged providers and tracer policy into a frozen registry."""
 
-        logger.trace(
+        _logger.trace(
             "Freezing dependency registry from %s module(s)",
             len(self.modules),
         )
@@ -238,7 +254,7 @@ class DepsRegistry:
 
         for i, module in enumerate(self.modules, 1):
             module_deps = module()
-            logger.trace(
+            _logger.trace(
                 "Built deps module #%s with %s dependency(ies)",
                 i,
                 module_deps.count(),
@@ -246,7 +262,7 @@ class DepsRegistry:
             built.append(module_deps)
 
         for i, dep in enumerate(self.deps, 1):
-            logger.trace(
+            _logger.trace(
                 "Adding registration deps #%s with %s dependency(ies)",
                 i,
                 dep.count(),

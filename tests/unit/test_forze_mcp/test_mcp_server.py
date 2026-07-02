@@ -436,10 +436,14 @@ class TestLoggingMiddleware:
     async def test_logs_access_per_message_with_target_and_outcome(self) -> None:
         import structlog
 
+        from forze.base.logging import AccessLogSampler
         from forze_mcp import LoggingMiddleware
 
         server = build_mcp_server(_registry(), _ctx_factory, name="calc-mcp")
-        server.add_middleware(LoggingMiddleware())
+        # Full mode: assert a line per message deterministically (the default samples successes).
+        server.add_middleware(
+            LoggingMiddleware(access_log=AccessLogSampler(mode="full"))
+        )
 
         with structlog.testing.capture_logs() as logs:
             async with Client(server) as client:

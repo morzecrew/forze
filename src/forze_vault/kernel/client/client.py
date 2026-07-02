@@ -58,6 +58,8 @@ class VaultClient(VaultClientPort):
             if self.config.renew_token:
                 await self._start_token_renewal()
 
+            logger.trace("Vault client connected")
+
         await self._lifecycle.initialize(
             setup,
             ready=lambda: self._client is not None,
@@ -78,6 +80,7 @@ class VaultClient(VaultClientPort):
                     await asyncio.shield(task)
 
             self._client = None
+            logger.trace("Vault client closed")
 
         await self._lifecycle.close(teardown)
 

@@ -18,6 +18,7 @@ from pydantic import SecretStr
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import MeilisearchClientPort
 from .value_objects import MeilisearchConfig
@@ -60,6 +61,7 @@ class MeilisearchClient(MeilisearchClientPort):
                 key,
                 timeout=int(cfg.timeout.total_seconds()),
             )
+            logger.trace("Meilisearch client connected", url=url)
 
     # ....................... #
 
@@ -78,6 +80,7 @@ class MeilisearchClient(MeilisearchClientPort):
         if self.__client is not None:
             await self.__client.aclose()
             self.__client = None
+            logger.trace("Meilisearch client closed")
 
     # ....................... #
 

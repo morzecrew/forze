@@ -11,8 +11,8 @@ from typing import Any, final
 
 import attrs
 
-from forze.application._logger import logger
 from forze.application.contracts.crypto import BytesCipherPort, KeyringDepKey
+from forze_kits.integrations._logger import logger
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.queue import (
     QueueMessage,

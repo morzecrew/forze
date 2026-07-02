@@ -1,6 +1,7 @@
 """Async HTTP client wrapper using httpx."""
 
 from typing import Any, Mapping, final
+from urllib.parse import urlsplit, urlunsplit
 
 from forze_http._compat import require_http
 
@@ -15,6 +16,7 @@ import attrs
 from forze.base.exceptions import exc
 from forze.base.primitives import GuardedLifecycle, JsonDict
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import HttpClientPort
 from .value_objects import HttpConfig
@@ -30,6 +32,26 @@ def _merge_url(base_url: str | None, url: str) -> str:
         raise exc.configuration("Relative HTTP URL requires a configured base_url")
 
     return f"{base_url.rstrip('/')}/{url.lstrip('/')}"
+
+
+# ....................... #
+
+
+def _redact_url(url: str | None) -> str | None:
+    """Strip any ``user:pass@`` userinfo from *url* so credentials never reach logs."""
+
+    if not url:
+        return url
+
+    parts = urlsplit(url)
+
+    if not (parts.username or parts.password):
+        return url
+
+    host = parts.hostname or ""
+    netloc = f"{host}:{parts.port}" if parts.port else host
+
+    return urlunsplit(parts._replace(netloc=netloc))
 
 
 # ....................... #
@@ -73,6 +95,7 @@ class HttpClient(HttpClientPort):
                 client_kwargs["transport"] = transport
 
             self.__client = httpx.AsyncClient(**client_kwargs)
+            logger.trace("HTTP client connected", base_url=_redact_url(base_url))
 
         await self.__lifecycle.initialize(
             setup,
@@ -95,6 +118,7 @@ class HttpClient(HttpClientPort):
             await self.__client.aclose()
             self.__client = None
             self.__base_url = None
+            logger.trace("HTTP client closed")
 
     # ....................... #
 

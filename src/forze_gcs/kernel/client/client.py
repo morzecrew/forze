@@ -38,6 +38,7 @@ from forze.base.primitives import (
 )
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import GCSClientPort
 from .value_objects import DEFAULT_TIMEOUT, GCSConfig
@@ -136,6 +137,7 @@ class GCSClient(GCSClientPort):
                 service_file=key_file,
                 api_root=api_root,
             )
+            logger.trace("GCS client connected", project_id=project_id)
 
         await self.__lifecycle.initialize(
             setup,
@@ -183,6 +185,8 @@ class GCSClient(GCSClientPort):
         if len(errors) > 1:
             raise ExceptionGroup("GCS client close failed", errors) from errors[0]
 
+        logger.trace("GCS client closed")
+
     # ....................... #
 
     def __require_storage(self) -> Storage:
@@ -228,6 +232,7 @@ class GCSClient(GCSClientPort):
             return "ok", True
 
         except Exception as e:
+            logger.debug("GCS health check failed", exc_info=True)
             return str(e), False
 
     async def list_buckets_first_page(self) -> None:

@@ -72,7 +72,13 @@ The name stays low-cardinality (`surface.op`); the specification name rides as t
 `route` attribute, never in the name. The span sits **inside** the resilience
 policy, so a retried call is one span per attempt and a call shed by an open breaker
 or a full bulkhead emits none — the trace shows the work that actually reached the
-backend. Failure status follows the exception *kind*: an infrastructure, internal,
+backend.
+
+For a **log line** per outbound call instead of (or alongside) a span, add
+`deps.with_port_logging()`. It logs every port call uniformly — `surface`, `route`,
+`op`, and `duration_ms` under `forze.integrations.<domain>` — at `trace` on success
+(so it costs nothing in production unless you turn trace on), `debug` on an expected
+domain failure, and `warning` with a traceback on an unexpected one. Failure status follows the exception *kind*: an infrastructure, internal,
 or configuration fault reds the span, while a domain failure the caller can handle —
 not-found, conflict, precondition — leaves it clean, exactly as a 404 does not red an
 HTTP client span. Streaming methods (a cursor, a consume loop, a subscription) pass
@@ -172,12 +178,105 @@ and **sustained evictions at full capacity with a sagging hit rate** is the
 scan-pollution signature — the signal to switch the eviction policy to the
 in-box W-TinyLFU store or raise `capacity`.
 
-## Logs correlate for free
+## Configure logging in one call
 
-`configure_logging(otel_config=...)` injects the active span's `trace_id` and
-`span_id` into every log line. Because `instrument_operations` is what starts the
-span, your structured logs line up with the operation trace automatically — no
-extra wiring.
+`bootstrap_logging` wires the whole logging surface: the framework's own loggers
+(`forze.*`, `forze_kits.*`, and the `forze.integrations.*` adapters), any
+integration loggers you name, third-party stdlib loggers routed through the same
+formatter, and the uncaught-exception hook.
+
+```python
+from forze import bootstrap_logging
+from forze_postgres import FORZE_POSTGRES_LOGGER_NAMES
+from forze_redis import FORZE_REDIS_LOGGER_NAMES
+
+bootstrap_logging(
+    level="info",
+    render_mode="json",  # "console" for local dev
+    logger_names=[FORZE_POSTGRES_LOGGER_NAMES, FORZE_REDIS_LOGGER_NAMES],
+    third_party=["uvicorn", "sqlalchemy.engine"],
+)
+```
+
+`configure_logging` remains the lower-level entry point when you want to wire the
+pieces yourself. Either way, pass `otel_config=...` and the active span's
+`trace_id` and `span_id` are injected into every log line — because
+`instrument_operations` starts that span, your structured logs line up with the
+operation trace automatically, no extra wiring.
+
+## Log levels and the verbosity budget
+
+The framework holds one rule: **at `level="info"` it emits almost nothing per
+request.** A quiet default is a feature — you turn detail *up* when investigating,
+rather than filtering noise *out* in steady state. Each level has a fixed meaning:
+
+| Level | What the framework logs here | Steady-state volume |
+|-------|------------------------------|---------------------|
+| `trace` | per-row / per-message / per-port-call detail | **none in production** — the trace gate is one integer compare unless you configure `level="trace"` |
+| `debug` | per-operation internals, cache hits, dedup skips | opt-in |
+| `info` | lifecycle events only: startup, shutdown, saga pivot, relay batch summaries | rare |
+| `warning` | degraded-but-continuing: retries exhausted, breaker open, a callback failed | rare, deduped |
+| `error` | an unhandled server-side fault (a bug) | should be ~zero |
+| `critical` | data loss or an unrecoverable condition | ~zero |
+
+A **domain failure is never an error.** A validation, not-found, conflict, or
+precondition outcome is the application working as designed — it logs at `debug`
+or not at all, exactly as it leaves an [HTTP span clean](#trace-every-outbound-call).
+Only an unhandled fault reaches `error`.
+
+## Tame high-volume logs
+
+Two per-event controls collapse the events that would otherwise flood a log,
+without dropping the first occurrence you actually need to see. They are a no-op
+for events that don't opt in:
+
+```python
+# keep 1 in 100 of a uniformly high-volume event
+logger.debug("cache miss", _sample=100)
+
+# emit a flapping condition at most once per window (default 60s)
+logger.warning("upstream degraded", _dedup_key="upstream-degraded")
+```
+
+`_sample=N` keeps one in every `N` events sharing the same logger and message;
+`_dedup_key` emits at most one event per key per window (`_dedup_window=` overrides
+the seconds). The control keys are stripped before rendering. This is on by default
+(`configure_logging(enable_sampling=True)`).
+
+For per-request access logs — the largest steady-state source — the FastAPI and MCP
+middlewares are quiet by default: successful requests are sampled 1-in-N and error
+responses are always logged. The FastAPI middleware additionally drops health and
+readiness probe *paths* (`DEFAULT_HEALTH_PATHS`); MCP messages have no such path, so
+its default sampler applies no path exclusion. Configure either with
+`access_log=AccessLogSampler(...)`: `mode="full"` logs every request, `mode="off"`
+disables them, and `sample_rate` / `exclude` tune the rate and the excluded subjects
+(request paths for FastAPI, method names for MCP).
+
+## Sensitive data is scrubbed
+
+Log output runs through a redaction pass that masks sensitive **keys** (password,
+token, secret, api-key, cookie, authorization, …) and secret-shaped **values**
+(bearer tokens, JWTs, connection DSNs) in both extras and the message text. Extend
+it for deployment-specific patterns once at startup:
+
+```python
+from forze.base.scrubbing.policy import register_sensitive_patterns
+
+register_sensitive_patterns(keys=["x_internal_token"])
+```
+
+Disable with `configure_logging(sanitize_logs=False)` only when you fully control
+the sink and its retention.
+
+## Naming: where a log line comes from
+
+Every logger is namespaced so you can raise or lower detail per area without
+touching the rest. Core framework logs sit under `forze.*` (`forze.application`,
+`forze.domain`); pre-built wiring under `forze_kits.*`; each integration under its
+own `forze_<name>.*` (`forze_postgres.adapters`, `forze_redis.kernel`). Generic
+adapter machinery shared across integrations logs under `forze.integrations.<domain>`
+(`forze.integrations.cache`, `forze.integrations.document`) — filter the whole group
+with `forze.integrations.*`, or a single domain on its own.
 
 ## Bring your own exporter
 

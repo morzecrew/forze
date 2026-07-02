@@ -37,6 +37,7 @@ from ..adapters.context import (
 from ..adapters.crypto import open_event_payload
 from ..adapters.step import bind_inngest_step, reset_inngest_step
 from ..kernel.client import InngestClientPort
+from ._logger import logger
 
 # ----------------------- #
 
@@ -201,6 +202,8 @@ def _register_one(
 
         args = binding.spec.run.args_type.model_validate(payload)
         step_token = bind_inngest_step(ctx.step)
+
+        logger.debug("Inngest function invoked", function=str(spec.name))
 
         try:
             with _bind_invocation(execution_ctx, envelope):
