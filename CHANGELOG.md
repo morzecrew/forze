@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Fencing-token capability for distributed locks** — `DistributedLockSpec(requires_fencing_token=True)` fails closed at resolve against a backend not reporting `FencingAware` / `fencing_tokens` (Redis and mock support it; default `False`).
 
+- **Wiring check (`check_wiring`)** — an opt-in dry-run that resolves every registered operation against a throwaway context and aggregates the failures, so a missing/misrouted dependency surfaces at test or startup time instead of on the operation's first live call. One resolve per operation transitively covers its handler, hooks, transaction-scope stages and saga dispatch targets, and replicates the read-only bind a QUERY operation is built under. `WiringReport.raise_if_failed()` fails fast with the full list; `check_facade_factory_wiring` is the facade-factory shortcut. Diagnostic only — lifecycle steps (which open real connections at startup) are validated by opening a scope.
+
 **Querying & read models**
 
 - **Nested-field projection & sorting** — projection `fields` and sort keys may be dotted paths into nested Pydantic sub-models and `str`-keyed mappings (`project(filters, ["contract.reg_number"])`, `sorts={"addr.city": "asc"}`); a path crossing a list maps the selection over each element. Resolved across `project_*` / `project_search_*` and offset/keyset reads on every backend (mock, Postgres, Mongo, Firestore). *Behavior change:* the mock now nests a dotted projection key instead of emitting it flat. Sorting on a nested path whose root column is field-encrypted is rejected.
