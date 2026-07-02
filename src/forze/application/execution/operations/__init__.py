@@ -13,6 +13,12 @@ from .run import (
     run_durable_function_typed,
     run_operation,
 )
+from .wiring import (
+    WiringFailure,
+    WiringReport,
+    check_facade_factory_wiring,
+    check_wiring,
+)
 
 # ----------------------- #
 
@@ -33,4 +39,8 @@ __all__ = [
     "facade_op",
     "namespaced_facade",
     "OperationFacadeFactory",
+    "WiringFailure",
+    "WiringReport",
+    "check_facade_factory_wiring",
+    "check_wiring",
 ]

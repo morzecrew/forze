@@ -31,6 +31,10 @@ from .operations import (
     OperationDescriptor,
     OperationKind,
     OperationPlan,
+    WiringFailure,
+    WiringReport,
+    check_facade_factory_wiring,
+    check_wiring,
 )
 from .operations.registry import FrozenOperationRegistry, OperationRegistry
 from .resilience import (
@@ -123,6 +127,10 @@ __all__ = [
     "OperationKind",
     "OperationPlan",
     "OperationRegistry",
+    "WiringFailure",
+    "WiringReport",
+    "check_facade_factory_wiring",
+    "check_wiring",
     "instrument_operations",
     "instrument_resilience",
     "instrument_tenant_pools",
