@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Search**
 
-- **Facets & highlights** — term facet distributions and per-hit highlights via search options, declared on the spec and returned as optional page sidecars; mock, Meilisearch, Postgres single-index (PGroonga/FTS) and hub over offset/cursor, plus per-hit highlights on federated. Unsupported fields/topologies fail closed; the generated search routes carry them. In-process highlighting (mock, hub) resolves nested (dotted) highlightable fields, matching nested sort/projection; the single-index relational and Meilisearch engines (flat-field highlighting) fail closed on a dotted highlightable field rather than silently dropping it.
+- **Facets & highlights** — term facet distributions and per-hit highlights via search options, declared on the spec and returned as optional page sidecars; mock, Meilisearch, Postgres single-index (PGroonga/FTS) and hub over offset/cursor (both `sql` and `parallel` execution), plus per-hit highlights on federated. Unsupported fields/topologies fail closed; the generated search routes carry them. In-process highlighting (mock, hub) resolves nested (dotted) highlightable fields, matching nested sort/projection; the single-index relational and Meilisearch engines (flat-field highlighting) fail closed on a dotted highlightable field rather than silently dropping it.
 
 - **`FederatedSearchSpec(thin_merge=True)`** — late-materialized RRF merge (fetch `id` per leg, fuse on `(member, id)`, hydrate one page); Postgres and Meilisearch, opt-in, results identical to the full path. A secondary `sort` shared by every member (including a dotted path into nested sub-models) now also stays on the thin path — the field is projected alongside `id` and resolved identically thin vs. full; a sort whose root field is absent on a member falls back to full-fetch.
 
@@ -173,7 +173,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Unbounded in-process caches gain bounded defaults** — Postgres introspector filtered-estimate lane (`max_filtered_estimate_entries=2048`), Redis breaker local cache (`max_cache_entries=4096`), document-cache refresh fan-out (`max_inflight_refresh=64`), L1 live-store registry weak-ref sweep. All with escape hatches.
 
-- **More read/list paths stream** — GCS `list_objects` page-by-page (exact total kept); realtime mailbox `trim` projects only `id`; Postgres hub `execution="parallel"` scans only matched hub rows; Postgres `update_matching` honours `batch_size` (keyset-pages instead of one unbounded UPDATE).
+- **More read/list paths stream** — GCS `list_objects` page-by-page (exact total kept); realtime mailbox `trim` projects only `id`; Postgres hub `execution="parallel"` scans only matched hub rows, late-materializes (merges thin id/sort/key rows, hydrates the heavy read-model columns for the page by id) and bounds per-leg query concurrency with the shared pool semaphore; Postgres `update_matching` honours `batch_size` (keyset-pages instead of one unbounded UPDATE).
 
 - **Streamed offline-mailbox replay** — `RealtimeMailbox.replay_since` (HLC keyset, `replay_page_size=100`) emits page-by-page instead of loading a device's whole backlog.
 
