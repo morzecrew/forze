@@ -5,8 +5,9 @@ a ``DurableFunctionStepPort`` — each step's action (and each compensation) is 
 a process crash mid-saga resumes at the first un-journaled step / compensation instead of
 leaving committed steps un-compensated. A step that *fails* journals its failure too, so a
 re-invocation of the same run re-raises it rather than re-running the action (a failed step's
-side effect stays exactly-once, like a completed one's). It depends only on the contract, so
-the same code runs over the mock (tests), Postgres (self-hosted), or any step-port backend.
+body is not re-run on replay, like a completed one's — keep step bodies idempotent, as a body
+can still run more than once if a worker is reclaimed mid-body). It depends only on the
+contract, so the same code runs over the mock (tests), Postgres (self-hosted), or any backend.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ if TYPE_CHECKING:
 _STEP_FAILURE_KEY = "__saga_step_failed__"
 """Journal sentinel. A step whose action raised records its failure message under this key
 (instead of a state dict), so a replay re-raises the failure rather than re-running the
-action — a failed step's side effect stays exactly-once, like a completed step's."""
+action — the failed body is not re-run on replay, like a completed step's."""
 
 
 @final
@@ -149,7 +150,7 @@ class DurableSagaExecutor:
             except Exception as error:  # noqa: BLE001 — journaled as the outcome, re-raised
                 # Record the failure as this step's journaled outcome so a re-invocation of
                 # the same durable run (crash recovery / replay) re-raises it instead of
-                # re-running the action — the side effect stays exactly-once.
+                # re-running the action's body.
                 return {_STEP_FAILURE_KEY: str(error)}
 
         # Journaled: a completed step returns its recorded context on replay and its action

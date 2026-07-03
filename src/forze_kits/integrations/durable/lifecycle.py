@@ -191,8 +191,9 @@ def durable_recovery_background_lifecycle_step(
     ``PENDING`` run or a ``RUNNING`` run past its lease) are re-claimed and re-invoked until
     a sweep returns fewer than *limit*, capped at *max_batches_per_tick*; then the task
     sleeps *interval* with multiplicative *jitter*. A run's completed steps replay from the
-    journal, so each step effect applies exactly once across the crash. *max_concurrency*
-    bounds how many runs a batch recovers at once (``None`` = sequential).
+    journal rather than re-running (exactly-once for the recorded result; a body may re-run if
+    a worker is reclaimed / crashes before it journals, so keep step bodies idempotent).
+    *max_concurrency* bounds how many runs a batch recovers at once (``None`` = sequential).
 
     When *tenants* is set the store is **namespace-tier** (per-tenant tables): each sweep
     binds every assigned tenant in turn and recovers its table (shard frozen at startup;

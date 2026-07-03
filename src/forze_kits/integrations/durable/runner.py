@@ -45,7 +45,9 @@ class DurableFunctionRunner:
 
     ``enqueue`` records a run; ``run_now`` records and executes it in-process; ``recover``
     re-claims abandoned runs (crashed mid-flight) and re-invokes them — completed steps
-    replay from the journal, so each step effect applies exactly once across a crash.
+    replay from the journal rather than re-running (exactly-once for the recorded result; a
+    body may still re-run if a worker is reclaimed / crashes before it journals, so keep step
+    bodies idempotent).
     """
 
     registry: DurableFunctionRegistry

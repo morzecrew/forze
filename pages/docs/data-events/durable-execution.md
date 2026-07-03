@@ -101,11 +101,17 @@ OpenTelemetry: a `durable.run` span per execution plus `forze.durable.runs` /
 `forze.durable.schedule.fires` metrics. Emits via the global OTel providers — configure the
 SDK in your app.
 
-The exactly-once-across-a-crash promise is checked by [deterministic simulation](../dst/overview.md): a
-seeded crash fault kills a run mid-step, the recovery scanner re-invokes it, and the oracle
-asserts every completed step replays from its journal instead of re-executing. Keep durable
-bodies deterministic — read time / ids through `utcnow` / `uuid7` and do work in steps — and
-the simulator explores the crash-point space for you.
+The step journal is exactly-once for a step's **recorded result** — a completed step replays
+from the journal instead of re-running. It is **not** exactly-once for arbitrary side
+effects: a body can run more than once if a worker is reclaimed (its run lease expired
+mid-body) or crashes before the result is journaled — the same at-least-once step guarantee
+as Temporal / DBOS / Inngest. **Keep step bodies idempotent** (use an idempotency key on
+external calls) for exactly-once effects. The replay guarantee is checked by
+[deterministic simulation](../dst/overview.md): a seeded crash fault kills a run mid-step, the
+recovery scanner re-invokes it, and the oracle asserts every completed step replays from its
+journal instead of re-executing. Keep durable bodies deterministic too — read time / ids
+through `utcnow` / `uuid7` and do work in steps — and the simulator explores the crash-point
+space for you.
 
 ### Crash-resumable sagas
 

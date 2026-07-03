@@ -1,4 +1,4 @@
-"""Postgres durable-function step-memo journal (DBOS-style exactly-once steps)."""
+"""Postgres durable-function step-memo journal (DBOS-style memoized steps)."""
 
 from __future__ import annotations
 
@@ -42,11 +42,13 @@ class PostgresDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
     """Memoize durable-function step results in a Postgres journal.
 
     On the first execution of ``(run_id, step_id)`` the step body runs and its result is
-    journaled; on replay (crash recovery / re-invocation) the journaled result is returned
-    and the body is **not** re-run — the exactly-once step effect. The active ``run_id``
-    is read from the ambient
-    :class:`~forze.application.contracts.durable.function.DurableRunContext` bound by the
-    runner, so it need not thread through every ``step.run`` call.
+    journaled; on replay (crash recovery / re-invocation) the journaled **result** is
+    returned and the body is **not** re-run. The guarantee is exactly-once for the recorded
+    result — the body may still run more than once if a worker is reclaimed (its run lease
+    expired mid-body) or crashes before the result is journaled, so keep step bodies
+    idempotent for exactly-once external effects. The active ``run_id`` is read from the
+    ambient :class:`~forze.application.contracts.durable.function.DurableRunContext` bound by
+    the runner, so it need not thread through every ``step.run`` call.
 
     Results are journaled as JSON, so a step must return a JSON-serializable value (the
     durable saga executor encodes its context before journaling); a value comes back as its
@@ -121,7 +123,8 @@ class PostgresDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
 
         if not rowcount:
             # A concurrent/duplicate runner journaled this step first: converge on the
-            # winner's memoized result rather than this attempt's (idempotent step effect).
+            # winner's memoized result rather than this attempt's (so every caller agrees on
+            # one result; both bodies still ran — an at-least-once effect).
             winner = await self._read(table, run.run_id, step_id, tenant_id)
 
             if winner is not _MISSING:

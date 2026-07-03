@@ -28,8 +28,10 @@ class MockDurableFunctionStepAdapter(DurableFunctionStepPort):
     single-run use — so it journals per run like the Postgres adapter.
 
     Emits a ``durable`` step event (``executed`` on the first run, ``replayed`` from the memo)
-    into the runtime trace, so a deterministic-simulation oracle can assert each step's effect
-    applies exactly once across a crash.
+    into the runtime trace, so a deterministic-simulation oracle can assert a completed step
+    replays from the memo instead of re-executing across a crash. The recorded **result** is
+    exactly-once; a body may still run more than once if a worker is reclaimed / crashes
+    mid-body before the result is journaled, so keep step bodies idempotent.
     """
 
     state: MockState
@@ -59,7 +61,14 @@ class MockDurableFunctionStepAdapter(DurableFunctionStepPort):
         result = await fn()
 
         with self.state.lock:
-            self.state.durable_step_memo[key] = result  # type: ignore[arg-type]
+            # First-write-wins convergence, matching the Postgres ``ON CONFLICT DO NOTHING``:
+            # if a concurrent execution journaled this step first, discard our result and
+            # return the winner's so every caller agrees on one value. (The body still ran —
+            # an at-least-once effect under a reclaimed lease; keep step bodies idempotent.)
+            memo = self.state.durable_step_memo
+            if key not in memo:
+                memo[key] = result  # type: ignore[arg-type]
+            winner = memo[key]
 
         record(
             domain="durable",
@@ -69,4 +78,4 @@ class MockDurableFunctionStepAdapter(DurableFunctionStepPort):
             outcome="executed",
         )
 
-        return result
+        return cast("T", winner)
