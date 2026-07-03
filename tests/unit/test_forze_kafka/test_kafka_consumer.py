@@ -8,7 +8,7 @@ from forze.application.contracts.stream import (
     CommitStreamGroupCapabilities,
     StreamPosition,
 )
-from forze_kafka.adapters import KafkaCommitStreamGroupAdapter
+from forze_kafka.adapters import KafkaCommitStreamGroupAdapter, KafkaStreamCodec
 
 from _kafka_fakes import FakeConsumer, FakeKafkaClient, Msg, make_codec, record
 
@@ -72,11 +72,29 @@ async def test_read_respects_limit() -> None:
     assert len(messages) == 2
 
 
+def _batch(
+    codec: KafkaStreamCodec[Msg], topic: str, partition: int
+) -> dict[TopicPartition, list[object]]:
+    return {
+        TopicPartition(topic, partition): [
+            record(topic, partition, 0, codec.encode_value(Msg(body="x")))
+        ]
+    }
+
+
 async def test_commit_translates_to_next_offset_max_per_partition() -> None:
-    consumer = FakeConsumer()
+    codec = make_codec()
+    tp0 = TopicPartition("events", 0)
+    tp1 = TopicPartition("events", 1)
+    consumer = FakeConsumer(
+        batches={
+            tp0: [record("events", 0, 0, codec.encode_value(Msg(body="a")))],
+            tp1: [record("events", 1, 0, codec.encode_value(Msg(body="b")))],
+        }
+    )
     adapter = _adapter(FakeKafkaClient(consumer=consumer))
 
-    await adapter.read("g", "m", ["events"])  # binds the consumer to the cell
+    await adapter.read("g", "m", ["events"])  # registers partitions 0 and 1
     await adapter.commit(
         "g",
         [
@@ -90,14 +108,16 @@ async def test_commit_translates_to_next_offset_max_per_partition() -> None:
     )
 
     # Highest offset per partition wins; the lower straggler does not regress it.
-    assert consumer.committed[TopicPartition("events", 0)].offset == 8
-    assert consumer.committed[TopicPartition("events", 1)].offset == 3
+    assert consumer.committed[tp0].offset == 8
+    assert consumer.committed[tp1].offset == 3
 
 
 async def test_commit_targets_the_group_that_read_not_the_latest() -> None:
     # Regression: interleaved reads across groups must not cross-commit.
-    g1 = FakeConsumer()
-    g2 = FakeConsumer()
+    codec = make_codec()
+    tp0 = TopicPartition("events", 0)
+    g1 = FakeConsumer(batches=_batch(codec, "events", 0))
+    g2 = FakeConsumer(batches=_batch(codec, "events", 0))
     client = FakeKafkaClient(consumers_by_group={"g1": g1, "g2": g2})
     adapter = _adapter(client)
 
@@ -106,8 +126,28 @@ async def test_commit_targets_the_group_that_read_not_the_latest() -> None:
 
     await adapter.commit("g1", [StreamPosition(stream="events", partition=0, offset=4)])
 
-    assert g1.committed[TopicPartition("events", 0)].offset == 5
+    assert g1.committed[tp0].offset == 5
     assert g2.committed == {}  # the g2 consumer must be untouched
+
+
+async def test_commit_routes_to_member_that_read_the_partition() -> None:
+    # Regression: same group, two members reading different topics — a commit for
+    # topic `a` must go through m1's consumer, never m2's (which would fail on
+    # unassigned partitions or advance the wrong member).
+    codec = make_codec()
+    tp_a = TopicPartition("a", 0)
+    m1 = FakeConsumer(batches=_batch(codec, "a", 0))
+    m2 = FakeConsumer(batches=_batch(codec, "b", 0))
+    client = FakeKafkaClient(consumers_by_member={"m1": m1, "m2": m2})
+    adapter = _adapter(client)
+
+    await adapter.read("g", "m1", ["a"])
+    await adapter.read("g", "m2", ["b"])  # same group, other member + topic
+
+    await adapter.commit("g", [StreamPosition(stream="a", partition=0, offset=4)])
+
+    assert m1.committed[tp_a].offset == 5
+    assert m2.committed == {}  # m2's consumer must not receive a's offsets
 
 
 async def test_commit_before_read_is_noop() -> None:

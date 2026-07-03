@@ -188,6 +188,7 @@ class FakeKafkaClient:
         send_offset: int = 0,
         consumer: FakeConsumer | None = None,
         consumers_by_group: dict[str, FakeConsumer] | None = None,
+        consumers_by_member: dict[str, FakeConsumer] | None = None,
         transient: FakeConsumer | None = None,
         admin: FakeAdmin | None = None,
     ) -> None:
@@ -196,6 +197,7 @@ class FakeKafkaClient:
         self._send_offset = send_offset
         self._consumer = consumer or FakeConsumer()
         self._consumers_by_group = consumers_by_group or {}
+        self._consumers_by_member = consumers_by_member or {}
         self._transient = transient or FakeConsumer()
         self._admin = admin or FakeAdmin()
         self.get_consumer_calls: list[dict[str, Any]] = []
@@ -246,6 +248,8 @@ class FakeKafkaClient:
                 "max_poll_records": max_poll_records,
             }
         )
+        if member in self._consumers_by_member:
+            return self._consumers_by_member[member]
         return self._consumers_by_group.get(group, self._consumer)
 
     async def new_transient_consumer(self, *, group: str | None = None) -> FakeConsumer:

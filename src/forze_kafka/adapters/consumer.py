@@ -34,15 +34,18 @@ _DEFAULT_POLL_MS = 1_000
 
 @attrs.define(slots=True, kw_only=True)
 class _ConsumerCell:
-    """Mutable holder mapping each group to the consumer its ``read`` used.
+    """Maps each read ``(group, topic, partition)`` to the consumer that read it.
 
-    The adapter is frozen; this cell lets a ``read`` record the exact consumer
-    instance **per group** so the matching ``commit`` targets the consumer of
-    *that* group (``commit`` receives the group but not the member/topics the
-    client pools by). Keying by group is what keeps interleaved reads across
-    groups from committing one group's offsets through another's consumer."""
+    The adapter is frozen; this cell records, per delivered partition, the exact
+    pooled consumer a ``read`` used, so ``commit`` — which receives only the
+    group and positions, not the member/topics the client pools by — routes each
+    offset back to the consumer actually assigned that partition. A partition is
+    assigned to one group member at a time, so the key is unambiguous even when
+    several members of the same group read different topics/partitions."""
 
-    by_group: dict[str, AIOKafkaConsumer] = attrs.field(factory=dict)
+    by_partition: dict[tuple[str, str, int | None], AIOKafkaConsumer] = attrs.field(
+        factory=dict
+    )
 
 
 # ....................... #
@@ -132,8 +135,6 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
             auto_offset_reset=self.auto_offset_reset,
             max_poll_records=self.max_poll_records,
         )
-        self._cell.by_group[group] = kafka_consumer
-
         timeout_ms = (
             int(timeout.total_seconds() * 1000)
             if timeout is not None
@@ -148,7 +149,13 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
 
         for records in batches.values():
             for record in records:
-                out.append(self._to_message(record))
+                message = self._to_message(record)
+                # Remember which consumer delivered this partition so its commit
+                # routes to the right assigned member.
+                self._cell.by_partition[
+                    (group, message.stream, message.partition)
+                ] = kafka_consumer
+                out.append(message)
 
                 if limit is not None and len(out) >= limit:
                     return out
@@ -177,25 +184,33 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
     # ....................... #
 
     async def commit(self, group: str, positions: Sequence[StreamPosition]) -> None:
-        kafka_consumer = self._cell.by_group.get(group)
-
-        if kafka_consumer is None or not positions:
+        if not positions:
             return
 
         # Kafka commits the NEXT offset to read, so committing processed offset N
-        # means committing N + 1; the highest offset per (stream, partition) wins.
-        maxima: dict[TopicPartition, int] = {}
+        # means committing N + 1. Route each position to the consumer that read
+        # its partition and take the highest offset per (consumer, partition).
+        routed: dict[AIOKafkaConsumer, dict[TopicPartition, int]] = {}
 
         for position in positions:
+            consumer = self._cell.by_partition.get(
+                (group, position.stream, position.partition)
+            )
+
+            if consumer is None:
+                continue  # not read through this adapter — nothing to commit on
+
+            maxima = routed.setdefault(consumer, {})
             tp = TopicPartition(position.stream, position.partition)
             nxt = position.offset + 1
 
             if nxt > maxima.get(tp, -1):
                 maxima[tp] = nxt
 
-        await kafka_consumer.commit(
-            {tp: OffsetAndMetadata(offset, "") for tp, offset in maxima.items()}
-        )
+        for consumer, maxima in routed.items():
+            await consumer.commit(
+                {tp: OffsetAndMetadata(offset, "") for tp, offset in maxima.items()}
+            )
 
     # ....................... #
 
