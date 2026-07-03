@@ -8,7 +8,13 @@ from typing import (
     runtime_checkable,
 )
 
-from .value_objects import PendingEntry, StreamMessage
+from .value_objects import (
+    ConsumerLag,
+    OffsetReset,
+    PendingEntry,
+    StreamMessage,
+    StreamPosition,
+)
 
 # ----------------------- #
 
@@ -43,8 +49,16 @@ class StreamQueryPort[M](Protocol):
 
 
 @runtime_checkable
-class StreamGroupQueryPort[M](Protocol):
-    """Contract for consumer-group-based stream reads, acknowledgments, and recovery.
+class AckStreamGroupQueryPort[M](Protocol):
+    """Consumer-group stream reads with per-message acknowledgment and recovery.
+
+    The **ack** sub-model of the stream family (Redis-class): each entry is
+    acknowledged individually by id and stranded entries are recovered by an
+    explicit :meth:`claim`. Its sibling is
+    :class:`CommitStreamGroupQueryPort`, the **commit** sub-model (offset-log /
+    Kafka-class), where a single committed offset acknowledges every message up
+    to it. The ``Ack``/``Commit`` prefix names the acknowledgment discipline —
+    the one axis on which the two consumer-group ports differ.
 
     Group delivery is exclusive: each entry is delivered to exactly one consumer
     per group and stays pending for that consumer until acknowledged via
@@ -155,10 +169,10 @@ class StreamGroupQueryPort[M](Protocol):
 
 
 @runtime_checkable
-class StreamGroupAdminPort(Protocol):
-    """Control-plane provisioning for stream consumer groups.
+class AckStreamGroupAdminPort(Protocol):
+    """Control-plane provisioning for ack-stream consumer groups.
 
-    Kept **separate** from the data-plane :class:`StreamGroupQueryPort` (read /
+    Kept **separate** from the data-plane :class:`AckStreamGroupQueryPort` (read /
     ack / claim / pending): group creation mutates shared topology and runs once
     at startup, so a request-path consumer never sees it. Mirrors the framework's
     management/data split (e.g. ``TenantManagementPort`` vs ``TenantResolverPort``).
@@ -183,6 +197,146 @@ class StreamGroupAdminPort(Protocol):
         :param group: Consumer group name.
         :param stream: Stream the group consumes.
         :param start_id: Where a freshly-created group starts.
+        """
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class CommitStreamGroupQueryPort[M](Protocol):
+    """Consume an offset-committed, partitioned log through a consumer group.
+
+    The **commit** sub-model of the stream family (Kafka-class), sibling to the
+    **ack** :class:`AckStreamGroupQueryPort`. Delivery is at-least-once:
+    messages already read but not yet committed are redelivered after a crash or
+    rebalance, so handlers must dedup (see the inbox). Recovery is
+    broker-coordinated — partitions are reassigned across live group members
+    automatically; there is no per-message :meth:`~AckStreamGroupQueryPort.claim`.
+    Committing a :class:`StreamPosition` acknowledges every message up to and
+    including it on that partition (a high-water mark, not a set of ids).
+
+    Partitions and rebalancing are hidden in the adapter; the contract speaks
+    ``read`` / ``commit`` / positions, not a broker's poll/assign vocabulary.
+    """
+
+    def read(
+        self,
+        group: str,
+        consumer: str,
+        topics: Sequence[str],
+        *,
+        limit: int | None = None,
+        timeout: timedelta | None = None,
+    ) -> Awaitable[list[StreamMessage[M]]]:
+        """Read a batch for *consumer* in *group* across its assigned partitions of *topics*.
+
+        The group tracks committed offsets server-side, so — unlike the ack
+        port's ``stream_mapping`` cursor — the caller passes only the *topics* to
+        subscribe to and the backend returns the next uncommitted messages.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def tail(
+        self,
+        group: str,
+        consumer: str,
+        topics: Sequence[str],
+        *,
+        timeout: timedelta | None = None,
+    ) -> AsyncGenerator[StreamMessage[M]]:
+        """Continuously yield messages for *consumer* in *group* across *topics*."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def commit(
+        self,
+        group: str,
+        positions: Sequence[StreamPosition],
+    ) -> Awaitable[None]:
+        """Commit processed *positions*; the highest offset per ``(stream, partition)`` wins.
+
+        Committing acknowledges every message up to and including each position
+        on its partition. Build a position from a processed message's typed
+        fields with :meth:`StreamPosition.from_message`.
+        """
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class CommitStreamGroupAdminPort(Protocol):
+    """Control-plane provisioning, replay, and lag inspection for offset-log streams.
+
+    Kept **separate** from the data-plane :class:`CommitStreamGroupQueryPort`
+    (read / commit), mirroring the ack sub-model's
+    :class:`AckStreamGroupAdminPort` and the framework's management/data split.
+    """
+
+    def ensure_topic(
+        self,
+        stream: str,
+        *,
+        partitions: int,
+        replication: int = 1,
+        config: Mapping[str, str] | None = None,
+    ) -> Awaitable[None]:
+        """Idempotently create *stream* with *partitions* (no-op if present).
+
+        *partitions* and *replication* are the two offset-log-shaped knobs the
+        ack family never needed; a backend that auto-creates topics may treat
+        this as a no-op or a config assertion.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def ensure_group(
+        self,
+        group: str,
+        topics: Sequence[str],
+        *,
+        start: OffsetReset = OffsetReset.LATEST,
+    ) -> Awaitable[None]:
+        """Idempotently initialize *group* on *topics*; *start* is the first-time position.
+
+        *start* mirrors a broker's first-consume default (earliest / latest);
+        it applies only when the group has no committed offset yet.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def reset_offsets(
+        self,
+        group: str,
+        stream: str,
+        *,
+        to: OffsetReset,
+    ) -> Awaitable[None]:
+        """Seek *group* on *stream* to *to* — replay / skip.
+
+        Requires :attr:`CommitStreamGroupCapabilities.supports_replay`; a backend
+        that cannot seek fails closed at this call (``stream.replay_unsupported``).
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def lag(
+        self,
+        group: str,
+        stream: str | None = None,
+    ) -> Awaitable[list[ConsumerLag]]:
+        """Per-partition committed / end / lag for *group* — the observability analog of ``pending()``.
+
+        Scopes to *stream* when given, else reports every subscribed stream.
         """
         ...  # pragma: no cover
 

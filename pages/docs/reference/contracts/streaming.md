@@ -13,17 +13,26 @@ tier (`none` / `end_to_end`). Realtime push rides on the stream; see
 
 ## Streams
 
-`StreamSpec[M]` — an ordered, replayable log. Four ports by dep key:
+`StreamSpec[M]` — an ordered, replayable log. The producer and plain reader are shared;
+consumption comes in two disciplines, named for how they acknowledge — per-message **ack**
+(Redis-class) or per-partition offset **commit** (Kafka-class):
 
 | Dep key | Port | Methods |
 |---------|------|---------|
 | `StreamCommandDepKey` | producer | `append` |
 | `StreamQueryDepKey` | reader | `read` (by offset), `tail` (follow) |
-| `StreamGroupQueryDepKey` | consumer group | `read`, `tail`, `ack` — at-least-once per group |
-| `StreamGroupAdminDepKey` | group admin | `ensure_group` |
+| `AckStreamGroupQueryDepKey` | ack consumer group | `read`, `tail`, `ack`, `claim`, `pending` |
+| `AckStreamGroupAdminDepKey` | ack group admin | `ensure_group` |
+| `CommitStreamGroupQueryDepKey` | commit consumer group | `read`, `tail`, `commit` |
+| `CommitStreamGroupAdminDepKey` | commit group admin | `ensure_topic`, `ensure_group`, `reset_offsets`, `lag` |
 
-A consumer group gives competing consumers and acked, resumable delivery; a plain reader
-replays from any offset.
+The **ack** group gives competing consumers, per-message acks, and explicit `claim` recovery
+of stranded entries. The **commit** group is a partitioned, offset-committed log: a single
+committed `StreamPosition` acknowledges every message up to it on that partition, recovery is
+broker-coordinated (no per-message claim), and `reset_offsets` replays. Both are
+at-least-once; pair either with the [inbox](messaging.md) for exactly-once *effect*. A plain
+reader replays from any offset. For picking a model, see
+[Messaging delivery models](../../data-events/messaging-delivery-models.md).
 
 ## Pub/sub
 

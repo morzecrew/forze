@@ -1,7 +1,7 @@
 """Consumer-group semantics for the in-memory mock stream adapters.
 
 Mirrors the Redis ``XREADGROUP``/``XACK`` contract exposed by
-:class:`~forze.application.contracts.stream.StreamGroupQueryPort`: each entry
+:class:`~forze.application.contracts.stream.AckStreamGroupQueryPort`: each entry
 is delivered to exactly one consumer per group, pending entries are tracked
 per consumer until acked, and independent groups each see the full stream.
 """
@@ -17,7 +17,7 @@ from forze.base.serialization import PydanticModelCodec
 from forze_mock.adapters import (
     MockState,
     MockStreamAdapter,
-    MockStreamGroupAdapter,
+    MockAckStreamGroupAdapter,
 )
 
 # ----------------------- #
@@ -27,14 +27,14 @@ class _Msg(BaseModel):
     body: str
 
 
-def _adapters() -> tuple[MockStreamAdapter[_Msg], MockStreamGroupAdapter[_Msg]]:
+def _adapters() -> tuple[MockStreamAdapter[_Msg], MockAckStreamGroupAdapter[_Msg]]:
     st = MockState()
     sa = MockStreamAdapter(
         state=st,
         namespace="s",
         codec=StreamSpec(name="s", codec=PydanticModelCodec(model_type=_Msg)).codec,
     )
-    sg = MockStreamGroupAdapter(stream=sa, state=st, namespace="s")
+    sg = MockAckStreamGroupAdapter(stream=sa, state=st, namespace="s")
     return sa, sg
 
 

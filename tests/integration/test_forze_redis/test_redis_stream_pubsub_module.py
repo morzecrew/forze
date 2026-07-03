@@ -24,8 +24,8 @@ from forze.application.contracts.pubsub import (
 )
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
-    StreamGroupAdminDepKey,
-    StreamGroupQueryDepKey,
+    AckStreamGroupAdminDepKey,
+    AckStreamGroupQueryDepKey,
     StreamSpec,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
@@ -63,7 +63,7 @@ async def test_module_wired_stream_group_roundtrip(redis_client: RedisClient) ->
         ctx = runtime.get_context()
 
         admin = ctx.deps.resolve_configurable(
-            ctx, StreamGroupAdminDepKey, spec, route=spec.name
+            ctx, AckStreamGroupAdminDepKey, spec, route=spec.name
         )
         await admin.ensure_group("g", channel, start_id="0")
 
@@ -72,7 +72,7 @@ async def test_module_wired_stream_group_roundtrip(redis_client: RedisClient) ->
         await cmd.append(channel, _Payload(value="two"))
 
         grp = ctx.deps.resolve_configurable(
-            ctx, StreamGroupQueryDepKey, spec, route=spec.name
+            ctx, AckStreamGroupQueryDepKey, spec, route=spec.name
         )
         messages = await grp.read("g", "c1", {channel: ">"}, limit=10)
 

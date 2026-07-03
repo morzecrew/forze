@@ -26,8 +26,8 @@ from forze.application.contracts.pubsub import (
 from forze.application.contracts.search import SearchResultSnapshotDepKey
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
-    StreamGroupAdminDepKey,
-    StreamGroupQueryDepKey,
+    AckStreamGroupAdminDepKey,
+    AckStreamGroupQueryDepKey,
     StreamQueryDepKey,
 )
 from forze.application.contracts.tenancy import (
@@ -215,8 +215,8 @@ class RedisDepsModule(DepsModule):
     )
     """Mapping from stream consumer-group route names to their configurations.
 
-    Registered under ``StreamGroupQueryDepKey`` (read/ack/claim/pending) and
-    ``StreamGroupAdminDepKey`` (group provisioning)."""
+    Registered under ``AckStreamGroupQueryDepKey`` (read/ack/claim/pending) and
+    ``AckStreamGroupAdminDepKey`` (group provisioning)."""
 
     pubsub: StrKeyMapping[RedisPubSubConfig] | None = attrs.field(
         default=None,
@@ -381,8 +381,8 @@ class RedisDepsModule(DepsModule):
             routed_from_mapping(
                 self.stream_groups,
                 bindings=[
-                    (StreamGroupQueryDepKey, ConfigurableRedisStreamGroup),
-                    (StreamGroupAdminDepKey, ConfigurableRedisStreamGroupAdmin),
+                    (AckStreamGroupQueryDepKey, ConfigurableRedisStreamGroup),
+                    (AckStreamGroupAdminDepKey, ConfigurableRedisStreamGroupAdmin),
                 ],
             ),
             routed_from_mapping(

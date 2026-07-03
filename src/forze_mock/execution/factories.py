@@ -91,12 +91,14 @@ from forze_mock.adapters import (
     MockSearchAdapter,
     MockSearchCommandAdapter,
     MockSearchManagementAdapter,
-    MockStreamGroupAdminAdapter,
+    MockAckStreamGroupAdminAdapter,
+    MockCommitStreamGroupAdapter,
+    MockCommitStreamGroupAdminAdapter,
     MockSearchResultSnapshotAdapter,
     MockState,
     MockStorageAdapter,
     MockStreamAdapter,
-    MockStreamGroupAdapter,
+    MockAckStreamGroupAdapter,
     MockJournalTxManagerAdapter,
     MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
@@ -660,12 +662,12 @@ class ConfigurableMockStream(_MockFactoryBase):
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class ConfigurableMockStreamGroup(_MockFactoryBase):
+class ConfigurableMockAckStreamGroup(_MockFactoryBase):
     def __call__(
         self,
         context: ExecutionContext,
         spec: StreamSpec[Any],
-    ) -> MockStreamGroupAdapter[Any]:
+    ) -> MockAckStreamGroupAdapter[Any]:
         enforce_required_reach(
             context.deps,
             route=str(spec.name),
@@ -678,7 +680,7 @@ class ConfigurableMockStreamGroup(_MockFactoryBase):
         )._adapter(  # pyright: ignore[reportPrivateUsage]
             context, spec
         )
-        return MockStreamGroupAdapter(
+        return MockAckStreamGroupAdapter(
             stream=stream,
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
@@ -687,18 +689,63 @@ class ConfigurableMockStreamGroup(_MockFactoryBase):
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class ConfigurableMockStreamGroupAdmin(_MockFactoryBase):
+class ConfigurableMockAckStreamGroupAdmin(_MockFactoryBase):
     def __call__(
         self,
         context: ExecutionContext,
         spec: StreamSpec[Any],
-    ) -> MockStreamGroupAdminAdapter[Any]:
+    ) -> MockAckStreamGroupAdminAdapter[Any]:
         stream = ConfigurableMockStream(
             module=self.module
         )._adapter(  # pyright: ignore[reportPrivateUsage]
             context, spec
         )
-        return MockStreamGroupAdminAdapter(stream=stream, state=self._state(context))
+        return MockAckStreamGroupAdminAdapter(stream=stream, state=self._state(context))
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockCommitStreamGroup(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: StreamSpec[Any],
+    ) -> MockCommitStreamGroupAdapter[Any]:
+        enforce_required_reach(
+            context.deps,
+            route=str(spec.name),
+            declared=spec.encryption,
+            kind="stream",
+            supports_at_rest=False,
+        )
+        stream = ConfigurableMockStream(
+            module=self.module
+        )._adapter(  # pyright: ignore[reportPrivateUsage]
+            context, spec
+        )
+        return MockCommitStreamGroupAdapter(
+            stream=stream,
+            state=self._state(context),
+            namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockCommitStreamGroupAdmin(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: StreamSpec[Any],
+    ) -> MockCommitStreamGroupAdminAdapter[Any]:
+        stream = ConfigurableMockStream(
+            module=self.module
+        )._adapter(  # pyright: ignore[reportPrivateUsage]
+            context, spec
+        )
+        return MockCommitStreamGroupAdminAdapter(
+            stream=stream, state=self._state(context)
+        )
 
 
 @final

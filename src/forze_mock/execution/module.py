@@ -110,8 +110,10 @@ from forze.application.contracts.storage import (
 )
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
-    StreamGroupAdminDepKey,
-    StreamGroupQueryDepKey,
+    AckStreamGroupAdminDepKey,
+    AckStreamGroupQueryDepKey,
+    CommitStreamGroupAdminDepKey,
+    CommitStreamGroupQueryDepKey,
     StreamQueryDepKey,
 )
 from forze.application.contracts.tenancy import (
@@ -195,13 +197,15 @@ from forze_mock.execution.factories import (
     ConfigurableMockSearch,
     ConfigurableMockSearchCommand,
     ConfigurableMockSearchManagement,
-    ConfigurableMockStreamGroupAdmin,
+    ConfigurableMockAckStreamGroupAdmin,
+    ConfigurableMockCommitStreamGroup,
+    ConfigurableMockCommitStreamGroupAdmin,
     ConfigurableMockSearchSnapshot,
     ConfigurableMockStorageCommand,
     ConfigurableMockStorageQuery,
     ConfigurableMockStorageUploads,
     ConfigurableMockStream,
-    ConfigurableMockStreamGroup,
+    ConfigurableMockAckStreamGroup,
     ConfigurableMockTokenLifecycle,
     ConstantMockPortFactory,
     mock_journal_txmanager,
@@ -378,8 +382,12 @@ class MockDepsModule(DepsModule):
             PubSubQueryDepKey: ConfigurableMockPubSub(module=self),
             StreamQueryDepKey: ConfigurableMockStream(module=self),
             StreamCommandDepKey: ConfigurableMockStream(module=self, command=True),
-            StreamGroupQueryDepKey: ConfigurableMockStreamGroup(module=self),
-            StreamGroupAdminDepKey: ConfigurableMockStreamGroupAdmin(module=self),
+            AckStreamGroupQueryDepKey: ConfigurableMockAckStreamGroup(module=self),
+            AckStreamGroupAdminDepKey: ConfigurableMockAckStreamGroupAdmin(module=self),
+            CommitStreamGroupQueryDepKey: ConfigurableMockCommitStreamGroup(module=self),
+            CommitStreamGroupAdminDepKey: ConfigurableMockCommitStreamGroupAdmin(
+                module=self
+            ),
             OutboxCommandDepKey: ConfigurableMockOutboxCommand(module=self),
             OutboxQueryDepKey: ConfigurableMockOutboxQuery(module=self),
             DistributedLockQueryDepKey: dlock,

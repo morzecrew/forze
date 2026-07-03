@@ -17,7 +17,7 @@ from forze.application.contracts.realtime import (
     RealtimeShard,
     RealtimeSignal,
 )
-from forze.application.contracts.stream import StreamCommandDepKey, StreamGroupQueryDepKey
+from forze.application.contracts.stream import StreamCommandDepKey, AckStreamGroupQueryDepKey
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup
@@ -52,7 +52,7 @@ async def _append(ctx, tenant: UUID, text: str) -> None:  # type: ignore[no-unty
 
 async def _group_read(ctx, tenant: UUID, group: str) -> list[str]:  # type: ignore[no-untyped-def]
     with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-        group_q = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, _STREAM, route=_STREAM.name)
+        group_q = ctx.deps.resolve_configurable(ctx, AckStreamGroupQueryDepKey, _STREAM, route=_STREAM.name)
         messages = await group_q.read(group, "c", {str(_STREAM.name): ">"})
     return [m.payload.payload["text"] for m in messages]
 

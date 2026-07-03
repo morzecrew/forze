@@ -13,7 +13,9 @@ from tests.support.execution_context import context_from_deps
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
-    StreamGroupQueryDepKey,
+    AckStreamGroupQueryDepKey,
+    CommitStreamGroupAdminDepKey,
+    CommitStreamGroupQueryDepKey,
 )
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.base.serialization import PydanticModelCodec
@@ -71,7 +73,9 @@ async def test_mock_deps_module_registers_expected_contracts() -> None:
     assert deps.exists(MockStateDepKey)
     assert deps.exists(PubSubCommandDepKey)
     assert deps.exists(QueueQueryDepKey)
-    assert deps.exists(StreamGroupQueryDepKey)
+    assert deps.exists(AckStreamGroupQueryDepKey)
+    assert deps.exists(CommitStreamGroupQueryDepKey)
+    assert deps.exists(CommitStreamGroupAdminDepKey)
 
 
 async def test_execution_context_can_use_mock_document_and_search() -> None:
@@ -105,7 +109,7 @@ async def test_execution_context_resolves_optional_contract_ports() -> None:
     stream_write = ctx.deps.provide(StreamCommandDepKey)(
         ctx, StreamSpec(name="s", codec=PydanticModelCodec(model_type=_Msg))
     )
-    stream_group = ctx.deps.provide(StreamGroupQueryDepKey)(
+    stream_group = ctx.deps.provide(AckStreamGroupQueryDepKey)(
         ctx,
         StreamSpec(name="s", codec=PydanticModelCodec(model_type=_Msg)),
     )

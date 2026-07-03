@@ -20,7 +20,7 @@ from forze_mock.adapters import (
     MockState,
     MockStorageAdapter,
     MockStreamAdapter,
-    MockStreamGroupAdapter,
+    MockAckStreamGroupAdapter,
     MockTxManagerAdapter,
 )
 
@@ -158,7 +158,7 @@ async def test_mock_stream_read_and_group_ack() -> None:
             name="s", codec=PydanticModelCodec(model_type=_Msg)
         ).codec,
     )
-    sg = MockStreamGroupAdapter(stream=sa, state=st, namespace="s")
+    sg = MockAckStreamGroupAdapter(stream=sa, state=st, namespace="s")
     sid = await sa.append("events", _Msg(body="e1"))
     rows = await sa.read({"events": "0"}, limit=5)
     assert len(rows) == 1

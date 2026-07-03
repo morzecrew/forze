@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timedelta
 from typing import (
     Any,
@@ -17,13 +18,21 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.stream import (
+    AckStreamGroupAdminPort,
+    AckStreamGroupQueryPort,
+    CommitStreamGroupAdminPort,
+    CommitStreamGroupCapabilities,
+    CommitStreamGroupQueryPort,
+    ConsumerLag,
+    OffsetReset,
+    OffsetResetKind,
     PendingEntry,
     StreamCommandPort,
-    StreamGroupAdminPort,
-    StreamGroupQueryPort,
     StreamMessage,
+    StreamPosition,
     StreamQueryPort,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 from forze.base.serialization import (
     ModelCodec,
@@ -177,7 +186,7 @@ class _MockGroupState:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
+class MockAckStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M]):
     """In-memory stream group adapter mirroring Redis ``XREADGROUP`` semantics.
 
     Each entry is delivered to exactly one consumer per group: a ``">"``
@@ -400,11 +409,11 @@ class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStreamGroupAdminAdapter[M: BaseModel](StreamGroupAdminPort):
-    """In-memory stream-group provisioning (``StreamGroupAdminPort``).
+class MockAckStreamGroupAdminAdapter[M: BaseModel](AckStreamGroupAdminPort):
+    """In-memory stream-group provisioning (``AckStreamGroupAdminPort``).
 
     Control-plane only: idempotent group creation over the same in-memory store as
-    :class:`MockStreamGroupAdapter`. Kept separate from the data-plane query adapter so a
+    :class:`MockAckStreamGroupAdapter`. Kept separate from the data-plane query adapter so a
     read/ack/claim reference cannot reach group provisioning.
     """
 
@@ -438,3 +447,353 @@ class MockStreamGroupAdminAdapter[M: BaseModel](StreamGroupAdminPort):
                 gs.last_delivered = self.stream._id_to_int(start_id)  # type: ignore[reportPrivateUsage]
 
             groups[(group, stream)] = gs
+
+
+# ....................... #
+
+
+def _partition_for(selector: str, partitions: int) -> int:
+    """Deterministically map a message's key (or id) to a partition.
+
+    Uses a stable BLAKE2b digest — never Python's per-process-salted ``hash`` —
+    so a message lands on the same partition across runs, keeping partition
+    assignment reproducible under deterministic simulation.
+    """
+
+    if partitions <= 1:
+        return 0
+
+    digest = hashlib.blake2b(selector.encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big") % partitions
+
+
+# ....................... #
+
+
+def _assign_positions(
+    log: Sequence[StreamMessage[Any]],
+    partitions: int,
+) -> list[tuple[StreamMessage[Any], int, int]]:
+    """Derive ``(message, partition, offset)`` for a flat append-ordered log.
+
+    The partition is chosen from the message's ``key`` (falling back to ``id``
+    for keyless messages) and the offset is the per-partition running index, so
+    same-key messages share a partition and keep their produce order — the
+    offset-log's per-partition ordering guarantee.
+    """
+
+    counts: dict[int, int] = {}
+    out: list[tuple[StreamMessage[Any], int, int]] = []
+
+    for msg in log:
+        selector = msg.key if msg.key is not None else msg.id
+        partition = _partition_for(selector, partitions)
+        offset = counts.get(partition, 0)
+        counts[partition] = offset + 1
+        out.append((msg, partition, offset))
+
+    return out
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockCommitStreamGroupAdapter[M: BaseModel](CommitStreamGroupQueryPort[M]):
+    """In-memory offset-log consumer mirroring Kafka commit semantics.
+
+    Reads the shared append-ordered log the producer (:class:`MockStreamAdapter`)
+    writes to, deriving each message's ``(partition, offset)`` on the fly (so the
+    unchanged producer path — including the outbox relay — feeds it directly).
+    A per-``(group, topic, partition)`` committed cursor gates delivery: only
+    :meth:`commit` advances it, so a read that is not committed is redelivered on
+    the next read — modeling at-least-once on crash-before-commit. Partition
+    assignment is by ``key`` hash, giving per-partition ordering for same-key
+    messages. The group cursor is shared across a group's consumers (the mock
+    does not simulate partition rebalancing).
+    """
+
+    stream: MockStreamAdapter[M]
+    state: MockState
+    namespace: str
+
+    # ....................... #
+
+    def _partitions(self, topic: str) -> int:
+        return self.state.commit_stream_partitions.get(
+            (self.stream._ns(), topic),  # type: ignore[reportPrivateUsage]
+            1,
+        )
+
+    def _log(self, topic: str) -> list[StreamMessage[M]]:
+        return self.stream._stream_store().setdefault(topic, [])  # type: ignore[reportPrivateUsage]
+
+    def _cursor(self, group: str, topic: str, partition: int) -> int:
+        return self.state.commit_stream_offsets.get(
+            (self.stream._ns(), group, topic, partition),  # type: ignore[reportPrivateUsage]
+            0,
+        )
+
+    # ....................... #
+
+    async def read(
+        self,
+        group: str,
+        consumer: str,
+        topics: Sequence[str],
+        *,
+        limit: int | None = None,
+        timeout: timedelta | None = None,
+    ) -> list[StreamMessage[M]]:
+        del consumer, timeout
+        out: list[StreamMessage[M]] = []
+
+        with self.state.lock:
+            for topic in topics:
+                partitions = self._partitions(topic)
+
+                for msg, partition, offset in _assign_positions(
+                    self._log(topic), partitions
+                ):
+                    if offset < self._cursor(group, topic, partition):
+                        continue
+
+                    out.append(
+                        attrs.evolve(
+                            msg,
+                            partition=partition,
+                            offset=offset,
+                            id=f"{topic}:{partition}:{offset}",
+                        )
+                    )
+
+                    if limit is not None and len(out) >= limit:
+                        return out
+
+        return out
+
+    # ....................... #
+
+    async def tail(
+        self,
+        group: str,
+        consumer: str,
+        topics: Sequence[str],
+        *,
+        timeout: timedelta | None = None,
+    ) -> AsyncGenerator[StreamMessage[M]]:
+        while True:
+            messages = await self.read(group, consumer, topics, timeout=timeout)
+
+            for message in messages:
+                yield message
+
+            if not messages:
+                await asyncio.sleep(_sleep_interval(timeout))
+
+    # ....................... #
+
+    async def commit(self, group: str, positions: Sequence[StreamPosition]) -> None:
+        with self.state.lock:
+            for pos in positions:
+                key = (self.stream._ns(), group, pos.stream, pos.partition)  # type: ignore[reportPrivateUsage]
+                nxt = pos.offset + 1
+
+                if nxt > self.state.commit_stream_offsets.get(key, 0):
+                    self.state.commit_stream_offsets[key] = nxt
+
+    # ....................... #
+
+    def capabilities(self) -> CommitStreamGroupCapabilities:
+        return CommitStreamGroupCapabilities(
+            supports_replay=True,
+            supports_transactions=False,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort):
+    """In-memory offset-log control plane (``CommitStreamGroupAdminPort``).
+
+    Topic provisioning (partition count), first-time group positioning, replay
+    (``reset_offsets``), and per-partition lag over the same shared log and
+    cursor store as :class:`MockCommitStreamGroupAdapter`. Kept separate from the
+    data-plane consumer so a read/commit reference cannot reach provisioning or
+    replay.
+    """
+
+    stream: MockStreamAdapter[M]
+    state: MockState
+
+    # ....................... #
+
+    def _ns(self) -> str:
+        return self.stream._ns()  # type: ignore[reportPrivateUsage]
+
+    def _partitions(self, topic: str) -> int:
+        return self.state.commit_stream_partitions.get((self._ns(), topic), 1)
+
+    def _log(self, topic: str) -> list[StreamMessage[Any]]:
+        return self.stream._stream_store().setdefault(topic, [])  # type: ignore[reportPrivateUsage]
+
+    def _end_offsets(self, topic: str) -> dict[int, int]:
+        partitions = self._partitions(topic)
+        counts: dict[int, int] = {p: 0 for p in range(partitions)}
+
+        for _msg, partition, _offset in _assign_positions(
+            self._log(topic), partitions
+        ):
+            counts[partition] = counts.get(partition, 0) + 1
+
+        return counts
+
+    def _all_topics(self) -> list[str]:
+        return [k for k in self.stream._stream_store() if k != _GROUPS_KEY]  # type: ignore[reportPrivateUsage]
+
+    def _offset_at_timestamp(
+        self, when: datetime | None, *, end: int, topic: str, partition: int
+    ) -> int:
+        """First offset on *partition* whose message timestamp is at or after *when* (else *end*)."""
+
+        for msg, msg_partition, offset in _assign_positions(
+            self._log(topic), self._partitions(topic)
+        ):
+            if msg_partition != partition:
+                continue
+
+            if when is not None and msg.timestamp is not None and msg.timestamp >= when:
+                return offset
+
+        return end
+
+    def _target_offset(
+        self, target: OffsetReset, *, end: int, topic: str, partition: int
+    ) -> int:
+        if target.kind is OffsetResetKind.EARLIEST:
+            return 0
+
+        if target.kind is OffsetResetKind.LATEST:
+            return end
+
+        if target.kind is OffsetResetKind.OFFSET:
+            offset = target.offset if target.offset is not None else 0
+            return max(0, min(offset, end))
+
+        return self._offset_at_timestamp(
+            target.timestamp, end=end, topic=topic, partition=partition
+        )
+
+    # ....................... #
+
+    async def ensure_topic(
+        self,
+        stream: str,
+        *,
+        partitions: int,
+        replication: int = 1,
+        config: Mapping[str, str] | None = None,
+    ) -> None:
+        del replication, config
+
+        if partitions < 1:
+            raise exc.validation("ensure_topic requires partitions >= 1")
+
+        with self.state.lock:
+            key = (self._ns(), stream)
+            existing = self.state.commit_stream_partitions.get(key)
+
+            if existing is not None:
+                if existing != partitions:
+                    raise exc.configuration(
+                        f"Stream {stream!r} already exists with {existing} partitions; "
+                        f"cannot ensure it with {partitions} partitions."
+                    )
+                return
+
+            self.state.commit_stream_partitions[key] = partitions
+
+    # ....................... #
+
+    async def ensure_group(
+        self,
+        group: str,
+        topics: Sequence[str],
+        *,
+        start: OffsetReset = OffsetReset.LATEST,
+    ) -> None:
+        with self.state.lock:
+            for topic in topics:
+                partitions = self._partitions(topic)
+                ends = self._end_offsets(topic)
+
+                for partition in range(partitions):
+                    key = (self._ns(), group, topic, partition)
+
+                    if key in self.state.commit_stream_offsets:
+                        continue  # first-time positioning only
+
+                    self.state.commit_stream_offsets[key] = self._target_offset(
+                        start, end=ends.get(partition, 0), topic=topic, partition=partition
+                    )
+
+    # ....................... #
+
+    async def reset_offsets(
+        self, group: str, stream: str, *, to: OffsetReset
+    ) -> None:
+        if not self.capabilities().supports_replay:
+            raise exc.configuration(
+                f"Stream {stream!r} backend does not support offset reset / replay.",
+                code="stream.replay_unsupported",
+            )
+
+        with self.state.lock:
+            partitions = self._partitions(stream)
+            ends = self._end_offsets(stream)
+
+            for partition in range(partitions):
+                self.state.commit_stream_offsets[
+                    (self._ns(), group, stream, partition)
+                ] = self._target_offset(
+                    to, end=ends.get(partition, 0), topic=stream, partition=partition
+                )
+
+    # ....................... #
+
+    async def lag(self, group: str, stream: str | None = None) -> list[ConsumerLag]:
+        out: list[ConsumerLag] = []
+
+        with self.state.lock:
+            topics = [stream] if stream is not None else self._all_topics()
+
+            for topic in topics:
+                ends = self._end_offsets(topic)
+
+                for partition in range(self._partitions(topic)):
+                    committed = self.state.commit_stream_offsets.get(
+                        (self._ns(), group, topic, partition), 0
+                    )
+                    end = ends.get(partition, 0)
+                    out.append(
+                        ConsumerLag(
+                            stream=topic,
+                            partition=partition,
+                            committed_offset=committed,
+                            end_offset=end,
+                        )
+                    )
+
+        return out
+
+    # ....................... #
+
+    def capabilities(self) -> CommitStreamGroupCapabilities:
+        return CommitStreamGroupCapabilities(
+            supports_replay=True,
+            supports_transactions=False,
+        )

@@ -11,7 +11,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.realtime import Audience, AudienceKind, RealtimeEvent
-from forze.application.contracts.stream import StreamGroupQueryDepKey
+from forze.application.contracts.stream import AckStreamGroupQueryDepKey
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.integrations.realtime import build_realtime_publisher, realtime_stream_spec
@@ -147,7 +147,7 @@ async def test_signal_is_acked_after_emit() -> None:
         await pub.publish(Audience.topic("c"), _MESSAGE_NEW, _MsgView(text="x"))
         await _run_until(gw, ctx, lambda: bool(sio.emits))
 
-        group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
+        group = ctx.deps.resolve_configurable(ctx, AckStreamGroupQueryDepKey, spec, route=spec.name)
         pending = await group.pending("realtime-gateway", str(spec.name))
 
     assert pending == []  # acknowledged → nothing left pending
@@ -167,7 +167,7 @@ async def test_bridge_error_is_isolated_and_acked() -> None:
         await pub.publish(Audience.topic("b"), _MESSAGE_NEW, _MsgView(text="2"))
         await _run_until(gw, ctx, lambda: bool(sio.emits))
 
-        group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
+        group = ctx.deps.resolve_configurable(ctx, AckStreamGroupQueryDepKey, spec, route=spec.name)
         pending = await group.pending("realtime-gateway", str(spec.name))
 
     # the failed signal was still acked (not wedged), the second one emitted

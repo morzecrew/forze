@@ -24,8 +24,8 @@ from forze.application.contracts.pubsub import (
 )
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
-    StreamGroupAdminDepKey,
-    StreamGroupQueryDepKey,
+    AckStreamGroupAdminDepKey,
+    AckStreamGroupQueryDepKey,
     StreamQueryDepKey,
     StreamSpec,
 )
@@ -169,10 +169,10 @@ async def test_stream_group_query_admin_split() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         query = ctx.deps.resolve_configurable(
-            ctx, StreamGroupQueryDepKey, _stream(), route="s"
+            ctx, AckStreamGroupQueryDepKey, _stream(), route="s"
         )
         admin = ctx.deps.resolve_configurable(
-            ctx, StreamGroupAdminDepKey, _stream(), route="s"
+            ctx, AckStreamGroupAdminDepKey, _stream(), route="s"
         )
         assert isinstance(query, RedisStreamGroupAdapter)
         assert isinstance(admin, RedisStreamGroupAdminAdapter)
@@ -182,7 +182,7 @@ async def test_stream_group_query_admin_split() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key", [StreamQueryDepKey, StreamGroupQueryDepKey])
+@pytest.mark.parametrize("key", [StreamQueryDepKey, AckStreamGroupQueryDepKey])
 async def test_stream_read_rejected_under_e2e_floor(key) -> None:
     # The floor gates reads too, not just publishes (defense-in-depth, mirrors the mock).
     runtime = _runtime(floor="end_to_end")
@@ -194,7 +194,7 @@ async def test_stream_read_rejected_under_e2e_floor(key) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key", [StreamQueryDepKey, StreamGroupQueryDepKey])
+@pytest.mark.parametrize("key", [StreamQueryDepKey, AckStreamGroupQueryDepKey])
 async def test_stream_read_at_rest_rejected(key) -> None:
     runtime = _runtime()
     async with runtime.scope():

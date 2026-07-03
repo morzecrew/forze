@@ -18,8 +18,8 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 from forze.application.contracts.stream import (
     PendingEntry,
     StreamCommandPort,
-    StreamGroupAdminPort,
-    StreamGroupQueryPort,
+    AckStreamGroupAdminPort,
+    AckStreamGroupQueryPort,
     StreamMessage,
     StreamQueryPort,
 )
@@ -176,8 +176,8 @@ class RedisStreamAdapter[M: BaseModel](
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M], TenancyMixin):
-    """Redis implementation of :class:`~forze.application.contracts.stream.StreamGroupQueryPort`.
+class RedisStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M], TenancyMixin):
+    """Redis implementation of :class:`~forze.application.contracts.stream.AckStreamGroupQueryPort`.
 
     Reads via ``XREADGROUP`` with ``noack=False`` so messages enter the pending
     list until :meth:`ack` is called.  :meth:`tail` polls continuously,
@@ -359,8 +359,8 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M], TenancyMixi
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisStreamGroupAdminAdapter(StreamGroupAdminPort, TenancyMixin):
-    """Redis implementation of :class:`~forze.application.contracts.stream.StreamGroupAdminPort`.
+class RedisStreamGroupAdminAdapter(AckStreamGroupAdminPort, TenancyMixin):
+    """Redis implementation of :class:`~forze.application.contracts.stream.AckStreamGroupAdminPort`.
 
     Control-plane only: idempotent consumer-group creation (``XGROUP CREATE …
     MKSTREAM``). Kept separate from the data-plane :class:`RedisStreamGroupAdapter`

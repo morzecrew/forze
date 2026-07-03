@@ -14,7 +14,7 @@ import attrs
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.realtime import DEFAULT_REALTIME_GROUP, RealtimeShard
-from forze.application.contracts.stream import StreamGroupAdminDepKey, StreamSpec
+from forze.application.contracts.stream import AckStreamGroupAdminDepKey, StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import StrKey
@@ -37,7 +37,7 @@ class _EnsureGroupStartup(LifecycleHook):
     async def __call__(self, ctx: ExecutionContext) -> None:
         admin = ctx.deps.resolve_configurable(
             ctx,
-            StreamGroupAdminDepKey,
+            AckStreamGroupAdminDepKey,
             self.stream_spec,
             route=self.stream_spec.name,
         )
@@ -101,7 +101,7 @@ class _EnsureTenantGroupsStartup(LifecycleHook):
             with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
                 admin = ctx.deps.resolve_configurable(
                     ctx,
-                    StreamGroupAdminDepKey,
+                    AckStreamGroupAdminDepKey,
                     stream_spec,
                     route=stream_spec.name,
                 )
