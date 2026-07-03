@@ -1641,6 +1641,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#self-hosted-on-postgres" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Self-hosted on Postgres
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Self-hosted on Postgres">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#crash-resumable-sagas" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Crash-resumable sagas
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recurring-schedules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recurring schedules
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-to-reach-for-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5368,6 +5407,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#self-hosted-on-postgres" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Self-hosted on Postgres
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Self-hosted on Postgres">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#crash-resumable-sagas" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Crash-resumable sagas
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recurring-schedules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recurring schedules
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-to-reach-for-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5487,9 +5565,11 @@
 <p>Some work outlives the request that starts it: a multi-step fulfilment that runs for days,
 retries a flaky payment, waits on a human approval, and must survive a deploy or a crash in
 the middle. In-process <a href="../events-sagas/">sagas</a> coordinate steps <em>within</em> one process;
-<strong>durable execution</strong> runs the orchestration on an external engine
-(<a href="../../integrations/temporal/">Temporal</a> / <a href="../../integrations/inngest/">Inngest</a>) that
-persists every step — so a crash resumes exactly where it left off, not from the top.</p>
+<strong>durable execution</strong> runs the orchestration against a store that persists every step — so a
+crash resumes exactly where it left off, not from the top. That store can be an external
+engine (<a href="../../integrations/temporal/">Temporal</a> / <a href="../../integrations/inngest/">Inngest</a>) or,
+for a deployment that runs <strong>only Postgres</strong>, the <a href="#self-hosted-on-postgres">self-hosted tier</a>
+on the database you already operate.</p>
 <h2 id="the-mental-model-journaled-progress">The mental model: journaled progress<a class="headerlink" href="#the-mental-model-journaled-progress" title="Permanent link">&para;</a></h2>
 <p>A durable workflow is ordinary code whose progress the engine <strong>journals</strong>. Each step's
 result is recorded, so after a crash the engine replays the workflow and skips the steps
@@ -5513,6 +5593,111 @@ it was.</p>
 <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">queries</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>         <span class="c1"># the typed return value, once complete</span>
 </code></pre></div>
 <p>A stable <code>workflow_id</code> makes <code>start</code> idempotent — the same id won't launch a second run.</p>
+<h2 id="self-hosted-on-postgres">Self-hosted on Postgres<a class="headerlink" href="#self-hosted-on-postgres" title="Permanent link">&para;</a></h2>
+<p>The external engines are <em>operational</em> dependencies — a Temporal cluster or the Inngest
+service. For the common deployment that runs <strong>only Postgres</strong>, the self-hosted tier gives
+you the <strong>functions</strong> form (memoized steps + crash recovery) and crash-resumable <strong>sagas</strong>
+on the same database, with no engine to stand up.</p>
+<p>It reuses the journaled-progress model, backed by two app-provided tables: a <code>durable_step</code>
+<strong>memo journal</strong> (each step's result recorded so a replay skips it) and a <code>durable_run</code>
+<strong>run store</strong> (run instances, claimed for recovery with <code>FOR UPDATE SKIP LOCKED</code>). Wire both
+on the Postgres module and drive them with the <code>forze_kits</code> runner:</p>
+<div class="highlight"><pre><span></span><code><span class="n">deps</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span>
+    <span class="n">durable_step</span><span class="o">=</span><span class="n">PostgresDurableStepConfig</span><span class="p">(</span><span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">,</span> <span class="s2">&quot;durable_step&quot;</span><span class="p">)),</span>
+    <span class="n">durable_run</span><span class="o">=</span><span class="n">PostgresDurableRunConfig</span><span class="p">(</span><span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">,</span> <span class="s2">&quot;durable_run&quot;</span><span class="p">)),</span>
+<span class="p">)</span>
+
+<span class="n">registry</span> <span class="o">=</span> <span class="n">DurableFunctionRegistry</span><span class="p">()</span>
+<span class="n">registry</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">&quot;fulfil-order&quot;</span><span class="p">,</span> <span class="n">fulfil_order</span><span class="p">)</span>      <span class="c1"># async (ctx, input) -&gt; output</span>
+<span class="n">runner</span> <span class="o">=</span> <span class="n">DurableFunctionRunner</span><span class="p">(</span><span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span>
+
+<span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">enqueue</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="s2">&quot;fulfil-order&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;order_id&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">order_id</span><span class="p">)})</span>
+</code></pre></div>
+<p>A registered function does its work in <strong>steps</strong> via the step port; each step memoizes, so a
+re-invocation after a crash replays completed steps and resumes at the first incomplete one:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fulfil_order</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="nb">input</span><span class="p">):</span>
+    <span class="n">step</span> <span class="o">=</span> <span class="n">resolve_durable_step</span><span class="p">(</span><span class="n">ctx</span><span class="p">)</span>
+    <span class="n">charge</span> <span class="o">=</span> <span class="k">await</span> <span class="n">step</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;charge&quot;</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="n">charge_card</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="nb">input</span><span class="p">))</span>   <span class="c1"># journaled once</span>
+    <span class="k">await</span> <span class="n">step</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;ship&quot;</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="n">ship</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">charge</span><span class="p">))</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;shipped&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</code></pre></div>
+<p>A background scanner re-claims runs abandoned by a crash and re-invokes them —
+<code>durable_recovery_background_lifecycle_step(runner=runner)</code>. It is <strong>multi-worker-safe</strong>:
+concurrent scanners never claim the same run (<code>FOR UPDATE SKIP LOCKED</code>) and a terminal
+write is <strong>fenced</strong> against a reclaimed lease, so a stalled worker whose lease expired can't
+finish a run the new owner already took over. Run it on every replica, or pair it with the
+singleton lifecycle guard to elect one. <code>max_concurrency</code> bounds how many runs a sweep
+recovers at once. Enqueue with <code>run_at=&lt;when&gt;</code> for a <strong>delayed</strong> run — the scan skips it
+until it's due.</p>
+<p><strong>Multi-tenant.</strong> The stores resolve their table under the bound tenant. On a <strong>tagged</strong>
+shared table (a <code>tenant_id</code> column), an unbound scanner recovers every tenant's runs and the
+runner re-binds each run's tenant to execute it. On a <strong>namespace</strong> store (a per-tenant
+<code>relation</code> resolver, one table per tenant schema) pass <code>tenants=…</code> to the lifecycle step: each
+sweep binds every assigned tenant in turn and recovers its table — shard the tenant set across
+instances to parallelize.</p>
+<p><strong>Observability.</strong> Pass <code>DurableTelemetry.create()</code> to the runner and scheduler for
+OpenTelemetry: a <code>durable.run</code> span per execution plus <code>forze.durable.runs</code> /
+<code>forze.durable.run.duration</code> (by name + outcome), <code>forze.durable.recovered</code>, and
+<code>forze.durable.schedule.fires</code> metrics. Emits via the global <abbr title="OpenTelemetry">OTel</abbr> providers — configure the
+SDK in your app.</p>
+<p>The step journal is exactly-once for a step's <strong>recorded result</strong> — a completed step replays
+from the journal instead of re-running. It is <strong>not</strong> exactly-once for arbitrary side
+effects: a body can run more than once if a worker is reclaimed (its run lease expired
+mid-body) or crashes before the result is journaled — the same at-least-once step guarantee
+as Temporal / DBOS / Inngest. <strong>Keep step bodies idempotent</strong> (use an idempotency key on
+external calls) for exactly-once effects. The replay guarantee is checked by
+<a href="../../dst/overview/">deterministic simulation</a>: a seeded crash fault kills a run mid-step, the
+recovery scanner re-invokes it, and the oracle asserts every completed step replays from its
+journal instead of re-executing. Keep durable bodies deterministic too — read time / ids
+through <code>utcnow</code> / <code>uuid7</code> and do work in steps — and the simulator explores the crash-point
+space for you.</p>
+<h3 id="crash-resumable-sagas">Crash-resumable sagas<a class="headerlink" href="#crash-resumable-sagas" title="Permanent link">&para;</a></h3>
+<p>The self-hosted tier closes the "an in-process saga is not crash-resumable" gap. Swap the
+saga executor for the durable one and run the saga as a durable function — each step <strong>and
+each compensation</strong> is journaled, so a crash mid-saga (or mid-rollback) resumes instead of
+leaving committed steps un-compensated:</p>
+<div class="highlight"><pre><span></span><code><span class="n">deps</span> <span class="o">=</span> <span class="n">SagaDepsModule</span><span class="p">(</span><span class="n">executor</span><span class="o">=</span><span class="n">DurableSagaExecutor</span><span class="p">())</span>      <span class="c1"># swap the seam</span>
+<span class="n">registry</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">saga</span><span class="o">.</span><span class="n">name</span><span class="p">),</span> <span class="n">durable_saga_handler</span><span class="p">(</span><span class="n">saga</span><span class="p">,</span> <span class="n">OrderCtx</span><span class="p">))</span>
+<span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">run_now</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">saga</span><span class="o">.</span><span class="n">name</span><span class="p">),</span> <span class="n">initial</span><span class="o">.</span><span class="n">model_dump</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;json&quot;</span><span class="p">))</span>
+</code></pre></div>
+<p>The saga context must be a serializable <code>pydantic.BaseModel</code> (it is journaled between
+steps). This tier is self-hosted-Postgres only; a full workflow engine (timers, signals,
+versioning) is still Temporal/Inngest. The two tables come from your migrations; their
+schema is documented on the adapter classes.</p>
+<h3 id="recurring-schedules">Recurring schedules<a class="headerlink" href="#recurring-schedules" title="Permanent link">&para;</a></h3>
+<p>A <code>durable_schedule</code> table + the <code>DurableScheduler</code> fire a run on a <strong>cron cadence</strong>. Put a
+schedule and run the scheduler step (alongside the recovery step, which executes the runs it
+enqueues):</p>
+<div class="highlight"><pre><span></span><code><span class="n">deps</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span> <span class="n">durable_run</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="n">durable_schedule</span><span class="o">=</span><span class="err">…</span><span class="p">)</span>
+
+<span class="k">await</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="s2">&quot;nightly-report&quot;</span><span class="p">,</span> <span class="s2">&quot;report&quot;</span><span class="p">,</span> <span class="s2">&quot;0 3 * * *&quot;</span><span class="p">,</span> <span class="n">tz</span><span class="o">=</span><span class="s2">&quot;Europe/Berlin&quot;</span><span class="p">)</span>
+
+<span class="n">lifecycle</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">durable_scheduler_background_lifecycle_step</span><span class="p">(</span><span class="n">scheduler</span><span class="o">=</span><span class="n">scheduler</span><span class="p">),</span>
+    <span class="n">durable_recovery_background_lifecycle_step</span><span class="p">(</span><span class="n">runner</span><span class="o">=</span><span class="n">runner</span><span class="p">),</span>
+<span class="p">]</span>
+</code></pre></div>
+<p><code>await scheduler.remove(ctx, "nightly-report")</code> unregisters a schedule so it never fires
+again — distinct from pausing it (<code>put</code> it back with <code>enabled=False</code>, which keeps the row).</p>
+<p>Or <strong>declare the cadence on the function</strong> and let it wire itself: a <code>DurableFunctionSpec</code>
+with a <code>DurableFunctionCronTrigger</code> auto-registers its schedule when you pass the specs to
+the step — no manual <code>put</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">spec</span> <span class="o">=</span> <span class="n">DurableFunctionSpec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;report&quot;</span><span class="p">,</span>
+    <span class="n">run</span><span class="o">=</span><span class="n">DurableFunctionInvokeSpec</span><span class="p">(</span><span class="n">args_type</span><span class="o">=</span><span class="n">ReportArgs</span><span class="p">),</span>
+    <span class="n">triggers</span><span class="o">=</span><span class="p">(</span><span class="n">DurableFunctionCronTrigger</span><span class="p">(</span><span class="n">expression</span><span class="o">=</span><span class="s2">&quot;0 3 * * *&quot;</span><span class="p">),),</span>
+<span class="p">)</span>
+<span class="n">durable_scheduler_background_lifecycle_step</span><span class="p">(</span><span class="n">scheduler</span><span class="o">=</span><span class="n">scheduler</span><span class="p">,</span> <span class="n">specs</span><span class="o">=</span><span class="p">[</span><span class="n">spec</span><span class="p">])</span>
+</code></pre></div>
+<p>Auto-registration is <strong>idempotent</strong> — a restart re-uses an unchanged schedule (so it never
+resets <code>next_fire_at</code> and skips a due fire) and re-registers only when the cron changes.</p>
+<p>Firing is <strong>fire-once / skip-missed</strong>: if the scheduler was down across several occurrences
+it fires once and advances to the next future one (no backfill). It's exactly-once across
+replicas — each fire enqueues a run keyed <code>{schedule_id}:{fire_epoch}</code> and the next fire is a
+compare-and-set — so, like recovery, it's safe to run on every node. "Now" comes from the
+<code>TimeSource</code> seam, so schedules are deterministic under simulation. Recurring <strong>schedules</strong>
+are self-hosted here; a full engine's timers/signals/versioning are still Temporal/Inngest.</p>
 <h2 id="when-to-reach-for-it">When to reach for it<a class="headerlink" href="#when-to-reach-for-it" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
