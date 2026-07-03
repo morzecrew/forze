@@ -48,8 +48,18 @@
         "src"
     ],
     "cursorpyright.analysis.ignore": [
-        "tests/**"
+        "tests/**",
+        // aiokafka ships no py.typed, so strict pyright can only resolve it to
+        // Unknown — ~55 false errors across the package with zero real defects.
+        // mypy is the authoritative gate here (green via ignore_missing_imports).
+        "src/forze_kafka/**"
     ],
+    "cursorpyright.analysis.diagnosticSeverityOverrides": {
+        "reportMissingTypeStubs": "none"
+    },
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingTypeStubs": "none"
+    },
     "[json]": {
         "editor.tabSize": 2,
     },
