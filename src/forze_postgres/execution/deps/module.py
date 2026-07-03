@@ -16,6 +16,11 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.durable.function import (
+    DurableFunctionStepDepKey,
+    DurableRunStoreDepKey,
+    DurableScheduleStoreDepKey,
+)
 from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
@@ -44,6 +49,9 @@ from ...kernel.client import PostgresClientPort, RoutedPostgresClient
 from .configs import (
     PostgresAnalyticsConfig,
     PostgresDocumentConfig,
+    PostgresDurableRunConfig,
+    PostgresDurableScheduleConfig,
+    PostgresDurableStepConfig,
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
     PostgresHlcCheckpointConfig,
@@ -58,6 +66,9 @@ from .configs import (
 from .factories import (
     ConfigurablePostgresAnalytics,
     ConfigurablePostgresDocument,
+    ConfigurablePostgresDurableRun,
+    ConfigurablePostgresDurableSchedule,
+    ConfigurablePostgresDurableStep,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHlcCheckpoint,
     ConfigurablePostgresHubSearch,
@@ -189,6 +200,27 @@ class PostgresDepsModule(DepsModule):
     transaction so ``hlc_checkpoint_recovery_lifecycle_step`` can resume the clock above its
     prior emissions after a restart, keeping HLC monotonicity across process boundaries.
     Unset leaves the clock resuming from ``(0, 0)`` (the prior behavior)."""
+
+    durable_step: PostgresDurableStepConfig | None = attrs.field(default=None)
+    """Optional Postgres durable-function step-memo journal (execution-scoped).
+
+    When set, registers the ``DurableFunctionStepPort`` over a ``durable_step`` table so
+    steps memoize their results (exactly-once effect on replay), enabling the self-hosted
+    durable saga executor. Unset leaves durability delegated to Temporal/Inngest."""
+
+    durable_run: PostgresDurableRunConfig | None = attrs.field(default=None)
+    """Optional Postgres durable-run store (execution-scoped).
+
+    When set, registers the ``DurableRunStorePort`` over a ``durable_run`` table so run
+    instances persist and a crashed run can be re-claimed and resumed. Pairs with
+    :attr:`durable_step` and the ``forze_kits`` durable-function runner / recovery scanner."""
+
+    durable_schedule: PostgresDurableScheduleConfig | None = attrs.field(default=None)
+    """Optional Postgres durable-schedule store (execution-scoped).
+
+    When set, registers the ``DurableScheduleStorePort`` over a ``durable_schedule`` table
+    so recurring cron triggers fire runs on a cadence (driven by the ``forze_kits`` durable
+    scheduler lifecycle step)."""
 
     # ....................... #
 
@@ -574,6 +606,41 @@ class PostgresDepsModule(DepsModule):
                 }
             )
 
+        durable_step_deps = Deps()
+
+        if self.durable_step is not None:
+            # Execution-scoped step port (SimpleDepPort): plain registration, resolved per
+            # scope; the active run is read from the ambient DurableRunContext, not a route.
+            durable_step_deps = Deps.plain(
+                {
+                    DurableFunctionStepDepKey: ConfigurablePostgresDurableStep(
+                        config=self.durable_step
+                    ),
+                }
+            )
+
+        durable_run_deps = Deps()
+
+        if self.durable_run is not None:
+            durable_run_deps = Deps.plain(
+                {
+                    DurableRunStoreDepKey: ConfigurablePostgresDurableRun(
+                        config=self.durable_run
+                    ),
+                }
+            )
+
+        durable_schedule_deps = Deps()
+
+        if self.durable_schedule is not None:
+            durable_schedule_deps = Deps.plain(
+                {
+                    DurableScheduleStoreDepKey: ConfigurablePostgresDurableSchedule(
+                        config=self.durable_schedule
+                    ),
+                }
+            )
+
         return plain_deps.merge(
             doc_deps,
             search_deps,
@@ -586,4 +653,7 @@ class PostgresDepsModule(DepsModule):
             inbox_deps,
             idempotency_deps,
             hlc_checkpoint_deps,
+            durable_step_deps,
+            durable_run_deps,
+            durable_schedule_deps,
         )

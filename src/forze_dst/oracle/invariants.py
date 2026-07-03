@@ -181,6 +181,60 @@ def no_duplicate_effect(kind: str, *, by: str) -> Invariant:
     return _check
 
 
+def no_duplicate_trace_effect(
+    *,
+    domain: str,
+    op: str,
+    outcome: str,
+    by: Sequence[str],
+    name: str | None = None,
+) -> Invariant:
+    """Each runtime-trace effect matching ``(domain, op, outcome)`` occurs at most once per group.
+
+    Reads the folded ``"trace"`` events (``fields``: ``trace_domain`` / ``op`` / ``outcome`` /
+    ``route`` / ``key`` / …) and groups them by the ``by`` field names — so an effect a component
+    records once per logical action is asserted to fire exactly once even **across a crash +
+    recovery**. E.g. a durable step's ``executed`` event keyed by run id + step id: a completed
+    step must replay from its journal on recovery, never re-execute.
+    """
+
+    invariant_name = name or f"no_duplicate_{domain}_{op}"
+
+    def _check(history: History) -> list[Violation]:
+        seen: dict[tuple[object, ...], Event] = {}
+        violations: list[Violation] = []
+
+        for event in history.of_kind("trace"):
+            fields = event.fields
+
+            if (
+                fields.get("trace_domain") != domain
+                or fields.get("op") != op
+                or fields.get("outcome") != outcome
+            ):
+                continue
+
+            identifier = tuple(fields.get(field) for field in by)
+
+            if identifier in seen:
+                violations.append(
+                    Violation(
+                        invariant=invariant_name,
+                        message=(
+                            f"{domain}.{op} effect {identifier!r} (outcome {outcome!r}) "
+                            "occurred more than once"
+                        ),
+                        events=(seen[identifier], event),
+                    )
+                )
+            else:
+                seen[identifier] = event
+
+        return violations
+
+    return _check
+
+
 def monotonic_per(kind: str, value: str, *, actor: str) -> Invariant:
     """``fields[value]`` must never decrease within each ``fields[actor]`` group.
 

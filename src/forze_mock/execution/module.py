@@ -61,6 +61,8 @@ from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepKey,
     DurableFunctionStepDepKey,
+    DurableRunStoreDepKey,
+    DurableScheduleStoreDepKey,
 )
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowCommandDepKey,
@@ -138,7 +140,6 @@ from forze.application.integrations.authn import (
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
-    MockDurableFunctionStepAdapter,
     MockHttpRegistry,
     MockKeyManagement,
     MockProcedureRegistry,
@@ -176,6 +177,9 @@ from forze_mock.execution.factories import (
     ConfigurableMockDistributedLock,
     ConfigurableMockDocument,
     ConfigurableMockDurableFunctionEvent,
+    ConfigurableMockDurableFunctionStep,
+    ConfigurableMockDurableRunStore,
+    ConfigurableMockDurableSchedule,
     ConfigurableMockDurableWorkflowCommand,
     ConfigurableMockDurableWorkflowQuery,
     ConfigurableMockDurableWorkflowScheduleCommand,
@@ -411,7 +415,9 @@ class MockDepsModule(DepsModule):
             DurableFunctionEventCommandDepKey: ConfigurableMockDurableFunctionEvent(
                 module=self
             ),
-            DurableFunctionStepDepKey: MockDurableFunctionStepAdapter(state=self.state),
+            DurableFunctionStepDepKey: ConfigurableMockDurableFunctionStep(module=self),
+            DurableRunStoreDepKey: ConfigurableMockDurableRunStore(module=self),
+            DurableScheduleStoreDepKey: ConfigurableMockDurableSchedule(module=self),
             SecretsDepKey: secrets,
             KeyManagementDepKey: crypto_kms,
             AeadDepKey: crypto_aead,

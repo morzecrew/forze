@@ -1,5 +1,6 @@
 """Durable workflow and function mock adapters."""
 
+import asyncio
 from datetime import timedelta
 
 from pydantic import BaseModel
@@ -93,6 +94,35 @@ async def test_schedule_and_event_and_step_memo() -> None:
     assert await step.run("s1", body) == "ok"
     assert await step.run("s1", body) == "ok"
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_step_executions_converge_on_the_winner() -> None:
+    # Two live executions of the same step (the reclaimed-lease overlap) both run the body —
+    # an at-least-once effect — but must converge on ONE recorded result, first-write-wins,
+    # matching the Postgres ``ON CONFLICT DO NOTHING`` (so the mock reproduces production).
+    state = MockState()
+    step = MockDurableFunctionStepAdapter(state=state, run_id="run-1")
+    a_stored = asyncio.Event()
+
+    async def fn_a() -> str:
+        return "A"  # completes immediately -> journals first (the winner)
+
+    async def fn_b() -> str:
+        await a_stored.wait()  # completes only after A has journaled
+        return "B"
+
+    # B passes the memo-miss check, then parks in its body; A then runs to completion.
+    tb = asyncio.create_task(step.run("s", fn_b))
+    await asyncio.sleep(0)
+
+    ra = await step.run("s", fn_a)
+    a_stored.set()
+    rb = await tb
+
+    assert ra == "A"
+    assert rb == "A"  # B converged on the winner, not its own "B"
+    assert state.durable_step_memo["run-1:s"] == "A"
 
 
 # ----------------------- #

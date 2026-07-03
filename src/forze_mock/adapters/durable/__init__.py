@@ -2,6 +2,8 @@
 
 from .function_event import MockDurableFunctionEventAdapter
 from .function_step import MockDurableFunctionStepAdapter
+from .run_store import MockDurableRunStore
+from .schedule_store import MockDurableScheduleStore
 from .workflow import (
     MockDurableWorkflowCommandAdapter,
     MockDurableWorkflowQueryAdapter,
@@ -18,4 +20,6 @@ __all__ = [
     "MockDurableWorkflowScheduleQueryAdapter",
     "MockDurableFunctionEventAdapter",
     "MockDurableFunctionStepAdapter",
+    "MockDurableRunStore",
+    "MockDurableScheduleStore",
 ]

@@ -133,6 +133,47 @@ class TestPostgresDepsModule:
         assert deps.exists(PostgresClientDepKey)
         assert deps.exists(PostgresIntrospectorDepKey)
 
+    def test_registers_durable_ports_when_configured(self) -> None:
+        from forze.application.contracts.durable.function import (
+            DurableFunctionStepDepKey,
+            DurableRunStoreDepKey,
+            DurableScheduleStoreDepKey,
+        )
+        from forze_postgres.execution.deps.configs import (
+            PostgresDurableRunConfig,
+            PostgresDurableScheduleConfig,
+            PostgresDurableStepConfig,
+        )
+
+        client = MagicMock(spec=PostgresClient)
+        module = PostgresDepsModule(
+            client=client,
+            durable_step=PostgresDurableStepConfig(relation=("public", "durable_step")),
+            durable_run=PostgresDurableRunConfig(relation=("public", "durable_run")),
+            durable_schedule=PostgresDurableScheduleConfig(
+                relation=("public", "durable_schedule")
+            ),
+        )
+
+        deps = module()
+
+        assert deps.exists(DurableFunctionStepDepKey)
+        assert deps.exists(DurableRunStoreDepKey)
+        assert deps.exists(DurableScheduleStoreDepKey)
+
+    def test_omits_durable_ports_by_default(self) -> None:
+        from forze.application.contracts.durable.function import (
+            DurableFunctionStepDepKey,
+            DurableRunStoreDepKey,
+            DurableScheduleStoreDepKey,
+        )
+
+        deps = PostgresDepsModule(client=MagicMock(spec=PostgresClient))()
+
+        assert not deps.exists(DurableFunctionStepDepKey)
+        assert not deps.exists(DurableRunStoreDepKey)
+        assert not deps.exists(DurableScheduleStoreDepKey)
+
     def test_introspector_receives_cache_ttl(self) -> None:
         from datetime import timedelta
 

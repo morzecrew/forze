@@ -20,6 +20,7 @@ from .oracle.invariants import (
     monotonic_per,
     mutual_exclusion,
     no_duplicate_effect,
+    no_duplicate_trace_effect,
     no_resource_leak,
     no_unclosed_transaction,
     no_unexpected_error,
@@ -68,6 +69,7 @@ __all__ = [
     "check",
     # always-properties
     "no_duplicate_effect",
+    "no_duplicate_trace_effect",
     "no_resource_leak",
     "no_unclosed_transaction",
     "monotonic_per",
