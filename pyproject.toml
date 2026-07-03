@@ -123,6 +123,7 @@ bigquery = ["aiohttp>=3.11.0", "gcloud-aio-bigquery>=7.1.0"]
 clickhouse = ["clickhouse-connect[async]>=1.0.0"]
 duckdb = ["duckdb>=1.1.0", "pyarrow>=17.0.0"]
 rabbitmq = ["aio-pika>=9.6.1"]
+kafka = ["aiokafka>=0.14.0"]
 socketio = [
     "python-socketio>=5.16.1",
     "python-socketio-stubs>=5.16.1.0.20260211",
@@ -189,6 +190,7 @@ packages = [
     "src/forze_firestore",
     "src/forze_postgres",
     "src/forze_rabbitmq",
+    "src/forze_kafka",
     "src/forze_redis",
     "src/forze_s3",
     "src/forze_gcs",
@@ -261,6 +263,7 @@ omit = [
     "*/forze_redis/execution/deps/module.py",
     "*/forze_meilisearch/execution/deps/module.py",
     "*/forze_neo4j/execution/deps/module.py",
+    "*/forze_kafka/execution/deps/module.py",
 ]
 
 [tool.coverage.report]
@@ -296,6 +299,10 @@ strict = true
 warn_return_any = false
 warn_unused_ignores = false
 
+[[tool.mypy.overrides]]
+module = ["aiokafka.*"]
+ignore_missing_imports = true
+
 # ....................... #
 # Import contracts
 
@@ -320,6 +327,7 @@ root_packages = [
     "forze_mongo",
     "forze_firestore",
     "forze_rabbitmq",
+    "forze_kafka",
     "forze_sqs",
     "forze_identity",
     "forze_vault",
@@ -433,6 +441,7 @@ protected_modules = [
     "forze_mongo",
     "forze_firestore",
     "forze_rabbitmq",
+    "forze_kafka",
     "forze_sqs",
     "forze_vault",
     "forze_meilisearch",
@@ -467,6 +476,7 @@ paths = [
     "src/forze_mongo",
     "src/forze_firestore",
     "src/forze_rabbitmq",
+    "src/forze_kafka",
     "src/forze_sqs",
     "src/forze_identity",
     "src/forze_vault",
@@ -510,6 +520,7 @@ known_first_party = [
     "forze_mongo",
     "forze_firestore",
     "forze_rabbitmq",
+    "forze_kafka",
     "forze_sqs",
     "forze_identity",
     "forze_vault",
