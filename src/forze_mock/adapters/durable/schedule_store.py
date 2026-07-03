@@ -18,6 +18,12 @@ from forze_mock.state import MockState
 # ----------------------- #
 
 
+def _scoped_key(schedule_id: str, tenant_id: UUID | None) -> str:
+    """Tenant-scope the storage key so two tenants reusing one schedule id stay distinct
+    (mirrors the Postgres store's tenant-scoped ``schedule_id`` primary key)."""
+    return schedule_id if tenant_id is None else f"{tenant_id}:{schedule_id}"
+
+
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockDurableScheduleStore(DurableScheduleStorePort):
@@ -50,7 +56,7 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
         )
 
         with self.state.lock:
-            self.state.durable_run_schedules[record.schedule_id] = {
+            self.state.durable_run_schedules[_scoped_key(record.schedule_id, tenant_id)] = {
                 "schedule_id": record.schedule_id,
                 "name": record.name,
                 "cron": record.cron,
@@ -94,7 +100,8 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
         to_fire_at: datetime,
     ) -> bool:
         with self.state.lock:
-            data = self.state.durable_run_schedules.get(schedule_id)
+            key = _scoped_key(schedule_id, self._bound_tenant())
+            data = self.state.durable_run_schedules.get(key)
 
             # Compare-and-set: only the scheduler that still sees the fired instant advances.
             if data is None or data["next_fire_at"] != from_fire_at:
@@ -108,7 +115,8 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
 
     async def load(self, schedule_id: str) -> DurableScheduleRecord | None:
         with self.state.lock:
-            data = self.state.durable_run_schedules.get(schedule_id)
+            key = _scoped_key(schedule_id, self._bound_tenant())
+            data = self.state.durable_run_schedules.get(key)
 
             return None if data is None else _to_record(data)
 

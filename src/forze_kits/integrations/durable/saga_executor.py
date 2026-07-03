@@ -3,8 +3,10 @@
 Implements ``SagaExecutorPort`` by driving the shared ``SagaProgress`` coordinator through
 a ``DurableFunctionStepPort`` — each step's action (and each compensation) is journaled, so
 a process crash mid-saga resumes at the first un-journaled step / compensation instead of
-leaving committed steps un-compensated. It depends only on the contract, so the same code
-runs over the mock (tests), Postgres (self-hosted), or any step-port backend.
+leaving committed steps un-compensated. A step that *fails* journals its failure too, so a
+re-invocation of the same run re-raises it rather than re-running the action (a failed step's
+side effect stays exactly-once, like a completed one's). It depends only on the contract, so
+the same code runs over the mock (tests), Postgres (self-hosted), or any step-port backend.
 """
 
 from __future__ import annotations
@@ -31,6 +33,23 @@ if TYPE_CHECKING:
     from forze.base.primitives import JsonDict
 
 # ----------------------- #
+
+_STEP_FAILURE_KEY = "__saga_step_failed__"
+"""Journal sentinel. A step whose action raised records its failure message under this key
+(instead of a state dict), so a replay re-raises the failure rather than re-running the
+action — a failed step's side effect stays exactly-once, like a completed step's."""
+
+
+@final
+class _JournaledStepFailure(Exception):
+    """A step-action failure re-raised from the journal on replay (never re-runs the action).
+
+    Carries the recorded message so the saga coordinator wraps it exactly as it wrapped the
+    original failure; it is always caught inside :meth:`DurableSagaExecutor.run`.
+    """
+
+
+# ....................... #
 
 
 @final
@@ -121,14 +140,25 @@ class DurableSagaExecutor:
             return cast("BaseModel", new_state).model_dump(mode="json")
 
         async def _journaled() -> JsonDict:
-            if step.retry_policy is not None:
-                return await ctx.resilience().run(_act, policy=step.retry_policy)
+            try:
+                if step.retry_policy is not None:
+                    return await ctx.resilience().run(_act, policy=step.retry_policy)
 
-            return await _act()
+                return await _act()
+
+            except Exception as error:  # noqa: BLE001 — journaled as the outcome, re-raised
+                # Record the failure as this step's journaled outcome so a re-invocation of
+                # the same durable run (crash recovery / replay) re-raises it instead of
+                # re-running the action — the side effect stays exactly-once.
+                return {_STEP_FAILURE_KEY: str(error)}
 
         # Journaled: a completed step returns its recorded context on replay and its action
-        # is not re-run; a retry_policy retries transient failures before it journals.
+        # is not re-run; a failed step records its failure and re-raises it on replay (never
+        # re-running the action). A retry_policy retries transient failures before it journals.
         encoded = await step_port.run(str(step.name), _journaled)
+
+        if _STEP_FAILURE_KEY in encoded:
+            raise _JournaledStepFailure(str(encoded[_STEP_FAILURE_KEY]))
 
         return ctx_model.model_validate(encoded)
 

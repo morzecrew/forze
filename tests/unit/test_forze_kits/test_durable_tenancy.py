@@ -19,6 +19,7 @@ from forze_kits.integrations.durable import (
     DurableFunctionRunner,
     DurableScheduler,
     resolve_durable_run_store,
+    resolve_durable_schedule_store,
 )
 from forze_mock import MockDepsModule, MockState
 
@@ -99,6 +100,28 @@ class TestPerTenantRecovery:
         runs = list(state.durable_runs.values())
         assert len(runs) == 1
         assert runs[0]["tenant_id"] == tenant_a
+
+    async def test_schedule_id_is_scoped_per_tenant(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        tenant_a, tenant_b = uuid4(), uuid4()
+        scheduler = DurableScheduler()
+        store = resolve_durable_schedule_store(ctx)
+        at = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+
+        with _bind(ctx, tenant_a):
+            await scheduler.put(ctx, "s", "fn_a", "* * * * *", now=at)
+        with _bind(ctx, tenant_b):
+            await scheduler.put(ctx, "s", "fn_b", "0 3 * * *", now=at)
+
+        # Two distinct schedules persist; neither tenant's put overwrote the other.
+        assert len(state.durable_run_schedules) == 2
+        with _bind(ctx, tenant_a):
+            a = await store.load("s")
+        with _bind(ctx, tenant_b):
+            b = await store.load("s")
+        assert a is not None and a.name == "fn_a" and a.schedule_id == "s"
+        assert b is not None and b.name == "fn_b" and b.schedule_id == "s"
 
     async def test_idempotency_key_convergence_is_scoped_per_tenant(self) -> None:
         state = MockState()

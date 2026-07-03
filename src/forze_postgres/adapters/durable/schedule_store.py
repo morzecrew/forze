@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Sequence, final
+from uuid import UUID
 
 import attrs
 from psycopg import sql
@@ -26,6 +27,28 @@ _COLUMNS = "schedule_id, name, cron, tz, input, next_fire_at, enabled, tenant_id
 """Row projection for schedule reads."""
 
 
+def _scope_schedule_id(schedule_id: str, tenant_id: UUID | None) -> str:
+    """Namespace a schedule id under its tenant for the stored ``schedule_id`` primary key.
+
+    A shared **tagged** table has a single-column ``PRIMARY KEY (schedule_id)``; prefixing
+    the id with the tenant scopes it per tenant, so two tenants registering the same
+    ``schedule_id`` stay distinct schedules instead of overwriting each other. Single-tenant
+    ids (``tenant_id is None``) are stored verbatim — unchanged on-disk shape.
+    """
+    return schedule_id if tenant_id is None else f"{tenant_id}:{schedule_id}"
+
+
+def _unscope_schedule_id(stored: str, tenant_id: UUID | None) -> str:
+    """Strip the tenant prefix :func:`_scope_schedule_id` added, so a record surfaces the id
+    the caller registered (the fixed-width ``{uuid}:`` prefix makes the strip exact)."""
+    if tenant_id is None:
+        return stored
+
+    prefix = f"{tenant_id}:"
+
+    return stored[len(prefix) :] if stored.startswith(prefix) else stored
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
@@ -36,7 +59,9 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     schedulers firing the same instant converge to one advance (and one run, via the run's
     ``{schedule_id}:{fire_epoch}`` idempotency key). Tenancy mirrors the run store: the table
     resolves under the bound tenant (tagged shared or per-tenant namespace), and a bound
-    scheduler claims only that tenant's schedules.
+    scheduler claims only that tenant's schedules. On a shared tagged table the ``schedule_id``
+    is stored **tenant-scoped**, so two tenants registering the same id stay distinct
+    schedules instead of overwriting each other.
 
     The table is provided by the application; expected schema::
 
@@ -105,7 +130,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
                 now=sql.Placeholder("now"),
             ),
             {
-                "sid": record.schedule_id,
+                "sid": _scope_schedule_id(record.schedule_id, tenant_id),
                 "name": record.name,
                 "cron": record.cron,
                 "tz": record.tz,
@@ -166,6 +191,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
         to_fire_at: datetime,
     ) -> bool:
         table = await self._table()
+        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
 
         rowcount = await self.client.execute(
             sql.SQL(
@@ -179,7 +205,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
                 sid=sql.Placeholder("sid"),
                 from_fire=sql.Placeholder("from_fire"),
             ),
-            {"to": to_fire_at, "sid": schedule_id, "from_fire": from_fire_at},
+            {"to": to_fire_at, "sid": stored_sid, "from_fire": from_fire_at},
             return_rowcount=True,
         )
 
@@ -189,6 +215,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     async def load(self, schedule_id: str) -> DurableScheduleRecord | None:
         table = await self._table()
+        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
 
         row = await self.client.fetch_one(
             sql.SQL(
@@ -198,7 +225,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
                 table=table.ident(),
                 sid=sql.Placeholder("sid"),
             ),
-            {"sid": schedule_id},
+            {"sid": stored_sid},
         )
 
         return None if row is None else _record_from_row(row)
@@ -209,7 +236,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
 def _record_from_row(row: dict[str, Any]) -> DurableScheduleRecord:
     return DurableScheduleRecord(
-        schedule_id=row["schedule_id"],
+        schedule_id=_unscope_schedule_id(row["schedule_id"], row["tenant_id"]),
         name=row["name"],
         cron=row["cron"],
         next_fire_at=row["next_fire_at"],

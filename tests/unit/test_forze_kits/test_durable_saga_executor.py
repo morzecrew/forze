@@ -330,6 +330,45 @@ class TestDurableSagaExecutorEdges:
         # compensation runs and raises (collected into the failure).
         assert effects == ["do:a", "do:b", "do:c", "undo:a"]
 
+    async def test_replay_after_rollback_does_not_repeat_the_failed_step(self) -> None:
+        # A saga that fails pre-pivot and rolls back must, on a second invocation under the
+        # same durable run, re-raise the recorded failure WITHOUT re-running the failed
+        # step's action — so a non-idempotent failed step's effect stays exactly-once.
+        state = MockState()  # one journal shared across both invocations
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("a", effects),
+                _step("b", effects),
+                _step("c", effects, fail=True),
+            ),
+        )
+        executor = DurableSagaExecutor()
+        rolled_back = ["do:a", "do:b", "do:c", "undo:b", "undo:a"]
+
+        ctx1 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException):
+                await executor.run(ctx1, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert effects == rolled_back
+
+        # Re-invoke under the SAME run: a, b replay from the journal, c re-raises its recorded
+        # failure without re-running do:c, and the compensations replay — effects unchanged.
+        ctx2 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException):
+                await executor.run(ctx2, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert effects == rolled_back  # no second "do:c"
+
     async def test_saga_handler_requires_an_initial_context(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         saga: SagaDefinition[OrderCtx] = SagaDefinition(

@@ -62,7 +62,11 @@ class DurableScheduleStorePort(Protocol):
     """
 
     def put(self, record: DurableScheduleRecord) -> Awaitable[None]:
-        """Insert or replace a schedule (keyed by ``schedule_id``)."""
+        """Insert or replace a schedule (keyed by ``schedule_id``, scoped per tenant).
+
+        The key is scoped to the tenant, so two tenants may register the same
+        ``schedule_id`` without one overwriting the other.
+        """
         ...  # pragma: no cover
 
     def claim_due(

@@ -9,12 +9,13 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from psycopg import sql
 
 from forze.application.contracts.durable.function import DurableScheduleRecord
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.primitives import utcnow
 from forze_postgres.adapters.durable import PostgresDurableScheduleStore
 from forze_postgres.execution.deps.configs import PostgresDurableScheduleConfig
@@ -52,6 +53,16 @@ def _store(pg_client: PostgresClient, table: str) -> PostgresDurableScheduleStor
     return PostgresDurableScheduleStore(
         client=pg_client,
         config=PostgresDurableScheduleConfig(relation=("public", table)),
+    )
+
+
+def _tenant_store(
+    pg_client: PostgresClient, table: str, tenant: UUID
+) -> PostgresDurableScheduleStore:
+    return PostgresDurableScheduleStore(
+        client=pg_client,
+        config=PostgresDurableScheduleConfig(relation=("public", table)),
+        tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
     )
 
 
@@ -136,3 +147,41 @@ class TestPostgresDurableScheduleStore:
         assert await store.advance("s", from_fire_at=fire, to_fire_at=nxt) is True
         assert (await store.load("s")).next_fire_at == nxt
         assert await store.advance("s", from_fire_at=fire, to_fire_at=nxt) is False
+
+    async def test_schedule_id_is_scoped_per_tenant(
+        self, pg_client: PostgresClient, schedule_table: str
+    ) -> None:
+        # Two tenants share one tagged table and register the same schedule id — one must
+        # not overwrite the other, and each acts only on its own schedule.
+        tenant_a, tenant_b = uuid4(), uuid4()
+        store_a = _tenant_store(pg_client, schedule_table, tenant_a)
+        store_b = _tenant_store(pg_client, schedule_table, tenant_b)
+        now = utcnow()
+        fire_a, fire_b = now - timedelta(seconds=1), now - timedelta(seconds=2)
+
+        await store_a.put(
+            DurableScheduleRecord(
+                schedule_id="s", name="fn_a", cron="* * * * *", next_fire_at=fire_a
+            )
+        )
+        await store_b.put(
+            DurableScheduleRecord(
+                schedule_id="s", name="fn_b", cron="0 3 * * *", next_fire_at=fire_b
+            )
+        )
+
+        # Neither put overwrote the other; each loads its own schedule.
+        loaded_a, loaded_b = await store_a.load("s"), await store_b.load("s")
+        assert loaded_a is not None and loaded_a.name == "fn_a"
+        assert loaded_b is not None and loaded_b.name == "fn_b"
+        assert loaded_a.schedule_id == "s" and loaded_b.schedule_id == "s"
+
+        # A bound scan claims only its tenant's schedule.
+        claimed_a = await store_a.claim_due(now=now, limit=10)
+        assert [c.name for c in claimed_a] == ["fn_a"]
+
+        # Advancing A's schedule leaves B's untouched.
+        assert await store_a.advance(
+            "s", from_fire_at=fire_a, to_fire_at=now + timedelta(minutes=1)
+        )
+        assert (await store_b.load("s")).next_fire_at == fire_b  # type: ignore[union-attr]
