@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Sequence, final
+from uuid import UUID
 
 import attrs
 
@@ -11,6 +12,7 @@ from forze.application.contracts.durable.function import (
     DurableScheduleRecord,
     DurableScheduleStorePort,
 )
+from forze.application.contracts.tenancy import TenantProviderPort
 from forze_mock.state import MockState
 
 # ----------------------- #
@@ -21,14 +23,32 @@ from forze_mock.state import MockState
 class MockDurableScheduleStore(DurableScheduleStorePort):
     """Back recurring schedules with :attr:`MockState.durable_run_schedules`.
 
-    Same semantics as the Postgres store (upsert, due-claim, compare-and-set advance).
+    Same semantics as the Postgres store (upsert, due-claim, compare-and-set advance); a
+    bound tenant scopes ``put``/``claim_due`` to that tenant.
     """
 
     state: MockState
+    tenant_provider: TenantProviderPort | None = None
+
+    # ....................... #
+
+    def _bound_tenant(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        return tenant.tenant_id if tenant is not None else None
 
     # ....................... #
 
     async def put(self, record: DurableScheduleRecord) -> None:
+        tenant_id = (
+            record.tenant_id
+            if record.tenant_id is not None
+            else self._bound_tenant()
+        )
+
         with self.state.lock:
             self.state.durable_run_schedules[record.schedule_id] = {
                 "schedule_id": record.schedule_id,
@@ -38,7 +58,7 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
                 "input": record.input_json,
                 "next_fire_at": record.next_fire_at,
                 "enabled": record.enabled,
-                "tenant_id": record.tenant_id,
+                "tenant_id": tenant_id,
             }
 
     # ....................... #
@@ -49,11 +69,15 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
         now: datetime,
         limit: int,
     ) -> Sequence[DurableScheduleRecord]:
+        bound_tenant = self._bound_tenant()
+
         with self.state.lock:
             due = [
                 data
                 for data in self.state.durable_run_schedules.values()
-                if data["enabled"] and data["next_fire_at"] <= now
+                if data["enabled"]
+                and data["next_fire_at"] <= now
+                and (bound_tenant is None or data["tenant_id"] == bound_tenant)
             ]
 
         due.sort(key=lambda data: data["next_fire_at"])

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import timedelta
 from typing import final
+from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
@@ -45,6 +48,11 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
     max_concurrency: int | None
     """Recover a batch's runs concurrently up to this bound (``None`` = sequential)."""
 
+    tenants: Callable[[], Sequence[UUID]] | None = None
+    """When set, recover **per tenant** (namespace tier): each sweep binds every assigned
+    tenant in turn and recovers its per-tenant table. The shard is frozen at startup. ``None``
+    recovers unbound — one pass over a tagged table claims every tenant's runs."""
+
     task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
 
     # ....................... #
@@ -64,8 +72,8 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
-    async def _recover_tick(self, ctx: ExecutionContext) -> None:
-        """Drain abandoned runs: recover batches until a sweep comes back short."""
+    async def _drain(self, ctx: ExecutionContext) -> None:
+        """Drain abandoned runs (under whatever tenant is bound): recover until short."""
 
         for _ in range(self.max_batches_per_tick):
             claimed = await self.runner.recover(
@@ -77,11 +85,41 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
+    async def _recover_tick(
+        self,
+        ctx: ExecutionContext,
+        tenants: Sequence[UUID] | None,
+    ) -> None:
+        if tenants is None:
+            await self._drain(ctx)
+            return
+
+        for tenant in tenants:
+            try:
+                with ctx.inv_ctx.bind_identity(
+                    tenant=TenantIdentity(tenant_id=tenant)
+                ):
+                    await self._drain(ctx)
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                logger.exception(
+                    "Durable recovery failed for tenant", tenant=str(tenant)
+                )
+
+    # ....................... #
+
     async def __call__(self, ctx: ExecutionContext) -> None:
+        # Freeze the assigned tenant shard at startup (restart to repartition), matching the
+        # outbox relay — a broken provider fails startup loudly instead of a silent dead task.
+        tenants = list(self.tenants()) if self.tenants is not None else None
+
         async def _loop() -> None:
             while True:
                 try:
-                    await self._recover_tick(ctx)
+                    await self._recover_tick(ctx, tenants)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -143,6 +181,7 @@ def durable_recovery_background_lifecycle_step(
     limit: int = 10,
     max_batches_per_tick: int = 100,
     max_concurrency: int | None = None,
+    tenants: Callable[[], Sequence[UUID]] | None = None,
     step_id: StrKey = "durable_recovery",
 ) -> LifecycleStep:
     """Build a lifecycle step that recovers abandoned durable runs on a background interval.
@@ -153,6 +192,12 @@ def durable_recovery_background_lifecycle_step(
     sleeps *interval* with multiplicative *jitter*. A run's completed steps replay from the
     journal, so each step effect applies exactly once across the crash. *max_concurrency*
     bounds how many runs a batch recovers at once (``None`` = sequential).
+
+    When *tenants* is set the store is **namespace-tier** (per-tenant tables): each sweep
+    binds every assigned tenant in turn and recovers its table (shard frozen at startup;
+    assign the shard this instance owns and shard across instances to parallelize). Omit it
+    for a tagged (shared-table) store — one unbound sweep recovers every tenant's runs and
+    the runner re-binds each run's tenant to execute it.
 
     Concurrent scanners are safe (``FOR UPDATE SKIP LOCKED`` + a fence on the terminal
     write), so this can run on every replica; pair with the ``forze_kits`` singleton
@@ -167,6 +212,7 @@ def durable_recovery_background_lifecycle_step(
         limit=limit,
         max_batches_per_tick=max_batches_per_tick,
         max_concurrency=max_concurrency,
+        tenants=tenants,
     )
     shutdown = _DurableRecoveryBackgroundShutdown(startup=startup)
 
@@ -186,6 +232,7 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
     jitter: float
     limit: int
     max_batches_per_tick: int
+    tenants: Callable[[], Sequence[UUID]] | None = None
 
     task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
 
@@ -206,8 +253,8 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
-    async def _fire_tick(self, ctx: ExecutionContext) -> None:
-        """Fire due schedules until a sweep comes back short."""
+    async def _drain(self, ctx: ExecutionContext) -> None:
+        """Fire due schedules (under whatever tenant is bound) until a sweep comes short."""
 
         for _ in range(self.max_batches_per_tick):
             fired = await self.scheduler.tick(ctx, limit=self.limit)
@@ -217,11 +264,39 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
+    async def _fire_tick(
+        self,
+        ctx: ExecutionContext,
+        tenants: Sequence[UUID] | None,
+    ) -> None:
+        if tenants is None:
+            await self._drain(ctx)
+            return
+
+        for tenant in tenants:
+            try:
+                with ctx.inv_ctx.bind_identity(
+                    tenant=TenantIdentity(tenant_id=tenant)
+                ):
+                    await self._drain(ctx)
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                logger.exception(
+                    "Durable scheduler failed for tenant", tenant=str(tenant)
+                )
+
+    # ....................... #
+
     async def __call__(self, ctx: ExecutionContext) -> None:
+        tenants = list(self.tenants()) if self.tenants is not None else None
+
         async def _loop() -> None:
             while True:
                 try:
-                    await self._fire_tick(ctx)
+                    await self._fire_tick(ctx, tenants)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -280,6 +355,7 @@ def durable_scheduler_background_lifecycle_step(
     jitter: float = 0.2,
     limit: int = 100,
     max_batches_per_tick: int = 100,
+    tenants: Callable[[], Sequence[UUID]] | None = None,
     step_id: StrKey = "durable_scheduler",
 ) -> LifecycleStep:
     """Build a lifecycle step that fires due recurring schedules on a background interval.
@@ -289,6 +365,10 @@ def durable_scheduler_background_lifecycle_step(
     then sleeps *interval* with multiplicative *jitter*. The enqueued runs are executed by
     the recovery scanner / runner — run this alongside
     :func:`durable_recovery_background_lifecycle_step`.
+
+    When *tenants* is set the schedule store is **namespace-tier**: each sweep binds every
+    assigned tenant in turn and fires its schedules (shard frozen at startup). Omit it for a
+    tagged store (one unbound sweep fires every tenant's due schedules).
 
     Concurrent schedulers are safe (idempotent run keys + compare-and-set advance), so this
     can run on every replica; pair with the singleton lifecycle guard for a single elected
@@ -302,6 +382,7 @@ def durable_scheduler_background_lifecycle_step(
         jitter=jitter,
         limit=limit,
         max_batches_per_tick=max_batches_per_tick,
+        tenants=tenants,
     )
     shutdown = _DurableSchedulerBackgroundShutdown(startup=startup)
 

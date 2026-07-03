@@ -61,7 +61,6 @@ class ConfigurablePostgresDurableStep:
             client=client,
             config=self.config,
             cipher=cipher,
-            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
@@ -103,6 +102,7 @@ class ConfigurablePostgresDurableRun:
             client=client,
             config=self.config,
             cipher=cipher,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
 
@@ -124,4 +124,5 @@ class ConfigurablePostgresDurableSchedule:
         return PostgresDurableScheduleStore(
             client=ctx.deps.provide(PostgresClientDepKey),
             config=self.config,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )

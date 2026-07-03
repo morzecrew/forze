@@ -72,7 +72,7 @@ class PostgresDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
     # ....................... #
 
     async def _table(self) -> PostgresQualifiedName:
-        tenant_id = self.require_tenant_if_aware()
+        tenant_id = self._tenant_id_for_resolve()
         return await resolve_postgres_qname(self.config.relation, tenant_id)
 
     # ....................... #
@@ -83,7 +83,7 @@ class PostgresDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
         fn: Callable[[], Awaitable[T]],
     ) -> T:
         run = require_durable_run()
-        tenant_id = self.require_tenant_if_aware()
+        tenant_id = self._tenant_id_for_resolve()
         table = await self._table()
 
         memoized = await self._read(table, run.run_id, step_id, tenant_id)

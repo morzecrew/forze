@@ -16,6 +16,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
 )
+from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
     decrypt_payload,
     encrypt_payload,
@@ -46,7 +47,7 @@ resolve the ``run_id`` shared with the ``picked`` CTE); column names stay unqual
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresDurableRunStore(DurableRunStorePort):
+class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
     """Postgres-backed durable-run store.
 
     Records run instances and hands out claims for execution and crash recovery. A crashed
@@ -54,7 +55,12 @@ class PostgresDurableRunStore(DurableRunStorePort):
     ``FOR UPDATE SKIP LOCKED`` (single-leader-safe, concurrent-scanner-safe). Re-submits
     under one ``idempotency_key`` converge on a single run (``ON CONFLICT DO NOTHING``).
 
-    Single-relation, tagged tenancy (``tenant_id`` column). The table is provided by the
+    **Tenancy.** The table is resolved under the bound tenant, so a static ``relation`` is a
+    shared **tagged** table (``tenant_id`` column) and a per-tenant ``relation`` resolver is a
+    **namespace** table. Recovery either runs unbound over a tagged table (claims every
+    tenant's runs; the runner re-binds each run's tenant to execute it) or per-tenant over a
+    namespace table (the scanner binds each tenant in turn). Non-enforcing: an unbound scan
+    never fails, and a bound scan claims only that tenant's runs. The table is provided by the
     application; expected schema::
 
         CREATE TABLE <relation> (
@@ -88,7 +94,9 @@ class PostgresDurableRunStore(DurableRunStorePort):
     # ....................... #
 
     async def _table(self) -> PostgresQualifiedName:
-        return await resolve_postgres_qname(self.config.relation, None)
+        return await resolve_postgres_qname(
+            self.config.relation, self._tenant_id_for_resolve()
+        )
 
     # ....................... #
 
@@ -101,6 +109,9 @@ class PostgresDurableRunStore(DurableRunStorePort):
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
     ) -> DurableRunRecord:
+        # Default the tenant column to the bound tenant so a run enqueued under a namespace
+        # binding still tags its tenant (the recovery filter matches on it).
+        tenant_id = tenant_id if tenant_id is not None else self._tenant_id_for_resolve()
         table = await self._table()
         run_id = str(uuid7())
         now = utcnow()
@@ -213,16 +224,30 @@ class PostgresDurableRunStore(DurableRunStorePort):
         lease_for: timedelta,
     ) -> Sequence[DurableRunRecord]:
         table = await self._table()
+        params: dict[str, object] = {"limit": limit, "lease": lease_for}
+
+        # Scope the scan to the bound tenant when one is bound (per-tenant recovery on a
+        # tagged table); unbound, it recovers every tenant's runs (the runner re-binds each
+        # run's tenant to execute it). On a namespace table the resolved table is already
+        # per-tenant, so the filter is a redundant no-op.
+        tenant_id = self._tenant_id_for_resolve()
+        tenant_filter = sql.SQL("")
+
+        if tenant_id is not None:
+            tenant_filter = sql.SQL("AND tenant_id = %(tenant_id)s")
+            params["tenant_id"] = tenant_id
 
         rows = await self.client.fetch_all(
             sql.SQL(
                 """
                 WITH picked AS (
                     SELECT run_id FROM {table}
-                    WHERE (status = 'pending'
-                           AND (available_at IS NULL OR available_at <= now()))
-                       OR (status = 'running'
-                           AND (leased_until IS NULL OR leased_until <= now()))
+                    WHERE (
+                        (status = 'pending'
+                         AND (available_at IS NULL OR available_at <= now()))
+                        OR (status = 'running'
+                            AND (leased_until IS NULL OR leased_until <= now()))
+                    ) {tenant_filter}
                     ORDER BY created_at
                     LIMIT {limit}
                     FOR UPDATE SKIP LOCKED
@@ -237,12 +262,13 @@ class PostgresDurableRunStore(DurableRunStorePort):
                 RETURNING {columns}
                 """
             ).format(
+                tenant_filter=tenant_filter,
                 table=table.ident(),
                 limit=sql.Placeholder("limit"),
                 lease=sql.Placeholder("lease"),
                 columns=sql.SQL(_T_COLUMNS),
             ),
-            {"limit": limit, "lease": lease_for},
+            params,
         )
 
         return [await self._record_from_row(row) for row in rows]

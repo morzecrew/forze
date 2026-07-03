@@ -88,6 +88,13 @@ singleton lifecycle guard to elect one. `max_concurrency` bounds how many runs a
 recovers at once. Enqueue with `run_at=<when>` for a **delayed** run — the scan skips it
 until it's due.
 
+**Multi-tenant.** The stores resolve their table under the bound tenant. On a **tagged**
+shared table (a `tenant_id` column), an unbound scanner recovers every tenant's runs and the
+runner re-binds each run's tenant to execute it. On a **namespace** store (a per-tenant
+`relation` resolver, one table per tenant schema) pass `tenants=…` to the lifecycle step: each
+sweep binds every assigned tenant in turn and recovers its table — shard the tenant set across
+instances to parallelize.
+
 ### Crash-resumable sagas
 
 The self-hosted tier closes the "an in-process saga is not crash-resumable" gap. Swap the

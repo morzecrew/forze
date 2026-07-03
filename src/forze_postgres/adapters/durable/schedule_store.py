@@ -13,6 +13,7 @@ from forze.application.contracts.durable.function import (
     DurableScheduleRecord,
     DurableScheduleStorePort,
 )
+from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.primitives import utcnow
 from forze_postgres.execution.deps.configs.durable import PostgresDurableScheduleConfig
 from forze_postgres.kernel.client import PostgresClientPort
@@ -27,13 +28,15 @@ _COLUMNS = "schedule_id, name, cron, tz, input, next_fire_at, enabled, tenant_id
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresDurableScheduleStore(DurableScheduleStorePort):
+class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     """Postgres-backed recurring-schedule store.
 
     :meth:`put` upserts a schedule; :meth:`claim_due` hands out due schedules
     (``FOR UPDATE SKIP LOCKED``); :meth:`advance` compare-and-sets the next fire so two
     schedulers firing the same instant converge to one advance (and one run, via the run's
-    ``{schedule_id}:{fire_epoch}`` idempotency key). Single-relation, tagged tenancy.
+    ``{schedule_id}:{fire_epoch}`` idempotency key). Tenancy mirrors the run store: the table
+    resolves under the bound tenant (tagged shared or per-tenant namespace), and a bound
+    scheduler claims only that tenant's schedules.
 
     The table is provided by the application; expected schema::
 
@@ -58,13 +61,21 @@ class PostgresDurableScheduleStore(DurableScheduleStorePort):
     # ....................... #
 
     async def _table(self) -> PostgresQualifiedName:
-        return await resolve_postgres_qname(self.config.relation, None)
+        return await resolve_postgres_qname(
+            self.config.relation, self._tenant_id_for_resolve()
+        )
 
     # ....................... #
 
     async def put(self, record: DurableScheduleRecord) -> None:
         table = await self._table()
         now = utcnow()
+        # Tag the schedule with the bound tenant so a bound scheduler's claim matches it.
+        tenant_id = (
+            record.tenant_id
+            if record.tenant_id is not None
+            else self._tenant_id_for_resolve()
+        )
 
         await self.client.execute(
             sql.SQL(
@@ -101,7 +112,7 @@ class PostgresDurableScheduleStore(DurableScheduleStorePort):
                 "input": None if record.input_json is None else Jsonb(record.input_json),
                 "next_fire": record.next_fire_at,
                 "enabled": record.enabled,
-                "tenant_id": record.tenant_id,
+                "tenant_id": tenant_id,
                 "now": now,
             },
         )
@@ -115,12 +126,20 @@ class PostgresDurableScheduleStore(DurableScheduleStorePort):
         limit: int,
     ) -> Sequence[DurableScheduleRecord]:
         table = await self._table()
+        params: dict[str, object] = {"now": now, "limit": limit}
+
+        tenant_id = self._tenant_id_for_resolve()
+        tenant_filter = sql.SQL("")
+
+        if tenant_id is not None:
+            tenant_filter = sql.SQL("AND tenant_id = %(tenant_id)s")
+            params["tenant_id"] = tenant_id
 
         rows = await self.client.fetch_all(
             sql.SQL(
                 """
                 SELECT {columns} FROM {table}
-                WHERE enabled AND next_fire_at <= {now}
+                WHERE enabled AND next_fire_at <= {now} {tenant_filter}
                 ORDER BY next_fire_at
                 LIMIT {limit}
                 FOR UPDATE SKIP LOCKED
@@ -129,9 +148,10 @@ class PostgresDurableScheduleStore(DurableScheduleStorePort):
                 columns=sql.SQL(_COLUMNS),
                 table=table.ident(),
                 now=sql.Placeholder("now"),
+                tenant_filter=tenant_filter,
                 limit=sql.Placeholder("limit"),
             ),
-            {"now": now, "limit": limit},
+            params,
         )
 
         return [_record_from_row(row) for row in rows]

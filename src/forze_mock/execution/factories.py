@@ -929,7 +929,10 @@ class ConfigurableMockDurableRunStore(_MockFactoryBase):
         self,
         context: ExecutionContext,
     ) -> MockDurableRunStore:
-        return MockDurableRunStore(state=self._state(context))
+        return MockDurableRunStore(
+            state=self._state(context),
+            tenant_provider=_tenant_provider(context),
+        )
 
 
 @final
@@ -941,7 +944,10 @@ class ConfigurableMockDurableSchedule(_MockFactoryBase):
         self,
         context: ExecutionContext,
     ) -> MockDurableScheduleStore:
-        return MockDurableScheduleStore(state=self._state(context))
+        return MockDurableScheduleStore(
+            state=self._state(context),
+            tenant_provider=_tenant_provider(context),
+        )
 
 
 @final

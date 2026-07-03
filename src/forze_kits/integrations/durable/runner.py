@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, final
 from uuid import UUID
@@ -16,6 +17,7 @@ from forze.application.contracts.durable.function import (
     bind_durable_run,
     reset_durable_run,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
 
 from ._resolve import resolve_durable_run_store
@@ -154,6 +156,29 @@ class DurableFunctionRunner:
     # ....................... #
 
     async def _execute(
+        self,
+        ctx: ExecutionContext,
+        record: DurableRunRecord,
+        *,
+        reraise: bool,
+    ) -> None:
+        # Execute under the run's tenant so the step journal + terminal writes resolve the
+        # right tenant (essential when recovery ran unbound over a tagged table; a no-op
+        # under a namespace shard already bound to this tenant).
+        binding = (
+            ctx.inv_ctx.bind_identity(
+                tenant=TenantIdentity(tenant_id=record.tenant_id)
+            )
+            if record.tenant_id is not None
+            else nullcontext()
+        )
+
+        with binding:
+            await self._execute_bound(ctx, record, reraise=reraise)
+
+    # ....................... #
+
+    async def _execute_bound(
         self,
         ctx: ExecutionContext,
         record: DurableRunRecord,

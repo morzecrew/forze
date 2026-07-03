@@ -13,6 +13,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
 )
+from forze.application.contracts.tenancy import TenantProviderPort
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze_mock.state import MockState
 
@@ -26,9 +27,22 @@ class MockDurableRunStore(DurableRunStorePort):
 
     Same lifecycle and lease/claim semantics as the Postgres store (``PENDING`` →
     ``RUNNING`` under a lease, abandoned reclaim, idempotency-key convergence), in memory.
+    A bound tenant scopes ``enqueue``/``claim_abandoned`` to that tenant (per-tenant
+    recovery); unbound, the scan spans every tenant.
     """
 
     state: MockState
+    tenant_provider: TenantProviderPort | None = None
+
+    # ....................... #
+
+    def _bound_tenant(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        return tenant.tenant_id if tenant is not None else None
 
     # ....................... #
 
@@ -41,6 +55,8 @@ class MockDurableRunStore(DurableRunStorePort):
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
     ) -> DurableRunRecord:
+        tenant_id = tenant_id if tenant_id is not None else self._bound_tenant()
+
         with self.state.lock:
             if idempotency_key is not None:
                 for data in self.state.durable_runs.values():
@@ -93,12 +109,17 @@ class MockDurableRunStore(DurableRunStorePort):
         lease_for: timedelta,
     ) -> Sequence[DurableRunRecord]:
         now = utcnow()
+        bound_tenant = self._bound_tenant()
         claimed: list[DurableRunRecord] = []
 
         with self.state.lock:
             for data in self.state.durable_runs.values():
                 if len(claimed) >= limit:
                     break
+
+                # Bound → recover only that tenant's runs (per-tenant recovery).
+                if bound_tenant is not None and data["tenant_id"] != bound_tenant:
+                    continue
 
                 if not _is_abandoned(data, now):
                     continue
