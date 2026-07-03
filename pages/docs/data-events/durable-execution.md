@@ -101,6 +101,12 @@ OpenTelemetry: a `durable.run` span per execution plus `forze.durable.runs` /
 `forze.durable.schedule.fires` metrics. Emits via the global OTel providers — configure the
 SDK in your app.
 
+The exactly-once-across-a-crash promise is checked by [deterministic simulation](../dst/overview.md): a
+seeded crash fault kills a run mid-step, the recovery scanner re-invokes it, and the oracle
+asserts every completed step replays from its journal instead of re-executing. Keep durable
+bodies deterministic — read time / ids through `utcnow` / `uuid7` and do work in steps — and
+the simulator explores the crash-point space for you.
+
 ### Crash-resumable sagas
 
 The self-hosted tier closes the "an in-process saga is not crash-resumable" gap. Swap the
