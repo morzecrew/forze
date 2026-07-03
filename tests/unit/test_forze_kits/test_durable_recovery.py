@@ -18,6 +18,7 @@ from forze.application.contracts.durable.function import (
     reset_durable_run,
 )
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
+from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 from tests.support.execution_context import context_from_modules
 
@@ -133,7 +134,7 @@ class TestCrashRecovery:
 
 class TestRecoveryLifecycleValidation:
     def test_non_positive_interval_rejected(self) -> None:
-        with pytest.raises(Exception, match="Interval"):
+        with pytest.raises(CoreException, match="Interval"):
             durable_recovery_background_lifecycle_step(
                 runner=DurableFunctionRunner(registry=DurableFunctionRegistry()),
                 interval=timedelta(seconds=0),

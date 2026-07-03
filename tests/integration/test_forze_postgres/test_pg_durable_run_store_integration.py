@@ -20,6 +20,7 @@ from forze.application.contracts.crypto import (
     AesGcmAead,
     KeyRef,
     StaticKeyDirectory,
+    is_encrypted_payload,
 )
 from forze.application.contracts.durable.function import DurableRunStatus
 from forze.application.contracts.tenancy import TenantIdentity
@@ -286,6 +287,24 @@ class TestPostgresDurableRunStore:
         await store.begin(record.run_id, lease_for=timedelta(minutes=5))
         await store.complete(record.run_id, output_json={"secret": "out"})
 
+        # Sealed at rest: the raw columns hold an encryption envelope, not the plaintext.
+        raw = await pg_client.fetch_one(
+            sql.SQL(
+                "SELECT input, output FROM {table} WHERE run_id = {rid}"
+            ).format(
+                table=sql.Identifier("public", durable_run_table),
+                rid=sql.Placeholder(),
+            ),
+            [record.run_id],
+            row_factory="tuple",
+        )
+        assert raw is not None
+        raw_input, raw_output = raw
+        assert is_encrypted_payload(raw_input)
+        assert is_encrypted_payload(raw_output)
+        assert raw_input != {"secret": "in"} and raw_output != {"secret": "out"}
+
+        # And they decrypt back on load (AAD tenant matches the row's tenant, not ``None``).
         loaded = await store.load(record.run_id)
         assert loaded is not None
         assert loaded.tenant_id == tenant

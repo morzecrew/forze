@@ -58,6 +58,11 @@ class TestCronNextFire:
         with pytest.raises(CoreException, match="timezone"):
             validate_cron("* * * * *", tz="Not/AZone")
 
+    def test_rejects_a_naive_after(self) -> None:
+        # A naive datetime would be read in the host timezone (environment-dependent).
+        with pytest.raises(CoreException, match="timezone-aware"):
+            next_cron_fire("* * * * *", after=datetime(2026, 1, 1, 0, 0))
+
 
 class TestDurableScheduler:
     async def test_put_computes_first_fire(self) -> None:

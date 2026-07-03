@@ -77,18 +77,21 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
     ) -> Sequence[DurableScheduleRecord]:
         bound_tenant = self._bound_tenant()
 
+        # Scan, sort, and snapshot to records all under the lock so a concurrent put/advance
+        # cannot mutate a schedule dict mid-read (matches RunStore.claim_abandoned).
         with self.state.lock:
-            due = [
-                data
-                for data in self.state.durable_run_schedules.values()
-                if data["enabled"]
-                and data["next_fire_at"] <= now
-                and (bound_tenant is None or data["tenant_id"] == bound_tenant)
-            ]
+            due = sorted(
+                (
+                    data
+                    for data in self.state.durable_run_schedules.values()
+                    if data["enabled"]
+                    and data["next_fire_at"] <= now
+                    and (bound_tenant is None or data["tenant_id"] == bound_tenant)
+                ),
+                key=lambda data: data["next_fire_at"],
+            )
 
-        due.sort(key=lambda data: data["next_fire_at"])
-
-        return [_to_record(data) for data in due[:limit]]
+            return [_to_record(data) for data in due[:limit]]
 
     # ....................... #
 

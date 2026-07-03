@@ -46,7 +46,16 @@ def next_cron_fire(
     intermediate missed occurrences are skipped, not backfilled. When *tz* is set the
     schedule is evaluated in that timezone (e.g. ``"0 3 * * *"`` = 03:00 local) and the
     result is normalised back to UTC for storage.
+
+    *after* must be timezone-aware: a naive datetime would be read in the host timezone,
+    making the schedule environment-dependent.
     """
+
+    if after.tzinfo is None:
+        raise exc.validation(
+            "next_cron_fire requires a timezone-aware 'after' datetime "
+            "(a naive value would be read in the host timezone)."
+        )
 
     base = after if tz is None else after.astimezone(ZoneInfo(tz))
     fire = croniter(expression, base).get_next(datetime)

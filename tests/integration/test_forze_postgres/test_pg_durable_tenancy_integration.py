@@ -30,7 +30,11 @@ async def namespaced_tenants(pg_client: PostgresClient) -> tuple[str, UUID, UUID
 
     for tenant in (tenant_a, tenant_b):
         schema = f"tnt_{tenant.hex[:8]}"
-        await pg_client.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        await pg_client.execute(
+            sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema}").format(
+                schema=sql.Identifier(schema)
+            )
+        )
         await pg_client.execute(
             sql.SQL(
                 """

@@ -94,6 +94,7 @@ class TestRecoveryConfigValidation:
     @pytest.mark.parametrize(
         "over,match",
         [
+            ({"interval": timedelta(0)}, "Interval"),
             ({"jitter": 1.0}, "Jitter"),
             ({"jitter": -0.1}, "Jitter"),
             ({"limit": 0}, "Limit"),
