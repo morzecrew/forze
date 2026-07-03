@@ -127,18 +127,20 @@ class CommitStreamGroupConsumer[M]:
     1. **Decode** — handled in the adapter's read path (undecodable payloads
        never reach the loop).
     2. **Decrypt** — an end-to-end ciphertext envelope is decrypted to the typed
-       model; a tamper/decode failure is treated as poison, a missing-keyring
-       config error aborts the loop (deployment fault).
+       model; a missing-keyring config error aborts the loop (deployment fault),
+       and a tamper/decode failure **pauses and alerts** (an undecryptable
+       payload has no typed model to re-produce, so it cannot be dead-lettered
+       through the typed producer — an operator must inspect it).
     3. **Process** — :func:`process_with_inbox` runs the dedup mark + handler in
        one transaction on ``tx_route``, rebinding correlation/causation/trace
        from the envelope headers. Both processed and duplicate outcomes commit.
     4. **Retry** — a failing handler is retried up to ``max_attempts`` (each
        attempt optionally wrapped in the named ``retry_policy``).
-    5. **Poison (log-shaped)** — a log cannot requeue one message without wedging
-       the partition. After ``max_attempts``, if ``dlq_stream`` is set the
-       message is produced there and the offset is **committed past** (freeing
-       the partition); otherwise the run **pauses and alerts** — the offset stays
-       uncommitted for redelivery, never silently skipped.
+    5. **Handler poison (log-shaped)** — a log cannot requeue one message without
+       wedging the partition. After ``max_attempts``, if ``dlq_stream`` is set the
+       (decoded) message is produced there and the offset is **committed past**
+       (freeing the partition); otherwise the run **pauses and alerts** — the
+       offset stays uncommitted for redelivery, never silently skipped.
     6. **Idle** — a finite ``timeout`` drains what is available and returns;
        ``None`` runs forever, polling.
     """
@@ -180,9 +182,10 @@ class CommitStreamGroupConsumer[M]:
     """Optional **named** resilience policy wrapping each process attempt."""
 
     dlq_stream: str | None = None
-    """Dead-letter stream name. When set, a poison message is produced here (via
-    ``stream_spec``'s command port) and the offset is committed past it;
-    when ``None``, poison **pauses and alerts** instead of skipping."""
+    """Dead-letter stream name for **handler** poison. When set, a decoded message
+    that exhausts ``max_attempts`` is produced here (via ``stream_spec``'s command
+    port) and the offset is committed past it; when ``None``, it **pauses and
+    alerts** instead. Decrypt/decode poison always pauses (nothing to re-produce)."""
 
     batch_limit: int | None = None
     """Max messages per ``read`` (``None`` = the whole uncommitted tail)."""
@@ -297,21 +300,16 @@ class CommitStreamGroupConsumer[M]:
                 if e.code == _CIPHER_MISSING_CODE:
                     raise  # deployment fault — abort, don't dead-letter every message
 
-                if await self._dead_letter(message, dlq_producer, reason="decrypt"):
-                    positions.append(StreamPosition.from_message(message))
-                    totals.dead_lettered += 1
-                    continue
-
+                # Decrypt-poison: no typed model in hand, so it cannot be
+                # re-produced through the typed DLQ port — pause and alert.
+                self._alert_pause(message, reason="decrypt")
                 await _flush()
                 totals.failed += 1
                 return False
 
             except Exception:
-                if await self._dead_letter(message, dlq_producer, reason="decode"):
-                    positions.append(StreamPosition.from_message(message))
-                    totals.dead_lettered += 1
-                    continue
-
+                # Decode-poison: same as decrypt — nothing decodable to forward.
+                self._alert_pause(message, reason="decode")
                 await _flush()
                 totals.failed += 1
                 return False
@@ -326,15 +324,7 @@ class CommitStreamGroupConsumer[M]:
                     totals.dead_lettered += 1
                     continue
 
-                logger.error(
-                    "Commit-stream consumer pausing group %s on %s at %s: handler "
-                    "failed %s time(s) and no dead-letter stream is set; offset left "
-                    "uncommitted for redelivery",
-                    self.group,
-                    message.stream,
-                    message.id,
-                    self.max_attempts,
-                )
+                self._alert_pause(message, reason="handler")
                 await _flush()
                 totals.failed += 1
                 return False
@@ -394,6 +384,20 @@ class CommitStreamGroupConsumer[M]:
                 )
 
         return None
+
+    # ....................... #
+
+    def _alert_pause(self, message: StreamMessage[M], *, reason: str) -> None:
+        """Log the pause-and-alert: the offset is left uncommitted for redelivery."""
+
+        logger.error(
+            "Commit-stream consumer pausing group %s on %s at %s (%s poison); offset "
+            "left uncommitted for redelivery — operator intervention required",
+            self.group,
+            message.stream,
+            message.id,
+            reason,
+        )
 
     # ....................... #
 

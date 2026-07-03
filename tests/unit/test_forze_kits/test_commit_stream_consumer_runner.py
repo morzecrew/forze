@@ -14,31 +14,37 @@ from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
 
+import attrs
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.inbox import InboxSpec
+from forze.application.contracts.inbox import InboxDepKey, InboxSpec
+from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.contracts.stream import (
+    CommitStreamGroupQueryDepKey,
     OffsetReset,
     StreamMessage,
     StreamSpec,
 )
-from forze.application.execution import ExecutionContext
+from forze.application.contracts.transaction import TransactionManagerDepKey
+from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
+from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
-from tests.support.execution_context import context_from_modules
+from tests.support.execution_context import context_from_deps, context_from_modules
 
 from forze_kits.integrations.consumer import (
     CommitStreamGroupConsumer,
     CommitStreamGroupConsumerRunResult,
 )
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters import (
     MockCommitStreamGroupAdapter,
     MockCommitStreamGroupAdminAdapter,
     MockState,
     MockStreamAdapter,
 )
+from forze_mock.execution.module import ConfigurableMockInbox, mock_strict_txmanager
 
 # ----------------------- #
 
@@ -211,6 +217,66 @@ async def test_requires_transactions_fails_closed() -> None:
         await _consumer(handler, stream_spec=spec).run(ctx, timeout=_IDLE)
 
     assert ei.value.code == "stream.transactions_unsupported"
+
+
+@attrs.define(slots=True)
+class _RetryOnceExecutor:
+    """Resilience executor double: records the policy and retries the call once."""
+
+    policies_used: list[str] = attrs.field(factory=list)
+
+    async def run[T](
+        self,
+        fn: Callable[[], Awaitable[T]],
+        *,
+        policy: StrKey,
+        route: StrKey | None = None,
+        fallback: Callable[[BaseException], Awaitable[T]] | None = None,
+    ) -> T:
+        del route, fallback
+        self.policies_used.append(str(policy))
+        try:
+            return await fn()
+        except Exception:  # noqa: BLE001 — retry-once double
+            return await fn()
+
+
+@pytest.mark.asyncio
+async def test_retry_policy_wraps_each_process_attempt() -> None:
+    state = MockState()
+    producer = MockStreamAdapter(state=state, namespace=_TOPIC, codec=_CODEC)
+    admin = MockCommitStreamGroupAdminAdapter(stream=producer, state=state)
+    query = MockCommitStreamGroupAdapter(stream=producer, state=state, namespace=_TOPIC)
+
+    executor = _RetryOnceExecutor()
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MockStateDepKey: state,
+                InboxDepKey: ConfigurableMockInbox(module=MockDepsModule(state=state)),
+                TransactionManagerDepKey: mock_strict_txmanager,
+                CommitStreamGroupQueryDepKey: (lambda _ctx, _spec: query),
+                ResilienceExecutorDepKey: executor,
+            }
+        )
+    )
+
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+    await _seed(producer, 1)
+
+    attempts = 0
+
+    async def handler(_msg: StreamMessage[_Payload]) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ValueError("transient")
+
+    result = await _consumer(handler, retry_policy="flaky").run(ctx, timeout=_IDLE)
+
+    assert result.processed == 1
+    assert attempts == 2  # the executor retried the failing attempt once
+    assert executor.policies_used == ["flaky"]
 
 
 @pytest.mark.asyncio
