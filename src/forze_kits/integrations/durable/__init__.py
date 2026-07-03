@@ -1,0 +1,25 @@
+"""Self-hosted durable execution: run store runner, registry, and durable saga executor.
+
+Provider-agnostic: drives durable functions and sagas over the framework's
+``DurableFunctionStepPort`` + ``DurableRunStorePort`` contracts (Postgres self-hosted, or
+the mock under tests / simulation).
+"""
+
+from ._resolve import resolve_durable_run_store, resolve_durable_step
+from .lifecycle import durable_recovery_background_lifecycle_step
+from .registry import DurableFunctionHandler, DurableFunctionRegistry
+from .runner import DurableFunctionRunner
+from .saga_executor import DurableSagaExecutor, durable_saga_handler
+
+# ----------------------- #
+
+__all__ = [
+    "DurableFunctionHandler",
+    "DurableFunctionRegistry",
+    "DurableFunctionRunner",
+    "DurableSagaExecutor",
+    "durable_recovery_background_lifecycle_step",
+    "durable_saga_handler",
+    "resolve_durable_run_store",
+    "resolve_durable_step",
+]

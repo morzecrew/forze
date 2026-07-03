@@ -2,6 +2,7 @@
 
 from .analytics import PostgresAnalyticsConfig, PostgresQueryConfig
 from .document import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
+from .durable import PostgresDurableRunConfig, PostgresDurableStepConfig
 from .federated import (
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLeg,
@@ -38,6 +39,8 @@ __all__ = [
     "PgroongaScoreVersion",
     "PostgresAnalyticsConfig",
     "PostgresDocumentConfig",
+    "PostgresDurableRunConfig",
+    "PostgresDurableStepConfig",
     "PostgresFederatedSearchConfig",
     "PostgresFederatedSearchLeg",
     "PostgresFederatedSearchLegHub",

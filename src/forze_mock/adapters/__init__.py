@@ -12,6 +12,7 @@ from forze_mock.adapters.embeddings import MockHashEmbeddingsProvider
 from forze_mock.adapters.durable import (
     MockDurableFunctionEventAdapter,
     MockDurableFunctionStepAdapter,
+    MockDurableRunStore,
     MockDurableWorkflowCommandAdapter,
     MockDurableWorkflowQueryAdapter,
     MockDurableWorkflowScheduleCommandAdapter,
@@ -100,6 +101,7 @@ __all__ = [
     "MockDurableWorkflowScheduleQueryAdapter",
     "MockDurableFunctionEventAdapter",
     "MockDurableFunctionStepAdapter",
+    "MockDurableRunStore",
     "MockOutboxStore",
     "MockOutboxRow",
     "MockHashEmbeddingsProvider",

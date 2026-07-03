@@ -16,6 +16,10 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.durable.function import (
+    DurableFunctionStepDepKey,
+    DurableRunStoreDepKey,
+)
 from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
@@ -44,6 +48,8 @@ from ...kernel.client import PostgresClientPort, RoutedPostgresClient
 from .configs import (
     PostgresAnalyticsConfig,
     PostgresDocumentConfig,
+    PostgresDurableRunConfig,
+    PostgresDurableStepConfig,
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
     PostgresHlcCheckpointConfig,
@@ -58,6 +64,8 @@ from .configs import (
 from .factories import (
     ConfigurablePostgresAnalytics,
     ConfigurablePostgresDocument,
+    ConfigurablePostgresDurableRun,
+    ConfigurablePostgresDurableStep,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHlcCheckpoint,
     ConfigurablePostgresHubSearch,
@@ -189,6 +197,20 @@ class PostgresDepsModule(DepsModule):
     transaction so ``hlc_checkpoint_recovery_lifecycle_step`` can resume the clock above its
     prior emissions after a restart, keeping HLC monotonicity across process boundaries.
     Unset leaves the clock resuming from ``(0, 0)`` (the prior behavior)."""
+
+    durable_step: PostgresDurableStepConfig | None = attrs.field(default=None)
+    """Optional Postgres durable-function step-memo journal (execution-scoped).
+
+    When set, registers the ``DurableFunctionStepPort`` over a ``durable_step`` table so
+    steps memoize their results (exactly-once effect on replay), enabling the self-hosted
+    durable saga executor. Unset leaves durability delegated to Temporal/Inngest."""
+
+    durable_run: PostgresDurableRunConfig | None = attrs.field(default=None)
+    """Optional Postgres durable-run store (execution-scoped).
+
+    When set, registers the ``DurableRunStorePort`` over a ``durable_run`` table so run
+    instances persist and a crashed run can be re-claimed and resumed. Pairs with
+    :attr:`durable_step` and the ``forze_kits`` durable-function runner / recovery scanner."""
 
     # ....................... #
 
@@ -574,6 +596,30 @@ class PostgresDepsModule(DepsModule):
                 }
             )
 
+        durable_step_deps = Deps()
+
+        if self.durable_step is not None:
+            # Execution-scoped step port (SimpleDepPort): plain registration, resolved per
+            # scope; the active run is read from the ambient DurableRunContext, not a route.
+            durable_step_deps = Deps.plain(
+                {
+                    DurableFunctionStepDepKey: ConfigurablePostgresDurableStep(
+                        config=self.durable_step
+                    ),
+                }
+            )
+
+        durable_run_deps = Deps()
+
+        if self.durable_run is not None:
+            durable_run_deps = Deps.plain(
+                {
+                    DurableRunStoreDepKey: ConfigurablePostgresDurableRun(
+                        config=self.durable_run
+                    ),
+                }
+            )
+
         return plain_deps.merge(
             doc_deps,
             search_deps,
@@ -586,4 +632,6 @@ class PostgresDepsModule(DepsModule):
             inbox_deps,
             idempotency_deps,
             hlc_checkpoint_deps,
+            durable_step_deps,
+            durable_run_deps,
         )

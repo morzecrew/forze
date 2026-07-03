@@ -73,6 +73,8 @@ from forze_mock.adapters import (
     MockDistributedLockAdapter,
     MockDocumentAdapter,
     MockDurableFunctionEventAdapter,
+    MockDurableFunctionStepAdapter,
+    MockDurableRunStore,
     MockDurableWorkflowCommandAdapter,
     MockDurableWorkflowQueryAdapter,
     MockDurableWorkflowScheduleCommandAdapter,
@@ -898,6 +900,35 @@ class ConfigurableMockDurableFunctionEvent(_MockFactoryBase):
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockDurableFunctionStep(_MockFactoryBase):
+    """Build the mock durable step port (a ``SimpleDepPort``: ``ctx`` only, no spec).
+
+    Resolves state per scope via ``MockStateDepKey`` like every other mock factory, so it
+    is coherent under DST — a shared instance would bypass ``resolve_simple``'s per-scope
+    resolution and tracing.
+    """
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+    ) -> MockDurableFunctionStepAdapter:
+        return MockDurableFunctionStepAdapter(state=self._state(context))
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockDurableRunStore(_MockFactoryBase):
+    """Build the mock durable run store (a ``SimpleDepPort``: ``ctx`` only, no spec)."""
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+    ) -> MockDurableRunStore:
+        return MockDurableRunStore(state=self._state(context))
 
 
 @final
