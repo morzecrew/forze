@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Sequence, final
 from uuid import UUID
 
@@ -31,13 +31,14 @@ from forze_postgres.kernel.relation import resolve_postgres_qname
 # ----------------------- #
 
 _COLUMNS = (
-    "run_id, name, status, idempotency_key, input, output, error, tenant_id, attempts"
+    "run_id, name, status, idempotency_key, input, output, error, tenant_id, "
+    "attempts, available_at"
 )
 """Row projection for plain single-table SELECTs."""
 
 _T_COLUMNS = (
     "t.run_id, t.name, t.status, t.idempotency_key, t.input, t.output, "
-    "t.error, t.tenant_id, t.attempts"
+    "t.error, t.tenant_id, t.attempts, t.available_at"
 )
 """Row projection for RETURNING out of an ``UPDATE ... FROM picked`` join (qualified to
 resolve the ``run_id`` shared with the ``picked`` CTE); column names stay unqualified."""
@@ -67,11 +68,17 @@ class PostgresDurableRunStore(DurableRunStorePort):
             tenant_id       uuid,
             attempts        integer     NOT NULL DEFAULT 0,
             leased_until    timestamptz,
+            available_at    timestamptz,
             created_at      timestamptz NOT NULL,
             updated_at      timestamptz NOT NULL,
             PRIMARY KEY (run_id),
             UNIQUE (idempotency_key)
         );
+
+    ``attempts`` doubles as the fence token (advances under a row lock on each claim);
+    ``available_at`` delays when a ``PENDING`` run may be claimed. Concurrent scanners are
+    safe (``FOR UPDATE SKIP LOCKED``) and a terminal write can be fenced against a
+    reclaimed lease — so the store is multi-worker-safe, not just single-leader.
     """
 
     client: PostgresClientPort
@@ -92,6 +99,7 @@ class PostgresDurableRunStore(DurableRunStorePort):
         input_json: JsonDict | None,
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
+        available_at: datetime | None = None,
     ) -> DurableRunRecord:
         table = await self._table()
         run_id = str(uuid7())
@@ -103,10 +111,10 @@ class PostgresDurableRunStore(DurableRunStorePort):
                 """
                 INSERT INTO {table}
                     (run_id, name, status, idempotency_key, input, tenant_id,
-                     attempts, leased_until, created_at, updated_at)
+                     attempts, leased_until, available_at, created_at, updated_at)
                 VALUES
                     ({run_id}, {name}, 'pending', {idem}, {input}, {tenant_id},
-                     0, NULL, {now}, {now})
+                     0, NULL, {available_at}, {now}, {now})
                 ON CONFLICT (idempotency_key) DO NOTHING
                 RETURNING run_id
                 """
@@ -117,6 +125,7 @@ class PostgresDurableRunStore(DurableRunStorePort):
                 idem=sql.Placeholder("idem"),
                 input=sql.Placeholder("input"),
                 tenant_id=sql.Placeholder("tenant_id"),
+                available_at=sql.Placeholder("available_at"),
                 now=sql.Placeholder("now"),
             ),
             {
@@ -125,6 +134,7 @@ class PostgresDurableRunStore(DurableRunStorePort):
                 "idem": idempotency_key,
                 "input": None if stored_input is None else Jsonb(stored_input),
                 "tenant_id": tenant_id,
+                "available_at": available_at,
                 "now": now,
             },
             row_factory="tuple",
@@ -139,6 +149,7 @@ class PostgresDurableRunStore(DurableRunStorePort):
                 input_json=input_json,
                 tenant_id=tenant_id,
                 attempts=0,
+                available_at=available_at,
             )
 
         # A run already exists for this idempotency key: converge on it.
@@ -208,7 +219,8 @@ class PostgresDurableRunStore(DurableRunStorePort):
                 """
                 WITH picked AS (
                     SELECT run_id FROM {table}
-                    WHERE status = 'pending'
+                    WHERE (status = 'pending'
+                           AND (available_at IS NULL OR available_at <= now()))
                        OR (status = 'running'
                            AND (leased_until IS NULL OR leased_until <= now()))
                     ORDER BY created_at
@@ -242,6 +254,7 @@ class PostgresDurableRunStore(DurableRunStorePort):
         run_id: str,
         *,
         output_json: JsonDict | None,
+        fence: int | None = None,
     ) -> None:
         stored = await self._seal(output_json, run_id, "output", None)
         await self._finish(
@@ -249,23 +262,31 @@ class PostgresDurableRunStore(DurableRunStorePort):
             status=DurableRunStatus.COMPLETED,
             output=None if stored is None else Jsonb(stored),
             error=None,
+            fence=fence,
         )
 
     # ....................... #
 
-    async def fail(self, run_id: str, *, error: str) -> None:
+    async def fail(self, run_id: str, *, error: str, fence: int | None = None) -> None:
         await self._finish(
-            run_id, status=DurableRunStatus.FAILED, output=None, error=error
+            run_id,
+            status=DurableRunStatus.FAILED,
+            output=None,
+            error=error,
+            fence=fence,
         )
 
     # ....................... #
 
-    async def mark_forward_incomplete(self, run_id: str, *, error: str) -> None:
+    async def mark_forward_incomplete(
+        self, run_id: str, *, error: str, fence: int | None = None
+    ) -> None:
         await self._finish(
             run_id,
             status=DurableRunStatus.FORWARD_INCOMPLETE,
             output=None,
             error=error,
+            fence=fence,
         )
 
     # ....................... #
@@ -293,18 +314,27 @@ class PostgresDurableRunStore(DurableRunStorePort):
         status: DurableRunStatus,
         output: Jsonb | None,
         error: str | None,
+        fence: int | None = None,
     ) -> None:
         table = await self._table()
 
         # Guarded on ``status = 'running'`` so a terminal state is not overwritten and a
         # duplicate/late completion is a no-op (idempotent under recovery re-invocation).
+        # When *fence* is given, also require it to match ``attempts`` so a stale worker
+        # whose lease was reclaimed (attempts advanced) cannot finish the run.
+        fence_clause = (
+            sql.SQL(" AND attempts = {fence}").format(fence=sql.Placeholder("fence"))
+            if fence is not None
+            else sql.SQL("")
+        )
+
         await self.client.execute(
             sql.SQL(
                 """
                 UPDATE {table}
                 SET status = {status}, output = {output}, error = {error},
                     leased_until = NULL, updated_at = now()
-                WHERE run_id = {run_id} AND status = 'running'
+                WHERE run_id = {run_id} AND status = 'running'{fence_clause}
                 """
             ).format(
                 table=table.ident(),
@@ -312,12 +342,14 @@ class PostgresDurableRunStore(DurableRunStorePort):
                 output=sql.Placeholder("output"),
                 error=sql.Placeholder("error"),
                 run_id=sql.Placeholder("run_id"),
+                fence_clause=fence_clause,
             ),
             {
                 "status": str(status),
                 "output": output,
                 "error": error,
                 "run_id": run_id,
+                **({"fence": fence} if fence is not None else {}),
             },
         )
 
@@ -362,6 +394,7 @@ class PostgresDurableRunStore(DurableRunStorePort):
             error=row["error"],
             tenant_id=tenant_id,
             attempts=row["attempts"],
+            available_at=row["available_at"],
         )
 
     # ....................... #

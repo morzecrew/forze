@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Sequence, final
 from uuid import UUID
 
@@ -39,6 +39,7 @@ class MockDurableRunStore(DurableRunStorePort):
         input_json: JsonDict | None,
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
+        available_at: datetime | None = None,
     ) -> DurableRunRecord:
         with self.state.lock:
             if idempotency_key is not None:
@@ -58,6 +59,7 @@ class MockDurableRunStore(DurableRunStorePort):
                 "tenant_id": tenant_id,
                 "attempts": 0,
                 "leased_until": None,
+                "available_at": available_at,
                 "created_at": utcnow(),
             }
             self.state.durable_runs[run_id] = data
@@ -113,19 +115,29 @@ class MockDurableRunStore(DurableRunStorePort):
         run_id: str,
         *,
         output_json: JsonDict | None,
+        fence: int | None = None,
     ) -> None:
-        self._finish(run_id, status=DurableRunStatus.COMPLETED, output=output_json)
-
-    # ....................... #
-
-    async def fail(self, run_id: str, *, error: str) -> None:
-        self._finish(run_id, status=DurableRunStatus.FAILED, error=error)
-
-    # ....................... #
-
-    async def mark_forward_incomplete(self, run_id: str, *, error: str) -> None:
         self._finish(
-            run_id, status=DurableRunStatus.FORWARD_INCOMPLETE, error=error
+            run_id, status=DurableRunStatus.COMPLETED, output=output_json, fence=fence
+        )
+
+    # ....................... #
+
+    async def fail(self, run_id: str, *, error: str, fence: int | None = None) -> None:
+        self._finish(
+            run_id, status=DurableRunStatus.FAILED, error=error, fence=fence
+        )
+
+    # ....................... #
+
+    async def mark_forward_incomplete(
+        self, run_id: str, *, error: str, fence: int | None = None
+    ) -> None:
+        self._finish(
+            run_id,
+            status=DurableRunStatus.FORWARD_INCOMPLETE,
+            error=error,
+            fence=fence,
         )
 
     # ....................... #
@@ -152,12 +164,18 @@ class MockDurableRunStore(DurableRunStorePort):
         status: DurableRunStatus,
         output: JsonDict | None = None,
         error: str | None = None,
+        fence: int | None = None,
     ) -> None:
         with self.state.lock:
             data = self.state.durable_runs.get(run_id)
 
-            # Guarded on RUNNING so a terminal state is not overwritten (idempotent finish).
+            # Guarded on RUNNING so a terminal state is not overwritten (idempotent finish);
+            # when *fence* is given it must match ``attempts`` so a stale worker whose lease
+            # was reclaimed cannot finish the run.
             if data is None or data["status"] != DurableRunStatus.RUNNING.value:
+                return
+
+            if fence is not None and data["attempts"] != fence:
                 return
 
             data["status"] = status.value
@@ -173,7 +191,8 @@ def _is_abandoned(data: dict[str, Any], now: Any) -> bool:
     status = data["status"]
 
     if status == DurableRunStatus.PENDING.value:
-        return True
+        available_at = data["available_at"]
+        return available_at is None or available_at <= now  # due?
 
     if status != DurableRunStatus.RUNNING.value:
         return False
@@ -197,4 +216,5 @@ def _to_record(data: dict[str, Any]) -> DurableRunRecord:
         error=data["error"],
         tenant_id=data["tenant_id"],
         attempts=data["attempts"],
+        available_at=data["available_at"],
     )

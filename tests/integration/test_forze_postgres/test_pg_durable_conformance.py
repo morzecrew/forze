@@ -51,8 +51,8 @@ async def run_table(pg_client: PostgresClient) -> str:
                 run_id text NOT NULL, name text NOT NULL, status text NOT NULL,
                 idempotency_key text, input jsonb, output jsonb, error text,
                 tenant_id uuid, attempts integer NOT NULL DEFAULT 0,
-                leased_until timestamptz, created_at timestamptz NOT NULL,
-                updated_at timestamptz NOT NULL,
+                leased_until timestamptz, available_at timestamptz,
+                created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
                 PRIMARY KEY (run_id), UNIQUE (idempotency_key)
             )
             """

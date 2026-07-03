@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+import asyncio
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, final
 from uuid import UUID
 
@@ -57,8 +58,12 @@ class DurableFunctionRunner:
         *,
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
+        run_at: datetime | None = None,
     ) -> DurableRunRecord:
-        """Record a new ``PENDING`` run (idempotency-key re-submits converge on one run)."""
+        """Record a new ``PENDING`` run (idempotency-key re-submits converge on one run).
+
+        *run_at* delays when the recovery scan may claim it (a scheduled/delayed run).
+        """
 
         store = resolve_durable_run_store(ctx)
 
@@ -67,6 +72,7 @@ class DurableFunctionRunner:
             input_json=input_json,
             idempotency_key=idempotency_key,
             tenant_id=tenant_id,
+            available_at=run_at,
         )
 
     # ....................... #
@@ -113,18 +119,35 @@ class DurableFunctionRunner:
         ctx: ExecutionContext,
         *,
         limit: int = 10,
+        max_concurrency: int | None = None,
     ) -> int:
         """Claim up to *limit* abandoned runs and re-invoke them; return the count claimed.
 
         A body failure during recovery is recorded on the run and swallowed (the scanner
-        keeps draining), never propagated.
+        keeps draining), never propagated. With *max_concurrency* set the claimed runs are
+        recovered concurrently up to that bound (each run executes in its own task, so its
+        ambient run binding stays isolated); ``None`` recovers them sequentially.
         """
 
         store = resolve_durable_run_store(ctx)
         claimed = await store.claim_abandoned(limit=limit, lease_for=self.lease_for)
 
-        for record in claimed:
-            await self._execute(ctx, record, reraise=False)
+        if not claimed:
+            return 0
+
+        if max_concurrency is None or max_concurrency <= 1:
+            for record in claimed:
+                await self._execute(ctx, record, reraise=False)
+
+            return len(claimed)
+
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _bounded(record: DurableRunRecord) -> None:
+            async with semaphore:
+                await self._execute(ctx, record, reraise=False)
+
+        await asyncio.gather(*(_bounded(record) for record in claimed))
 
         return len(claimed)
 
@@ -139,6 +162,11 @@ class DurableFunctionRunner:
     ) -> None:
         store = resolve_durable_run_store(ctx)
         handler = self.registry.get(record.name)
+
+        # The claim's attempt count is this execution's fence token: a stale worker whose
+        # lease was reclaimed (attempts advanced) cannot finish the run out from under the
+        # new owner.
+        fence = record.attempts
 
         token = bind_durable_run(
             DurableRunContext(
@@ -155,9 +183,11 @@ class DurableFunctionRunner:
             # A pivot-committed saga that could not complete forward is a distinct terminal
             # state — never compensated, must be finished by hand — not an ordinary failure.
             if (error.code or "") == _FORWARD_INCOMPLETE_CODE:
-                await store.mark_forward_incomplete(record.run_id, error=str(error))
+                await store.mark_forward_incomplete(
+                    record.run_id, error=str(error), fence=fence
+                )
             else:
-                await store.fail(record.run_id, error=str(error))
+                await store.fail(record.run_id, error=str(error), fence=fence)
 
             if reraise:
                 raise
@@ -165,7 +195,7 @@ class DurableFunctionRunner:
             return
 
         except Exception as error:  # noqa: BLE001 — record then optionally re-raise
-            await store.fail(record.run_id, error=str(error))
+            await store.fail(record.run_id, error=str(error), fence=fence)
 
             if reraise:
                 raise
@@ -175,4 +205,4 @@ class DurableFunctionRunner:
         finally:
             reset_durable_run(token)
 
-        await store.complete(record.run_id, output_json=output)
+        await store.complete(record.run_id, output_json=output, fence=fence)

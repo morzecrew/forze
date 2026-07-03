@@ -41,6 +41,9 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
     max_batches_per_tick: int
     """Safety cap on batches per sweep so a large backlog cannot starve the loop."""
 
+    max_concurrency: int | None
+    """Recover a batch's runs concurrently up to this bound (``None`` = sequential)."""
+
     task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
 
     # ....................... #
@@ -64,7 +67,9 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
         """Drain abandoned runs: recover batches until a sweep comes back short."""
 
         for _ in range(self.max_batches_per_tick):
-            claimed = await self.runner.recover(ctx, limit=self.limit)
+            claimed = await self.runner.recover(
+                ctx, limit=self.limit, max_concurrency=self.max_concurrency
+            )
 
             if claimed < self.limit:
                 break
@@ -136,19 +141,22 @@ def durable_recovery_background_lifecycle_step(
     jitter: float = 0.2,
     limit: int = 10,
     max_batches_per_tick: int = 100,
+    max_concurrency: int | None = None,
     step_id: StrKey = "durable_recovery",
 ) -> LifecycleStep:
     """Build a lifecycle step that recovers abandoned durable runs on a background interval.
 
-    Each sweep **drains the backlog**: batches of up to *limit* abandoned runs (``PENDING``
-    or ``RUNNING`` past their lease) are re-claimed and re-invoked until a sweep returns
-    fewer than *limit*, capped at *max_batches_per_tick*; then the task sleeps *interval*
-    with multiplicative *jitter*. A run's completed steps replay from the journal, so each
-    step effect applies exactly once across the crash.
+    Each sweep **drains the backlog**: batches of up to *limit* abandoned runs (a due
+    ``PENDING`` run or a ``RUNNING`` run past its lease) are re-claimed and re-invoked until
+    a sweep returns fewer than *limit*, capped at *max_batches_per_tick*; then the task
+    sleeps *interval* with multiplicative *jitter*. A run's completed steps replay from the
+    journal, so each step effect applies exactly once across the crash. *max_concurrency*
+    bounds how many runs a batch recovers at once (``None`` = sequential).
 
-    Opt-in for long-running processes. Production deployments often prefer an external cron
-    or workflow scheduler over in-process polling. Single-leader recovery — pair with the
-    ``forze_kits`` singleton lifecycle guard to elect one scanner across replicas.
+    Concurrent scanners are safe (``FOR UPDATE SKIP LOCKED`` + a fence on the terminal
+    write), so this can run on every replica; pair with the ``forze_kits`` singleton
+    lifecycle guard if you prefer a single elected scanner. Production deployments often
+    prefer an external cron / workflow scheduler over in-process polling.
     """
 
     startup = _DurableRecoveryBackgroundStartup(
@@ -157,6 +165,7 @@ def durable_recovery_background_lifecycle_step(
         jitter=jitter,
         limit=limit,
         max_batches_per_tick=max_batches_per_tick,
+        max_concurrency=max_concurrency,
     )
     shutdown = _DurableRecoveryBackgroundShutdown(startup=startup)
 

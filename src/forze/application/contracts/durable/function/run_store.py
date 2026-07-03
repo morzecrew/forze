@@ -9,7 +9,7 @@ an in-memory mock (tests / simulation).
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Awaitable, Protocol, Sequence, final, runtime_checkable
 from uuid import UUID
@@ -73,7 +73,16 @@ class DurableRunRecord:
     """Owning tenant (tagged tier); ``None`` for single-tenant deployments."""
 
     attempts: int = 0
-    """Number of times this run has been claimed for execution (recovery increments it)."""
+    """Number of times this run has been claimed for execution (recovery increments it).
+
+    Doubles as the **fence token**: a claim advances it under a row lock, so a later claim
+    always sees a higher value. Pass it back as *fence* to a terminal write so a stale
+    worker whose lease was reclaimed cannot overwrite the run (its fence no longer matches).
+    """
+
+    available_at: datetime | None = None
+    """Earliest instant the run may be claimed (``None`` = immediately). Set for a delayed
+    run; the recovery scan skips a ``PENDING`` run until it is due."""
 
 
 # ....................... #
@@ -95,11 +104,13 @@ class DurableRunStorePort(Protocol):
         input_json: JsonDict | None,
         idempotency_key: str | None = None,  # noqa: F841
         tenant_id: UUID | None = None,  # noqa: F841
+        available_at: datetime | None = None,  # noqa: F841
     ) -> Awaitable[DurableRunRecord]:
         """Record a new ``PENDING`` run and return it.
 
         When *idempotency_key* is set and a run already exists for it, the existing run is
-        returned unchanged (re-submits converge on one run).
+        returned unchanged (re-submits converge on one run). *available_at* delays when the
+        recovery scan may claim it (``None`` = immediately).
         """
         ...  # pragma: no cover
 
@@ -124,9 +135,10 @@ class DurableRunStorePort(Protocol):
     ) -> Awaitable[Sequence[DurableRunRecord]]:
         """Claim up to *limit* abandoned runs for recovery.
 
-        An abandoned run is ``PENDING`` or ``RUNNING`` with an expired lease; each is moved
-        to ``RUNNING`` with a fresh lease and an incremented attempt count. Concurrent
-        scanners never claim the same run (``FOR UPDATE SKIP LOCKED``).
+        An abandoned run is a **due** ``PENDING`` run (``available_at`` in the past or unset)
+        or a ``RUNNING`` run with an expired lease; each is moved to ``RUNNING`` with a fresh
+        lease and an incremented attempt count (its new fence token). Concurrent scanners
+        never claim the same run (``FOR UPDATE SKIP LOCKED``), so it is multi-worker-safe.
         """
         ...  # pragma: no cover
 
@@ -135,8 +147,14 @@ class DurableRunStorePort(Protocol):
         run_id: str,
         *,
         output_json: JsonDict | None,
+        fence: int | None = None,  # noqa: F841
     ) -> Awaitable[None]:
-        """Mark a running run ``COMPLETED`` with its encoded result."""
+        """Mark a running run ``COMPLETED`` with its encoded result.
+
+        When *fence* is given (the claimed run's :attr:`DurableRunRecord.attempts`), the
+        write is a no-op unless it still matches — so a stale worker whose lease was
+        reclaimed cannot complete the run out from under the new owner.
+        """
         ...  # pragma: no cover
 
     def fail(
@@ -144,8 +162,9 @@ class DurableRunStorePort(Protocol):
         run_id: str,
         *,
         error: str,
+        fence: int | None = None,  # noqa: F841
     ) -> Awaitable[None]:
-        """Mark a running run ``FAILED`` with a message."""
+        """Mark a running run ``FAILED`` with a message (fenced when *fence* is given)."""
         ...  # pragma: no cover
 
     def mark_forward_incomplete(
@@ -153,6 +172,7 @@ class DurableRunStorePort(Protocol):
         run_id: str,
         *,
         error: str,
+        fence: int | None = None,  # noqa: F841
     ) -> Awaitable[None]:
         """Mark a running run ``FORWARD_INCOMPLETE`` (pivot committed, forward step failed)."""
         ...  # pragma: no cover

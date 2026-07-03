@@ -17,6 +17,7 @@ import pytest
 from psycopg import sql
 
 from forze.application.contracts.durable.function import DurableRunStatus
+from forze.base.primitives import utcnow
 from forze_postgres.adapters.durable import PostgresDurableRunStore
 from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
 from forze_postgres.kernel.client import PostgresClient
@@ -41,6 +42,7 @@ async def durable_run_table(pg_client: PostgresClient) -> str:
                 tenant_id       UUID,
                 attempts        INTEGER     NOT NULL DEFAULT 0,
                 leased_until    TIMESTAMPTZ,
+                available_at    TIMESTAMPTZ,
                 created_at      TIMESTAMPTZ NOT NULL,
                 updated_at      TIMESTAMPTZ NOT NULL,
                 PRIMARY KEY (run_id),
@@ -167,3 +169,56 @@ class TestPostgresDurableRunStore:
         # The reclaimed-once expired run shows two attempts (begin + reclaim).
         reclaimed_expired = next(c for c in claimed if c.run_id == expired.run_id)
         assert reclaimed_expired.attempts == 2
+
+    async def test_stale_worker_is_fenced_out_after_reclaim(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        store = _store(pg_client, durable_run_table)
+        record = await store.enqueue("fn", input_json=None)
+
+        worker_a = await store.begin(record.run_id, lease_for=timedelta(minutes=5))
+        assert worker_a is not None and worker_a.attempts == 1
+
+        await _expire_lease(pg_client, durable_run_table, record.run_id)
+        reclaimed = await store.claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
+        worker_b = next(c for c in reclaimed if c.run_id == record.run_id)
+        assert worker_b.attempts == 2
+
+        # Worker A's stale fence must not finish the run out from under worker B.
+        await store.complete(
+            record.run_id, output_json={"by": "A"}, fence=worker_a.attempts
+        )
+        loaded = await store.load(record.run_id)
+        assert loaded is not None
+        assert loaded.status is DurableRunStatus.RUNNING
+        assert loaded.output_json is None
+
+        await store.complete(
+            record.run_id, output_json={"by": "B"}, fence=worker_b.attempts
+        )
+        loaded = await store.load(record.run_id)
+        assert loaded is not None
+        assert loaded.status is DurableRunStatus.COMPLETED
+        assert loaded.output_json == {"by": "B"}
+
+    async def test_delayed_run_is_not_claimed_until_due(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        store = _store(pg_client, durable_run_table)
+
+        future = await store.enqueue(
+            "fn", input_json=None, available_at=utcnow() + timedelta(hours=1)
+        )
+        due = await store.enqueue(
+            "fn", input_json=None, available_at=utcnow() - timedelta(minutes=1)
+        )
+        immediate = await store.enqueue("fn", input_json=None)
+
+        claimed = {
+            c.run_id
+            for c in await store.claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
+        }
+
+        assert future.run_id not in claimed  # not yet due
+        assert due.run_id in claimed
+        assert immediate.run_id in claimed

@@ -80,8 +80,13 @@ async def fulfil_order(ctx, input):
 ```
 
 A background scanner re-claims runs abandoned by a crash and re-invokes them —
-`durable_recovery_background_lifecycle_step(runner=runner)` (pair it with the singleton
-lifecycle guard so one replica leads).
+`durable_recovery_background_lifecycle_step(runner=runner)`. It is **multi-worker-safe**:
+concurrent scanners never claim the same run (`FOR UPDATE SKIP LOCKED`) and a terminal
+write is **fenced** against a reclaimed lease, so a stalled worker whose lease expired can't
+finish a run the new owner already took over. Run it on every replica, or pair it with the
+singleton lifecycle guard to elect one. `max_concurrency` bounds how many runs a sweep
+recovers at once. Enqueue with `run_at=<when>` for a **delayed** run — the scan skips it
+until it's due.
 
 ### Crash-resumable sagas
 
@@ -97,9 +102,9 @@ await runner.run_now(ctx, str(saga.name), initial.model_dump(mode="json"))
 ```
 
 The saga context must be a serializable `pydantic.BaseModel` (it is journaled between
-steps). This tier is self-hosted-Postgres only and single-leader — a full workflow engine
-(timers, signals, versioning, multi-worker scheduling) is still Temporal/Inngest. The two
-tables come from your migrations; their schema is documented on the adapter classes.
+steps). This tier is self-hosted-Postgres only; a full workflow engine (timers, signals,
+versioning, recurring schedules) is still Temporal/Inngest. The two tables come from your
+migrations; their schema is documented on the adapter classes.
 
 ## When to reach for it
 
