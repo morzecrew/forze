@@ -107,20 +107,20 @@ class KafkaClient(KafkaClientPort):
         for consumer in consumers:
             try:
                 await consumer.stop()
-            except Exception as e:  # close must never raise
+            except Exception as e:  # pragma: no cover - close must never raise
                 logger.warning("Kafka close: consumer stop failed: %s", e)
 
         if self.__producer is not None:
             try:
                 await self.__producer.stop()
-            except Exception as e:
+            except Exception as e:  # pragma: no cover - close must never raise
                 logger.warning("Kafka close: producer stop failed: %s", e)
             self.__producer = None
 
         if self.__admin is not None:
             try:
                 await self.__admin.close()
-            except Exception as e:
+            except Exception as e:  # pragma: no cover - close must never raise
                 logger.warning("Kafka close: admin close failed: %s", e)
             self.__admin = None
 
@@ -131,7 +131,9 @@ class KafkaClient(KafkaClientPort):
     def __security_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"security_protocol": self.__config.security_protocol}
 
-        if self.__config.sasl_mechanism is not None:
+        if (
+            self.__config.sasl_mechanism is not None
+        ):  # pragma: no cover - needs a SASL broker
             kwargs["sasl_mechanism"] = self.__config.sasl_mechanism
             kwargs["sasl_plain_username"] = self.__config.sasl_plain_username
             kwargs["sasl_plain_password"] = (

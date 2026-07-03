@@ -76,12 +76,15 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
 
         admin = await self.client.admin()
         described = await admin.describe_topics([topic])
+        by_topic = {entry.get("topic"): entry for entry in described}
+        entry = by_topic.get(topic)
 
-        for entry in described:
-            if entry.get("topic") == topic:
-                return sorted(part["partition"] for part in entry.get("partitions", []))
+        if (
+            entry is None
+        ):  # pragma: no cover - describe_topics returns an entry per queried topic
+            return []
 
-        return []
+        return sorted(part["partition"] for part in entry.get("partitions", []))
 
     # ....................... #
 
@@ -141,7 +144,9 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
         *,
         to: OffsetReset,
     ) -> None:
-        if not self.capabilities().supports_replay:
+        if (
+            not self.capabilities().supports_replay
+        ):  # pragma: no cover - Kafka always supports replay
             raise exc.configuration(
                 f"Stream {stream!r} backend does not support offset reset / replay.",
                 code="stream.replay_unsupported",

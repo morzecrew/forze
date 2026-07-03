@@ -82,10 +82,14 @@ async def test_commit_translates_to_next_offset_max_per_partition() -> None:
         [
             StreamPosition(stream="events", partition=0, offset=3),
             StreamPosition(stream="events", partition=0, offset=7),
+            StreamPosition(
+                stream="events", partition=0, offset=1
+            ),  # out-of-order, ignored
             StreamPosition(stream="events", partition=1, offset=2),
         ],
     )
 
+    # Highest offset per partition wins; the lower straggler does not regress it.
     assert consumer.committed[TopicPartition("events", 0)].offset == 8
     assert consumer.committed[TopicPartition("events", 1)].offset == 3
 
@@ -100,9 +104,7 @@ async def test_commit_targets_the_group_that_read_not_the_latest() -> None:
     await adapter.read("g1", "m", ["events"])
     await adapter.read("g2", "m", ["events"])  # latest read is g2
 
-    await adapter.commit(
-        "g1", [StreamPosition(stream="events", partition=0, offset=4)]
-    )
+    await adapter.commit("g1", [StreamPosition(stream="events", partition=0, offset=4)])
 
     assert g1.committed[TopicPartition("events", 0)].offset == 5
     assert g2.committed == {}  # the g2 consumer must be untouched

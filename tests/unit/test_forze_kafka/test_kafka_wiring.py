@@ -9,6 +9,7 @@ from forze.application.contracts.stream import StreamSpec
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
+from forze.application.contracts.secrets import SecretRef
 from forze_kafka import (
     KafkaClient,
     KafkaClientDepKey,
@@ -16,8 +17,10 @@ from forze_kafka import (
     KafkaConfig,
     KafkaDepsModule,
     KafkaStreamConfig,
+    RoutedKafkaClient,
     kafka_lifecycle_step,
     resolve_kafka_topic,
+    routed_kafka_lifecycle_step,
 )
 from forze_kafka.adapters import (
     KafkaCommitStreamGroupAdapter,
@@ -60,6 +63,11 @@ def test_config_rejects_nonpositive_timeout() -> None:
 def test_config_sasl_requires_mechanism() -> None:
     with pytest.raises(CoreException):
         KafkaConfig(security_protocol="SASL_SSL")
+
+
+def test_config_rejects_negative_linger() -> None:
+    with pytest.raises(CoreException):
+        KafkaConfig(linger_ms=-1)
 
 
 def test_route_config_defaults() -> None:
@@ -141,6 +149,25 @@ def test_lifecycle_step_built() -> None:
     step = kafka_lifecycle_step(bootstrap_servers="localhost:9092")
 
     assert step.id == "kafka_lifecycle"
+
+
+class _StubSecrets:
+    async def resolve_str(self, ref: SecretRef) -> str:  # pragma: no cover - not called
+        return ""
+
+    async def exists(self, ref: SecretRef) -> bool:  # pragma: no cover - not called
+        return True
+
+
+async def test_routed_lifecycle_step_built() -> None:
+    routed = RoutedKafkaClient(
+        secrets=_StubSecrets(),  # type: ignore[arg-type]
+        secret_ref_for_tenant=lambda tid: SecretRef(path=f"tenants/{tid}/kafka"),
+        tenant_provider=lambda: None,
+    )
+    step = routed_kafka_lifecycle_step(client=routed)
+
+    assert step.id == "routed_kafka_lifecycle"
 
 
 # ---- relation ------------------------------------------------------------ #

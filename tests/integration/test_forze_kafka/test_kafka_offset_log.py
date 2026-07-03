@@ -10,6 +10,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from forze.application.contracts.stream import OffsetReset, StreamPosition
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.serialization import PydanticModelCodec
 from forze_kafka.adapters import (
     KafkaCommitStreamGroupAdapter,
@@ -192,6 +193,68 @@ async def test_at_least_once_redelivery_without_commit(
         bodies = await _bodies(recovered, group, "m-recover", topic, minimum=3)
 
     assert sorted(bodies[:3]) == ["0", "1", "2"]
+
+
+async def test_namespaced_tenant_round_trip(
+    kafka_client,  # noqa: ANN001 - initialized client fixture
+) -> None:
+    # tenant_aware=True + namespace → the physical topic is prefixed per tenant.
+    tenant = uuid4()
+    codec = KafkaStreamCodec(payload_codec=PydanticModelCodec(model_type=Payload))
+    provider = lambda: TenantIdentity(tenant_id=tenant)  # noqa: E731
+    namespace = "tns"
+
+    producer = KafkaStreamCommandAdapter(
+        client=kafka_client,
+        codec=codec,
+        namespace=namespace,
+        tenant_aware=True,
+        tenant_provider=provider,
+    )
+    consumer = KafkaCommitStreamGroupAdapter(
+        client=kafka_client,
+        codec=codec,
+        namespace=namespace,
+        tenant_aware=True,
+        tenant_provider=provider,
+        auto_offset_reset="earliest",
+    )
+    admin = KafkaCommitStreamGroupAdminAdapter(
+        client=kafka_client,
+        namespace=namespace,
+        tenant_aware=True,
+        tenant_provider=provider,
+    )
+
+    topic = f"ev-{uuid4().hex[:8]}"
+    group = f"g-{uuid4().hex[:8]}"
+    await admin.ensure_topic(topic, partitions=1)
+
+    message_id = await producer.append(topic, Payload(value="x"), key="k")
+    assert message_id.startswith(f"{namespace}.{topic}:")  # tenant-namespaced topic
+
+    positions: list[StreamPosition] = []
+    for _ in range(20):
+        batch = await consumer.read(group, "m1", [topic], timeout=timedelta(seconds=1))
+        positions.extend(StreamPosition.from_message(m) for m in batch)
+        if positions:
+            break
+    assert positions
+    await consumer.commit(group, positions)
+
+    lags = await admin.lag(group, topic)
+    assert lags and sum(lag.lag for lag in lags) == 0
+
+
+async def test_admin_on_missing_topic(
+    admin: KafkaCommitStreamGroupAdminAdapter,
+) -> None:
+    topic = f"nope-{uuid4().hex[:8]}"
+    group = f"g-{uuid4().hex[:8]}"
+
+    # No partitions to discover → lag is empty and replay is a safe no-op.
+    assert await admin.lag(group, topic) == []
+    await admin.reset_offsets(group, topic, to=OffsetReset.EARLIEST)
 
 
 async def test_capabilities_and_ensure_topic_idempotent(

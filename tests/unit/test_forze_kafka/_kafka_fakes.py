@@ -75,12 +75,14 @@ class FakeConsumer:
         self,
         *,
         batches: dict[TopicPartition, list[Any]] | None = None,
+        batch_sequence: list[dict[TopicPartition, list[Any]]] | None = None,
         partitions: dict[str, set[int]] | None = None,
         begins: dict[TopicPartition, int] | None = None,
         ends: dict[TopicPartition, int] | None = None,
         times: dict[TopicPartition, OffsetAndTimestamp | None] | None = None,
     ) -> None:
         self._batches = batches or {}
+        self._batch_sequence = batch_sequence
         self._partitions = partitions or {}
         self._begins = begins or {}
         self._ends = ends or {}
@@ -93,6 +95,13 @@ class FakeConsumer:
         self, *, timeout_ms: int = 0, max_records: int | None = None
     ) -> dict[TopicPartition, list[Any]]:
         del timeout_ms, max_records
+        if self._batch_sequence:
+            # Pop each queued batch, repeating the last (models empty polls → data).
+            return (
+                self._batch_sequence.pop(0)
+                if len(self._batch_sequence) > 1
+                else self._batch_sequence[0]
+            )
         return self._batches
 
     async def commit(self, offsets: dict[TopicPartition, OffsetAndMetadata]) -> None:
