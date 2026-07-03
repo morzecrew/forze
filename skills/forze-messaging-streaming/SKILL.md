@@ -115,7 +115,7 @@ stream = ctx.deps.resolve_configurable(
 entry_id = await stream.append("orders", payload, type="order.created")
 ```
 
-Use `StreamQueryDepKey` for `read` / `tail`. Consumer groups come in two disciplines: `AckStreamGroupQueryDepKey` for per-message ack + `claim` recovery (Redis-class), and `CommitStreamGroupQueryDepKey` for per-partition offset `commit` on a Kafka-class log (with a `CommitStreamGroupAdminDepKey` for `ensure_topic` / `reset_offsets` / `lag`). `MockDepsModule` registers all of them. For Redis streams or pub/sub, `RedisDepsModule` does not register stream/pubsub maps yet — use [`forze-custom-deps`](../forze-custom-deps/SKILL.md) or `MockDepsModule`.
+Use `StreamQueryDepKey` for `read` / `tail`. Consumer groups come in two disciplines: `AckStreamGroupQueryDepKey` for per-message ack + `claim` recovery (Redis-class), and `CommitStreamGroupQueryDepKey` for per-partition offset `commit` on a Kafka-class log (with a `CommitStreamGroupAdminDepKey` for `ensure_topic` / `ensure_group` / `reset_offsets` / `lag`). `MockDepsModule` registers all of them. For Redis streams or pub/sub, `RedisDepsModule` does not register stream/pubsub maps yet — use [`forze-custom-deps`](../forze-custom-deps/SKILL.md) or `MockDepsModule`.
 
 ## Processing rules
 

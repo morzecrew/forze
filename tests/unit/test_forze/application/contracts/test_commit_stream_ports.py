@@ -74,11 +74,13 @@ class TestOffsetReset:
 
 
 class TestConsumerLag:
-    def test_fields(self) -> None:
-        lag = ConsumerLag(
-            stream="s", partition=0, committed_offset=3, end_offset=10, lag=7
-        )
-        assert lag.lag == lag.end_offset - lag.committed_offset
+    def test_lag_is_derived(self) -> None:
+        lag = ConsumerLag(stream="s", partition=0, committed_offset=3, end_offset=10)
+        assert lag.lag == 7  # derived: max(0, end - committed)
+
+    def test_lag_never_negative(self) -> None:
+        lag = ConsumerLag(stream="s", partition=0, committed_offset=12, end_offset=10)
+        assert lag.lag == 0
 
 
 # ----------------------- #

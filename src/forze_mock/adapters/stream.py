@@ -655,6 +655,22 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
     def _all_topics(self) -> list[str]:
         return [k for k in self.stream._stream_store() if k != _GROUPS_KEY]  # type: ignore[reportPrivateUsage]
 
+    def _offset_at_timestamp(
+        self, when: datetime | None, *, end: int, topic: str, partition: int
+    ) -> int:
+        """First offset on *partition* whose message timestamp is at or after *when* (else *end*)."""
+
+        for msg, msg_partition, offset in _assign_positions(
+            self._log(topic), self._partitions(topic)
+        ):
+            if msg_partition != partition:
+                continue
+
+            if when is not None and msg.timestamp is not None and msg.timestamp >= when:
+                return offset
+
+        return end
+
     def _target_offset(
         self, target: OffsetReset, *, end: int, topic: str, partition: int
     ) -> int:
@@ -668,19 +684,9 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
             offset = target.offset if target.offset is not None else 0
             return max(0, min(offset, end))
 
-        # TIMESTAMP: the first offset on this partition at or after the instant.
-        when = target.timestamp
-
-        for msg, msg_partition, offset in _assign_positions(
-            self._log(topic), self._partitions(topic)
-        ):
-            if msg_partition != partition:
-                continue
-
-            if when is not None and msg.timestamp is not None and msg.timestamp >= when:
-                return offset
-
-        return end
+        return self._offset_at_timestamp(
+            target.timestamp, end=end, topic=topic, partition=partition
+        )
 
     # ....................... #
 
@@ -768,7 +774,6 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
                             partition=partition,
                             committed_offset=committed,
                             end_offset=end,
-                            lag=max(0, end - committed),
                         )
                     )
 

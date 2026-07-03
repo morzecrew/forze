@@ -18,11 +18,13 @@ an implementation detail behind it. There are four.
 | **Commit-stream** | at-least-once, per group | per-partition offset `commit`; broker rebalance | any offset / timestamp | high-throughput logs, event sourcing |
 | **Pub/sub** | at-most-once | none | no | lossy broadcast (presence, cache-bust) |
 
-Every model except pub/sub is at-least-once at the transport. **Exactly-once *effect*** comes
-from pairing any of them with the [inbox](../reference/contracts/messaging.md): the consumer
-dedups on a stable message id inside the same transaction as its writes, so a redelivery is a
-no-op. That is why the transport only has to promise at-least-once — the inbox turns "at least
-once" into "exactly once" for the observable effect.
+Three of the four — queue, ack-stream, commit-stream — are at-least-once at the transport, and
+those three reach **exactly-once *effect*** when paired with the
+[inbox](../reference/contracts/messaging.md): the consumer dedups on a stable message id inside
+the same transaction as its writes, so a redelivery is a no-op. The inbox only turns *at-least*
+-once into exactly-once — it cannot recover a message the transport never delivered, so it does
+**not** apply to pub/sub, which is at-most-once and can drop a message before the inbox ever
+sees it. Choose an at-least-once model whenever a consumer must eventually see every message.
 
 ## Queue
 

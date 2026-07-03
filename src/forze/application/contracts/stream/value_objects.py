@@ -257,5 +257,12 @@ class ConsumerLag:
     end_offset: int
     """Offset just past the last produced message on this partition."""
 
-    lag: int
-    """Uncommitted messages on this partition (``end_offset - committed_offset``)."""
+    @property
+    def lag(self) -> int:
+        """Uncommitted messages on this partition (``max(0, end - committed)``).
+
+        Derived, never stored — so an adapter cannot report a lag inconsistent
+        with its committed/end offsets.
+        """
+
+        return max(0, self.end_offset - self.committed_offset)

@@ -143,6 +143,14 @@ class CommitStreamGroupConsumer[M]:
        offset stays uncommitted for redelivery, never silently skipped.
     6. **Idle** — a finite ``timeout`` drains what is available and returns;
        ``None`` runs forever, polling.
+
+    **Pause is consumer-wide, not per-topic.** A pause-and-alert (poison with no
+    dead-letter route, or any decrypt/decode poison) stops the *whole* consumer —
+    every subscribed topic — not just the wedged partition. The run returns and
+    does not resume until an operator intervenes (clear the poison / add a DLQ
+    route / reset the offset). Run one consumer per isolation boundary if a poison
+    message in one topic must not stall the others, and alert on a run that
+    returns with ``failed > 0``.
     """
 
     topics: tuple[str, ...] = attrs.field(converter=tuple)
@@ -208,6 +216,11 @@ class CommitStreamGroupConsumer[M]:
         timeout: timedelta | None = None,
     ) -> CommitStreamGroupConsumerRunResult:
         """Consume the log and process each message exactly-once via the inbox.
+
+        Returns early — even with ``timeout=None`` — if a message pauses the
+        consumer (poison with no dead-letter route, or decrypt/decode poison):
+        the pause is **consumer-wide**, halting every subscribed topic, so treat a
+        result with ``failed > 0`` as an alert requiring operator intervention.
 
         :param timeout: ``None`` runs forever (polling on an empty log); a finite
             value drains what is currently available and returns a result.
