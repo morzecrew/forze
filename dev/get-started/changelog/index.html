@@ -2488,6 +2488,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/messaging-delivery-models/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-split" viewBox="0 0 24 24"><path d="M16 3h5v5M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3M15 9l6-6"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Messaging delivery models
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/realtime/" class="md-nav__link">
         
   
@@ -7361,6 +7390,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Transports &amp; DX</strong></p>
 <ul>
 <li>
+<p><strong>Offset-log stream consumption</strong> — a fourth delivery model for Kafka-class partitioned, offset-committed logs, backend-neutral under <code>contracts/stream/</code>: <code>CommitStreamGroupQueryPort</code> (<code>read</code> / <code>tail</code> / <code>commit</code>) + <code>CommitStreamGroupAdminPort</code> (<code>ensure_topic</code> / <code>ensure_group</code> / <code>reset_offsets</code> / <code>lag</code>), <code>StreamPosition</code> / <code>OffsetReset</code> / <code>ConsumerLag</code>, and a <code>CommitStreamGroupCapabilities</code> (<code>supports_replay</code> / <code>supports_transactions</code>) fail-closed at the admin-call / resolve boundary (via <code>ctx.stream</code> / <code>StreamSpec.requires_transactions</code>). A <code>CommitStreamGroupConsumer</code> kits runner commits after <code>process_with_inbox</code> (at-least-once transport + inbox dedup = exactly-once effect; DLQ-and-advance or pause-and-alert on poison). Mock reference adapters + a conformance battery pin the semantics; the concrete Kafka backend lands separately.</p>
+</li>
+<li>
 <p><strong>Redis stream &amp; pub-sub transports</strong> — <code>RedisDepsModule</code> wires <code>StreamSpec</code> / <code>PubSubSpec</code> via <code>RedisStreamConfig</code> / <code>RedisStreamGroupConfig</code> / <code>RedisPubSubConfig</code>; <code>encryption="end_to_end"</code> seals through the broker, <code>tenant_aware</code> adds a key prefix. The stream consumer-group adapter splits into a data-plane query adapter and a control-plane <code>*StreamGroupAdminAdapter</code> (<code>ensure_group</code>), for Redis and the mock.</p>
 </li>
 <li>
@@ -7446,6 +7478,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>GroupRef</code> (query grouping) → <code>GroupField</code></strong> — resolves the clash with the authz <code>GroupRef</code> (unchanged).</p>
 </li>
 <li>
+<p><strong>PEL stream ports renamed for the two-sub-model split</strong> — <code>StreamGroupQueryPort</code> / <code>StreamGroupAdminPort</code> → <code>AckStreamGroupQueryPort</code> / <code>AckStreamGroupAdminPort</code> (and dep keys <code>StreamGroup*DepKey</code> → <code>AckStreamGroup*DepKey</code>), pairing symmetrically with the new <code>CommitStreamGroup*</code> offset-log ports; behavior unchanged (find-and-replace <code>StreamGroup*</code> → <code>AckStreamGroup*</code>). <code>StreamMessage</code> gains optional <code>partition</code> / <code>offset</code> fields (<code>None</code> for the ack sub-model).</p>
+</li>
+<li>
 <p><strong>Package restructures</strong> — <code>forze_dst</code> splits into a thin <code>Simulation</code> facade over <code>engines/</code> / <code>oracle/</code> / <code>artifacts/</code> (<code>SchedulerKind</code> removed); <code>forze_mock</code> root modules → <code>adapters/</code>, factories → <code>execution.factories</code> (top-level imports unchanged); notify kit's <code>NotificationRouter</code> is now a mutable builder (<code>register()</code> → <code>freeze()</code>) with resolution on <code>FrozenNotificationRouter</code>, reorganized into <code>routing</code> / <code>events</code> / <code>consumer</code> / <code>lifecycle</code>.</p>
 </li>
 </ul>
@@ -7462,6 +7497,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Empty filter/sort maps are no-ops</strong> on list/search requests; a structured-but-empty envelope is still rejected.</p>
+</li>
+<li>
+<p><strong>Sizing bounds clamp/reject instead of silently resetting</strong> — an out-of-range document-adapter <code>batch_size</code> (outside <code>[10, 20000]</code>) is now rejected with <code>exc.configuration</code> at wiring instead of being replaced with <code>200</code> on first use; a per-call stream <code>chunk_size</code> is clamped to the nearest bound (<code>[10, 20000]</code>) instead of reset to <code>500</code>, so an over-large request runs at the ceiling rather than shrinking. A BigQuery <code>max_poll_attempts &lt; 1</code> is likewise rejected at wiring. Bounds are enforced through a shared <code>clamp</code> primitive.</p>
 </li>
 <li>
 <p><strong>Integration logger namespaces unified to <code>forze_&lt;pkg&gt;.*</code></strong> — <code>forze_redis</code> / <code>forze_postgres</code> / <code>forze_http</code> / <code>forze_firestore</code> / <code>forze_temporal</code> no longer log under bare prefixes; update log filters keyed on the old ones.</p>

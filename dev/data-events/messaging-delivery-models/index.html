@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/data-events/procedures/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/data-events/messaging-delivery-models/">
       
       
-        <link rel="prev" href="../query-parameters/">
+        <link rel="prev" href="../events-sagas/">
       
       
-        <link rel="next" href="../analytics/">
+        <link rel="next" href="../realtime/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Procedures - Forze</title>
+        <title>Messaging delivery models - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#where-it-sits" class="md-skip">
+        <a href="#the-four-models" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Procedures
+              Messaging delivery models
             
           </span>
         </div>
@@ -1383,36 +1383,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cog" viewBox="0 0 24 24"><path d="M11 10.27 7 3.34M11 13.73l-4 6.93M12 22v-2M12 2v2M14 12h8M17 20.66l-1-1.73M17 3.34l-1 1.73M2 12h2M20.66 17l-1.73-1M20.66 7l-1.73 1M3.34 17l1.73-1M3.34 7l1.73 1"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="8"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Procedures
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../procedures/" class="md-nav__link">
         
   
   
@@ -1429,91 +1403,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#where-it-sits" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Where it sits
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-shape-in-code" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The shape in code
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-comes-back" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What comes back
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#mapping-it-to-postgres" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Mapping it to Postgres
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tenancy" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Tenancy
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-batch-recompute-case" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The batch-recompute case
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1610,10 +1499,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../messaging-delivery-models/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-split" viewBox="0 0 24 24"><path d="M16 3h5v5M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3M15 9l6-6"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Messaging delivery models
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1630,6 +1545,91 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-four-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The four models
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Queue
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ack-stream-redis-class" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ack-stream (Redis-class)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commit-stream-kafka-class" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Commit-stream (Kafka-class)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pubsub" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pub/sub
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choosing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5379,10 +5379,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#where-it-sits" class="md-nav__link">
+  <a href="#the-four-models" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Where it sits
+        The four models
       </span>
     </span>
   </a>
@@ -5390,10 +5390,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-shape-in-code" class="md-nav__link">
+  <a href="#queue" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The shape in code
+        Queue
       </span>
     </span>
   </a>
@@ -5401,10 +5401,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-comes-back" class="md-nav__link">
+  <a href="#ack-stream-redis-class" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What comes back
+        Ack-stream (Redis-class)
       </span>
     </span>
   </a>
@@ -5412,10 +5412,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#mapping-it-to-postgres" class="md-nav__link">
+  <a href="#commit-stream-kafka-class" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Mapping it to Postgres
+        Commit-stream (Kafka-class)
       </span>
     </span>
   </a>
@@ -5423,10 +5423,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tenancy" class="md-nav__link">
+  <a href="#pubsub" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Tenancy
+        Pub/sub
       </span>
     </span>
   </a>
@@ -5434,10 +5434,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-batch-recompute-case" class="md-nav__link">
+  <a href="#choosing" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The batch-recompute case
+        Choosing
       </span>
     </span>
   </a>
@@ -5548,232 +5548,109 @@
   
 
 
-  <h1 id="__skip">Procedures</h1>
+  <h1 id="__skip">Messaging delivery models</h1>
 
-<p>Some database work is neither a document write nor an analytical read: recomputing
-a rollup over a freshly-ingested batch, calling a stored function, refreshing a
-materialized view. You can always reach for the raw client — but then you own
-correctness, with no parameter validation, no tenancy, no portability. The
-<strong>procedures</strong> port is the governed middle ground: a spec-named, parametrized
-command or compute step. It is the write-and-compute twin of the governed,
-parametrized <em>reads</em> you run through <a href="../analytics/">analytics</a>, sharing the same
-machinery and differing only in intent.</p>
-<h2 id="where-it-sits">Where it sits<a class="headerlink" href="#where-it-sits" title="Permanent link">&para;</a></h2>
-<p>A handler touches the database three ways, and procedures fills the gap between
-the other two:</p>
+<p>Forze separates its messaging ports by <strong>delivery model</strong>, not by backend. The model decides
+what a consumer is promised — whether a message survives a crash, whether it can be replayed,
+how a stalled consumer recovers — so choosing the model is the real decision; the backend is
+an implementation detail behind it. There are four.</p>
+<h2 id="the-four-models">The four models<a class="headerlink" href="#the-four-models" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Approach</th>
-<th>What it does</th>
-<th>Governed?</th>
+<th>Model</th>
+<th>Guarantee</th>
+<th>Recovery unit</th>
+<th>Replayable</th>
+<th>Fits</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Raw client</td>
-<td>any SQL, inline</td>
-<td>no — you own validation, tenancy, portability</td>
+<td><strong>Queue</strong></td>
+<td>at-least-once</td>
+<td>per-message <code>ack</code> / <code>nack(requeue)</code></td>
+<td>no</td>
+<td>work items, jobs, commands</td>
 </tr>
 <tr>
-<td><strong>Procedures</strong></td>
-<td>a named command / compute step</td>
-<td><strong>yes</strong> — validated params, tenancy, backend-portable</td>
+<td><strong>Ack-stream</strong></td>
+<td>at-least-once, per group</td>
+<td>per-message <code>ack</code> + explicit <code>claim</code></td>
+<td>from group creation</td>
+<td>ordered events, competing consumers</td>
 </tr>
 <tr>
-<td>Analytics</td>
-<td>named reads, pages of rows</td>
-<td>yes</td>
+<td><strong>Commit-stream</strong></td>
+<td>at-least-once, per group</td>
+<td>per-partition offset <code>commit</code>; broker rebalance</td>
+<td>any offset / timestamp</td>
+<td>high-throughput logs, event sourcing</td>
+</tr>
+<tr>
+<td><strong>Pub/sub</strong></td>
+<td>at-most-once</td>
+<td>none</td>
+<td>no</td>
+<td>lossy broadcast (presence, cache-bust)</td>
 </tr>
 </tbody>
 </table>
-<p>Procedures promotes raw SQL to a <em>named, validated, tenant-aware, portable</em>
-operation. Unlike analytics it mutates or computes rather than returning pages —
-so it is <strong>command-only</strong>, and acquiring it inside a read-only operation fails
-closed. The motivating case is a batch pipeline: ingest a large batch, then run
-<strong>one</strong> set-based statement over it, instead of per-row triggers that overload
-the database.</p>
-<h2 id="the-shape-in-code">The shape in code<a class="headerlink" href="#the-shape-in-code" title="Permanent link">&para;</a></h2>
-<p>One spec is one procedure: a typed params model in, and an optional typed result.
-It names nothing about SQL or the backend — that lives in the wiring.</p>
-<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Sale</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-    <span class="n">region</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">amount</span><span class="p">:</span> <span class="nb">int</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">RegionTotal</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-    <span class="n">region</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">total</span><span class="p">:</span> <span class="nb">int</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">RegionQuery</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-    <span class="k">pass</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">RecomputeWindow</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-    <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2026-01-01&quot;</span>
-
-
-<span class="c1"># The batch lands via analytics append; the read side serves recomputed per-region totals.</span>
-<span class="n">SALES_SPEC</span> <span class="o">=</span> <span class="n">AnalyticsSpec</span><span class="p">[</span><span class="n">RegionTotal</span><span class="p">,</span> <span class="n">Sale</span><span class="p">](</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;sales&quot;</span><span class="p">,</span>
-    <span class="n">read</span><span class="o">=</span><span class="n">RegionTotal</span><span class="p">,</span>
-    <span class="n">queries</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;by_region&quot;</span><span class="p">:</span> <span class="n">AnalyticsQueryDefinition</span><span class="p">(</span><span class="n">params</span><span class="o">=</span><span class="n">RegionQuery</span><span class="p">)},</span>
-    <span class="n">ingest</span><span class="o">=</span><span class="n">Sale</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="c1"># The procedure is the whole handler-facing surface: typed params, no result model means</span>
-<span class="c1"># side-effect only (returns an affected-row count). Command-only — it mutates/computes.</span>
-<span class="n">RECOMPUTE_SPEC</span> <span class="o">=</span> <span class="n">ProcedureSpec</span><span class="p">[</span><span class="n">RecomputeWindow</span><span class="p">,</span> <span class="kc">None</span><span class="p">](</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;recompute_region_totals&quot;</span><span class="p">,</span>
-    <span class="n">params</span><span class="o">=</span><span class="n">RecomputeWindow</span><span class="p">,</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>A handler resolves the port off the context and runs it with typed params. The
-recompute below replaces a swarm of per-row triggers with a single governed call:</p>
-<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">ingest_sales</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">sales</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Sale</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="c1"># Append-only ingest of the batch (stands in for a large bulk load).</span>
-    <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">analytics</span><span class="o">.</span><span class="n">ingest</span><span class="p">(</span><span class="n">SALES_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sales</span><span class="p">)</span>
-
-
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">recompute</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2026-01-01&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="c1"># ONE governed set-based statement over the whole batch — no per-row triggers.</span>
-    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">procedure</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">RECOMPUTE_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-        <span class="n">RecomputeWindow</span><span class="p">(</span><span class="n">since</span><span class="o">=</span><span class="n">since</span><span class="p">)</span>
-    <span class="p">)</span>
-    <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">affected_count</span> <span class="ow">or</span> <span class="mi">0</span>
-
-
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">region_totals</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">RegionTotal</span><span class="p">]:</span>
-    <span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">analytics</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SALES_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;by_region&quot;</span><span class="p">,</span> <span class="n">RegionQuery</span><span class="p">())</span>
-    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">hits</span><span class="p">)</span>
-</code></pre></div>
-<h2 id="what-comes-back">What comes back<a class="headerlink" href="#what-comes-back" title="Permanent link">&para;</a></h2>
-<p>The <code>result</code> you declare on the spec drives the shape of the <code>ExecResult</code>. The
-cardinality is deliberately narrow — a scalar, a single row, or an affected-row
-count. Pages of rows are analytics' job, not this port's.</p>
-<table>
-<thead>
-<tr>
-<th><code>result</code> on the spec</th>
-<th><code>ExecResult</code> carries</th>
-<th>Use for</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>None</code></td>
-<td><code>affected_count</code></td>
-<td>a side effect — recompute, <code>REFRESH</code>, <code>CALL</code></td>
-</tr>
-<tr>
-<td>a scalar type (<code>int</code>, …)</td>
-<td><code>value</code></td>
-<td>a function returning one value</td>
-</tr>
-<tr>
-<td>a Pydantic model</td>
-<td><code>value</code></td>
-<td>a function or <code>SELECT</code> returning one row</td>
-</tr>
-</tbody>
-</table>
-<h2 id="mapping-it-to-postgres">Mapping it to Postgres<a class="headerlink" href="#mapping-it-to-postgres" title="Permanent link">&para;</a></h2>
-<p>The handler-facing spec stays backend-agnostic; the statement lives in the
-integration config. On <a href="../../integrations/postgres/">Postgres</a>, one
-<code>PostgresProcedureConfig</code> maps a route to a statement with <code>%(name)s</code>
-placeholders:</p>
-<div class="highlight"><pre><span></span><code><span class="n">PostgresProcedureConfig</span><span class="p">(</span>
-    <span class="c1"># A set-based statement; with result=None the rowcount is the affected count, so this is DML</span>
-    <span class="c1"># (not `SELECT a_function(...)`, which returns one row — a count-returning function uses a</span>
-    <span class="c1"># scalar result instead).</span>
-    <span class="n">sql</span><span class="o">=</span><span class="p">(</span>
-        <span class="s2">&quot;INSERT INTO region_totals (region, total) &quot;</span>
-        <span class="s2">&quot;SELECT region, sum(amount) FROM sales WHERE since &gt;= </span><span class="si">%(since)s</span><span class="s2"> GROUP BY region &quot;</span>
-        <span class="s2">&quot;ON CONFLICT (region) DO UPDATE SET total = excluded.total&quot;</span>
-    <span class="p">),</span>
-    <span class="n">in_transaction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>            <span class="c1"># False for REFRESH MATERIALIZED VIEW CONCURRENTLY</span>
-    <span class="n">statement_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>         <span class="c1"># SET LOCAL statement_timeout for long compute</span>
-    <span class="n">query_schema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>              <span class="c1"># per-tenant schema (namespace tier)</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>Set <code>in_transaction=False</code> for statements that cannot run inside a transaction
-(<code>REFRESH MATERIALIZED VIEW CONCURRENTLY</code> and some maintenance); they take the
-autocommit path. <code>statement_timeout</code> and <code>query_schema</code> both need a transaction,
-so they are rejected at wiring when combined with <code>in_transaction=False</code>.</p>
-<h2 id="tenancy">Tenancy<a class="headerlink" href="#tenancy" title="Permanent link">&para;</a></h2>
-<p>Analytics and document writes can <em>enforce</em> tenant isolation because the framework
-composes the predicate. A procedure runs author-supplied opaque SQL, so the
-framework can only enforce isolation where the tenant boundary lives outside that
-SQL:</p>
-<table>
-<thead>
-<tr>
-<th>Tier</th>
-<th>Mechanism</th>
-<th>Posture</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>namespace</code></td>
-<td>per-tenant schema via <code>query_schema</code></td>
-<td>enforced — the SQL runs in the tenant's own schema</td>
-</tr>
-<tr>
-<td><code>dedicated</code></td>
-<td>a routed client per tenant</td>
-<td>enforced — strongest isolation</td>
-</tr>
-<tr>
-<td><code>tagged</code></td>
-<td><code>%(tenant)s</code> bound into the SQL</td>
-<td>offered, then validated (below)</td>
-</tr>
-</tbody>
-</table>
-<p>At the tagged tier the framework binds the current tenant id as the <code>%(tenant)s</code>
-parameter, but it cannot prove the SQL <em>uses</em> it to scope. So a <code>tenant_aware</code>
-route is allowed, but checked.</p>
-<div class="admonition warning">
-<p class="admonition-title">A tenant-aware route fails closed at wiring</p>
-<p>Wiring a <code>tenant_aware</code> procedure whose SQL never references <code>%(tenant)s</code>
-raises at startup, not at runtime — a route that declares tenant-scoping but
-forgets to bind the tenant is a configuration error, never a silent leak.
-This proves the parameter is <em>bound</em>; for genuinely enforced isolation, prefer
-the <code>namespace</code> or <code>dedicated</code> tier. See <a href="../../identity-tenancy-enc/multi-tenancy/">multi-tenancy</a>.</p>
+<p>Three of the four — queue, ack-stream, commit-stream — are at-least-once at the transport, and
+those three reach <strong>exactly-once <em>effect</em></strong> when paired with the
+<a href="../../reference/contracts/messaging/">inbox</a>: the consumer dedups on a stable message id inside
+the same transaction as its writes, so a redelivery is a no-op. The inbox only turns <em>at-least</em>
+-once into exactly-once — it cannot recover a message the transport never delivered, so it does
+<strong>not</strong> apply to pub/sub, which is at-most-once and can drop a message before the inbox ever
+sees it. Choose an at-least-once model whenever a consumer must eventually see every message.</p>
+<h2 id="queue">Queue<a class="headerlink" href="#queue" title="Permanent link">&para;</a></h2>
+<p><code>QueueSpec[M]</code> — a competing-consumers work queue. Each message is delivered to one consumer,
+which <code>ack</code>s on success or <code>nack</code>s (with or without requeue) on failure; the broker redelivers
+after a visibility timeout. No offsets, no replay — once acked, a message is gone. Reach for it
+for <strong>jobs and commands</strong> where order across items does not matter and each item is handled
+once.</p>
+<h2 id="ack-stream-redis-class">Ack-stream (Redis-class)<a class="headerlink" href="#ack-stream-redis-class" title="Permanent link">&para;</a></h2>
+<p><code>AckStreamGroupQueryPort</code> — an ordered, replayable log consumed by a <strong>consumer group</strong> with a
+Pending Entries List. Each entry is delivered to exactly one consumer in the group and stays
+<em>pending</em> until that consumer <code>ack</code>s it; a consumer that crashes strands its pending entries,
+and any worker recovers them with <code>claim</code> (transferring ownership of entries idle past a
+threshold). Use it for <strong>ordered events with competing consumers</strong> on a Redis-class backend,
+where you want per-message acks and explicit stranded-work recovery.</p>
+<h2 id="commit-stream-kafka-class">Commit-stream (Kafka-class)<a class="headerlink" href="#commit-stream-kafka-class" title="Permanent link">&para;</a></h2>
+<p><code>CommitStreamGroupQueryPort</code> — a <strong>partitioned, offset-committed log</strong>. Instead of acking each
+message, a consumer <code>commit</code>s a <code>StreamPosition</code>, and that single offset acknowledges every
+message up to it on that partition (a high-water mark). Partitions are assigned across live
+group members by the broker, so recovery from a crash is a <strong>rebalance</strong>, not a per-message
+claim. The control plane (<code>CommitStreamGroupAdminPort</code>) provisions topics, positions a group,
+inspects <code>lag</code>, and <code>reset_offsets</code> to <strong>replay</strong> from any offset or timestamp.</p>
+<p>Consume it with the <code>CommitStreamGroupConsumer</code> runner, which commits the offset only <strong>after</strong>
+<code>process_with_inbox</code> succeeds — never auto-commit, which would decouple the commit from
+processing and silently drop the guarantee. On a poison message it either produces to a
+dead-letter stream and commits past it (freeing the partition) or, with no dead-letter route,
+pauses and alerts — never a silent skip. Reach for it for <strong>high-throughput logs and event
+sourcing</strong> where partitioned ordering and replay matter.</p>
+<div class="admonition note">
+<p class="admonition-title">Ack vs commit</p>
+<p>Both are consumer groups over an ordered log; the difference is the acknowledgment unit —
+per-message id (<code>ack</code>) versus per-partition offset (<code>commit</code>). That one axis is why the
+ports carry the <code>Ack</code> / <code>Commit</code> prefix.</p>
 </div>
-<p>A procedure that is inherently cross-tenant — refreshing a shared materialized
-view, a cross-tenant rollup — is simply not <code>tenant_aware</code>, the same as any other
-non-tenant port.</p>
-<h2 id="the-batch-recompute-case">The batch-recompute case<a class="headerlink" href="#the-batch-recompute-case" title="Permanent link">&para;</a></h2>
-<p>The flow that motivates the port: a batch lands, then one set-based statement
-recomputes over it. The compute is expressed once, in the registered statement —
-here modelled in-process so the recipe runs without a warehouse:</p>
-<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_recompute_region_totals</span><span class="p">(</span>
-    <span class="n">params</span><span class="p">:</span> <span class="n">RecomputeWindow</span><span class="p">,</span>
-    <span class="n">state</span><span class="p">:</span> <span class="n">MockState</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecResult</span><span class="p">[</span><span class="kc">None</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Model the set-based recompute the production SQL performs: read the ingested batch,</span>
-<span class="sd">    aggregate per region in one pass, materialize the read model. Returns the rows written.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-
-    <span class="n">sales</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">analytics_ingest_log</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;sales&quot;</span><span class="p">,</span> <span class="p">[])</span>
-
-    <span class="n">totals</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
-    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">sales</span><span class="p">:</span>
-        <span class="n">totals</span><span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;region&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="n">totals</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;region&quot;</span><span class="p">],</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;amount&quot;</span><span class="p">])</span>
-
-    <span class="n">state</span><span class="o">.</span><span class="n">analytics_query_hits</span><span class="p">[</span><span class="s2">&quot;sales&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="s2">&quot;by_region&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="n">r</span><span class="p">,</span> <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="n">t</span><span class="p">}</span> <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">totals</span><span class="o">.</span><span class="n">items</span><span class="p">())]</span>
-    <span class="p">}</span>
-
-    <span class="k">return</span> <span class="n">ExecResult</span><span class="p">(</span><span class="n">affected_count</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">totals</span><span class="p">))</span>
-</code></pre></div>
-<p>In production that handler is a single Postgres statement; the calling code does
-not change. Field encryption applies to a procedure's <strong>params</strong> when a keyring is
-wired — the same field-level <a href="../../identity-tenancy-enc/encryption/">encryption</a>
-the document and analytics paths use.</p>
+<h2 id="pubsub">Pub/sub<a class="headerlink" href="#pubsub" title="Permanent link">&para;</a></h2>
+<p><code>PubSubSpec[M]</code> — fire-and-forget fan-out to whoever is listening <strong>right now</strong>. A subscriber
+offline at publish time misses the message; there is no ack and no replay. It is <strong>at-most-once
+past the broker</strong> — legitimate for lossy broadcast (cache invalidation, presence, live
+notifications), wrong for anything that must eventually be seen. When in doubt, pick a queue or
+a stream.</p>
+<h2 id="choosing">Choosing<a class="headerlink" href="#choosing" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Must every item be handled, order-independent?</strong> → <strong>Queue</strong>.</li>
+<li><strong>Ordered events, competing consumers, per-message acks?</strong> → <strong>Ack-stream</strong>.</li>
+<li><strong>Partitioned high-throughput log, replay, offset commits?</strong> → <strong>Commit-stream</strong>.</li>
+<li><strong>Lossy broadcast to live listeners only?</strong> → <strong>Pub/sub</strong>.</li>
+</ul>
+<p>The contract surface for each lives in
+<a href="../../reference/contracts/streaming/">Streaming &amp; pub/sub</a> and
+<a href="../../reference/contracts/messaging/">Messaging &amp; the outbox</a>.</p>
 
 
 
@@ -5814,7 +5691,7 @@ the document and analytics paths use.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../query-parameters/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Query parameters">
+          <a href="../events-sagas/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Events &amp; sagas">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -5824,20 +5701,20 @@ the document and analytics paths use.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Query parameters
+                Events & sagas
               </div>
             </div>
           </a>
         
         
           
-          <a href="../analytics/" class="md-footer__link md-footer__link--next" aria-label="Next: Analytics">
+          <a href="../realtime/" class="md-footer__link md-footer__link--next" aria-label="Next: Realtime push">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Analytics
+                Realtime push
               </div>
             </div>
             <div class="md-footer__button md-icon">

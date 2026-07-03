@@ -1484,6 +1484,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../data-events/messaging-delivery-models/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-split" viewBox="0 0 24 24"><path d="M16 3h5v5M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3M15 9l6-6"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Messaging delivery models
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../data-events/realtime/" class="md-nav__link">
         
   
@@ -5462,7 +5491,9 @@ and declared with a <code>MessageCodecSpec</code> — a <code>name</code>, a pay
 tier (<code>none</code> / <code>end_to_end</code>). Realtime push rides on the stream; see
 <a href="../../../data-events/realtime/">Realtime</a>.</p>
 <h2 id="streams">Streams<a class="headerlink" href="#streams" title="Permanent link">&para;</a></h2>
-<p><code>StreamSpec[M]</code> — an ordered, replayable log. Four ports by dep key:</p>
+<p><code>StreamSpec[M]</code> — an ordered, replayable log. The producer and plain reader are shared;
+consumption comes in two disciplines, named for how they acknowledge — per-message <strong>ack</strong>
+(Redis-class) or per-partition offset <strong>commit</strong> (Kafka-class):</p>
 <table>
 <thead>
 <tr>
@@ -5483,19 +5514,34 @@ tier (<code>none</code> / <code>end_to_end</code>). Realtime push rides on the s
 <td><code>read</code> (by offset), <code>tail</code> (follow)</td>
 </tr>
 <tr>
-<td><code>StreamGroupQueryDepKey</code></td>
-<td>consumer group</td>
-<td><code>read</code>, <code>tail</code>, <code>ack</code> — at-least-once per group</td>
+<td><code>AckStreamGroupQueryDepKey</code></td>
+<td>ack consumer group</td>
+<td><code>read</code>, <code>tail</code>, <code>ack</code>, <code>claim</code>, <code>pending</code></td>
 </tr>
 <tr>
-<td><code>StreamGroupAdminDepKey</code></td>
-<td>group admin</td>
+<td><code>AckStreamGroupAdminDepKey</code></td>
+<td>ack group admin</td>
 <td><code>ensure_group</code></td>
+</tr>
+<tr>
+<td><code>CommitStreamGroupQueryDepKey</code></td>
+<td>commit consumer group</td>
+<td><code>read</code>, <code>tail</code>, <code>commit</code></td>
+</tr>
+<tr>
+<td><code>CommitStreamGroupAdminDepKey</code></td>
+<td>commit group admin</td>
+<td><code>ensure_topic</code>, <code>ensure_group</code>, <code>reset_offsets</code>, <code>lag</code></td>
 </tr>
 </tbody>
 </table>
-<p>A consumer group gives competing consumers and acked, resumable delivery; a plain reader
-replays from any offset.</p>
+<p>The <strong>ack</strong> group gives competing consumers, per-message acks, and explicit <code>claim</code> recovery
+of stranded entries. The <strong>commit</strong> group is a partitioned, offset-committed log: a single
+committed <code>StreamPosition</code> acknowledges every message up to it on that partition, recovery is
+broker-coordinated (no per-message claim), and <code>reset_offsets</code> replays. Both are
+at-least-once; pair either with the <a href="../messaging/">inbox</a> for exactly-once <em>effect</em>. A plain
+reader replays from any offset. For picking a model, see
+<a href="../../../data-events/messaging-delivery-models/">Messaging delivery models</a>.</p>
 <h2 id="pubsub">Pub/sub<a class="headerlink" href="#pubsub" title="Permanent link">&para;</a></h2>
 <p><code>PubSubSpec[M]</code> — fire-and-forget fan-out. Two ports:</p>
 <table>
