@@ -6,11 +6,12 @@ import asyncio
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import timedelta
-from typing import final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.durable.function import DurableFunctionSpec
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
@@ -233,6 +234,9 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
     limit: int
     max_batches_per_tick: int
     tenants: Callable[[], Sequence[UUID]] | None = None
+    specs: Sequence[DurableFunctionSpec[Any, Any]] = ()
+    """Durable-function specs whose cron triggers are auto-registered as schedules at
+    startup (idempotent — a restart re-uses an unchanged schedule, so no due fire is lost)."""
 
     task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
 
@@ -290,8 +294,29 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
+    async def _ensure_cron_schedules(
+        self,
+        ctx: ExecutionContext,
+        tenants: Sequence[UUID] | None,
+    ) -> None:
+        if not self.specs:
+            return
+
+        if tenants is None:
+            await self.scheduler.ensure_cron_schedules(ctx, self.specs)
+            return
+
+        for tenant in tenants:
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                await self.scheduler.ensure_cron_schedules(ctx, self.specs)
+
+    # ....................... #
+
     async def __call__(self, ctx: ExecutionContext) -> None:
         tenants = list(self.tenants()) if self.tenants is not None else None
+
+        # Auto-register schedules from declared cron triggers before the fire loop starts.
+        await self._ensure_cron_schedules(ctx, tenants)
 
         async def _loop() -> None:
             while True:
@@ -356,6 +381,7 @@ def durable_scheduler_background_lifecycle_step(
     limit: int = 100,
     max_batches_per_tick: int = 100,
     tenants: Callable[[], Sequence[UUID]] | None = None,
+    specs: Sequence[DurableFunctionSpec[Any, Any]] = (),
     step_id: StrKey = "durable_scheduler",
 ) -> LifecycleStep:
     """Build a lifecycle step that fires due recurring schedules on a background interval.
@@ -366,9 +392,13 @@ def durable_scheduler_background_lifecycle_step(
     the recovery scanner / runner — run this alongside
     :func:`durable_recovery_background_lifecycle_step`.
 
+    *specs* auto-registers a schedule for every ``DurableFunctionCronTrigger`` declared on a
+    durable-function spec (idempotent — a restart re-uses an unchanged schedule, so no due
+    fire is lost), so cron triggers "just schedule" without a manual ``scheduler.put``.
+
     When *tenants* is set the schedule store is **namespace-tier**: each sweep binds every
-    assigned tenant in turn and fires its schedules (shard frozen at startup). Omit it for a
-    tagged store (one unbound sweep fires every tenant's due schedules).
+    assigned tenant in turn and fires its schedules (and the specs are ensured per tenant);
+    the shard is frozen at startup. Omit it for a tagged store (one unbound sweep).
 
     Concurrent schedulers are safe (idempotent run keys + compare-and-set advance), so this
     can run on every replica; pair with the singleton lifecycle guard for a single elected
@@ -383,6 +413,7 @@ def durable_scheduler_background_lifecycle_step(
         limit=limit,
         max_batches_per_tick=max_batches_per_tick,
         tenants=tenants,
+        specs=specs,
     )
     shutdown = _DurableSchedulerBackgroundShutdown(startup=startup)
 

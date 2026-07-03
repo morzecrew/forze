@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Any, Sequence, final
 from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.durable.function import DurableScheduleRecord
+from forze.application.contracts.durable.function import (
+    DurableFunctionCronTrigger,
+    DurableFunctionSpec,
+    DurableScheduleRecord,
+)
 from forze.application.integrations.durable import next_cron_fire, validate_cron
 from forze.base.primitives import current_time_source
 
@@ -106,3 +110,76 @@ class DurableScheduler:
             )
 
         return len(due)
+
+    # ....................... #
+
+    async def ensure_schedule(
+        self,
+        ctx: ExecutionContext,
+        schedule_id: str,
+        name: str,
+        cron: str,
+        *,
+        input_json: JsonDict | None = None,
+        tz: str | None = None,
+        tenant_id: UUID | None = None,
+        enabled: bool = True,
+        now: datetime | None = None,
+    ) -> DurableScheduleRecord:
+        """Idempotently register a schedule.
+
+        Creates it if absent, re-registers it if its cron/timezone changed, and otherwise
+        leaves the existing schedule untouched — so calling this on every startup does **not**
+        reset ``next_fire_at`` (which would skip a due fire) or un-pause a disabled schedule.
+        """
+
+        existing = await resolve_durable_schedule_store(ctx).load(schedule_id)
+
+        if existing is not None and existing.cron == cron and existing.tz == tz:
+            return existing
+
+        return await self.put(
+            ctx,
+            schedule_id,
+            name,
+            cron,
+            input_json=input_json,
+            tz=tz,
+            tenant_id=tenant_id,
+            enabled=enabled,
+            now=now,
+        )
+
+    # ....................... #
+
+    async def ensure_cron_schedules(
+        self,
+        ctx: ExecutionContext,
+        specs: Sequence[DurableFunctionSpec[Any, Any]],
+        *,
+        now: datetime | None = None,
+    ) -> int:
+        """Register a schedule for every ``DurableFunctionCronTrigger`` on *specs*.
+
+        Each cron trigger becomes a schedule keyed ``{spec.name}:cron:{index}`` that fires the
+        function ``spec.name`` (with no input — cron carries no payload). Idempotent via
+        :meth:`ensure_schedule`; event triggers are ignored. Returns the number ensured.
+        """
+
+        ensured = 0
+
+        for spec in specs:
+            for index, trigger in enumerate(spec.triggers):
+                if not isinstance(trigger, DurableFunctionCronTrigger):
+                    continue
+
+                await self.ensure_schedule(
+                    ctx,
+                    f"{spec.name}:cron:{index}",
+                    str(spec.name),
+                    trigger.expression,
+                    now=now,
+                )
+                ensured += 1
+
+        return ensured

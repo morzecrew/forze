@@ -130,6 +130,22 @@ lifecycle = [
 ]
 ```
 
+Or **declare the cadence on the function** and let it wire itself: a `DurableFunctionSpec`
+with a `DurableFunctionCronTrigger` auto-registers its schedule when you pass the specs to
+the step — no manual `put`:
+
+```python
+spec = DurableFunctionSpec(
+    name="report",
+    run=DurableFunctionInvokeSpec(args_type=ReportArgs),
+    triggers=(DurableFunctionCronTrigger(expression="0 3 * * *"),),
+)
+durable_scheduler_background_lifecycle_step(scheduler=scheduler, specs=[spec])
+```
+
+Auto-registration is **idempotent** — a restart re-uses an unchanged schedule (so it never
+resets `next_fire_at` and skips a due fire) and re-registers only when the cron changes.
+
 Firing is **fire-once / skip-missed**: if the scheduler was down across several occurrences
 it fires once and advances to the next future one (no backfill). It's exactly-once across
 replicas — each fire enqueues a run keyed `{schedule_id}:{fire_epoch}` and the next fire is a
