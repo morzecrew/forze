@@ -99,3 +99,21 @@ class TestPerTenantRecovery:
         runs = list(state.durable_runs.values())
         assert len(runs) == 1
         assert runs[0]["tenant_id"] == tenant_a
+
+    async def test_idempotency_key_convergence_is_scoped_per_tenant(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        tenant_a, tenant_b = uuid4(), uuid4()
+        store = resolve_durable_run_store(ctx)
+
+        with _bind(ctx, tenant_a):
+            a1 = await store.enqueue("fn", input_json={"n": 1}, idempotency_key="k")
+            a2 = await store.enqueue("fn", input_json={"n": 2}, idempotency_key="k")
+        with _bind(ctx, tenant_b):
+            b1 = await store.enqueue("fn", input_json={"n": 3}, idempotency_key="k")
+
+        # Same tenant + key converges; a different tenant reusing the key is its own run.
+        assert a1.run_id == a2.run_id
+        assert b1.run_id != a1.run_id
+        assert a1.idempotency_key == "k" and b1.idempotency_key == "k"
+        assert a1.tenant_id == tenant_a and b1.tenant_id == tenant_b

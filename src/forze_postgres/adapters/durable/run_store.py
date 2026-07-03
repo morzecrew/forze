@@ -45,6 +45,32 @@ _T_COLUMNS = (
 resolve the ``run_id`` shared with the ``picked`` CTE); column names stay unqualified."""
 
 
+def _scope_idem(idempotency_key: str | None, tenant_id: UUID | None) -> str | None:
+    """Namespace an idempotency key under its tenant for the stored ``idempotency_key``.
+
+    A shared **tagged** table has one global ``UNIQUE (idempotency_key)``; prefixing the key
+    with the tenant scopes convergence per tenant, so two tenants reusing one key (e.g. a
+    scheduler's ``{schedule_id}:{fire_epoch}``) stay distinct runs. Single-tenant keys
+    (``tenant_id is None``) are stored verbatim — unchanged on-disk shape — and a ``None``
+    key is never namespaced (no idempotency; ``NULL`` stays globally distinct).
+    """
+    if idempotency_key is None or tenant_id is None:
+        return idempotency_key
+
+    return f"{tenant_id}:{idempotency_key}"
+
+
+def _unscope_idem(stored: str | None, tenant_id: UUID | None) -> str | None:
+    """Strip the tenant prefix :func:`_scope_idem` added, so a record surfaces the key the
+    caller passed (the fixed-width ``{uuid}:`` prefix makes the strip exact)."""
+    if stored is None or tenant_id is None:
+        return stored
+
+    prefix = f"{tenant_id}:"
+
+    return stored[len(prefix) :] if stored.startswith(prefix) else stored
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
@@ -53,7 +79,9 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
     Records run instances and hands out claims for execution and crash recovery. A crashed
     run is left ``RUNNING`` with an expired lease; :meth:`claim_abandoned` re-claims it with
     ``FOR UPDATE SKIP LOCKED`` (single-leader-safe, concurrent-scanner-safe). Re-submits
-    under one ``idempotency_key`` converge on a single run (``ON CONFLICT DO NOTHING``).
+    under one ``idempotency_key`` converge on a single run (``ON CONFLICT DO NOTHING``);
+    the key is stored **tenant-scoped**, so on a shared tagged table two tenants reusing one
+    key (e.g. a scheduler's ``{schedule_id}:{fire_epoch}``) stay distinct runs.
 
     **Tenancy.** The table is resolved under the bound tenant, so a static ``relation`` is a
     shared **tagged** table (``tenant_id`` column) and a per-tenant ``relation`` resolver is a
@@ -116,6 +144,7 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
         run_id = str(uuid7())
         now = utcnow()
         stored_input = await self._seal(input_json, run_id, "input", tenant_id)
+        stored_idem = _scope_idem(idempotency_key, tenant_id)
 
         row = await self.client.fetch_one(
             sql.SQL(
@@ -142,7 +171,7 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
             {
                 "run_id": run_id,
                 "name": name,
-                "idem": idempotency_key,
+                "idem": stored_idem,
                 "input": None if stored_input is None else Jsonb(stored_input),
                 "tenant_id": tenant_id,
                 "available_at": available_at,
@@ -163,8 +192,10 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
                 available_at=available_at,
             )
 
-        # A run already exists for this idempotency key: converge on it.
-        existing = await self._load_by_idempotency(table, idempotency_key)
+        # A run already exists for this idempotency key: converge on it. Look up by the
+        # tenant-scoped stored key so convergence never crosses tenants (``_record_from_row``
+        # unscopes it back to the caller's key).
+        existing = await self._load_by_idempotency(table, stored_idem)
 
         if existing is None:  # pragma: no cover — the conflicting row must exist
             raise exc.internal(
@@ -282,7 +313,12 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
         output_json: JsonDict | None,
         fence: int | None = None,
     ) -> None:
-        stored = await self._seal(output_json, run_id, "output", None)
+        # Seal under the bound tenant so the output AAD matches what ``_record_from_row``
+        # reconstructs on load: the runner binds the run's tenant before completing it, so
+        # this resolves the run's ``tenant_id`` (mirrors the input seal in ``enqueue``).
+        stored = await self._seal(
+            output_json, run_id, "output", self._tenant_id_for_resolve()
+        )
         await self._finish(
             run_id,
             status=DurableRunStatus.COMPLETED,
@@ -414,7 +450,7 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
             run_id=run_id,
             name=row["name"],
             status=DurableRunStatus(row["status"]),
-            idempotency_key=row["idempotency_key"],
+            idempotency_key=_unscope_idem(row["idempotency_key"], tenant_id),
             input_json=input_json,
             output_json=output_json,
             error=row["error"],

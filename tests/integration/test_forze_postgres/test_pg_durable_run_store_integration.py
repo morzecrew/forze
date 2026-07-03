@@ -11,13 +11,21 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from psycopg import sql
 
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.durable.function import DurableRunStatus
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.integrations.crypto import Keyring
 from forze.base.primitives import utcnow
+from forze_mock import MockKeyManagement
 from forze_postgres.adapters.durable import PostgresDurableRunStore
 from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
 from forze_postgres.kernel.client import PostgresClient
@@ -58,6 +66,30 @@ def _store(pg_client: PostgresClient, table: str) -> PostgresDurableRunStore:
     return PostgresDurableRunStore(
         client=pg_client,
         config=PostgresDurableRunConfig(relation=("public", table)),
+    )
+
+
+def _tenant_store(
+    pg_client: PostgresClient,
+    table: str,
+    tenant: UUID,
+    *,
+    cipher: Keyring | None = None,
+) -> PostgresDurableRunStore:
+    """A store bound to *tenant* over a shared tagged table (optionally sealing payloads)."""
+    return PostgresDurableRunStore(
+        client=pg_client,
+        config=PostgresDurableRunConfig(relation=("public", table)),
+        cipher=cipher,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
+    )
+
+
+def _keyring() -> Keyring:
+    return Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
     )
 
 
@@ -222,3 +254,40 @@ class TestPostgresDurableRunStore:
         assert future.run_id not in claimed  # not yet due
         assert due.run_id in claimed
         assert immediate.run_id in claimed
+
+    async def test_idempotency_key_is_scoped_per_tenant(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        # Two tenants share one tagged table (global ``UNIQUE (idempotency_key)``) and reuse
+        # the same key — they must stay distinct runs, not converge onto one.
+        tenant_a, tenant_b = uuid4(), uuid4()
+        store_a = _tenant_store(pg_client, durable_run_table, tenant_a)
+        store_b = _tenant_store(pg_client, durable_run_table, tenant_b)
+
+        a1 = await store_a.enqueue("fn", input_json={"n": 1}, idempotency_key="k")
+        a2 = await store_a.enqueue("fn", input_json={"n": 2}, idempotency_key="k")
+        b1 = await store_b.enqueue("fn", input_json={"n": 3}, idempotency_key="k")
+
+        assert a1.run_id == a2.run_id  # same tenant + key converges on one run
+        assert b1.run_id != a1.run_id  # a different tenant's same key is its own run
+        assert a1.idempotency_key == "k"  # the caller's key, not the tenant-scoped form
+        assert b1.idempotency_key == "k"
+        assert b1.tenant_id == tenant_b
+
+    async def test_encrypted_tenant_output_round_trips_on_load(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        # A tenant-scoped run whose payloads are sealed: the output must decrypt on load
+        # (its AAD tenant must match the row's tenant, not ``None``).
+        tenant = uuid4()
+        store = _tenant_store(pg_client, durable_run_table, tenant, cipher=_keyring())
+
+        record = await store.enqueue("fn", input_json={"secret": "in"})
+        await store.begin(record.run_id, lease_for=timedelta(minutes=5))
+        await store.complete(record.run_id, output_json={"secret": "out"})
+
+        loaded = await store.load(record.run_id)
+        assert loaded is not None
+        assert loaded.tenant_id == tenant
+        assert loaded.input_json == {"secret": "in"}
+        assert loaded.output_json == {"secret": "out"}

@@ -59,8 +59,14 @@ class MockDurableRunStore(DurableRunStorePort):
 
         with self.state.lock:
             if idempotency_key is not None:
+                # Convergence is scoped to the tenant: two tenants reusing one key (e.g. a
+                # scheduler's ``{schedule_id}:{fire_epoch}``) stay distinct runs, matching the
+                # tenant-scoped stored key on the Postgres tagged table.
                 for data in self.state.durable_runs.values():
-                    if data["idempotency_key"] == idempotency_key:
+                    if (
+                        data["idempotency_key"] == idempotency_key
+                        and data["tenant_id"] == tenant_id
+                    ):
                         return _to_record(data)
 
             run_id = str(uuid7())

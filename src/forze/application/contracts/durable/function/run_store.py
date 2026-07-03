@@ -109,7 +109,8 @@ class DurableRunStorePort(Protocol):
         """Record a new ``PENDING`` run and return it.
 
         When *idempotency_key* is set and a run already exists for it, the existing run is
-        returned unchanged (re-submits converge on one run). *available_at* delays when the
+        returned unchanged (re-submits converge on one run). Convergence is **per tenant**:
+        two tenants reusing one key stay distinct runs. *available_at* delays when the
         recovery scan may claim it (``None`` = immediately).
         """
         ...  # pragma: no cover
