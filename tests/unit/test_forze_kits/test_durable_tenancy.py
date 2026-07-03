@@ -123,6 +123,34 @@ class TestPerTenantRecovery:
         assert a is not None and a.name == "fn_a" and a.schedule_id == "s"
         assert b is not None and b.name == "fn_b" and b.schedule_id == "s"
 
+    async def test_unbound_sweep_advances_each_tenant_schedule(self) -> None:
+        # A tagged-table sweep runs unbound: claim_due returns every tenant's schedules, and
+        # advance must rebind each schedule's tenant or the CAS misses the tenant-scoped id
+        # and leaves next_fire_at due forever.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        tenant_a, tenant_b = uuid4(), uuid4()
+        scheduler = DurableScheduler()
+        store = resolve_durable_schedule_store(ctx)
+        put_at = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+
+        with _bind(ctx, tenant_a):
+            await scheduler.put(ctx, "s", "fn", "* * * * *", now=put_at)
+        with _bind(ctx, tenant_b):
+            await scheduler.put(ctx, "s", "fn", "* * * * *", now=put_at)
+
+        # Unbound sweep fires both due schedules (next_fire_at was 00:01:00).
+        assert await scheduler.tick(ctx, now=datetime(2026, 1, 1, 0, 1, 5, tzinfo=UTC)) == 2
+
+        # Both advanced to the next occurrence — neither stuck at the fired instant.
+        next_at = datetime(2026, 1, 1, 0, 2, tzinfo=UTC)
+        with _bind(ctx, tenant_a):
+            a = await store.load("s")
+        with _bind(ctx, tenant_b):
+            b = await store.load("s")
+        assert a is not None and a.next_fire_at == next_at
+        assert b is not None and b.next_fire_at == next_at
+
     async def test_idempotency_key_convergence_is_scoped_per_tenant(self) -> None:
         state = MockState()
         ctx = context_from_modules(MockDepsModule(state=state))

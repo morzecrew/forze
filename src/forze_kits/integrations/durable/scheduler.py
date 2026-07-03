@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Sequence, final
 from uuid import UUID
@@ -13,6 +14,7 @@ from forze.application.contracts.durable.function import (
     DurableFunctionSpec,
     DurableScheduleRecord,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.durable import next_cron_fire, validate_cron
 from forze.base.primitives import current_time_source
 
@@ -96,25 +98,40 @@ class DurableScheduler:
         due = await schedules.claim_due(now=moment, limit=limit)
 
         for schedule in due:
-            # Enqueue first (idempotent on the fired instant), then advance (CAS): a crash
-            # between the two re-fires the same instant on the next tick without a duplicate
-            # run, and concurrent schedulers converge on one run + one advance.
-            fire_epoch = int(schedule.next_fire_at.timestamp())
-            await runs.enqueue(
-                schedule.name,
-                input_json=schedule.input_json,
-                idempotency_key=f"{schedule.schedule_id}:{fire_epoch}",
-                tenant_id=schedule.tenant_id,
+            # Bind the schedule's tenant so the schedule/run stores resolve the right tenant.
+            # Essential when the sweep runs unbound over a tagged shared table (claim_due
+            # returns every tenant's schedules, but advance scopes its id from the bound
+            # tenant); a no-op under a namespace shard already bound to this tenant.
+            binding = (
+                ctx.inv_ctx.bind_identity(
+                    tenant=TenantIdentity(tenant_id=schedule.tenant_id)
+                )
+                if schedule.tenant_id is not None
+                else nullcontext()
             )
 
-            await schedules.advance(
-                schedule.schedule_id,
-                from_fire_at=schedule.next_fire_at,
-                to_fire_at=next_cron_fire(schedule.cron, after=moment, tz=schedule.tz),
-            )
+            with binding:
+                # Enqueue first (idempotent on the fired instant), then advance (CAS): a crash
+                # between the two re-fires the same instant on the next tick without a
+                # duplicate run, and concurrent schedulers converge on one run + one advance.
+                fire_epoch = int(schedule.next_fire_at.timestamp())
+                await runs.enqueue(
+                    schedule.name,
+                    input_json=schedule.input_json,
+                    idempotency_key=f"{schedule.schedule_id}:{fire_epoch}",
+                    tenant_id=schedule.tenant_id,
+                )
 
-            if self.telemetry is not None:
-                self.telemetry.record_fire(schedule.name)
+                await schedules.advance(
+                    schedule.schedule_id,
+                    from_fire_at=schedule.next_fire_at,
+                    to_fire_at=next_cron_fire(
+                        schedule.cron, after=moment, tz=schedule.tz
+                    ),
+                )
+
+                if self.telemetry is not None:
+                    self.telemetry.record_fire(schedule.name)
 
         return len(due)
 
