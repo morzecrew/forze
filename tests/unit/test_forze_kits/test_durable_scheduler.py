@@ -1,6 +1,7 @@
 """P7 recurring schedules: cron next-fire (skip-missed) + the durable scheduler.
 
 # covers: DurableScheduler.put
+# covers: DurableScheduler.remove
 # covers: DurableScheduler.tick
 """
 
@@ -69,6 +70,22 @@ class TestDurableScheduler:
             now=datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC),
         )
         assert record.next_fire_at == datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+
+    async def test_remove_unregisters_a_schedule(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        scheduler = DurableScheduler()
+        put_at = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+
+        await scheduler.put(ctx, "s", "fn", "* * * * *", now=put_at)
+
+        assert await scheduler.remove(ctx, "s") is True  # removed
+        assert await resolve_durable_schedule_store(ctx).load("s") is None
+        assert await scheduler.remove(ctx, "s") is False  # idempotent no-op
+
+        # A removed schedule never fires again.
+        assert await scheduler.tick(ctx, now=datetime(2026, 1, 1, 0, 5, tzinfo=UTC)) == 0
+        assert _runs_for(state, "fn") == []
 
     async def test_tick_fires_a_due_schedule_and_advances(self) -> None:
         state = MockState()

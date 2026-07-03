@@ -142,6 +142,9 @@ lifecycle = [
 ]
 ```
 
+`await scheduler.remove(ctx, "nightly-report")` unregisters a schedule so it never fires
+again — distinct from pausing it (`put` it back with `enabled=False`, which keeps the row).
+
 Or **declare the cadence on the function** and let it wire itself: a `DurableFunctionSpec`
 with a `DurableFunctionCronTrigger` auto-registers its schedule when you pass the specs to
 the step — no manual `put`:

@@ -82,6 +82,18 @@ class DurableScheduler:
 
     # ....................... #
 
+    async def remove(self, ctx: ExecutionContext, schedule_id: str) -> bool:
+        """Unregister a schedule so it never fires again; return whether one was removed.
+
+        Deletes the row (scoped to the bound tenant) — unlike :meth:`put` with
+        ``enabled=False``, which pauses but keeps it. Idempotent: removing an unknown
+        schedule returns ``False``.
+        """
+
+        return await resolve_durable_schedule_store(ctx).delete(schedule_id)
+
+    # ....................... #
+
     async def tick(
         self,
         ctx: ExecutionContext,

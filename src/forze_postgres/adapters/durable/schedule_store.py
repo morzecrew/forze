@@ -230,6 +230,23 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
         return None if row is None else _record_from_row(row)
 
+    # ....................... #
+
+    async def delete(self, schedule_id: str) -> bool:
+        table = await self._table()
+        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
+
+        rowcount = await self.client.execute(
+            sql.SQL("DELETE FROM {table} WHERE schedule_id = {sid}").format(
+                table=table.ident(),
+                sid=sql.Placeholder("sid"),
+            ),
+            {"sid": stored_sid},
+            return_rowcount=True,
+        )
+
+        return bool(rowcount)
+
 
 # ....................... #
 

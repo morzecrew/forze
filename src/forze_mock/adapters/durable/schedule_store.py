@@ -120,6 +120,14 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
 
             return None if data is None else _to_record(data)
 
+    # ....................... #
+
+    async def delete(self, schedule_id: str) -> bool:
+        with self.state.lock:
+            key = _scoped_key(schedule_id, self._bound_tenant())
+
+            return self.state.durable_run_schedules.pop(key, None) is not None
+
 
 # ....................... #
 

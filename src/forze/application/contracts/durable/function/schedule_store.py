@@ -100,3 +100,12 @@ class DurableScheduleStorePort(Protocol):
     def load(self, schedule_id: str) -> Awaitable[DurableScheduleRecord | None]:
         """Return the schedule record, or ``None`` if unknown."""
         ...  # pragma: no cover
+
+    def delete(self, schedule_id: str) -> Awaitable[bool]:
+        """Remove a schedule (idempotent); return ``True`` iff a row was removed.
+
+        Unregisters the schedule so it never fires again — unlike pausing it (``put`` with
+        ``enabled=False``), which keeps the row. Scoped to the tenant, like the other
+        operations. To only pause, put it back with ``enabled=False`` instead.
+        """
+        ...  # pragma: no cover

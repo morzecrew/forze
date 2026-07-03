@@ -185,3 +185,18 @@ class TestPostgresDurableScheduleStore:
             "s", from_fire_at=fire_a, to_fire_at=now + timedelta(minutes=1)
         )
         assert (await store_b.load("s")).next_fire_at == fire_b  # type: ignore[union-attr]
+
+        # Deleting A's schedule leaves B's intact (tenant-scoped delete).
+        assert await store_a.delete("s") is True
+        assert await store_a.load("s") is None
+        assert await store_b.load("s") is not None
+
+    async def test_delete_removes_and_is_idempotent(
+        self, pg_client: PostgresClient, schedule_table: str
+    ) -> None:
+        store = _store(pg_client, schedule_table)
+        await store.put(_record("s", next_fire_at=utcnow() + timedelta(minutes=1)))
+
+        assert await store.delete("s") is True  # removed
+        assert await store.load("s") is None
+        assert await store.delete("s") is False  # already gone -> no-op
