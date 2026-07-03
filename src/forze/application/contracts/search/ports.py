@@ -238,8 +238,8 @@ class SearchManagementPort(Protocol):
     (upsert / delete): index creation mutates shared topology and a full wipe is
     destructive admin — both run outside the request path (typically once at
     startup or in tooling), so a request-path writer never sees them. Mirrors the
-    framework's management/data split (e.g. ``StreamGroupAdminPort`` vs
-    ``StreamGroupQueryPort``).
+    framework's management/data split (e.g. ``AckStreamGroupAdminPort`` vs
+    ``AckStreamGroupQueryPort``).
     """
 
     def ensure_index(self) -> Awaitable[None]:

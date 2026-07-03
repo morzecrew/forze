@@ -1,7 +1,7 @@
 """Pending-entry recovery on the in-memory mock stream group adapter.
 
 Mirrors the Redis ``XAUTOCLAIM``/``XPENDING`` contract exposed by
-:class:`~forze.application.contracts.stream.StreamGroupQueryPort`: entries read
+:class:`~forze.application.contracts.stream.AckStreamGroupQueryPort`: entries read
 but never acked stay pending with their owner, last delivery time, and delivery
 count; ``claim`` transfers entries idle past a threshold to a live consumer
 (bumping the count and resetting the idle clock) and ``pending`` inspects the
@@ -23,7 +23,7 @@ from forze.base.serialization import PydanticModelCodec
 from forze_mock.adapters import (
     MockState,
     MockStreamAdapter,
-    MockStreamGroupAdapter,
+    MockAckStreamGroupAdapter,
 )
 
 # ----------------------- #
@@ -37,14 +37,14 @@ class _Msg(BaseModel):
     body: str
 
 
-def _adapters() -> tuple[MockStreamAdapter[_Msg], MockStreamGroupAdapter[_Msg]]:
+def _adapters() -> tuple[MockStreamAdapter[_Msg], MockAckStreamGroupAdapter[_Msg]]:
     st = MockState()
     sa = MockStreamAdapter(
         state=st,
         namespace="s",
         codec=StreamSpec(name="s", codec=PydanticModelCodec(model_type=_Msg)).codec,
     )
-    sg = MockStreamGroupAdapter(stream=sa, state=st, namespace="s")
+    sg = MockAckStreamGroupAdapter(stream=sa, state=st, namespace="s")
     return sa, sg
 
 

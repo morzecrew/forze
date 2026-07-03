@@ -63,6 +63,7 @@ nav = [
             "data-events/analytics.md",
             "data-events/caching.md",
             "data-events/events-sagas.md",
+            "data-events/messaging-delivery-models.md",
             "data-events/realtime.md",
             "data-events/durable-execution.md",
         ] },

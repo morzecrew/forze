@@ -12,15 +12,15 @@ import attrs
 from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.stream import (
     StreamCommandPort,
-    StreamGroupAdminPort,
-    StreamGroupQueryPort,
+    AckStreamGroupAdminPort,
+    AckStreamGroupQueryPort,
     StreamQueryPort,
     StreamSpec,
 )
 from forze.application.contracts.stream.deps import (
     StreamCommandDepPort,
-    StreamGroupAdminDepPort,
-    StreamGroupQueryDepPort,
+    AckStreamGroupAdminDepPort,
+    AckStreamGroupQueryDepPort,
     StreamQueryDepPort,
 )
 from forze.application.execution import ExecutionContext
@@ -113,7 +113,7 @@ class ConfigurableRedisStreamCommand(StreamCommandDepPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurableRedisStreamGroup(StreamGroupQueryDepPort):
+class ConfigurableRedisStreamGroup(AckStreamGroupQueryDepPort):
     """Build a :class:`RedisStreamGroupAdapter` (consumer-group reads/ack/claim/pending)."""
 
     config: RedisStreamGroupConfig = attrs.field(
@@ -122,7 +122,7 @@ class ConfigurableRedisStreamGroup(StreamGroupQueryDepPort):
 
     def __call__(
         self, ctx: ExecutionContext, spec: StreamSpec[Any]
-    ) -> StreamGroupQueryPort[Any]:
+    ) -> AckStreamGroupQueryPort[Any]:
         enforce_required_reach(
             ctx.deps,
             route=str(spec.name),
@@ -143,7 +143,7 @@ class ConfigurableRedisStreamGroup(StreamGroupQueryDepPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurableRedisStreamGroupAdmin(StreamGroupAdminDepPort):
+class ConfigurableRedisStreamGroupAdmin(AckStreamGroupAdminDepPort):
     """Build a :class:`RedisStreamGroupAdminAdapter` (group provisioning only)."""
 
     config: RedisStreamGroupConfig = attrs.field(
@@ -152,7 +152,7 @@ class ConfigurableRedisStreamGroupAdmin(StreamGroupAdminDepPort):
 
     def __call__(
         self, ctx: ExecutionContext, spec: StreamSpec[Any]
-    ) -> StreamGroupAdminPort:
+    ) -> AckStreamGroupAdminPort:
         return RedisStreamGroupAdminAdapter(
             client=ctx.deps.provide(RedisClientDepKey),
             tenant_aware=self.config.tenant_aware,

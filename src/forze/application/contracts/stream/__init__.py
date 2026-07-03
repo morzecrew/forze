@@ -1,30 +1,54 @@
+from .capabilities import CommitStreamGroupAware, CommitStreamGroupCapabilities
 from .deps import (
+    AckStreamGroupAdminDepKey,
+    AckStreamGroupQueryDepKey,
+    CommitStreamGroupAdminDepKey,
+    CommitStreamGroupQueryDepKey,
     StreamCommandDepKey,
-    StreamGroupAdminDepKey,
-    StreamGroupQueryDepKey,
+    StreamDeps,
     StreamQueryDepKey,
 )
 from .ports import (
+    AckStreamGroupAdminPort,
+    AckStreamGroupQueryPort,
+    CommitStreamGroupAdminPort,
+    CommitStreamGroupQueryPort,
     StreamCommandPort,
-    StreamGroupAdminPort,
-    StreamGroupQueryPort,
     StreamQueryPort,
 )
 from .specs import StreamSpec
-from .value_objects import PendingEntry, StreamMessage
+from .value_objects import (
+    ConsumerLag,
+    OffsetReset,
+    OffsetResetKind,
+    PendingEntry,
+    StreamMessage,
+    StreamPosition,
+)
 
 # ----------------------- #
 
 __all__ = [
     "PendingEntry",
     "StreamMessage",
-    "StreamGroupQueryPort",
-    "StreamGroupAdminPort",
+    "StreamPosition",
+    "OffsetReset",
+    "OffsetResetKind",
+    "ConsumerLag",
+    "AckStreamGroupQueryPort",
+    "AckStreamGroupAdminPort",
+    "CommitStreamGroupQueryPort",
+    "CommitStreamGroupAdminPort",
+    "CommitStreamGroupCapabilities",
+    "CommitStreamGroupAware",
     "StreamQueryPort",
     "StreamCommandPort",
-    "StreamGroupQueryDepKey",
-    "StreamGroupAdminDepKey",
+    "AckStreamGroupQueryDepKey",
+    "AckStreamGroupAdminDepKey",
+    "CommitStreamGroupQueryDepKey",
+    "CommitStreamGroupAdminDepKey",
     "StreamQueryDepKey",
     "StreamCommandDepKey",
+    "StreamDeps",
     "StreamSpec",
 ]

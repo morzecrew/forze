@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from forze.application.contracts.realtime import Audience, AudienceKind, RealtimeEvent, RealtimeSignal
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
-    StreamGroupQueryDepKey,
+    AckStreamGroupQueryDepKey,
     StreamQueryDepKey,
 )
 from forze.application.contracts.tenancy import TenantIdentity
@@ -212,7 +212,7 @@ async def test_group_ensure_step_skips_backlog_and_is_idempotent() -> None:
         await step.startup(ctx)
         await step.startup(ctx)  # idempotent — no error
 
-        group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
+        group = ctx.deps.resolve_configurable(ctx, AckStreamGroupQueryDepKey, spec, route=spec.name)
         backlog = await group.read("gw", "c", {str(spec.name): ">"})
 
         # "$" delivers only what arrives after creation
@@ -237,7 +237,7 @@ async def test_group_ensure_step_honours_an_explicit_start_id() -> None:
         step = realtime_group_ensure_lifecycle_step(stream_spec=spec, group="gw", start_id=id_a)
         await step.startup(ctx)
 
-        group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
+        group = ctx.deps.resolve_configurable(ctx, AckStreamGroupQueryDepKey, spec, route=spec.name)
         delivered = await group.read("gw", "c", {str(spec.name): ">"})
 
     # the explicit cursor is respected: A is skipped, B (after it) is delivered

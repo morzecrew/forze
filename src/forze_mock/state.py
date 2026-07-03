@@ -140,6 +140,14 @@ class MockState:
     pubsub_logs: dict[str, dict[str, list[Any]]] = attrs.field(factory=dict)
     streams: dict[str, dict[str, list[Any]]] = attrs.field(factory=dict)
     stream_ack: dict[tuple[str, str, str], set[str]] = attrs.field(factory=dict)
+    commit_stream_partitions: dict[tuple[str, str], int] = attrs.field(factory=dict)
+    """``(namespace, topic)`` → partition count for the offset-log (commit) sub-model,
+    set by ``ensure_topic``; a topic never provisioned defaults to a single partition."""
+    commit_stream_offsets: dict[tuple[str, str, str, int], int] = attrs.field(
+        factory=dict,
+    )
+    """``(namespace, group, topic, partition)`` → next uncommitted offset (the group's
+    committed high-water mark + 1). Advanced by ``commit``, moved by ``reset_offsets``."""
     analytics_query_hits: dict[str, dict[str, list[dict[str, Any]]]] = attrs.field(
         factory=dict,
     )

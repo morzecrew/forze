@@ -20,6 +20,7 @@ from forze.application.contracts.procedure import ProcedureDeps
 from forze.application.contracts.resilience import ResilienceDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
+from forze.application.contracts.stream import StreamDeps
 from forze.application.contracts.tenancy import TenancyDeps
 from forze.application.contracts.transaction import TransactionDeps
 from forze.base.primitives import HybridLogicalClock, StrKey
@@ -202,6 +203,9 @@ class ExecutionContext:
     dlock: DistributedLockDeps = attrs.field(factory=DistributedLockDeps, init=False)
     """Distributed lock dependencies."""
 
+    stream: StreamDeps = attrs.field(factory=StreamDeps, init=False)
+    """Offset-log (commit sub-model) stream dependencies."""
+
     tenancy: TenancyDeps = attrs.field(factory=TenancyDeps, init=False)
     """Tenancy dependencies."""
 
@@ -339,6 +343,7 @@ class ExecutionContext:
         self.graph.lock(self)
         self.embeddings.lock(self)
         self.dlock.lock(self)
+        self.stream.lock(self)
         self.tenancy.lock(self)
         self.authz.lock(self)
         self.authn.lock(self)

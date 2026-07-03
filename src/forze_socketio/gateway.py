@@ -59,7 +59,7 @@ from forze.application.contracts.realtime import (
     RealtimeShard,
     RealtimeSignal,
 )
-from forze.application.contracts.stream import StreamGroupQueryDepKey, StreamSpec
+from forze.application.contracts.stream import AckStreamGroupQueryDepKey, StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -388,7 +388,7 @@ class StreamGroupSignalSource(RealtimeSignalSource):
     async def run(self, ctx: ExecutionContext, handler: SignalHandler) -> None:
         group = ctx.deps.resolve_configurable(
             ctx,
-            StreamGroupQueryDepKey,
+            AckStreamGroupQueryDepKey,
             self.stream_spec,
             route=self.stream_spec.name,
         )
@@ -481,7 +481,7 @@ class TenantShardedSignalSource(RealtimeSignalSource):
         with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
             group = ctx.deps.resolve_configurable(
                 ctx,
-                StreamGroupQueryDepKey,
+                AckStreamGroupQueryDepKey,
                 stream_spec,
                 route=stream_spec.name,
             )

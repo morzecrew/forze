@@ -87,6 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Transports & DX**
 
+- **Offset-log stream consumption** — a fourth delivery model for Kafka-class partitioned, offset-committed logs, backend-neutral under `contracts/stream/`: `CommitStreamGroupQueryPort` (`read` / `tail` / `commit`) + `CommitStreamGroupAdminPort` (`ensure_topic` / `ensure_group` / `reset_offsets` / `lag`), `StreamPosition` / `OffsetReset` / `ConsumerLag`, and a `CommitStreamGroupCapabilities` (`supports_replay` / `supports_transactions`) fail-closed at the admin-call / resolve boundary (via `ctx.stream` / `StreamSpec.requires_transactions`). A `CommitStreamGroupConsumer` kits runner commits after `process_with_inbox` (at-least-once transport + inbox dedup = exactly-once effect; DLQ-and-advance or pause-and-alert on poison). Mock reference adapters + a conformance battery pin the semantics; the concrete Kafka backend lands separately.
+
 - **Redis stream & pub-sub transports** — `RedisDepsModule` wires `StreamSpec` / `PubSubSpec` via `RedisStreamConfig` / `RedisStreamGroupConfig` / `RedisPubSubConfig`; `encryption="end_to_end"` seals through the broker, `tenant_aware` adds a key prefix. The stream consumer-group adapter splits into a data-plane query adapter and a control-plane `*StreamGroupAdminAdapter` (`ensure_group`), for Redis and the mock.
 
 - **Top-level front door** — the most-used names re-export lazily (PEP 562) from `forze` / `forze_kits` (`from forze import DocumentSpec, build_runtime`; `from forze_kits import DocumentFacade, build_document_registry`); deep paths keep working, the core never imports kits.
@@ -144,6 +146,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`update_many` takes `Sequence[KeyedUpdate[U]]`** (document command port) — not `Sequence[tuple[UUID, int, U]]`; `KeyedUpdate` (`id`, `rev`, `dto`) from `contracts.document`. Single-item `update` unchanged.
 
 - **`GroupRef` (query grouping) → `GroupField`** — resolves the clash with the authz `GroupRef` (unchanged).
+
+- **PEL stream ports renamed for the two-sub-model split** — `StreamGroupQueryPort` / `StreamGroupAdminPort` → `AckStreamGroupQueryPort` / `AckStreamGroupAdminPort` (and dep keys `StreamGroup*DepKey` → `AckStreamGroup*DepKey`), pairing symmetrically with the new `CommitStreamGroup*` offset-log ports; behavior unchanged (find-and-replace `StreamGroup*` → `AckStreamGroup*`). `StreamMessage` gains optional `partition` / `offset` fields (`None` for the ack sub-model).
 
 - **Package restructures** — `forze_dst` splits into a thin `Simulation` facade over `engines/` / `oracle/` / `artifacts/` (`SchedulerKind` removed); `forze_mock` root modules → `adapters/`, factories → `execution.factories` (top-level imports unchanged); notify kit's `NotificationRouter` is now a mutable builder (`register()` → `freeze()`) with resolution on `FrozenNotificationRouter`, reorganized into `routing` / `events` / `consumer` / `lifecycle`.
 

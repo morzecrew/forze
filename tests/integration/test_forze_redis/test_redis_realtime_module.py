@@ -19,7 +19,7 @@ pytest.importorskip("redis")
 from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
-    StreamGroupAdminDepKey,
+    AckStreamGroupAdminDepKey,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.integrations.realtime import realtime_stream_spec
@@ -68,7 +68,7 @@ async def test_realtime_egress_over_module_wired_redis(redis_client: RedisClient
 
         # provision the consumer group (control plane) and publish (data plane) — both via the module
         admin = ctx.deps.resolve_configurable(
-            ctx, StreamGroupAdminDepKey, spec, route=spec.name
+            ctx, AckStreamGroupAdminDepKey, spec, route=spec.name
         )
         await admin.ensure_group("realtime-gateway", channel, start_id="0")
 

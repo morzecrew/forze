@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.realtime import Audience, RealtimeEvent, RealtimeSignal
-from forze.application.contracts.stream import StreamCommandDepKey, StreamGroupQueryDepKey
+from forze.application.contracts.stream import StreamCommandDepKey, AckStreamGroupQueryDepKey
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.integrations.outbox import OutboxRelay
@@ -153,7 +153,7 @@ async def test_durable_emit_failure_is_not_acked() -> None:
         await _append(ctx, spec, sig, event_id="evt-1")
         await _run_settle(gw, ctx, lambda: sio.attempts >= 1)
 
-        group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
+        group = ctx.deps.resolve_configurable(ctx, AckStreamGroupQueryDepKey, spec, route=spec.name)
         pending = await group.pending("realtime-gateway", str(spec.name))
 
     assert sio.emits == []  # never delivered
@@ -176,7 +176,7 @@ async def test_durable_transient_emit_failure_is_reclaimed_and_re_emitted() -> N
         await _append(ctx, spec, sig, event_id="evt-1")
         await _run_settle(gw, ctx, lambda: bool(sio.emits))
 
-        group = ctx.deps.resolve_configurable(ctx, StreamGroupQueryDepKey, spec, route=spec.name)
+        group = ctx.deps.resolve_configurable(ctx, AckStreamGroupQueryDepKey, spec, route=spec.name)
         pending = await group.pending("realtime-gateway", str(spec.name))
 
     assert sio.attempts == 2  # one failure, then a successful retry via reclaim
