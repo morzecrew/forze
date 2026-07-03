@@ -103,8 +103,32 @@ await runner.run_now(ctx, str(saga.name), initial.model_dump(mode="json"))
 
 The saga context must be a serializable `pydantic.BaseModel` (it is journaled between
 steps). This tier is self-hosted-Postgres only; a full workflow engine (timers, signals,
-versioning, recurring schedules) is still Temporal/Inngest. The two tables come from your
-migrations; their schema is documented on the adapter classes.
+versioning) is still Temporal/Inngest. The two tables come from your migrations; their
+schema is documented on the adapter classes.
+
+### Recurring schedules
+
+A `durable_schedule` table + the `DurableScheduler` fire a run on a **cron cadence**. Put a
+schedule and run the scheduler step (alongside the recovery step, which executes the runs it
+enqueues):
+
+```python
+deps = PostgresDepsModule(client=client, durable_run=…, durable_schedule=…)
+
+await scheduler.put(ctx, "nightly-report", "report", "0 3 * * *", tz="Europe/Berlin")
+
+lifecycle = [
+    durable_scheduler_background_lifecycle_step(scheduler=scheduler),
+    durable_recovery_background_lifecycle_step(runner=runner),
+]
+```
+
+Firing is **fire-once / skip-missed**: if the scheduler was down across several occurrences
+it fires once and advances to the next future one (no backfill). It's exactly-once across
+replicas — each fire enqueues a run keyed `{schedule_id}:{fire_epoch}` and the next fire is a
+compare-and-set — so, like recovery, it's safe to run on every node. "Now" comes from the
+`TimeSource` seam, so schedules are deterministic under simulation. Recurring **schedules**
+are self-hosted here; a full engine's timers/signals/versioning are still Temporal/Inngest.
 
 ## When to reach for it
 

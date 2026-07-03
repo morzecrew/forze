@@ -4,6 +4,7 @@ from forze.application.contracts.deps import ConfigurableDepPort, DepKey, Simple
 
 from .ports import DurableFunctionEventCommandPort, DurableFunctionStepPort
 from .run_store import DurableRunStorePort
+from .schedule_store import DurableScheduleStorePort
 from .specs import DurableFunctionEventSpec
 
 # ----------------------- #
@@ -19,6 +20,9 @@ DurableFunctionStepDepPort = SimpleDepPort[DurableFunctionStepPort]
 
 DurableRunStoreDepPort = SimpleDepPort[DurableRunStorePort]
 """Durable run store dependency port (execution-scoped, not spec-routed)."""
+
+DurableScheduleStoreDepPort = SimpleDepPort[DurableScheduleStorePort]
+"""Durable schedule store dependency port (execution-scoped, not spec-routed)."""
 
 # ....................... #
 
@@ -36,3 +40,8 @@ DurableRunStoreDepKey = DepKey[DurableRunStoreDepPort](
     "durable_function_run_store",
 )
 """Key used to register the :class:`DurableRunStorePort` implementation."""
+
+DurableScheduleStoreDepKey = DepKey[DurableScheduleStoreDepPort](
+    "durable_function_schedule_store",
+)
+"""Key used to register the :class:`DurableScheduleStorePort` implementation."""

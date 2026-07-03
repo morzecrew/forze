@@ -14,6 +14,8 @@ from forze.application.contracts.durable.function import (
     DurableFunctionStepPort,
     DurableRunStoreDepKey,
     DurableRunStorePort,
+    DurableScheduleStoreDepKey,
+    DurableScheduleStorePort,
 )
 
 if TYPE_CHECKING:
@@ -40,4 +42,16 @@ def resolve_durable_run_store(ctx: ExecutionContext) -> DurableRunStorePort:
     return cast(
         "DurableRunStorePort",
         ctx.deps.resolve_simple(ctx, DurableRunStoreDepKey),
+    )
+
+
+# ....................... #
+
+
+def resolve_durable_schedule_store(ctx: ExecutionContext) -> DurableScheduleStorePort:
+    """Resolve the durable schedule store bound in *ctx*."""
+
+    return cast(
+        "DurableScheduleStorePort",
+        ctx.deps.resolve_simple(ctx, DurableScheduleStoreDepKey),
     )

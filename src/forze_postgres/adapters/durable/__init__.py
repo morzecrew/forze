@@ -5,6 +5,7 @@ from .function_step import (
     PostgresDurableFunctionStepAdapter,
 )
 from .run_store import PostgresDurableRunStore
+from .schedule_store import PostgresDurableScheduleStore
 
 # ----------------------- #
 
@@ -12,4 +13,5 @@ __all__ = [
     "DURABLE_PAYLOAD_DOMAIN",
     "PostgresDurableFunctionStepAdapter",
     "PostgresDurableRunStore",
+    "PostgresDurableScheduleStore",
 ]

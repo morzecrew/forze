@@ -12,8 +12,13 @@ from forze.base.exceptions import exc
 from ....adapters.durable import (
     PostgresDurableFunctionStepAdapter,
     PostgresDurableRunStore,
+    PostgresDurableScheduleStore,
 )
-from ..configs.durable import PostgresDurableRunConfig, PostgresDurableStepConfig
+from ..configs.durable import (
+    PostgresDurableRunConfig,
+    PostgresDurableScheduleConfig,
+    PostgresDurableStepConfig,
+)
 from ..keys import PostgresClientDepKey
 
 if TYPE_CHECKING:
@@ -98,4 +103,25 @@ class ConfigurablePostgresDurableRun:
             client=client,
             config=self.config,
             cipher=cipher,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurablePostgresDurableSchedule:
+    """Build a :class:`PostgresDurableScheduleStore` for the durable schedule store port."""
+
+    config: PostgresDurableScheduleConfig
+    """Postgres-specific configuration for the durable schedule store."""
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+    ) -> PostgresDurableScheduleStore:
+        return PostgresDurableScheduleStore(
+            client=ctx.deps.provide(PostgresClientDepKey),
+            config=self.config,
         )

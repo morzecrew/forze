@@ -5,6 +5,8 @@ from .deps import (
     DurableFunctionStepDepPort,
     DurableRunStoreDepKey,
     DurableRunStoreDepPort,
+    DurableScheduleStoreDepKey,
+    DurableScheduleStoreDepPort,
 )
 from .ports import DurableFunctionEventCommandPort, DurableFunctionStepPort
 from .run_context import (
@@ -18,6 +20,10 @@ from .run_store import (
     DurableRunRecord,
     DurableRunStatus,
     DurableRunStorePort,
+)
+from .schedule_store import (
+    DurableScheduleRecord,
+    DurableScheduleStorePort,
 )
 from .specs import (
     DurableFunctionCronTrigger,
@@ -49,6 +55,10 @@ __all__ = [
     "DurableRunStoreDepKey",
     "DurableRunStoreDepPort",
     "DurableRunStorePort",
+    "DurableScheduleRecord",
+    "DurableScheduleStoreDepKey",
+    "DurableScheduleStoreDepPort",
+    "DurableScheduleStorePort",
     "bind_durable_run",
     "current_durable_run",
     "require_durable_run",

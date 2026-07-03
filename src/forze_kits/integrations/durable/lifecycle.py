@@ -17,6 +17,7 @@ from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
 
 from .runner import DurableFunctionRunner
+from .scheduler import DurableScheduler
 
 # ----------------------- #
 
@@ -168,5 +169,140 @@ def durable_recovery_background_lifecycle_step(
         max_concurrency=max_concurrency,
     )
     shutdown = _DurableRecoveryBackgroundShutdown(startup=startup)
+
+    return LifecycleStep(id=step_id, startup=startup, shutdown=shutdown)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _DurableSchedulerBackgroundStartup(LifecycleHook):
+    """Start a background task that fires due recurring schedules."""
+
+    scheduler: DurableScheduler
+    interval: timedelta
+    jitter: float
+    limit: int
+    max_batches_per_tick: int
+
+    task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.interval.total_seconds() <= 0:
+            raise exc.configuration("Interval must be positive")
+
+        if not 0.0 <= self.jitter < 1.0:
+            raise exc.configuration("Jitter must be in [0, 1)")
+
+        if self.limit < 1:
+            raise exc.configuration("Limit must be >= 1")
+
+        if self.max_batches_per_tick < 1:
+            raise exc.configuration("Max batches per tick must be >= 1")
+
+    # ....................... #
+
+    async def _fire_tick(self, ctx: ExecutionContext) -> None:
+        """Fire due schedules until a sweep comes back short."""
+
+        for _ in range(self.max_batches_per_tick):
+            fired = await self.scheduler.tick(ctx, limit=self.limit)
+
+            if fired < self.limit:
+                break
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        async def _loop() -> None:
+            while True:
+                try:
+                    await self._fire_tick(ctx)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Durable scheduler sweep failed")
+
+                await asyncio.sleep(
+                    self.interval.total_seconds()
+                    * (
+                        1.0
+                        + current_entropy_source()
+                        .as_random()
+                        .uniform(-self.jitter, self.jitter)
+                    )
+                )
+
+        if self.task is not None and not self.task.done():
+            logger.warning(
+                "Durable scheduler already running; ignoring duplicate startup"
+            )
+            return
+
+        self.task = asyncio.create_task(_loop(), name="durable_scheduler_background")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _DurableSchedulerBackgroundShutdown(LifecycleHook):
+    """Cancel the background durable-scheduler task."""
+
+    startup: _DurableSchedulerBackgroundStartup
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:  # noqa: ARG002
+        task = self.startup.task
+
+        if task is None:
+            return
+
+        task.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+# ....................... #
+
+
+def durable_scheduler_background_lifecycle_step(
+    *,
+    scheduler: DurableScheduler,
+    interval: timedelta = timedelta(seconds=30),
+    jitter: float = 0.2,
+    limit: int = 100,
+    max_batches_per_tick: int = 100,
+    step_id: StrKey = "durable_scheduler",
+) -> LifecycleStep:
+    """Build a lifecycle step that fires due recurring schedules on a background interval.
+
+    Each sweep claims due schedules, enqueues one run per schedule, and advances each to its
+    next occurrence (fire-once / skip-missed), draining until a sweep is short of *limit*,
+    then sleeps *interval* with multiplicative *jitter*. The enqueued runs are executed by
+    the recovery scanner / runner — run this alongside
+    :func:`durable_recovery_background_lifecycle_step`.
+
+    Concurrent schedulers are safe (idempotent run keys + compare-and-set advance), so this
+    can run on every replica; pair with the singleton lifecycle guard for a single elected
+    scheduler. Production deployments often prefer an external scheduler over in-process
+    polling.
+    """
+
+    startup = _DurableSchedulerBackgroundStartup(
+        scheduler=scheduler,
+        interval=interval,
+        jitter=jitter,
+        limit=limit,
+        max_batches_per_tick=max_batches_per_tick,
+    )
+    shutdown = _DurableSchedulerBackgroundShutdown(startup=startup)
 
     return LifecycleStep(id=step_id, startup=startup, shutdown=shutdown)

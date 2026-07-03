@@ -47,3 +47,18 @@ class PostgresDurableRunConfig(TenantAwareIntegrationConfig):
 
     When ``True`` the factory fails closed at resolve if no keyring is registered.
     """
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PostgresDurableScheduleConfig(TenantAwareIntegrationConfig):
+    """Configuration for the Postgres durable-schedule store.
+
+    See :class:`~forze_postgres.adapters.durable.schedule_store.PostgresDurableScheduleStore`.
+    """
+
+    relation: RelationSpec = attrs.field(converter=coerce_relation_spec)
+    """Schema-qualified ``durable_schedule`` table (single relation; tenant is a column)."""

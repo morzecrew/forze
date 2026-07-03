@@ -14,6 +14,7 @@ from .document import (
 )
 from .durable import (
     ConfigurablePostgresDurableRun,
+    ConfigurablePostgresDurableSchedule,
     ConfigurablePostgresDurableStep,
 )
 from .federated import ConfigurablePostgresFederatedSearch
@@ -38,6 +39,7 @@ __all__ = [
     "ConfigurablePostgresOutboxQuery",
     "ConfigurablePostgresDocument",
     "ConfigurablePostgresDurableRun",
+    "ConfigurablePostgresDurableSchedule",
     "ConfigurablePostgresDurableStep",
     "ConfigurablePostgresFederatedSearch",
     "ConfigurablePostgresHlcCheckpoint",

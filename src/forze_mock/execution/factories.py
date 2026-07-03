@@ -75,6 +75,7 @@ from forze_mock.adapters import (
     MockDurableFunctionEventAdapter,
     MockDurableFunctionStepAdapter,
     MockDurableRunStore,
+    MockDurableScheduleStore,
     MockDurableWorkflowCommandAdapter,
     MockDurableWorkflowQueryAdapter,
     MockDurableWorkflowScheduleCommandAdapter,
@@ -929,6 +930,18 @@ class ConfigurableMockDurableRunStore(_MockFactoryBase):
         context: ExecutionContext,
     ) -> MockDurableRunStore:
         return MockDurableRunStore(state=self._state(context))
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockDurableSchedule(_MockFactoryBase):
+    """Build the mock durable schedule store (a ``SimpleDepPort``: ``ctx`` only, no spec)."""
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+    ) -> MockDurableScheduleStore:
+        return MockDurableScheduleStore(state=self._state(context))
 
 
 @final

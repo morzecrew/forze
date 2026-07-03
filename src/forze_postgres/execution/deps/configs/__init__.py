@@ -2,7 +2,11 @@
 
 from .analytics import PostgresAnalyticsConfig, PostgresQueryConfig
 from .document import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
-from .durable import PostgresDurableRunConfig, PostgresDurableStepConfig
+from .durable import (
+    PostgresDurableRunConfig,
+    PostgresDurableScheduleConfig,
+    PostgresDurableStepConfig,
+)
 from .federated import (
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLeg,
@@ -40,6 +44,7 @@ __all__ = [
     "PostgresAnalyticsConfig",
     "PostgresDocumentConfig",
     "PostgresDurableRunConfig",
+    "PostgresDurableScheduleConfig",
     "PostgresDurableStepConfig",
     "PostgresFederatedSearchConfig",
     "PostgresFederatedSearchLeg",

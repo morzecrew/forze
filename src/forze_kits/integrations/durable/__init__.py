@@ -5,11 +5,19 @@ Provider-agnostic: drives durable functions and sagas over the framework's
 the mock under tests / simulation).
 """
 
-from ._resolve import resolve_durable_run_store, resolve_durable_step
-from .lifecycle import durable_recovery_background_lifecycle_step
+from ._resolve import (
+    resolve_durable_run_store,
+    resolve_durable_schedule_store,
+    resolve_durable_step,
+)
+from .lifecycle import (
+    durable_recovery_background_lifecycle_step,
+    durable_scheduler_background_lifecycle_step,
+)
 from .registry import DurableFunctionHandler, DurableFunctionRegistry
 from .runner import DurableFunctionRunner
 from .saga_executor import DurableSagaExecutor, durable_saga_handler
+from .scheduler import DurableScheduler
 
 # ----------------------- #
 
@@ -18,8 +26,11 @@ __all__ = [
     "DurableFunctionRegistry",
     "DurableFunctionRunner",
     "DurableSagaExecutor",
+    "DurableScheduler",
     "durable_recovery_background_lifecycle_step",
     "durable_saga_handler",
+    "durable_scheduler_background_lifecycle_step",
     "resolve_durable_run_store",
+    "resolve_durable_schedule_store",
     "resolve_durable_step",
 ]

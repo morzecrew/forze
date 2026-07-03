@@ -843,6 +843,18 @@ wheels = [
 ]
 
 [[package]]
+name = "croniter"
+version = "6.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/03/35/96ad0a71eb0b27ab4476a7ed23facd0713d82da9c911edc8af7f34a62d6a/croniter-6.2.3.tar.gz", hash = "sha256:fb129986ef7e2c44e3f4c9f503da83ad914d2afa48f40a43ee3dca4b5c41d476", size = 166174, upload-time = "2026-07-02T14:34:22.166Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5c/dd/6466498a8b69754cffbd7237ce4c66446ca5ffcf53fb397d437666f056d2/croniter-6.2.3-py3-none-any.whl", hash = "sha256:137a97001b4d52fb71c10b750e303db79e6e42d40fff8ff77126102176c9f786", size = 46446, upload-time = "2026-07-02T14:34:20.889Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "48.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1180,6 +1192,7 @@ name = "forze"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
+    { name = "croniter" },
     { name = "cryptography" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
@@ -1321,6 +1334,7 @@ dev = [
     { name = "ruff" },
     { name = "testcontainers", extra = ["clickhouse", "google", "minio", "neo4j", "rabbitmq"] },
     { name = "typer" },
+    { name = "types-croniter" },
     { name = "types-pyyaml" },
     { name = "vulture" },
     { name = "zizmor" },
@@ -1347,6 +1361,7 @@ requires-dist = [
     { name = "botocore", marker = "extra == 's3'", specifier = ">=1.40.61" },
     { name = "botocore", marker = "extra == 'sqs'", specifier = ">=1.40.61" },
     { name = "clickhouse-connect", extras = ["async"], marker = "extra == 'clickhouse'", specifier = ">=1.0.0" },
+    { name = "croniter", specifier = ">=6.0.0" },
     { name = "cryptography", specifier = ">=44.0.1" },
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.1.0" },
     { name = "email-validator", marker = "extra == 'authn'", specifier = ">=2.3.0" },
@@ -1425,6 +1440,7 @@ dev = [
     { name = "ruff", specifier = ">=0.15.5" },
     { name = "testcontainers", extras = ["minio", "rabbitmq", "vault", "google", "clickhouse", "neo4j"], specifier = ">=4.14.1" },
     { name = "typer", specifier = ">=0.12.0" },
+    { name = "types-croniter", specifier = ">=6.0.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
     { name = "vulture", specifier = ">=2.14" },
     { name = "zizmor", specifier = ">=1.25.2" },
@@ -4247,6 +4263,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3e/59/44409a8fc06b444ab1a6f71dcb29d49a6e17e02424345eb51b051bebb345/types_awscrt-0.34.1.tar.gz", hash = "sha256:559aa04250f6a419a617dfb788f3e10903aaf74700ef23e521b64a411b83b803", size = 19062, upload-time = "2026-06-05T04:40:10.689Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e4/b1/214b12162b452ed6acd230065e6c587cde6b96871e3ce6d653f40888f8df/types_awscrt-0.34.1-py3-none-any.whl", hash = "sha256:20c752b6031544d8f694803c35174aee129f1be5ddf886ae46d22f7ffd9b7d75", size = 45688, upload-time = "2026-06-05T04:40:09.198Z" },
+]
+
+[[package]]
+name = "types-croniter"
+version = "6.2.2.20260518"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/02/f03a44ded34e6abb125c339647b070f2705a0583782f5638d62ab958cdc2/types_croniter-6.2.2.20260518.tar.gz", hash = "sha256:aceb426b9187bb9255b89d17713d07ac034a2b96b437bfdd5d3a56b46b4eb656", size = 12120, upload-time = "2026-05-18T06:03:11.885Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/37/3d/f12c417944d00c42db71de3e334f36a69cafa6767ff3fb705c9e1d101e53/types_croniter-6.2.2.20260518-py3-none-any.whl", hash = "sha256:85018c7ce091428d3643be239ad348e27f9a8fb77ca94335cc39ebeb9403b240", size = 9743, upload-time = "2026-05-18T06:03:10.608Z" },
 ]
 
 [[package]]

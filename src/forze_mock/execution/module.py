@@ -62,6 +62,7 @@ from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepKey,
     DurableFunctionStepDepKey,
     DurableRunStoreDepKey,
+    DurableScheduleStoreDepKey,
 )
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowCommandDepKey,
@@ -178,6 +179,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockDurableFunctionEvent,
     ConfigurableMockDurableFunctionStep,
     ConfigurableMockDurableRunStore,
+    ConfigurableMockDurableSchedule,
     ConfigurableMockDurableWorkflowCommand,
     ConfigurableMockDurableWorkflowQuery,
     ConfigurableMockDurableWorkflowScheduleCommand,
@@ -415,6 +417,7 @@ class MockDepsModule(DepsModule):
             ),
             DurableFunctionStepDepKey: ConfigurableMockDurableFunctionStep(module=self),
             DurableRunStoreDepKey: ConfigurableMockDurableRunStore(module=self),
+            DurableScheduleStoreDepKey: ConfigurableMockDurableSchedule(module=self),
             SecretsDepKey: secrets,
             KeyManagementDepKey: crypto_kms,
             AeadDepKey: crypto_aead,

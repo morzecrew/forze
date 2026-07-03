@@ -191,6 +191,7 @@ class MockState:
     durable_events: dict[str, list[Any]] = attrs.field(factory=dict)
     durable_step_memo: dict[str, Any] = attrs.field(factory=dict)
     durable_runs: dict[str, dict[str, Any]] = attrs.field(factory=dict)
+    durable_run_schedules: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     identity: dict[str, Any] = attrs.field(
         factory=lambda: {
             "authn": {},
