@@ -216,3 +216,126 @@ class TestDurableSagaCrashRecovery:
         # step "a" replayed from the journal (no second "do:a"); "b" ran live to completion.
         assert effects == ["do:a", "do:b"]
         assert reloaded.output_json == {"trail": ["a", "b"]}
+
+
+# ....................... #
+
+
+def _flex_step(
+    name: str,
+    effects: list[str],
+    *,
+    tx_route: str | None = "mock",
+    fail: bool = False,
+    comp: str = "ok",  # "ok" | "none" | "raise"
+    kind: SagaStepKind = SagaStepKind.COMPENSATABLE,
+    idempotent: bool = False,
+) -> SagaStep[OrderCtx]:
+    async def action(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
+        effects.append(f"do:{name}")
+        if fail:
+            raise exc.infrastructure(f"{name} failed")
+        return OrderCtx(trail=[*state.trail, name])
+
+    async def compensation(_ctx: ExecutionContext, _state: OrderCtx) -> None:
+        effects.append(f"undo:{name}")
+        if comp == "raise":
+            raise exc.infrastructure(f"{name} undo failed")
+
+    return SagaStep(
+        name=name,
+        action=action,
+        compensation=compensation if comp != "none" else None,
+        kind=kind,
+        tx_route=tx_route,
+        idempotent=idempotent,
+    )
+
+
+class TestDurableSagaExecutorEdges:
+    async def test_running_inside_a_transaction_is_rejected(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order", steps=(_flex_step("a", []),)
+        )
+
+        token = _bound()
+        try:
+            with pytest.raises(CoreException, match="outside a transaction"):
+                async with ctx.tx_ctx.scope("mock"):
+                    await DurableSagaExecutor().run(ctx, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+    async def test_failure_after_pivot_is_forward_incomplete_not_compensated(
+        self,
+    ) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _flex_step("a", effects),
+                _flex_step("p", effects, kind=SagaStepKind.PIVOT),
+                _flex_step(
+                    "c",
+                    effects,
+                    kind=SagaStepKind.RETRYABLE,
+                    idempotent=True,
+                    fail=True,
+                ),
+            ),
+        )
+
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as ei:
+                await DurableSagaExecutor().run(ctx, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        # Past the pivot: complete-forward (manual), never compensate.
+        assert ei.value.code == "saga.forward_incomplete"
+        assert effects == ["do:a", "do:p", "do:c"]  # no "undo:*"
+
+    async def test_compensation_skips_none_and_collects_raised_errors(self) -> None:
+        # No-tx-route actions/compensations, a completed step with no compensation (skipped
+        # on rollback), and a compensation that raises (collected, not swallowing the rest).
+        ctx = context_from_modules(MockDepsModule())
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _flex_step("a", effects, tx_route=None, comp="raise"),
+                _flex_step("b", effects, tx_route=None, comp="none"),
+                _flex_step("c", effects, tx_route=None, fail=True),
+            ),
+        )
+
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as ei:
+                await DurableSagaExecutor().run(ctx, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        # A compensation that raised makes the rollback non-clean -> INFRASTRUCTURE, and the
+        # collected compensation error rides along in the failure details.
+        assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert any(
+            "a undo failed" in str(e)
+            for e in (ei.value.details or {}).get("compensation_errors", [])
+        )
+        # Rollback is reverse over completed steps: b has no compensation (skipped), a's
+        # compensation runs and raises (collected into the failure).
+        assert effects == ["do:a", "do:b", "do:c", "undo:a"]
+
+    async def test_saga_handler_requires_an_initial_context(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order", steps=(_flex_step("a", []),)
+        )
+        handler = durable_saga_handler(saga, OrderCtx)
+
+        with pytest.raises(CoreException, match="initial context"):
+            await handler(ctx, None)
