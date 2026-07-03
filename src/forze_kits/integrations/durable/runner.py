@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import nullcontext
 from datetime import datetime, timedelta
+from time import perf_counter
 from typing import TYPE_CHECKING, final
 from uuid import UUID
 
@@ -22,8 +23,11 @@ from forze.base.exceptions import CoreException
 
 from ._resolve import resolve_durable_run_store
 from .registry import DurableFunctionRegistry
+from .telemetry import DurableTelemetry
 
 if TYPE_CHECKING:
+    from opentelemetry.trace import Span
+
     from forze.application.execution.context import ExecutionContext
     from forze.base.primitives import JsonDict
 
@@ -49,6 +53,9 @@ class DurableFunctionRunner:
 
     lease_for: timedelta = timedelta(minutes=5)
     """How long a claim leases a run before the recovery scanner may reclaim it."""
+
+    telemetry: DurableTelemetry | None = None
+    """Optional OpenTelemetry spans + metrics for run execution and recovery."""
 
     # ....................... #
 
@@ -137,6 +144,9 @@ class DurableFunctionRunner:
         if not claimed:
             return 0
 
+        if self.telemetry is not None:
+            self.telemetry.record_recovered(len(claimed))
+
         if max_concurrency is None or max_concurrency <= 1:
             for record in claimed:
                 await self._execute(ctx, record, reraise=False)
@@ -201,33 +211,63 @@ class DurableFunctionRunner:
             )
         )
 
+        started = perf_counter()
+        outcome = "completed"
+        span_cm = (
+            self.telemetry.run_span(record)
+            if self.telemetry is not None
+            else nullcontext()
+        )
+
         try:
-            output = await handler(ctx, record.input_json)
+            with span_cm as span:
+                try:
+                    output = await handler(ctx, record.input_json)
 
-        except CoreException as error:
-            # A pivot-committed saga that could not complete forward is a distinct terminal
-            # state — never compensated, must be finished by hand — not an ordinary failure.
-            if (error.code or "") == _FORWARD_INCOMPLETE_CODE:
-                await store.mark_forward_incomplete(
-                    record.run_id, error=str(error), fence=fence
-                )
-            else:
-                await store.fail(record.run_id, error=str(error), fence=fence)
+                except CoreException as error:
+                    # A pivot-committed saga that could not complete forward is a distinct
+                    # terminal state (never compensated, finished by hand) — not a failure.
+                    outcome = (
+                        "forward_incomplete"
+                        if (error.code or "") == _FORWARD_INCOMPLETE_CODE
+                        else "failed"
+                    )
+                    self._mark_span_error(span, error)
 
-            if reraise:
-                raise
+                    if outcome == "forward_incomplete":
+                        await store.mark_forward_incomplete(
+                            record.run_id, error=str(error), fence=fence
+                        )
+                    else:
+                        await store.fail(record.run_id, error=str(error), fence=fence)
 
-            return
+                    if reraise:
+                        raise
 
-        except Exception as error:  # noqa: BLE001 — record then optionally re-raise
-            await store.fail(record.run_id, error=str(error), fence=fence)
+                    return
 
-            if reraise:
-                raise
+                except Exception as error:  # noqa: BLE001 — record then optionally re-raise
+                    outcome = "failed"
+                    self._mark_span_error(span, error)
+                    await store.fail(record.run_id, error=str(error), fence=fence)
 
-            return
+                    if reraise:
+                        raise
+
+                    return
+
+                await store.complete(record.run_id, output_json=output, fence=fence)
 
         finally:
             reset_durable_run(token)
 
-        await store.complete(record.run_id, output_json=output, fence=fence)
+            if self.telemetry is not None:
+                self.telemetry.record_run(
+                    record.name, outcome, (perf_counter() - started) * 1000.0
+                )
+
+    # ....................... #
+
+    def _mark_span_error(self, span: "Span | None", error: BaseException) -> None:
+        if self.telemetry is not None and span is not None:
+            self.telemetry.mark_error(span, error)

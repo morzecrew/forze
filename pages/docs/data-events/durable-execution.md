@@ -95,6 +95,12 @@ runner re-binds each run's tenant to execute it. On a **namespace** store (a per
 sweep binds every assigned tenant in turn and recovers its table — shard the tenant set across
 instances to parallelize.
 
+**Observability.** Pass `DurableTelemetry.create()` to the runner and scheduler for
+OpenTelemetry: a `durable.run` span per execution plus `forze.durable.runs` /
+`forze.durable.run.duration` (by name + outcome), `forze.durable.recovered`, and
+`forze.durable.schedule.fires` metrics. Emits via the global OTel providers — configure the
+SDK in your app.
+
 ### Crash-resumable sagas
 
 The self-hosted tier closes the "an in-process saga is not crash-resumable" gap. Swap the

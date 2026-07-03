@@ -17,6 +17,7 @@ from forze.application.integrations.durable import next_cron_fire, validate_cron
 from forze.base.primitives import current_time_source
 
 from ._resolve import resolve_durable_run_store, resolve_durable_schedule_store
+from .telemetry import DurableTelemetry
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -40,6 +41,9 @@ class DurableScheduler:
     "Now" is read from the ambient :class:`~forze.base.primitives.TimeSource`, so schedules
     are deterministic under simulation (pass *now* to pin it in a test).
     """
+
+    telemetry: DurableTelemetry | None = None
+    """Optional OpenTelemetry metrics (counts each schedule fire)."""
 
     async def put(
         self,
@@ -108,6 +112,9 @@ class DurableScheduler:
                 from_fire_at=schedule.next_fire_at,
                 to_fire_at=next_cron_fire(schedule.cron, after=moment, tz=schedule.tz),
             )
+
+            if self.telemetry is not None:
+                self.telemetry.record_fire(schedule.name)
 
         return len(due)
 
