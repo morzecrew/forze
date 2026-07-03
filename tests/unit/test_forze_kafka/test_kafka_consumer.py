@@ -90,6 +90,24 @@ async def test_commit_translates_to_next_offset_max_per_partition() -> None:
     assert consumer.committed[TopicPartition("events", 1)].offset == 3
 
 
+async def test_commit_targets_the_group_that_read_not_the_latest() -> None:
+    # Regression: interleaved reads across groups must not cross-commit.
+    g1 = FakeConsumer()
+    g2 = FakeConsumer()
+    client = FakeKafkaClient(consumers_by_group={"g1": g1, "g2": g2})
+    adapter = _adapter(client)
+
+    await adapter.read("g1", "m", ["events"])
+    await adapter.read("g2", "m", ["events"])  # latest read is g2
+
+    await adapter.commit(
+        "g1", [StreamPosition(stream="events", partition=0, offset=4)]
+    )
+
+    assert g1.committed[TopicPartition("events", 0)].offset == 5
+    assert g2.committed == {}  # the g2 consumer must be untouched
+
+
 async def test_commit_before_read_is_noop() -> None:
     consumer = FakeConsumer()
     adapter = _adapter(FakeKafkaClient(consumer=consumer))

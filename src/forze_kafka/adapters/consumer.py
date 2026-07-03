@@ -34,13 +34,15 @@ _DEFAULT_POLL_MS = 1_000
 
 @attrs.define(slots=True, kw_only=True)
 class _ConsumerCell:
-    """Mutable holder for the pooled consumer serving read + its follow-up commit.
+    """Mutable holder mapping each group to the consumer its ``read`` used.
 
     The adapter is frozen; this cell lets a ``read`` record the exact consumer
-    instance so the matching ``commit`` targets it (the client pools by
-    ``(group, member, topics)``, none of which ``commit`` receives)."""
+    instance **per group** so the matching ``commit`` targets the consumer of
+    *that* group (``commit`` receives the group but not the member/topics the
+    client pools by). Keying by group is what keeps interleaved reads across
+    groups from committing one group's offsets through another's consumer."""
 
-    consumer: AIOKafkaConsumer | None = None
+    by_group: dict[str, AIOKafkaConsumer] = attrs.field(factory=dict)
 
 
 # ....................... #
@@ -130,7 +132,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
             auto_offset_reset=self.auto_offset_reset,
             max_poll_records=self.max_poll_records,
         )
-        self._cell.consumer = kafka_consumer
+        self._cell.by_group[group] = kafka_consumer
 
         timeout_ms = (
             int(timeout.total_seconds() * 1000)
@@ -175,9 +177,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
     # ....................... #
 
     async def commit(self, group: str, positions: Sequence[StreamPosition]) -> None:
-        del group
-
-        kafka_consumer = self._cell.consumer
+        kafka_consumer = self._cell.by_group.get(group)
 
         if kafka_consumer is None or not positions:
             return
