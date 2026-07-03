@@ -260,6 +260,17 @@ async def test_ensure_topic_rejects_zero_partitions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ensure_topic_is_idempotent_and_rejects_repartition() -> None:
+    _producer, _query, admin = _adapters()
+    await admin.ensure_topic("orders", partitions=4)
+
+    await admin.ensure_topic("orders", partitions=4)  # same count → no-op
+
+    with pytest.raises(CoreException):  # different count → rejected (would remap)
+        await admin.ensure_topic("orders", partitions=8)
+
+
+@pytest.mark.asyncio
 async def test_query_and_admin_report_capabilities() -> None:
     _producer, query, admin = _adapters()
     assert isinstance(query, CommitStreamGroupAware)

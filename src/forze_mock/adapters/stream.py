@@ -704,7 +704,18 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
             raise exc.validation("ensure_topic requires partitions >= 1")
 
         with self.state.lock:
-            self.state.commit_stream_partitions[(self._ns(), stream)] = partitions
+            key = (self._ns(), stream)
+            existing = self.state.commit_stream_partitions.get(key)
+
+            if existing is not None:
+                if existing != partitions:
+                    raise exc.configuration(
+                        f"Stream {stream!r} already exists with {existing} partitions; "
+                        f"cannot ensure it with {partitions} partitions."
+                    )
+                return
+
+            self.state.commit_stream_partitions[key] = partitions
 
     # ....................... #
 
