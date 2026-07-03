@@ -73,3 +73,8 @@ class KafkaConfig:
             raise exc.configuration(
                 "Kafka sasl_mechanism is required for SASL security protocols"
             )
+
+        if self.enable_idempotence and self.acks not in ("all", -1):
+            raise exc.configuration(
+                "Kafka enable_idempotence=True requires acks='all' (or -1)"
+            )

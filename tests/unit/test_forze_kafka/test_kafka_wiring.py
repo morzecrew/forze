@@ -70,6 +70,17 @@ def test_config_rejects_negative_linger() -> None:
         KafkaConfig(linger_ms=-1)
 
 
+def test_config_idempotence_requires_all_acks() -> None:
+    with pytest.raises(CoreException):
+        KafkaConfig(enable_idempotence=True, acks=1)
+
+
+def test_config_idempotence_allows_all_or_minus_one() -> None:
+    assert KafkaConfig(enable_idempotence=True, acks="all")  # default
+    assert KafkaConfig(enable_idempotence=True, acks=-1)
+    assert KafkaConfig(enable_idempotence=False, acks=0)  # non-idempotent: any acks
+
+
 def test_route_config_defaults() -> None:
     assert KafkaStreamConfig().namespace == ""
     group = KafkaCommitStreamGroupConfig()

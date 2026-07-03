@@ -5,6 +5,7 @@ require_kafka()
 # ....................... #
 
 import asyncio
+from contextlib import suppress
 from typing import Any, Mapping, Sequence, final
 
 import attrs
@@ -74,15 +75,24 @@ class KafkaClient(KafkaClientPort):
                 request_timeout_ms=int(config.request_timeout.total_seconds() * 1000),
                 **self.__security_kwargs(),
             )
-            await producer.start()
-            self.__producer = producer
-
             admin = AIOKafkaAdminClient(
                 bootstrap_servers=bootstrap_servers,
                 request_timeout_ms=int(config.request_timeout.total_seconds() * 1000),
                 **self.__security_kwargs(),
             )
-            await admin.start()
+
+            await producer.start()
+            try:
+                await admin.start()
+            except BaseException:  # pragma: no cover - admin start is an infra fault
+                # Roll back the started producer so a failed init leaves no live
+                # client behind and the ready check stays False.
+                with suppress(Exception):
+                    await producer.stop()
+                raise
+
+            # Publish both only once both started — the ready lambda then flips.
+            self.__producer = producer
             self.__admin = admin
 
             logger.trace("Kafka client started")
@@ -107,21 +117,21 @@ class KafkaClient(KafkaClientPort):
         for consumer in consumers:
             try:
                 await consumer.stop()
-            except Exception as e:  # pragma: no cover - close must never raise
-                logger.warning("Kafka close: consumer stop failed: %s", e)
+            except Exception:  # pragma: no cover - close must never raise
+                logger.warning("Kafka close: consumer stop failed", exc_info=True)
 
         if self.__producer is not None:
             try:
                 await self.__producer.stop()
-            except Exception as e:  # pragma: no cover - close must never raise
-                logger.warning("Kafka close: producer stop failed: %s", e)
+            except Exception:  # pragma: no cover - close must never raise
+                logger.warning("Kafka close: producer stop failed", exc_info=True)
             self.__producer = None
 
         if self.__admin is not None:
             try:
                 await self.__admin.close()
-            except Exception as e:  # pragma: no cover - close must never raise
-                logger.warning("Kafka close: admin close failed: %s", e)
+            except Exception:  # pragma: no cover - close must never raise
+                logger.warning("Kafka close: admin close failed", exc_info=True)
             self.__admin = None
 
         logger.trace("Kafka client closed")
@@ -190,26 +200,38 @@ class KafkaClient(KafkaClientPort):
         async with self.__consumer_lock:
             cached = self.__consumers.get(key)
 
-            if cached is not None:
-                return cached
+        if cached is not None:
+            return cached
 
-            consumer = AIOKafkaConsumer(
-                *topics,
-                bootstrap_servers=self.__bootstrap,
-                group_id=group,
-                client_id=member,
-                enable_auto_commit=False,
-                auto_offset_reset=auto_offset_reset or self.__config.auto_offset_reset,
-                max_poll_records=max_poll_records or self.__config.max_poll_records,
-                request_timeout_ms=int(
-                    self.__config.request_timeout.total_seconds() * 1000
-                ),
-                **self.__security_kwargs(),
-            )
-            await consumer.start()
-            self.__consumers[key] = consumer
+        consumer = AIOKafkaConsumer(
+            *topics,
+            bootstrap_servers=self.__bootstrap,
+            group_id=group,
+            client_id=member,
+            enable_auto_commit=False,
+            auto_offset_reset=auto_offset_reset or self.__config.auto_offset_reset,
+            max_poll_records=(
+                max_poll_records
+                if max_poll_records is not None
+                else self.__config.max_poll_records
+            ),
+            request_timeout_ms=int(
+                self.__config.request_timeout.total_seconds() * 1000
+            ),
+            **self.__security_kwargs(),
+        )
+        # Start outside the lock so an unrelated consumer's slow start does not
+        # serialize others; a concurrent racer for the same key is de-duplicated.
+        await consumer.start()
 
-            return consumer
+        async with self.__consumer_lock:
+            winner = self.__consumers.setdefault(key, consumer)
+
+        if winner is not consumer:  # pragma: no cover - concurrent same-key race
+            with suppress(Exception):
+                await consumer.stop()
+
+        return winner
 
     # ....................... #
 
