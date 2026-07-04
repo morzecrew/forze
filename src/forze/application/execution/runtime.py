@@ -10,7 +10,7 @@ import attrs
 from forze.application._logger import logger
 from forze.application.contracts.querying import (
     CursorTokenSigner,
-    configure_cursor_signer,
+    bind_cursor_signer,
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import (
@@ -265,11 +265,6 @@ class ExecutionRuntime:
 
         logger.info("Creating execution context")
 
-        # Opt-in: sign every keyset cursor token and require signatures (hard cutover).
-        # ``None`` leaves the process default untouched (unsigned unless configured elsewhere).
-        if self.cursor_token_signer is not None:
-            configure_cursor_signer(self.cursor_token_signer)
-
         resolved_deps = self.deps.resolve()
 
         ctx = ExecutionContext(
@@ -382,8 +377,16 @@ class ExecutionRuntime:
             )
             bind = bind_cpu_executor(owned_pool)
 
+        # Opt-in cursor-token signing, scoped to this runtime's scope (context-local, so two
+        # runtimes in one process each mint/verify with their own signer). ``None`` = unsigned.
+        sign_bind: AbstractContextManager[None] = (
+            bind_cursor_signer(self.cursor_token_signer)
+            if self.cursor_token_signer is not None
+            else nullcontext()
+        )
+
         try:
-            with bind:
+            with bind, sign_bind:
                 try:
                     await self.startup()
 

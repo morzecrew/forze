@@ -17,6 +17,7 @@ from ..sort_resolution import (
 )
 from .cursor_token import (
     CursorTokenSigner,
+    bind_cursor_signer,
     compare_keyset_sort_values,
     configure_cursor_signer,
     current_cursor_signer,
@@ -35,6 +36,7 @@ from .cursor_token import (
 __all__ = [
     "CursorTokenSigner",
     "assert_cursor_projection_includes_sort_keys",
+    "bind_cursor_signer",
     "configure_cursor_signer",
     "current_cursor_signer",
     "assert_default_null_ordering",

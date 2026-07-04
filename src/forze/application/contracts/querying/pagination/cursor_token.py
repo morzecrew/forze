@@ -3,8 +3,10 @@
 import base64
 import hashlib
 import hmac
+from contextlib import contextmanager
+from contextvars import ContextVar
 from decimal import Decimal, InvalidOperation
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 import attrs
 
@@ -66,40 +68,65 @@ class CursorTokenSigner:
 # ....................... #
 
 
-_configured_signer: CursorTokenSigner | None = None
-"""Process-wide cursor-token signer, set once by the runtime / app (see
-:func:`configure_cursor_signer`). ``None`` = tokens are unsigned (the default). Every keyset
-mint/verify falls back to this when no explicit ``signer`` is passed, so enabling it signs and
-requires signatures everywhere at once — no per-backend wiring, no mint-signed/verify-unsigned
-split from a missed call site."""
+_cursor_signer_var: ContextVar[CursorTokenSigner | None] = ContextVar(
+    "forze_cursor_token_signer", default=None
+)
+"""The active cursor-token signer for the current context (``None`` = unsigned, the default).
+
+Context-scoped so two :class:`ExecutionRuntime` s in one process each mint/verify with their
+own signer instead of sharing one — bind it with :func:`bind_cursor_signer` (the runtime does
+this per scope) or :func:`configure_cursor_signer`. Every keyset mint/verify falls back to it
+when no explicit ``signer`` is passed, so enabling it signs and requires signatures everywhere
+at once — no per-backend wiring, no mint-signed/verify-unsigned split from a missed call site."""
 
 
 def configure_cursor_signer(
     signer: CursorTokenSigner | None,
 ) -> CursorTokenSigner | None:
-    """Set the process-wide cursor-token signer; return the previous one (for restore).
+    """Set the cursor-token signer for the *current* context; return the previous one (restore).
 
     Opt-in: with a signer set, every keyset cursor token is HMAC-signed and verification
     rejects any unsigned or tampered token (a hard cutover — cursors minted before it 400
-    once and the client restarts pagination). Call once at startup, like ``configure_logging``.
+    once and the client restarts pagination). Call at startup, like ``configure_logging``; for
+    a scoped binding that auto-restores (and isolates concurrent runtimes) use
+    :func:`bind_cursor_signer`.
     """
 
-    global _configured_signer
-    previous = _configured_signer
-    _configured_signer = signer
+    previous = _cursor_signer_var.get()
+    _cursor_signer_var.set(signer)
     return previous
 
 
-def current_cursor_signer() -> CursorTokenSigner | None:
-    """The active cursor-token signer, or ``None`` when signing is not configured."""
+@contextmanager
+def bind_cursor_signer(
+    signer: CursorTokenSigner | None,
+) -> Iterator[None]:
+    """Bind *signer* as the cursor-token signer for the duration of the block, then restore.
 
-    return _configured_signer
+    Context-scoped (a :class:`~contextvars.ContextVar`), so an :class:`ExecutionRuntime` binds
+    its own signer per :meth:`~ExecutionRuntime.scope`: two runtimes in one process verify and
+    mint with independent signers rather than clobbering a shared global.
+    """
+
+    token = _cursor_signer_var.set(signer)
+
+    try:
+        yield
+
+    finally:
+        _cursor_signer_var.reset(token)
+
+
+def current_cursor_signer() -> CursorTokenSigner | None:
+    """The cursor-token signer active in the current context, or ``None`` when unsigned."""
+
+    return _cursor_signer_var.get()
 
 
 def _effective_signer(signer: CursorTokenSigner | None) -> CursorTokenSigner | None:
-    """An explicit *signer* wins; otherwise fall back to the configured process signer."""
+    """An explicit *signer* wins; otherwise fall back to the context's active signer."""
 
-    return signer if signer is not None else _configured_signer
+    return signer if signer is not None else _cursor_signer_var.get()
 
 # ....................... #
 

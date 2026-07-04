@@ -154,6 +154,68 @@ def test_configured_cursor_signer_applies_without_explicit_param() -> None:
     )
 
 
+def test_bind_cursor_signer_scopes_and_restores() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenSigner,
+        bind_cursor_signer,
+        current_cursor_signer,
+    )
+
+    assert current_cursor_signer() is None
+
+    signer = CursorTokenSigner(secret=b"k" * 32)
+
+    with bind_cursor_signer(signer):
+        assert current_cursor_signer() is signer
+        assert "." in encode_keyset_v1(
+            sort_keys=["id"], directions=["asc"], values=[1]
+        )
+
+    # Auto-restored on block exit.
+    assert current_cursor_signer() is None
+    assert "." not in encode_keyset_v1(
+        sort_keys=["id"], directions=["asc"], values=[1]
+    )
+
+
+@pytest.mark.asyncio
+async def test_cursor_signer_is_isolated_across_concurrent_contexts() -> None:
+    # The multi-runtime win: two concurrently-running contexts each bind their own signer and
+    # never clobber each other (a module-global would let the last binding win for both).
+    import asyncio
+
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenSigner,
+        bind_cursor_signer,
+        current_cursor_signer,
+    )
+
+    signer_a = CursorTokenSigner(secret=b"a" * 32)
+    signer_b = CursorTokenSigner(secret=b"b" * 32)
+    seen: dict[str, Any] = {}
+
+    async def worker(name: str, signer: CursorTokenSigner) -> None:
+        with bind_cursor_signer(signer):
+            await asyncio.sleep(0)  # interleave with the other worker
+            seen[name] = current_cursor_signer()
+            seen[f"{name}_tok"] = encode_keyset_v1(
+                sort_keys=["id"], directions=["asc"], values=[1]
+            )
+
+    await asyncio.gather(worker("a", signer_a), worker("b", signer_b))
+
+    # Each worker kept its own signer despite interleaving.
+    assert seen["a"] is signer_a
+    assert seen["b"] is signer_b
+
+    # And a token minted under A does not verify under B's signer.
+    with pytest.raises(CoreException):
+        decode_keyset_v1(seen["a_tok"], signer=signer_b)
+
+    # Outside any binding, signing is off again.
+    assert current_cursor_signer() is None
+
+
 def test_encode_keyset_misaligned_raises() -> None:
     with pytest.raises(CoreException, match="aligned"):
         encode_keyset_v1(sort_keys=["a"], directions=["asc", "asc"], values=[1])

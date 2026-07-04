@@ -50,6 +50,31 @@ class TestExecutionRuntime:
         assert order == ["start", "shut"]
 
     @pytest.mark.asyncio
+    async def test_scope_binds_cursor_signer_and_restores(self) -> None:
+        from forze.application.contracts.querying import (
+            CursorTokenSigner,
+            current_cursor_signer,
+        )
+
+        signer = CursorTokenSigner(secret=b"k" * 32)
+        rt = ExecutionRuntime(cursor_token_signer=signer)
+
+        assert current_cursor_signer() is None
+
+        async with rt.scope():
+            # Operations in this scope mint/verify cursor tokens with this runtime's signer.
+            assert current_cursor_signer() is signer
+
+        assert current_cursor_signer() is None  # restored on scope exit
+
+    @pytest.mark.asyncio
+    async def test_scope_without_signer_leaves_cursor_signing_off(self) -> None:
+        from forze.application.contracts.querying import current_cursor_signer
+
+        async with ExecutionRuntime().scope():
+            assert current_cursor_signer() is None
+
+    @pytest.mark.asyncio
     async def test_scope_builds_lifecycle_from_modules(self) -> None:
         order: list[str] = []
 
