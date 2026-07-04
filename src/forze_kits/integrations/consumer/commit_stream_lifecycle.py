@@ -59,7 +59,7 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                     # are absorbed inside the runner's decision ladder (which already
                     # rewinds to committed on a pause); only a mid-batch crash
                     # (broker connection loss, ...) escapes to here.
-                    await self.consumer.run(ctx, timeout=None)
+                    result = await self.consumer.run(ctx, timeout=None)
 
                 except asyncio.CancelledError:
                     raise
@@ -76,16 +76,31 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                     with suppress(Exception):
                         await self.consumer.reset_to_committed(ctx)
 
-                # Reached on crash — or if the run ever returns (a pause-and-alert
-                # poison) despite timeout=None: restart either way after the backoff
-                # so a flapping broker / wedged poison cannot hot-loop the consumer.
-                # Jittered: a shared downstream outage crashes every replica at once;
-                # without jitter they all restart (and re-crash) in lockstep.
-                await asyncio.sleep(
-                    # Desynchronization jitter, not security randomness.
-                    self.restart_backoff.total_seconds()
-                    * current_entropy_source().as_random().uniform(1.0, 1.5)
+                    # Jittered backoff, then restart so a flapping broker cannot
+                    # hot-loop the consumer. Jittered: a shared downstream outage
+                    # crashes every replica at once; without jitter they all restart
+                    # (and re-crash) in lockstep.
+                    await asyncio.sleep(
+                        # Desynchronization jitter, not security randomness.
+                        self.restart_backoff.total_seconds()
+                        * current_entropy_source().as_random().uniform(1.0, 1.5)
+                    )
+                    continue
+
+                # run() returned rather than raising: with timeout=None the only exit
+                # is a consumer-wide pause-and-alert poison (failed > 0). The runner
+                # already alerted and left the record uncommitted; restarting would
+                # re-fetch the same poison from the committed offset and pause again
+                # in a backoff loop, so honor the documented operator-intervention
+                # contract and stop supervising. The operator clears the poison (or
+                # adds a dead-letter route) and restarts the process.
+                logger.error(
+                    "Commit-stream consumer for %s paused on poison (failed=%d); "
+                    "supervision stopped pending operator intervention",
+                    self.consumer.topics,
+                    result.failed,
                 )
+                return
 
         if self.task is not None and not self.task.done():
             # The runtime invokes startup once per scope; a direct double call must
@@ -153,12 +168,16 @@ def commit_stream_consumer_background_lifecycle_step(
     The offset-log (commit sub-model) counterpart of
     :func:`~forze_kits.integrations.consumer.queue_consumer_background_lifecycle_step`.
     Startup spawns a consume-forever task (``timeout=None``); shutdown cancels and
-    awaits it. Per-message failures never reach this loop — they are handled inside
-    the runner's decision ladder (retry, dead-letter, or pause-and-alert). A crash
-    of the consume itself (broker connection loss) is logged and the consume
-    **restarts after a jittered *restart_backoff***, first rewinding the group to its
-    committed offset so no uncommitted record is skipped on restart; unprocessed
-    offsets are redelivered and deduped by the inbox.
+    awaits it. Per-message retry/dead-letter is handled inside the runner's decision
+    ladder. A **consumer-wide pause-and-alert poison** (decrypt/decode poison, or
+    handler poison with no dead-letter route) makes the run *return* rather than raise;
+    the supervisor then **stops** — a restart would only re-fetch the same uncommitted
+    record from the committed offset and pause again — logging an alert and leaving the
+    consumer paused until an operator intervenes. A **crash** of the consume itself
+    (broker connection loss) is instead logged and the consume **restarts after a
+    jittered *restart_backoff***, first rewinding the group to its committed offset so
+    no uncommitted record is skipped on restart; unprocessed offsets are redelivered
+    and deduped by the inbox.
 
     One step consumes one consumer's topics within one group. For more consumers —
     or more members across processes — register multiple steps with distinct

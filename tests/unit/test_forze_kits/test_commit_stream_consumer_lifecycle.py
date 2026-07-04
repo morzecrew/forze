@@ -151,6 +151,62 @@ async def test_consume_crash_is_logged_and_restarts_after_backoff() -> None:
 
 
 @pytest.mark.asyncio
+async def test_poison_pause_return_stops_supervision_without_restart() -> None:
+    # A pause-and-alert poison makes run() *return* (failed > 0), not raise. Restarting
+    # would re-fetch the same uncommitted record from the committed offset and pause
+    # again forever, so the supervisor must stop — call run() exactly once, log an alert,
+    # and let the task end. It must NOT rewind to committed (that is the crash path).
+    from forze_kits.integrations.consumer.commit_stream_runner import (
+        CommitStreamGroupConsumerRunResult,
+    )
+
+    calls = 0
+
+    async def _paused(ctx: Any, **kwargs: Any) -> CommitStreamGroupConsumerRunResult:
+        del ctx, kwargs
+        nonlocal calls
+        calls += 1
+
+        return CommitStreamGroupConsumerRunResult(processed=2, failed=1)
+
+    step = _step(restart_backoff=timedelta(milliseconds=10))
+    logger_mock = MagicMock()
+    runtime = _runtime()
+    reset_mock = AsyncMock()
+
+    with (
+        patch.object(CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_paused)),
+        patch.object(CommitStreamGroupConsumer, "reset_to_committed", reset_mock),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+            assert startup.task is not None
+
+            # The task ends on its own once the poison pause returns.
+            await asyncio.wait_for(startup.task, timeout=2.0)
+
+            await step.shutdown(ctx)
+
+    # run() invoked once and never restarted (no re-fetch of the same poison).
+    assert calls == 1
+    # The pause is a rewind-free alert, distinct from the crash path.
+    reset_mock.assert_not_called()
+    logger_mock.error.assert_called_once()
+    logger_mock.exception.assert_not_called()
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
 async def test_crash_restart_rewinds_to_committed() -> None:
     # BUG 3 (loss-free restart): a crashed run rewinds the group to its committed
     # offset before restarting, so the reader does not resume past uncommitted
