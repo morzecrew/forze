@@ -144,6 +144,71 @@ async def test_signed_cursor_rejects_tampered_token(cursor_signing: Any) -> None
         )
 
 
+@pytest.fixture
+def cursor_encryption() -> Any:
+    from forze.application.contracts.querying import (
+        CursorTokenCipher,
+        configure_cursor_cipher,
+    )
+
+    previous = configure_cursor_cipher(CursorTokenCipher(secret=b"z" * 32))
+
+    try:
+        yield
+
+    finally:
+        configure_cursor_cipher(previous)
+
+
+@pytest.mark.asyncio
+async def test_encrypted_cursor_pagination_hides_payload_and_round_trips(
+    cursor_encryption: Any,
+) -> None:
+    # With a cipher configured, the minted cursor is AEAD-encrypted: opaque, yet it still
+    # drives the next page end-to-end through the mock adapter.
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    assert [h.title for h in page1.hits] == ["b", "d"]
+    assert page1.next_cursor is not None
+    assert page1.next_cursor.startswith("~")  # encrypted marker
+
+    page2 = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page1.next_cursor},
+    )
+    assert [h.title for h in page2.hits] == ["f", "h"]
+
+
+@pytest.mark.asyncio
+async def test_encrypted_cursor_rejects_a_previously_plaintext_cursor() -> None:
+    # Hard cutover: mint plaintext (no cipher), then enable encryption and reuse it -> rejected.
+    from forze.application.contracts.querying import (
+        CursorTokenCipher,
+        configure_cursor_cipher,
+    )
+
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    plaintext = page1.next_cursor
+    assert plaintext is not None
+    assert not plaintext.startswith("~")
+
+    previous = configure_cursor_cipher(CursorTokenCipher(secret=b"z" * 32))
+    try:
+        with pytest.raises(CoreException):
+            await doc.find_cursor(
+                sorts={"title": "asc"}, cursor={"limit": 2, "after": plaintext}
+            )
+    finally:
+        configure_cursor_cipher(previous)
+
+
 @pytest.mark.asyncio
 async def test_signed_cursor_rejects_replay_against_a_different_filter(
     cursor_signing: Any,

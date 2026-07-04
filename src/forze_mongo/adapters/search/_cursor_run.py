@@ -12,7 +12,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
     build_cursor_binding,
-    current_cursor_signer,
+    cursor_protection_active,
     decode_keyset_v1,
     encode_keyset_v1,
     normalize_sorts_for_keyset,
@@ -98,7 +98,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
             tenant_id=gw.require_tenant_if_aware(),
             filter_expr=gw.compile_filters(filters),
         )
-        if current_cursor_signer() is not None
+        if cursor_protection_active()
         else None
     )
 

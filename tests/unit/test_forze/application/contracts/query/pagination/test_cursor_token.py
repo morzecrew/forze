@@ -416,6 +416,181 @@ def test_fingerprint_filter_is_stable_across_pythonhashseed() -> None:
     assert _run("0") == _run("1")
 
 
+# ----------------------- #
+# AEAD payload confidentiality: P3
+
+
+def test_encrypted_cursor_round_trips_and_hides_the_payload() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenCipher,
+        _b64url_decode,
+        bind_cursor_cipher,
+    )
+
+    with bind_cursor_cipher(CursorTokenCipher(secret=b"z" * 32)):
+        tok = encode_keyset_v1(
+            sort_keys=["score"], directions=["desc"], values=[4242]
+        )
+        # Encrypted tokens carry the scheme marker and are opaque — the ciphertext holds neither
+        # the plaintext payload keys (``score``) nor the boundary value (``4242``), so a boundary
+        # sort-key value that isn't in the row projection stays hidden.
+        assert tok.startswith("~")
+        body = _b64url_decode(tok[1:])
+        assert b"score" not in body
+        assert b"4242" not in body
+        # Round-trips back to the exact values.
+        assert validate_cursor_token(
+            tok, sort_keys=["score"], directions=["desc"]
+        ) == [4242]
+
+
+def test_encrypted_cursor_uses_a_fresh_nonce_each_time() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenCipher,
+        bind_cursor_cipher,
+    )
+
+    with bind_cursor_cipher(CursorTokenCipher(secret=b"z" * 32)):
+        a = encode_keyset_v1(sort_keys=["id"], directions=["asc"], values=[1])
+        b = encode_keyset_v1(sort_keys=["id"], directions=["asc"], values=[1])
+        # Same cursor, different ciphertext (random nonce) — but both decrypt identically.
+        assert a != b
+        assert validate_cursor_token(a, sort_keys=["id"], directions=["asc"]) == [1]
+        assert validate_cursor_token(b, sort_keys=["id"], directions=["asc"]) == [1]
+
+
+def test_encrypted_cursor_rejects_tampering_and_a_foreign_key() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenCipher,
+        bind_cursor_cipher,
+    )
+
+    cipher = CursorTokenCipher(secret=b"z" * 32)
+
+    with bind_cursor_cipher(cipher):
+        tok = encode_keyset_v1(sort_keys=["id"], directions=["asc"], values=[9])
+
+        # Flip a ciphertext byte (index 6, well past the ``~`` marker) -> AEAD auth fails.
+        i = 6
+        flipped = tok[:i] + ("A" if tok[i] != "A" else "B") + tok[i + 1 :]
+        with pytest.raises(CoreException):
+            validate_cursor_token(flipped, sort_keys=["id"], directions=["asc"])
+
+    # A token sealed under one key does not open under another.
+    with bind_cursor_cipher(CursorTokenCipher(secret=b"w" * 32)):
+        with pytest.raises(CoreException):
+            validate_cursor_token(tok, sort_keys=["id"], directions=["asc"])
+
+
+def test_encryption_is_a_hard_cutover() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        _CODEC,
+        CursorTokenCipher,
+        bind_cursor_cipher,
+    )
+
+    # A previously-minted plaintext (or signed) token has no ``~`` marker, so once a cipher is
+    # configured it is rejected outright — the client restarts pagination from page 1.
+    plaintext = _CODEC.dumps(
+        {"v": _KEYSET_V1, "k": ["id"], "d": ["asc"], "n": ["first"], "x": [5]}
+    )
+
+    with bind_cursor_cipher(CursorTokenCipher(secret=b"z" * 32)):
+        with pytest.raises(CoreException):
+            decode_keyset_v1(plaintext)
+
+
+def test_cipher_supersedes_signer_when_both_are_bound() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenCipher,
+        CursorTokenSigner,
+        bind_cursor_cipher,
+        bind_cursor_signer,
+    )
+
+    with (
+        bind_cursor_signer(CursorTokenSigner(secret=b"k" * 32)),
+        bind_cursor_cipher(CursorTokenCipher(secret=b"z" * 32)),
+    ):
+        tok = encode_keyset_v1(sort_keys=["id"], directions=["asc"], values=[3])
+        # The cipher wins: the token is encrypted (not a signed ``payload.hmac``) and verifies.
+        assert tok.startswith("~")
+        assert "." not in tok
+        assert validate_cursor_token(tok, sort_keys=["id"], directions=["asc"]) == [3]
+
+
+def test_encrypted_cursor_still_enforces_context_binding() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenCipher,
+        bind_cursor_cipher,
+        build_cursor_binding,
+    )
+
+    f_open = _parse_filter({"$values": {"status": {"$eq": "open"}}})
+    f_closed = _parse_filter({"$values": {"status": {"$eq": "closed"}}})
+    minted = build_cursor_binding(spec_name="orders", tenant_id="t1", filter_expr=f_open)
+
+    with bind_cursor_cipher(CursorTokenCipher(secret=b"z" * 32)):
+        tok = encode_keyset_v1(
+            sort_keys=["id"], directions=["asc"], values=[5], binding=minted
+        )
+        assert validate_cursor_token(
+            tok, sort_keys=["id"], directions=["asc"], binding=minted
+        ) == [5]
+
+        # The binding rides *inside* the ciphertext now, and a replay under a different filter
+        # is still rejected after decryption.
+        other = build_cursor_binding(
+            spec_name="orders", tenant_id="t1", filter_expr=f_closed
+        )
+        with pytest.raises(CoreException):
+            validate_cursor_token(
+                tok, sort_keys=["id"], directions=["asc"], binding=other
+            )
+
+
+def test_bind_cursor_cipher_scopes_and_configure_restores() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenCipher,
+        bind_cursor_cipher,
+        configure_cursor_cipher,
+        current_cursor_cipher,
+        cursor_protection_active,
+    )
+
+    assert current_cursor_cipher() is None
+    assert cursor_protection_active() is False
+
+    cipher = CursorTokenCipher(secret=b"z" * 32)
+
+    with bind_cursor_cipher(cipher):
+        assert current_cursor_cipher() is cipher
+        # Protection is active under a cipher alone (no signer needed).
+        assert cursor_protection_active() is True
+        assert encode_keyset_v1(
+            sort_keys=["id"], directions=["asc"], values=[1]
+        ).startswith("~")
+
+    assert current_cursor_cipher() is None
+
+    # configure_* set/restore mirrors the signer's.
+    previous = configure_cursor_cipher(cipher)
+    try:
+        assert current_cursor_cipher() is cipher
+    finally:
+        configure_cursor_cipher(previous)
+    assert current_cursor_cipher() is None
+
+
+def test_short_cipher_secret_is_refused() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenCipher,
+    )
+
+    with pytest.raises(ValueError):
+        CursorTokenCipher(secret=b"short")
+
+
 def test_encode_keyset_misaligned_raises() -> None:
     with pytest.raises(CoreException, match="aligned"):
         encode_keyset_v1(sort_keys=["a"], directions=["asc", "asc"], values=[1])

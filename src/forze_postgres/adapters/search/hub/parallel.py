@@ -19,7 +19,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
     build_cursor_binding,
-    current_cursor_signer,
+    cursor_protection_active,
     encode_keyset_v1,
     row_passes_keyset_seek,
     row_value_for_sort_key,
@@ -482,7 +482,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 tenant_id=host._tenant_id_for_resolve(),  # type: ignore[protected-access]
                 filter_expr=host.compile_filters(filters),
             )
-            if current_cursor_signer() is not None
+            if cursor_protection_active()
             else None
         )
 

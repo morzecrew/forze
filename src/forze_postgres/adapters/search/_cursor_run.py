@@ -21,7 +21,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
     build_cursor_binding,
-    current_cursor_signer,
+    cursor_protection_active,
     keyset_page_bounds,
     normalize_sorts_for_keyset,
     resolve_effective_sorts,
@@ -83,14 +83,14 @@ def _search_cursor_binding(
     filters: Any,
     parsed: Any = _UNSET,
 ) -> CursorBinding | None:
-    """Bind a search cursor to its (spec, tenant, filter) — only while signing is active.
+    """Bind a search cursor to its (spec, tenant, filter) — only while protection is active.
 
-    Returns ``None`` when no signer is bound (the embedded binding is HMAC-covered, so it is
-    only meaningful signed), which also skips parsing the filter on the unsigned hot path.
-    A caller with the filter already parsed passes it as *parsed* to avoid re-parsing.
+    Returns ``None`` when neither a signer nor a cipher is bound (the embedded binding is
+    authenticated, so it is only meaningful then), which also skips parsing the filter on the
+    unprotected hot path. A caller with the filter already parsed passes it as *parsed*.
     """
 
-    if current_cursor_signer() is None:
+    if not cursor_protection_active():
         return None
 
     expr = parsed if parsed is not _UNSET else gw.compile_filters(filters)

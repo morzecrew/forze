@@ -75,6 +75,24 @@ class TestExecutionRuntime:
             assert current_cursor_signer() is None
 
     @pytest.mark.asyncio
+    async def test_scope_binds_cursor_cipher_and_restores(self) -> None:
+        from forze.application.contracts.querying import (
+            CursorTokenCipher,
+            current_cursor_cipher,
+        )
+
+        cipher = CursorTokenCipher(secret=b"z" * 32)
+        rt = ExecutionRuntime(cursor_token_cipher=cipher)
+
+        assert current_cursor_cipher() is None
+
+        async with rt.scope():
+            # Operations in this scope mint/verify encrypted cursor tokens with this cipher.
+            assert current_cursor_cipher() is cipher
+
+        assert current_cursor_cipher() is None  # restored on scope exit
+
+    @pytest.mark.asyncio
     async def test_scope_builds_lifecycle_from_modules(self) -> None:
         order: list[str] = []
 

@@ -9,7 +9,9 @@ import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.querying import (
+    CursorTokenCipher,
     CursorTokenSigner,
+    bind_cursor_cipher,
     bind_cursor_signer,
 )
 from forze.base.exceptions import CoreException, exc
@@ -170,6 +172,14 @@ class ExecutionRuntime:
     context creation, so every keyset cursor token is signed and verification rejects any
     unsigned or tampered token — opt-in, hard cutover. ``None`` (default) leaves tokens
     unsigned. Equivalent to calling ``configure_cursor_signer`` yourself at startup."""
+
+    cursor_token_cipher: CursorTokenCipher | None = None
+    """Optional AEAD cipher for keyset cursor tokens. When set, the runtime binds it per scope,
+    so every keyset cursor token is encrypted (payload hidden, tag-authenticated) and
+    verification rejects any unencrypted or tampered token — opt-in, hard cutover. A cipher
+    **supersedes** :attr:`cursor_token_signer` (AEAD already authenticates). ``None`` (default)
+    leaves confidentiality off. See
+    :func:`~forze.application.contracts.querying.configure_cursor_cipher`."""
 
     # ....................... #
 
@@ -385,8 +395,16 @@ class ExecutionRuntime:
             else nullcontext()
         )
 
+        # Opt-in cursor-token encryption (confidentiality), same scoping. A cipher supersedes
+        # the signer — AEAD authenticates too — so both binding is harmless. ``None`` = plaintext.
+        cipher_bind: AbstractContextManager[None] = (
+            bind_cursor_cipher(self.cursor_token_cipher)
+            if self.cursor_token_cipher is not None
+            else nullcontext()
+        )
+
         try:
-            with bind, sign_bind:
+            with bind, sign_bind, cipher_bind:
                 try:
                     await self.startup()
 

@@ -16,7 +16,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryFilterLimits,
     build_cursor_binding,
-    current_cursor_signer,
+    cursor_protection_active,
     validate_query_field_types,
     validate_runtime_filter_fields,
 )
@@ -606,14 +606,14 @@ def document_cursor_binding(
     The document read path splits mint (in the pagination mixin) from verify (inside the
     backend gateway's ``find_many_with_cursor``), so both sides call this with the *same*
     gateway and filters to derive an identical binding — no value is threaded across the
-    two frames and there is nothing to drift. Returns ``None`` when no signer is bound (the
-    binding is HMAC-covered) or when the gateway is not tenant-aware and has no filter.
+    two frames and there is nothing to drift. Returns ``None`` when cursor protection is off
+    (no signer or cipher bound — the binding is only meaningful authenticated).
 
     There is no spec name on this path (the gateway is generic), so a document cursor and a
     named-search cursor bind differently even for the same tenant and filter.
     """
 
-    if current_cursor_signer() is None:
+    if not cursor_protection_active():
         return None
 
     return build_cursor_binding(

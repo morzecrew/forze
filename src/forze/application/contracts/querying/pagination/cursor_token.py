@@ -12,7 +12,8 @@ from typing import Any, Iterator, Sequence, cast
 import attrs
 
 from forze.base.codecs import B64UrlJsonCodec
-from forze.base.exceptions import exc
+from forze.base.crypto import Aead, AesGcmAead
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
 
@@ -35,6 +36,12 @@ def _b64url_nopad(data: bytes) -> str:
     """URL-safe base64 without ``=`` padding (matches the token codec's alphabet)."""
 
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(s: str) -> bytes:
+    """Inverse of :func:`_b64url_nopad` — re-pad and decode URL-safe base64."""
+
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
 # ....................... #
@@ -64,6 +71,95 @@ class CursorTokenSigner:
         """Constant-time check that *signature* is a valid HMAC of *message*."""
 
         return hmac.compare_digest(self.sign(message), signature)
+
+
+# ....................... #
+
+
+_ENC_PREFIX = "~"
+"""Leading marker of an AEAD-encrypted cursor token. Outside the base64url alphabet and
+distinct from the signature separator, so decode tells an encrypted token from a signed or
+plaintext one at a glance (a plaintext base64url payload never starts with it)."""
+
+_CURSOR_CIPHER_AAD = b"forze.cursor.token.v1"
+"""Fixed associated data domain-separating cursor-token AEAD from any other use of the key."""
+
+_CURSOR_KEY_INFO = b"forze.cursor.token.aead-key"
+"""Domain-separation label for deriving the AES key from the configured secret."""
+
+_NONCE_LEN = 12
+"""GCM / ChaCha20-Poly1305 nonce length (see :mod:`forze.base.crypto`)."""
+
+
+@attrs.define(frozen=True, slots=True, kw_only=True)
+class CursorTokenCipher:
+    """AEAD sealer for keyset cursor tokens — confidentiality **and** integrity.
+
+    An encrypted token is ``~<base64url(nonce || ciphertext+tag)>``: the whole keyset payload
+    (sort keys, boundary values, and any context binding) is hidden, so a client can't read the
+    boundary sort-key values — which may not appear in the row projection — or introspect the
+    cursor internals. The AEAD tag authenticates too, so an encrypted token needs no separate
+    HMAC: a cipher **supersedes** a :class:`CursorTokenSigner` when both are configured.
+
+    The AES-256 key is derived from *secret* (like the signer's), so this is a static-secret
+    cipher, not a KMS-backed one; rotating the secret invalidates in-flight cursors (they 400
+    once and the client restarts). Defaults to AES-256-GCM via :mod:`forze.base.crypto`, whose
+    nonce comes from the ambient entropy source (deterministic under simulation).
+    """
+
+    secret: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
+    """Root secret; at least 32 bytes. The AES-256 key is derived from it by domain-separated
+    SHA-256, so the secret need not itself be exactly 32 bytes."""
+
+    aead: Aead = attrs.field(factory=AesGcmAead, repr=False)
+    """AEAD primitive (default AES-256-GCM); swap for ChaCha20-Poly1305 on non-AES-NI hosts."""
+
+    _key: bytes = attrs.field(
+        init=False,
+        repr=False,
+        default=attrs.Factory(
+            lambda self: hashlib.sha256(self.secret + _CURSOR_KEY_INFO).digest(),
+            takes_self=True,
+        ),
+    )
+    """The 32-byte AES-256 key, derived once from :attr:`secret` (domain-separated SHA-256)."""
+
+    def seal(self, plaintext: str) -> str:
+        """Encrypt *plaintext* (the encoded keyset payload) into a token body (no prefix)."""
+
+        nonce, ciphertext = self.aead.seal(
+            key=self._key,
+            plaintext=plaintext.encode("utf-8"),
+            aad=_CURSOR_CIPHER_AAD,
+        )
+        return _b64url_nopad(nonce + ciphertext)
+
+    def open(self, body: str) -> str:
+        """Decrypt a token body from :meth:`seal`; tampered / foreign -> ``validation`` error."""
+
+        try:
+            raw = _b64url_decode(body)
+
+        except ValueError as e:
+            raise exc.validation("Invalid cursor token") from e
+
+        if len(raw) <= _NONCE_LEN:
+            raise exc.validation("Invalid cursor token")
+
+        try:
+            plaintext = self.aead.open(
+                key=self._key,
+                nonce=raw[:_NONCE_LEN],
+                ciphertext=raw[_NONCE_LEN:],
+                aad=_CURSOR_CIPHER_AAD,
+            )
+
+        except CoreException as e:
+            # AEAD auth failure / key-size mismatch — a tampered or foreign cursor. Normalize
+            # to the uniform cursor message rather than leaking the crypto-layer detail.
+            raise exc.validation("Invalid cursor token") from e
+
+        return plaintext.decode("utf-8")
 
 
 # ....................... #
@@ -281,6 +377,77 @@ def _effective_signer(signer: CursorTokenSigner | None) -> CursorTokenSigner | N
     """An explicit *signer* wins; otherwise fall back to the context's active signer."""
 
     return signer if signer is not None else _cursor_signer_var.get()
+
+
+# ....................... #
+
+
+_cursor_cipher_var: ContextVar[CursorTokenCipher | None] = ContextVar(
+    "forze_cursor_token_cipher", default=None
+)
+"""The active cursor-token cipher for the current context (``None`` = not encrypted).
+
+Context-scoped like :data:`_cursor_signer_var`; an :class:`ExecutionRuntime` binds its own per
+:meth:`~ExecutionRuntime.scope`. A cipher **supersedes** a signer — AEAD gives integrity too —
+so with one bound every mint encrypts and every verify requires (and decrypts) an encrypted
+token, everywhere at once, with no per-backend wiring."""
+
+
+def configure_cursor_cipher(
+    cipher: CursorTokenCipher | None,
+) -> CursorTokenCipher | None:
+    """Set the cursor-token cipher for the *current* context; return the previous one (restore).
+
+    Opt-in: with a cipher set, every keyset cursor token is AEAD-encrypted (payload hidden,
+    tag-authenticated) and verification rejects any unencrypted or tampered token — a hard
+    cutover, like :func:`configure_cursor_signer`. A cipher takes precedence over any signer.
+    """
+
+    previous = _cursor_cipher_var.get()
+    _cursor_cipher_var.set(cipher)
+    return previous
+
+
+@contextmanager
+def bind_cursor_cipher(
+    cipher: CursorTokenCipher | None,
+) -> Iterator[None]:
+    """Bind *cipher* as the cursor-token cipher for the duration of the block, then restore.
+
+    Context-scoped (a :class:`~contextvars.ContextVar`), so two runtimes in one process encrypt
+    and decrypt with independent ciphers rather than clobbering a shared global.
+    """
+
+    token = _cursor_cipher_var.set(cipher)
+
+    try:
+        yield
+
+    finally:
+        _cursor_cipher_var.reset(token)
+
+
+def current_cursor_cipher() -> CursorTokenCipher | None:
+    """The cursor-token cipher active in the current context, or ``None`` when not encrypting."""
+
+    return _cursor_cipher_var.get()
+
+
+def _effective_cipher(cipher: CursorTokenCipher | None) -> CursorTokenCipher | None:
+    """An explicit *cipher* wins; otherwise fall back to the context's active cipher."""
+
+    return cipher if cipher is not None else _cursor_cipher_var.get()
+
+
+def cursor_protection_active() -> bool:
+    """Whether cursor tokens are protected in this context — a signer **or** cipher is bound.
+
+    Gates the (otherwise wasted) work of building a :class:`CursorBinding` at a mint/verify
+    call site: the binding is embedded and checked only under signing or encryption, so with
+    neither bound there is nothing to bind to and the filter need not be fingerprinted.
+    """
+
+    return _cursor_signer_var.get() is not None or _cursor_cipher_var.get() is not None
 
 
 # ....................... #
@@ -542,6 +709,7 @@ def encode_keyset_v1(
     values: Sequence[Any],
     nulls: Sequence[str] | None = None,
     signer: CursorTokenSigner | None = None,
+    cipher: CursorTokenCipher | None = None,
     binding: CursorBinding | None = None,
 ) -> str:
     null_order = _resolved_nulls(directions, nulls)
@@ -564,14 +732,20 @@ def encode_keyset_v1(
         "x": [_jsonify_value(x) for x in values],
     }
     signer = _effective_signer(signer)
+    cipher = _effective_cipher(cipher)
 
-    # The binding digest is embedded (and HMAC-covered) only when signing is active — unsigned,
-    # a client could forge it, so it would be integrity theater; with no signer the token is
-    # byte-for-byte what it was before this feature.
-    if signer is not None and binding is not None:
+    # The binding digest is embedded (and authenticated) only under integrity — a signer or a
+    # cipher. Unprotected, a client could forge it, so it would be integrity theater; with
+    # neither the token is byte-for-byte what it was before this feature.
+    if binding is not None and (signer is not None or cipher is not None):
         payload["b"] = binding.digest()
 
     encoded = _CODEC.dumps(payload)
+
+    # A cipher supersedes a signer: AEAD authenticates, so the sealed token needs no HMAC and
+    # the whole payload (values + binding) is hidden.
+    if cipher is not None:
+        return f"{_ENC_PREFIX}{cipher.seal(encoded)}"
 
     if signer is None:
         return encoded
@@ -602,6 +776,7 @@ def decode_keyset_v1(
     token: str,
     *,
     signer: CursorTokenSigner | None = None,
+    cipher: CursorTokenCipher | None = None,
     binding: CursorBinding | None = None,
 ) -> tuple[list[str], list[str], list[str], list[Any]]:
     """Decode a keyset token to ``(keys, directions, nulls, values)``.
@@ -610,18 +785,28 @@ def decode_keyset_v1(
     nulls default to the canonical placement for each direction, so old cursors stay
     valid as long as the active sort uses that default.
 
-    When *signer* is set, the token must be signed and the HMAC must verify (constant-time);
-    an unsigned or tampered token is rejected as invalid — a hard cutover, so enabling signing
-    invalidates cursors minted without it (they 400 once and the client restarts pagination).
+    When *cipher* is set the token must be AEAD-encrypted and is decrypted first (the tag
+    authenticates); otherwise when *signer* is set the token must be signed and the HMAC must
+    verify (constant-time). Either way an unprotected or tampered token is rejected — a hard
+    cutover, so enabling protection invalidates cursors minted without it (they 400 once and the
+    client restarts pagination).
 
     When *binding* is also given, the token's embedded binding digest must equal the current
-    query's (spec, tenant, filter) — a validly-signed cursor replayed against a different query
-    is rejected. The digest is HMAC-covered, so this check only runs alongside a signer.
+    query's (spec, tenant, filter) — a valid cursor replayed against a different query is
+    rejected. The digest is authenticated, so this check only runs under a signer or cipher.
     """
 
     signer = _effective_signer(signer)
+    cipher = _effective_cipher(cipher)
 
-    if signer is not None:
+    if cipher is not None:
+        # Hard cutover: with a cipher configured, only an encrypted token is acceptable.
+        if not token.startswith(_ENC_PREFIX):
+            raise exc.validation("Invalid cursor token")
+
+        token = cipher.open(token[len(_ENC_PREFIX) :])
+
+    elif signer is not None:
         encoded, sep, signature = token.rpartition(_SIGNATURE_SEP)
 
         if not sep or not signer.verify(encoded, signature):
@@ -638,7 +823,7 @@ def decode_keyset_v1(
     if not isinstance(data, dict) or int(data.get("v", 0)) != _KEYSET_V1:  # type: ignore[arg-type]
         raise exc.validation("Invalid cursor token")
 
-    if signer is not None and binding is not None:
+    if binding is not None and (signer is not None or cipher is not None):
         embedded = data.get("b")  # type: ignore[assignment, misc]
 
         if not isinstance(embedded, str) or not hmac.compare_digest(
@@ -693,6 +878,7 @@ def validate_cursor_token(
     directions: Sequence[str],
     nulls: Sequence[str] | None = None,
     signer: CursorTokenSigner | None = None,
+    cipher: CursorTokenCipher | None = None,
     binding: CursorBinding | None = None,
 ) -> list[Any]:
     """Decode a keyset *token* and verify it matches the active sort; return its values.
@@ -700,13 +886,15 @@ def validate_cursor_token(
     Raises :func:`~forze.base.exceptions.exc.validation` when the token's keys,
     directions, or null placement do not align with the current search sort (a stale or
     mismatched cursor). When *nulls* is omitted the canonical placement is assumed.
-    Shared by every keyset-cursor search path so the validation is identical. When *signer*
-    is set the token's HMAC is verified first, and when *binding* is set the token's context
-    binding must match the current query (see :func:`decode_keyset_v1`).
+    Shared by every keyset-cursor search path so the validation is identical. When *cipher*
+    or *signer* is set the token is decrypted / HMAC-verified first, and when *binding* is set
+    the token's context binding must match the current query (see :func:`decode_keyset_v1`).
     """
 
     null_order = _resolved_nulls(directions, nulls)
-    tk, td, tn, tv = decode_keyset_v1(token, signer=signer, binding=binding)
+    tk, td, tn, tv = decode_keyset_v1(
+        token, signer=signer, cipher=cipher, binding=binding
+    )
 
     if (
         list(tk) != list(sort_keys)

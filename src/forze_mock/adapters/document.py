@@ -40,7 +40,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     assert_cursor_projection_includes_sort_keys,
     build_cursor_binding,
-    current_cursor_signer,
+    cursor_protection_active,
     normalize_sorts_for_keyset,
     read_fields_for_model,
     resolve_effective_sorts,
@@ -1179,7 +1179,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                     QueryFilterExpressionParser.parse(filters) if filters else None
                 ),
             )
-            if current_cursor_signer() is not None
+            if cursor_protection_active()
             else None
         )
 

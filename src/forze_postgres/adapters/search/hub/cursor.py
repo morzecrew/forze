@@ -18,7 +18,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
     build_cursor_binding,
-    current_cursor_signer,
+    cursor_protection_active,
     keyset_page_bounds,
     validate_cursor_token,
 )
@@ -180,7 +180,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 tenant_id=self._hub_host._tenant_id_for_resolve(),  # pyright: ignore[reportPrivateUsage]
                 filter_expr=self._hub_host.compile_filters(filters),
             )
-            if current_cursor_signer() is not None
+            if cursor_protection_active()
             else None
         )
 
