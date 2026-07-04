@@ -287,6 +287,55 @@ async def test_lifecycle_consumes_from_the_real_mock_offset_log() -> None:
 # ....................... #
 
 
+@pytest.mark.asyncio
+async def test_duplicate_startup_is_ignored_and_does_not_orphan_the_task() -> None:
+    # A second startup call while the first task still runs must warn and keep the original
+    # task, not spawn (and leak) a second consumer.
+    async def _forever(ctx: Any, **kwargs: Any) -> None:
+        del ctx, kwargs
+        await asyncio.Event().wait()
+
+    step = _step()
+    logger_mock = MagicMock()
+    runtime = _runtime()
+
+    with (
+        patch.object(CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_forever)),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+
+            await startup(ctx)
+            first_task = startup.task
+            assert first_task is not None and not first_task.done()
+
+            await startup(ctx)  # duplicate while the first task is still running
+            logger_mock.warning.assert_called_once()
+            assert startup.task is first_task  # unchanged — no second task spawned
+
+            await step.shutdown(ctx)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_without_startup_is_a_noop() -> None:
+    step = _step()
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        # Shutdown before any startup: startup.task is None, so it must return cleanly.
+        await step.shutdown(ctx)
+
+
+# ....................... #
+
+
 def test_default_step_id_derives_from_group() -> None:
     assert _step(group="orders").id == "commit_stream_consumer:orders"
     assert _step(step_id="my_consumer").id == "my_consumer"

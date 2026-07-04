@@ -260,6 +260,52 @@ def test_fingerprint_filter_membership_container_is_deterministic() -> None:
     assert _canonical_filter_value({3, 1, 2}) == _canonical_filter_value({2, 3, 1})
 
 
+def test_fingerprint_filter_covers_every_node_type() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        fingerprint_filter,
+    )
+
+    # One filter per AST node kind: $or (QueryOr), $not (QueryNot), $fields (QueryCompare),
+    # and $any/$all element quantifiers (QueryElem) — each must fingerprint stably and differ
+    # from the others.
+    raw_by_kind = {
+        "or": {"$or": [{"$values": {"a": {"$eq": 1}}}, {"$values": {"b": {"$eq": 2}}}]},
+        "not": {"$not": {"$values": {"a": {"$eq": 1}}}},
+        "cmp": {"$fields": {"a": {"$gt": "b"}}},
+        "any": {"$values": {"tags": {"$any": "x"}}},
+        "all": {"$values": {"nums": {"$all": {"$gte": 2}}}},
+    }
+
+    fps: set[str] = set()
+    for raw in raw_by_kind.values():
+        fp = fingerprint_filter(_parse_filter(raw))
+        # Stable across an independent re-parse.
+        assert fp == fingerprint_filter(_parse_filter(raw))
+        fps.add(fp)
+
+    # Every node kind yields a distinct fingerprint.
+    assert len(fps) == len(raw_by_kind)
+
+
+def test_fingerprint_filter_unknown_node_falls_back_deterministically() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        fingerprint_filter,
+    )
+
+    # A shape the canonicalizer does not recognize folds through its repr — still deterministic
+    # (same value → same fingerprint) and still sensitive (a different value differs), never a
+    # silent constant.
+    class _Weird:
+        def __init__(self, tag: str) -> None:
+            self.tag = tag
+
+        def __repr__(self) -> str:
+            return f"_Weird({self.tag})"
+
+    assert fingerprint_filter(_Weird("a")) == fingerprint_filter(_Weird("a"))
+    assert fingerprint_filter(_Weird("a")) != fingerprint_filter(_Weird("b"))
+
+
 def test_cursor_binding_digest_changes_per_dimension() -> None:
     from forze.application.contracts.querying.pagination.cursor_token import (
         build_cursor_binding,
@@ -480,6 +526,22 @@ def test_encrypted_cursor_rejects_tampering_and_a_foreign_key() -> None:
     with bind_cursor_cipher(CursorTokenCipher(secret=b"w" * 32)):
         with pytest.raises(CoreException):
             validate_cursor_token(tok, sort_keys=["id"], directions=["asc"])
+
+
+def test_encrypted_cursor_rejects_malformed_and_truncated_bodies() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenCipher,
+        bind_cursor_cipher,
+    )
+
+    with bind_cursor_cipher(CursorTokenCipher(secret=b"z" * 32)):
+        # A ``~`` body that is not decodable base64url (one lone data char) -> validation.
+        with pytest.raises(CoreException):
+            decode_keyset_v1("~A")
+
+        # A well-formed base64url body too short to hold even the nonce -> validation.
+        with pytest.raises(CoreException):
+            decode_keyset_v1("~AAAA")
 
 
 def test_encryption_is_a_hard_cutover() -> None:
