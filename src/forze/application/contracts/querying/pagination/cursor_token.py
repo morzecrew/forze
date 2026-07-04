@@ -1,7 +1,12 @@
 """Base64-JSON cursors and sort normalization (agnostic of SQL vs Mongo)."""
 
+import base64
+import hashlib
+import hmac
 from decimal import Decimal, InvalidOperation
 from typing import Any, Sequence
+
+import attrs
 
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
@@ -14,6 +19,87 @@ _CODEC = B64UrlJsonCodec()
 _DECIMAL_TAG = "$dec"
 """Wire tag round-tripping a ``Decimal`` sort key exactly (as its string form) so keyset
 seek compares it numerically after decode, not as a bare (lexicographically-ordered) string."""
+
+_SIGNATURE_SEP = "."
+"""Separator between a signed token's ``base64url(payload)`` and its ``base64url(hmac)``. The
+base64url alphabet excludes ``.``, so a single ``rpartition`` split is unambiguous."""
+
+
+# ....................... #
+
+
+def _b64url_nopad(data: bytes) -> str:
+    """URL-safe base64 without ``=`` padding (matches the token codec's alphabet)."""
+
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+# ....................... #
+
+
+@attrs.define(frozen=True, slots=True, kw_only=True)
+class CursorTokenSigner:
+    """HMAC-SHA256 signer for opaque keyset cursor tokens — tamper-evidence, not secrecy.
+
+    A signed token is ``<base64url payload>.<base64url hmac>``. Signing makes a client unable
+    to forge keyset values (and, once the token carries a context binding, unable to replay it
+    against a different query) — verification is constant-time. It does **not** hide the
+    payload: the base64-JSON stays readable, so confidentiality (hiding boundary sort-key
+    values) would need a separate AEAD layer.
+    """
+
+    secret: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
+    """HMAC key; at least 32 bytes."""
+
+    def sign(self, message: str) -> str:
+        """Return the unpadded base64url HMAC-SHA256 of *message* (the encoded payload)."""
+
+        mac = hmac.new(self.secret, message.encode("utf-8"), hashlib.sha256).digest()
+        return _b64url_nopad(mac)
+
+    def verify(self, message: str, signature: str) -> bool:
+        """Constant-time check that *signature* is a valid HMAC of *message*."""
+
+        return hmac.compare_digest(self.sign(message), signature)
+
+
+# ....................... #
+
+
+_configured_signer: CursorTokenSigner | None = None
+"""Process-wide cursor-token signer, set once by the runtime / app (see
+:func:`configure_cursor_signer`). ``None`` = tokens are unsigned (the default). Every keyset
+mint/verify falls back to this when no explicit ``signer`` is passed, so enabling it signs and
+requires signatures everywhere at once — no per-backend wiring, no mint-signed/verify-unsigned
+split from a missed call site."""
+
+
+def configure_cursor_signer(
+    signer: CursorTokenSigner | None,
+) -> CursorTokenSigner | None:
+    """Set the process-wide cursor-token signer; return the previous one (for restore).
+
+    Opt-in: with a signer set, every keyset cursor token is HMAC-signed and verification
+    rejects any unsigned or tampered token (a hard cutover — cursors minted before it 400
+    once and the client restarts pagination). Call once at startup, like ``configure_logging``.
+    """
+
+    global _configured_signer
+    previous = _configured_signer
+    _configured_signer = signer
+    return previous
+
+
+def current_cursor_signer() -> CursorTokenSigner | None:
+    """The active cursor-token signer, or ``None`` when signing is not configured."""
+
+    return _configured_signer
+
+
+def _effective_signer(signer: CursorTokenSigner | None) -> CursorTokenSigner | None:
+    """An explicit *signer* wins; otherwise fall back to the configured process signer."""
+
+    return signer if signer is not None else _configured_signer
 
 # ....................... #
 
@@ -273,6 +359,7 @@ def encode_keyset_v1(
     directions: Sequence[str],
     values: Sequence[Any],
     nulls: Sequence[str] | None = None,
+    signer: CursorTokenSigner | None = None,
 ) -> str:
     null_order = _resolved_nulls(directions, nulls)
 
@@ -293,7 +380,14 @@ def encode_keyset_v1(
         "n": list(null_order),
         "x": [_jsonify_value(x) for x in values],
     }
-    return _CODEC.dumps(payload)
+    encoded = _CODEC.dumps(payload)
+    signer = _effective_signer(signer)
+
+    if signer is None:
+        return encoded
+
+    # Append the HMAC of the encoded payload; ``decode_keyset_v1`` verifies it before parsing.
+    return f"{encoded}{_SIGNATURE_SEP}{signer.sign(encoded)}"
 
 
 # ....................... #
@@ -314,13 +408,31 @@ def row_value_for_sort_key(row: dict[str, Any], key: str) -> Any:
 # ....................... #
 
 
-def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[str], list[Any]]:
+def decode_keyset_v1(
+    token: str,
+    *,
+    signer: CursorTokenSigner | None = None,
+) -> tuple[list[str], list[str], list[str], list[Any]]:
     """Decode a keyset token to ``(keys, directions, nulls, values)``.
 
     A token written before per-key null placement existed carries no ``n`` field; its
     nulls default to the canonical placement for each direction, so old cursors stay
     valid as long as the active sort uses that default.
+
+    When *signer* is set, the token must be signed and the HMAC must verify (constant-time);
+    an unsigned or tampered token is rejected as invalid — a hard cutover, so enabling signing
+    invalidates cursors minted without it (they 400 once and the client restarts pagination).
     """
+
+    signer = _effective_signer(signer)
+
+    if signer is not None:
+        encoded, sep, signature = token.rpartition(_SIGNATURE_SEP)
+
+        if not sep or not signer.verify(encoded, signature):
+            raise exc.validation("Invalid cursor token")
+
+        token = encoded
 
     try:
         data: Any = _CODEC.loads(token)
@@ -377,17 +489,19 @@ def validate_cursor_token(
     sort_keys: Sequence[str],
     directions: Sequence[str],
     nulls: Sequence[str] | None = None,
+    signer: CursorTokenSigner | None = None,
 ) -> list[Any]:
     """Decode a keyset *token* and verify it matches the active sort; return its values.
 
     Raises :func:`~forze.base.exceptions.exc.validation` when the token's keys,
     directions, or null placement do not align with the current search sort (a stale or
     mismatched cursor). When *nulls* is omitted the canonical placement is assumed.
-    Shared by every keyset-cursor search path so the validation is identical.
+    Shared by every keyset-cursor search path so the validation is identical. When *signer*
+    is set the token's HMAC is verified first (see :func:`decode_keyset_v1`).
     """
 
     null_order = _resolved_nulls(directions, nulls)
-    tk, td, tn, tv = decode_keyset_v1(token)
+    tk, td, tn, tv = decode_keyset_v1(token, signer=signer)
 
     if (
         list(tk) != list(sort_keys)

@@ -99,6 +99,61 @@ def test_decimal_keys_order_numerically_not_lexicographically() -> None:
     assert compare_keyset_sort_values(Decimal("9"), cursor_price) == -1
 
 
+def test_cursor_token_signer_round_trip_and_rejections() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenSigner,
+    )
+
+    signer = CursorTokenSigner(secret=b"k" * 32)
+    tok = encode_keyset_v1(
+        sort_keys=["id"], directions=["asc"], values=[5], signer=signer
+    )
+    assert "." in tok  # <payload>.<signature>
+
+    # Signed round-trip verifies and returns the values.
+    assert decode_keyset_v1(tok, signer=signer)[3] == [5]
+
+    # Tampered signature -> rejected.
+    with pytest.raises(CoreException):
+        decode_keyset_v1(tok[:-1] + ("x" if tok[-1] != "x" else "y"), signer=signer)
+
+    # Wrong key -> rejected.
+    with pytest.raises(CoreException):
+        decode_keyset_v1(tok, signer=CursorTokenSigner(secret=b"y" * 32))
+
+    # Hard cutover: an unsigned token under a signer -> rejected.
+    unsigned = encode_keyset_v1(sort_keys=["id"], directions=["asc"], values=[5])
+    with pytest.raises(CoreException):
+        decode_keyset_v1(unsigned, signer=signer)
+
+    # A short secret is refused at construction.
+    with pytest.raises(ValueError):
+        CursorTokenSigner(secret=b"short")
+
+
+def test_configured_cursor_signer_applies_without_explicit_param() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenSigner,
+        configure_cursor_signer,
+    )
+
+    previous = configure_cursor_signer(CursorTokenSigner(secret=b"k" * 32))
+
+    try:
+        # No explicit signer passed (as the gateways call it) -> the configured one applies.
+        tok = encode_keyset_v1(sort_keys=["id"], directions=["asc"], values=[7])
+        assert "." in tok
+        assert decode_keyset_v1(tok)[3] == [7]
+
+    finally:
+        configure_cursor_signer(previous)
+
+    # Restored: unsigned again.
+    assert "." not in encode_keyset_v1(
+        sort_keys=["id"], directions=["asc"], values=[7]
+    )
+
+
 def test_encode_keyset_misaligned_raises() -> None:
     with pytest.raises(CoreException, match="aligned"):
         encode_keyset_v1(sort_keys=["a"], directions=["asc", "asc"], values=[1])

@@ -16,7 +16,10 @@ from ..sort_resolution import (
     validate_sort_fields,
 )
 from .cursor_token import (
+    CursorTokenSigner,
     compare_keyset_sort_values,
+    configure_cursor_signer,
+    current_cursor_signer,
     decode_keyset_v1,
     encode_keyset_v1,
     keyset_canonical_value,
@@ -30,7 +33,10 @@ from .cursor_token import (
 # ----------------------- #
 
 __all__ = [
+    "CursorTokenSigner",
     "assert_cursor_projection_includes_sort_keys",
+    "configure_cursor_signer",
+    "current_cursor_signer",
     "assert_default_null_ordering",
     "assemble_keyset_cursor_page",
     "compare_keyset_sort_values",

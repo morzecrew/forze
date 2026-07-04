@@ -92,6 +92,87 @@ async def test_cursor_page_stable_under_insert_before_position() -> None:
     assert not page2.has_more
 
 
+@pytest.fixture
+def cursor_signing() -> Any:
+    from forze.application.contracts.querying import (
+        CursorTokenSigner,
+        configure_cursor_signer,
+    )
+
+    previous = configure_cursor_signer(CursorTokenSigner(secret=b"k" * 32))
+
+    try:
+        yield
+
+    finally:
+        configure_cursor_signer(previous)
+
+
+@pytest.mark.asyncio
+async def test_signed_cursor_pagination_round_trips(cursor_signing: Any) -> None:
+    # With a signer configured, the minted cursor is HMAC-signed and drives the next page.
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    assert [h.title for h in page1.hits] == ["b", "d"]
+    assert page1.next_cursor is not None
+    assert "." in page1.next_cursor  # <payload>.<signature>
+
+    page2 = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page1.next_cursor},
+    )
+    assert [h.title for h in page2.hits] == ["f", "h"]
+
+
+@pytest.mark.asyncio
+async def test_signed_cursor_rejects_tampered_token(cursor_signing: Any) -> None:
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    assert page1.next_cursor is not None
+    last = page1.next_cursor[-1]
+    tampered = page1.next_cursor[:-1] + ("x" if last != "x" else "y")
+
+    with pytest.raises(CoreException):
+        await doc.find_cursor(
+            sorts={"title": "asc"}, cursor={"limit": 2, "after": tampered}
+        )
+
+
+@pytest.mark.asyncio
+async def test_signing_hard_cutover_rejects_a_previously_unsigned_cursor() -> None:
+    # Mint unsigned (no signer), then enable signing and try to reuse it: rejected.
+    from forze.application.contracts.querying import (
+        CursorTokenSigner,
+        configure_cursor_signer,
+    )
+
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    unsigned = page1.next_cursor
+    assert unsigned is not None
+    assert "." not in unsigned  # unsigned by default
+
+    previous = configure_cursor_signer(CursorTokenSigner(secret=b"k" * 32))
+
+    try:
+        with pytest.raises(CoreException):
+            await doc.find_cursor(
+                sorts={"title": "asc"}, cursor={"limit": 2, "after": unsigned}
+            )
+
+    finally:
+        configure_cursor_signer(previous)
+
+
 @pytest.mark.asyncio
 async def test_cursor_page_stable_under_delete_of_returned_row() -> None:
     doc = _adapter()

@@ -8,6 +8,10 @@ from typing import AsyncGenerator, final
 import attrs
 
 from forze.application._logger import logger
+from forze.application.contracts.querying import (
+    CursorTokenSigner,
+    configure_cursor_signer,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import (
     CpuExecutor,
@@ -160,6 +164,13 @@ class ExecutionRuntime:
     positive integer when set (validated at construction).
     """
 
+    cursor_token_signer: CursorTokenSigner | None = None
+    """Optional HMAC signer for keyset cursor tokens. When set, the runtime configures it
+    process-wide (:func:`~forze.application.contracts.querying.configure_cursor_signer`) at
+    context creation, so every keyset cursor token is signed and verification rejects any
+    unsigned or tampered token — opt-in, hard cutover. ``None`` (default) leaves tokens
+    unsigned. Equivalent to calling ``configure_cursor_signer`` yourself at startup."""
+
     # ....................... #
 
     __ctx: RuntimeVar[ExecutionContext] = attrs.field(
@@ -253,6 +264,11 @@ class ExecutionRuntime:
         """
 
         logger.info("Creating execution context")
+
+        # Opt-in: sign every keyset cursor token and require signatures (hard cutover).
+        # ``None`` leaves the process default untouched (unsigned unless configured elsewhere).
+        if self.cursor_token_signer is not None:
+            configure_cursor_signer(self.cursor_token_signer)
 
         resolved_deps = self.deps.resolve()
 
