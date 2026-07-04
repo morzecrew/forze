@@ -25,6 +25,7 @@ from forze.application.contracts.querying import (
     keyset_page_bounds,
     normalize_sorts_for_keyset,
     resolve_effective_sorts,
+    resolved_cursor_limit,
     validate_cursor_token,
 )
 from forze.application.contracts.search import (
@@ -62,10 +63,10 @@ def parse_search_cursor(
     if c.get("after") and c.get("before"):
         raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
-    lim: int = 10 if c.get("limit") is None else int(c["limit"])  # type: ignore[arg-type, assignment, call-overload]
-
-    if lim < 1:
-        raise exc.validation("Cursor pagination 'limit' must be positive")
+    # Shared with document pagination: a non-integer ``limit`` is a clean 400 (not a raw
+    # ``ValueError``) and an over-large value is clamped to ``MAX_CURSOR_LIMIT`` rather than
+    # reaching the backend as an unbounded fetch.
+    lim = resolved_cursor_limit(c)
 
     return lim, c.get("after") is not None, c.get("before") is not None
 

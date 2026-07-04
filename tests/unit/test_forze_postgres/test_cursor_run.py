@@ -36,3 +36,21 @@ def test_parse_search_cursor_rejects_both_tokens() -> None:
 def test_parse_search_cursor_rejects_non_positive_limit() -> None:
     with pytest.raises(CoreException, match="positive"):
         parse_search_cursor({"limit": 0})
+
+
+def test_parse_search_cursor_rejects_non_integer_limit() -> None:
+    # A non-integer is a clean 400 via the shared ``resolved_cursor_limit`` — not a raw
+    # ``ValueError`` from a bare ``int('abc')``.
+    with pytest.raises(CoreException, match="must be an integer"):
+        parse_search_cursor({"limit": "abc"})
+
+
+def test_parse_search_cursor_clamps_oversized_limit() -> None:
+    # An enormous client-supplied limit is clamped rather than reaching the backend as an
+    # unbounded fetch.
+    from forze.application.contracts.querying.pagination.cursor_page import (
+        MAX_CURSOR_LIMIT,
+    )
+
+    lim, _use_after, _use_before = parse_search_cursor({"limit": 1_000_000_000})
+    assert lim == MAX_CURSOR_LIMIT

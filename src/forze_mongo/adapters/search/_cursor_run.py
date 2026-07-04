@@ -17,6 +17,7 @@ from forze.application.contracts.querying import (
     encode_keyset_v1,
     normalize_sorts_for_keyset,
     resolve_effective_sorts,
+    resolved_cursor_limit,
     row_value_for_sort_key,
 )
 from forze.application.contracts.search import ranked_search_cursor_key_spec
@@ -55,10 +56,9 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     if c.get("after") and c.get("before"):
         raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
-    lim: int = 10 if c.get("limit") is None else int(c["limit"])  # type: ignore[arg-type, call-overload]
-
-    if lim < 1:
-        raise exc.validation("Cursor pagination 'limit' must be positive")
+    # Coerced + clamped like the PG search path and document pagination: a non-integer is a
+    # clean 400 (not a raw ValueError) and an over-large value is clamped to MAX_CURSOR_LIMIT.
+    lim = resolved_cursor_limit(c)
 
     use_after = c.get("after") is not None
     use_before = c.get("before") is not None
@@ -151,6 +151,10 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         return encode_keyset_v1(
             sort_keys=sort_keys,
             directions=directions,
+            # Carry the active null placement so a non-default order (e.g. asc NULLS LAST)
+            # round-trips; without it the token defaults to canonical nulls and the next
+            # page is rejected as "Cursor does not match current search sort".
+            nulls=nulls,
             values=vals,
             binding=binding,
         )
