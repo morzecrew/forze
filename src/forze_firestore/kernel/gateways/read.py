@@ -7,13 +7,11 @@ require_firestore()
 # ....................... #
 
 from typing import (
-    Any,
     AsyncGenerator,
     Literal,
     Never,
     Sequence,
     TypeVar,
-    cast,
     final,
     overload,
 )
@@ -35,6 +33,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     decode_keyset_v1,
     normalize_sorts_for_keyset,
+    resolved_cursor_limit,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -416,11 +415,10 @@ class FirestoreReadGateway[M: BaseModel](
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
-        limit_raw = c.get("limit")
-        lim: int = 10 if limit_raw is None else int(cast(Any, limit_raw))  # type: ignore[has-type, assignment]
-
-        if lim < 1:
-            raise exc.validation("Cursor pagination 'limit' must be positive")
+        # Coerced + clamped like the document/search cursor paths: a non-integer is a clean
+        # 400 (not a raw ValueError) and an over-large value is clamped to MAX_CURSOR_LIMIT
+        # instead of reaching Firestore as an unbounded ``lim + 1`` fetch.
+        lim = resolved_cursor_limit(c)
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
