@@ -38,6 +38,26 @@ class IsolationLevel(IntEnum):
 # ....................... #
 
 
+@runtime_checkable
+class TransactionallyEnlistable(Protocol):
+    """A resource that can report whether its writes commit in the *ambient* transaction.
+
+    A store (e.g. an inbox) is *enlisted* when its writes go through the same connection the
+    active :meth:`~forze.application.execution.context.transaction.TransactionContext.scope`
+    opened its transaction on — so they commit atomically with the rest of the unit of work.
+    A store bound to a **different** client/pool is not enlisted: its write commits on its own
+    connection, silently breaking any "commit atomically" guarantee. See
+    :meth:`~forze.application.execution.context.transaction.TransactionContext.assert_enlisted`.
+    """
+
+    def is_transactionally_enlisted(self) -> bool:
+        """Whether this resource's writes participate in the ambient transaction."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class TxCapabilities:

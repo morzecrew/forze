@@ -16,9 +16,13 @@ from forze.application.contracts.storage import (
     StorageSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution.context.transaction import (
+    AfterCommitError,
+    AfterCommitErrorHandler,
+)
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import context_from_deps, frozen_deps_from_deps
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockCounterAdapter, MockStorageAdapter
 from forze_mock.execution import MockStateDepKey
@@ -41,14 +45,27 @@ def _mock_storage_fac(ctx: ExecutionContext, spec: StorageSpec) -> MockStorageAd
     return MockStorageAdapter(state=ctx.deps.provide(MockStateDepKey), bucket=spec.name)
 
 
-@pytest.fixture
-def ctx(mock_state: MockState) -> ExecutionContext:
+def _build_ctx(
+    mock_state: MockState,
+    *,
+    after_commit_error_handler: "AfterCommitErrorHandler | None" = None,
+) -> ExecutionContext:
     base = MockDepsModule(state=mock_state)()
     plain = dict(base.plain_deps)
     plain[CounterDepKey] = _mock_counter_fac
     plain[StorageQueryDepKey] = _mock_storage_fac
     plain[StorageCommandDepKey] = _mock_storage_fac
-    return context_from_deps(Deps.plain(plain))
+    if after_commit_error_handler is None:
+        return context_from_deps(Deps.plain(plain))
+    return ExecutionContext(
+        deps=frozen_deps_from_deps(Deps.plain(plain)),
+        after_commit_error_handler=after_commit_error_handler,
+    )
+
+
+@pytest.fixture
+def ctx(mock_state: MockState) -> ExecutionContext:
+    return _build_ctx(mock_state)
 
 
 def _doc_spec(
@@ -170,7 +187,7 @@ class TestExecutionContextTransaction:
 
 class TestAfterCommitCallbackFailures:
     @pytest.mark.asyncio
-    async def test_all_callbacks_run_and_failures_aggregate(
+    async def test_all_callbacks_run_and_result_returned_no_raise(
         self, ctx: ExecutionContext
     ) -> None:
         order: list[str] = []
@@ -186,47 +203,136 @@ class TestAfterCommitCallbackFailures:
             order.append("c")
             raise ValueError("c failed")
 
-        with pytest.raises(CoreException) as ei:
-            async with ctx.tx_ctx.scope("mock"):
-                await ctx.tx_ctx.run_or_defer(_a)
-                await ctx.tx_ctx.run_or_defer(_b)
-                await ctx.tx_ctx.run_or_defer(_c)
+        # The transaction commits; a failing after-commit callback must NOT raise
+        # (the committed result stands), so the block completes normally.
+        committed = False
+        async with ctx.tx_ctx.scope("mock"):
+            await ctx.tx_ctx.run_or_defer(_a)
+            await ctx.tx_ctx.run_or_defer(_b)
+            await ctx.tx_ctx.run_or_defer(_c)
+            committed = True
 
-        # Every callback ran despite earlier failures.
+        # Every callback ran despite earlier failures, and the scope exited cleanly.
         assert order == ["a", "b", "c"]
-
-        # A single aggregated internal error, chained from the first failure.
-        assert ei.value.kind is ExceptionKind.INTERNAL
-        assert ei.value.code == "after_commit_failed"
-        assert isinstance(ei.value.__cause__, RuntimeError)
-        assert str(ei.value.__cause__) == "a failed"
-
-        # Details carry which callbacks failed (names + error strings).
-        assert ei.value.details is not None
-        failed = ei.value.details["failed"]
-        assert len(failed) == 2
-        assert failed[0]["error"] == "a failed"
-        assert failed[1]["error"] == "c failed"
-        assert all("callback" in f and "index" in f for f in failed)
+        assert committed is True
 
     @pytest.mark.asyncio
-    async def test_single_failure_still_raises_after_all_ran(
+    async def test_handler_notified_out_of_band_with_failures(
+        self, mock_state: MockState
+    ) -> None:
+        captured: list[AfterCommitError] = []
+
+        ctx = _build_ctx(mock_state, after_commit_error_handler=captured.append)
+
+        async def _a() -> None:
+            raise RuntimeError("a failed")
+
+        async def _b() -> None:
+            pass
+
+        async def _c() -> None:
+            raise ValueError("c failed")
+
+        async with ctx.tx_ctx.scope("mock"):
+            await ctx.tx_ctx.run_or_defer(_a)
+            await ctx.tx_ctx.run_or_defer(_b)
+            await ctx.tx_ctx.run_or_defer(_c)
+
+        # The handler is notified exactly once, out-of-band, with only the failed
+        # callbacks (by queue index), the committed operation having returned normally.
+        assert len(captured) == 1
+        report = captured[0]
+        assert report.route == "mock"
+        assert [f.index for f in report.failures] == [0, 2]
+        assert [f.error for f in report.failures] == ["a failed", "c failed"]
+        assert [f.callback.split(".")[-1] for f in report.failures] == ["_a", "_c"]
+
+    @pytest.mark.asyncio
+    async def test_raising_handler_is_suppressed(
+        self, mock_state: MockState
+    ) -> None:
+        def _boom(_: AfterCommitError) -> None:
+            raise RuntimeError("handler boom")
+
+        ctx = _build_ctx(mock_state, after_commit_error_handler=_boom)
+
+        async def _fail() -> None:
+            raise ValueError("cb failed")
+
+        # A raising handler must never turn a committed operation into a failure.
+        completed = False
+        async with ctx.tx_ctx.scope("mock"):
+            await ctx.tx_ctx.run_or_defer(_fail)
+            completed = True
+
+        assert completed is True
+
+    @pytest.mark.asyncio
+    async def test_fatal_callback_reraises_after_all_ran(
         self, ctx: ExecutionContext
     ) -> None:
         ran: list[str] = []
 
-        async def _fail() -> None:
-            raise RuntimeError("boom")
+        async def _domain_check() -> None:
+            ran.append("check")
+            raise ValueError("invariant violated")
 
-        async def _ok() -> None:
-            ran.append("ok")
+        async def _effect() -> None:
+            ran.append("effect")
 
-        with pytest.raises(CoreException, match="After-commit callbacks failed"):
+        # A fatal (deliberate domain check) callback surfaces to the caller even though
+        # the transaction committed, and every callback still ran first.
+        with pytest.raises(ValueError, match="invariant violated"):
             async with ctx.tx_ctx.scope("mock"):
-                await ctx.tx_ctx.run_or_defer(_fail)
-                await ctx.tx_ctx.run_or_defer(_ok)
+                await ctx.tx_ctx.run_or_defer(_domain_check, fatal=True)
+                await ctx.tx_ctx.run_or_defer(_effect)
 
-        assert ran == ["ok"]
+        assert ran == ["check", "effect"]
+
+
+class TestAssertEnlisted:
+    """A store whose writes don't commit in the ambient transaction fails closed."""
+
+    @pytest.mark.asyncio
+    async def test_unenlisted_resource_fails_closed(
+        self, ctx: ExecutionContext
+    ) -> None:
+        class _NotEnlisted:
+            def is_transactionally_enlisted(self) -> bool:
+                return False
+
+        async with ctx.tx_ctx.scope("mock"):
+            with pytest.raises(CoreException) as ei:
+                ctx.tx_ctx.assert_enlisted(_NotEnlisted(), what="Inbox route 'x'")
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert ei.value.code == "core.tx.not_enlisted"
+
+    @pytest.mark.asyncio
+    async def test_enlisted_resource_passes(self, ctx: ExecutionContext) -> None:
+        class _Enlisted:
+            def is_transactionally_enlisted(self) -> bool:
+                return True
+
+        async with ctx.tx_ctx.scope("mock"):
+            ctx.tx_ctx.assert_enlisted(_Enlisted(), what="x")  # no raise
+
+    @pytest.mark.asyncio
+    async def test_unreportable_resource_is_left_unchecked(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # A resource that cannot report enlistment is best-effort (not rejected).
+        async with ctx.tx_ctx.scope("mock"):
+            ctx.tx_ctx.assert_enlisted(object(), what="x")  # no raise
+
+    @pytest.mark.asyncio
+    async def test_requires_active_scope(self, ctx: ExecutionContext) -> None:
+        class _Enlisted:
+            def is_transactionally_enlisted(self) -> bool:
+                return True
+
+        with pytest.raises(CoreException):
+            ctx.tx_ctx.assert_enlisted(_Enlisted(), what="x")  # no open scope
 
 
 class TestTransactionCancellation:

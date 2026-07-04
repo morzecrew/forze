@@ -8,6 +8,7 @@ from forze.application._logger import logger
 from forze.application.contracts.transaction import (
     IsolationAware,
     IsolationLevel,
+    TransactionallyEnlistable,
     TransactionHandle,
     TransactionManagerPort,
 )
@@ -21,6 +22,58 @@ from .commit_state import mark_commit_started
 # ----------------------- #
 
 
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class AfterCommitFailure:
+    """One post-commit callback that raised after the transaction had committed."""
+
+    index: int
+    """Position of the callback in the deferred queue."""
+
+    callback: str
+    """A human-readable name of the callback (its ``__qualname__`` or ``repr``)."""
+
+    error: str
+    """The stringified exception the callback raised."""
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class AfterCommitError:
+    """Reported to a wired handler when post-commit callbacks fail on an already-committed transaction.
+
+    The transaction is committed and its result is returned to the caller unchanged; this
+    is an out-of-band signal so an app can alert or reconcile the failed effects (e.g. an
+    idempotency-record write or an eager after-commit dispatch) without a committed
+    operation surfacing as a caller-visible error.
+    """
+
+    route: str
+    """The root transaction's route."""
+
+    tx_id: int | None
+    """The root transaction's run-global id (``None`` in production)."""
+
+    failures: tuple[AfterCommitFailure, ...]
+    """Every callback that failed, in queue order."""
+
+
+AfterCommitErrorHandler = Callable[[AfterCommitError], None]
+"""Out-of-band handler for post-commit callback failures. Must not raise (a raising handler
+is logged and suppressed — it can never turn a committed operation into a failed one)."""
+
+
+_DeferredCallback = tuple[Callable[[], Awaitable[None]], bool]
+"""A queued post-commit callback and whether its failure is ``fatal``.
+
+A **fatal** callback is a deliberate domain check (e.g. detective invariant enforcement) whose
+failure must surface to the caller — it re-raises after every callback has run. A **non-fatal**
+callback is a best-effort effect (cache invalidation, event dispatch, an idempotency-record
+write) whose failure must **not** turn an already-committed operation into a caller-visible
+error — it is logged and reported to the wired :class:`AfterCommitErrorHandler` instead."""
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True)
 class TransactionContext:
     """Transaction context."""
@@ -30,6 +83,11 @@ class TransactionContext:
 
     _tx_tracer: TxTracer = attrs.field(default=NOOP_TX_TRACER, init=False)
     """Optional observer for root scope enter/exit (noop by default)."""
+
+    _after_commit_error_handler: "AfterCommitErrorHandler | None" = attrs.field(
+        default=None, init=False
+    )
+    """Optional out-of-band handler invoked when post-commit callbacks fail (noop by default)."""
 
     # ....................... #
 
@@ -62,13 +120,13 @@ class TransactionContext:
     no run counter is bound). Minted at root entry, inherited by nested scopes, and stamped on the
     trace so the oracle can group port calls by transaction — see :func:`tx_id`."""
 
-    __cb_stack: ContextVar[list[Callable[[], Awaitable[None]]] | None] = attrs.field(
+    __cb_stack: ContextVar[list[_DeferredCallback] | None] = attrs.field(
         factory=lambda: ContextVar("cb_stack", default=None),
         init=False,
         repr=False,
         on_setattr=attrs.setters.frozen,
     )
-    """Queued async callables run after a successful root transaction exit."""
+    """Queued ``(callback, fatal)`` pairs run after a successful root transaction exit."""
 
     # ....................... #
 
@@ -77,6 +135,7 @@ class TransactionContext:
         resolver: Callable[[StrKey], TransactionManagerPort],
         *,
         tx_tracer: TxTracer | None = None,
+        after_commit_error_handler: "AfterCommitErrorHandler | None" = None,
     ) -> None:
         """Lock the transaction context."""
 
@@ -86,6 +145,7 @@ class TransactionContext:
         self._locked = True
         self.resolver = resolver
         self._tx_tracer = tx_tracer if tx_tracer is not None else NOOP_TX_TRACER
+        self._after_commit_error_handler = after_commit_error_handler
 
     # ....................... #
 
@@ -123,13 +183,47 @@ class TransactionContext:
 
     # ....................... #
 
-    def _defer(self, cb: Callable[[], Awaitable[None]]) -> None:
+    def assert_enlisted(self, resource: object, *, what: str) -> None:
+        """Fail closed if *resource* does not commit in the active transaction.
+
+        Requires an open scope. If *resource* can report enlistment (implements
+        :class:`~forze.application.contracts.transaction.TransactionallyEnlistable`) and its
+        writes go through a *different* client/pool than the one this scope opened its
+        transaction on, its write commits on a separate connection — silently breaking any
+        "commit atomically" guarantee (e.g. an inbox dedup mark that must be atomic with the
+        handler's writes for exactly-once). Raises ``configuration`` in that case. A resource
+        that cannot report enlistment is left unchecked (best-effort).
+        """
+
+        if self.depth() == 0:
+            raise exc.internal(
+                f"assert_enlisted({what}) requires an active transaction scope"
+            )
+
+        if isinstance(resource, TransactionallyEnlistable) and (
+            not resource.is_transactionally_enlisted()
+        ):
+            raise exc.configuration(
+                f"{what} is not enlisted in the active transaction: its writes commit on a "
+                "different connection/pool than the transaction was opened on, silently "
+                "breaking atomic (exactly-once) commit. Wire it to the same client/route as "
+                "the transaction.",
+                code="core.tx.not_enlisted",
+            )
+
+    # ....................... #
+
+    def _defer(self, cb: Callable[[], Awaitable[None]], *, fatal: bool = False) -> None:
         """Defer a callback to run after the current root transaction commits successfully.
 
         Deferred callbacks run *post-commit*: every registered callback runs even when
         earlier ones fail, and a callback failure does **not** roll back the (already
-        committed) transaction. Failures are logged individually and re-raised as a
-        single aggregated ``after_commit_failed`` internal error after all callbacks ran.
+        committed) transaction. A ``fatal=False`` (default) callback is a best-effort effect
+        — its failure is logged and reported to a wired :class:`AfterCommitErrorHandler`
+        out-of-band, never raised, so the committed operation returns its result unchanged.
+        A ``fatal=True`` callback is a deliberate domain check (e.g. detective invariant
+        enforcement) — its failure re-raises once every callback has run (see
+        :meth:`_run_deferred`).
         """
 
         q = self.__cb_stack.get()
@@ -139,23 +233,26 @@ class TransactionContext:
                 "defer_callback requires an active TransactionContext.scope scope"
             )
 
-        q.append(cb)
+        q.append((cb, fatal))
 
     # ....................... #
 
-    async def run_or_defer(self, cb: Callable[[], Awaitable[None]]) -> None:
+    async def run_or_defer(
+        self, cb: Callable[[], Awaitable[None]], *, fatal: bool = False
+    ) -> None:
         """Defer a callback to run after the current root transaction commits successfully, or run it immediately if outside a transaction.
 
-        See :meth:`_defer` for the post-commit failure semantics: all deferred
-        callbacks run regardless of individual failures, and a failure does not
-        roll back the committed transaction.
+        See :meth:`_defer` for the post-commit failure semantics. ``fatal`` distinguishes a
+        best-effort effect (default — a failure is reported out-of-band, not raised) from a
+        deliberate domain check (``fatal=True`` — a failure re-raises after all callbacks
+        run). Outside a transaction the callback runs immediately and any failure propagates.
         """
 
         if self.depth() == 0:
             await cb()
             return
 
-        self._defer(cb)
+        self._defer(cb, fatal=fatal)
 
     # ....................... #
 
@@ -213,7 +310,11 @@ class TransactionContext:
         body completes, the scope marks the commit imminent (see
         :func:`commit_started`); the deferred post-commit callbacks are a
         critical section — they run to completion even if the task is cancelled,
-        and the cancellation is re-raised afterwards. Cancellation landing inside
+        and the cancellation is re-raised afterwards. A *non-fatal* post-commit
+        callback that fails is logged and reported to a wired
+        :class:`AfterCommitErrorHandler` but never raised — the transaction
+        committed, so the operation returns its result unchanged; a *fatal* one (a
+        deliberate domain check) re-raises (see :meth:`_run_deferred`). Cancellation landing inside
         the driver commit itself is still outside the engine's control (the
         adapter rolls back best-effort; the server-side outcome can be
         ambiguous), but because the commit was marked, the invocation boundary
@@ -305,7 +406,7 @@ class TransactionContext:
 
         self._tx_tracer.on_scope_enter(route=route_name, depth=1, tx_id=tx_id)
 
-        deferred: list[Callable[[], Awaitable[None]]] | None = None
+        deferred: list[_DeferredCallback] | None = None
         committed = False
 
         try:
@@ -351,28 +452,45 @@ class TransactionContext:
             # The cancellation is re-raised once the drain finishes. A
             # cancellation landing during the driver commit itself is adapter
             # territory and follows the rollback path above.
-            await run_to_completion(self._run_deferred(deferred))
+            #
+            # ``route_name``/``tx_id`` are passed explicitly: the tx ContextVars
+            # were already reset in the ``finally`` above, so reading them here
+            # would report the *outer* transaction, not this one.
+            await run_to_completion(
+                self._run_deferred(deferred, route=route_name, tx_id=tx_id)
+            )
 
     # ....................... #
 
     async def _run_deferred(
-        self, deferred: list[Callable[[], Awaitable[None]]]
+        self,
+        deferred: list[_DeferredCallback],
+        *,
+        route: str,
+        tx_id: int | None,
     ) -> None:
         """Run post-commit callbacks, isolating individual failures.
 
-        Every callback runs even when earlier ones fail; each failure is logged.
-        If any failed, a single aggregated internal error is raised afterwards —
-        the transaction is already committed and is **not** rolled back.
+        Every callback runs even when earlier ones fail; each failure is logged. The
+        transaction is already committed, so no failure rolls it back.
+
+        A **non-fatal** callback (a best-effort effect — cache invalidation, dispatch, an
+        idempotency-record write) that fails does **not** raise: it is reported to the wired
+        :class:`AfterCommitErrorHandler` out-of-band so the committed operation returns its
+        result unchanged. A **fatal** callback (a deliberate domain check, e.g. detective
+        invariant enforcement) that fails re-raises its original exception once every callback
+        has run — the caller must see it, even though the transaction committed. A raising
+        handler is itself logged and suppressed (it can never fail a committed operation).
         """
 
-        first_error: Exception | None = None
-        failed: list[dict[str, str]] = []
+        first_fatal_error: Exception | None = None
+        effect_failures: list[AfterCommitFailure] = []
 
-        for index, cb in enumerate(deferred):
+        for index, (cb, fatal) in enumerate(deferred):
             try:
                 await cb()
 
-            except Exception as e:
+            except Exception as error:
                 name = getattr(cb, "__qualname__", None) or repr(cb)
                 logger.exception(
                     "After-commit callback %s/%s (%s) failed "
@@ -382,14 +500,40 @@ class TransactionContext:
                     name,
                 )
 
-                if first_error is None:
-                    first_error = e
+                if fatal:
+                    if first_fatal_error is None:
+                        first_fatal_error = error
 
-                failed.append({"index": str(index), "callback": name, "error": str(e)})
+                else:
+                    effect_failures.append(
+                        AfterCommitFailure(index=index, callback=name, error=str(error))
+                    )
 
-        if first_error is not None:
-            raise exc.internal(
-                "After-commit callbacks failed (transaction already committed)",
-                code="after_commit_failed",
-                details={"failed": failed},
-            ) from first_error
+        if effect_failures:
+            logger.error(
+                "%s of %s after-commit effect(s) failed on route %r "
+                "(transaction already committed; the operation result is returned unchanged)",
+                len(effect_failures),
+                len(deferred),
+                route,
+            )
+
+            handler = self._after_commit_error_handler
+
+            if handler is not None:
+                try:
+                    handler(
+                        AfterCommitError(
+                            route=route, tx_id=tx_id, failures=tuple(effect_failures)
+                        )
+                    )
+
+                except Exception:
+                    logger.exception(
+                        "After-commit error handler raised (suppressed — a committed "
+                        "operation must not fail on its post-commit reporting)"
+                    )
+
+        # A deliberate domain check (fatal) must surface even though the tx committed.
+        if first_fatal_error is not None:
+            raise first_fatal_error

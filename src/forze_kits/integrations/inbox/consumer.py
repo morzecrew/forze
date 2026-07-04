@@ -208,6 +208,12 @@ async def process_with_inbox[M](
         async with ctx.tx_ctx.scope(tx_route):
             port = ctx.inbox(inbox_spec)
 
+            # Exactly-once holds only if the dedup mark commits atomically with the
+            # handler's writes — i.e. the inbox store runs on the same client this scope
+            # opened the transaction on. Wiring the inbox and ``tx_route`` to different
+            # pools would silently break that; fail closed instead.
+            ctx.tx_ctx.assert_enlisted(port, what=f"Inbox route {inbox_spec.name!r}")
+
             if not await port.mark_if_unseen(str(inbox_spec.name), dedup_id):
                 return False
 

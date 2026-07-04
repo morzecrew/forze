@@ -36,7 +36,7 @@ from .background import BackgroundOwners
 from .drain import OperationDrainGate
 from .invocation import InvocationContext
 from forze.application.contracts.outbox import OutboxStagingContext
-from .transaction import TransactionContext
+from .transaction import AfterCommitErrorHandler, TransactionContext
 
 # ----------------------- #
 
@@ -66,6 +66,13 @@ class ExecutionContext:
     """Whether resolved dependencies are memoized for this scope — both configurable
     ports and simple deps (see
     :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_ports`)."""
+
+    after_commit_error_handler: AfterCommitErrorHandler | None = None
+    """Optional out-of-band handler notified when a post-commit callback fails on an
+    already-committed transaction. The operation still returns its committed result; this
+    only surfaces the failed effect (an idempotency-record write, an eager dispatch) for
+    alerting/reconciliation. Must not raise. ``None`` = log only (see
+    :class:`~forze.application.execution.context.transaction.AfterCommitError`)."""
 
     outbox_clock: HybridLogicalClock = attrs.field(factory=_new_outbox_clock)
     """This runtime's node-local HLC for causal outbox ordering. One per context, so a
@@ -356,6 +363,7 @@ class ExecutionContext:
         self.tx_ctx.lock(
             self.transaction,
             tx_tracer=tx_tracer_from_runtime(self.deps.runtime_tracer),
+            after_commit_error_handler=self.after_commit_error_handler,
         )
 
 

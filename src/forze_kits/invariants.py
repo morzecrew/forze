@@ -109,7 +109,9 @@ async def enforce(
                 f"aggregate observed {result.observed}"
             )
 
-    await ctx.tx_ctx.run_or_defer(_check)
+    # A detective check is a deliberate domain outcome, not a best-effort effect: its
+    # violation must surface to the caller even though the writing transaction committed.
+    await ctx.tx_ctx.run_or_defer(_check, fatal=True)
 
 
 # ....................... #

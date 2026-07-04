@@ -31,6 +31,14 @@ class MockInboxAdapter(MockTenancyMixin, InboxPort):
 
     # ....................... #
 
+    def is_transactionally_enlisted(self) -> bool:
+        """Always enlisted: the mock has a single ``MockState`` connection, so its writes
+        commit with whatever transaction the surrounding scope opened."""
+
+        return True
+
+    # ....................... #
+
     async def mark_if_unseen(self, inbox: str, message_id: str) -> bool:
         # Inbox marks are DB rows in production: writing one inside a strict
         # read-only root raises, like Postgres ``BEGIN ... READ ONLY`` would.
