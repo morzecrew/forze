@@ -16,11 +16,12 @@ The effective chain for a call is ``deps_interceptors + ambient_interceptors`` (
 innermost, closest to the port — it models the I/O boundary). The chain sits **inside** the
 resilience port-policy wrap, so a fault interceptor's transient error is retryable.
 
-Async-generator methods intercept only the *acquisition* of the generator, not per-item
-iteration (see :class:`~forze.application.execution.interception.proxy.InterceptingPortProxy`):
-a streamed read is a single interception point, so cooperative-yield and fault interceptors do
-not fire between items and a logging interceptor times only the open. A per-item hook would
-need a stream-aware interceptor shape beyond the request/response ``around``.
+Async-generator methods intercept the acquisition of the generator via ``around``; an
+interceptor that additionally implements :class:`StreamPortInterceptor` (``around_stream``)
+also wraps the *iteration*, so it can yield per item (a per-item interleaving point), inject a
+mid-stream fault, and time or log the whole stream. An ``around``-only interceptor keeps the
+acquisition-only behavior (see
+:class:`~forze.application.execution.interception.proxy.InterceptingPortProxy`).
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ from forze.application.contracts.interception import (
     PortInterceptorChain,
     PortNext,
     PortSelector,
+    StreamPortInterceptor,
+    StreamPortNext,
 )
 
 __all__ = [
@@ -46,6 +49,8 @@ __all__ = [
     "PortInterceptorChain",
     "PortNext",
     "PortSelector",
+    "StreamPortInterceptor",
+    "StreamPortNext",
     "bind_interceptors",
     "current_interceptors",
 ]

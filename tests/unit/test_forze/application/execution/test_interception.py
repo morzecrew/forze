@@ -110,7 +110,9 @@ def test_interceptors_run_in_registration_order() -> None:
     assert log == ["outer:before", "inner:before", "inner:after", "outer:after"]
 
 
-def test_async_gen_is_intercepted_once_at_iterator_acquisition() -> None:
+def test_async_gen_around_only_interceptor_is_acquisition_only() -> None:
+    # An ``around``-only interceptor keeps the historical behavior: one interception at
+    # iterator acquisition, not one per yielded item.
     seen: list[str] = []
 
     @attrs.define(slots=True, frozen=True)
@@ -128,6 +130,67 @@ def test_async_gen_is_intercepted_once_at_iterator_acquisition() -> None:
 
     assert asyncio.run(run()) == [0, 1, 2]
     assert seen == ["stream"]  # once at the start, not per yielded item
+
+
+def test_cooperative_interceptor_interleaves_per_stream_item() -> None:
+    # A stream-aware interceptor yields per item, so two workers consuming streams
+    # concurrently interleave item-by-item instead of each draining its stream atomically.
+    order: list[str] = []
+
+    @attrs.define(slots=True)
+    class _StreamPort:
+        tag: str
+
+        async def stream(self, n: int) -> AsyncIterator[int]:
+            for i in range(n):
+                order.append(f"{self.tag}{i}")
+                yield i
+
+    def _wrap(tag: str) -> Any:
+        return wrap_intercepted(
+            _StreamPort(tag),
+            interceptors=(CooperativeInterceptor(),),
+            surface="fake",
+            route=None,
+        )
+
+    async def worker(port: Any) -> None:
+        async for _ in port.stream(2):
+            pass
+
+    async def run() -> list[str]:
+        await asyncio.gather(worker(_wrap("a")), worker(_wrap("b")))
+        return order
+
+    # Per-item yield -> interleaved. (An acquisition-only interceptor would give a0,a1,b0,b1.)
+    assert asyncio.run(run()) == ["a0", "b0", "a1", "b1"]
+
+
+def test_stream_aware_interceptor_sees_and_transforms_each_item() -> None:
+    from typing import AsyncIterator as _AsyncIterator
+
+    from forze.application.execution.interception import StreamPortNext
+
+    seen: list[int] = []
+
+    @attrs.define(slots=True, frozen=True)
+    class _Doubler:
+        async def around_stream(
+            self, call: PortCall, nxt: StreamPortNext
+        ) -> _AsyncIterator[Any]:
+            async for item in nxt(call):
+                seen.append(item)
+                yield item * 10
+
+    port = wrap_intercepted(
+        _FakePort(), interceptors=(_Doubler(),), surface="fake", route=None
+    )
+
+    async def run() -> list[int]:
+        return [i async for i in port.stream(3)]
+
+    assert asyncio.run(run()) == [0, 10, 20]  # each item transformed
+    assert seen == [0, 1, 2]  # the interceptor saw every item, not just acquisition
 
 
 def test_sync_method_passes_through_uninterceptable() -> None:

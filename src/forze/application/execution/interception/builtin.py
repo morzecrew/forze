@@ -1,11 +1,11 @@
 """Built-in port interceptors for deterministic simulation."""
 
 import asyncio
-from typing import Any, Callable
+from typing import Any, AsyncIterator, Callable
 
 import attrs
 
-from .protocol import PortCall, PortNext
+from .protocol import PortCall, PortNext, StreamPortNext
 
 # ----------------------- #
 
@@ -43,3 +43,25 @@ class CooperativeInterceptor:
         )  # delay 0 -> a bare yield; > 0 -> advances virtual time
 
         return await nxt(call)
+
+    # ....................... #
+
+    async def around_stream(
+        self, call: PortCall, nxt: StreamPortNext
+    ) -> AsyncIterator[Any]:
+        """Yield at stream open *and before each item*, so a streamed read is an interleaving
+        point per item — not just once at acquisition. Without this, two concurrent operations
+        consuming a stream run as if each item batch were atomic and interleaving bugs in
+        stream consumption hide. The optional latency models the stream-open cost once (a
+        per-item latency would over-advance virtual time for a long stream)."""
+
+        delay = 0.0
+
+        if self.latency is not None:
+            delay = self.latency(call.surface, call.route, call.op)
+
+        await asyncio.sleep(delay)  # stream-open cost + a yield
+
+        async for item in nxt(call):
+            await asyncio.sleep(0)  # each item is an interleaving point
+            yield item

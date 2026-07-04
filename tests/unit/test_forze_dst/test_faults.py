@@ -18,7 +18,9 @@ from __future__ import annotations
 import random
 from contextlib import aclosing
 from datetime import timedelta
+from typing import AsyncIterator
 
+import attrs
 import pytest
 from pydantic import BaseModel
 
@@ -29,7 +31,7 @@ from forze.application.execution.interception import wrap_intercepted
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
 
-from forze_dst.faults import FaultPolicy, FaultRule
+from forze_dst.faults import FaultPolicy, FaultRule, _FaultPolicyInterceptor
 from forze_dst.runtime import run_simulation
 from forze_dst.faults import compile_fault_policy
 from forze_mock import MockDepsModule
@@ -207,3 +209,67 @@ class TestTransportFaultMechanics:
             return run()
 
         assert run_simulation(scenario, seed=0) == 2
+
+
+# ....................... #
+
+
+class _ScriptedRng:
+    """A deterministic stand-in for ``random.Random`` that returns scripted ``random()`` values,
+    so a mid-stream fault fires at an exact item regardless of platform RNG."""
+
+    def __init__(self, values: list[float]) -> None:
+        self._it = iter(values)
+
+    def random(self) -> float:
+        return next(self._it)
+
+    def uniform(self, a: float, b: float) -> float:  # pragma: no cover - unused here
+        return a
+
+    def getrandbits(self, n: int) -> int:  # pragma: no cover - unused here
+        return 0
+
+
+@attrs.define(slots=True)
+class _StreamPort:
+    async def stream(self, n: int) -> "AsyncIterator[int]":
+        for i in range(n):
+            yield i
+
+
+class TestStreamFaults:
+    """``FaultRule(stream_faults=True)`` injects a raise-fault *mid-stream*; off, a stream
+    behaves exactly as before (fail before opening, then clean iteration)."""
+
+    async def _drain(self, interceptor: object) -> list[int]:
+        port = wrap_intercepted(
+            _StreamPort(), interceptors=(interceptor,), surface="f", route=None
+        )
+        return [i async for i in port.stream(5)]
+
+    async def test_mid_stream_fault_when_opted_in(self) -> None:
+        # rule has only error>0, so each roll is one ``random()`` draw. Pre-open: no fire
+        # (0.9 >= 0.5); after item 0: fire (0.1 < 0.5).
+        interceptor = _FaultPolicyInterceptor(
+            rules=(FaultRule(error=0.5, stream_faults=True),),
+            rng=_ScriptedRng([0.9, 0.1]),  # type: ignore[arg-type]
+        )
+        got: list[int] = []
+        with pytest.raises(CoreException):
+            port = wrap_intercepted(
+                _StreamPort(), interceptors=(interceptor,), surface="f", route=None
+            )
+            async for i in port.stream(5):
+                got.append(i)
+
+        assert got == [0]  # one item delivered, then the mid-stream fault
+
+    async def test_no_mid_stream_fault_when_off(self) -> None:
+        # Same pre-open draw (no fire); with stream_faults off, iteration is clean — no
+        # per-item draws — so the whole stream delivers.
+        interceptor = _FaultPolicyInterceptor(
+            rules=(FaultRule(error=0.5, stream_faults=False),),
+            rng=_ScriptedRng([0.9]),  # type: ignore[arg-type]
+        )
+        assert await self._drain(interceptor) == [0, 1, 2, 3, 4]

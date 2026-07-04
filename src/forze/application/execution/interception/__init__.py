@@ -14,10 +14,17 @@ from .protocol import (
     PortInterceptor,
     PortInterceptorChain,
     PortNext,
+    StreamPortInterceptor,
+    StreamPortNext,
     bind_interceptors,
     current_interceptors,
 )
-from .proxy import InterceptingPortProxy, run_chain, wrap_intercepted
+from .proxy import (
+    InterceptingPortProxy,
+    compose_stream_chain,
+    run_chain,
+    wrap_intercepted,
+)
 
 # ----------------------- #
 
@@ -30,7 +37,10 @@ __all__ = [
     "PortInterceptor",
     "PortInterceptorChain",
     "PortNext",
+    "StreamPortInterceptor",
+    "StreamPortNext",
     "bind_interceptors",
+    "compose_stream_chain",
     "current_interceptors",
     "run_chain",
     "wrap_intercepted",

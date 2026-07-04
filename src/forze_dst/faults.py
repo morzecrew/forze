@@ -24,11 +24,16 @@ from __future__ import annotations
 import asyncio
 import random
 from datetime import timedelta
-from typing import Any, final
+from typing import Any, AsyncIterator, final
 
 import attrs
 
-from forze.application.contracts.interception import PortCall, PortNext, PortSelector
+from forze.application.contracts.interception import (
+    PortCall,
+    PortNext,
+    PortSelector,
+    StreamPortNext,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import monotonic
 from forze_dst.oracle.recorder import record_event
@@ -258,6 +263,14 @@ class FaultRule(PortSelector):
     max_delay: timedelta = timedelta(seconds=5)
     """Upper bound for an injected :attr:`delay` (drawn uniformly in ``(0, max_delay]``)."""
 
+    stream_faults: bool = False
+    """Also roll ``error`` / ``timeout`` / ``crash`` **per item** of an async-generator port
+    call (``find_cursor``, ``consume``, ``run_chunked``, …), modeling a downstream that fails
+    partway through a stream. Off by default: a stream then behaves exactly as before — the
+    same pre-open faults, then clean iteration — so enabling it does not perturb the fault RNG
+    stream of runs that leave it off. Each item rolls the same rates, so a long stream is more
+    fault-exposed (each item is one delivery opportunity)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -375,6 +388,83 @@ class _FaultPolicyInterceptor:
             await nxt(call)
 
         return result
+
+    # ....................... #
+
+    def _mid_stream_fault(self, rule: FaultRule, call: PortCall, where: str) -> None:
+        """Roll ``crash`` / ``error`` / ``timeout`` after a yielded item; raise the first that fires.
+
+        Same rates and RNG as the pre-open rolls, so a mid-stream fault is part of the seeded,
+        reproducible fault stream. Only reached when ``rule.stream_faults`` is set.
+        """
+
+        if rule.crash > 0.0 and self.rng.random() < rule.crash:
+            _record_fault("crash", call, mid_stream=True)
+            raise SimulatedCrash(f"simulated crash mid-stream at {where}")
+
+        if rule.error > 0.0 and self.rng.random() < rule.error:
+            _record_fault("error", call, mid_stream=True)
+            raise exc.infrastructure(
+                f"injected mid-stream fault at {where}", code="dst.injected_port_fault"
+            )
+
+        if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
+            _record_fault("timeout", call, mid_stream=True)
+            raise exc.timeout(
+                f"injected mid-stream timeout at {where}", code="dst.injected_timeout"
+            )
+
+    # ....................... #
+
+    async def around_stream(
+        self, call: PortCall, nxt: StreamPortNext
+    ) -> AsyncIterator[Any]:
+        """Fault an async-generator port call. The pre-open rolls (crash / error / timeout /
+        delay) match :meth:`around` exactly — same rates, order, and RNG draws — so a stream
+        with ``stream_faults`` off behaves identically to before (fail before opening, then
+        clean iteration). With ``stream_faults`` on, a raise-fault may also fire *mid-stream*
+        after any item, modeling a downstream that dies partway through delivery. Transport
+        drop/duplicate never apply — no async-generator op is a transport op."""
+
+        rule = self._match(call)
+
+        if rule is None:
+            async for item in nxt(call):
+                yield item
+            return
+
+        where = f"{call.surface}[{call.route}].{call.op}"
+
+        # Pre-open raise-faults (fail before the stream opens) — identical rolls to ``around``.
+        if rule.crash > 0.0 and self.rng.random() < rule.crash:
+            await asyncio.sleep(0)
+            _record_fault("crash", call)
+            raise SimulatedCrash(f"simulated crash at {where}")
+
+        if rule.error > 0.0 and self.rng.random() < rule.error:
+            await asyncio.sleep(0)
+            _record_fault("error", call)
+            raise exc.infrastructure(
+                f"injected fault at {where}", code="dst.injected_port_fault"
+            )
+
+        if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
+            await asyncio.sleep(0)
+            _record_fault("timeout", call)
+            raise exc.timeout(
+                f"injected timeout at {where}", code="dst.injected_timeout"
+            )
+
+        if rule.delay > 0.0 and self.rng.random() < rule.delay:
+            seconds = self.rng.uniform(0.0, rule.max_delay.total_seconds())
+            _record_fault("delay", call, seconds=seconds)
+            await asyncio.sleep(seconds)
+
+        async for item in nxt(call):
+            yield item
+
+            if rule.stream_faults:
+                self._mid_stream_fault(rule, call, where)
 
 
 # ....................... #
