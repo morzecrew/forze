@@ -24,6 +24,7 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     keyset_page_bounds,
     ordered_compare,
+    resolved_cursor_limit,
     row_passes_keyset_seek,
     row_value_for_sort_key,
     validate_cursor_token,
@@ -50,19 +51,15 @@ def _b64url_json_loads_dict(token: str) -> dict[str, int]:
 
 def _mock_cursor_start_and_limit(  # type: ignore[reportPrivateUsage]
     cursor: CursorPaginationExpression | None,
-    *,
-    default_limit: int = 10,
 ) -> tuple[int, int]:
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
         raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
-    lim_raw = c.get("limit")
-    lim: int = default_limit if lim_raw is None else int(cast(Any, lim_raw))
-
-    if lim < 1:
-        raise exc.validation("Cursor pagination 'limit' must be positive")
+    # Shared coerce + positive-check + clamp to [1, MAX_CURSOR_LIMIT] (a non-int is a 400,
+    # a huge value is bounded), keeping the mock's paging identical to the real backends.
+    lim = resolved_cursor_limit(c)
 
     start = 0
 

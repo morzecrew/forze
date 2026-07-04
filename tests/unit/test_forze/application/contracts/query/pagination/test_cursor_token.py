@@ -73,10 +73,30 @@ def test_encode_decode_roundtrip_json_types() -> None:
     assert v2[0] == "x"
     assert v2[1] == dt.isoformat()
     assert v2[2] == d.isoformat()
-    assert v2[3] == "1.5"
+    assert v2[3] == Decimal("1.5")  # Decimal round-trips exactly (not a bare string)
+    assert isinstance(v2[3], Decimal)
     assert v2[4] is True
     assert v2[5] == 7
     assert v2[6] == str(u)
+
+
+def test_decimal_keys_order_numerically_not_lexicographically() -> None:
+    # The bug: canonicalizing Decimal to str then comparing gives "9" > "10". Keyset
+    # order must be numeric, so 9 sorts *before* 10.
+    assert ordered_compare(
+        Decimal("9"), Decimal("10"), direction="asc", nulls="first"
+    ) == -1
+    assert ordered_compare(
+        Decimal("10"), Decimal("9"), direction="asc", nulls="first"
+    ) == 1
+    assert compare_keyset_sort_values(Decimal("9"), Decimal("10")) == -1
+    # Cross-type numeric comparison stays numeric (int/float/Decimal).
+    assert compare_keyset_sort_values(9, Decimal("10")) == -1
+    assert compare_keyset_sort_values(Decimal("9.5"), 10) == -1
+    # A Decimal round-tripped through a token still compares numerically against a row value.
+    token = encode_keyset_v1(sort_keys=["price"], directions=["asc"], values=[Decimal("10")])
+    _, _, _, (cursor_price,) = decode_keyset_v1(token)
+    assert compare_keyset_sort_values(Decimal("9"), cursor_price) == -1
 
 
 def test_encode_keyset_misaligned_raises() -> None:

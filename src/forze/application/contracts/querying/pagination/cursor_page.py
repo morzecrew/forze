@@ -10,6 +10,9 @@ from .cursor_token import encode_keyset_v1, row_value_for_sort_key
 # ----------------------- #
 
 _DEFAULT_CURSOR_LIMIT = 10
+MAX_CURSOR_LIMIT = 10_000
+"""Ceiling for a client-supplied cursor page size. The limit is untrusted, so a huge value
+(``limit=10**9``) is clamped rather than materializing an unbounded result set."""
 
 # ....................... #
 
@@ -56,12 +59,28 @@ def assert_cursor_projection_includes_sort_keys(
 
 
 def resolved_cursor_limit(cursor: Mapping[str, Any] | None) -> int:
-    """Effective page size (default ``10`` when omitted)."""
+    """Effective page size — default when omitted, coerced and clamped to ``[1, MAX_CURSOR_LIMIT]``.
+
+    The limit is client-controlled, so a non-integer is a clean ``validation`` error (not a
+    500 from a bare ``int('abc')``) and an over-large value is clamped to ``MAX_CURSOR_LIMIT``
+    rather than materializing an unbounded result set (``LIMIT 1000000001``).
+    """
     lim = dict(cursor or {}).get("limit")
     if lim is None:
         return _DEFAULT_CURSOR_LIMIT
 
-    return int(lim)
+    try:
+        value = int(lim)
+
+    except (TypeError, ValueError) as e:
+        raise exc.validation(
+            "Cursor pagination 'limit' must be an integer"
+        ) from e
+
+    if value < 1:
+        raise exc.validation("Cursor pagination 'limit' must be positive")
+
+    return min(value, MAX_CURSOR_LIMIT)
 
 
 # ....................... #

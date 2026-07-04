@@ -1,4 +1,5 @@
 import asyncio
+from functools import partial
 from typing import Any, Callable, Coroutine, Hashable, cast, final
 
 import attrs
@@ -147,28 +148,43 @@ class InflightLane[T]:
             if existing is None:
                 existing = asyncio.create_task(factory())
                 self._tasks[key] = existing
+                # Deregister on *task completion*, not on a waiter exiting: popping when a
+                # follower leaves (timeout / cancellation) would let the next caller start a
+                # duplicate factory, breaking single-flight.
+                existing.add_done_callback(partial(self._deregister, key))
 
             my_task = existing
 
+        # Shield so this caller's timeout — or an external cancellation of *this* caller —
+        # cancels only this wait, never the shared task; cancelling the task would break
+        # every other follower awaiting the same result.
+        shielded = asyncio.shield(my_task)
+
+        if timeout is None:
+            return await shielded
+
         try:
-            if timeout is None:
-                return await my_task
+            return await asyncio.wait_for(shielded, timeout=timeout)
 
-            try:
-                return await asyncio.wait_for(my_task, timeout=timeout)
+        except asyncio.TimeoutError as e:
+            raise exc.internal("InflightLane timed out") from e
 
-            except asyncio.TimeoutError as e:
-                async with self._guard:
-                    if self._tasks.get(key) is my_task:
-                        my_task.cancel()
-                        self._tasks.pop(key, None)
+    # ....................... #
 
-                raise exc.internal("InflightLane timed out") from e
+    def _deregister(self, key: tuple[Any, ...], task: "asyncio.Task[Any]") -> None:
+        """Drop a completed task and retrieve its outcome.
 
-        finally:
-            async with self._guard:
-                if self._tasks.get(key) is my_task:
-                    self._tasks.pop(key, None)
+        Runs from the task's done-callback, so cleanup is tied to the computation finishing
+        rather than to any single waiter leaving. Retrieving the result/exception here means
+        an *orphaned* task (every waiter timed out or cancelled) does not emit a spurious
+        "Task exception was never retrieved" warning.
+        """
+
+        if self._tasks.get(key) is task:
+            del self._tasks[key]
+
+        if not task.cancelled():
+            task.exception()
 
     # ....................... #
 

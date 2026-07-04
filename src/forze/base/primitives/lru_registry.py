@@ -264,22 +264,29 @@ class SimpleLruRegistry(Generic[K, V, R]):
             value = await self._invoke_create(key, slot)
 
             evicted: list[V] = []
+            existing: V | None = None
 
             async with self._lock:
                 if slot in self._entries:
-                    await self.dispose(value)
                     existing = self._entries[slot]
                     self._entries.move_to_end(slot)
-                    return existing
 
-                self._entries[slot] = value
-                self._entries.move_to_end(slot)
+                else:
+                    self._entries[slot] = value
+                    self._entries.move_to_end(slot)
 
-                while len(self._entries) > self.max_entries:
-                    evicted_slot, old = self._entries.popitem(last=False)
-                    self._dedup.release_slot(evicted_slot)
-                    self._init_locks.pop(evicted_slot, None)
-                    evicted.append(old)
+                    while len(self._entries) > self.max_entries:
+                        evicted_slot, old = self._entries.popitem(last=False)
+                        self._dedup.release_slot(evicted_slot)
+                        self._init_locks.pop(evicted_slot, None)
+                        evicted.append(old)
+
+            if existing is not None:
+                # Lost the create race: dispose our now-redundant value *outside* the lock —
+                # a slow dispose (closing a pool) must not stall every registry op, and a
+                # dispose that re-enters the registry would deadlock the non-reentrant lock.
+                await self.dispose(value)
+                return existing
 
             for old in evicted:
                 await self.dispose(old)
@@ -343,6 +350,11 @@ class _GuardedEntry(Generic[V, R]):
     drain_after_idle: bool = False
     """Whether to drain the entry after it is idle."""
 
+    disposing: bool = False
+    """Set once the idle-drain path has taken ownership of disposing :attr:`value`. A
+    concurrent :meth:`GuardedLruRegistry.evict` that finds the entry in this window must not
+    dispose it a second time — the drain path owns the single disposal."""
+
     condition: asyncio.Condition = attrs.field(factory=asyncio.Condition)
     """Condition for the entry to be used."""
 
@@ -397,11 +409,16 @@ class _GuardedEntry(Generic[V, R]):
             async with self.condition:
                 self.refcount -= 1
                 do_finish_drain = self.refcount == 0 and self.drain_after_idle
+
+                if do_finish_drain:
+                    # Claim disposal under the lock so a concurrent evict that pops this
+                    # still-in-``_draining`` entry sees the claim and does not dispose again.
+                    self.drain_after_idle = False
+                    self.disposing = True
+
                 self.condition.notify_all()
 
             if do_finish_drain:
-                self.drain_after_idle = False
-
                 try:
                     await self.dispose(self.value)
 
@@ -710,7 +727,15 @@ class GuardedLruRegistry(Generic[K, V, R]):
                 entry = self._draining.pop(slot, None)
 
             if entry is not None:
-                if entry.refcount == 0:
+                if entry.disposing:
+                    # The idle-drain path already owns this entry's single disposal *and* its
+                    # barrier cleanup. Put it back in ``_draining`` (it was popped above) so
+                    # that path's ``on_finish_drain`` removes it and unblocks waiters; evict
+                    # must not dispose it a second time.
+                    self._draining[slot] = entry
+                    immediate = None
+
+                elif entry.refcount == 0:
                     immediate = entry.value
 
                 else:

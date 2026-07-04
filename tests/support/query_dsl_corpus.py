@@ -114,6 +114,14 @@ CASES: tuple[QueryCase, ...] = (
               expected=frozenset({"alice", "bob"})),
     QueryCase(name="null_true", filters={"$values": {"score": {"$null": True}}},
               expected=frozenset({"bob"})),
+    # Negative operators on a nullable field. The in-memory evaluator (the oracle) treats a
+    # NULL/absent field as *matching* $neq / $nin — like Mongo (``null_matches_missing``).
+    # Every backend must agree: a naive SQL ``<>`` / ``NOT IN`` three-valued-excludes bob
+    # (score=None), which is exactly the divergence this pins. (alice/dave score=10.)
+    QueryCase(name="neq_nullable", filters={"$values": {"score": {"$neq": 10}}},
+              expected=frozenset({"bob", "carol"})),
+    QueryCase(name="nin_nullable", filters={"$values": {"score": {"$nin": [10]}}},
+              expected=frozenset({"bob", "carol"})),
     # Text op — rejected by search/MVP backends.
     QueryCase(name="text_regex", filters={"$values": {"name": {"$regex": "^a"}}},
               expected=frozenset({"alice"})),

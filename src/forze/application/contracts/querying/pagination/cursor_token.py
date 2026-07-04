@@ -1,5 +1,6 @@
 """Base64-JSON cursors and sort normalization (agnostic of SQL vs Mongo)."""
 
+from decimal import Decimal, InvalidOperation
 from typing import Any, Sequence
 
 from forze.base.codecs import B64UrlJsonCodec
@@ -10,6 +11,9 @@ from forze.base.exceptions import exc
 _KEYSET_V1 = 1
 _DIRECTIONS = ("asc", "desc")
 _CODEC = B64UrlJsonCodec()
+_DECIMAL_TAG = "$dec"
+"""Wire tag round-tripping a ``Decimal`` sort key exactly (as its string form) so keyset
+seek compares it numerically after decode, not as a bare (lexicographically-ordered) string."""
 
 # ....................... #
 
@@ -37,7 +41,9 @@ def _jsonify_value(v: Any) -> Any:
         return v.isoformat()
 
     if t == "Decimal":
-        return str(v)
+        # Tagged (not a bare string) so decode restores a ``Decimal`` and keyset seek
+        # compares it numerically; a bare ``str(v)`` would order ``'9' > '10'``.
+        return {_DECIMAL_TAG: str(v)}
 
     return str(v)
 
@@ -54,11 +60,46 @@ def keyset_canonical_value(v: Any) -> Any:
 # ....................... #
 
 
-def compare_keyset_sort_values(left: Any, right: Any) -> int:
-    """Compare two sort-key values (-1, 0, 1) using cursor wire canonicalization."""
+def _compare_value(v: Any) -> Any:
+    """Canonicalize a sort-key value for *comparison* — numbers stay numeric.
 
-    lc = keyset_canonical_value(left)
-    rc = keyset_canonical_value(right)
+    Unlike the wire form (:func:`_jsonify_value`), an ``int`` / ``float`` / ``Decimal`` is
+    coerced to ``Decimal`` so keys order numerically (``Decimal('9') < Decimal('10')``), not
+    lexicographically as their string form would (``'9' > '10'``). UUID / datetime keep the
+    string / isoformat canonicalization the cursor round-trip relies on.
+    """
+
+    if v is None or isinstance(v, bool):
+        return v
+
+    if isinstance(v, Decimal):
+        return v
+
+    if isinstance(v, (int, float)):
+        return Decimal(str(v))
+
+    if isinstance(v, (str, list, dict)):
+        return v  # pyright: ignore[reportUnknownVariableType]
+
+    t = type(v).__name__
+
+    if t in ("UUID", "uuid"):
+        return str(v)
+
+    if t in ("datetime", "date"):
+        return v.isoformat()
+
+    return str(v)
+
+
+# ....................... #
+
+
+def compare_keyset_sort_values(left: Any, right: Any) -> int:
+    """Compare two sort-key values (-1, 0, 1) using the numeric-aware canonicalization."""
+
+    lc = _compare_value(left)
+    rc = _compare_value(right)
 
     if lc == rc:
         return 0
@@ -99,15 +140,15 @@ def ordered_compare(
     direction. This is the canonical keyset order every backend conforms to.
     """
 
-    lc = keyset_canonical_value(left)
-    rc = keyset_canonical_value(right)
+    lc = _compare_value(left)
+    rc = _compare_value(right)
     l_null = lc is None
     r_null = rc is None
 
-    if l_null and r_null:
-        return 0
-
     if l_null:
+        if r_null:
+            return 0
+
         return -1 if nulls == "first" else 1
 
     if r_null:
@@ -196,8 +237,24 @@ def _parse_value(v: Any) -> Any:
     if isinstance(v, (int, float, str, bool)):
         return v
 
-    # Token values are client-controlled: only JSON scalars are valid sort-key
-    # values; containers (and anything else) are rejected as a tampered cursor.
+    # The one accepted container is the Decimal tag (``{"$dec": "<digits>"}``), restored to
+    # a ``Decimal`` so keyset seek compares it numerically. A malformed tag is a tampered
+    # cursor, not a 500.
+    if (
+        isinstance(v, dict)
+        and set(v) == {_DECIMAL_TAG}  # pyright: ignore[reportUnknownArgumentType]
+        and isinstance(v[_DECIMAL_TAG], str)
+    ):
+        try:
+            return Decimal(
+                v[_DECIMAL_TAG]  # pyright: ignore[reportUnknownArgumentType]
+            )
+
+        except InvalidOperation as e:
+            raise exc.validation("Invalid cursor token") from e
+
+    # Token values are client-controlled: any other container (or non-scalar) is rejected
+    # as a tampered cursor.
     raise exc.validation("Invalid cursor token")
 
 

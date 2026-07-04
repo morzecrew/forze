@@ -38,7 +38,10 @@ from forze.base.primitives import JsonDict, build_projection
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
-from forze.application.contracts.querying import normalize_sorts_for_keyset
+from forze.application.contracts.querying import (
+    normalize_sorts_for_keyset,
+    resolved_cursor_limit,
+)
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_seek_condition,
@@ -789,12 +792,9 @@ class PostgresReadGateway[M: BaseModel](
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
-        limit_raw = c.get("limit")
-
-        lim: int = 10 if limit_raw is None else int(limit_raw)  # type: ignore[call-overload]
-
-        if lim < 1:
-            raise exc.validation("Cursor pagination 'limit' must be positive")
+        # Coerced + clamped to [1, MAX_CURSOR_LIMIT] so a non-int is a 400 (not a 500) and a
+        # huge value can't materialize an unbounded ``LIMIT``.
+        lim = resolved_cursor_limit(c)
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None

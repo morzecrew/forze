@@ -239,11 +239,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Bad query fields are a client error** — a sort/filter/direction naming an absent field → `precondition` (`field_not_on_read_model` / `invalid_sort_value`); a spec's own bad `default_sort` stays `configuration` (author misconfiguration).
 
+- **Malformed `$and`/`$or` is a clean 400** — a combinator whose operand is not a list of filter objects (`{"$or": "abc"}` iterated characters; `{"$and": ["x"]}` crashed on `.keys()`) now raises `precondition` instead of an `AttributeError` (500), matching the existing `$not` object check.
+
+- **Cursor page size is coerced and clamped** — `resolved_cursor_limit` (shared by the mock and the Postgres gateway) rejects a non-integer `limit` with `validation` (not a 500 from `int('abc')`) and clamps to `MAX_CURSOR_LIMIT` (10,000) so a huge value can't materialize an unbounded `LIMIT`.
+
 - **Encryption fail-closed** — filtering a randomized-encrypted field raises `precondition` (`core.crypto.encrypted_field_not_filterable`); encrypted-sort rejection now covers every search backend (`core.search.encrypted_sort_field`).
 
 - **Consistent adapter errors** — the mock rev-conflict raises `exc.precondition(..., code="revision_mismatch")` like the real adapters; a missing dependency reports a legible `configuration` error naming what *is* registered; database error classification keys on codes (Postgres SQLSTATE, ClickHouse numeric, Mongo op code, Redis RESP token), not message text.
 
 **Correctness & consistency**
+
+- **`$neq` / `$nin` / `$disjoint` include NULL / missing rows on Postgres** — the in-memory evaluator (the DST oracle) and Mongo (`null_matches_missing`) treat an absent/null field as *matching* a negative operator; the Postgres field-vs-value renderer used a three-valued `<>` / `NOT (… = ANY …)` that excluded NULL rows — diverging from the oracle and even from its *own* field-to-field `$neq` (`IS DISTINCT FROM`). It now renders `IS DISTINCT FROM` / `… IS NULL OR NOT …`, so mock ≡ Postgres ≡ Mongo. New parity-corpus cases (`neq_nullable`, `nin_nullable`) pin it, verified against real Postgres and Mongo.
+
+- **Decimal cursor keys order numerically** — keyset comparison coerces `int` / `float` / `Decimal` to `Decimal` instead of comparing their string form (which ordered `'9' > '10'`, skipping/duplicating rows on money-shaped sort keys), and a `Decimal` sort key now round-trips through the cursor token exactly (a tagged wire value) so the seek compares it numerically. mock ≡ Postgres restored for Decimal-keyed pagination.
+
+- **Concurrency primitives hardened** — `InflightLane` now `shield`s the shared task so one caller's timeout (or cancellation) can no longer cancel the in-flight computation for the other followers sharing it, and it deregisters on *task completion* (a done-callback that also retrieves the result) rather than on any waiter leaving, preserving single-flight. `SimpleLruRegistry.get_or_create` disposes a lost-create-race value *outside* the lock (a slow or re-entrant dispose no longer stalls or deadlocks the registry), and `GuardedLruRegistry.evict` no longer double-disposes an entry the idle-drain path is already disposing (a new `disposing` claim).
 
 - **Mock isolation matches Postgres at the default level (both directions)** — READ COMMITTED conflict detection now anchors on the version at which each row was actually read/rev-checked, not on transaction begin, so a legal fresh-read-then-update no longer false-aborts (writes are still buffered and published at commit — no dirty reads). A concurrent duplicate-id `create` race now raises `exc.conflict` (matching Postgres 23505) instead of silently merging; `ensure`/`upsert` stay `ON CONFLICT DO NOTHING`. `FOR UPDATE` is now honoured (conflict-on-read); `SKIP LOCKED` is a declared mechanism divergence, not a silent no-op. Serializability soundness is unchanged. New conformance-battery cases (`fresh_read_update`, `duplicate_key_insert`, `for_update_lost_update`) catch each divergence, verified mock ≡ real Postgres. Removes a class of DST false positives *and* a false-negative; production adapters unchanged.
 
