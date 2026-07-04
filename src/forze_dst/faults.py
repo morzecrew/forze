@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import asyncio
 import random
+from contextlib import aclosing
 from datetime import timedelta
-from typing import Any, AsyncIterator, final
+from typing import Any, AsyncGenerator, AsyncIterator, cast, final
 
 import attrs
 
@@ -429,8 +430,14 @@ class _FaultPolicyInterceptor:
         rule = self._match(call)
 
         if rule is None:
-            async for item in nxt(call):
-                yield item
+            # ``aclosing`` guarantees the inner stream is closed (backend cursor/connection
+            # released) even when the consumer stops iterating early. Seam streams are async
+            # generators (they have ``aclose``); the annotated ``AsyncIterator`` is narrowed.
+            async with aclosing(
+                cast("AsyncGenerator[Any, None]", nxt(call))
+            ) as stream:
+                async for item in stream:
+                    yield item
             return
 
         where = f"{call.surface}[{call.route}].{call.op}"
@@ -460,11 +467,15 @@ class _FaultPolicyInterceptor:
             _record_fault("delay", call, seconds=seconds)
             await asyncio.sleep(seconds)
 
-        async for item in nxt(call):
-            yield item
+        # ``aclosing`` closes the inner stream deterministically on every exit — a mid-stream
+        # fault raising out of the loop, or the consumer stopping early — so no backend
+        # cursor/connection is leaked.
+        async with aclosing(cast("AsyncGenerator[Any, None]", nxt(call))) as stream:
+            async for item in stream:
+                yield item
 
-            if rule.stream_faults:
-                self._mid_stream_fault(rule, call, where)
+                if rule.stream_faults:
+                    self._mid_stream_fault(rule, call, where)
 
 
 # ....................... #

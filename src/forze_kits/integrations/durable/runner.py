@@ -22,6 +22,7 @@ from forze.application.contracts.durable.function import (
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
 
+from .._logger import logger
 from ._resolve import resolve_durable_run_store
 from .registry import DurableFunctionRegistry
 from .telemetry import DurableTelemetry
@@ -347,7 +348,27 @@ class DurableFunctionRunner:
         while True:
             await asyncio.sleep(seconds)
 
-            held = await store.renew(run_id, lease_for=self.lease_for, fence=fence)
+            try:
+                held = await store.renew(
+                    run_id, lease_for=self.lease_for, fence=fence
+                )
+
+            except Exception:
+                # A renewal that errors (DB/network blip) means we can no longer prove we hold
+                # the lease; another worker may reclaim it. Treat it as lease loss — stop the
+                # body before it double-executes and surface the lease-loss path — rather than
+                # letting the raw error escape the heartbeat task and override the body result.
+                # (``Exception`` leaves a genuine task cancellation — ``CancelledError`` — to
+                # propagate so the ``finally`` cancel path still works.)
+                logger.warning(
+                    "Durable run %s heartbeat renewal errored; treating as lease loss",
+                    run_id,
+                    exc_info=True,
+                )
+                reclaimed.set()
+                body.cancel()
+
+                return
 
             if not held:
                 # Another worker reclaimed the run; stop the body before it double-executes.

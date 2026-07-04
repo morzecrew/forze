@@ -708,12 +708,14 @@ def _reproduce_lines(report: "ViolationReport") -> list[str]:
         lines.append(
             f"    # as a test:  assert_no_violation(simulation, SimulationConfig.reproduce({seed}))"
         )
-        return lines
 
-    call = f"SimulationConfig.reproduce({seed}, {_reproduce_kwargs(config)})"
-    lines.append(f"    simulation.run({call})")
-    lines.append(f"    # as a test:  assert_no_violation(simulation, {call})")
+    else:
+        call = f"SimulationConfig.reproduce({seed}, {_reproduce_kwargs(config)})"
+        lines.append(f"    simulation.run({call})")
+        lines.append(f"    # as a test:  assert_no_violation(simulation, {call})")
 
+    # DPOR / Hypothesis hints are independent of whether the config was threaded, so emit them
+    # in both forms rather than dropping them on the seed-only (config-less) path.
     if report.choices is not None:
         lines.append(
             f"    # exact interleaving (DPOR): SystematicReorderer(choices={list(report.choices)!r})"
@@ -722,7 +724,11 @@ def _reproduce_lines(report: "ViolationReport") -> list[str]:
     if report.plan is not None:
         lines.append(f"    # counterexample act-plan (Hypothesis): {list(report.plan)!r}")
 
-    if any((config.faults, config.latency, config.crash, config.cluster)):
+    # The rich-environment note is only meaningful when the config that carries those knobs is
+    # present.
+    if config is not None and any(
+        (config.faults, config.latency, config.crash, config.cluster)
+    ):
         lines.append(
             "    # note: faults / latency / partitions / crash reproduce faithfully only from a"
         )

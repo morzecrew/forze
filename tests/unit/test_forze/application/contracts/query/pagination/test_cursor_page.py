@@ -89,6 +89,17 @@ def test_resolved_cursor_limit_explicit() -> None:
     assert resolved_cursor_limit({"limit": 25}) == 25
 
 
+def test_resolved_cursor_limit_rejects_non_coercible_values() -> None:
+    # Client-controlled, so each bad shape is a clean 400, never a 500. ``float('inf')`` in
+    # particular raises OverflowError from ``int()`` and must be caught like the others.
+    for bad in ("abc", float("inf"), float("nan"), [1, 2]):
+        with pytest.raises(CoreException, match="must be an integer"):
+            resolved_cursor_limit({"limit": bad})
+
+    with pytest.raises(CoreException, match="must be positive"):
+        resolved_cursor_limit({"limit": 0})
+
+
 def test_assemble_empty_fetch() -> None:
     hits, has_more, nxt, prev = assemble_keyset_cursor_page(
         [],

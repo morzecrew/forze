@@ -31,7 +31,12 @@ from forze.application.execution.interception import wrap_intercepted
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
 
-from forze_dst.faults import FaultPolicy, FaultRule, _FaultPolicyInterceptor
+from forze_dst.faults import (
+    FaultPolicy,
+    FaultRule,
+    SimulatedCrash,
+    _FaultPolicyInterceptor,
+)
 from forze_dst.runtime import run_simulation
 from forze_dst.faults import compile_fault_policy
 from forze_mock import MockDepsModule
@@ -273,3 +278,30 @@ class TestStreamFaults:
             rng=_ScriptedRng([0.9]),  # type: ignore[arg-type]
         )
         assert await self._drain(interceptor) == [0, 1, 2, 3, 4]
+
+    @pytest.mark.parametrize(
+        ("rule", "expected"),
+        [
+            (FaultRule(crash=0.5, stream_faults=True), SimulatedCrash),
+            (FaultRule(timeout=0.5, stream_faults=True), CoreException),
+        ],
+    )
+    async def test_mid_stream_crash_and_timeout_when_opted_in(
+        self, rule: FaultRule, expected: type[BaseException]
+    ) -> None:
+        # A single-kind rule means each roll is one draw: pre-open no-fire (0.9), then the
+        # mid-stream fault fires after item 0 (0.1). Covers the crash and timeout branches of
+        # ``_mid_stream_fault`` alongside the error case above.
+        interceptor = _FaultPolicyInterceptor(
+            rules=(rule,),
+            rng=_ScriptedRng([0.9, 0.1]),  # type: ignore[arg-type]
+        )
+        got: list[int] = []
+        with pytest.raises(expected):
+            port = wrap_intercepted(
+                _StreamPort(), interceptors=(interceptor,), surface="f", route=None
+            )
+            async for i in port.stream(5):
+                got.append(i)
+
+        assert got == [0]  # one item delivered, then the mid-stream fault

@@ -503,9 +503,15 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         each document is tenant-verified via :meth:`kill`, so a missing or
         cross-tenant id raises ``not_found``.
 
+        **Not atomic — partial success is possible.** The ids are deleted one at a
+        time in order and each ``kill`` commits immediately, so a ``not_found`` on a
+        later id leaves the earlier deletes already applied (they are not rolled
+        back). Callers needing all-or-nothing semantics must pre-validate existence,
+        or delete within their own transaction rather than relying on this helper.
+
         :param pks: Document primary keys (must be unique). No-ops when empty.
         :raises NotFoundError: If any document does not exist or is not accessible
-            in the current tenant scope.
+            in the current tenant scope (earlier deletes in the batch still commit).
         """
 
         _ = batch_size

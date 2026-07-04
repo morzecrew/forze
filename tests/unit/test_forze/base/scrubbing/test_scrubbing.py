@@ -152,6 +152,11 @@ class TestScrubAssignmentSuffixLeak:
             "visit https://example.com/docs for details",  # no userinfo, no secret
             "user authorized the request",  # 'authorization' not followed by ':'
             "order 12345 fulfilled for customer 9876",
+            # A bare word continuation of a sensitive term must NOT be swallowed: the suffix
+            # only extends across separator-led segments, so these stay ordinary text.
+            "secretary=Jane started today",
+            "the tokenizer=bpe finished",
+            "sessionization=on in the config",
         ],
     )
     def test_leaves_non_secret_strings_untouched(self, text: str) -> None:
@@ -324,7 +329,7 @@ class TestRegisterSensitivePatterns:
 _FRAGMENT_SAMPLES: dict[str, str] = {
     (
         r"(?:password|passwd|mysql[._ -]?pwd|secret|token|api[._ -]?key"
-        r"|credential|session|cookie|csrf|xsrf|jwt|ssn)[\w.-]{0,24}\s*[=:]\s*\S+"
+        r"|credential|session|cookie|csrf|xsrf|jwt|ssn)(?:[._-]\w+){0,6}\s*[=:]\s*\S+"
     ): "retry with api key=abc123",
     r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}": "mail sent to alice@example.com today",
     r"Bearer\s+\S+": "header was Bearer eyJhbGci.x.y",

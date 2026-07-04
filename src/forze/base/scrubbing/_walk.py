@@ -92,13 +92,22 @@ def walk_mapping(
         # not always ``str`` (e.g. ``log.info("stats", counts={1: 2})``), and the
         # sensitive-key regex only accepts strings. Coerce for the check so a
         # non-str key is inspected by name without crashing the caller's log site.
-        key_name = (
-            key
-            if isinstance(key, str)  # pyright: ignore[reportUnnecessaryIsInstance]
-            else str(key)
-        )
+        # A key whose ``__str__`` (or the sensitivity check) raises is masked rather
+        # than propagated — masking is the safe failure mode for a scrubber, mirroring
+        # ``EventDictSanitizer.__call__``.
+        try:
+            key_name = (
+                key
+                if isinstance(key, str)  # pyright: ignore[reportUnnecessaryIsInstance]
+                else str(key)
+            )
+            sensitive = is_sensitive_key(key_name)
 
-        if is_sensitive_key(key_name):
+        except Exception:
+            out[key] = SECRET_PLACEHOLDER
+            continue
+
+        if sensitive:
             out[key] = SECRET_PLACEHOLDER
             continue
 

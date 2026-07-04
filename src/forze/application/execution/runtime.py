@@ -167,11 +167,11 @@ class ExecutionRuntime:
     """
 
     cursor_token_signer: CursorTokenSigner | None = None
-    """Optional HMAC signer for keyset cursor tokens. When set, the runtime configures it
-    process-wide (:func:`~forze.application.contracts.querying.configure_cursor_signer`) at
-    context creation, so every keyset cursor token is signed and verification rejects any
+    """Optional HMAC signer for keyset cursor tokens. When set, the runtime binds it per scope
+    (context-scoped, auto-restored on scope exit — so two runtimes in one process sign with
+    their own signer), so every keyset cursor token is signed and verification rejects any
     unsigned or tampered token — opt-in, hard cutover. ``None`` (default) leaves tokens
-    unsigned. Equivalent to calling ``configure_cursor_signer`` yourself at startup."""
+    unsigned. See :func:`~forze.application.contracts.querying.bind_cursor_signer`."""
 
     cursor_token_cipher: CursorTokenCipher | None = None
     """Optional AEAD cipher for keyset cursor tokens. When set, the runtime binds it per scope,

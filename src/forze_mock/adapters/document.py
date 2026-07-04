@@ -1173,7 +1173,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         binding = (
             build_cursor_binding(
-                spec_name=self.spec.name,
+                # Spec-less, mirroring the real document read path (``document_cursor_binding``):
+                # the generic gateway has no spec, so a document cursor binds on tenant + filter
+                # only. Using a spec name here would diverge from the backends the mock models.
+                spec_name=None,
                 tenant_id=self.require_tenant_if_aware(),
                 filter_expr=(
                     QueryFilterExpressionParser.parse(filters) if filters else None

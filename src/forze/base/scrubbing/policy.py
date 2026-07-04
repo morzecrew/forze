@@ -66,13 +66,15 @@ _FORZE_KEY_EXTRAS: tuple[str, ...] = (
 # only when it is followed by ``=``/``:`` and a token (``session=abc`` → masked
 # whole), which is the form that actually carries the secret.
 #
-# A bounded identifier suffix (``[\w.-]{0,24}``) sits between the sensitive term
+# A bounded compound-name suffix (``(?:[._-]\w+){0,6}``) sits between the sensitive term
 # and the ``=``/``:`` separator so compound names carry through: ``secret_key=``,
 # ``aws_secret_access_key=``, ``token_value=`` all match (previously only a term
-# immediately followed by the separator — e.g. ``client_secret=`` — was caught).
+# immediately followed by the separator — e.g. ``client_secret=`` — was caught). Each suffix
+# segment must be separator-led (``_``/``.``/``-`` then word chars), so a bare word
+# continuation is *not* swallowed: ``secretary=`` / ``tokenizer=`` stay ordinary text.
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
     r"(?:password|passwd|mysql[._ -]?pwd|secret|token|api[._ -]?key"
-    r"|credential|session|cookie|csrf|xsrf|jwt|ssn)[\w.-]{0,24}\s*[=:]\s*\S+",
+    r"|credential|session|cookie|csrf|xsrf|jwt|ssn)(?:[._-]\w+){0,6}\s*[=:]\s*\S+",
 )
 
 _LOG_STRING_EXTRAS: tuple[str, ...] = (

@@ -72,7 +72,9 @@ def resolved_cursor_limit(cursor: Mapping[str, Any] | None) -> int:
     try:
         value = int(lim)
 
-    except (TypeError, ValueError) as e:
+    # OverflowError: a non-finite float (``float('inf')``) — coercion must be a clean 400,
+    # not a 500 from the raw ``int(inf)``.
+    except (TypeError, ValueError, OverflowError) as e:
         raise exc.validation(
             "Cursor pagination 'limit' must be an integer"
         ) from e

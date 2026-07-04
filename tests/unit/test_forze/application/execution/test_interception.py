@@ -193,6 +193,48 @@ def test_stream_aware_interceptor_sees_and_transforms_each_item() -> None:
     assert seen == [0, 1, 2]  # the interceptor saw every item, not just acquisition
 
 
+def test_mixed_chain_stream_aware_and_acquisition_only() -> None:
+    # A stream-aware interceptor (per-item) composed with an around-only interceptor
+    # (acquisition-only, via ``_acquisition_only_stream``): the stream still transforms per
+    # item while the outer around-only wraps acquisition exactly once, before any item flows.
+    from typing import AsyncIterator as _AsyncIterator
+
+    from forze.application.execution.interception import StreamPortNext
+
+    events: list[str] = []
+
+    @attrs.define(slots=True, frozen=True)
+    class _Doubler:
+        async def around_stream(
+            self, call: PortCall, nxt: StreamPortNext
+        ) -> _AsyncIterator[Any]:
+            async for item in nxt(call):
+                events.append(f"item:{item}")
+                yield item * 10
+
+    @attrs.define(slots=True, frozen=True)
+    class _AroundOnly:
+        async def around(self, call: PortCall, nxt: PortNext) -> Any:
+            events.append("acquire")
+            return await nxt(call)
+
+    # First = outermost: the around-only wraps acquisition around the stream-aware inner one.
+    port = wrap_intercepted(
+        _FakePort(),
+        interceptors=(_AroundOnly(), _Doubler()),
+        surface="fake",
+        route=None,
+    )
+
+    async def run() -> list[int]:
+        return [i async for i in port.stream(3)]
+
+    # The stream-aware transform survives the mixed chain...
+    assert asyncio.run(run()) == [0, 10, 20]
+    # ...and acquisition ran once, before any item — the around-only is acquisition-only.
+    assert events == ["acquire", "item:0", "item:1", "item:2"]
+
+
 def test_sync_method_passes_through_uninterceptable() -> None:
     seen: list[str] = []
 

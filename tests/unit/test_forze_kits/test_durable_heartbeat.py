@@ -141,6 +141,44 @@ class TestRunnerHeartbeat:
         assert result.status is DurableRunStatus.RUNNING
         assert result.attempts == 2
 
+    async def test_renew_error_is_treated_as_lease_loss(self) -> None:
+        # A renewal that ERRORS (DB/network blip) must not crash the run with the raw error or
+        # override the body result; it is treated as lease loss — the body is cancelled before
+        # it double-executes, and the run is left RUNNING for a later recovery.
+        from unittest.mock import AsyncMock, patch
+
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+
+        side_effects = {"count": 0}
+
+        registry = DurableFunctionRegistry()
+
+        async def handler(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            # Outlive the heartbeat interval so a renewal fires (and raises) before we finish.
+            await asyncio.sleep(1.0)
+            side_effects["count"] += 1  # must NOT run — the body is cancelled on lease loss
+            return {"ok": True}
+
+        registry.register("fn", handler)
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=timedelta(milliseconds=60),
+            heartbeat_divisor=2,
+        )
+
+        with patch.object(
+            MockDurableRunStore,
+            "renew",
+            AsyncMock(side_effect=RuntimeError("db down")),
+        ):
+            # No RuntimeError escapes: the renewal failure is absorbed as lease loss.
+            result = await runner.run_now(ctx, "fn")
+
+        assert side_effects["count"] == 0
+        # Left RUNNING (no terminal write) for a later recovery, not FAILED with the DB error.
+        assert result.status is DurableRunStatus.RUNNING
+
     async def test_side_effect_runs_once_across_would_be_reclaim_window(self) -> None:
         state = MockState()
         ctx = context_from_modules(MockDepsModule(state=state))
