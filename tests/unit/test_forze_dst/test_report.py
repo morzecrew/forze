@@ -240,6 +240,42 @@ class TestFormatReport:
         assert "registry=" not in rendered  # no fingerprint → omitted
         assert "concurrency" not in rendered  # a single span: no race
 
+    def test_reproduce_block_reflects_capture_values_and_runtime(self) -> None:
+        # When a config is threaded, the reproduce kwargs surface the search-shaping knobs
+        # that were enabled (``capture_values`` / ``runtime``) so the repro re-drives them.
+        history = History(
+            seed=1,
+            events=(
+                Event(
+                    seq=0, kind="op_start", at=0.0, fields={"call_id": 0, "op": "boom"}
+                ),
+                Event(
+                    seq=1,
+                    kind="operation",
+                    at=0.0,
+                    fields={
+                        "call_id": 0,
+                        "op": "boom",
+                        "outcome": "ok",
+                        "invoked_at": 0.0,
+                        "returned_at": 0.0,
+                    },
+                ),
+            ),
+        )
+        report = ViolationReport(
+            seed=1,
+            schedule_seed=None,
+            violations=(Violation(invariant="e", message="m", events=()),),
+            workload=(("boom", "x"),),
+            history=history,
+            config=SimulationConfig(capture_values=True, runtime=True),
+        )
+        rendered = format_report(report)
+
+        assert "capture_values=True" in rendered
+        assert "runtime=True" in rendered
+
     def test_render_with_no_violations_says_none(self) -> None:
         report = ViolationReport(
             seed=1,

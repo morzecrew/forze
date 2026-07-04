@@ -305,3 +305,94 @@ class TestStreamFaults:
                 got.append(i)
 
         assert got == [0]  # one item delivered, then the mid-stream fault
+
+    @pytest.mark.parametrize(
+        ("rule", "expected"),
+        [
+            (FaultRule(crash=0.5), SimulatedCrash),
+            (FaultRule(error=0.5), CoreException),
+            (FaultRule(timeout=0.5), CoreException),
+        ],
+    )
+    async def test_pre_open_stream_fault_fails_before_any_item(
+        self, rule: FaultRule, expected: type[BaseException]
+    ) -> None:
+        # The pre-open rolls (identical to ``around``) fire before the stream opens, so no
+        # item is delivered — mirroring a stream that dies on acquisition.
+        interceptor = _FaultPolicyInterceptor(
+            rules=(rule,),
+            rng=_ScriptedRng([0.1]),  # type: ignore[arg-type]
+        )
+        got: list[int] = []
+        with pytest.raises(expected):
+            port = wrap_intercepted(
+                _StreamPort(), interceptors=(interceptor,), surface="f", route=None
+            )
+            async for i in port.stream(5):
+                got.append(i)
+
+        assert got == []  # failed before opening — no item delivered
+
+    async def test_pre_open_stream_delay_then_delivers(self) -> None:
+        # A pre-open delay advances virtual time (one ``random`` draw fires it, one ``uniform``
+        # draw sizes it) and then the whole stream delivers cleanly.
+        interceptor = _FaultPolicyInterceptor(
+            rules=(FaultRule(delay=0.5),),
+            rng=_ScriptedRng([0.1]),  # type: ignore[arg-type]
+        )
+        assert await self._drain(interceptor) == [0, 1, 2, 3, 4]
+
+    async def test_stream_faults_on_but_no_roll_fires_delivers_all(self) -> None:
+        # ``stream_faults`` on, but every roll misses: the per-item fault check runs and returns
+        # without raising, so the full stream still delivers (the no-fault mid-stream path).
+        interceptor = _FaultPolicyInterceptor(
+            rules=(FaultRule(error=0.5, stream_faults=True),),
+            rng=_ScriptedRng([0.9] * 6),  # type: ignore[arg-type]  # pre-open + 5 per-item
+        )
+        assert await self._drain(interceptor) == [0, 1, 2, 3, 4]
+
+    async def test_stream_with_no_matching_rule_passes_through(self) -> None:
+        # No rule matches the call, so ``around_stream`` is a transparent pass-through (the
+        # ``rule is None`` branch) that still closes the inner stream via ``aclosing``.
+        interceptor = _FaultPolicyInterceptor(
+            rules=(),
+            rng=_ScriptedRng([]),  # type: ignore[arg-type]  # no rolls on the pass-through
+        )
+        assert await self._drain(interceptor) == [0, 1, 2, 3, 4]
+
+
+@attrs.define(slots=True)
+class _CallPort:
+    async def call(self, x: int) -> int:
+        return x * 2
+
+
+class TestAroundRaiseFaults:
+    """The non-stream ``around`` raise-faults (crash / timeout) short-circuit the call."""
+
+    @pytest.mark.parametrize(
+        ("rule", "expected"),
+        [
+            (FaultRule(crash=0.5), SimulatedCrash),
+            (FaultRule(timeout=0.5), CoreException),
+        ],
+    )
+    async def test_around_crash_and_timeout_short_circuit(
+        self, rule: FaultRule, expected: type[BaseException]
+    ) -> None:
+        interceptor = _FaultPolicyInterceptor(
+            rules=(rule,),
+            rng=_ScriptedRng([0.1]),  # type: ignore[arg-type]
+        )
+        port = wrap_intercepted(
+            _CallPort(), interceptors=(interceptor,), surface="f", route=None
+        )
+        with pytest.raises(expected):
+            await port.call(3)
+
+
+def test_crash_policy_rejects_out_of_range_probability() -> None:
+    from forze_dst.faults import CrashPolicy
+
+    with pytest.raises(ValueError, match="probability"):
+        CrashPolicy(probability=1.5)

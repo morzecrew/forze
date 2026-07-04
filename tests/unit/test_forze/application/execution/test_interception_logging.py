@@ -115,3 +115,80 @@ class TestLoggingInterceptor:
 
         (record,) = _records(stream)
         assert record["logger"] == "forze_postgres.adapters"
+
+
+async def _ok_stream(_call: PortCall):
+    yield 1
+    yield 2
+
+
+async def _core_stream(_call: PortCall):
+    yield 1
+    raise exc.not_found("nope")
+
+
+async def _boom_stream(_call: PortCall):
+    yield 1
+    raise RuntimeError("kaboom")
+
+
+class TestLoggingInterceptorStream:
+    """``around_stream`` times the whole stream and logs its item count once — success at
+    ``trace``, a mid-stream ``CoreException`` at ``debug``, an unexpected raise at ``warning``."""
+
+    async def test_stream_success_logs_once_at_trace_with_item_count(self) -> None:
+        stream = io.StringIO()
+        _configure(stream)
+
+        got = [
+            i async for i in LoggingInterceptor().around_stream(_call(), _ok_stream)
+        ]
+
+        assert got == [1, 2]
+        (record,) = _records(stream)
+        assert record["event"] == "port stream"
+        assert record["level"] == "trace"
+        assert record["items"] == 2
+
+    async def test_stream_is_silent_at_info(self) -> None:
+        stream = io.StringIO()
+        _configure(stream, level="info")
+
+        got = [
+            i async for i in LoggingInterceptor().around_stream(_call(), _ok_stream)
+        ]
+
+        assert got == [1, 2]
+        assert _records(stream) == []
+
+    async def test_stream_core_exception_logs_at_debug_with_items_and_reraises(
+        self,
+    ) -> None:
+        stream = io.StringIO()
+        _configure(stream, level="debug")
+
+        got: list[int] = []
+        with pytest.raises(CoreException):
+            async for i in LoggingInterceptor().around_stream(_call(), _core_stream):
+                got.append(i)
+
+        assert got == [1]  # one item delivered before the mid-stream failure
+        (record,) = _records(stream)
+        assert record["event"] == "port stream failed"
+        assert record["level"] == "debug"
+        assert record["items"] == 1
+        assert record["error_kind"] == "not_found"
+
+    async def test_stream_unexpected_exception_logs_at_warning_and_reraises(
+        self,
+    ) -> None:
+        stream = io.StringIO()
+        _configure(stream, level="info")
+
+        with pytest.raises(RuntimeError):
+            async for _ in LoggingInterceptor().around_stream(_call(), _boom_stream):
+                pass
+
+        (record,) = _records(stream)
+        assert record["event"] == "port stream raised"
+        assert record["level"] == "warning"

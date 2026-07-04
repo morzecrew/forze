@@ -418,3 +418,68 @@ class TestScrubPrefilterBehaviorIdentical:
     def test_no_match_strings_returned_unchanged(self) -> None:
         msg = "order 12345 fulfilled for customer 9876"
         assert scrub_log_string(msg) == msg
+
+
+# ....................... #
+
+
+class TestWalkBranches:
+    """Direct coverage of the recursive scrub walk's value/mapping branches."""
+
+    def _walk(self):
+        from forze.base.scrubbing._walk import walk_mapping, walk_value
+
+        return walk_value, walk_mapping
+
+    def test_walk_value_max_depth_returns_sentinel(self) -> None:
+        from forze.base.scrubbing.policy import MAX_DEPTH_SENTINEL
+
+        walk_value, _ = self._walk()
+        assert (
+            walk_value({"a": 1}, text_scrub=False, depth=5, max_depth=4)
+            == MAX_DEPTH_SENTINEL
+        )
+
+    def test_walk_mapping_max_depth_returns_sentinel(self) -> None:
+        from forze.base.scrubbing.policy import MAX_DEPTH_SENTINEL
+
+        _, walk_mapping = self._walk()
+        assert walk_mapping({"a": 1}, text_scrub=False, depth=5, max_depth=4) == {
+            MAX_DEPTH_SENTINEL: True
+        }
+
+    def test_walk_value_basemodel_is_dumped_and_key_masked(self) -> None:
+        class _M(BaseModel):
+            secret: str = "x"
+            name: str = "ok"
+
+        walk_value, _ = self._walk()
+        out = walk_value(_M(), text_scrub=False, depth=0, max_depth=8)
+        assert out["secret"] == SECRET_PLACEHOLDER  # sensitive key name masked
+        assert out["name"] == "ok"
+
+    def test_walk_value_bytes_pass_through_untouched(self) -> None:
+        walk_value, _ = self._walk()
+        raw = b"binary-blob"
+        assert walk_value(raw, text_scrub=True, depth=0, max_depth=8) is raw
+
+    def test_walk_value_sequence_recurses_into_items(self) -> None:
+        walk_value, _ = self._walk()
+        out = walk_value(
+            ["plain", {"secret": "s"}], text_scrub=False, depth=0, max_depth=8
+        )
+        assert out[0] == "plain"
+        assert out[1]["secret"] == SECRET_PLACEHOLDER
+
+    def test_walk_mapping_masks_key_whose_str_raises(self) -> None:
+        class _BadKey:
+            __hash__ = object.__hash__
+
+            def __str__(self) -> str:
+                raise RuntimeError("boom")
+
+        _, walk_mapping = self._walk()
+        bad = _BadKey()
+        out = walk_mapping({bad: "value"}, text_scrub=False, depth=0, max_depth=8)
+        # A key that cannot be stringified is masked, never propagated.
+        assert out[bad] == SECRET_PLACEHOLDER
