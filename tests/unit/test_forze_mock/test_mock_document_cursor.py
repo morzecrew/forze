@@ -355,6 +355,35 @@ async def test_cursor_before_navigates_back_to_previous_page() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cursor_before_with_more_returns_nearest_previous_page() -> None:
+    # A 'before' page that over-fetches (rows remain before the window) must return the rows
+    # NEAREST the cursor, not the far end. Walk to the last page, then page back: from the
+    # last page's start the nearest previous page is the middle one, and more remain before it.
+    doc = _adapter()
+    for title in ["b", "d", "f", "h", "j", "l"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    page2 = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page1.next_cursor},
+    )
+    page3 = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page2.next_cursor},
+    )
+    assert [h.title for h in page3.hits] == ["j", "l"]
+    assert page3.prev_cursor is not None
+
+    back = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "before": page3.prev_cursor},
+    )
+    # Nearest previous page is [f, h] (not [d, f]); b, d still remain before it.
+    assert [h.title for h in back.hits] == ["f", "h"]
+
+
+@pytest.mark.asyncio
 async def test_cursor_end_of_results_and_empty_page() -> None:
     doc = _adapter()
 
@@ -456,3 +485,27 @@ async def test_project_cursor_requires_sort_keys_in_projection() -> None:
             sorts={"title": "asc"},
             cursor={"limit": 5},
         )
+
+
+@pytest.mark.asyncio
+async def test_cursor_limit_is_coerced_and_clamped() -> None:
+    # The mock keyset path routes its limit through the shared, hardened parser (like the
+    # offset path and the real backends): a non-integer is a clean validation error, and a
+    # huge value is clamped rather than materializing an unbounded in-memory page.
+    from forze.application.contracts.querying.pagination.cursor_page import (
+        MAX_CURSOR_LIMIT,
+    )
+
+    doc = _adapter()
+    for title in ["a", "b", "c"]:
+        await doc.create(_ItemCreate(title=title))
+
+    with pytest.raises(CoreException, match="must be an integer"):
+        await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": "abc"})
+
+    # An enormous limit is clamped (no error, no unbounded page): all rows fit under the cap.
+    page = await doc.find_cursor(
+        sorts={"title": "asc"}, cursor={"limit": MAX_CURSOR_LIMIT + 10_000}
+    )
+    assert [h.title for h in page.hits] == ["a", "b", "c"]
+    assert page.has_more is False

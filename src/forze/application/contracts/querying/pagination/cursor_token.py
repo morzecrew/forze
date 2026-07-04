@@ -926,17 +926,24 @@ def keyset_page_bounds(
 ) -> tuple[list[dict[str, Any]], bool, str | None, str | None]:
     """Trim an over-fetched keyset result to one page and compute next/prev cursors.
 
-    *raw_rows* holds up to ``limit + 1`` rows — the extra row signals more pages. For a
-    ``before`` page the rows are reversed back into ascending order first. Returns
+    *raw_rows* holds up to ``limit + 1`` rows — the extra row signals more pages. A ``before``
+    page arrives in flipped (descending-from-cursor) order, so its over-fetch sentinel is the
+    row *farthest* from the cursor (the last one); the ``limit`` rows nearest the cursor are
+    kept and only then reversed back into ascending order. Returns
     ``(rows, has_more, next_cursor, prev_cursor)``. Shared by the keyset-cursor search
     paths so the page-boundary and token-emission logic is single-sourced.
     """
 
-    if use_before:
-        raw_rows = list(reversed(raw_rows))
-
     has_more = len(raw_rows) > limit
-    rows = raw_rows[:limit]
+
+    if use_before:
+        # Keep the ``limit`` rows nearest the cursor (the front of the descending fetch,
+        # dropping the far sentinel), then reverse into ascending order. Reversing the whole
+        # ``limit + 1`` set first would move the sentinel to the front and return the wrong
+        # window (e.g. ``before=5&limit=2`` over ``[1..5]`` -> ``[2,3]`` instead of ``[3,4]``).
+        rows = list(reversed(raw_rows[:limit]))
+    else:
+        rows = raw_rows[:limit]
 
     def _row_token_vals(row: dict[str, Any]) -> list[Any]:
         return [row_value_for_sort_key(row, k) for k in sort_keys]

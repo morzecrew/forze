@@ -781,15 +781,28 @@ def test_keyset_page_bounds_after_page_emits_prev() -> None:
     assert prv is not None  # an 'after' page can page back
 
 
-def test_keyset_page_bounds_before_reverses_then_trims() -> None:
-    # 'before' fetches in flipped order; the helper reverses then trims to the window.
+def test_keyset_page_bounds_before_keeps_nearest_window_then_reverses() -> None:
+    # 'before' fetches in flipped (descending) order over-fetched by one; the sentinel is the
+    # FARTHEST row (0). The window is the `limit` rows NEAREST the cursor, reversed to
+    # ascending — [3,2,1,0] -> keep nearest 3 [3,2,1] -> reversed [1,2,3] (NOT [0,1,2]).
     raw = [{"id": i} for i in (3, 2, 1, 0)]
     rows, has_more, _nxt, prv = keyset_page_bounds(
         raw, 3, sort_keys=["id"], directions=["asc"], use_after=False, use_before=True
     )
-    assert [r["id"] for r in rows] == [0, 1, 2]  # reversed([3,2,1,0])[:3]
+    assert [r["id"] for r in rows] == [1, 2, 3]
     assert has_more is True
     assert prv is not None  # paging 'before' with more remaining emits a prev cursor
+
+
+def test_keyset_page_bounds_before_returns_nearest_previous_page() -> None:
+    # The reviewer's case: before=5, limit=2 over [1,2,3,4,5]. The backend seeks < 5 descending
+    # and over-fetches -> [4,3,2]; the nearest previous page is [3,4], not [2,3].
+    raw = [{"id": i} for i in (4, 3, 2)]
+    rows, has_more, _nxt, _prv = keyset_page_bounds(
+        raw, 2, sort_keys=["id"], directions=["asc"], use_after=False, use_before=True
+    )
+    assert [r["id"] for r in rows] == [3, 4]
+    assert has_more is True
 
 
 def test_keyset_page_bounds_exact_fit_has_no_more() -> None:

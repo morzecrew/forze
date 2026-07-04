@@ -88,8 +88,6 @@ def _mock_cursor_start_and_limit(  # type: ignore[reportPrivateUsage]
 
 def _mock_keyset_parse(  # type: ignore[reportPrivateUsage]
     cursor: CursorPaginationExpression | None,
-    *,
-    default_limit: int = 10,
 ) -> tuple[int, bool, bool]:
     """Return ``(limit, use_after, use_before)`` from a cursor expression."""
 
@@ -98,11 +96,10 @@ def _mock_keyset_parse(  # type: ignore[reportPrivateUsage]
     if c.get("after") and c.get("before"):
         raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
-    lim_raw = c.get("limit")
-    lim: int = default_limit if lim_raw is None else int(cast(Any, lim_raw))
-
-    if lim < 1:
-        raise exc.validation("Cursor pagination 'limit' must be positive")
+    # Coerced + clamped like the offset path above and the real backends: a non-integer is a
+    # clean 400 (not a raw ValueError) and a huge value is clamped to MAX_CURSOR_LIMIT rather
+    # than materializing an unbounded in-memory page.
+    lim = resolved_cursor_limit(c)
 
     return lim, c.get("after") is not None, c.get("before") is not None
 
