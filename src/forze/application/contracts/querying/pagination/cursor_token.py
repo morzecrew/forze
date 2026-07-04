@@ -3,10 +3,11 @@
 import base64
 import hashlib
 import hmac
+import json
 from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal, InvalidOperation
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Sequence, cast
 
 import attrs
 
@@ -68,6 +69,156 @@ class CursorTokenSigner:
 # ....................... #
 
 
+@attrs.define(frozen=True, slots=True, kw_only=True)
+class CursorBinding:
+    """The query context a keyset cursor is minted against — spec, tenant, and filter.
+
+    A signed token embeds this binding's :meth:`digest`; verification recomputes the digest
+    from the *current* request's (spec, tenant, filter) and rejects a mismatch. That stops a
+    validly-signed cursor from being replayed against a different query — a different search
+    spec, another tenant, or a changed filter. Sort is already bound structurally by
+    :func:`validate_cursor_token` (keys/directions/nulls), so it is not repeated here.
+
+    Only meaningful once signing is on: unsigned, a client could recompute a matching digest,
+    so binding is defense-in-depth over the HMAC, not a standalone control. Any field may be
+    ``None`` when a call site cannot supply it (e.g. the generic document read path has no
+    spec) — mint and verify for one path use the same fields, so a partial binding still holds.
+    """
+
+    spec_name: str | None = None
+    """The search/query spec name, or ``None`` for the generic (spec-less) document path."""
+
+    tenant_id: str | None = None
+    """The bound tenant (stringified), or ``None`` when the gateway is not tenant-aware."""
+
+    filter_fingerprint: str | None = None
+    """A deterministic digest of the parsed filter (see :func:`fingerprint_filter`)."""
+
+    def digest(self) -> str:
+        """A stable, PYTHONHASHSEED-independent digest embedded in the token as ``b``."""
+
+        blob = json.dumps(
+            {"s": self.spec_name, "t": self.tenant_id, "f": self.filter_fingerprint},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _b64url_nopad(hashlib.sha256(blob.encode("utf-8")).digest())
+
+
+# ....................... #
+
+
+def _canonical_filter_value(v: Any) -> Any:
+    """Canonicalize a filter operand into a deterministic, JSON-serializable form.
+
+    Mirrors :func:`_jsonify_value` for scalars (``Decimal`` tagged, ``datetime``/``UUID``
+    stringified) but also normalizes membership containers: a ``list``/``tuple`` keeps its
+    order, a ``set``/``frozenset`` is **sorted** by canonical string form so its
+    (hash-ordered, PYTHONHASHSEED-dependent) iteration order can't perturb the fingerprint.
+    """
+
+    if isinstance(v, (list, tuple)):
+        return [_canonical_filter_value(x) for x in cast(Sequence[Any], v)]
+
+    if isinstance(v, (set, frozenset)):
+        items = [_canonical_filter_value(x) for x in cast(set[Any], v)]
+        return sorted(items, key=lambda c: json.dumps(c, sort_keys=True, default=str))
+
+    return _jsonify_value(v)
+
+
+# ....................... #
+
+
+def _canonical_filter_node(node: Any) -> Any:
+    """Serialize a parsed filter AST node to nested lists of canonical primitives.
+
+    Duck-typed on the node class name (like the value canonicalization above) so this
+    codec stays free of a dependency on the filter-AST module. Combinator child order is
+    preserved as written — the same filter dict fingerprints identically across pages and
+    processes, which is all the binding needs.
+    """
+
+    if node is None:
+        return None
+
+    t = type(node).__name__
+
+    if t == "QueryAnd":
+        return ["and", [_canonical_filter_node(i) for i in node.items]]
+
+    if t == "QueryOr":
+        return ["or", [_canonical_filter_node(i) for i in node.items]]
+
+    if t == "QueryNot":
+        return ["not", _canonical_filter_node(node.item)]
+
+    if t == "QueryField":
+        return ["field", node.name, str(node.op), _canonical_filter_value(node.value)]
+
+    if t == "QueryCompare":
+        return ["cmp", node.left, str(node.op), node.right]
+
+    if t == "QueryElem":
+        return [
+            "elem",
+            node.path,
+            str(node.quantifier),
+            _canonical_filter_node(node.inner),
+        ]
+
+    # Unknown node: fold its (deterministic, hash-free) repr so an unexpected shape still
+    # changes the fingerprint when the filter changes — never silently collapse to a constant.
+    return ["?", str(node)]
+
+
+# ....................... #
+
+
+def fingerprint_filter(expr: Any) -> str:
+    """A deterministic, PYTHONHASHSEED-independent digest of a parsed filter (``None`` ok).
+
+    Canonicalizes the AST (:func:`_canonical_filter_node`) then hashes its compact,
+    key-sorted JSON with SHA-256. Computed identically at mint and verify from the same
+    parsed filter, so it is the ``filter`` leg of a :class:`CursorBinding`.
+    """
+
+    blob = json.dumps(
+        _canonical_filter_node(expr),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+
+    return _b64url_nopad(hashlib.sha256(blob.encode("utf-8")).digest())
+
+
+# ....................... #
+
+
+def build_cursor_binding(
+    *,
+    spec_name: str | None = None,
+    tenant_id: Any | None = None,
+    filter_expr: Any = None,
+) -> CursorBinding:
+    """Assemble a :class:`CursorBinding` from a spec name, tenant, and parsed filter.
+
+    Both the mint and verify sites of one keyset path call this with the same inputs so the
+    embedded and recomputed digests agree; *tenant_id* is stringified so a ``UUID`` and its
+    string form bind identically.
+    """
+
+    return CursorBinding(
+        spec_name=spec_name,
+        tenant_id=None if tenant_id is None else str(tenant_id),
+        filter_fingerprint=fingerprint_filter(filter_expr),
+    )
+
+
+# ....................... #
+
+
 _cursor_signer_var: ContextVar[CursorTokenSigner | None] = ContextVar(
     "forze_cursor_token_signer", default=None
 )
@@ -95,6 +246,9 @@ def configure_cursor_signer(
     previous = _cursor_signer_var.get()
     _cursor_signer_var.set(signer)
     return previous
+
+
+# ....................... #
 
 
 @contextmanager
@@ -127,6 +281,7 @@ def _effective_signer(signer: CursorTokenSigner | None) -> CursorTokenSigner | N
     """An explicit *signer* wins; otherwise fall back to the context's active signer."""
 
     return signer if signer is not None else _cursor_signer_var.get()
+
 
 # ....................... #
 
@@ -387,6 +542,7 @@ def encode_keyset_v1(
     values: Sequence[Any],
     nulls: Sequence[str] | None = None,
     signer: CursorTokenSigner | None = None,
+    binding: CursorBinding | None = None,
 ) -> str:
     null_order = _resolved_nulls(directions, nulls)
 
@@ -407,8 +563,15 @@ def encode_keyset_v1(
         "n": list(null_order),
         "x": [_jsonify_value(x) for x in values],
     }
-    encoded = _CODEC.dumps(payload)
     signer = _effective_signer(signer)
+
+    # The binding digest is embedded (and HMAC-covered) only when signing is active — unsigned,
+    # a client could forge it, so it would be integrity theater; with no signer the token is
+    # byte-for-byte what it was before this feature.
+    if signer is not None and binding is not None:
+        payload["b"] = binding.digest()
+
+    encoded = _CODEC.dumps(payload)
 
     if signer is None:
         return encoded
@@ -439,6 +602,7 @@ def decode_keyset_v1(
     token: str,
     *,
     signer: CursorTokenSigner | None = None,
+    binding: CursorBinding | None = None,
 ) -> tuple[list[str], list[str], list[str], list[Any]]:
     """Decode a keyset token to ``(keys, directions, nulls, values)``.
 
@@ -449,6 +613,10 @@ def decode_keyset_v1(
     When *signer* is set, the token must be signed and the HMAC must verify (constant-time);
     an unsigned or tampered token is rejected as invalid — a hard cutover, so enabling signing
     invalidates cursors minted without it (they 400 once and the client restarts pagination).
+
+    When *binding* is also given, the token's embedded binding digest must equal the current
+    query's (spec, tenant, filter) — a validly-signed cursor replayed against a different query
+    is rejected. The digest is HMAC-covered, so this check only runs alongside a signer.
     """
 
     signer = _effective_signer(signer)
@@ -469,6 +637,14 @@ def decode_keyset_v1(
 
     if not isinstance(data, dict) or int(data.get("v", 0)) != _KEYSET_V1:  # type: ignore[arg-type]
         raise exc.validation("Invalid cursor token")
+
+    if signer is not None and binding is not None:
+        embedded = data.get("b")  # type: ignore[assignment, misc]
+
+        if not isinstance(embedded, str) or not hmac.compare_digest(
+            embedded, binding.digest()
+        ):
+            raise exc.validation("Invalid cursor token")
 
     k = data.get("k")  # type: ignore[assignment, misc]
     d = data.get("d")  # type: ignore[assignment, misc]
@@ -517,6 +693,7 @@ def validate_cursor_token(
     directions: Sequence[str],
     nulls: Sequence[str] | None = None,
     signer: CursorTokenSigner | None = None,
+    binding: CursorBinding | None = None,
 ) -> list[Any]:
     """Decode a keyset *token* and verify it matches the active sort; return its values.
 
@@ -524,11 +701,12 @@ def validate_cursor_token(
     directions, or null placement do not align with the current search sort (a stale or
     mismatched cursor). When *nulls* is omitted the canonical placement is assumed.
     Shared by every keyset-cursor search path so the validation is identical. When *signer*
-    is set the token's HMAC is verified first (see :func:`decode_keyset_v1`).
+    is set the token's HMAC is verified first, and when *binding* is set the token's context
+    binding must match the current query (see :func:`decode_keyset_v1`).
     """
 
     null_order = _resolved_nulls(directions, nulls)
-    tk, td, tn, tv = decode_keyset_v1(token, signer=signer)
+    tk, td, tn, tv = decode_keyset_v1(token, signer=signer, binding=binding)
 
     if (
         list(tk) != list(sort_keys)
@@ -556,6 +734,7 @@ def keyset_page_bounds(
     use_after: bool,
     use_before: bool,
     nulls: Sequence[str] | None = None,
+    binding: CursorBinding | None = None,
 ) -> tuple[list[dict[str, Any]], bool, str | None, str | None]:
     """Trim an over-fetched keyset result to one page and compute next/prev cursors.
 
@@ -580,6 +759,7 @@ def keyset_page_bounds(
             directions=directions,
             nulls=nulls,
             values=_row_token_vals(rows[-1]),
+            binding=binding,
         )
         if has_more and rows
         else None
@@ -591,6 +771,7 @@ def keyset_page_bounds(
             directions=directions,
             nulls=nulls,
             values=_row_token_vals(rows[0]),
+            binding=binding,
         )
         if rows and (use_after or (use_before and has_more))
         else None

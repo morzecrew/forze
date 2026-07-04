@@ -145,6 +145,41 @@ async def test_signed_cursor_rejects_tampered_token(cursor_signing: Any) -> None
 
 
 @pytest.mark.asyncio
+async def test_signed_cursor_rejects_replay_against_a_different_filter(
+    cursor_signing: Any,
+) -> None:
+    # The P2 context binding: a signed cursor minted for one filter must not drive a page
+    # under a different filter — the embedded (spec, tenant, filter) binding won't match.
+    doc = _adapter()
+    for title in ["b", "d", "f", "h", "j", "l"]:
+        await doc.create(_ItemCreate(title=title))
+
+    # Page 1 under a membership filter that keeps every title.
+    filters_a = {"$values": {"title": {"$in": ["b", "d", "f", "h", "j", "l"]}}}
+    page1 = await doc.find_cursor(
+        filters=filters_a, sorts={"title": "asc"}, cursor={"limit": 2}
+    )
+    assert [h.title for h in page1.hits] == ["b", "d"]
+    assert page1.next_cursor is not None
+
+    # Same filter -> the cursor advances (positive control).
+    page2 = await doc.find_cursor(
+        filters=filters_a,
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page1.next_cursor},
+    )
+    assert [h.title for h in page2.hits] == ["f", "h"]
+
+    # Different filter -> the bound cursor is rejected, not silently honored.
+    with pytest.raises(CoreException):
+        await doc.find_cursor(
+            filters={"$values": {"title": {"$in": ["d", "f", "h", "j", "l"]}}},
+            sorts={"title": "asc"},
+            cursor={"limit": 2, "after": page1.next_cursor},
+        )
+
+
+@pytest.mark.asyncio
 async def test_signing_hard_cutover_rejects_a_previously_unsigned_cursor() -> None:
     # Mint unsigned (no signer), then enable signing and try to reuse it: rejected.
     from forze.application.contracts.querying import (

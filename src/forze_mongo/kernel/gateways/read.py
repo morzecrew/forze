@@ -38,6 +38,7 @@ from forze.application.contracts.querying import (
 )
 from forze.application.integrations.persistence import (
     ReadValidationCodecMixin,
+    document_cursor_binding,
     log_non_postgres_lock_degrade,
 )
 from forze.base.exceptions import exc
@@ -693,7 +694,9 @@ class MongoReadGateway[M: BaseModel](
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
-            tk, td, _tn, tv = decode_keyset_v1(token)
+            tk, td, _tn, tv = decode_keyset_v1(
+                token, binding=document_cursor_binding(self, filters)
+            )
             if (
                 tk != [ID_FIELD]
                 or len(td) != 1

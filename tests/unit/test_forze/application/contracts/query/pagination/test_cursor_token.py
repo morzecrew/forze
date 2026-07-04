@@ -216,6 +216,206 @@ async def test_cursor_signer_is_isolated_across_concurrent_contexts() -> None:
     assert current_cursor_signer() is None
 
 
+# ----------------------- #
+# Context binding (spec + tenant + filter): P2
+
+
+def _parse_filter(raw: object) -> object:
+    from forze.application.contracts.querying.internal import (
+        QueryFilterExpressionParser,
+    )
+
+    return QueryFilterExpressionParser.parse(raw)  # type: ignore[arg-type]
+
+
+def test_fingerprint_filter_is_stable_and_filter_sensitive() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        fingerprint_filter,
+    )
+
+    open_f = _parse_filter({"$values": {"status": {"$eq": "open"}}})
+    open_again = _parse_filter({"$values": {"status": {"$eq": "open"}}})
+    closed_f = _parse_filter({"$values": {"status": {"$eq": "closed"}}})
+
+    # Same filter -> same fingerprint (across independent parses); different filter differs.
+    assert fingerprint_filter(open_f) == fingerprint_filter(open_again)
+    assert fingerprint_filter(open_f) != fingerprint_filter(closed_f)
+
+    # Empty filter has a single stable fingerprint.
+    assert fingerprint_filter(None) == fingerprint_filter(None)
+    assert fingerprint_filter(None) != fingerprint_filter(open_f)
+
+
+def test_fingerprint_filter_membership_container_is_deterministic() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        _canonical_filter_value,
+        fingerprint_filter,
+    )
+
+    a = _parse_filter({"$values": {"name": {"$in": ["a", "b", "c"]}}})
+    b = _parse_filter({"$values": {"name": {"$in": ["a", "b", "c"]}}})
+    assert fingerprint_filter(a) == fingerprint_filter(b)
+
+    # A set operand is sorted into a stable order regardless of (hash-ordered) iteration.
+    assert _canonical_filter_value({3, 1, 2}) == _canonical_filter_value({2, 3, 1})
+
+
+def test_cursor_binding_digest_changes_per_dimension() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        build_cursor_binding,
+    )
+
+    f_open = _parse_filter({"$values": {"status": {"$eq": "open"}}})
+    f_closed = _parse_filter({"$values": {"status": {"$eq": "closed"}}})
+
+    base = build_cursor_binding(spec_name="orders", tenant_id="t1", filter_expr=f_open)
+    other_spec = build_cursor_binding(
+        spec_name="invoices", tenant_id="t1", filter_expr=f_open
+    )
+    other_tenant = build_cursor_binding(
+        spec_name="orders", tenant_id="t2", filter_expr=f_open
+    )
+    other_filter = build_cursor_binding(
+        spec_name="orders", tenant_id="t1", filter_expr=f_closed
+    )
+
+    digests = {
+        base.digest(),
+        other_spec.digest(),
+        other_tenant.digest(),
+        other_filter.digest(),
+    }
+    # Every dimension (spec, tenant, filter) perturbs the digest independently.
+    assert len(digests) == 4
+
+
+def test_cursor_binding_tenant_uuid_and_str_are_equal() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        build_cursor_binding,
+    )
+
+    u = UUID("00000000-0000-0000-0000-0000000000ab")
+    f = _parse_filter({"$values": {"status": {"$eq": "open"}}})
+    assert (
+        build_cursor_binding(tenant_id=u, filter_expr=f).digest()
+        == build_cursor_binding(tenant_id=str(u), filter_expr=f).digest()
+    )
+
+
+def test_signed_bound_cursor_rejects_cross_context_replay() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenSigner,
+        bind_cursor_signer,
+        build_cursor_binding,
+    )
+
+    f_open = _parse_filter({"$values": {"status": {"$eq": "open"}}})
+    f_closed = _parse_filter({"$values": {"status": {"$eq": "closed"}}})
+    minted = build_cursor_binding(spec_name="orders", tenant_id="t1", filter_expr=f_open)
+
+    with bind_cursor_signer(CursorTokenSigner(secret=b"k" * 32)):
+        tok = encode_keyset_v1(
+            sort_keys=["id"], directions=["asc"], values=[5], binding=minted
+        )
+        # The exact same binding verifies and returns the values.
+        assert validate_cursor_token(
+            tok, sort_keys=["id"], directions=["asc"], binding=minted
+        ) == [5]
+
+        # Replay against a different spec / tenant / filter -> rejected, per dimension.
+        for other in (
+            build_cursor_binding(
+                spec_name="invoices", tenant_id="t1", filter_expr=f_open
+            ),
+            build_cursor_binding(spec_name="orders", tenant_id="t2", filter_expr=f_open),
+            build_cursor_binding(
+                spec_name="orders", tenant_id="t1", filter_expr=f_closed
+            ),
+        ):
+            with pytest.raises(CoreException):
+                validate_cursor_token(
+                    tok, sort_keys=["id"], directions=["asc"], binding=other
+                )
+
+
+def test_binding_is_a_hard_cutover_once_signing_is_on() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenSigner,
+        bind_cursor_signer,
+        build_cursor_binding,
+    )
+
+    f = _parse_filter({"$values": {"status": {"$eq": "open"}}})
+    b = build_cursor_binding(spec_name="orders", tenant_id="t1", filter_expr=f)
+
+    with bind_cursor_signer(CursorTokenSigner(secret=b"k" * 32)):
+        # A signed token minted WITHOUT a binding (no embedded ``b``)...
+        unbound_tok = encode_keyset_v1(
+            sort_keys=["id"], directions=["asc"], values=[5]
+        )
+        # ...still verifies where no binding is required (signing only).
+        assert validate_cursor_token(
+            unbound_tok, sort_keys=["id"], directions=["asc"]
+        ) == [5]
+        # ...but is rejected once a binding is required (the ``b`` is absent).
+        with pytest.raises(CoreException):
+            validate_cursor_token(
+                unbound_tok, sort_keys=["id"], directions=["asc"], binding=b
+            )
+
+
+def test_binding_is_inert_and_invisible_when_unsigned() -> None:
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        build_cursor_binding,
+    )
+
+    f = _parse_filter({"$values": {"status": {"$eq": "open"}}})
+    b = build_cursor_binding(spec_name="orders", tenant_id="t1", filter_expr=f)
+
+    # No signer bound: passing a binding embeds nothing and the token is byte-identical to
+    # the legacy unsigned token (the whole feature stays opt-in behind a configured signer).
+    with_binding = encode_keyset_v1(
+        sort_keys=["id"], directions=["asc"], values=[5], binding=b
+    )
+    legacy = encode_keyset_v1(sort_keys=["id"], directions=["asc"], values=[5])
+    assert with_binding == legacy
+
+    # And an unsigned token verifies regardless of the binding passed (nothing to check).
+    assert validate_cursor_token(
+        with_binding, sort_keys=["id"], directions=["asc"], binding=b
+    ) == [5]
+
+
+def test_fingerprint_filter_is_stable_across_pythonhashseed() -> None:
+    # PYTHONHASHSEED-independence is a hard requirement (the DST determinism guard forbids
+    # hash()-ordering): the fingerprint of a set-bearing filter must be identical in two
+    # interpreters started with different hash seeds.
+    import os
+    import subprocess
+    import sys
+
+    prog = (
+        "from forze.application.contracts.querying.internal import "
+        "QueryFilterExpressionParser as P;"
+        "from forze.application.contracts.querying.pagination.cursor_token import "
+        "fingerprint_filter as f;"
+        "print(f(P.parse({'$values': {'name': {'$in': ['a','b','c','d','e']}}})))"
+    )
+
+    def _run(seed: str) -> str:
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        out = subprocess.run(
+            [sys.executable, "-c", prog],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        )
+        return out.stdout.strip()
+
+    assert _run("0") == _run("1")
+
+
 def test_encode_keyset_misaligned_raises() -> None:
     with pytest.raises(CoreException, match="aligned"):
         encode_keyset_v1(sort_keys=["a"], directions=["asc", "asc"], values=[1])

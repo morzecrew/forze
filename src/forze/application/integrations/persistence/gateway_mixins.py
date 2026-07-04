@@ -10,10 +10,13 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
+    CursorBinding,
     QueryExpr,
     QueryFilterExpression,
     QueryFilterExpressionParser,
     QueryFilterLimits,
+    build_cursor_binding,
+    current_cursor_signer,
     validate_query_field_types,
     validate_runtime_filter_fields,
 )
@@ -589,6 +592,35 @@ class FilterParserMixin(Generic[M]):
         rewrite = getattr(codec_for(), "rewrite_filter", None)
 
         return expr if rewrite is None else rewrite(expr)
+
+
+# ....................... #
+
+
+def document_cursor_binding(
+    gateway: Any,
+    filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+) -> CursorBinding | None:
+    """The (spec-less) tenant + filter binding for the generic document keyset path.
+
+    The document read path splits mint (in the pagination mixin) from verify (inside the
+    backend gateway's ``find_many_with_cursor``), so both sides call this with the *same*
+    gateway and filters to derive an identical binding — no value is threaded across the
+    two frames and there is nothing to drift. Returns ``None`` when no signer is bound (the
+    binding is HMAC-covered) or when the gateway is not tenant-aware and has no filter.
+
+    There is no spec name on this path (the gateway is generic), so a document cursor and a
+    named-search cursor bind differently even for the same tenant and filter.
+    """
+
+    if current_cursor_signer() is None:
+        return None
+
+    return build_cursor_binding(
+        spec_name=None,
+        tenant_id=gateway.require_tenant_if_aware(),
+        filter_expr=gateway.compile_filters(filters),
+    )
 
 
 # ....................... #

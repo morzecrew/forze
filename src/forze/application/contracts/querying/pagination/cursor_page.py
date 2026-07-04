@@ -5,7 +5,7 @@ from typing import Any, Callable, Mapping, Sequence
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from .cursor_token import encode_keyset_v1, row_value_for_sort_key
+from .cursor_token import CursorBinding, encode_keyset_v1, row_value_for_sort_key
 
 # ----------------------- #
 
@@ -94,13 +94,15 @@ def assemble_keyset_cursor_page(
     directions: Sequence[str],
     dump_row: Callable[[Any], JsonDict],
     nulls: Sequence[str] | None = None,
+    binding: CursorBinding | None = None,
 ) -> tuple[list[Any], bool, str | None, str | None]:
     """Slice ``fetched`` to the requested window and derive opaque cursors.
 
     Gateways commonly return ``limit + 1`` rows so callers can infer
     ``has_more`` without a separate count query. *nulls* (the per-key placement) is
     carried into the emitted tokens so a follow-up page validates; omit it for the
-    canonical default.
+    canonical default. *binding* is embedded in the emitted tokens when signing is active
+    so a follow-up page can prove it belongs to this query.
     """
 
     c = dict(cursor or {})
@@ -119,6 +121,7 @@ def assemble_keyset_cursor_page(
             directions=directions,
             nulls=nulls,
             values=[row_value_for_sort_key(last, k) for k in sort_keys],
+            binding=binding,
         )
 
     else:
@@ -131,6 +134,7 @@ def assemble_keyset_cursor_page(
             directions=directions,
             nulls=nulls,
             values=[row_value_for_sort_key(first, k) for k in sort_keys],
+            binding=binding,
         )
 
     else:

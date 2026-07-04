@@ -21,6 +21,7 @@ from typing import (
 )
 
 from forze.application.contracts.querying import (
+    CursorBinding,
     CursorPaginationExpression,
     keyset_page_bounds,
     ordered_compare,
@@ -146,6 +147,7 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
     sort_keys: Sequence[str],
     directions: Sequence[str],
     nulls: Sequence[str],
+    binding: CursorBinding | None = None,
 ) -> tuple[list[JsonDict], bool, str | None, str | None]:
     """Sort *docs*, seek past the cursor's sort values, and trim to one page.
 
@@ -153,6 +155,8 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
     the shared :func:`validate_cursor_token`, rows are filtered with
     :func:`row_passes_keyset_seek` (never sliced by index), and the page plus
     next/prev tokens come from the shared :func:`keyset_page_bounds`.
+    *binding* is the (spec, tenant, filter) context threaded through both the
+    verify and mint sides when cursor signing is on.
     Returns ``(page_docs, has_more, next_cursor, prev_cursor)``.
     """
 
@@ -170,6 +174,7 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
             sort_keys=sort_keys,
             directions=directions,
             nulls=nulls,
+            binding=binding,
         )
         ordered = [
             row
@@ -195,6 +200,7 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
         sort_keys=sort_keys,
         directions=directions,
         nulls=nulls,
+        binding=binding,
         use_after=use_after,
         use_before=use_before,
     )

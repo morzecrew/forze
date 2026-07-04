@@ -77,6 +77,10 @@ class HubSearchHost(Protocol[M]):
 
     # ....................... #
 
+    def compile_filters(self, filters: QueryFilterExpression | None) -> Any: ...
+
+    # ....................... #
+
     def order_by_clause(
         self,
         sorts: QuerySortExpression | None,

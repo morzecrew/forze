@@ -17,6 +17,8 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    build_cursor_binding,
+    current_cursor_signer,
     keyset_page_bounds,
     validate_cursor_token,
 )
@@ -172,6 +174,16 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         sort_keys = [k for k, _ in plan.order_key_spec]
         directions = [d for _, d in plan.order_key_spec]
 
+        binding = (
+            build_cursor_binding(
+                spec_name=self._hub_host.hub_spec.name,
+                tenant_id=self._hub_host._tenant_id_for_resolve(),  # pyright: ignore[reportPrivateUsage]
+                filter_expr=self._hub_host.compile_filters(filters),
+            )
+            if current_cursor_signer() is not None
+            else None
+        )
+
         types = await self._hub_host.column_types()
         exprs: list[sql.Composable] = []
 
@@ -197,6 +209,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 token,
                 sort_keys=sort_keys,
                 directions=directions,
+                binding=binding,
             )
 
             sk, sp = build_seek_condition(
@@ -294,6 +307,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
             directions=directions,
             use_after=use_after,
             use_before=use_before,
+            binding=binding,
         )
 
         # The page rows still carry the hub rank (selected for keyset when do_legs); surface it

@@ -20,6 +20,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD
 
+from ..persistence import document_cursor_binding
 from ._limits import assert_cursor_advanced, check_page_limit
 from ._types import R, T
 
@@ -244,6 +245,9 @@ class DocumentPaginationMixin(Generic[R]):
             directions=directions,
             nulls=nulls,
             dump_row=_dump,
+            # Same gateway + filters as the verify inside ``find_many_with_cursor`` above, so
+            # the minted and checked bindings are identical (nothing is threaded across).
+            binding=document_cursor_binding(self.read_gw, filters),
         )
 
         if query.return_model is not None:

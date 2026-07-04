@@ -47,7 +47,10 @@ from forze_postgres.kernel.sql import (
     build_seek_condition,
 )
 
-from forze.application.integrations.persistence import ReadValidationCodecMixin
+from forze.application.integrations.persistence import (
+    ReadValidationCodecMixin,
+    document_cursor_binding,
+)
 
 from .base import PostgresGateway
 
@@ -832,6 +835,7 @@ class PostgresReadGateway[M: BaseModel](
                 sort_keys=sort_keys,
                 directions=directions,
                 nulls=nulls,
+                binding=document_cursor_binding(self, filters),
             )
 
             seek_sql, seek_params = build_seek_condition(

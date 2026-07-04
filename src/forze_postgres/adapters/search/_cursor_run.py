@@ -16,9 +16,12 @@ from forze.application.contracts.search import (
     SearchCursorPage,
 )
 from forze.application.contracts.querying import (
+    CursorBinding,
     CursorPaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    build_cursor_binding,
+    current_cursor_signer,
     keyset_page_bounds,
     normalize_sorts_for_keyset,
     resolve_effective_sorts,
@@ -65,6 +68,38 @@ def parse_search_cursor(
         raise exc.validation("Cursor pagination 'limit' must be positive")
 
     return lim, c.get("after") is not None, c.get("before") is not None
+
+
+# ....................... #
+
+
+_UNSET: Any = object()
+
+
+def _search_cursor_binding(
+    gw: PostgresGateway[Any],
+    spec_name: str,
+    *,
+    filters: Any,
+    parsed: Any = _UNSET,
+) -> CursorBinding | None:
+    """Bind a search cursor to its (spec, tenant, filter) — only while signing is active.
+
+    Returns ``None`` when no signer is bound (the embedded binding is HMAC-covered, so it is
+    only meaningful signed), which also skips parsing the filter on the unsigned hot path.
+    A caller with the filter already parsed passes it as *parsed* to avoid re-parsing.
+    """
+
+    if current_cursor_signer() is None:
+        return None
+
+    expr = parsed if parsed is not _UNSET else gw.compile_filters(filters)
+
+    return build_cursor_binding(
+        spec_name=spec_name,
+        tenant_id=gw.require_tenant_if_aware(),
+        filter_expr=expr,
+    )
 
 
 # ....................... #
@@ -121,6 +156,10 @@ async def execute_projection_keyset_cursor[M: BaseModel](
     fw, fp = await gw.where_clause(filters, parsed=parsed_filters)
     types = await gw.column_types()
 
+    binding = _search_cursor_binding(
+        gw, spec.name, filters=filters, parsed=parsed_filters
+    )
+
     exprs = [
         sort_key_expr(
             field=k,
@@ -141,6 +180,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
             token,
             sort_keys=sort_keys,
             directions=directions,
+            binding=binding,
         )
 
         sk, sp_seek = build_seek_condition(
@@ -187,6 +227,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
         directions=directions,
         use_after=use_after,
         use_before=use_before,
+        binding=binding,
     )
 
     return await _cursor_page_from_rows(
@@ -237,6 +278,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
     directions = [d for _, d in key_spec]
 
     types = await gw.column_types()
+    binding = _search_cursor_binding(gw, spec.name, filters=filters)
     exprs: list[sql.Composable] = []
 
     for k in sort_keys:
@@ -273,6 +315,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
             token,
             sort_keys=sort_keys,
             directions=directions,
+            binding=binding,
         )
 
         sk, sp_seek = build_seek_condition(
@@ -353,6 +396,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         directions=directions,
         use_after=use_after,
         use_before=use_before,
+        binding=binding,
     )
 
     # Capture + strip the synthetic highlight columns from the final page rows (after

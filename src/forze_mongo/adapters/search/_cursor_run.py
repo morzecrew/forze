@@ -11,6 +11,8 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    build_cursor_binding,
+    current_cursor_signer,
     decode_keyset_v1,
     encode_keyset_v1,
     normalize_sorts_for_keyset,
@@ -47,7 +49,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
 ) -> SearchCursorPage[Any]:
     """Run keyset cursor search over a ranked aggregation pipeline."""
 
-    _ = query, filters
+    _ = query
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
@@ -90,11 +92,21 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     sort_keys = [k for k, _ in key_spec]
     directions = [d for _, d in key_spec]
 
+    binding = (
+        build_cursor_binding(
+            spec_name=gw.spec.name,
+            tenant_id=gw.require_tenant_if_aware(),
+            filter_expr=gw.compile_filters(filters),
+        )
+        if current_cursor_signer() is not None
+        else None
+    )
+
     pipeline = list(ranked_pipeline)
 
     if use_after or use_before:
         token = str(c["after" if use_after else "before"])
-        tk, td, _tn, tv = decode_keyset_v1(token)
+        tk, td, _tn, tv = decode_keyset_v1(token, binding=binding)
 
         if tk != sort_keys or len(td) != len(directions) or len(_tn) != len(nulls):
             raise exc.validation("Cursor does not match current search sort")
@@ -140,6 +152,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
             sort_keys=sort_keys,
             directions=directions,
             values=vals,
+            binding=binding,
         )
 
     next_c = (

@@ -16,13 +16,16 @@ from ..sort_resolution import (
     validate_sort_fields,
 )
 from .cursor_token import (
+    CursorBinding,
     CursorTokenSigner,
     bind_cursor_signer,
+    build_cursor_binding,
     compare_keyset_sort_values,
     configure_cursor_signer,
     current_cursor_signer,
     decode_keyset_v1,
     encode_keyset_v1,
+    fingerprint_filter,
     keyset_canonical_value,
     keyset_page_bounds,
     ordered_compare,
@@ -34,11 +37,14 @@ from .cursor_token import (
 # ----------------------- #
 
 __all__ = [
+    "CursorBinding",
     "CursorTokenSigner",
     "assert_cursor_projection_includes_sort_keys",
     "bind_cursor_signer",
+    "build_cursor_binding",
     "configure_cursor_signer",
     "current_cursor_signer",
+    "fingerprint_filter",
     "assert_default_null_ordering",
     "assemble_keyset_cursor_page",
     "compare_keyset_sort_values",

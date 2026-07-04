@@ -39,6 +39,8 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QuerySortExpression,
     assert_cursor_projection_includes_sort_keys,
+    build_cursor_binding,
+    current_cursor_signer,
     normalize_sorts_for_keyset,
     read_fields_for_model,
     resolve_effective_sorts,
@@ -1169,6 +1171,18 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         docs = self._candidate_docs()
 
+        binding = (
+            build_cursor_binding(
+                spec_name=self.spec.name,
+                tenant_id=self.require_tenant_if_aware(),
+                filter_expr=(
+                    QueryFilterExpressionParser.parse(filters) if filters else None
+                ),
+            )
+            if current_cursor_signer() is not None
+            else None
+        )
+
         filtered = [doc for doc in docs if _match_filters(doc, filters)]
         page_docs, has_more, next_c, prev_c = _mock_keyset_window(
             filtered,
@@ -1176,6 +1190,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             sort_keys=sort_keys,
             directions=directions,
             nulls=nulls,
+            binding=binding,
         )
         if return_fields is not None:
             out_raw = [
