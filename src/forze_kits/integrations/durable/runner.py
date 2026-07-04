@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from datetime import datetime, timedelta
 from time import perf_counter
 from typing import TYPE_CHECKING, final
@@ -15,6 +15,7 @@ from forze.application.contracts.durable.function import (
     DurableRunContext,
     DurableRunRecord,
     DurableRunStatus,
+    DurableRunStorePort,
     bind_durable_run,
     reset_durable_run,
 )
@@ -31,11 +32,20 @@ if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
     from forze.base.primitives import JsonDict
 
+    from .registry import DurableFunctionHandler
+
 # ----------------------- #
 
 _FORWARD_INCOMPLETE_CODE = "saga.forward_incomplete"
 """A saga that committed at its pivot but could not complete forward — a distinct terminal
 state from an ordinary failure (no compensation happened; manual completion is required)."""
+
+
+@final
+class _LeaseLost(Exception):
+    """Raised inside ``_execute_bound`` when a heartbeat renewal reports the lease was
+    reclaimed (another worker advanced ``attempts``). It aborts the body so the run does not
+    keep double-executing the new owner's work; the new owner records the terminal state."""
 
 
 @final
@@ -55,6 +65,11 @@ class DurableFunctionRunner:
 
     lease_for: timedelta = timedelta(minutes=5)
     """How long a claim leases a run before the recovery scanner may reclaim it."""
+
+    heartbeat_divisor: int = 3
+    """Renew the lease every ``lease_for / heartbeat_divisor`` while a body runs, so a body
+    that legitimately outlives one lease is not reclaimed mid-flight. Must be ``>= 2`` so a
+    renewal lands before the lease expires (a single missed heartbeat still leaves headroom)."""
 
     telemetry: DurableTelemetry | None = None
     """Optional OpenTelemetry spans + metrics for run execution and recovery."""
@@ -224,7 +239,18 @@ class DurableFunctionRunner:
         try:
             with span_cm as span:
                 try:
-                    output = await handler(ctx, record.input_json)
+                    output = await self._run_body_with_heartbeat(
+                        ctx, store, handler, record, fence
+                    )
+
+                except _LeaseLost:
+                    # A heartbeat found the lease reclaimed mid-body: another worker owns the
+                    # run now. Stop without a terminal write (a fenced write would be a no-op
+                    # anyway) and let the new owner record the outcome — this is the whole
+                    # point of the heartbeat: not double-executing the body to completion.
+                    outcome = "reclaimed"
+
+                    return
 
                 except CoreException as error:
                     # A pivot-committed saga that could not complete forward is a distinct
@@ -267,6 +293,68 @@ class DurableFunctionRunner:
                 self.telemetry.record_run(
                     record.name, outcome, (perf_counter() - started) * 1000.0
                 )
+
+    # ....................... #
+
+    async def _run_body_with_heartbeat(
+        self,
+        ctx: ExecutionContext,
+        store: DurableRunStorePort,
+        handler: DurableFunctionHandler,
+        record: DurableRunRecord,
+        fence: int,
+    ) -> JsonDict | None:
+        # Run the body as its own task and renew the lease alongside it, so a body that
+        # legitimately outlives one lease keeps the run leased instead of being reclaimed
+        # mid-flight (which would double-execute its side effects). If a renewal reports the
+        # lease was reclaimed, the heartbeat cancels the body and we surface ``_LeaseLost``.
+        body = asyncio.ensure_future(handler(ctx, record.input_json))
+        reclaimed = asyncio.Event()
+        heartbeat = asyncio.ensure_future(
+            self._heartbeat(store, record.run_id, fence, body, reclaimed)
+        )
+
+        try:
+            return await body
+
+        except asyncio.CancelledError:
+            # A cancel raised because the heartbeat reclaimed the run is turned into
+            # ``_LeaseLost``; an external cancel (``reclaimed`` unset) propagates untouched.
+            if reclaimed.is_set():
+                raise _LeaseLost from None
+
+            raise
+
+        finally:
+            heartbeat.cancel()
+
+            with suppress(asyncio.CancelledError):
+                await heartbeat
+
+    # ....................... #
+
+    async def _heartbeat(
+        self,
+        store: DurableRunStorePort,
+        run_id: str,
+        fence: int,
+        body: "asyncio.Future[JsonDict | None]",
+        reclaimed: asyncio.Event,
+    ) -> None:
+        interval = self.lease_for / max(self.heartbeat_divisor, 2)
+        seconds = interval.total_seconds()
+
+        while True:
+            await asyncio.sleep(seconds)
+
+            held = await store.renew(run_id, lease_for=self.lease_for, fence=fence)
+
+            if not held:
+                # Another worker reclaimed the run; stop the body before it double-executes.
+                reclaimed.set()
+                body.cancel()
+
+                return
 
     # ....................... #
 

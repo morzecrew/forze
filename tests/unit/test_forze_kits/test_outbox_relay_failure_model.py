@@ -28,8 +28,12 @@ from forze.application.contracts.outbox import (
     OutboxSpec,
     OutboxStatus,
 )
+from forze.application.contracts.crypto import KeyringDepKey, wrap_encrypted_payload
+from forze.application.contracts.deps.keys import DepKey
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
+from forze.application.execution.deps.frozen import FrozenDeps
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.base.exceptions import CoreException
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze.base.serialization import PydanticModelCodec
@@ -244,6 +248,62 @@ async def test_poison_row_fails_immediately_without_attempt_bump() -> None:
         assert poison.attempts == 0
         assert poison.last_error is not None
         assert published == [_EventPayload(n=1), _EventPayload(n=3)]
+
+
+def _hide_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the frozen deps registry report no keyring wired (deployment fault).
+
+    ``MockDepsModule`` always wires a keyring and its plain deps cannot be
+    overridden (merge conflicts), so simulate a process with no ``CryptoDepsModule``
+    by reporting ``KeyringDepKey`` absent — the relay then resolves a ``None`` cipher.
+    """
+
+    original = FrozenDeps.exists
+
+    def patched(self: FrozenDeps, key: DepKey[Any], *, route: Any = None) -> bool:
+        if key is KeyringDepKey:
+            return False
+        return original(self, key, route=route)
+
+    monkeypatch.setattr(FrozenDeps, "exists", patched)
+
+
+@pytest.mark.asyncio
+async def test_encrypted_rows_with_no_keyring_abort_without_marking_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An encrypted row + ``None`` keyring is a deployment fault, not row poison.
+
+    ``decrypt_outbox_payload`` raises ``core.crypto.payload_cipher_missing`` when
+    an encrypted row meets a ``None`` keyring (no ``CryptoDepsModule`` wired). The
+    relay must abort the pass — leaving the rows for reclaim/redelivery — exactly
+    as both consumer runners do, rather than dead-lettering the whole encrypted
+    backlog at claim-batch rate. Mirrors the consumers' cipher-missing handling.
+    """
+
+    _hide_keyring(monkeypatch)
+    published: list[Any] = []
+
+    async with _runtime_ctx() as (ctx, state):
+        # No keyring is visible, so the relay resolves a ``None`` cipher; these
+        # encrypted-envelope rows cannot be decrypted.
+        rows = [
+            _row(wrap_encrypted_payload("Zm9vYmFy"), index=0),
+            _row(wrap_encrypted_payload("YmF6cXV4"), index=1),
+        ]
+        state.outbox_rows["events"] = rows
+
+        with pytest.raises(CoreException) as excinfo:
+            await _relay(ctx, _recorder(published))
+
+        assert excinfo.value.code == PAYLOAD_CIPHER_MISSING_CODE
+
+        # Not dead-lettered: rows are left claimed (processing) for later reclaim,
+        # never marked failed at claim-batch rate.
+        assert published == []
+        assert all(r.status != OutboxStatus.FAILED for r in rows)
+        assert all(r.last_error is None for r in rows)
+        assert all(r.attempts == 0 for r in rows)
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,7 @@ from forze_dst.time_source import DEFAULT_EPOCH
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from forze_dst.config import SimulationConfig
     from forze_dst.oracle.report import TimelineEntry
 
 # ----------------------- #
@@ -107,6 +108,20 @@ class ViolationReport:
     registry_fingerprint: str | None = None
     """Fingerprint of the operation registry the report was found against; a replay on a
     changed registry (different fingerprint) can no longer be trusted to reproduce."""
+
+    config: "SimulationConfig | None" = None
+    """The full run configuration that found this counterexample (scheduler, concurrency,
+    act_count, faults, latency, …), attached by ``Simulation.run``. Threaded so the rendered
+    repro reflects the *actual* search that found the bug rather than the library defaults —
+    ``SimulationConfig.reproduce(seed)`` alone resets every knob and usually will not reproduce."""
+
+    choices: tuple[int, ...] | None = None
+    """DPOR only: the systematic interleaving choice vector that reproduces this run under a
+    :class:`~forze_dst.scheduler.SystematicReorderer`. Carried so a DPOR counterexample is
+    reproducible from its own instructions, not by re-running the default strategy."""
+
+    plan: tuple[int, ...] | None = None
+    """Hypothesis only: the act-plan (act-rule indices) that reproduces this counterexample."""
 
     # ....................... #
 

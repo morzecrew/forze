@@ -248,6 +248,40 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
 
     # ....................... #
 
+    async def renew(
+        self,
+        run_id: str,
+        *,
+        lease_for: timedelta,
+        fence: int,
+    ) -> bool:
+        table = await self._table()
+
+        # Fenced on ``attempts = fence`` (and ``status = 'running'``), mirroring ``_finish``:
+        # the lease is pushed forward only while this worker is still the current claim
+        # holder. If a recovery scan reclaimed the run its ``attempts`` advanced, no row
+        # matches, the row count is 0, and the caller learns it must stop.
+        updated = await self.client.execute(
+            sql.SQL(
+                """
+                UPDATE {table}
+                SET leased_until = now() + {lease}, updated_at = now()
+                WHERE run_id = {run_id} AND status = 'running' AND attempts = {fence}
+                """
+            ).format(
+                table=table.ident(),
+                lease=sql.Placeholder("lease"),
+                run_id=sql.Placeholder("run_id"),
+                fence=sql.Placeholder("fence"),
+            ),
+            {"lease": lease_for, "run_id": run_id, "fence": fence},
+            return_rowcount=True,
+        )
+
+        return updated > 0
+
+    # ....................... #
+
     async def claim_abandoned(
         self,
         *,

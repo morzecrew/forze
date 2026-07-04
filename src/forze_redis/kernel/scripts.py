@@ -276,6 +276,45 @@ min_throughput, break_duration_s, half_open_max_calls, ttl_ms.
 Returns ``"<phase>:<transition>"`` — transition ``none``/``open``/``closed``.
 """
 
+IDEMPOTENCY_COMMIT: Final = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+    return 0
+end
+local ex = tonumber(ARGV[4])
+redis.call('SET', KEYS[2], ARGV[3], 'EX', ex)
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ex)
+return 1
+"""
+"""Compare-and-set the idempotency claim to DONE, fenced to the caller's own claim.
+
+KEYS[1] is the metadata key, KEYS[2] the result-body key. ARGV[1] is the exact
+serialized *pending* metadata the caller wrote in ``begin`` (``{st:"P",ph:…}``),
+ARGV[2] the serialized *done* metadata, ARGV[3] the raw result body, ARGV[4] the
+TTL in seconds.
+
+The write only happens if the current metadata is **byte-for-byte** the caller's
+own pending claim: a stale owner whose claim lapsed and was re-acquired by
+another writer (different ``ph``), or whose record is already DONE, cannot
+overwrite it. Returns 1 on commit, 0 when the claim is missing, expired, or not
+owned by the caller. Byte-exact compare mirrors ``RELEASE_DLOCK`` /
+``APPEND_SNAPSHOT_CHUNK`` and avoids parsing JSON server-side.
+"""
+
+IDEMPOTENCY_RELEASE: Final = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+    return 0
+end
+return redis.call('DEL', KEYS[1], KEYS[2])
+"""
+"""Compare-and-delete a *pending* idempotency claim owned by the caller.
+
+KEYS[1] is the metadata key, KEYS[2] the result-body key. ARGV[1] is the exact
+serialized pending metadata the caller wrote in ``begin``. Both keys are deleted
+only if the current metadata is byte-for-byte that pending claim, so a completed
+record (DONE) or a claim re-acquired by another writer (different ``ph``) is left
+untouched. Returns the number of keys deleted (>= 1) on release, 0 otherwise.
+"""
+
 RATE_LIMIT_ACQUIRE: Final = """
 local t = redis.call('TIME')
 local now = tonumber(t[1]) + tonumber(t[2]) / 1000000

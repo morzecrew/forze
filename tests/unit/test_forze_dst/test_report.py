@@ -20,7 +20,7 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
-from forze_dst import OperationCase, Simulation, SimulationConfig, Strategy
+from forze_dst import OperationCase, PCTScheduler, Simulation, SimulationConfig, Strategy
 from forze_dst.markers import record_event
 from forze_dst.invariants import Violation, expect
 from forze_dst.oracle import CausalGraph, format_report
@@ -249,3 +249,39 @@ class TestFormatReport:
             history=History(seed=1, events=()),
         )
         assert "(none)" in format_report(report)
+
+    def test_repro_reflects_the_actual_config_not_the_defaults(self) -> None:
+        # The printed repro must carry the config that found the bug (scheduler / concurrency /
+        # act_count), so it actually reproduces — SimulationConfig.reproduce(seed) alone resets
+        # every knob (its scheduler is RandomScheduler, its concurrency 4) and usually won't.
+        report = _lost_deposit_simulation().run(
+            SimulationConfig(
+                strategy=Strategy.OP_CASE,
+                count=6,
+                concurrency=6,
+                seeds=range(5),
+                scheduler=PCTScheduler(depth=3),
+            ),
+            cases=[OperationCase(op="deposit")],
+        )
+        assert report is not None
+
+        rendered = report.format()
+        assert "reproduce:" in rendered
+        assert f"reproduce({report.seed}," in rendered
+        assert "strategy=Strategy.OP_CASE" in rendered
+        assert "PCTScheduler(depth=3" in rendered  # the actual scheduler, not the default
+        assert "concurrency=6" in rendered  # the actual concurrency, not the default 4
+        assert "RandomScheduler()" not in rendered  # the stale default is gone
+
+    def test_seedless_report_keeps_the_honest_seed_only_repro(self) -> None:
+        # A lower-level report with no config threaded falls back to the seed-only form.
+        report = ViolationReport(
+            seed=3,
+            schedule_seed=None,
+            violations=(Violation(invariant="x", message="m", events=()),),
+            workload=(),
+            history=History(seed=3, events=()),
+        )
+        rendered = format_report(report)
+        assert "SimulationConfig.reproduce(3)" in rendered

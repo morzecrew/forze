@@ -185,6 +185,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Shutdown reliability** — the drain-timeout now cancels still-running ops and awaits their unwind before teardown closes the clients they hold; detached document-cache early-refresh tasks are cancelled via a per-runtime background-owner registry; each shutdown hook gets `ExecutionRuntime.shutdown_step_timeout` (default 10s) so a wedged hook can't hang process exit.
 
+- **Spawned operations no longer escape drain** — nesting is decided by `asyncio.Task` identity, not the mere presence of the active-operation marker (a ContextVar copied into every `create_task`). An operation a handler spawns (`asyncio.create_task(facade.run(...))`) is now admitted, counted in flight, and drained/cancelled at shutdown instead of running on against clients teardown is closing. Genuine same-task in-await nesting still rides the outer slot; concurrent sub-dispatch on separate tasks (e.g. `asyncio.gather(facade.run(a), facade.run(b))`) is now gated, so it can receive `THROTTLED` (`draining`) during a drain rather than silently riding the parent slot.
+
+- **Durable runs renew their lease under a long body** — new `DurableRunStorePort.renew(run_id, *, lease_for, fence)` (fenced `UPDATE`; Postgres + mock stores) plus a `DurableFunctionRunner` heartbeat (every `lease_for / heartbeat_divisor`, default 3) keep a still-executing run's lease alive so the recovery scanner can't reclaim it mid-flight and double-execute its side effects. A lost fence (a newer claim advanced `attempts`) cancels the body rather than continuing; covers durable functions and sagas.
+
 - **Resilience hardening** — the breaker classifies by downstream *health* (a `429` / OCC conflict no longer trips it; a timeout now counts as a failure); per-`(policy, route)` state maps are LRU-bounded (`max_state_entries` / `max_entries`, default 4096); a blanket policy retrying an *ambiguous* failure on every method is refused at build (`resilience.blanket_write_retry`); a distributed resilience-store outage fails open by default (`ResiliencePolicy.fail_open_on_store_error`), and a `record` failure is swallowed.
 
 - **Idempotency** — dedup TTL default 30s → 24h to cover the redelivery horizon (materially raises a Redis store's footprint at scale); a store failure recording the result *after* the business commit no longer fails the succeeded op. At-least-once-with-dedup, not exactly-once.
@@ -196,6 +200,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hard-delete cache-invalidation failures surface at error level** — a deleted document served from the distributed cache until its TTL is a correctness hazard; stays best-effort so a cache outage can't block a delete.
 
 - **Opt-in guard against outbox dual-writes** — `OutboxSpec(require_transaction=True)` makes flush-inside-a-transaction a checked precondition (`exc.configuration`, `core.outbox.flush_outside_transaction`); default off (stage-then-relay flushes outside a tx by design).
+
+- **Outbox relay no longer dead-letters the backlog on a missing keyring** — a `core.crypto.payload_cipher_missing` raised when an encrypted row meets a `None` keyring is a deployment fault, not row poison: the relay now aborts the pass (leaving rows pending for redelivery) instead of marking the whole encrypted backlog terminally `failed`, matching what both consumer runners already do. Genuine decode poison (keyring present) still parks the row.
 
 **Bounded memory**
 
@@ -223,7 +229,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Correctness & consistency**
 
-- **Faithful read-committed in the mock** — writes are buffered and published at commit (no dirty reads); removes a class of DST false positives, production adapters unchanged.
+- **Mock isolation matches Postgres at the default level (both directions)** — READ COMMITTED conflict detection now anchors on the version at which each row was actually read/rev-checked, not on transaction begin, so a legal fresh-read-then-update no longer false-aborts (writes are still buffered and published at commit — no dirty reads). A concurrent duplicate-id `create` race now raises `exc.conflict` (matching Postgres 23505) instead of silently merging; `ensure`/`upsert` stay `ON CONFLICT DO NOTHING`. `FOR UPDATE` is now honoured (conflict-on-read); `SKIP LOCKED` is a declared mechanism divergence, not a silent no-op. Serializability soundness is unchanged. New conformance-battery cases (`fresh_read_update`, `duplicate_key_insert`, `for_update_lost_update`) catch each divergence, verified mock ≡ real Postgres. Removes a class of DST false positives *and* a false-negative; production adapters unchanged.
+
+- **DST systematic search is complete again** — the DPOR frontier now zero-pads the choice prefix instead of truncating it, so schedules that hold a branch point FIFO before deviating (e.g. `(0, 1)`) are reachable; previously the search covered only an exponentially small contiguous-deviation corner and the completeness guarantee was false. Violation reports now carry the actual config / DPOR choices / Hypothesis plan and print a faithful `reproduce(...)` line (the old one reset to library defaults and usually would not reproduce under `thorough()`).
+
+- **Kafka commit-stream consumer is loss-free under poison and rebalance** — a malformed payload is surfaced as an `UndecodableStreamPayload` marker (paused, not raised out of `read()`); every pause/abort path calls the new `seek_to_committed` so an aborted batch is re-fetched, not skipped; a `KafkaCommitRebalanceListener` drops stale partition routing on revoke and seeks on assign; and the new supervised `commit_stream_consumer_background_lifecycle_step` restarts crash-loss-free. Adds `seek_to_committed` to `CommitStreamGroupQueryPort` and `UndecodableStreamPayload` to the stream contracts.
+
+- **Firestore write path is OCC- and tenant-safe** — `_patch` wraps read-check-write in a Firestore transaction for real rev-CAS (works with or without a caller transaction; a concurrent write aborts → `@occ_retry` re-applies), replacing an unconditional full-document `set()` that lost even non-overlapping concurrent field changes. `kill`/`kill_many` do a tenant-verified delete and raise `not_found` on miss/cross-tenant. `$neq`/`$nin`/`$null` are removed from advertised capabilities (Firestore cannot match absent/null the way the agnostic oracle does, so they now fail closed with `query_feature_unsupported` instead of returning silently-wrong rows); `get_many` chunks ids at Firestore's 30-value cap. Firestore joins the cross-backend DSL parity harness.
 
 - **CQRS read-only guard covers eager (factory-time) write-port acquisition** — an eager `ctx.document.command(spec)` in a QUERY factory now hits the same guard as a call-time one.
 
@@ -235,6 +247,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Adapters & security**
 
+- **Temporal default workflow id is a real UUID** — the default `workflow_id_factory` called `str(uuid4)` (the function's repr), so every unnamed `start()`/`schedule()` shared one garbage id and collided; now `str(uuid4())`.
+
+- **Redis idempotency store can't be corrupted via the idempotency key** — the untrusted `Idempotency-Key` is hashed and the result body moved to a disjoint key scope, so a key containing the codec separator (e.g. one ending in `:body`) can no longer alias and overwrite another key's stored result; `commit`/`fail` became Lua compare-and-set/delete fenced on the caller's own PENDING claim. `RedisKeyCodec.join` no longer silently aliases distinct inputs (empty parts rejected, edge separators preserved). *Compat:* the idempotency key format changed, so the in-flight dedup window resets once on upgrade (old records expire by TTL — no corruption; a safe re-execute).
+
 - **VK login** no longer copies the untrusted introspection envelope into claims (keeps only the masked `user`).
 
 - **Mongo** query renderer rejects `$`-prefixed field names (injection); index introspection keeps string index directions verbatim (text/2dsphere/2d/hashed/vector).
@@ -245,7 +261,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres** schema validation accepts parameterized column types (`NUMERIC(10,2)`, `TIMESTAMP(3) WITH TIME ZONE`); search index-definition parsing hardened (balanced-delimiter, dollar-quote-aware).
 
-- **Misc** — BigQuery empty-array/null params typed from annotations; Meilisearch strips embedded quotes; numeric timezone offsets validated; `forze dst --seeds` parsing fails loud; S3 multipart-ETag normalization and unknown-total range downloads; `If-None-Match` parsed per RFC 7232; `forze_http` suppresses its default bearer when an `Authorization` header is set; GCS rejects reserved `forze-tag-` metadata keys; log scrubbing requires a secret-bearing shape (ordinary paths survive).
+- **Log scrubbing closes three leaks** — console render mode (the default) no longer hands the raw exception to Rich when `sanitize_logs=True`, so a credential in an exception message (e.g. a DSN) is scrubbed in both the message and the rendered traceback (pretty tracebacks stay when scrubbing is off); assignment scrubbing now covers a bounded suffix (`secret_key=`, `aws_secret_access_key=`, `token_value=`), the whole `Authorization:` header, and a scheme-agnostic `scheme://user:pass@` DSN (ClickHouse/Mongo/HTTP, not just the four SQL schemes); and a non-str dict key no longer raises `TypeError` into the caller's log site.
+
+- **Misc** — BigQuery empty-array/null params typed from annotations; Meilisearch strips embedded quotes; numeric timezone offsets validated; `forze dst --seeds` parsing fails loud; S3 multipart-ETag normalization and unknown-total range downloads; `If-None-Match` parsed per RFC 7232; `forze_http` suppresses its default bearer when an `Authorization` header is set; GCS rejects reserved `forze-tag-` metadata keys.
 
 ## [0.4.1] - 2026-06-17
 

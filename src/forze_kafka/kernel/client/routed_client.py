@@ -4,7 +4,7 @@ from typing import Callable, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
-from aiokafka import AIOKafkaConsumer
+from aiokafka import AIOKafkaConsumer, ConsumerRebalanceListener
 from aiokafka.admin import AIOKafkaAdminClient
 from aiokafka.structs import RecordMetadata
 
@@ -85,6 +85,7 @@ class RoutedKafkaClient(DsnRoutedTenantClientBase[KafkaClient], KafkaClientPort)
         topics: Sequence[str],
         auto_offset_reset: str | None = None,
         max_poll_records: int | None = None,
+        listener: ConsumerRebalanceListener | None = None,
     ) -> AIOKafkaConsumer:
         inner = await self._get_client()
         return await inner.get_consumer(
@@ -93,6 +94,7 @@ class RoutedKafkaClient(DsnRoutedTenantClientBase[KafkaClient], KafkaClientPort)
             topics=topics,
             auto_offset_reset=auto_offset_reset,
             max_poll_records=max_poll_records,
+            listener=listener,
         )
 
     # ....................... #

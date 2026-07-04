@@ -21,7 +21,11 @@ from forze.application.execution.operations.registry import OperationRegistry
 
 from forze_dst import ModelState, PCTScheduler, Rule, Scenario, Simulation, SimulationConfig, Strategy
 from forze_dst.markers import record_event
-from forze_dst.invariants import expect, no_duplicate_effect
+from forze_dst.invariants import Violation, expect, no_duplicate_effect
+from forze_dst.engines import projection
+from forze_dst.engines.scenario import _expand_frontier, run_scenario
+from forze_dst.oracle.invariants import check
+from forze_dst.oracle.recorder import History
 from forze_dst.runtime import run_simulation
 from forze_dst.scheduler import PCTReorderer, RandomReorderer, SystematicReorderer
 from forze_mock import MockDepsModule
@@ -262,3 +266,182 @@ class TestDPOR:
             scenario=scenario,
         )
         assert report is None
+
+
+# ....................... #
+
+# A schedule-sensitive violation whose ONLY witness keeps the first branch point FIFO and deviates
+# at a later one: two concurrent workers each mark two phases across a yield, and the violation is
+# the interleaving where worker 1 wins phase 0 (a deviation) yet worker 0 wins phase 1 — reachable
+# only by holding branch 0 FIFO and diverging afterwards.
+_FIFO_THEN_DEVIATE_ORDER = ((1, 0), (0, 0), (0, 1), (1, 1))
+
+
+def _two_phase_order(history: History) -> tuple[tuple[int, int], ...]:
+    return tuple(
+        (event.fields["worker"], event.fields["phase"])
+        for event in sorted(history.events, key=lambda e: e.seq)
+        if event.kind == "mark"
+    )
+
+
+def _order_invariant(target: tuple[tuple[int, int], ...]):
+    def check_order(history: History) -> list[Violation]:
+        if _two_phase_order(history) == target:
+            return [Violation(invariant="fifo_then_deviate", message=f"order={target}")]
+        return []
+
+    return check_order
+
+
+def _two_worker_two_phase_simulation(target: tuple[tuple[int, int], ...]) -> Simulation:
+    def make(worker_id: int) -> Handler[None, None]:
+        @attrs.define(slots=True)
+        class _Worker(Handler[None, None]):
+            async def __call__(self, _args: None) -> None:
+                for phase in range(2):
+                    await asyncio.sleep(0)  # a per-phase yield ⇒ two ordered branch points
+                    record_event("mark", worker=worker_id, phase=phase)
+
+        return _Worker()
+
+    registry = OperationRegistry(
+        handlers={f"w{i}": (lambda _c, i=i: make(i)) for i in range(2)},
+        descriptors={
+            f"w{i}": OperationDescriptor(
+                input_type=None, output_type=None, description="w"
+            )
+            for i in range(2)
+        },
+    ).freeze()
+
+    return Simulation(
+        operations=registry,
+        deps=lambda: MockDepsModule(),
+        invariants=[_order_invariant(target)],
+    )
+
+
+def _two_worker_scenario() -> Scenario:
+    return Scenario(state=ModelState, act=(Rule(op="w0"), Rule(op="w1")))
+
+
+def _truncating_dpor_finds(
+    sim: Simulation, scenario: Scenario, workload: tuple[str, ...], *, seed: int
+) -> bool:
+    """Re-drive the DPOR search with the OLD *truncating* frontier expansion (the bug).
+
+    Identical to :func:`~forze_dst.engines.scenario.explore_dpor` except the expansion is the
+    pre-fix ``choices[:tick]`` truncation, so it can never emit a FIFO-then-deviate vector. Used to
+    prove the scenario below is genuinely unreachable by the buggy search.
+    """
+
+    epoch = SimulationConfig().epoch
+    frontier: list[tuple[int, ...]] = [()]
+    visited: set[tuple[int, ...]] = set()
+    seen: set[object] = set()
+
+    while frontier:
+        choices = frontier.pop()
+
+        if choices in visited:
+            continue
+
+        visited.add(choices)
+        scheduler = SystematicReorderer(choices)
+        history, _ = run_scenario(
+            sim,
+            scenario,
+            act_workload=[(op, None) for op in workload],
+            act_count=len(workload),
+            concurrency=len(workload),
+            seed=seed,
+            schedule_seed=None,
+            epoch=epoch,
+            scheduler=scheduler,
+        )
+
+        if check(history, sim.invariants):
+            return True
+
+        signature = projection.outcome_signature(history)
+
+        if signature in seen:
+            continue
+
+        seen.add(signature)
+
+        for tick, size in enumerate(scheduler.branching):  # buggy truncation
+            frontier.extend((*choices[:tick], alt) for alt in range(1, size))
+
+    return False
+
+
+class TestDPORCompleteness:
+    def test_frontier_expansion_reaches_fifo_then_deviate_schedule(self) -> None:
+        # Two binary branch points. To deviate *first* at branch 1 while branch 0 stays FIFO the
+        # search must emit (0, 1). The zero-padded expansion does; the old truncation collapsed
+        # every deep deviation onto branch 0, so it could only ever emit (1,).
+        branching = [2, 2]
+
+        expanded = _expand_frontier((), branching)
+        assert (0, 1) in expanded  # FIFO at branch 0, deviate at branch 1 — now reachable
+
+        # The pre-fix truncating expansion could not reach it (its whole explored corner).
+        old = [
+            (*(())[:tick], alt)
+            for tick, size in enumerate(branching)
+            for alt in range(1, size)
+        ]
+        assert (0, 1) not in old
+        assert set(old) == {(1,)}
+
+    def test_dpor_finds_violation_only_reachable_by_fifo_then_deviate(self) -> None:
+        # dpor_seed=1 fixes the generated act workload to (w0, w1); the only violating schedule
+        # keeps branch 0 FIFO and deviates later. The zero-padded search finds it; the old
+        # truncating search misses it entirely.
+        sim = _two_worker_two_phase_simulation(_FIFO_THEN_DEVIATE_ORDER)
+        scenario = _two_worker_scenario()
+
+        report = sim.run(
+            SimulationConfig(
+                strategy=Strategy.DPOR,
+                act_count=2,
+                concurrency=2,
+                max_runs=500,
+                dpor_seed=1,
+            ),
+            scenario=scenario,
+        )
+
+        assert report is not None
+        assert report.violations[0].invariant == "fifo_then_deviate"
+
+        # The witness keeps an earlier branch point FIFO (a 0) before its first deviation — a
+        # vector the old truncating expansion could never emit.
+        assert report.choices is not None
+        first_deviation = next(i for i, c in enumerate(report.choices) if c != 0)
+        assert first_deviation > 0
+        assert report.choices[0] == 0
+
+        # The buggy truncating search finds nothing here — this is the completeness regression.
+        assert not _truncating_dpor_finds(sim, scenario, ("w0", "w1"), seed=1)
+
+        # And the counterexample reproduces exactly from its own captured choice vector.
+        replayed, _ = run_scenario(
+            sim,
+            scenario,
+            act_workload=[("w0", None), ("w1", None)],
+            act_count=2,
+            concurrency=2,
+            seed=1,
+            schedule_seed=None,
+            epoch=SimulationConfig().epoch,
+            scheduler=SystematicReorderer(report.choices),
+        )
+        assert check(replayed, sim.invariants)
+
+        # The rendered repro carries the DPOR strategy and the exact interleaving.
+        rendered = report.format()
+        assert "strategy=Strategy.DPOR" in rendered
+        assert "SystematicReorderer(choices=" in rendered

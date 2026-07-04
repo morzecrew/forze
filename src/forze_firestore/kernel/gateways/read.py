@@ -52,6 +52,9 @@ from .base import FirestoreGateway
 T = TypeVar("T", bound=BaseModel)
 M = TypeVar("M", bound=BaseModel)
 
+_FIRESTORE_IN_LIMIT = 30
+"""Maximum number of comparison values Firestore accepts in an ``in`` query."""
+
 # ....................... #
 
 
@@ -102,16 +105,20 @@ class FirestoreReadGateway[M: BaseModel](
             return []
 
         ids = [str(pk) for pk in pks]
-        base = FieldFilter(ID_FIELD, "in", ids)
-        flt = self._add_tenant_filter(base)
-
-        rows = await self.client.query_stream(await self.coll(), filters=flt)
-
+        coll = await self.coll()
         by_pk: dict[str, JsonDict] = {}
 
-        for row in rows:
-            normalized = self._from_storage_doc(row)
-            by_pk[str(normalized[ID_FIELD])] = normalized
+        # Firestore caps ``in`` at 30 comparison values, so chunk the ids: a naive
+        # single ``in`` silently drops everything past the 30th id and reports those
+        # documents as not-found.
+        for offset in range(0, len(ids), _FIRESTORE_IN_LIMIT):
+            chunk = ids[offset : offset + _FIRESTORE_IN_LIMIT]
+            flt = self._add_tenant_filter(FieldFilter(ID_FIELD, "in", chunk))
+            rows = await self.client.query_stream(coll, filters=flt)
+
+            for row in rows:
+                normalized = self._from_storage_doc(row)
+                by_pk[str(normalized[ID_FIELD])] = normalized
 
         missing = [pk for pk in pks if str(pk) not in by_pk]
 

@@ -134,9 +134,16 @@ class Simulation:
         # Run-scoped: the per-run substrate compiles this config's seeded faults/latency.
         self.active_config = config
         try:
-            return engines.dispatch(self, config, scenario=scenario, cases=cases)
+            report = engines.dispatch(self, config, scenario=scenario, cases=cases)
         finally:
             self.active_config = None
+
+        # Attach the config that found the bug so the rendered repro reflects the actual search
+        # (scheduler / concurrency / act_count / faults), not the library defaults.
+        if report is not None and report.config is None:
+            report = attrs.evolve(report, config=config)
+
+        return report
 
     # ....................... #
 

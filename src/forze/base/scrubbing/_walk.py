@@ -15,10 +15,7 @@ from .policy import (
 
 
 def _scrub_string(value: str, *, text_scrub: bool) -> str:
-    if not text_scrub:
-        return value
-
-    return scrub_log_string(value)
+    return scrub_log_string(value) if text_scrub else value
 
 
 # ....................... #
@@ -91,7 +88,17 @@ def walk_mapping(
     out: dict[str, Any] = {}
 
     for key, value in mapping.items():
-        if is_sensitive_key(key):
+        # A logging pipeline must never raise into application code: dict keys are
+        # not always ``str`` (e.g. ``log.info("stats", counts={1: 2})``), and the
+        # sensitive-key regex only accepts strings. Coerce for the check so a
+        # non-str key is inspected by name without crashing the caller's log site.
+        key_name = (
+            key
+            if isinstance(key, str)  # pyright: ignore[reportUnnecessaryIsInstance]
+            else str(key)
+        )
+
+        if is_sensitive_key(key_name):
             out[key] = SECRET_PLACEHOLDER
             continue
 

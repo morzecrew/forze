@@ -6,6 +6,7 @@
 # covers: DurableRunStorePort.complete
 # covers: DurableRunStorePort.fail
 # covers: DurableRunStorePort.load
+# covers: DurableRunStorePort.renew
 """
 
 from __future__ import annotations
@@ -233,6 +234,64 @@ class TestPostgresDurableRunStore:
         assert loaded is not None
         assert loaded.status is DurableRunStatus.COMPLETED
         assert loaded.output_json == {"by": "B"}
+
+    async def test_renew_extends_lease_and_blocks_reclaim_while_held(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        store = _store(pg_client, durable_run_table)
+        record = await store.enqueue("fn", input_json=None)
+
+        claimed = await store.begin(record.run_id, lease_for=timedelta(minutes=5))
+        assert claimed is not None and claimed.attempts == 1
+
+        # Simulate a body that outran its lease, then heartbeats to renew it.
+        await _expire_lease(pg_client, durable_run_table, record.run_id)
+        held = await store.renew(
+            record.run_id, lease_for=timedelta(minutes=5), fence=claimed.attempts
+        )
+        assert held is True
+
+        # With the lease pushed forward, the recovery scan leaves the running run alone.
+        claimed_ids = {
+            c.run_id
+            for c in await store.claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
+        }
+        assert record.run_id not in claimed_ids
+
+        loaded = await store.load(record.run_id)
+        assert loaded is not None
+        assert loaded.status is DurableRunStatus.RUNNING
+        assert loaded.attempts == 1  # never reclaimed
+
+    async def test_renew_with_stale_fence_reports_lost_lease(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        store = _store(pg_client, durable_run_table)
+        record = await store.enqueue("fn", input_json=None)
+
+        worker_a = await store.begin(record.run_id, lease_for=timedelta(minutes=5))
+        assert worker_a is not None and worker_a.attempts == 1
+
+        # Worker B reclaims the expired lease (attempts -> 2).
+        await _expire_lease(pg_client, durable_run_table, record.run_id)
+        reclaimed = await store.claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
+        worker_b = next(c for c in reclaimed if c.run_id == record.run_id)
+        assert worker_b.attempts == 2
+
+        # Worker A's heartbeat can no longer renew (stale fence) and learns to stop.
+        assert (
+            await store.renew(
+                record.run_id, lease_for=timedelta(minutes=5), fence=worker_a.attempts
+            )
+            is False
+        )
+        # Worker B, the current holder, still renews.
+        assert (
+            await store.renew(
+                record.run_id, lease_for=timedelta(minutes=5), fence=worker_b.attempts
+            )
+            is True
+        )
 
     async def test_delayed_run_is_not_claimed_until_due(
         self, pg_client: PostgresClient, durable_run_table: str

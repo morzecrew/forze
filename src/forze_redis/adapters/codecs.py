@@ -51,11 +51,40 @@ class RedisKeyCodec:
         if isinstance(scope, tuple):
             scope = self.sep.join(scope)
 
-        items = [
-            str(p).strip(self.sep) for p in (prefix, scope, self.namespace, *parts) if p
-        ]
+        # ``prefix``/``scope``/``namespace`` are framework-controlled structural
+        # tokens (constants, a tenant prefix, the resolved namespace): a falsy
+        # leading token is simply an absent optional segment. They are joined
+        # verbatim (no ``strip`` — stripping edge separators aliased distinct
+        # values, e.g. ``"a"`` / ``":a"`` / ``"a:"``).
+        segments: list[str] = [seg for seg in (prefix, scope, self.namespace) if seg]
 
-        return self.sep.join(items)
+        # The variadic parts carry caller-supplied values. ``None`` is an absent
+        # optional segment and is dropped (callers pass it to omit a trailing
+        # part, e.g. the counter's optional suffix). An empty part is rejected:
+        # dropping it (the old ``if p``) aliased ``""`` with an absent ``None``.
+        # Parts are joined verbatim (no ``strip`` — stripping edge separators
+        # aliased ``"a"`` / ``":a"`` / ``"a:"``; kept raw they stay distinct).
+        #
+        # An embedded separator is *not* rejected here: operation names and many
+        # logical keys legitimately contain ``:`` (e.g. ``"orders:<uuid>"``).
+        # Callers that must be collision-proof against untrusted input hash it to
+        # a fixed-format, separator-free token before it reaches a key (the
+        # idempotency adapter does exactly this).
+        segments.extend(
+            self.__part_segment(part) for part in parts if part is not None
+        )
+
+        return self.sep.join(segments)
+
+    # ....................... #
+
+    def __part_segment(self, part: Any) -> str:
+        text = str(part)
+
+        if not text:
+            raise exc.validation("Redis key part must not be empty")
+
+        return text
 
 
 # ....................... #

@@ -2,8 +2,8 @@
 
 Every transaction on the document store gets a **buffered overlay**: writes go to the overlay,
 never write through, so the live store holds only committed rows and a concurrent transaction can
-never observe an uncommitted write (**no dirty reads, at any level**). The level differs only in
-what reads fall back to and what commit validates:
+never observe an uncommitted write (**no dirty reads, at any level**, including read-committed). The
+level differs only in what reads fall back to and what commit validates:
 
 * at begin, snapshot / serializable capture an as-of-begin snapshot of every document namespace
   (committed state); read-committed keeps no snapshot and reads through to the live store instead;
@@ -12,22 +12,31 @@ what reads fall back to and what commit validates:
   or to the live store (read-committed — so each statement sees the latest committed state);
 * writes go to the overlay, not the live store;
 * at commit the overlay is validated, then published to the live store:
-  - **read-committed** and **snapshot** both reject a *write-write* conflict (first-committer-wins
-    — prevents lost update; read-committed needs it because every update is rev-guarded, so two
-    concurrent updates to a row must not both commit, matching Postgres read-committed's row
-    serialization), while permitting write-skew; they differ only in reads (live vs frozen); and
+  - a **create** (plain INSERT) whose id a concurrent committer already published is a *unique
+    violation* — raised as ``exc.conflict`` (Postgres ``23505``) at **every** level, before any
+    serialization check, so the KIND matches Postgres regardless of isolation. (``ensure`` / ``upsert``
+    are ``ON CONFLICT DO NOTHING`` idempotent and are not tracked as creates.)
+  - **read-committed** rejects a *write-write* conflict only for a *claimed* row (a rev-guarded write
+    or a ``FOR UPDATE`` locked read) and only when the concurrent committer wrote it **after** this
+    transaction read / claimed it — a windowed check anchored at the row's read version, not at begin.
+    That matches Postgres read-committed: a statement re-reads the latest committed row, so an update
+    that reads a value a concurrent transaction then does not touch commits cleanly, while one whose
+    row changed since it was read fails. A *blind* (rev-less, unlocked) write is not claimed, so it
+    silently loses, as read-committed permits;
+  - **snapshot** rejects a *write-write* conflict on **every** write, begin-anchored
+    (first-committer-wins — prevents lost update), while permitting write-skew;
   - **serializable** additionally rejects a *read-write* conflict (a key this transaction read was
-    written by a concurrent committer — prevents write-skew).
+    written by a concurrent committer) and a *phantom* (a write to a namespace it scanned).
 
-Conflicts raise ``exc.concurrency(code="serialization_failure")``, which aborts the
-transaction (the overlay is discarded — nothing reached the live store). No global lock, so
-concurrent transactions still interleave freely — the basis DST needs.
+Serialization conflicts raise ``exc.concurrency(code="serialization_failure")`` and unique
+violations raise ``exc.conflict``; both abort the transaction (the overlay is discarded — nothing
+reached the live store). No global lock, so concurrent transactions still interleave freely — the
+basis DST needs.
 
 v1 limitations: the snapshot assumes the conflicting transactions are themselves
-snapshot/serializable (a concurrent *read-committed* transaction writes through and would be
-visible); the commit log is append-only (unbounded across a run); read-set tracking is by key
-(a full scan records every visible key, so it conflicts with any concurrent write in that
-namespace — sound, if coarse).
+snapshot/serializable; the commit log is append-only (unbounded across a run); serializable read-set
+tracking is by key, and a scan records every visible key (so it conflicts with any concurrent write
+in that namespace — sound, if coarse).
 """
 
 from __future__ import annotations
@@ -153,10 +162,12 @@ class MvccTx:
     what reads fall back to and what commit validates:
 
     - **read-committed** — reads fall through to the **live store** (latest committed, re-read per
-      statement); commit publishes with no conflict check (rev-OCC at the adapter still rejects a
-      stale-rev write, so lost update can't slip in).
+      statement); commit rejects a write-write conflict only for a *claimed* row (see
+      :attr:`rev_guarded`), windowed at the row's read version, plus a unique violation for a
+      duplicate ``create`` (see :attr:`created`).
     - **snapshot / serializable** — reads fall back to a frozen as-of-begin snapshot; commit
-      rejects write-write (snapshot) and additionally read-write / phantom (serializable).
+      rejects write-write (snapshot) and additionally read-write / phantom (serializable), plus the
+      same duplicate-``create`` unique violation.
     """
 
     begin_version: int
@@ -167,12 +178,22 @@ class MvccTx:
     reads: dict[str, set[Any]] = attrs.field(factory=dict)
     scans: set[str] = attrs.field(factory=set)
     """Namespaces this transaction scanned (predicate reads) — for phantom detection."""
-    rev_guarded: dict[str, set[Any]] = attrs.field(factory=dict)
-    """Keys this transaction wrote under a row-``rev`` guard (optimistic concurrency). Read-committed
-    surfaces a write-write conflict only for these — a rev-guarded update is the one a concurrent
-    committer makes fail (Postgres serializes it by row lock), while a *blind* (rev-less) write
-    silently loses the update, as read-committed permits. Snapshot/serializable conflict on every
-    write regardless."""
+    rev_guarded: dict[str, dict[Any, int]] = attrs.field(factory=dict)
+    """Rows this transaction holds a *claim* on, mapped to the commit-version at which the claim was
+    taken (the version the row was read at). A claim is a rev-guarded write (``update``/``delete``/
+    ``restore`` with an expected rev) or a ``FOR UPDATE`` locked read. Read-committed surfaces a
+    write-write conflict for a claimed row only when a concurrent committer wrote it *after* the
+    claim was taken (``committed_version > claim_version``) — matching Postgres read-committed, which
+    re-reads the latest committed row per statement and fails only a write whose row a concurrent
+    transaction changed since it was read (not merely since this transaction began). A *blind*
+    (rev-less, unlocked) write is not claimed, so it silently loses, as read-committed permits.
+    Snapshot/serializable ignore claims and conflict on every write regardless."""
+    created: dict[str, set[Any]] = attrs.field(factory=dict)
+    """Keys this transaction inserted as NEW rows via a plain ``create`` (INSERT). At commit each is
+    re-checked against the live store: an id a concurrent committer already published is a unique
+    violation, raised as ``exc.conflict`` (Postgres ``23505``) at **every** level, before any
+    serialization check. ``ensure`` / ``upsert`` are ``ON CONFLICT DO NOTHING`` idempotent on the
+    real adapters, so their create arm is deliberately not tracked here (no spurious conflict)."""
 
     # ....................... #
 
@@ -235,40 +256,91 @@ class MvccTx:
 
     # ....................... #
 
-    def mark_rev_guarded(self, ns: str, key: Any) -> None:
-        """Record that *key* in *ns* was written under a row-``rev`` guard (see :attr:`rev_guarded`)."""
+    def mark_rev_guarded(self, ns: str, key: Any, version: int) -> None:
+        """Record a *claim* on *key* in *ns* taken at commit-*version* (see :attr:`rev_guarded`).
 
-        self.rev_guarded.setdefault(ns, set()).add(key)
+        The claim version is kept at its earliest (``setdefault``): once a transaction has claimed a
+        row, any *later* concurrent commit to it conflicts, so the earliest claim is the conservative
+        (sound) anchor — a second claim after a fresh read never widens the safe window backwards.
+        """
+
+        self.rev_guarded.setdefault(ns, {}).setdefault(key, version)
+
+    def mark_created(self, ns: str, key: Any) -> None:
+        """Record that *key* in *ns* was inserted as a NEW row via ``create`` (see :attr:`created`)."""
+
+        self.created.setdefault(ns, set()).add(key)
 
     # ....................... #
 
     def _write_keys(self, ns: str) -> set[Any]:
         return set(self.overlays.get(ns, {}).keys())
 
-    def _conflict_keys(self, ns: str) -> set[Any]:
-        # Read-committed surfaces a write-write conflict only for rev-guarded writes (a blind write
-        # silently loses, as read-committed permits); snapshot/serializable conflict on every write.
-        return self.rev_guarded.get(ns, set()) if self.read_committed else self._write_keys(ns)
+    def _check_create_conflicts(self, state: Any) -> None:
+        # A create whose id a concurrent committer already published is a unique violation at EVERY
+        # level — Postgres raises 23505 regardless of isolation, and it takes precedence over a
+        # serialization failure (checked before the commit-log scan so the KIND matches: conflict,
+        # not serialization_failure). The transaction's own creates are not yet in the live store
+        # (commit publishes after validate), so this fires only on a genuine concurrent duplicate.
+        for ns, keys in self.created.items():
+            if not keys:
+                continue
+
+            live = state.documents.get(ns)
+
+            if not live:
+                continue
+
+            for key in keys:
+                if key in live:
+                    raise exc.conflict(
+                        "Unique violation: a concurrent transaction created a row with this id.",
+                        details={"id": str(key), "namespace": ns},
+                    )
 
     def validate(self, state: Any) -> None:
-        """Raise on a conflict with any transaction committed after this one began.
+        """Raise on a create unique violation or a conflict with a concurrently-committed write.
 
-        Snapshot rejects *write-write* on **every** write (first-committer-wins, preventing lost
-        update). Read-committed rejects it only for **rev-guarded** writes (see :attr:`rev_guarded`):
-        a rev-guarded update to a row a concurrent transaction also committed is exactly what
-        Postgres read-committed fails (it row-locks the second until the first commits, then its
-        stale-rev guard matches no rows); a *blind* (rev-less) write silently loses, which
-        read-committed permits. Serializable additionally rejects read-write (write skew) and, for
-        any namespace this transaction *scanned*, a concurrent write to that namespace — including
-        the insert of a new matching key (phantom / write skew).
+        First a duplicate ``create`` is rejected as ``exc.conflict`` (unique violation, every level).
+        Then, per concurrently-committed write-set: snapshot rejects *write-write* on **every** write
+        (first-committer-wins, preventing lost update); read-committed rejects it only for a
+        **claimed** row (see :attr:`rev_guarded`) and only when the concurrent write landed *after*
+        the claim was taken — the windowed check Postgres read-committed performs, so a fresh
+        read-then-update does not spuriously abort. Serializable additionally rejects read-write
+        (write skew) and, for any namespace this transaction *scanned*, a concurrent write to that
+        namespace — including the insert of a new matching key (phantom / write skew).
         """
+
+        self._check_create_conflicts(state)
 
         for version, write_sets in state.mvcc_commit_log:
             if version <= self.begin_version:
                 continue
 
             for ns, committed_keys in write_sets.items():
-                if self._conflict_keys(ns) & committed_keys:
+                if self.read_committed:
+                    # Windowed: conflict only if the concurrent write landed AFTER this transaction
+                    # read / claimed the row (``version > claim``), not merely after it began. A
+                    # claim taken at a version >= the concurrent commit (a fresh read-through that
+                    # already saw it) is safe — exactly Postgres read-committed's per-statement
+                    # re-read semantics.
+                    claims = self.rev_guarded.get(ns)
+
+                    if claims:
+                        for key in committed_keys:
+                            claim = claims.get(key)
+
+                            if claim is not None and version > claim:
+                                raise exc.concurrency(
+                                    "Write-write conflict: a concurrent transaction modified a "
+                                    "row this transaction claimed after it read it (lost update "
+                                    "prevented)",
+                                    code="serialization_failure",
+                                )
+
+                    continue
+
+                if self._write_keys(ns) & committed_keys:
                     raise exc.concurrency(
                         "Write-write conflict: a concurrent transaction modified a row "
                         "this transaction also wrote (lost update prevented)",

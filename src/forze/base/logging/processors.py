@@ -23,6 +23,8 @@ from .constants import (
     RenderMode,
 )
 
+# ----------------------- #
+
 # Keys left untouched by :class:`EventDictSanitizer` (message template, metadata, stacks).
 _EVENT_DICT_SANITIZE_SKIP: frozenset[str] = frozenset(
     {
@@ -41,7 +43,7 @@ _EVENT_DICT_SANITIZE_SKIP: frozenset[str] = frozenset(
     }
 )
 
-# ----------------------- #
+# ....................... #
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
@@ -95,9 +97,17 @@ class ExceptionInfoFormatter:
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ExceptionFieldsSanitizer:
-    """Scrub ``error.message`` and ``error.stack`` (always uses log string rules)."""
+    """Scrub ``error.message`` and ``error.stack`` (always uses log string rules).
 
-    # ....................... #
+    Also drops the raw ``RICH_EXC_INFO_KEY`` tuple: the console renderer would
+    hand those live ``(exc_type, exc, tb)`` objects straight to Rich's
+    ``Traceback.from_exception``, which formats the unscrubbed exception message
+    and source lines — leaking any secret (e.g. a DSN password) carried by the
+    exception. This processor is only wired in when ``sanitize_logs`` is on, so
+    dropping the key here forces the console to fall back to the already-scrubbed
+    ``error.stack``; pretty Rich tracebacks are preserved when scrubbing is off
+    (the sanitizer is absent from the pipeline and the key survives).
+    """
 
     def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
         from forze.base.scrubbing.policy import scrub_log_string
@@ -107,6 +117,8 @@ class ExceptionFieldsSanitizer:
 
             if isinstance(value, str):
                 event_dict[key] = scrub_log_string(value)
+
+        event_dict.pop(RICH_EXC_INFO_KEY, None)
 
         return event_dict
 
@@ -181,9 +193,7 @@ class TraceLevelResolver:
     def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
         """Resolve the trace level or drop the event if 'trace' is below the configured level."""
 
-        override = event_dict.pop(TRACE_LEVEL_KEY, None)
-
-        if override:
+        if override := event_dict.pop(TRACE_LEVEL_KEY, None):
             event_dict["level"] = override
 
         configured_rank = LogLevelToRank.get(self.configured_level, 0)
@@ -228,15 +238,31 @@ class EventDictSanitizer:
             if key in _EVENT_DICT_SANITIZE_SKIP:
                 continue
 
-            if is_sensitive_key(key):
-                event_dict[key] = SECRET_PLACEHOLDER
-                continue
+            # A sanitizer must never raise into the caller's log site (a non-str
+            # key or an exotic value must not crash logging), so each field is
+            # scrubbed defensively and an unscrubbable one is masked rather than
+            # left to propagate — masking is the safe failure mode for a scrubber.
+            try:
+                key_name = (
+                    key
+                    if isinstance(
+                        key, str
+                    )  # pyright: ignore[reportUnnecessaryIsInstance]
+                    else str(key)
+                )
 
-            event_dict[key] = sanitize(
-                event_dict[key],
-                context="log",
-                text_scrub=self.text_scrub,
-            )
+                if is_sensitive_key(key_name):
+                    event_dict[key] = SECRET_PLACEHOLDER
+                    continue
+
+                event_dict[key] = sanitize(
+                    event_dict[key],
+                    context="log",
+                    text_scrub=self.text_scrub,
+                )
+
+            except Exception:
+                event_dict[key] = "<unsanitizable>"
 
         # The message text is client-visible output too: positional args are
         # already interpolated by the time this sanitizer runs, so apply the
@@ -282,6 +308,8 @@ class SamplingDeduplicator:
 
     max_tracked_keys: int = 4096
     """Upper bound on distinct sampling buckets / dedup keys retained before a reset."""
+
+    # ....................... #
 
     _counts: dict[tuple[str, str], int] = attrs.field(factory=dict, init=False)
     _last_emit: dict[str, float] = attrs.field(factory=dict, init=False)

@@ -222,6 +222,33 @@ class FirestoreGateway[M: BaseModel](
 
     # ....................... #
 
+    def _row_matches_tenant(self, raw: JsonDict) -> bool:
+        """Whether a stored document belongs to the current tenant.
+
+        Always ``True`` for tenant-unaware gateways. For tenant-aware gateways it
+        compares the row's stored ``tenant_id`` against the resolved tenant, so a
+        by-id operation (which Firestore cannot combine with a query filter) can be
+        scoped to the caller's tenant instead of trusting the bare document id.
+        """
+
+        if not self.tenant_aware:
+            return True
+
+        if self.tenant_provider is None:
+            raise exc.configuration("Tenant provider is required for the gateway")
+
+        tenant_id = self.require_tenant_if_aware()
+
+        if tenant_id is None:
+            raise exc.authentication("Tenant ID is required", code="tenant_required")
+
+        # Stored tenant ids are coerced to strings on write (see
+        # ``adapt_payload_for_write`` -> ``_coerce_query_value``); coerce the
+        # resolved tenant id the same way before comparing.
+        return raw.get(TENANT_ID_FIELD) == self._coerce_query_value(tenant_id)
+
+    # ....................... #
+
     def _add_tenant_id(self, data: JsonDict) -> JsonDict:
         out = dict(data)
 

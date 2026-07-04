@@ -642,13 +642,92 @@ def format_report(report: ViolationReport) -> str:
             lines.append(f"        @t={event.at:.6f} {event.kind}: {payload}")
 
     # A copy-pasteable minimal repro — drop straight into a shell or a test.
-    lines.extend(
-        (
-            "",
-            "  reproduce:",
-            f"    simulation.run(SimulationConfig.reproduce({report.seed}))",
-            f"    # as a test:  assert_no_violation(simulation, SimulationConfig.reproduce({report.seed}))",
-        )
-    )
+    lines.extend(_reproduce_lines(report))
 
     return "\n".join(lines)
+
+
+# ....................... #
+
+
+def _reproduce_kwargs(config: Any) -> str:
+    """The search-shaping ``SimulationConfig.reproduce`` overrides that reflect *config*.
+
+    Renders the knobs that actually change the interleaving search — strategy, scheduler,
+    concurrency, workload size, and the per-strategy budgets — as a pasteable kwargs string, so
+    the repro re-drives the *same* search rather than the library defaults.
+    """
+
+    from forze_dst.config import Strategy
+
+    parts = [
+        f"strategy=Strategy.{config.strategy.name}",
+        f"scheduler={config.scheduler!r}",
+        f"concurrency={config.concurrency}",
+        f"act_count={config.act_count}",
+    ]
+
+    if config.strategy is Strategy.OP_CASE:
+        parts.append(f"count={config.count}")
+    elif config.strategy is Strategy.HYPOTHESIS:
+        parts.append(f"max_examples={config.max_examples}")
+    elif config.strategy is Strategy.DPOR:
+        parts.extend((f"max_runs={config.max_runs}", f"dpor_seed={config.dpor_seed}"))
+
+    if config.capture_values:
+        parts.append("capture_values=True")
+
+    if config.runtime:
+        parts.append("runtime=True")
+
+    return ", ".join(parts)
+
+
+# ....................... #
+
+
+def _reproduce_lines(report: "ViolationReport") -> list[str]:
+    """A copy-pasteable, *faithful* repro block for a counterexample.
+
+    Threads the actual config that found the bug into the printed command (so the scheduler /
+    concurrency / act_count / faults match the run, not the defaults), and — for DPOR / Hypothesis
+    — the exact interleaving choice vector / act-plan, so the counterexample reproduces from its own
+    instructions instead of re-running the default strategy. Rich, non-inline environment
+    (faults / latency / partitions / crash) reproduces faithfully only from a saved bundle, so it is
+    called out rather than silently dropped.
+    """
+
+    config = report.config
+    seed = report.seed
+    lines = ["", "  reproduce:"]
+
+    if config is None:
+        # A lower-level report (no config threaded, e.g. the raw replay engine) — keep the honest
+        # seed-only form; the run's own config still applies at the call site.
+        lines.append(f"    simulation.run(SimulationConfig.reproduce({seed}))")
+        lines.append(
+            f"    # as a test:  assert_no_violation(simulation, SimulationConfig.reproduce({seed}))"
+        )
+        return lines
+
+    call = f"SimulationConfig.reproduce({seed}, {_reproduce_kwargs(config)})"
+    lines.append(f"    simulation.run({call})")
+    lines.append(f"    # as a test:  assert_no_violation(simulation, {call})")
+
+    if report.choices is not None:
+        lines.append(
+            f"    # exact interleaving (DPOR): SystematicReorderer(choices={list(report.choices)!r})"
+        )
+
+    if report.plan is not None:
+        lines.append(f"    # counterexample act-plan (Hypothesis): {list(report.plan)!r}")
+
+    if any((config.faults, config.latency, config.crash, config.cluster)):
+        lines.append(
+            "    # note: faults / latency / partitions / crash reproduce faithfully only from a"
+        )
+        lines.append(
+            "    #       saved bundle — run with --dst-save-bundle, then replay_bundle(...)."
+        )
+
+    return lines

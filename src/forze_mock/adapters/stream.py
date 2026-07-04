@@ -605,6 +605,14 @@ class MockCommitStreamGroupAdapter[M: BaseModel](CommitStreamGroupQueryPort[M]):
 
     # ....................... #
 
+    async def seek_to_committed(self, group: str, topics: Sequence[str]) -> None:
+        # No-op: the mock has no in-memory read position — every ``read`` re-derives
+        # delivery from the committed cursor, so an uncommitted batch is already
+        # re-fetched on the next read. Present only to satisfy the port contract.
+        del group, topics
+
+    # ....................... #
+
     def capabilities(self) -> CommitStreamGroupCapabilities:
         return CommitStreamGroupCapabilities(
             supports_replay=True,

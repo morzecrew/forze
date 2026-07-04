@@ -31,6 +31,7 @@ would-block step so a lock wait is converted into an explicit signal normalized 
 from __future__ import annotations
 
 import itertools
+from contextlib import suppress
 from typing import Awaitable, Callable, Mapping
 from uuid import UUID
 
@@ -39,6 +40,7 @@ import attrs
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions.model import CoreException, ExceptionKind
 from forze.testing import Conductor, Gate
 
 from ._models import (
@@ -50,7 +52,12 @@ from ._models import (
     OnCallUpdate,
 )
 from .divergence import CONTRACT_STRENGTHENINGS
-from .harness import ConformanceBackend, Verdict, record_outcome
+from .harness import (
+    ConformanceBackend,
+    Verdict,
+    is_serialization_conflict,
+    record_outcome,
+)
 
 # ----------------------- #
 
@@ -68,6 +75,12 @@ _PREVENT = Verdict.PREVENTED
 # even on a store reused across runs — otherwise an absolute predicate count would be corrupted by
 # rows a prior run left behind.
 _marker_seq = itertools.count(7)
+
+# A deterministic (no-random) source of fresh primary keys for the duplicate-key race — a monotonic
+# counter, so each run claims an id absent from the store even when it is reused across runs.
+_contested_id_seq = itertools.count(1)
+
+# ....................... #
 
 
 def _fresh_predicate() -> tuple[int, QueryFilterExpression]:
@@ -92,13 +105,24 @@ class AnomalyCase:
     run: Callable[[ConformanceBackend, IsolationLevel], Awaitable[Verdict]]
     """Run the interleaving against a backend at a level; return the observed verdict."""
 
+    abort_engine_only: bool = False
+    """This case's forced interleaving only reaches its verdict on an **abort-based** engine.
+
+    On a lock-based engine (real Postgres) the case's second participant BLOCKS mid-step — a
+    duplicate-key insert waits on the unique index, a ``FOR UPDATE`` lock waits on the row — which
+    would wedge the :class:`~forze.testing.Conductor` (it advances one participant at a time). The
+    mock is abort-based and surfaces the same outcome without blocking, so these cases run against
+    the mock (and any abort-based engine); the lock-based real-adapter differential legs skip them.
+    See the ``lock-block-vs-abort-conductor`` :data:`~forze_dst.conformance.MECHANISM_DIVERGENCES`."""
+
 
 # ....................... #
 # Non-repeatable read (P2): a transaction reads a row twice and sees a concurrent commit between.
 
 
 async def _run_non_repeatable_read(
-    backend: ConformanceBackend, level: IsolationLevel
+    backend: ConformanceBackend,
+    level: IsolationLevel,
 ) -> Verdict:
     sessions = backend.contexts(2)
     reader, writer = sessions[0], sessions[1]
@@ -215,8 +239,12 @@ def _writeskew_session(
     return session
 
 
+# ....................... #
+
+
 async def _run_write_skew(
-    backend: ConformanceBackend, level: IsolationLevel
+    backend: ConformanceBackend,
+    level: IsolationLevel,
 ) -> Verdict:
     sessions = backend.contexts(2)
     a, b = sessions[0], sessions[1]
@@ -335,8 +363,12 @@ class _Rollback(Exception):
     """Sentinel used to force a writer's transaction to roll back in the dirty-read case."""
 
 
+# ....................... #
+
+
 async def _run_dirty_read(
-    backend: ConformanceBackend, level: IsolationLevel
+    backend: ConformanceBackend,
+    level: IsolationLevel,
 ) -> Verdict:
     sessions = backend.contexts(2)
     writer, reader = sessions[0], sessions[1]
@@ -348,7 +380,7 @@ async def _run_dirty_read(
     seen: dict[str, int] = {}
 
     async def roll_back_writer(gate: Gate) -> None:
-        try:
+        with suppress(_Rollback):
             async with writer.tx_ctx.scope(scope, isolation=level):
                 current = await writer.document.query(CELL).get(cid)
                 await writer.document.command(CELL).update(
@@ -356,8 +388,6 @@ async def _run_dirty_read(
                 )
                 await gate.checkpoint()  # 99 is written but not committed
                 raise _Rollback()
-        except _Rollback:
-            pass
 
     async def read_during_window(gate: Gate) -> None:
         await gate.checkpoint()
@@ -452,8 +482,12 @@ def _predicate_skew_session(
     return session
 
 
+# ....................... #
+
+
 async def _run_predicate_write_skew(
-    backend: ConformanceBackend, level: IsolationLevel
+    backend: ConformanceBackend,
+    level: IsolationLevel,
 ) -> Verdict:
     sessions = backend.contexts(2)
     a, b = sessions[0], sessions[1]
@@ -507,7 +541,8 @@ async def _run_predicate_write_skew(
 
 
 async def _run_read_only_anomaly(
-    backend: ConformanceBackend, level: IsolationLevel
+    backend: ConformanceBackend,
+    level: IsolationLevel,
 ) -> Verdict:
     sessions = backend.contexts(3)
     t1ctx, t2ctx, t3ctx = sessions[0], sessions[1], sessions[2]
@@ -564,6 +599,188 @@ async def _run_read_only_anomaly(
 
 
 # ....................... #
+# Fresh read then update (read-committed window): a transaction opens, a concurrent transaction
+# commits an update to a row, then the first reads that row FRESH and updates it. At READ_COMMITTED
+# the fresh re-read sees the concurrent commit, so the update is correctly rev-guarded and must
+# COMMIT (Postgres read-committed re-reads per statement) — a spurious abort here is the over-strict
+# begin-anchored conflict bug. At SNAPSHOT/SERIALIZABLE the same pattern reads the stale as-of-begin
+# snapshot and must ABORT (first-committer-wins on a row a concurrent transaction changed). The
+# READ_COMMITTED↔SNAPSHOT discriminator on the WRITE path (non_repeatable_read is its read-path twin).
+
+
+async def _run_fresh_read_update(
+    backend: ConformanceBackend,
+    level: IsolationLevel,
+) -> Verdict:
+    sessions = backend.contexts(2)
+    updater, precommitter = sessions[0], sessions[1]
+    scope = backend.scope_name
+
+    async with updater.tx_ctx.scope(scope):
+        cid = (await updater.document.command(CELL).create(CellCreate(value=1))).id
+
+    outcomes: dict[str, str] = {}
+
+    async def open_then_fresh_update(gate: Gate) -> None:
+        async with record_outcome(outcomes, "updater"):
+            async with updater.tx_ctx.scope(scope, isolation=level):
+                # Read once to PIN the snapshot before the concurrent commit — Postgres REPEATABLE
+                # READ captures its snapshot at the first statement, not at BEGIN, so a bare park here
+                # would let SI see the fresh value too. Then park so the concurrent update lands.
+                await updater.document.query(CELL).get(cid)
+                await gate.checkpoint()
+                # Re-read: RC reads through to the fresh committed row (new rev); SI/SER still see the
+                # pinned as-of-begin snapshot (stale rev).
+                current = await updater.document.query(CELL).get(cid)
+                await updater.document.command(CELL).update(
+                    cid, current.rev, CellUpdate(value=current.value + 1)
+                )
+
+    async def update_and_commit(gate: Gate) -> None:
+        await gate.checkpoint()  # run only after the updater has opened its scope
+        async with record_outcome(outcomes, "precommitter"):
+            async with precommitter.tx_ctx.scope(scope, isolation=level):
+                current = await precommitter.document.query(CELL).get(cid)
+                await precommitter.document.command(CELL).update(
+                    cid, current.rev, CellUpdate(value=current.value + 10)
+                )
+
+    await Conductor(schedule=("precommitter", "updater")).run(
+        {"updater": open_then_fresh_update, "precommitter": update_and_commit}
+    )
+
+    # PERMITTED = the fresh-read update committed (correct at RC, no spurious abort); PREVENTED = it
+    # aborted (correct at SI/SER, where it read the stale snapshot; the over-strict RC bug if here).
+    return _PERMIT if outcomes.get("updater") == "committed" else _PREVENT
+
+
+# ....................... #
+# Duplicate-key insert race (unique violation): two transactions each INSERT the SAME primary key,
+# both buffering before either commits. Postgres raises 23505 at EVERY level; the first commits, the
+# second must be REJECTED — never a silent merge. Abort-only: on Postgres the second INSERT blocks on
+# the unique index until the first commits, wedging the lock-step Conductor.
+
+
+async def _run_duplicate_key_insert(
+    backend: ConformanceBackend, level: IsolationLevel
+) -> Verdict:
+    sessions = backend.contexts(2)
+    a, b = sessions[0], sessions[1]
+    scope = backend.scope_name
+
+    contested = UUID(
+        int=next(_contested_id_seq)
+    )  # one id both racers insert; fresh per run
+    outcomes: dict[str, str] = {}
+
+    def insert_session(
+        ctx: ExecutionContext, name: str
+    ) -> Callable[[Gate], Awaitable[None]]:
+        async def session(gate: Gate) -> None:
+            try:
+                async with ctx.tx_ctx.scope(scope, isolation=level):
+                    await ctx.document.command(CELL).create(
+                        CellCreate(value=1), id=contested
+                    )
+                    await gate.checkpoint()  # buffered, uncommitted; let the other insert the same id
+                outcomes[name] = "committed"
+            except CoreException as error:
+                # A unique violation (conflict) OR a serialization failure both mean "the duplicate
+                # was rejected" — the anomaly (a silent merge) did NOT occur. Any other error is a bug.
+                if error.kind is ExceptionKind.CONFLICT or is_serialization_conflict(
+                    error
+                ):
+                    outcomes[name] = "rejected"
+                else:
+                    raise
+
+        return session
+
+    await Conductor(schedule=("a", "b")).run(
+        {"a": insert_session(a, "a"), "b": insert_session(b, "b")}
+    )
+
+    # PERMITTED = both inserts committed (a silent merge — the dangerous under-strict bug); PREVENTED
+    # = the duplicate was rejected (Postgres raises 23505, the mock now raises exc.conflict at commit).
+    return _PERMIT if all(v == "committed" for v in outcomes.values()) else _PREVENT
+
+
+# ....................... #
+# SELECT ... FOR UPDATE (pessimistic lock prevents lost update): two transactions each lock the SAME
+# row with a locked read, then blind-write it (no rev guard). The FOR UPDATE lock is what prevents the
+# lost update at READ_COMMITTED — without it, two blind writes both commit and one is lost. Abort-only:
+# on Postgres the second FOR UPDATE blocks on the row lock until the first commits, wedging the
+# Conductor; the mock converts the block into a conflict abort.
+
+
+def _for_update_session(
+    ctx: ExecutionContext,
+    *,
+    cid: UUID,
+    delta: int,
+    level: IsolationLevel,
+    scope: str,
+    outcomes: dict[str, str],
+    name: str,
+) -> Callable[[Gate], Awaitable[None]]:
+    async def session(gate: Gate) -> None:
+        async with record_outcome(outcomes, name):
+            async with ctx.tx_ctx.scope(scope, isolation=level):
+                row = await ctx.document.query(CELL).get(cid, for_update=True)
+                await gate.checkpoint()  # both hold the lock before either writes
+                # Rev-less write via the contract's bulk fast path: ``update_matching`` takes no
+                # expected revision, so the revision guard cannot catch the lost update — only the
+                # FOR UPDATE lock can. That isolates the lock's effect (a plain rev-guarded
+                # ``update`` would be prevented by rev-OCC at every level, masking it).
+                await ctx.document.command(CELL).update_matching(
+                    {"$values": {"id": {"$eq": cid}}},
+                    CellUpdate(value=row.value + delta),
+                    return_new=False,
+                )
+
+    return session
+
+
+async def _run_for_update_lost_update(
+    backend: ConformanceBackend, level: IsolationLevel
+) -> Verdict:
+    sessions = backend.contexts(2)
+    a, b = sessions[0], sessions[1]
+    scope = backend.scope_name
+
+    async with a.tx_ctx.scope(scope):
+        cid = (await a.document.command(CELL).create(CellCreate(value=0))).id
+
+    outcomes: dict[str, str] = {}
+    await Conductor(schedule=("a", "b")).run(
+        {
+            "a": _for_update_session(
+                a,
+                cid=cid,
+                delta=1,
+                level=level,
+                scope=scope,
+                outcomes=outcomes,
+                name="a",
+            ),
+            "b": _for_update_session(
+                b,
+                cid=cid,
+                delta=2,
+                level=level,
+                scope=scope,
+                outcomes=outcomes,
+                name="b",
+            ),
+        }
+    )
+
+    # PERMITTED = both blind writes committed (an update was lost); PREVENTED = the FOR UPDATE lock
+    # conflicted the second writer (the lock did its job — no lost update).
+    return _PERMIT if "aborted" not in outcomes.values() else _PREVENT
+
+
+# ....................... #
 
 
 BATTERY: tuple[AnomalyCase, ...] = (
@@ -614,6 +831,29 @@ BATTERY: tuple[AnomalyCase, ...] = (
         summary="Two transactions read then write the same row; one update would be lost.",
         contract={_RC: _PERMIT, _SI: _PREVENT, _SER: _PREVENT},
         run=_run_lost_update,
+    ),
+    AnomalyCase(
+        name="fresh_read_update",
+        summary=(
+            "A transaction reads a row after a concurrent commit, then updates it; RC re-reads fresh "
+            "and commits, SI/SER abort (stale as-of-begin snapshot)."
+        ),
+        contract={_RC: _PERMIT, _SI: _PREVENT, _SER: _PREVENT},
+        run=_run_fresh_read_update,
+    ),
+    AnomalyCase(
+        name="duplicate_key_insert",
+        summary="Two transactions insert the same primary key; the duplicate must be rejected, not merged.",
+        contract={_RC: _PREVENT, _SI: _PREVENT, _SER: _PREVENT},
+        run=_run_duplicate_key_insert,
+        abort_engine_only=True,
+    ),
+    AnomalyCase(
+        name="for_update_lost_update",
+        summary="Two transactions lock the same row (FOR UPDATE) then blind-write it; the lock prevents the lost update.",
+        contract={_RC: _PREVENT, _SI: _PREVENT, _SER: _PREVENT},
+        run=_run_for_update_lost_update,
+        abort_engine_only=True,
     ),
 )
 """The isolation anomaly battery, weakest-discriminator first."""
