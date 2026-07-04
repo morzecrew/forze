@@ -54,6 +54,16 @@ class InterceptingPortProxy(PortProxy):
     boundaries, which are async, matching the prior cooperative-yield behavior. The
     effective chain per call is the deps-scoped interceptors fixed at wrap time plus the
     ambient chain read per call (ambient innermost).
+
+    **Async-generator limitation.** For an async-generator method the chain wraps only
+    *obtaining* the generator (:meth:`_wrap_async_gen`); the subsequent per-item iteration
+    runs *outside* the chain. So an interceptor sees one ``around`` at open, not one per
+    yielded item: a ``LoggingInterceptor`` records the open (duration ≈ 0, "success") even if
+    the stream later fails mid-iteration; a DST cooperative-yield interceptor yields once at
+    open, not between items; and a fault interceptor cannot inject a mid-stream fault. This is
+    a deliberate consequence of the request/response ``around(call, next)`` shape — a proper
+    per-item hook needs a stream-aware interceptor method, not yet part of the contract. Treat
+    streamed reads as a single interception point.
     """
 
     interceptors: PortInterceptorChain

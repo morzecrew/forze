@@ -135,8 +135,9 @@ class TestIdempotencyDerivation:
 
         assert reg.freeze().catalog()["op"].supports_idempotency_key is False
 
-    def test_hedge_gate_behavior_untouched(self) -> None:
-        # Hedge without guard still rejected; with the idempotency sibling still passes.
+    def test_hedge_gate_and_idempotency_derivation(self) -> None:
+        # Hedge without an explicit safety basis is rejected — even with an idempotency
+        # sibling, which is claimed outside the hedge and cannot make concurrent attempts safe.
         hedged = (
             _registry()
             .bind("op")
@@ -148,11 +149,27 @@ class TestIdempotencyDerivation:
         with pytest.raises(CoreException, match="hedged"):
             hedged.freeze()
 
-        guarded = (
+        hedged_with_idempotency = (
             _registry()
             .bind("op")
             .bind_outer()
             .wrap(HedgeWrap(policy="p").to_step(), _idempotency_step())
+            .finish(deep=True)
+        )
+
+        with pytest.raises(CoreException, match="hedged"):
+            hedged_with_idempotency.freeze()
+
+        # With explicit safety it freezes, and the catalog still derives
+        # supports_idempotency_key from the IdempotencyWrap.
+        guarded = (
+            _registry()
+            .bind("op")
+            .bind_outer()
+            .wrap(
+                HedgeWrap(policy="p", safety=HedgeSafety.IDEMPOTENT).to_step(),
+                _idempotency_step(),
+            )
             .finish(deep=True)
         )
 

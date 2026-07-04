@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable
 # OpenTelemetry is imported lazily inside the ``instrument_*`` functions below so that
 # merely importing this module (it is re-exported from ``forze.application.execution``)
 # does not pull ``opentelemetry`` into the import path of an uninstrumented app.
+from forze.base.exceptions import CoreException, http_status_for_kind
+
 from forze.application.contracts.crypto import CryptoKeyringStats
 from forze.application.contracts.execution import (
     Middleware,
@@ -426,9 +428,23 @@ def _telemetry_factory(
                     return await next(args)
 
                 except BaseException as exc:
-                    outcome = "error"
-                    span.record_exception(exc)
-                    span.set_status(Status(StatusCode.ERROR))
+                    # Classify like the port spans: a client-class domain failure
+                    # (validation, not-found, conflict, precondition — a 4xx kind the
+                    # caller may handle) is an *expected* outcome recorded as ``failed``
+                    # with a clean span, so error-rate alerting on
+                    # ``forze.operations{forze.outcome="error"}`` tracks genuine faults.
+                    # A 5xx CoreException or any other exception paints the span red.
+                    if (
+                        isinstance(exc, CoreException)
+                        and http_status_for_kind(exc.kind) < 500
+                    ):
+                        outcome = "failed"
+
+                    else:
+                        outcome = "error"
+                        span.record_exception(exc)
+                        span.set_status(Status(StatusCode.ERROR))
+
                     raise
 
                 finally:

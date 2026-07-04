@@ -403,9 +403,19 @@ class AdaptiveBulkheadState:
             await waiter
 
         except asyncio.CancelledError:
-            if not waiter.cancelled() and waiter.done():
-                # Slot was granted concurrently with the cancellation: return
-                # it so the capacity is not leaked.
+            if (
+                waiter.done()
+                and not waiter.cancelled()
+                and waiter.exception() is None
+            ):
+                # A slot was *granted* concurrently with this cancellation —
+                # ``_wake`` did ``in_use += 1`` then ``set_result(None)`` — so
+                # return it or the capacity leaks. A waiter completed with an
+                # *exception* (queue shed / deadline) never took a slot, so it
+                # must NOT be decremented: doing so underflows ``in_use`` and
+                # permanently over-admits past the limit. (Reading ``exception()``
+                # also retrieves it, silencing the "never retrieved" warning for a
+                # shed waiter whose awaiting task was cancelled.)
                 self.in_use -= 1
                 self._wake()
 

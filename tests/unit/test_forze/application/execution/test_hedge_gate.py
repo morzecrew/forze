@@ -65,9 +65,17 @@ class TestHedgeSafetyGate:
     def test_hedge_with_explicit_safety_ok(self) -> None:
         _validate(HedgeWrap(policy="p", safety=HedgeSafety.READ_ONLY).to_step())
 
-    def test_hedge_with_idempotency_sibling_ok(self) -> None:
-        # No explicit safety, but the op carries an idempotency guard -> auto-blessed.
-        _validate(HedgeWrap(policy="p").to_step(), _idempotency_step())
+    def test_hedge_with_idempotency_sibling_still_requires_explicit_safety(self) -> None:
+        # A boundary IdempotencyWrap is claimed once *outside* the hedge, so it cannot make
+        # the hedge's concurrent duplicate attempts safe: the gate must still reject it.
+        with pytest.raises(CoreException, match="hedged"):
+            _validate(HedgeWrap(policy="p").to_step(), _idempotency_step())
+
+    def test_hedge_with_idempotency_and_explicit_safety_ok(self) -> None:
+        _validate(
+            HedgeWrap(policy="p", safety=HedgeSafety.IDEMPOTENT).to_step(),
+            _idempotency_step(),
+        )
 
     def test_no_hedge_is_unaffected(self) -> None:
         _validate(ResilienceWrap(policy="p").to_step())

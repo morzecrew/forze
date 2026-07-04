@@ -156,12 +156,15 @@ class RegistryFreezeValidator:
         handlers: StrKeyMapping[OperationHandlerFactory],
         resolution: PlanResolution,
     ) -> None:
-        """Reject hedged operations that are neither idempotency-guarded nor declared safe.
+        """Reject hedged operations whose hedge wraps do not declare an explicit safety basis.
 
-        Hedging fires concurrent duplicate attempts, so it is only safe on
-        idempotent / read-only operations. An operation carrying a hedge wrap passes
-        only if it also carries an idempotency guard (auto-detected) or every hedge
-        wrap declares an explicit safety basis.
+        Hedging fires concurrent duplicate attempts, so it is safe only when the handler
+        tolerates them (read-only, OCC, or naturally idempotent) — which the developer
+        asserts with ``HedgeWrap(safety=...)``. A boundary ``IdempotencyWrap`` does **not**
+        make hedging safe: it is claimed once at the outermost layer (priority 10), *outside*
+        the hedge (15), so the hedge's concurrent attempts each open their own transaction
+        and can both commit. It dedups separate client requests, not the in-invocation
+        concurrent attempts a hedge fires — so it is not accepted as a safety basis here.
         """
 
         for op in handlers:
@@ -176,16 +179,16 @@ class RegistryFreezeValidator:
             if not hedges:
                 continue
 
-            # Shared structural ProvidesIdempotency detection — the same derivation
-            # the catalog's ``supports_idempotency_key`` flag uses.
-            if plan.supports_idempotency_key() or all(
-                h.hedge_safety_declared() for h in hedges
-            ):
+            if all(h.hedge_safety_declared() for h in hedges):
                 continue
 
             raise exc.configuration(
-                f"Operation {op!r} is hedged but has no idempotency guard and no "
-                "explicit HedgeWrap(safety=...); concurrent duplicates are unsafe.",
+                f"Operation {op!r} is hedged but no HedgeWrap declares an explicit safety "
+                "basis (HedgeWrap(safety=...)). Concurrent duplicate attempts are unsafe "
+                "unless the handler tolerates them (read-only, OCC, or naturally "
+                "idempotent). A boundary IdempotencyWrap does NOT make hedging safe — it "
+                "dedups separate client requests, not the in-invocation concurrent attempts "
+                "a hedge fires, which each open their own transaction and can both commit.",
             )
 
     # ....................... #

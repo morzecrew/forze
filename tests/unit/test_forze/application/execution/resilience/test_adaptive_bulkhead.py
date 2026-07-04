@@ -262,6 +262,58 @@ class TestExecutorIntegration:
         ((_, _, limit),) = executor.adaptive_bulkhead_limits()
         assert limit == 8.0
 
+    def _boom_digest_executor(self, clock: _Clock) -> InProcessResilienceExecutor:
+        class _BoomDigest:  # satisfies the LatencyDigestStore protocol structurally
+            async def observe(
+                self,
+                key: LatencyDigestKey,
+                latency: float,
+                strat: AdaptiveBulkheadStrategy,
+            ) -> float | None:
+                raise RuntimeError("digest store down")
+
+            async def reset(
+                self, key: LatencyDigestKey, strat: AdaptiveBulkheadStrategy
+            ) -> None:
+                raise RuntimeError("digest store down")
+
+        return InProcessResilienceExecutor(
+            policies={
+                "p": ResiliencePolicy(
+                    name="p",
+                    strategies=(_strategy(max_concurrency=2, latency_quantile=0.95),),
+                )
+            },
+            clock=clock,
+            latency_digest_store=_BoomDigest(),
+        )
+
+    async def test_digest_store_error_does_not_fail_a_successful_call(self) -> None:
+        # Feeding the latency digest is bookkeeping (like the breaker's outcome
+        # recording): a store outage must not turn an already-successful call into a
+        # failure — it fails open.
+        clock = _Clock()
+        executor = self._boom_digest_executor(clock)
+
+        async def slow_ok() -> str:
+            clock.now += 1.0  # elapsed > 0 -> the success path feeds the digest
+            return "ok"
+
+        assert await executor.run(slow_ok, policy="p") == "ok"
+
+    async def test_digest_store_error_does_not_mask_business_exception(self) -> None:
+        # On the failure path the digest observe runs before the business error is
+        # re-raised; a store outage there must not replace the in-flight domain error.
+        clock = _Clock()
+        executor = self._boom_digest_executor(clock)
+
+        async def slow_boom() -> str:
+            clock.now += 1.0  # elapsed > threshold -> the failure path feeds the digest
+            raise exc.conflict("business failure")
+
+        with pytest.raises(CoreException, match="business failure"):
+            await executor.run(slow_boom, policy="p")
+
 
 class TestExpiredWaiterDrop:
     async def test_expired_waiter_failed_at_wake_instead_of_granted(self) -> None:
@@ -302,6 +354,38 @@ class TestExpiredWaiterDrop:
         state.release()
 
         await waiter  # granted normally
+
+    async def test_shed_waiter_cancelled_does_not_underflow_in_use(self) -> None:
+        # A waiter completed with an *exception* (queue displacement / CoDel shed) never
+        # took a slot. If its awaiting task is then cancelled, in_use must NOT be
+        # decremented — the historical bug did, underflowing past 0 and permanently
+        # over-admitting past the limit.
+        state = _state(max_concurrency=1, max_queue=2)
+        await state.acquire()  # hold the only slot
+        assert state.in_use == 1
+
+        entered = asyncio.Event()
+
+        async def parker() -> None:
+            entered.set()
+            await state.acquire()  # parks — no slot free
+
+        task = asyncio.create_task(parker())
+        await entered.wait()
+        await asyncio.sleep(0)  # let parker reach `await waiter`
+        assert state.waiting == 1
+
+        # Shed the parked waiter (set_exception, grant no slot), then cancel the task
+        # before it resumes (no await in between) so it wakes with CancelledError.
+        state._displace_lowest()  # noqa: SLF001 - white-box shed of the parked waiter
+        assert state.in_use == 1  # displacement granted nothing
+
+        task.cancel()
+
+        with pytest.raises((asyncio.CancelledError, CoreException)):
+            await task
+
+        assert state.in_use == 1  # the shed waiter took no slot -> no underflow
 
 
 class TestQueueManagement:

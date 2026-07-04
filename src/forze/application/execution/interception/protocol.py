@@ -15,6 +15,12 @@ Two registration surfaces feed the same chain:
 The effective chain for a call is ``deps_interceptors + ambient_interceptors`` (ambient runs
 innermost, closest to the port — it models the I/O boundary). The chain sits **inside** the
 resilience port-policy wrap, so a fault interceptor's transient error is retryable.
+
+Async-generator methods intercept only the *acquisition* of the generator, not per-item
+iteration (see :class:`~forze.application.execution.interception.proxy.InterceptingPortProxy`):
+a streamed read is a single interception point, so cooperative-yield and fault interceptors do
+not fire between items and a logging interceptor times only the open. A per-item hook would
+need a stream-aware interceptor shape beyond the request/response ``around``.
 """
 
 from __future__ import annotations
