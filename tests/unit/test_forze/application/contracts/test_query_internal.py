@@ -1677,3 +1677,21 @@ def test_elem_inner_is_scalar_or_recurses() -> None:
 def test_elem_inner_is_scalar_object_predicate_is_false() -> None:
     assert elem_inner_is_scalar(QueryField("sku", "$eq", "x")) is False
     assert elem_inner_is_scalar(QueryNot(QueryField(ELEM_SCALAR_FIELD, "$eq", "x"))) is False
+
+
+# ....................... #
+
+
+def test_combinator_operand_must_be_a_list() -> None:
+    # A non-list ``$or`` / ``$and`` operand (e.g. a bare string) is a clean client-caused
+    # precondition, not an AttributeError deep in the recursive parse.
+    for op in ("$or", "$and"):
+        with pytest.raises(CoreException, match="list of filter expression"):
+            QueryFilterExpressionParser.parse({op: "not-a-list"})
+
+
+def test_combinator_operand_entries_must_be_objects() -> None:
+    # A list entry that is not a filter-expression object is likewise rejected up front.
+    for op in ("$or", "$and"):
+        with pytest.raises(CoreException, match="must be filter expression"):
+            QueryFilterExpressionParser.parse({op: ["not-a-dict"]})

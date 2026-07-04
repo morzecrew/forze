@@ -108,6 +108,32 @@ class MockDurableRunStore(DurableRunStorePort):
 
     # ....................... #
 
+    async def renew(
+        self,
+        run_id: str,
+        *,
+        lease_for: timedelta,
+        fence: int,
+    ) -> bool:
+        with self.state.lock:
+            data = self.state.durable_runs.get(run_id)
+
+            # Fenced like ``_finish``: extend the lease only while this worker is still the
+            # current claim holder (``attempts == fence``) and the run is still RUNNING. A
+            # reclaim advanced ``attempts``, so the fence no longer matches and the caller is
+            # told to stop.
+            if data is None or data["status"] != DurableRunStatus.RUNNING.value:
+                return False
+
+            if data["attempts"] != fence:
+                return False
+
+            data["leased_until"] = utcnow() + lease_for
+
+            return True
+
+    # ....................... #
+
     async def claim_abandoned(
         self,
         *,

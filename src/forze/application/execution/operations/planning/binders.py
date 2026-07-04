@@ -210,10 +210,10 @@ class TransactionScopeBinder[P: _Parent, R](ScopeBinder[P, R]):
         """Add after commit steps to the plan.
 
         After-commit steps run *after* the root transaction has committed. Every
-        registered callback runs even when earlier ones fail; failures are logged
-        and aggregated into a single ``after_commit_failed`` internal error raised
-        once all callbacks ran. A callback failure does **not** roll back the
-        (already committed) transaction.
+        registered callback runs even when earlier ones fail. These are best-effort
+        effects: a failure is logged and reported to a wired ``AfterCommitErrorHandler``
+        out-of-band — not raised, so the committed operation returns its result unchanged.
+        A callback failure does **not** roll back the (already committed) transaction.
         """
 
         new_acc = attrs.evolve(

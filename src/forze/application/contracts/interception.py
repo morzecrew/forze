@@ -11,7 +11,7 @@ ambient binding and the wrapping proxy are execution machinery
 (``forze.application.execution.interception``).
 """
 
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, AsyncIterator, Awaitable, Callable, Protocol, runtime_checkable
 
 import attrs
 
@@ -92,6 +92,12 @@ class PortInterceptor(Protocol):
 
     ``around`` may delay, short-circuit (return a synthetic result), raise (inject a fault),
     or call ``nxt(call)`` and post-process its result. It must await ``nxt`` at most once.
+
+    For an **async-generator** port method (a stream — ``find_cursor``, ``search_stream``,
+    ``consume``, ``run_chunked``, …) ``around`` sees only the *acquisition* of the iterator:
+    ``nxt(call)`` returns the generator, which the proxy iterates afterwards. To act on each
+    yielded item (a per-item interleaving / fault-injection point) or across the whole stream
+    (duration, mid-stream failure), additionally implement :class:`StreamPortInterceptor`.
     """
 
     async def around(self, call: PortCall, nxt: PortNext) -> Any: ...
@@ -99,3 +105,34 @@ class PortInterceptor(Protocol):
 
 PortInterceptorChain = tuple[PortInterceptor, ...]
 """An ordered interceptor chain; the first element is the outermost."""
+
+
+# ....................... #
+
+
+StreamPortNext = Callable[["PortCall"], AsyncIterator[Any]]
+"""Continuation for an async-generator port call: returns the rest-of-chain async iterator
+(the real port method's generator at the terminal). Called synchronously — iterating it drives
+the inner chain — so a :class:`StreamPortInterceptor` awaits *per item*, not on ``nxt`` itself."""
+
+
+@runtime_checkable
+class StreamPortInterceptor(Protocol):
+    """Optional capability: interpose on an async-generator port call *as a stream*.
+
+    Where :meth:`PortInterceptor.around` wraps only obtaining the generator, ``around_stream``
+    wraps the **iteration**: an implementer ``async for item in nxt(call): ... yield item`` and
+    may act at stream open, on each item (delay for a per-item interleaving point, transform,
+    or raise to inject a mid-stream fault), and at stream end or failure (``try/except/finally``
+    around the loop — e.g. timing the whole stream and logging a mid-stream error). It must
+    re-yield the inner items (optionally transformed) unless it deliberately short-circuits.
+
+    The proxy uses ``around_stream`` for async-generator methods when an interceptor implements
+    it, and falls back to ``around`` (acquisition only) otherwise — so an ``around``-only
+    interceptor keeps its historical behavior. The check is structural (``runtime_checkable``);
+    an interceptor may implement one or both.
+    """
+
+    def around_stream(
+        self, call: PortCall, nxt: StreamPortNext
+    ) -> AsyncIterator[Any]: ...

@@ -5,11 +5,14 @@ from typing import Any, Callable, Mapping, Sequence
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from .cursor_token import encode_keyset_v1, row_value_for_sort_key
+from .cursor_token import CursorBinding, encode_keyset_v1, row_value_for_sort_key
 
 # ----------------------- #
 
 _DEFAULT_CURSOR_LIMIT = 10
+MAX_CURSOR_LIMIT = 10_000
+"""Ceiling for a client-supplied cursor page size. The limit is untrusted, so a huge value
+(``limit=10**9``) is clamped rather than materializing an unbounded result set."""
 
 # ....................... #
 
@@ -56,12 +59,30 @@ def assert_cursor_projection_includes_sort_keys(
 
 
 def resolved_cursor_limit(cursor: Mapping[str, Any] | None) -> int:
-    """Effective page size (default ``10`` when omitted)."""
+    """Effective page size — default when omitted, coerced and clamped to ``[1, MAX_CURSOR_LIMIT]``.
+
+    The limit is client-controlled, so a non-integer is a clean ``validation`` error (not a
+    500 from a bare ``int('abc')``) and an over-large value is clamped to ``MAX_CURSOR_LIMIT``
+    rather than materializing an unbounded result set (``LIMIT 1000000001``).
+    """
     lim = dict(cursor or {}).get("limit")
     if lim is None:
         return _DEFAULT_CURSOR_LIMIT
 
-    return int(lim)
+    try:
+        value = int(lim)
+
+    # OverflowError: a non-finite float (``float('inf')``) — coercion must be a clean 400,
+    # not a 500 from the raw ``int(inf)``.
+    except (TypeError, ValueError, OverflowError) as e:
+        raise exc.validation(
+            "Cursor pagination 'limit' must be an integer"
+        ) from e
+
+    if value < 1:
+        raise exc.validation("Cursor pagination 'limit' must be positive")
+
+    return min(value, MAX_CURSOR_LIMIT)
 
 
 # ....................... #
@@ -75,13 +96,15 @@ def assemble_keyset_cursor_page(
     directions: Sequence[str],
     dump_row: Callable[[Any], JsonDict],
     nulls: Sequence[str] | None = None,
+    binding: CursorBinding | None = None,
 ) -> tuple[list[Any], bool, str | None, str | None]:
     """Slice ``fetched`` to the requested window and derive opaque cursors.
 
     Gateways commonly return ``limit + 1`` rows so callers can infer
     ``has_more`` without a separate count query. *nulls* (the per-key placement) is
     carried into the emitted tokens so a follow-up page validates; omit it for the
-    canonical default.
+    canonical default. *binding* is embedded in the emitted tokens when signing is active
+    so a follow-up page can prove it belongs to this query.
     """
 
     c = dict(cursor or {})
@@ -100,6 +123,7 @@ def assemble_keyset_cursor_page(
             directions=directions,
             nulls=nulls,
             values=[row_value_for_sort_key(last, k) for k in sort_keys],
+            binding=binding,
         )
 
     else:
@@ -112,6 +136,7 @@ def assemble_keyset_cursor_page(
             directions=directions,
             nulls=nulls,
             values=[row_value_for_sort_key(first, k) for k in sort_keys],
+            binding=binding,
         )
 
     else:

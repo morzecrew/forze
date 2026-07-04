@@ -32,7 +32,7 @@ class TemporalBaseAdapter(TenancyMixin):
     queue: NamedResourceSpec
     """Static or tenant-scoped Temporal task queue name."""
 
-    workflow_id_factory: Callable[[], str] = attrs.field(default=lambda: str(uuid4))
+    workflow_id_factory: Callable[[], str] = attrs.field(default=lambda: str(uuid4()))
     """Callable to generate a unique workflow ID."""
 
     _queue_cell: OnceCell[str] = attrs.field(

@@ -137,9 +137,18 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         A **top-level** invocation (no operation already active on this task)
         is admitted through the scope's drain gate: rejected with ``THROTTLED``
         (``code="draining"``) once the runtime is draining, counted in flight
-        otherwise. Nested dispatch rides the outer invocation's slot — the
-        active-operation marker doubles as the nesting signal — so draining
-        never starves an admitted operation of its own dispatch chains.
+        otherwise. Genuine in-await nested dispatch rides the outer invocation's
+        slot — so draining never starves an admitted operation of its own
+        dispatch chains.
+
+        Nesting is decided by **task identity**, not by the marker's mere
+        presence: the marker is a ContextVar, so a task a handler spawns
+        (``asyncio.create_task(facade.run(...))``) inherits it despite being a
+        distinct, detached task. Only a marker owned by the *current* task counts
+        as nested; an inherited marker on a different task is treated as the
+        fresh top-level driver it is, so the spawned operation is admitted,
+        counted in flight, and its task tracked by the gate — otherwise it would
+        escape drain and run on against the clients teardown is closing.
 
         Hot path: both flags are token set/reset directly (the equivalent of the
         :func:`~forze.application.execution.context.active_operation.operation_running`
@@ -147,7 +156,14 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         ``@contextmanager`` enter/exit costs ~5x a raw ContextVar set/reset pair.
         """
 
-        gate = None if active_operation_var.get() else self.drain_gate
+        # Nested only when the enclosing operation runs on THIS task. A marker
+        # inherited via a copied context on a spawned task belongs to a different
+        # task, so it is a fresh top-level driver and must be gated (counted /
+        # tracked / rejectable), never mistaken for in-await nesting.
+        current_task = asyncio.current_task()
+        owner_task = active_operation_var.get()
+        nested = current_task is not None and owner_task is current_task
+        gate = None if nested else self.drain_gate
 
         if gate is not None:
             gate.admit(self.op)
@@ -159,7 +175,9 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
             # propagates to the top-level boundary.
             reset_commit_started()
 
-        marker_token = active_operation_var.set(True)
+        marker_token = active_operation_var.set(
+            current_task if current_task is not None else True
+        )
 
         try:
             if self.plan.kind is OperationKind.QUERY:
@@ -228,7 +246,7 @@ async def run_operation(
     # ``resolved`` runs (which sets the marker for *this* op) lets a trace consumer attribute the
     # invoke correctly. The invoke's ``seq`` becomes the correlation id its terminal carries back,
     # so concurrent calls of the same op are paired exactly rather than per-op FIFO.
-    nested = active_operation_var.get()
+    nested = bool(active_operation_var.get())
     invoke_seq = record(
         domain="operation", op=str(op), phase="invoke", nested=nested, deps=ctx.deps
     )

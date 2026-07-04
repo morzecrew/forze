@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from forze.application.contracts.stream import StreamSpec
 from forze.base.serialization import PydanticModelCodec
 from forze_kafka.adapters import KafkaStreamCodec
+from forze_kafka.kernel.rebalance import KafkaCommitRebalanceListener
 
 # ----------------------- #
 
@@ -80,6 +81,7 @@ class FakeConsumer:
         begins: dict[TopicPartition, int] | None = None,
         ends: dict[TopicPartition, int] | None = None,
         times: dict[TopicPartition, OffsetAndTimestamp | None] | None = None,
+        assignment: set[TopicPartition] | None = None,
     ) -> None:
         self._batches = batches or {}
         self._batch_sequence = batch_sequence
@@ -87,8 +89,10 @@ class FakeConsumer:
         self._begins = begins or {}
         self._ends = ends or {}
         self._times = times or {}
+        self._assignment = assignment or set()
         self.committed: dict[TopicPartition, OffsetAndMetadata] = {}
         self.assigned: list[TopicPartition] = []
+        self.sought: list[list[TopicPartition]] = []
         self.stopped = False
 
     async def getmany(
@@ -115,6 +119,12 @@ class FakeConsumer:
 
     def assign(self, partitions: list[TopicPartition]) -> None:
         self.assigned = list(partitions)
+
+    def assignment(self) -> set[TopicPartition]:
+        return set(self._assignment)
+
+    async def seek_to_committed(self, *partitions: TopicPartition) -> None:
+        self.sought.append(list(partitions))
 
     async def beginning_offsets(
         self, partitions: list[TopicPartition]
@@ -201,6 +211,7 @@ class FakeKafkaClient:
         self._transient = transient or FakeConsumer()
         self._admin = admin or FakeAdmin()
         self.get_consumer_calls: list[dict[str, Any]] = []
+        self.last_listener: KafkaCommitRebalanceListener | None = None
 
     async def close(self) -> None:  # pragma: no cover - not exercised
         return None
@@ -238,6 +249,7 @@ class FakeKafkaClient:
         topics: Sequence[str],
         auto_offset_reset: str | None = None,
         max_poll_records: int | None = None,
+        listener: KafkaCommitRebalanceListener | None = None,
     ) -> FakeConsumer:
         self.get_consumer_calls.append(
             {
@@ -249,8 +261,17 @@ class FakeKafkaClient:
             }
         )
         if member in self._consumers_by_member:
-            return self._consumers_by_member[member]
-        return self._consumers_by_group.get(group, self._consumer)
+            consumer = self._consumers_by_member[member]
+        else:
+            consumer = self._consumers_by_group.get(group, self._consumer)
+
+        # Mirror the real client: bind the live consumer so the listener's
+        # assignment seek can act on it.
+        self.last_listener = listener
+        if isinstance(listener, KafkaCommitRebalanceListener):
+            listener.consumer = consumer  # type: ignore[assignment]
+
+        return consumer
 
     async def new_transient_consumer(self, *, group: str | None = None) -> FakeConsumer:
         del group

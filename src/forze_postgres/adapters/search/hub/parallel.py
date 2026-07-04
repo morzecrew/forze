@@ -18,6 +18,8 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    build_cursor_binding,
+    cursor_protection_active,
     encode_keyset_v1,
     row_passes_keyset_seek,
     row_value_for_sort_key,
@@ -474,12 +476,23 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         sort_keys = [k for k, _ in plan.order_key_spec]
         directions = [d for _, d in plan.order_key_spec]
 
+        binding = (
+            build_cursor_binding(
+                spec_name=hub_spec.name,
+                tenant_id=host._tenant_id_for_resolve(),  # type: ignore[protected-access]
+                filter_expr=host.compile_filters(filters),
+            )
+            if cursor_protection_active()
+            else None
+        )
+
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
             cursor_vals = validate_cursor_token(
                 token,
                 sort_keys=sort_keys,
                 directions=directions,
+                binding=binding,
             )
 
             merged = [
@@ -512,6 +525,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 sort_keys=sort_keys,
                 directions=directions,
                 values=_row_token_vals(rows[-1]),
+                binding=binding,
             )
 
         else:
@@ -522,6 +536,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 sort_keys=sort_keys,
                 directions=directions,
                 values=_row_token_vals(rows[0]),
+                binding=binding,
             )
 
         else:

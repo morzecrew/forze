@@ -7,6 +7,7 @@ from aiokafka.structs import TopicPartition
 from forze.application.contracts.stream import (
     CommitStreamGroupCapabilities,
     StreamPosition,
+    UndecodableStreamPayload,
 )
 from forze_kafka.adapters import KafkaCommitStreamGroupAdapter, KafkaStreamCodec
 
@@ -176,6 +177,119 @@ async def test_capabilities() -> None:
         supports_replay=True,
         supports_transactions=False,
     )
+
+
+async def test_poison_record_does_not_crash_read_or_skip_good_records() -> None:
+    # BUG 1: a malformed record in the middle of a batch must not raise out of
+    # read() (getmany already advanced the pooled position past the whole batch,
+    # so a raise would let a later commit skip the unprocessed records). Instead
+    # the poison is surfaced as a marker with its real offset, so the runner can
+    # commit only up to the last good record before it and pause.
+    codec = make_codec()
+    tp = TopicPartition("events", 0)
+    records = [
+        record("events", 0, 0, codec.encode_value(Msg(body="good0"))),
+        record("events", 0, 1, b"\xff not valid json \x00"),  # poison
+        record("events", 0, 2, codec.encode_value(Msg(body="good2"))),
+    ]
+    consumer = FakeConsumer(batches={tp: records})
+    adapter = _adapter(FakeKafkaClient(consumer=consumer))
+
+    messages = await adapter.read("g", "m", ["events"])  # must not raise
+
+    assert len(messages) == 3
+    assert messages[0].payload.body == "good0"
+    assert isinstance(messages[1].payload, UndecodableStreamPayload)
+    assert messages[1].offset == 1
+    assert messages[1].id == "events:0:1"
+    assert messages[2].payload.body == "good2"
+
+    # The runner commits only the good record(s) BEFORE the poison, then pauses.
+    # Emulate that single commit: offset 0 → next offset 1, so the poison (1) and
+    # the good record after it (2) stay UNcommitted — never skipped past.
+    await adapter.commit("g", [StreamPosition.from_message(messages[0])])
+
+    assert consumer.committed[tp].offset == 1
+
+
+async def test_seek_to_committed_rewinds_each_group_consumer() -> None:
+    # BUG 1 (abort path): seek_to_committed rewinds every pooled consumer the group
+    # read through, so an aborted/paused batch is re-fetched from committed, not
+    # skipped by the advanced in-memory position.
+    codec = make_codec()
+    tp = TopicPartition("events", 0)
+    consumer = FakeConsumer(
+        batches={tp: [record("events", 0, 0, codec.encode_value(Msg(body="a")))]},
+        assignment={tp},
+    )
+    adapter = _adapter(FakeKafkaClient(consumer=consumer))
+
+    await adapter.read("g", "m", ["events"])  # registers partition routing
+    await adapter.seek_to_committed("g", ["events"])
+
+    assert consumer.sought == [[tp]]
+
+
+async def test_seek_to_committed_skips_consumer_with_no_assignment() -> None:
+    # A consumer that lost its assignment (e.g. mid-rebalance) is not sought — the
+    # aiokafka call would raise on unassigned partitions.
+    codec = make_codec()
+    tp = TopicPartition("events", 0)
+    consumer = FakeConsumer(
+        batches={tp: [record("events", 0, 0, codec.encode_value(Msg(body="a")))]},
+        assignment=set(),
+    )
+    adapter = _adapter(FakeKafkaClient(consumer=consumer))
+
+    await adapter.read("g", "m", ["events"])
+    await adapter.seek_to_committed("g", ["events"])
+
+    assert consumer.sought == []
+
+
+async def test_rebalance_revocation_clears_routing_then_commit_is_noop() -> None:
+    # BUG 2: a rebalance between read and commit revokes the partition. The
+    # listener clears the stale routing so the later commit is a skip (redelivered +
+    # inbox-deduped), never an IllegalStateError on a member that lost the partition.
+    codec = make_codec()
+    tp = TopicPartition("events", 0)
+    consumer = FakeConsumer(
+        batches={tp: [record("events", 0, 0, codec.encode_value(Msg(body="a")))]},
+        assignment={tp},
+    )
+    client = FakeKafkaClient(consumer=consumer)
+    adapter = _adapter(client)
+
+    await adapter.read("g", "m", ["events"])
+    listener = client.last_listener
+    assert listener is not None
+
+    await listener.on_partitions_revoked([tp])
+
+    # Routing for the revoked partition is gone → commit routes nowhere (no-op).
+    await adapter.commit("g", [StreamPosition(stream="events", partition=0, offset=4)])
+    assert consumer.committed == {}
+
+
+async def test_rebalance_assignment_seeks_to_committed() -> None:
+    # BUG 2: on (re)assignment the listener rewinds assigned partitions to committed
+    # so a rebalance never resumes from a stale in-memory position.
+    codec = make_codec()
+    tp = TopicPartition("events", 0)
+    consumer = FakeConsumer(
+        batches={tp: [record("events", 0, 0, codec.encode_value(Msg(body="a")))]},
+        assignment={tp},
+    )
+    client = FakeKafkaClient(consumer=consumer)
+    adapter = _adapter(client)
+
+    await adapter.read("g", "m", ["events"])
+    listener = client.last_listener
+    assert listener is not None
+
+    await listener.on_partitions_assigned([tp])
+
+    assert consumer.sought == [[tp]]
 
 
 async def test_tail_yields_messages() -> None:

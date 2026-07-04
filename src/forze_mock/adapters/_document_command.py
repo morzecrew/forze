@@ -62,6 +62,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         def _ensure_exists(self, pk: UUID) -> JsonDict: ...
         def _check_rev(self, current_rev: int, expected_rev: int | None) -> None: ...
         def _mark_rev_guarded(self, pk: UUID) -> None: ...
+        def _mark_created(self, pk: UUID) -> None: ...
         def _create_codec(self) -> ModelCodec[D, Any]: ...
         def _domain_codec(self) -> ModelCodec[D, Any]: ...
         def _patch_codec(self) -> ModelCodec[Any, Any]: ...
@@ -167,8 +168,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> None: ...
 
     async def create(
-        self, payload: C, *, id: UUID | None = None, return_new: bool = True
+        self,
+        payload: C,
+        *,
+        id: UUID | None = None,
+        return_new: bool = True,
+        conflict_on_duplicate: bool = True,
     ) -> R | None:
+        # ``conflict_on_duplicate`` is the plain-INSERT contract (a duplicate id is a unique
+        # violation). ``upsert`` sets it False for its create arm, which is ``ON CONFLICT DO
+        # NOTHING`` idempotent on the real adapters — so a concurrent duplicate must not raise there.
         self._ensure_writable()
         domain = self._build_domain(payload, id)
         serialized = self._apply_tenant(
@@ -185,6 +194,13 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     details={"id": str(domain.id)},
                 )
             store[domain.id] = serialized
+
+            # Publish-time unique-violation guard: a concurrent transaction may commit the same id
+            # between this statement and this transaction's commit; marking the create lets the MVCC
+            # commit raise ``exc.conflict`` then rather than silently merging (matching Postgres,
+            # which raises 23505 at every isolation level).
+            if conflict_on_duplicate:
+                self._mark_created(domain.id)
 
         await self._dispatch_domain_events([domain])
 
@@ -350,7 +366,15 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     update,
                     return_new=return_new,
                 )
-            return await self.create(create, id=id, return_new=return_new)  # type: ignore[call-overload]
+            # ``ON CONFLICT DO NOTHING`` idempotency: a concurrent upsert of the same id must not
+            # raise a unique violation (the real adapters converge silently), so the create arm opts
+            # out of the publish-time duplicate guard.
+            return await self.create(  # type: ignore[call-overload]
+                create,
+                id=id,
+                return_new=return_new,
+                conflict_on_duplicate=False,
+            )
 
     # ....................... #
 

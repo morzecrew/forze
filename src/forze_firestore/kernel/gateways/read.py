@@ -7,13 +7,11 @@ require_firestore()
 # ....................... #
 
 from typing import (
-    Any,
     AsyncGenerator,
     Literal,
     Never,
     Sequence,
     TypeVar,
-    cast,
     final,
     overload,
 )
@@ -35,6 +33,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     decode_keyset_v1,
     normalize_sorts_for_keyset,
+    resolved_cursor_limit,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -42,6 +41,7 @@ from forze.domain.constants import ID_FIELD
 
 from forze.application.integrations.persistence import (
     ReadValidationCodecMixin,
+    document_cursor_binding,
     log_non_postgres_lock_degrade,
 )
 
@@ -51,6 +51,9 @@ from .base import FirestoreGateway
 
 T = TypeVar("T", bound=BaseModel)
 M = TypeVar("M", bound=BaseModel)
+
+_FIRESTORE_IN_LIMIT = 30
+"""Maximum number of comparison values Firestore accepts in an ``in`` query."""
 
 # ....................... #
 
@@ -102,16 +105,20 @@ class FirestoreReadGateway[M: BaseModel](
             return []
 
         ids = [str(pk) for pk in pks]
-        base = FieldFilter(ID_FIELD, "in", ids)
-        flt = self._add_tenant_filter(base)
-
-        rows = await self.client.query_stream(await self.coll(), filters=flt)
-
+        coll = await self.coll()
         by_pk: dict[str, JsonDict] = {}
 
-        for row in rows:
-            normalized = self._from_storage_doc(row)
-            by_pk[str(normalized[ID_FIELD])] = normalized
+        # Firestore caps ``in`` at 30 comparison values, so chunk the ids: a naive
+        # single ``in`` silently drops everything past the 30th id and reports those
+        # documents as not-found.
+        for offset in range(0, len(ids), _FIRESTORE_IN_LIMIT):
+            chunk = ids[offset : offset + _FIRESTORE_IN_LIMIT]
+            flt = self._add_tenant_filter(FieldFilter(ID_FIELD, "in", chunk))
+            rows = await self.client.query_stream(coll, filters=flt)
+
+            for row in rows:
+                normalized = self._from_storage_doc(row)
+                by_pk[str(normalized[ID_FIELD])] = normalized
 
         missing = [pk for pk in pks if str(pk) not in by_pk]
 
@@ -408,11 +415,10 @@ class FirestoreReadGateway[M: BaseModel](
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
-        limit_raw = c.get("limit")
-        lim: int = 10 if limit_raw is None else int(cast(Any, limit_raw))  # type: ignore[has-type, assignment]
-
-        if lim < 1:
-            raise exc.validation("Cursor pagination 'limit' must be positive")
+        # Coerced + clamped like the document/search cursor paths: a non-integer is a clean
+        # 400 (not a raw ValueError) and an over-large value is clamped to MAX_CURSOR_LIMIT
+        # instead of reaching Firestore as an unbounded ``lim + 1`` fetch.
+        lim = resolved_cursor_limit(c)
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
@@ -434,7 +440,9 @@ class FirestoreReadGateway[M: BaseModel](
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
-            tk, td, _tn, tv = decode_keyset_v1(token)
+            tk, td, _tn, tv = decode_keyset_v1(
+                token, binding=document_cursor_binding(self, filters)
+            )
 
             if (
                 tk != [ID_FIELD]

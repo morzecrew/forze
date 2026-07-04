@@ -133,3 +133,12 @@ async def test_mongo_adapter_find_cursor_tokens(
             cursor={"limit": 2},
             sorts={"label": "asc"},
         )
+
+    # The Mongo cursor path routes its limit through the shared, hardened parser: a
+    # non-integer is a clean 400 (not a raw ValueError) ...
+    with pytest.raises(CoreException, match="must be an integer"):
+        await q.find_cursor(None, cursor={"limit": "abc"}, sorts=None)
+
+    # ... and an enormous limit is clamped rather than sent to Mongo as an unbounded fetch.
+    clamped = await q.find_cursor(None, cursor={"limit": 10**9}, sorts=None)
+    assert len(clamped.hits) == 4  # all rows returned, no error, no unbounded fetch

@@ -24,7 +24,9 @@ from forze.application.contracts.stream import (
     CommitStreamGroupQueryDepKey,
     OffsetReset,
     StreamMessage,
+    StreamPosition,
     StreamSpec,
+    UndecodableStreamPayload,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
@@ -277,6 +279,72 @@ async def test_retry_policy_wraps_each_process_attempt() -> None:
     assert result.processed == 1
     assert attempts == 2  # the executor retried the failing attempt once
     assert executor.policies_used == ["flaky"]
+
+
+@attrs.define(slots=True)
+class _PoisonThenEmptyPort:
+    """Fake commit-stream port: serves one undecodable-marker batch, then drains.
+
+    Records commits and seek-to-committed calls so the runner's decode-poison
+    pause path (surface marker → pause → rewind to committed) is observable
+    without a real Kafka adapter.
+    """
+
+    seek_calls: list[tuple[str, list[str]]] = attrs.field(factory=list)
+    commits: list[list[StreamPosition]] = attrs.field(factory=list)
+    served: bool = False
+
+    async def read(
+        self,
+        group: str,
+        consumer: str,
+        topics: Any,
+        *,
+        limit: Any = None,
+        timeout: Any = None,
+    ) -> list[StreamMessage[_Payload]]:
+        del group, consumer, topics, limit, timeout
+        if self.served:
+            return []
+        self.served = True
+        return [
+            StreamMessage(
+                stream=_TOPIC,
+                id=f"{_TOPIC}:0:0",
+                payload=UndecodableStreamPayload(raw=b"x", error="boom"),  # type: ignore[arg-type]
+                partition=0,
+                offset=0,
+            )
+        ]
+
+    async def tail(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+        raise NotImplementedError
+
+    async def commit(self, group: str, positions: Any) -> None:
+        del group
+        self.commits.append(list(positions))
+
+    async def seek_to_committed(self, group: str, topics: Any) -> None:
+        self.seek_calls.append((group, list(topics)))
+
+
+@pytest.mark.asyncio
+async def test_undecodable_marker_pauses_and_seeks_to_committed() -> None:
+    # BUG 1: an UndecodableStreamPayload surfaced by the read path pauses the run
+    # (offset left uncommitted) and rewinds to committed, never committing past it.
+    port = _PoisonThenEmptyPort()
+    ctx = context_from_deps(
+        Deps.plain({CommitStreamGroupQueryDepKey: (lambda _ctx, _spec: port)})
+    )
+
+    async def handler(_msg: StreamMessage[_Payload]) -> None:  # pragma: no cover
+        raise AssertionError("handler must not run on a decode-poison marker")
+
+    result = await _consumer(handler).run(ctx, timeout=_IDLE)
+
+    assert (result.failed, result.processed) == (1, 0)
+    assert port.commits == []  # nothing good before the poison → no offset committed
+    assert port.seek_calls == [("g", [_TOPIC])]
 
 
 @pytest.mark.asyncio

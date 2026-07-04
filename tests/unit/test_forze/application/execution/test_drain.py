@@ -202,6 +202,63 @@ class TestEngineGateIntegration:
         assert await outer_task == "handler:x"
         assert await drain_task is True
 
+    @pytest.mark.asyncio
+    async def test_spawned_operation_is_counted_and_cancellable(
+        self, ctx: ExecutionContext
+    ) -> None:
+        """An operation a handler spawns via ``create_task`` is a *detached*
+        top-level driver on a new task — it must be admitted (counted in flight)
+        and its task tracked, so drain awaits it or ``cancel_in_flight`` ends it.
+
+        It inherits the enclosing active-operation marker through the copied
+        context, so a presence-only nesting check would misclassify it as nested
+        (``gate=None``), leaving it uncounted and un-cancellable — it would escape
+        drain and run on against the clients teardown is closing.
+        """
+
+        release = asyncio.Event()
+        child_started = asyncio.Event()
+        spawned: list[asyncio.Task[Any]] = []
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class ChildHandler(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                child_started.set()
+                await release.wait()  # stays in flight until released/cancelled
+                return args
+
+        child = OperationRegistry(
+            handlers={"child": lambda _ctx: ChildHandler()}
+        ).freeze().resolve("child", ctx)
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class OuterHandler(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                # Fire-and-forget: spawn the child and return WITHOUT awaiting it.
+                spawned.append(asyncio.create_task(child(args)))
+                return args
+
+        outer = OperationRegistry(
+            handlers={"outer": lambda _ctx: OuterHandler()}
+        ).freeze().resolve("outer", ctx)
+
+        assert await outer("x") == "x"
+        # Outer released its own slot on return; the child runs on detached.
+        await child_started.wait()
+
+        assert ctx.drain_gate.in_flight == 1  # child was admitted, not skipped
+
+        # The child outlives its spawner: drain can't complete, and the gate holds
+        # its task so shutdown can cancel it before teardown closes its clients.
+        assert await ctx.drain_gate.drain(0.01) is False
+        assert ctx.drain_gate.in_flight == 1
+
+        cancelled = await ctx.drain_gate.cancel_in_flight(grace=1.0)
+
+        assert cancelled == 1
+        assert spawned[0].cancelled()  # the escaped op was reachable and cancelled
+        assert ctx.drain_gate.in_flight == 0  # its release ran on unwind
+
 
 class TestRuntimeDrain:
     @pytest.mark.asyncio

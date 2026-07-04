@@ -2,7 +2,7 @@
 
 from typing import Awaitable, Mapping, Protocol, Sequence
 
-from aiokafka import AIOKafkaConsumer
+from aiokafka import AIOKafkaConsumer, ConsumerRebalanceListener
 from aiokafka.admin import AIOKafkaAdminClient
 from aiokafka.structs import RecordMetadata
 
@@ -39,8 +39,16 @@ class KafkaClientPort(Protocol):
         topics: Sequence[str],
         auto_offset_reset: str | None = None,
         max_poll_records: int | None = None,
+        listener: ConsumerRebalanceListener | None = None,
     ) -> Awaitable[AIOKafkaConsumer]:
-        """Return a started, pooled consumer for ``(group, member, topics)``."""
+        """Return a started, pooled consumer for ``(group, member, topics)``.
+
+        When a new consumer is created, *listener* is registered on its
+        subscription so partition revocation / assignment during a rebalance is
+        observed (offset-log consumers rewind to committed on assign and drop
+        stale routing on revoke). A pooled cache hit ignores *listener* — the
+        consumer keeps the listener it was first subscribed with.
+        """
         ...  # pragma: no cover
 
     def new_transient_consumer(

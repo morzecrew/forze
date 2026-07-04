@@ -101,13 +101,35 @@ class TestFirestoreQueryRenderer:
         with pytest.raises(CoreException, match="Empty \\$or"):
             r.render(QueryOr(()))
 
-    def test_neq_in_nin_null_empty(self) -> None:
+    def test_in_and_empty_render(self) -> None:
         r = FirestoreQueryRenderer()
-        assert isinstance(r.render(QueryField("a", "$neq", 1)), FieldFilter)
         assert isinstance(r.render(QueryField("a", "$in", [1, 2])), FieldFilter)
-        assert isinstance(r.render(QueryField("a", "$nin", ["x"])), FieldFilter)
-        assert isinstance(r.render(QueryField("a", "$null", True)), FieldFilter)
         assert isinstance(r.render(QueryField("a", "$empty", False)), FieldFilter)
+
+    @pytest.mark.parametrize(
+        ("op", "value"),
+        [("$neq", 1), ("$nin", ["x"]), ("$null", True)],
+    )
+    def test_null_absent_diverging_ops_are_unsupported(
+        self, op: str, value: object
+    ) -> None:
+        # $neq / $nin / $null are not advertised (Firestore !=/not-in exclude
+        # absent/null fields, diverging from the agnostic semantics). render()
+        # fails closed via the capability validator with the clean unsupported code.
+        r = FirestoreQueryRenderer()
+        with pytest.raises(CoreException) as ei:
+            r.render(QueryField("a", op, value))
+
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+
+    @pytest.mark.parametrize("op", ["$neq", "$nin", "$null"])
+    def test_diverging_ops_render_backstop_raises(self, op: str) -> None:
+        # Direct _render_field call (bypassing the validator) still refuses:
+        # defense-in-depth backstop.
+        r = FirestoreQueryRenderer()
+        value: object = ["x"] if op == "$nin" else (True if op == "$null" else 1)
+        with pytest.raises(CoreException, match="does not support"):
+            r._render_field("a", op, value)  # type: ignore[arg-type]
 
     def test_comparison_ops(self) -> None:
         r = FirestoreQueryRenderer()

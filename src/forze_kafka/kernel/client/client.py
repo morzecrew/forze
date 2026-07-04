@@ -9,7 +9,7 @@ from contextlib import suppress
 from typing import Any, Mapping, Sequence, final
 
 import attrs
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRebalanceListener
 from aiokafka.admin import AIOKafkaAdminClient
 from aiokafka.structs import RecordMetadata
 
@@ -17,6 +17,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import GuardedLifecycle
 
 from .._logger import logger
+from ..rebalance import KafkaCommitRebalanceListener
 from .errors import exc_interceptor
 from .port import KafkaClientPort
 from .value_objects import KafkaConfig
@@ -194,6 +195,7 @@ class KafkaClient(KafkaClientPort):
         topics: Sequence[str],
         auto_offset_reset: str | None = None,
         max_poll_records: int | None = None,
+        listener: ConsumerRebalanceListener | None = None,
     ) -> AIOKafkaConsumer:
         key: _ConsumerKey = (group, member, tuple(sorted(topics)))
 
@@ -204,7 +206,6 @@ class KafkaClient(KafkaClientPort):
             return cached
 
         consumer = AIOKafkaConsumer(
-            *topics,
             bootstrap_servers=self.__bootstrap,
             group_id=group,
             client_id=member,
@@ -220,6 +221,17 @@ class KafkaClient(KafkaClientPort):
             ),
             **self.__security_kwargs(),
         )
+        # Subscribe explicitly (not via the constructor's ``*topics``) so a
+        # rebalance *listener* rides the subscription: on assign the offset-log
+        # consumer rewinds to committed, on revoke it drops stale routing — a
+        # routine rebalance then never crashes the commit or skips records.
+        consumer.subscribe(topics=list(topics), listener=listener)
+
+        # Bind the live consumer so the listener's assignment seek can act on it;
+        # done before start so the first group join already sees it.
+        if isinstance(listener, KafkaCommitRebalanceListener):
+            listener.consumer = consumer
+
         # Start outside the lock so an unrelated consumer's slow start does not
         # serialize others; a concurrent racer for the same key is de-duplicated.
         await consumer.start()

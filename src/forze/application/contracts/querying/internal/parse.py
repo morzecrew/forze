@@ -1,4 +1,4 @@
-from typing import Any, cast, get_args
+from typing import Any, Sequence, cast, get_args
 
 import attrs
 
@@ -139,14 +139,14 @@ class QueryFilterExpressionParser:
             return self._parse_constraints(expr, ctx)
 
         if is_query_conjunction(expr):
-            items = expr["$and"]  # type: ignore[index]
+            items = self._combinator_operands(expr["$and"], "$and")  # type: ignore[index]
             self._enter_combinator(ctx, len(items))
             nodes = [self._parse(item, ctx) for item in items]
 
             return QueryAnd(tuple(nodes))
 
         if is_query_disjunction(expr):
-            items = expr["$or"]  # type: ignore[index]
+            items = self._combinator_operands(expr["$or"], "$or")  # type: ignore[index]
             self._enter_combinator(ctx, len(items))
             nodes = [self._parse(item, ctx) for item in items]
 
@@ -165,6 +165,31 @@ class QueryFilterExpressionParser:
             return QueryNot(self._parse(child, ctx))  # type: ignore[arg-type]
 
         raise exc.precondition(f"Invalid filter expression: {expr!r}")
+
+    # ....................... #
+
+    @staticmethod
+    def _combinator_operands(items: Any, op: str) -> list[Any]:
+        """Validate a ``$and`` / ``$or`` operand: a list of filter-expression objects.
+
+        Without this, a non-list operand (``{"$or": "abc"}`` iterates characters) or a
+        non-dict entry (``{"$and": ["x"]}``) reaches ``_parse`` and crashes on ``.keys()``
+        with an ``AttributeError`` (500) — a client-caused malformation must be a clean 400,
+        like the ``$not`` object check above.
+        """
+
+        if not isinstance(items, (list, tuple)):
+            raise exc.precondition(f"{op} requires a list of filter expression objects")
+
+        items = cast(Sequence[Any], items)
+
+        for item in items:
+            if not isinstance(item, dict):
+                raise exc.precondition(
+                    f"{op} entries must be filter expression objects"
+                )
+
+        return list(items)
 
     # ....................... #
 
@@ -483,8 +508,10 @@ class QueryFilterExpressionParser:
 
         if op in _TEXT_OPS:
             expanded = self._expand_text_op(field, op, value)
+
             if isinstance(expanded, QueryOr):
                 self._add_clauses(ctx, len(expanded.items) - 1)
+
             return expanded
 
         if op in _EQ_OPS:
@@ -498,6 +525,7 @@ class QueryFilterExpressionParser:
         elif op in _MEMB_OPS:
             if not isinstance(value, list | tuple | set):
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+
             self._check_in_size(field, op, value)
 
         return QueryField(field, op, value)  # type: ignore[arg-type]
@@ -507,9 +535,11 @@ class QueryFilterExpressionParser:
     @staticmethod
     def _field_ops_from_nodes(nodes: list[QueryExpr]) -> set[str]:
         ops: set[str] = set()
+
         for node in nodes:
             if isinstance(node, QueryField):
                 ops.add(node.op)
+
             elif isinstance(node, QueryOr):
                 for item in node.items:
                     if isinstance(item, QueryField):
@@ -525,6 +555,7 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(
                     f"Field {field} cannot combine element quantifier with other operators",
                 )
+
             return
 
         ops = QueryFilterExpressionParser._field_ops_from_nodes(nodes)
@@ -575,12 +606,15 @@ class QueryFilterExpressionParser:
             max_pattern_length=self.limits.max_pattern_length,
             max_pattern_or_branches=self.limits.max_pattern_or_branches,
         )
+
         if len(patterns) == 1:
             return QueryField(field, op, patterns[0])  # type: ignore[arg-type]
+
         branches = tuple(
             QueryField(field, op, pattern)  # type: ignore[arg-type]
             for pattern in patterns
         )
+
         return QueryOr(branches)
 
     # ....................... #
@@ -594,8 +628,10 @@ class QueryFilterExpressionParser:
     ) -> QueryExpr:
         if op in _TEXT_OPS:
             expanded = self._expand_text_op(field, op, value)
+
             if isinstance(expanded, QueryOr):
                 self._add_clauses(ctx, len(expanded.items) - 1)
+
             return expanded
 
         if op in _EQ_OPS:
@@ -609,6 +645,7 @@ class QueryFilterExpressionParser:
         elif op in _MEMB_OPS:
             if not isinstance(value, list | tuple | set):
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+
             self._check_in_size(field, op, value)
 
         elif op in _UNARY_OPS:
@@ -618,6 +655,7 @@ class QueryFilterExpressionParser:
         elif op in _SET_REL_OPS:
             if not isinstance(value, list | tuple | set):
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+
             self._check_in_size(field, op, value)
 
         elif op in _HIERARCHY_OPS:

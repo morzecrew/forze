@@ -89,8 +89,14 @@ async def mongo_conformance(mongo_client_replica: MongoClient) -> MongoConforman
 # ....................... #
 
 
+# Lock-based contention (duplicate-key insert / FOR UPDATE) blocks rather than aborts and would wedge
+# the lock-step Conductor — those cases run against the abort-based mock only (see the
+# `lock-block-vs-abort-conductor` MECHANISM_DIVERGENCE).
+_LOCK_SAFE_BATTERY = tuple(case for case in BATTERY if not case.abort_engine_only)
+
+
 @pytest.mark.integration
-@pytest.mark.parametrize("case", BATTERY, ids=lambda case: case.name)
+@pytest.mark.parametrize("case", _LOCK_SAFE_BATTERY, ids=lambda case: case.name)
 class TestMongoSnapshotDifferential:
     async def test_real_mongo_matches_expected_at_snapshot(
         self, case, mongo_conformance: MongoConformanceBackend

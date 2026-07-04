@@ -266,6 +266,25 @@ class CommitStreamGroupQueryPort[M](Protocol):
         """
         ...  # pragma: no cover
 
+    # ....................... #
+
+    def seek_to_committed(
+        self,
+        group: str,
+        topics: Sequence[str],
+    ) -> Awaitable[None]:
+        """Rewind *group*'s in-memory read position on *topics* to its committed offset.
+
+        Called on an **abort / pause** path so a partially-read, uncommitted batch
+        is re-fetched from the last committed offset on the next read (or a
+        supervised restart) rather than silently skipped. An adapter that advances
+        an in-memory position on ``read`` (Kafka-class, whose pooled consumer moves
+        past a whole fetched batch) must undo that advance here; a backend whose
+        read position *is* the committed cursor (no separate in-memory position)
+        implements this as a no-op.
+        """
+        ...  # pragma: no cover
+
 
 # ....................... #
 

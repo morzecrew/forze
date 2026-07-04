@@ -23,7 +23,6 @@ from forze.application.contracts.base import (
     Page,
     page_from_limit_offset,
 )
-from forze.base.serialization import default_model_codec
 from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
@@ -40,6 +39,8 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QuerySortExpression,
     assert_cursor_projection_includes_sort_keys,
+    build_cursor_binding,
+    cursor_protection_active,
     normalize_sorts_for_keyset,
     read_fields_for_model,
     resolve_effective_sorts,
@@ -54,7 +55,7 @@ from forze.application.integrations.document._limits import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import ModelCodec
+from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.constants import ID_FIELD
 from forze_mock.adapters._journal import JournalingStore
 from forze_mock.adapters._mvcc import current_mvcc_tx
@@ -171,9 +172,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         # ``_store()`` acquires ``state.lock`` itself; the comprehension has no await, so the live
         # view can't be mutated mid-iteration — no extra outer lock needed.
-        return [
-            dict(doc) for doc in self._store().values() if self._doc_visible(doc)
-        ]
+        return [dict(doc) for doc in self._store().values() if self._doc_visible(doc)]
 
     # ....................... #
 
@@ -199,10 +198,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     # ....................... #
 
     def _mark_rev_guarded(self, pk: UUID) -> None:
-        """Record a rev-guarded write of *pk* on the active MVCC transaction (a no-op outside one).
+        """Claim *pk* for a rev-guarded write on the active MVCC transaction (a no-op outside one).
 
-        Lets read-committed surface a write-write conflict for rev-guarded updates only — a blind
-        (rev-less) write does not mark, so it silently loses as read-committed permits. See
+        Lets read-committed surface a write-write conflict for rev-guarded writes only — a blind
+        (rev-less) write does not mark, so it silently loses as read-committed permits. The claim is
+        anchored at the current commit version (the version the row was read at), so a fresh
+        read-then-update does not spuriously conflict. See
         :attr:`~forze_mock.adapters._mvcc.MvccTx.rev_guarded`.
         """
 
@@ -210,7 +211,69 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         if mvcc is not None:
             ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
-            mvcc.mark_rev_guarded(ns, pk)
+            mvcc.mark_rev_guarded(ns, pk, self.state.mvcc_version)
+
+    # ....................... #
+
+    def _mark_row_locked(self, pk: UUID) -> None:
+        """Claim *pk* for a ``FOR UPDATE`` locked read (a no-op outside an MVCC transaction).
+
+        Models Postgres ``SELECT ... FOR UPDATE``: the locked row conflicts with a concurrent writer
+        the way Postgres blocks it — a read-committed transaction that locked a row a concurrent
+        committer then wrote is aborted (abort-vs-block, normalized by the conformance differential),
+        preventing the lost update / write skew a bare read would let through. Reuses the claim
+        machinery (:attr:`~forze_mock.adapters._mvcc.MvccTx.rev_guarded`) — a lock is a claim on the
+        row just like a rev-guarded write.
+        """
+
+        mvcc = current_mvcc_tx()
+
+        if mvcc is not None:
+            ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+            mvcc.mark_rev_guarded(ns, pk, self.state.mvcc_version)
+
+    # ....................... #
+
+    def _mark_locked_row_from(self, hit: Any) -> None:
+        """Claim a ``FOR UPDATE`` lock on a predicate read's row, keyed by its id when discoverable.
+
+        ``get`` locks by an explicit pk; ``find``/``project``/``select`` lock the returned row,
+        whose id is read from the model attribute or the projected mapping. A projection that
+        excludes the id (or a custom ``select`` type without one) cannot be claimed — a best-effort
+        gap, not a lost update: the common id-addressable path (``get``, full-row ``find``) is exact.
+        """
+
+        raw = getattr(hit, ID_FIELD, None)
+
+        if raw is None and isinstance(hit, dict):
+            raw = hit.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                ID_FIELD
+            )
+
+        if raw is None:
+            return
+
+        self._mark_row_locked(
+            raw
+            if isinstance(raw, UUID)
+            else UUID(str(raw))  # pyright: ignore[reportUnknownArgumentType]
+        )
+
+    # ....................... #
+
+    def _mark_created(self, pk: UUID) -> None:
+        """Record *pk* as a NEW ``create`` insert on the active MVCC transaction (no-op outside one).
+
+        Lets commit reject a duplicate id a concurrent committer published as ``exc.conflict`` (unique
+        violation), rather than silently merging. See
+        :attr:`~forze_mock.adapters._mvcc.MvccTx.created`.
+        """
+
+        mvcc = current_mvcc_tx()
+
+        if mvcc is not None:
+            ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+            mvcc.mark_created(ns, pk)
 
     # ....................... #
 
@@ -318,7 +381,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         for_update: RowLockMode = False,
         skip_cache: bool = False,
     ) -> R:
-        del for_update, skip_cache
+        del skip_cache
 
         self._require_params_bound()
 
@@ -327,6 +390,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         with self.state.lock:
             doc = dict(self._ensure_exists(pk))
+            # ``FOR UPDATE`` (any truthy mode): claim the row so a concurrent writer conflicts, the
+            # way Postgres blocks it. ``skip_locked`` degrades to this too — its disjoint-claim
+            # semantics is a declared mock gap (see MECHANISM_DIVERGENCES), not a silent no-op.
+            if for_update:
+                self._mark_row_locked(pk)
         return self._to_read(doc)
 
     # ....................... #
@@ -351,18 +419,16 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         if self.bound_params is not None:
             by_id = {str(d.get(ID_FIELD)): d for d in self._param_source_rows()}
-            missing = [pk for pk in pks if str(pk) not in by_id]
 
-            if missing:
+            if missing := [pk for pk in pks if str(pk) not in by_id]:
                 raise exc.not_found(f"Documents not found: {missing}")
 
             return [self._to_read(by_id[str(pk)]) for pk in pks]
 
         with self.state.lock:
             store = self._store()
-            missing = [pk for pk in pks if pk not in store]
 
-            if missing:
+            if missing := [pk for pk in pks if pk not in store]:
                 raise exc.not_found(f"Documents not found: {missing}")
 
             docs = [dict(store[pk]) for pk in pks]
@@ -394,14 +460,14 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         expr = QueryFilterExpressionParser.parse(filters)
         validate_query_field_types(expr, self.read_model)
 
+    # ....................... #
+
     async def find(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: RowLockMode = False,
     ) -> R | None:
-        del for_update
-
         page = await self.find_many(
             filters=filters,
             pagination={"limit": 1},
@@ -410,7 +476,14 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if not page.hits:
             return None
 
-        return page.hits[0]
+        hit = page.hits[0]
+
+        if for_update:
+            self._mark_locked_row_from(hit)
+
+        return hit
+
+    # ....................... #
 
     async def project(
         self,
@@ -419,8 +492,6 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         *,
         for_update: RowLockMode = False,
     ) -> JsonDict | None:
-        del for_update
-
         page = await self.project_many(
             tuple(fields),
             filters=filters,
@@ -430,7 +501,14 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if not page.hits:
             return None
 
-        return page.hits[0]
+        hit = page.hits[0]
+
+        if for_update:
+            self._mark_locked_row_from(hit)
+
+        return hit
+
+    # ....................... #
 
     async def select(
         self,
@@ -439,8 +517,6 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         *,
         for_update: RowLockMode = False,
     ) -> T | None:
-        del for_update
-
         page = await self.select_many(
             return_type,
             filters=filters,
@@ -450,7 +526,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if not page.hits:
             return None
 
-        return page.hits[0]
+        hit = page.hits[0]
+
+        if for_update:
+            self._mark_locked_row_from(hit)
+
+        return hit
 
     # ....................... #
 
@@ -615,7 +696,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # Slice to the requested page *before* projecting/decoding, so only the page's rows
             # are materialized — matching the real adapters' late materialization (the DB
             # applies OFFSET/LIMIT before hydration) rather than decoding the whole match set.
-            return ordered[offset : offset + limit] if limit is not None else ordered[offset:]
+            return (
+                ordered[offset : offset + limit]
+                if limit is not None
+                else ordered[offset:]
+            )
 
         rows: list[Any]
 
@@ -651,8 +736,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 rows = default_model_codec(return_type).decode_mapping_many(dict_rows)
             else:
                 rows = [
-                    self._to_read_or_projection(doc, return_fields)
-                    for doc in page_docs
+                    self._to_read_or_projection(doc, return_fields) for doc in page_docs
                 ]
 
         if return_count:
@@ -662,6 +746,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 total=total,
             )
         return page_from_limit_offset(cast(Any, rows), pagination, total=None)
+
+    # ....................... #
 
     async def find_many(
         self,
@@ -678,6 +764,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_many(
         self,
@@ -696,6 +784,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_many(
         self,
         return_type: type[T],
@@ -713,6 +803,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return_fields=None,
         )
 
+    # ....................... #
+
     async def find_page(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -728,6 +820,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_page(
         self,
@@ -746,6 +840,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_page(
         self,
         return_type: type[T],
@@ -762,6 +858,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return_type=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def aggregate_many(
         self,
@@ -780,6 +878,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return_fields=None,
         )
 
+    # ....................... #
+
     async def aggregate_page(
         self,
         aggregates: AggregatesExpression,
@@ -796,6 +896,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_many_aggregated(
         self,
@@ -814,6 +916,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return_type=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_page_aggregated(
         self,
@@ -847,6 +951,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             sorts=sorts,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_cursor(
         self,
@@ -1007,6 +1113,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             cursor = {"limit": chunk_size, "after": page.next_cursor}
             page_num += 1
 
+    # ....................... #
+
     @overload
     async def _mock_cursor_page(
         self,
@@ -1063,6 +1171,21 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         docs = self._candidate_docs()
 
+        binding = (
+            build_cursor_binding(
+                # Spec-less, mirroring the real document read path (``document_cursor_binding``):
+                # the generic gateway has no spec, so a document cursor binds on tenant + filter
+                # only. Using a spec name here would diverge from the backends the mock models.
+                spec_name=None,
+                tenant_id=self.require_tenant_if_aware(),
+                filter_expr=(
+                    QueryFilterExpressionParser.parse(filters) if filters else None
+                ),
+            )
+            if cursor_protection_active()
+            else None
+        )
+
         filtered = [doc for doc in docs if _match_filters(doc, filters)]
         page_docs, has_more, next_c, prev_c = _mock_keyset_window(
             filtered,
@@ -1070,6 +1193,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             sort_keys=sort_keys,
             directions=directions,
             nulls=nulls,
+            binding=binding,
         )
         if return_fields is not None:
             out_raw = [
@@ -1095,4 +1219,4 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self._validate_filter_types(filters)
 
         docs = self._candidate_docs()
-        return sum(1 for doc in docs if _match_filters(doc, filters))
+        return sum(bool(_match_filters(doc, filters)) for doc in docs)

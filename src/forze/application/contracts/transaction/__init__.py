@@ -5,6 +5,7 @@ from .ports import (
     AfterCommitPort,
     IsolationAware,
     IsolationLevel,
+    TransactionallyEnlistable,
     TransactionHandle,
     TransactionManagerPort,
     TransactionScopeKey,
@@ -23,5 +24,6 @@ __all__ = [
     "TransactionManagerDepKey",
     "TransactionManagerDepPort",
     "TransactionHandle",
+    "TransactionallyEnlistable",
     "TxCapabilities",
 ]

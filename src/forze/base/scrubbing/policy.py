@@ -65,18 +65,32 @@ _FORZE_KEY_EXTRAS: tuple[str, ...] = (
 # the real value next to the masked word. So a sensitive term scrubs a log value
 # only when it is followed by ``=``/``:`` and a token (``session=abc`` → masked
 # whole), which is the form that actually carries the secret.
+#
+# A bounded compound-name suffix (``(?:[._-]\w+){0,6}``) sits between the sensitive term
+# and the ``=``/``:`` separator so compound names carry through: ``secret_key=``,
+# ``aws_secret_access_key=``, ``token_value=`` all match (previously only a term
+# immediately followed by the separator — e.g. ``client_secret=`` — was caught). Each suffix
+# segment must be separator-led (``_``/``.``/``-`` then word chars), so a bare word
+# continuation is *not* swallowed: ``secretary=`` / ``tokenizer=`` stay ordinary text.
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
     r"(?:password|passwd|mysql[._ -]?pwd|secret|token|api[._ -]?key"
-    r"|credential|session|cookie|csrf|xsrf|jwt|ssn)\s*[=:]\s*\S+",
+    r"|credential|session|cookie|csrf|xsrf|jwt|ssn)(?:[._-]\w+){0,6}\s*[=:]\s*\S+",
 )
 
 _LOG_STRING_EXTRAS: tuple[str, ...] = (
     r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
     r"Bearer\s+\S+",
+    # Any ``Authorization: <credential>`` header value, not just the Bearer
+    # scheme; consume the rest of the line so ``Basic <b64>`` / ``Bearer <jwt>``
+    # (scheme + credential token) are masked whole, not just the scheme word.
+    r"authorization\s*:\s*[^\r\n]+",
     r"postgresql(?:\+[a-z]+)?://\S+",
     r"mysql(?:\+[a-z]+)?://\S+",
     r"redis(?:\+[a-z]+)?://\S+",
     r"amqps?://\S+",
+    # Scheme-agnostic ``scheme://user:pass@`` userinfo, so clickhouse://, mongodb://,
+    # https://user:pass@ … DSNs are masked, not only the four schemes enumerated above.
+    r"\w[\w+.-]*://[^\s/@:]+:[^\s@]+@",
     r'"private_key"\s*:\s*"[^"]*"',
 )
 

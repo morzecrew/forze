@@ -449,10 +449,17 @@ class InProcessResilienceExecutor:
                         delay_state.observe(self.clock() - primary_start)
 
                     if error is None:
+                        # ``hedge_won`` counts only the calls a hedge actually
+                        # rescued; the primary winning emits its own event, so the
+                        # effectiveness ratio (hedge_won / all hedged completions)
+                        # stays meaningful instead of always reading 100%.
                         if task is not primary:
                             hedge_won = True
+                            self._emit("hedge_won", pol, route)
 
-                        self._emit("hedge_won", pol, route)
+                        else:
+                            self._emit("hedge_primary_won", pol, route)
+
                         return task.result()
 
                     errors.append(error)
@@ -920,21 +927,36 @@ class InProcessResilienceExecutor:
 
         In quantile mode the congestion signal comes from the latency digest
         store (process-local or fleet-shared); a backoff opens a fresh epoch.
+
+        Feeding the controller is bookkeeping: like the breaker's outcome recording,
+        a digest-store error must never turn a successful call into a failure nor mask
+        an in-flight domain error on the failure path, so a store failure is swallowed
+        and surfaced as a metric only (the sample is simply dropped from the controller).
         """
 
         quantile_value: float | None = None
 
         if strat.latency_quantile is not None:
             key = (pol.name, route)
-            quantile_value = await self.latency_digest_store.observe(
-                key, elapsed, strat
-            )
+
+            try:
+                quantile_value = await self.latency_digest_store.observe(
+                    key, elapsed, strat
+                )
+
+            except Exception:  # noqa: BLE001 — store-outage fail-open boundary
+                self._emit("latency_digest_store_error", pol, route)
+                return
 
         if state.on_complete(elapsed, self.clock(), quantile_value):
             self._emit("bulkhead_backoff", pol, route)
 
             if strat.latency_quantile is not None:
-                await self.latency_digest_store.reset((pol.name, route), strat)
+                try:
+                    await self.latency_digest_store.reset((pol.name, route), strat)
+
+                except Exception:  # noqa: BLE001 — store-outage fail-open boundary
+                    self._emit("latency_digest_store_error", pol, route)
 
     # ....................... #
 

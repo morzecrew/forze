@@ -24,6 +24,7 @@ from .value_objects import (
     PendingEntry,
     StreamMessage,
     StreamPosition,
+    UndecodableStreamPayload,
 )
 
 # ----------------------- #
@@ -32,6 +33,7 @@ __all__ = [
     "PendingEntry",
     "StreamMessage",
     "StreamPosition",
+    "UndecodableStreamPayload",
     "OffsetReset",
     "OffsetResetKind",
     "ConsumerLag",

@@ -92,6 +92,187 @@ async def test_cursor_page_stable_under_insert_before_position() -> None:
     assert not page2.has_more
 
 
+@pytest.fixture
+def cursor_signing() -> Any:
+    from forze.application.contracts.querying import (
+        CursorTokenSigner,
+        configure_cursor_signer,
+    )
+
+    previous = configure_cursor_signer(CursorTokenSigner(secret=b"k" * 32))
+
+    try:
+        yield
+
+    finally:
+        configure_cursor_signer(previous)
+
+
+@pytest.mark.asyncio
+async def test_signed_cursor_pagination_round_trips(cursor_signing: Any) -> None:
+    # With a signer configured, the minted cursor is HMAC-signed and drives the next page.
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    assert [h.title for h in page1.hits] == ["b", "d"]
+    assert page1.next_cursor is not None
+    assert "." in page1.next_cursor  # <payload>.<signature>
+
+    page2 = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page1.next_cursor},
+    )
+    assert [h.title for h in page2.hits] == ["f", "h"]
+
+
+@pytest.mark.asyncio
+async def test_signed_cursor_rejects_tampered_token(cursor_signing: Any) -> None:
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    assert page1.next_cursor is not None
+    last = page1.next_cursor[-1]
+    tampered = page1.next_cursor[:-1] + ("x" if last != "x" else "y")
+
+    with pytest.raises(CoreException):
+        await doc.find_cursor(
+            sorts={"title": "asc"}, cursor={"limit": 2, "after": tampered}
+        )
+
+
+@pytest.fixture
+def cursor_encryption() -> Any:
+    from forze.application.contracts.querying import (
+        CursorTokenCipher,
+        configure_cursor_cipher,
+    )
+
+    previous = configure_cursor_cipher(CursorTokenCipher(secret=b"z" * 32))
+
+    try:
+        yield
+
+    finally:
+        configure_cursor_cipher(previous)
+
+
+@pytest.mark.asyncio
+async def test_encrypted_cursor_pagination_hides_payload_and_round_trips(
+    cursor_encryption: Any,
+) -> None:
+    # With a cipher configured, the minted cursor is AEAD-encrypted: opaque, yet it still
+    # drives the next page end-to-end through the mock adapter.
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    assert [h.title for h in page1.hits] == ["b", "d"]
+    assert page1.next_cursor is not None
+    assert page1.next_cursor.startswith("~")  # encrypted marker
+
+    page2 = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page1.next_cursor},
+    )
+    assert [h.title for h in page2.hits] == ["f", "h"]
+
+
+@pytest.mark.asyncio
+async def test_encrypted_cursor_rejects_a_previously_plaintext_cursor() -> None:
+    # Hard cutover: mint plaintext (no cipher), then enable encryption and reuse it -> rejected.
+    from forze.application.contracts.querying import (
+        CursorTokenCipher,
+        configure_cursor_cipher,
+    )
+
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    plaintext = page1.next_cursor
+    assert plaintext is not None
+    assert not plaintext.startswith("~")
+
+    previous = configure_cursor_cipher(CursorTokenCipher(secret=b"z" * 32))
+    try:
+        with pytest.raises(CoreException):
+            await doc.find_cursor(
+                sorts={"title": "asc"}, cursor={"limit": 2, "after": plaintext}
+            )
+    finally:
+        configure_cursor_cipher(previous)
+
+
+@pytest.mark.asyncio
+async def test_signed_cursor_rejects_replay_against_a_different_filter(
+    cursor_signing: Any,
+) -> None:
+    # The P2 context binding: a signed cursor minted for one filter must not drive a page
+    # under a different filter — the embedded (spec, tenant, filter) binding won't match.
+    doc = _adapter()
+    for title in ["b", "d", "f", "h", "j", "l"]:
+        await doc.create(_ItemCreate(title=title))
+
+    # Page 1 under a membership filter that keeps every title.
+    filters_a = {"$values": {"title": {"$in": ["b", "d", "f", "h", "j", "l"]}}}
+    page1 = await doc.find_cursor(
+        filters=filters_a, sorts={"title": "asc"}, cursor={"limit": 2}
+    )
+    assert [h.title for h in page1.hits] == ["b", "d"]
+    assert page1.next_cursor is not None
+
+    # Same filter -> the cursor advances (positive control).
+    page2 = await doc.find_cursor(
+        filters=filters_a,
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page1.next_cursor},
+    )
+    assert [h.title for h in page2.hits] == ["f", "h"]
+
+    # Different filter -> the bound cursor is rejected, not silently honored.
+    with pytest.raises(CoreException):
+        await doc.find_cursor(
+            filters={"$values": {"title": {"$in": ["d", "f", "h", "j", "l"]}}},
+            sorts={"title": "asc"},
+            cursor={"limit": 2, "after": page1.next_cursor},
+        )
+
+
+@pytest.mark.asyncio
+async def test_signing_hard_cutover_rejects_a_previously_unsigned_cursor() -> None:
+    # Mint unsigned (no signer), then enable signing and try to reuse it: rejected.
+    from forze.application.contracts.querying import (
+        CursorTokenSigner,
+        configure_cursor_signer,
+    )
+
+    doc = _adapter()
+    for title in ["b", "d", "f", "h"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    unsigned = page1.next_cursor
+    assert unsigned is not None
+    assert "." not in unsigned  # unsigned by default
+
+    previous = configure_cursor_signer(CursorTokenSigner(secret=b"k" * 32))
+
+    try:
+        with pytest.raises(CoreException):
+            await doc.find_cursor(
+                sorts={"title": "asc"}, cursor={"limit": 2, "after": unsigned}
+            )
+
+    finally:
+        configure_cursor_signer(previous)
+
+
 @pytest.mark.asyncio
 async def test_cursor_page_stable_under_delete_of_returned_row() -> None:
     doc = _adapter()
@@ -171,6 +352,35 @@ async def test_cursor_before_navigates_back_to_previous_page() -> None:
         cursor={"limit": 2, "before": page2.prev_cursor},
     )
     assert [h.title for h in back.hits] == ["b", "d"]
+
+
+@pytest.mark.asyncio
+async def test_cursor_before_with_more_returns_nearest_previous_page() -> None:
+    # A 'before' page that over-fetches (rows remain before the window) must return the rows
+    # NEAREST the cursor, not the far end. Walk to the last page, then page back: from the
+    # last page's start the nearest previous page is the middle one, and more remain before it.
+    doc = _adapter()
+    for title in ["b", "d", "f", "h", "j", "l"]:
+        await doc.create(_ItemCreate(title=title))
+
+    page1 = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
+    page2 = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page1.next_cursor},
+    )
+    page3 = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "after": page2.next_cursor},
+    )
+    assert [h.title for h in page3.hits] == ["j", "l"]
+    assert page3.prev_cursor is not None
+
+    back = await doc.find_cursor(
+        sorts={"title": "asc"},
+        cursor={"limit": 2, "before": page3.prev_cursor},
+    )
+    # Nearest previous page is [f, h] (not [d, f]); b, d still remain before it.
+    assert [h.title for h in back.hits] == ["f", "h"]
 
 
 @pytest.mark.asyncio
@@ -275,3 +485,27 @@ async def test_project_cursor_requires_sort_keys_in_projection() -> None:
             sorts={"title": "asc"},
             cursor={"limit": 5},
         )
+
+
+@pytest.mark.asyncio
+async def test_cursor_limit_is_coerced_and_clamped() -> None:
+    # The mock keyset path routes its limit through the shared, hardened parser (like the
+    # offset path and the real backends): a non-integer is a clean validation error, and a
+    # huge value is clamped rather than materializing an unbounded in-memory page.
+    from forze.application.contracts.querying.pagination.cursor_page import (
+        MAX_CURSOR_LIMIT,
+    )
+
+    doc = _adapter()
+    for title in ["a", "b", "c"]:
+        await doc.create(_ItemCreate(title=title))
+
+    with pytest.raises(CoreException, match="must be an integer"):
+        await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": "abc"})
+
+    # An enormous limit is clamped (no error, no unbounded page): all rows fit under the cap.
+    page = await doc.find_cursor(
+        sorts={"title": "asc"}, cursor={"limit": MAX_CURSOR_LIMIT + 10_000}
+    )
+    assert [h.title for h in page.hits] == ["a", "b", "c"]
+    assert page.has_more is False

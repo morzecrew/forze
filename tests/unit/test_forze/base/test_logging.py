@@ -522,6 +522,53 @@ class TestForzeConsoleRenderer:
         assert "ValueError: pipe" in out
         assert "Traceback" in out
 
+    def test_console_exception_with_dsn_scrubbed_when_sanitizing(self) -> None:
+        # Bug 1: console mode (default) must not hand the raw exception to Rich
+        # when sanitize_logs is on, or the DSN password leaks through the pretty
+        # traceback that bypasses the error.message/error.stack scrubber.
+        buf = io.StringIO()
+        configure_logging(
+            level="info",
+            logger_names=["forze.test"],
+            stream=buf,
+            render_mode="console",
+            sanitize_logs=True,
+            custom_console_renderer=ForzeConsoleRenderer(colors=False),
+        )
+        log = Logger("forze.test")
+        try:
+            raise ValueError("connect failed: postgresql://admin:hunter2@db/app")
+        except ValueError as e:
+            log.critical_exception("boom", exc=e)
+        out = buf.getvalue()
+        assert "hunter2" not in out
+        assert "boom" in out
+        # A (scrubbed) traceback is still rendered from error.stack.
+        assert "Traceback" in out
+
+    def test_console_exception_pretty_traceback_preserved_without_sanitizing(
+        self,
+    ) -> None:
+        # When sanitizing is off the raw exc_info survives, so Rich renders the
+        # pretty traceback (source lines) — verified by the message text showing.
+        buf = io.StringIO()
+        configure_logging(
+            level="info",
+            logger_names=["forze.test"],
+            stream=buf,
+            render_mode="console",
+            sanitize_logs=False,
+            custom_console_renderer=ForzeConsoleRenderer(colors=False),
+        )
+        log = Logger("forze.test")
+        try:
+            raise ValueError("plain failure detail")
+        except ValueError as e:
+            log.critical_exception("boom", exc=e)
+        out = buf.getvalue()
+        assert "plain failure detail" in out
+        assert "ValueError" in out
+
 
 def test_unconfigured_process_drops_trace_but_emits_info() -> None:
     """Trace is opt-in: without ``configure_logging`` the gate defaults to INFO.

@@ -154,6 +154,32 @@ class StreamPosition:
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class UndecodableStreamPayload:
+    """Marker payload for an offset-log record whose value could not be decoded.
+
+    An offset-log adapter (Kafka-class) that decodes a record's value **inside**
+    its read path must not let a single malformed record raise out of ``read``:
+    the pooled consumer has already advanced its in-memory position past the whole
+    batch, so a raised decode error would abort the batch and a later commit could
+    skip the unprocessed records silently. Instead the adapter substitutes this
+    marker for the model payload, keeping the message's ``(partition, offset)`` /
+    ``id`` intact, so the consumer runner sees a poison record it can pause-and-alert
+    on (leaving the offset uncommitted for redelivery) exactly like a decrypt/decode
+    poison — never a skip. The raw bytes and error are carried for operator triage.
+    """
+
+    raw: bytes
+    """The undecodable record value bytes, verbatim."""
+
+    error: str
+    """String form of the decode error, for logs / operator inspection."""
+
+
+# ....................... #
+
+
 class OffsetResetKind(StrEnum):
     """Where an offset-log group's cursor is (re)positioned."""
 

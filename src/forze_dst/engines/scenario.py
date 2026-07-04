@@ -365,7 +365,42 @@ def explore_hypothesis(
         workload=tuple(generated),
         history=history,
         registry_fingerprint=sim.fingerprint(),
+        plan=tuple(plan),  # the act-plan that reproduces this counterexample
     )
+
+
+# ....................... #
+
+
+def _expand_frontier(
+    choices: tuple[int, ...], branching: Sequence[int]
+) -> list[tuple[int, ...]]:
+    """Child choice vectors that deviate at each branch point of an explored interleaving.
+
+    *branching* is the per-tick branching factor :class:`SystematicReorderer` recorded while
+    running *choices*. For each tick whose factor exceeds one, emit a sibling that replays the
+    parent's decisions for the ticks it covered, then takes a different first-choice at that tick.
+
+    Beyond the parent's explicit prefix the replay is zero-padded (FIFO, choice ``0``): to deviate
+    *first* at branch point ``tick`` past ``len(choices)``, the child must read as
+    ``choices + (0,) * (tick - len(choices)) + (alternative,)`` so the reorderer keeps FIFO order
+    at every intervening tick and only diverges at ``tick``. A bare ``choices[:tick]`` truncation
+    would instead collapse every such deviation onto branch point ``len(choices)`` — so no explored
+    vector could ever carry a ``0`` before a nonzero choice, and the search would cover only a
+    vanishing corner of the interleaving tree rather than every reachable reordering.
+    """
+
+    frontier: list[tuple[int, ...]] = []
+
+    for tick, size in enumerate(branching):
+        prefix = (
+            choices[:tick]
+            if tick < len(choices)
+            else (*choices, *(0,) * (tick - len(choices)))
+        )
+        frontier.extend((*prefix, alternative) for alternative in range(1, size))
+
+    return frontier
 
 
 # ....................... #
@@ -444,6 +479,7 @@ def explore_dpor(
                 workload=tuple(workload),
                 history=history,
                 registry_fingerprint=sim.fingerprint(),
+                choices=choices,  # the systematic interleaving that reproduces this run
             )
 
         signature = projection.outcome_signature(history)
@@ -453,10 +489,8 @@ def explore_dpor(
 
         seen_signatures.add(signature)
 
-        # Expand: at each tick that branched, try every alternative first-choice.
-        for tick, size in enumerate(scheduler.branching):
-            frontier.extend(
-                (*choices[:tick], alternative) for alternative in range(1, size)
-            )
+        # Expand: at each tick that branched, try every alternative first-choice, replaying the
+        # parent's (zero-padded) prefix so a deviation can land at a *later* branch point.
+        frontier.extend(_expand_frontier(choices, scheduler.branching))
 
     return None

@@ -263,31 +263,42 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         *,
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
-        current = await self.read_gw.get(pk)
+        # The read-check-write runs inside a Firestore transaction so the write is
+        # conditional on the document not having changed since the read: Firestore's
+        # optimistic concurrency aborts the commit (CONCURRENCY) if a competing
+        # writer touched the document, and @occ_retry re-runs with a fresh read.
+        # Without this, the unconditional full-document ``set`` would let two writers
+        # that both read the same revision clobber each other (lost update). The
+        # scope is re-entrant: when a caller already opened a transaction it is
+        # reused (no independent nested commit).
+        async with self.client.transaction():
+            current = await self.read_gw.get(pk)
 
-        if update is not None:
-            if rev is not None:
-                await self._validate_history((current, rev, update))
+            if update is not None:
+                if rev is not None:
+                    await self._validate_history((current, rev, update))
 
-            _, diff = current.update(update, materialized=self.read_codec.materialized)
+                _, diff = current.update(
+                    update, materialized=self.read_codec.materialized
+                )
 
-        else:
-            _, diff = current.touch()
+            else:
+                _, diff = current.touch()
 
-        if not diff:
-            return current, diff
+            if not diff:
+                return current, diff
 
-        diff = self._bump_rev(current, diff)
-        merged = await self._encode_domain_one(current)
-        merged.update(self.adapt_payload_for_write(diff, create=False))
+            diff = self._bump_rev(current, diff)
+            merged = await self._encode_domain_one(current)
+            merged.update(self.adapt_payload_for_write(diff, create=False))
 
-        coll = await self.coll()
-        storage = self.adapt_payload_for_write(merged, create=False)
-        await self.client.set_document(coll, self._storage_pk(pk), storage)
-        updated = await self._load_after_write(pk, merged=merged)
-        await self._write_history(updated)
+            coll = await self.coll()
+            storage = self.adapt_payload_for_write(merged, create=False)
+            await self.client.set_document(coll, self._storage_pk(pk), storage)
+            updated = await self._load_after_write(pk, merged=merged)
+            await self._write_history(updated)
 
-        return updated, diff
+            return updated, diff
 
     # ....................... #
 
@@ -459,11 +470,50 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     # ....................... #
 
     async def kill(self, pk: UUID) -> None:
-        await self.client.delete_document(await self.coll(), self._storage_pk(pk))
+        """Hard-delete a document, scoped to the current tenant.
+
+        Firestore deletes by document id and cannot combine a delete with a query
+        filter, so the delete is guarded by a read-verify-delete inside a
+        transaction: the document is fetched, its tenant is checked, and only then
+        deleted (atomically, so no competing writer slips in between). A missing
+        document — or one owned by another tenant under tagged tenancy — raises
+        ``not_found`` and never touches another tenant's data.
+
+        :param pk: Document primary key.
+        :raises NotFoundError: If the document does not exist or is not accessible
+            in the current tenant scope.
+        """
+
+        async with self.client.transaction():
+            coll = await self.coll()
+            storage_pk = self._storage_pk(pk)
+            raw = await self.client.get_document(coll, storage_pk)
+
+            if raw is None or not self._row_matches_tenant(raw):
+                raise exc.not_found(f"Record not found: {pk}")
+
+            await self.client.delete_document(coll, storage_pk)
 
     # ....................... #
 
     async def kill_many(self, pks: Sequence[UUID], *, batch_size: int = 200) -> None:
+        """Hard-delete multiple documents, each scoped to the current tenant.
+
+        Deletes are looped (Firestore has no atomic tenant-filtered bulk delete);
+        each document is tenant-verified via :meth:`kill`, so a missing or
+        cross-tenant id raises ``not_found``.
+
+        **Not atomic — partial success is possible.** The ids are deleted one at a
+        time in order and each ``kill`` commits immediately, so a ``not_found`` on a
+        later id leaves the earlier deletes already applied (they are not rolled
+        back). Callers needing all-or-nothing semantics must pre-validate existence,
+        or delete within their own transaction rather than relying on this helper.
+
+        :param pks: Document primary keys (must be unique). No-ops when empty.
+        :raises NotFoundError: If any document does not exist or is not accessible
+            in the current tenant scope (earlier deletes in the batch still commit).
+        """
+
         _ = batch_size
 
         if not pks:

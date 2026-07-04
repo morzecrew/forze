@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Sequence, final
+from functools import partial
+from typing import AsyncGenerator, Sequence, cast, final
 from uuid import UUID
 
 import attrs
@@ -16,14 +17,21 @@ from forze.application.contracts.stream import (
     CommitStreamGroupQueryPort,
     StreamMessage,
     StreamPosition,
+    UndecodableStreamPayload,
 )
 from forze.application.contracts.tenancy import TenantProviderPort
+from forze.base.logging import Logger
 
+from .._logging import ForzeKafkaLogger
 from ..kernel.client import KafkaClientPort
+from ..kernel.rebalance import KafkaCommitRebalanceListener
 from ..kernel.relation import NamedResourceSpec, resolve_kafka_topic
 from .codecs import KafkaStreamCodec
 
 # ----------------------- #
+
+logger = Logger(ForzeKafkaLogger.ADAPTERS)
+"""Kafka adapters logger."""
 
 _DEFAULT_POLL_MS = 1_000
 """``getmany`` wait when the caller passes no timeout (the runner polls anyway)."""
@@ -118,6 +126,39 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
 
     # ....................... #
 
+    def _poison_message(
+        self, record: ConsumerRecord[bytes, bytes], error: Exception
+    ) -> StreamMessage[M]:
+        """Wrap a record whose value/headers could not be decoded as a poison marker.
+
+        The record's ``(partition, offset)`` / ``id`` are preserved (read straight
+        off the native record, not the codec), so the runner can pause-and-alert and
+        leave the offset uncommitted for redelivery — never skip it. The payload is a
+        :class:`UndecodableStreamPayload`, not the model ``M``.
+        """
+
+        raw = record.value if isinstance(record.value, bytes) else b""
+
+        return StreamMessage(
+            stream=record.topic,
+            id=f"{record.topic}:{record.partition}:{record.offset}",
+            payload=cast(M, UndecodableStreamPayload(raw=raw, error=str(error))),
+            partition=record.partition,
+            offset=record.offset,
+        )
+
+    # ....................... #
+
+    def _forget_partitions(
+        self, group: str, revoked: Sequence[TopicPartition]
+    ) -> None:
+        """Drop revoked partitions' commit routing (a rebalance took them away)."""
+
+        for tp in revoked:
+            self._cell.by_partition.pop((group, tp.topic, tp.partition), None)
+
+    # ....................... #
+
     async def read(
         self,
         group: str,
@@ -134,6 +175,14 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
             topics=physical,
             auto_offset_reset=self.auto_offset_reset,
             max_poll_records=self.max_poll_records,
+            # On a rebalance: drop revoked partitions' routing (so a commit for one
+            # doesn't raise on a member that lost it) and rewind assigned ones to
+            # committed. Fresh per read; only the first read's listener is live (the
+            # consumer keeps the one it was subscribed with), and the closure's cell
+            # is stable across reads (the adapter is frozen).
+            listener=KafkaCommitRebalanceListener(
+                on_revoke=partial(self._forget_partitions, group)
+            ),
         )
         timeout_ms = (
             int(timeout.total_seconds() * 1000)
@@ -149,7 +198,26 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
 
         for records in batches.values():
             for record in records:
-                message = self._to_message(record)
+                try:
+                    message = self._to_message(record)
+
+                except Exception as error:
+                    # A malformed record must NOT raise out of read(): getmany has
+                    # already advanced the pooled consumer past the whole batch, so a
+                    # raise here would let a later successful commit skip the
+                    # unprocessed records (silent loss on restart). Surface a poison
+                    # marker instead — the runner pauses-and-alerts and rewinds to
+                    # committed, leaving the offset uncommitted for redelivery.
+                    logger.warning(
+                        "Kafka read: undecodable record at %s:%s:%s; surfacing poison "
+                        "marker (offset left uncommitted for the runner to pause on)",
+                        record.topic,
+                        record.partition,
+                        record.offset,
+                        exc_info=True,
+                    )
+                    message = self._poison_message(record, error)
+
                 # Remember which consumer delivered this partition so its commit
                 # routes to the right assigned member.
                 self._cell.by_partition[
@@ -211,6 +279,44 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
             await consumer.commit(
                 {tp: OffsetAndMetadata(offset, "") for tp, offset in maxima.items()}
             )
+
+    # ....................... #
+
+    async def seek_to_committed(self, group: str, topics: Sequence[str]) -> None:
+        del topics  # every pooled consumer for the group is rewound wholesale
+
+        # Rewind each pooled consumer this group read through back to its committed
+        # offset. ``getmany`` advanced the in-memory position past the whole batch;
+        # on an abort/pause (poison, crash) that advance must be undone or the next
+        # read — including a supervised in-process restart reusing this same pooled
+        # consumer — would resume PAST the uncommitted records and skip them.
+        seen: set[int] = set()
+
+        for (member_group, _topic, _partition), consumer in list(
+            self._cell.by_partition.items()
+        ):
+            if member_group != group or id(consumer) in seen:
+                continue
+
+            seen.add(id(consumer))
+            assigned = consumer.assignment()
+
+            if not assigned:
+                continue
+
+            # Best-effort: a concurrent rebalance may shift the assignment mid-seek;
+            # a fresh assignment already positions at committed, so a failure here is
+            # not loss-bearing.
+            try:
+                await consumer.seek_to_committed(*assigned)
+
+            except Exception:
+                logger.warning(
+                    "Kafka seek_to_committed failed for group %s; a rebalance may have "
+                    "shifted the assignment (fetch position defaults to committed)",
+                    group,
+                    exc_info=True,
+                )
 
     # ....................... #
 

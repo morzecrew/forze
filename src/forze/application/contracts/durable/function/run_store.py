@@ -143,6 +143,25 @@ class DurableRunStorePort(Protocol):
         """
         ...  # pragma: no cover
 
+    def renew(
+        self,
+        run_id: str,
+        *,
+        lease_for: timedelta,
+        fence: int,  # noqa: F841
+    ) -> Awaitable[bool]:
+        """Extend a running run's lease, but only while the caller still holds it.
+
+        A long-running body calls this periodically (a heartbeat) so ``leased_until`` stays
+        ahead of the recovery scanner and the run is not reclaimed while it is still
+        executing. The extension applies only when the run is still ``RUNNING`` and *fence*
+        (the claimed run's :attr:`DurableRunRecord.attempts`) still matches — i.e. the caller
+        is the current lease holder. Returns whether the lease was extended: ``False`` means
+        another worker reclaimed the run (a newer claim advanced ``attempts``), so the caller
+        no longer owns it and must stop before its body double-executes the new owner's work.
+        """
+        ...  # pragma: no cover
+
     def complete(
         self,
         run_id: str,

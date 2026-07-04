@@ -8,6 +8,12 @@ from typing import AsyncGenerator, final
 import attrs
 
 from forze.application._logger import logger
+from forze.application.contracts.querying import (
+    CursorTokenCipher,
+    CursorTokenSigner,
+    bind_cursor_cipher,
+    bind_cursor_signer,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import (
     CpuExecutor,
@@ -159,6 +165,21 @@ class ExecutionRuntime:
     pool without constructing and owning a :class:`ThreadPoolCpuExecutor` yourself. Must be a
     positive integer when set (validated at construction).
     """
+
+    cursor_token_signer: CursorTokenSigner | None = None
+    """Optional HMAC signer for keyset cursor tokens. When set, the runtime binds it per scope
+    (context-scoped, auto-restored on scope exit — so two runtimes in one process sign with
+    their own signer), so every keyset cursor token is signed and verification rejects any
+    unsigned or tampered token — opt-in, hard cutover. ``None`` (default) leaves tokens
+    unsigned. See :func:`~forze.application.contracts.querying.bind_cursor_signer`."""
+
+    cursor_token_cipher: CursorTokenCipher | None = None
+    """Optional AEAD cipher for keyset cursor tokens. When set, the runtime binds it per scope,
+    so every keyset cursor token is encrypted (payload hidden, tag-authenticated) and
+    verification rejects any unencrypted or tampered token — opt-in, hard cutover. A cipher
+    **supersedes** :attr:`cursor_token_signer` (AEAD already authenticates). ``None`` (default)
+    leaves confidentiality off. See
+    :func:`~forze.application.contracts.querying.configure_cursor_cipher`."""
 
     # ....................... #
 
@@ -366,8 +387,24 @@ class ExecutionRuntime:
             )
             bind = bind_cpu_executor(owned_pool)
 
+        # Opt-in cursor-token signing, scoped to this runtime's scope (context-local, so two
+        # runtimes in one process each mint/verify with their own signer). ``None`` = unsigned.
+        sign_bind: AbstractContextManager[None] = (
+            bind_cursor_signer(self.cursor_token_signer)
+            if self.cursor_token_signer is not None
+            else nullcontext()
+        )
+
+        # Opt-in cursor-token encryption (confidentiality), same scoping. A cipher supersedes
+        # the signer — AEAD authenticates too — so both binding is harmless. ``None`` = plaintext.
+        cipher_bind: AbstractContextManager[None] = (
+            bind_cursor_cipher(self.cursor_token_cipher)
+            if self.cursor_token_cipher is not None
+            else nullcontext()
+        )
+
         try:
-            with bind:
+            with bind, sign_bind, cipher_bind:
                 try:
                     await self.startup()
 

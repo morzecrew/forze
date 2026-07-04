@@ -127,6 +127,31 @@ MECHANISM_DIVERGENCES: tuple[MechanismDivergence, ...] = (
         source="Kleppmann, Hermitage: Testing the 'I' in ACID",
     ),
     MechanismDivergence(
+        name="skip-locked-degrades-to-for-update",
+        reason=(
+            "Postgres `SELECT ... FOR UPDATE SKIP LOCKED` returns DISJOINT rows to concurrent "
+            "workers (a locked row is skipped, not waited on). The mock does not model the "
+            "disjoint claim: `skip_locked` degrades to plain `FOR UPDATE` conflict-on-read (both "
+            "workers claim the same row, one aborts) — the declared RowLockMode fallback for "
+            "non-Postgres backends, not a silent no-op. A workload that depends on disjoint-claim "
+            "work distribution is a declared mock gap; model it against real Postgres."
+        ),
+        source="Postgres docs, SELECT FOR UPDATE SKIP LOCKED; RowLockMode contract",
+    ),
+    MechanismDivergence(
+        name="lock-block-vs-abort-conductor",
+        reason=(
+            "A duplicate-key insert race and a `FOR UPDATE` lock contention both BLOCK the second "
+            "participant on Postgres (it waits for the first to commit, then raises 23505 / re-reads) "
+            "— which would wedge the Conductor's one-participant-at-a-time forced interleaving. The "
+            "mock is abort-based, so it surfaces the same outcome (unique violation / prevented lost "
+            "update) without blocking. Battery cases marked `abort_engine_only` run against the mock "
+            "(and any abort-based engine); the lock-based real-adapter legs skip them, asserting the "
+            "outcome only where the interleaving does not deadlock."
+        ),
+        source="battery docstring (abort-based engine assumption); ept/hermitage",
+    ),
+    MechanismDivergence(
         name="read-only-abort-vs-safe-snapshot",
         reason=(
             "On a phantom under serializable, the mock's coarse namespace-level read-set aborts even "

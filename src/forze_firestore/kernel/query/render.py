@@ -29,19 +29,15 @@ from forze.base.exceptions import exc
 
 _OP_MAP: dict[str, str] = {
     "$eq": "==",
-    "$neq": "!=",
     "$gt": ">",
     "$gte": ">=",
     "$lt": "<",
     "$lte": "<=",
     "$in": "in",
-    "$nin": "not-in",
 }
 
 FIRESTORE_QUERY_CAPABILITIES = QueryCapabilities(
-    value_ops=frozenset(
-        {"$eq", "$neq", "$gt", "$gte", "$lt", "$lte", "$null", "$empty", "$in", "$nin"}
-    ),
+    value_ops=frozenset({"$eq", "$gt", "$gte", "$lt", "$lte", "$empty", "$in"}),
     element_ops=frozenset(),
     supports_quantifiers=False,
     supports_negation=False,
@@ -49,10 +45,21 @@ FIRESTORE_QUERY_CAPABILITIES = QueryCapabilities(
     supports_aggregates=False,
 )
 """What the Firestore MVP renderer compiles: equality / ordering / membership /
-null / empty, plus ``$and`` / ``$or``. No ``$not``, set or text operators, array
+empty, plus ``$and`` / ``$or``. No ``$not``, set or text operators, array
 element quantifiers, field-to-field comparison, or aggregates — the capability
 validators reject those up front; the renderer's inner raises are a defense-in-depth
-backstop."""
+backstop.
+
+``$neq``, ``$nin`` and ``$null`` are deliberately **not** advertised. The framework's
+agnostic semantics (matched by mock/Postgres/Mongo) treat an absent field as
+not-equal / not-in and as null (``null_matches_missing=True``), but Firestore's
+``!=`` / ``not-in`` operators *exclude* documents where the field is absent or null,
+and Firestore cannot express an "absent field" predicate at all. Compiling them
+would silently return a different set than the other backends, so they are gated off
+here and the framework fails closed with ``query_feature_unsupported`` rather than
+returning wrong rows. ``$null:false`` (present-and-non-null) alone would be
+faithful, but the capability model is per-operator (not per-direction), so ``$null``
+is dropped as a whole."""
 
 
 # ....................... #
@@ -160,16 +167,19 @@ class FirestoreQueryRenderer:
             case "$eq":
                 return FieldFilter(field, "==", self.caster.pass_through(value))
 
-            case "$neq":
-                return FieldFilter(field, "!=", self.caster.pass_through(value))
+            case "$neq" | "$nin" | "$null":
+                # Not advertised in FIRESTORE_QUERY_CAPABILITIES: Firestore's
+                # !=/not-in exclude absent/null fields (and "absent" is not
+                # queryable), diverging from the agnostic null_matches_missing
+                # semantics. Rejected up front by the capability validator; this
+                # is a defense-in-depth backstop.
+                raise exc.internal(
+                    f"Firestore adapter does not support {op!r}: its null/absent-field "
+                    "semantics diverge from the other backends"
+                )
 
             case "$gt" | "$gte" | "$lt" | "$lte":
                 return FieldFilter(field, _OP_MAP[op], self.caster.pass_through(value))
-
-            case "$null":
-                if self.caster.as_bool(value):
-                    return FieldFilter(field, "==", None)
-                return FieldFilter(field, "!=", None)
 
             case "$empty":
                 if self.caster.as_bool(value):
@@ -182,15 +192,6 @@ class FirestoreQueryRenderer:
                 return FieldFilter(
                     field,
                     "in",
-                    [self.caster.pass_through(v) for v in value],
-                )
-
-            case "$nin":
-                if isinstance(value, QueryValue.Scalar | None):
-                    raise exc.internal(f"{field}: {op} expects list")
-                return FieldFilter(
-                    field,
-                    "not-in",
                     [self.caster.pass_through(v) for v in value],
                 )
 

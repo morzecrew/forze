@@ -6,18 +6,34 @@ contract: :class:`~forze.application.execution.context.ExecutionContext` owns
 per-instance ContextVars and per-scope caches, so it must be created once per
 runtime scope, never per request. Constructing one while an operation is in
 flight is the signature of per-request creation and triggers a warning.
+
+The marker holds the :class:`asyncio.Task` that entered the enclosing operation
+(``False`` when none is active) rather than a bare ``True``. A ContextVar is
+*copied* into every task ``asyncio.create_task`` spawns, so a task a handler
+spawns (``asyncio.create_task(facade.run(...))``) inherits the marker even
+though it is a distinct, detached task. Recording the owning task lets the
+invoke path tell a genuine in-await nested call (same task — rides the outer
+drain slot) apart from a spawned operation (a *different* task — a fresh
+top-level driver that must be admitted and tracked by the drain gate); see
+:mod:`forze.application.execution.operations.run.invoke`.
 """
 
+import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Generator
+from typing import Any, Generator
 
 # ----------------------- #
 
-active_operation_var: ContextVar[bool] = ContextVar(
+active_operation_var: ContextVar["asyncio.Task[Any] | bool"] = ContextVar(
     "forze_active_operation",
     default=False,
 )
+"""Owning :class:`asyncio.Task` of the enclosing operation, or ``False`` when none.
+
+Truthy exactly when an operation is active on (or inherited into) the current
+context; the invoke path additionally compares the stored task to the running
+one to distinguish same-task nesting from a spawned operation."""
 
 _warned_ctx_in_operation: bool = False
 
@@ -43,7 +59,7 @@ def operation_running() -> Generator[None]:
 def is_operation_running() -> bool:
     """Whether an operation is executing on the current task."""
 
-    return active_operation_var.get()
+    return bool(active_operation_var.get())
 
 
 # ....................... #

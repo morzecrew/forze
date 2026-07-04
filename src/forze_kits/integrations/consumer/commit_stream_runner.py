@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import timedelta
 from functools import partial
 from typing import Any, final
@@ -20,6 +20,7 @@ from forze.application.contracts.stream import (
     StreamMessage,
     StreamPosition,
     StreamSpec,
+    UndecodableStreamPayload,
 )
 from forze.application.execution.context import ExecutionContext
 from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
@@ -50,6 +51,15 @@ def _default_dedup_id(message: StreamMessage[Any]) -> str:
     """
 
     return message.headers.get(HEADER_EVENT_ID) or message.id
+
+
+# ....................... #
+
+
+def _to_topic_tuple(topics: Iterable[str]) -> tuple[str, ...]:
+    """Freeze the subscribed topics to a tuple (typed so callers may pass any iterable)."""
+
+    return tuple(topics)
 
 
 # ....................... #
@@ -124,8 +134,12 @@ class CommitStreamGroupConsumer[M]:
 
     The decision ladder, adapted to a log's lack of per-message nack:
 
-    1. **Decode** — handled in the adapter's read path (undecodable payloads
-       never reach the loop).
+    1. **Decode** — the adapter's read path never raises a malformed record out of
+       the batch (a raise would let a later commit skip the whole fetched batch on
+       an offset-log). Instead it substitutes an
+       :class:`~forze.application.contracts.stream.UndecodableStreamPayload` marker,
+       which the loop treats as decode poison: **pause and alert**, rewind to
+       committed, and leave the offset uncommitted for redelivery.
     2. **Decrypt** — an end-to-end ciphertext envelope is decrypted to the typed
        model; a missing-keyring config error aborts the loop (deployment fault),
        and a tamper/decode failure **pauses and alerts** (an undecryptable
@@ -153,7 +167,7 @@ class CommitStreamGroupConsumer[M]:
     returns with ``failed > 0``.
     """
 
-    topics: tuple[str, ...] = attrs.field(converter=tuple)
+    topics: tuple[str, ...] = attrs.field(converter=_to_topic_tuple)
     """Topics (streams) this consumer subscribes to."""
 
     group: str
@@ -280,6 +294,22 @@ class CommitStreamGroupConsumer[M]:
 
     # ....................... #
 
+    async def reset_to_committed(self, ctx: ExecutionContext) -> None:
+        """Rewind the in-memory read position to the group's committed offset.
+
+        For a **loss-free restart**: a crash mid-batch may have left the backend's
+        pooled reader positioned past uncommitted records (``read`` advances an
+        in-memory cursor); rewinding to committed makes the restart re-fetch them
+        instead of skipping. A no-op on backends whose read position *is* the
+        committed cursor. Called by the supervised lifecycle step before it
+        restarts a crashed run.
+        """
+
+        port: CommitStreamGroupQueryPort[M] = ctx.stream.commit_query(self.stream_spec)
+        await port.seek_to_committed(self.group, list(self.topics))
+
+    # ....................... #
+
     async def _process_batch(
         self,
         ctx: ExecutionContext,
@@ -299,7 +329,21 @@ class CommitStreamGroupConsumer[M]:
             if positions:
                 await port.commit(self.group, positions)
 
+        async def _pause() -> bool:
+            # Commit the successes so far, then rewind the in-memory read position to
+            # committed so the uncommitted tail (this poison + everything after it) is
+            # re-fetched on the next read / supervised restart — never skipped past.
+            await _flush()
+            await port.seek_to_committed(self.group, list(self.topics))
+            totals.failed += 1
+            return False
+
         for message in batch:
+            # -- Decode: a poison marker from the read path pauses like decode. --- #
+            if isinstance(message.payload, UndecodableStreamPayload):
+                self._alert_pause(message, reason="decode")
+                return await _pause()
+
             # -- Decrypt: end-to-end ciphertext → typed model before the ladder. -- #
             try:
                 message = await _decrypt_message(
@@ -316,16 +360,12 @@ class CommitStreamGroupConsumer[M]:
                 # Decrypt-poison: no typed model in hand, so it cannot be
                 # re-produced through the typed DLQ port — pause and alert.
                 self._alert_pause(message, reason="decrypt")
-                await _flush()
-                totals.failed += 1
-                return False
+                return await _pause()
 
             except Exception:
                 # Decode-poison: same as decrypt — nothing decodable to forward.
                 self._alert_pause(message, reason="decode")
-                await _flush()
-                totals.failed += 1
-                return False
+                return await _pause()
 
             # -- Process: dedup mark + handler in one transaction, up to N tries. -- #
             outcome = await self._process_one(ctx, message, executor=executor)
@@ -338,9 +378,7 @@ class CommitStreamGroupConsumer[M]:
                     continue
 
                 self._alert_pause(message, reason="handler")
-                await _flush()
-                totals.failed += 1
-                return False
+                return await _pause()
 
             if outcome:
                 totals.processed += 1

@@ -6,6 +6,7 @@ require_redis()
 
 # ....................... #
 
+import hashlib
 from datetime import timedelta
 from typing import Any, Final, TypedDict, final
 
@@ -14,6 +15,7 @@ import attrs
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencyRecord
 from forze.base.exceptions import exc
 
+from ..kernel.scripts import IDEMPOTENCY_COMMIT, IDEMPOTENCY_RELEASE
 from ._logger import logger
 from .base import RedisBaseAdapter
 from .codecs import default_json_codec
@@ -23,7 +25,10 @@ from .codecs import default_json_codec
 _PENDING: Final[str] = "P"
 _DONE: Final[str] = "D"
 _IDEMPOTENCY_SCOPE: Final[str] = "idempotency"
-_BODY_SUFFIX: Final[str] = "body"
+# The result body lives under its own top-level scope, not a ``:body`` suffix on
+# the metadata path. A distinct scope segment makes body and metadata keys
+# structurally incapable of colliding regardless of the caller-supplied key.
+_BODY_SCOPE: Final[str] = "idempotency-body"
 
 
 # ....................... #
@@ -44,11 +49,17 @@ class _MetaPayload(TypedDict, total=False):
 class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
     """Redis implementation of :class:`~forze.application.contracts.idempotency.IdempotencyPort`.
 
-    Uses ``SET NX`` on a small JSON metadata key for :meth:`begin`, stores the
-    serialized result as raw bytes on a sibling key on :meth:`commit`, and keeps
-    metadata and result expiries aligned via a transactional pipeline.
-    :meth:`fail` deletes a matching *pending* claim so a retry of a failed
-    request can re-execute before the TTL expires.
+    Uses ``SET NX`` on a small JSON metadata key for :meth:`begin`, and stores
+    the serialized result as raw bytes on a separate result-body key.
+    :meth:`commit` is a fenced compare-and-set (metadata flips to DONE and the
+    body is written **only** if the current claim is still the caller's own
+    pending claim), and :meth:`fail` a compare-and-delete of that same pending
+    claim so a retry of a failed request can re-execute before the TTL expires.
+
+    The caller-supplied idempotency key is untrusted (an ``Idempotency-Key``
+    header): it is SHA-256 hashed before it enters any Redis key, and the body
+    lives under its own scope segment, so no caller value can collide the
+    metadata and body key spaces or one caller's keys with another's.
     """
 
     ttl: timedelta = timedelta(hours=24)
@@ -70,11 +81,21 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
 
     # ....................... #
 
+    @staticmethod
+    def __key_digest(key: str) -> str:
+        """Hex SHA-256 of the untrusted caller key.
+
+        Fixed-length, separator-free, and non-empty, so it cannot alias another
+        caller's key path nor smuggle the key separator into the built key.
+        """
+
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
     def __meta_key(self, op: str, key: str) -> str:
-        return self.construct_key(_IDEMPOTENCY_SCOPE, op, key)
+        return self.construct_key(_IDEMPOTENCY_SCOPE, op, self.__key_digest(key))
 
     def __body_key(self, op: str, key: str) -> str:
-        return self.construct_key(_IDEMPOTENCY_SCOPE, op, key, _BODY_SUFFIX)
+        return self.construct_key(_BODY_SCOPE, op, self.__key_digest(key))
 
     # ....................... #
 
@@ -167,29 +188,30 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         meta_k = self.__meta_key(op, key)
         body_k = self.__body_key(op, key)
         ex = int(self.ttl.total_seconds())
-        meta_done: _MetaPayload = {
-            "st": _DONE,
-            "ph": payload_hash,
-        }
 
-        async with self.client.pipeline(transaction=True):
-            await self.client.set(body_k, record.result, ex=ex)
-            await self.client.set(
-                meta_k,
-                default_json_codec.dumps(meta_done),
-                ex=ex,
-                xx=True,
+        # Fenced compare-and-set: flip metadata to DONE and write the body only
+        # if the current claim is byte-for-byte our own pending claim. ``SET XX``
+        # alone asserted merely that *some* metadata exists, so a stale owner
+        # whose claim had lapsed and been re-acquired by another writer could
+        # overwrite that writer's claim.
+        pending_meta: _MetaPayload = {"st": _PENDING, "ph": payload_hash}
+        done_meta: _MetaPayload = {"st": _DONE, "ph": payload_hash}
+
+        committed = await self.client.run_script(
+            IDEMPOTENCY_COMMIT,
+            [meta_k, body_k],
+            [
+                default_json_codec.dumps(pending_meta),
+                default_json_codec.dumps(done_meta),
+                record.result,
+                ex,
+            ],
+        )
+
+        if committed != "1":
+            raise exc.conflict(
+                "Idempotency commit failed (claim missing, expired, or not owned)"
             )
-
-        raw_check = await self.client.get(meta_k)
-
-        if raw_check is None:
-            raise exc.conflict("Idempotency commit failed (key missing or expired)")
-
-        done_meta: dict[str, Any] = default_json_codec.loads(raw_check)
-
-        if str(done_meta.get("st", "")) != _DONE:
-            raise exc.conflict("Idempotency commit failed (key missing or expired)")
 
     # ....................... #
 
@@ -211,19 +233,17 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         )
 
         meta_k = self.__meta_key(op, key)
-        raw = await self.client.get(meta_k)
+        body_k = self.__body_key(op, key)
 
-        if raw is None:
-            return  # claim already expired or never taken
+        # Compare-and-delete: drop the claim only if the current metadata is
+        # byte-for-byte our own pending claim. A completed record (DONE), a claim
+        # re-acquired for a different payload hash, or an already-expired claim is
+        # left untouched. This replaces the racy GET-check-DELETE with one atomic
+        # server-side step.
+        pending_meta: _MetaPayload = {"st": _PENDING, "ph": payload_hash}
 
-        data: dict[str, Any] = default_json_codec.loads(raw)
-
-        # Only release our own pending claim: a completed record (DONE) or a
-        # claim for a different payload hash is left untouched.
-        if (
-            str(data.get("st", "")) != _PENDING
-            or str(data.get("ph", "")) != payload_hash
-        ):
-            return
-
-        await self.client.delete(meta_k, self.__body_key(op, key))
+        await self.client.run_script(
+            IDEMPOTENCY_RELEASE,
+            [meta_k, body_k],
+            [default_json_codec.dumps(pending_meta)],
+        )

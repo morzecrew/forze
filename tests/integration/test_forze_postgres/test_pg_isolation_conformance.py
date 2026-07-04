@@ -122,8 +122,14 @@ async def conformance_tables(pg_client: PostgresClient):
 # ....................... #
 
 
+# Lock-based engines block (not abort) on a duplicate-key insert / FOR UPDATE contention, which would
+# wedge the lock-step Conductor — those cases run against the abort-based mock only (see the
+# `lock-block-vs-abort-conductor` MECHANISM_DIVERGENCE).
+_LOCK_SAFE_BATTERY = tuple(case for case in BATTERY if not case.abort_engine_only)
+
+
 @pytest.mark.integration
-@pytest.mark.parametrize("case", BATTERY, ids=lambda case: case.name)
+@pytest.mark.parametrize("case", _LOCK_SAFE_BATTERY, ids=lambda case: case.name)
 @pytest.mark.parametrize("level", _LEVELS, ids=lambda level: level.name)
 class TestPostgresIsolationDifferential:
     async def test_real_postgres_matches_expected_verdict(

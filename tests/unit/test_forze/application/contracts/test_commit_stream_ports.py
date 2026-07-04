@@ -122,6 +122,10 @@ class _StubCommitQuery:
         _ = group, positions
         return None
 
+    async def seek_to_committed(self, group: str, topics: Sequence[str]) -> None:
+        _ = group, topics
+        return None
+
 
 class _StubCommitAdmin:
     async def ensure_topic(

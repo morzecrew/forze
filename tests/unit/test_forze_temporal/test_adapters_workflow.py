@@ -243,6 +243,32 @@ class TestTemporalBaseAdapterWorkflowId:
         assert adapter.construct_workflow_id("manual") == "manual"
         assert adapter.construct_workflow_id(None) == "gen-id-1"
 
+    def test_default_workflow_id_factory_yields_distinct_valid_uuids(self) -> None:
+        from uuid import UUID
+
+        adapter_one = TemporalWorkflowCommandAdapter(
+            client=_client(),
+            queue="q",
+            spec=_spec(),
+            tenant_aware=False,
+        )
+        adapter_two = TemporalWorkflowCommandAdapter(
+            client=_client(),
+            queue="q",
+            spec=_spec(),
+            tenant_aware=False,
+        )
+
+        id_one = adapter_one.construct_workflow_id(None)
+        id_two = adapter_two.construct_workflow_id(None)
+
+        # Each default id must be a real UUID string (regression: the factory
+        # previously stringified the ``uuid4`` function itself, so every id was
+        # the identical ``"<function uuid4 ...>"`` garbage and collided).
+        assert str(UUID(id_one)) == id_one
+        assert str(UUID(id_two)) == id_two
+        assert id_one != id_two
+
     def test_construct_workflow_id_tenant_prefixed(self) -> None:
         from uuid import UUID
 

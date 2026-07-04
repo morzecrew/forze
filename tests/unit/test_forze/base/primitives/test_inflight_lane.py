@@ -77,6 +77,61 @@ class TestInflightLane:
 
         assert await lane.run(("k",), lambda: _return(7)) == 7
 
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_cancel_shared_task_for_other_followers(self) -> None:
+        lane = InflightLane[int]()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def factory() -> int:
+            nonlocal calls
+            calls += 1
+            started.set()
+            await release.wait()
+            return 7
+
+        # A follower with no timeout, sharing the single in-flight task.
+        follower = asyncio.create_task(lane.run(("k",), factory))
+        await started.wait()
+
+        # A caller with a short timeout gives up waiting.
+        with pytest.raises(CoreException, match="timed out"):
+            await lane.run(("k",), factory, timeout=0.02)
+
+        # The shared computation kept running (the timeout cancelled only that caller's wait,
+        # not the shared task): the follower still gets its result, factory ran exactly once.
+        release.set()
+        assert await follower == 7
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_orphaned_task_is_deregistered_after_completion(self) -> None:
+        lane = InflightLane[int]()
+        release = asyncio.Event()
+
+        async def factory() -> int:
+            await release.wait()
+            return 1
+
+        # The only caller times out; the task is left running (orphaned), still tracked.
+        with pytest.raises(CoreException, match="timed out"):
+            await lane.run(("k",), factory, timeout=0.02)
+
+        assert ("k",) in lane._tasks  # noqa: SLF001 - white-box: orphan still tracked
+
+        # On completion its done-callback deregisters it — no leak, no "exception never
+        # retrieved" warning (cleanup is tied to the task finishing, not to a waiter leaving).
+        release.set()
+
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+            if ("k",) not in lane._tasks:  # noqa: SLF001 - white-box
+                break
+
+        assert ("k",) not in lane._tasks  # noqa: SLF001 - white-box: deregistered
+
 
 async def _return(value: int) -> int:
     return value

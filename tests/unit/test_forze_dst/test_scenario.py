@@ -169,6 +169,9 @@ class TestHypothesisExplore:
         ops = [op for op, _arg in report.workload]
         assert ops == ["pay_order", "pay_order"]
         assert report.registry_fingerprint
+        # The act-plan is captured so the counterexample reproduces from its own instructions.
+        assert report.plan is not None
+        assert "act-plan (Hypothesis)" in report.format()
         # The report reproduces exactly from the reported (seed, plan).
         assert report.format() == report.format()
 

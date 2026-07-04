@@ -130,8 +130,14 @@ async def test_find_many_with_or_and_neq(
     assert page.count == 2
     assert {r.sku for r in page.hits} == {"a", "b"}
 
-    excluded = await query.find_page(
-        filters={"$values": {"sku": {"$neq": "c"}}},
-        pagination={"limit": 10, "offset": 0},
-    )
-    assert excluded.count == 2
+    # $neq is not advertised for Firestore: its != excludes absent/null fields,
+    # diverging from the agnostic semantics, so the framework fails closed.
+    from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
+    from forze.base.exceptions import CoreException
+
+    with pytest.raises(CoreException) as ei:
+        await query.find_page(
+            filters={"$values": {"sku": {"$neq": "c"}}},
+            pagination={"limit": 10, "offset": 0},
+        )
+    assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE

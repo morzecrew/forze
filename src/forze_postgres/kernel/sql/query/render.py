@@ -845,7 +845,11 @@ class PsycopgQueryRenderer:
     ) -> sql.Composable:
         op_map: dict[QueryOp.Eq, str] = {  # type: ignore[valid-type]
             "$eq": "=",
-            "$neq": "<>",
+            # ``IS DISTINCT FROM`` (not ``<>``) so a NULL / absent column *matches* $neq,
+            # aligning with the in-memory evaluator's documented semantics, with Mongo
+            # (``null_matches_missing``), and with this renderer's own field-to-field $neq
+            # path — plain ``<>`` would three-valued-exclude NULL rows and diverge.
+            "$neq": "IS DISTINCT FROM",
         }
         op_sql = sql.SQL(op_map[op])  # pyright: ignore[reportArgumentType]
 
@@ -890,7 +894,14 @@ class PsycopgQueryRenderer:
 
         expr = sql.SQL("{} = ANY({})").format(col, self.binder.add(coerced))
 
-        return expr if op == "$in" else sql.SQL("NOT ({})").format(expr)
+        if op == "$in":
+            return expr
+
+        # $nin: also match rows whose column is NULL / absent — the in-memory evaluator
+        # (and Mongo) treat a missing/null field as satisfying $nin; a bare ``NOT (…)`` would
+        # three-valued-exclude NULL rows. (The array-column branch above already includes
+        # NULL: ``unnest(NULL)`` is empty, so ``NOT EXISTS`` is TRUE.)
+        return sql.SQL("({} IS NULL OR NOT ({}))").format(col, expr)
 
     # ....................... #
 
@@ -911,7 +922,9 @@ class PsycopgQueryRenderer:
         ph = self.binder.add(value)
 
         if op == "$disjoint":
-            return sql.SQL("NOT ({} && {})").format(col, ph)
+            # A NULL / absent array is disjoint from everything (empty ∩ x = ∅), matching the
+            # in-memory evaluator; a bare ``NOT (col && ph)`` would three-valued-exclude it.
+            return sql.SQL("({} IS NULL OR NOT ({} && {}))").format(col, col, ph)
 
         else:
             op_sql = sql.SQL(op_map[op])  # pyright: ignore[reportArgumentType]

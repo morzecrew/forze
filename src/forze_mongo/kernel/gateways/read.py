@@ -13,7 +13,6 @@ from typing import (
     Never,
     Sequence,
     TypeVar,
-    cast,
     final,
     overload,
 )
@@ -35,9 +34,11 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     decode_keyset_v1,
     normalize_sorts_for_keyset,
+    resolved_cursor_limit,
 )
 from forze.application.integrations.persistence import (
     ReadValidationCodecMixin,
+    document_cursor_binding,
     log_non_postgres_lock_degrade,
 )
 from forze.base.exceptions import exc
@@ -666,11 +667,10 @@ class MongoReadGateway[M: BaseModel](
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
-        limit_raw = c.get("limit")
-        lim: int = 10 if limit_raw is None else int(cast(Any, limit_raw))  # type: ignore[has-type, assignment]
-
-        if lim < 1:
-            raise exc.validation("Cursor pagination 'limit' must be positive")
+        # Coerced + clamped like the document/search cursor paths: a non-integer is a clean
+        # 400 (not a raw ValueError) and an over-large value is clamped to MAX_CURSOR_LIMIT
+        # instead of reaching Mongo as an unbounded ``lim + 1`` fetch.
+        lim = resolved_cursor_limit(c)
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
@@ -693,7 +693,9 @@ class MongoReadGateway[M: BaseModel](
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
-            tk, td, _tn, tv = decode_keyset_v1(token)
+            tk, td, _tn, tv = decode_keyset_v1(
+                token, binding=document_cursor_binding(self, filters)
+            )
             if (
                 tk != [ID_FIELD]
                 or len(td) != 1

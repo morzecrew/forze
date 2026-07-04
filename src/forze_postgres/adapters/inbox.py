@@ -48,6 +48,18 @@ class PostgresInboxStore(TenancyMixin, InboxPort):
 
     # ....................... #
 
+    def is_transactionally_enlisted(self) -> bool:
+        """Whether the dedup mark commits in the ambient transaction.
+
+        ``True`` only when this store's own client is inside a transaction — i.e. the
+        surrounding scope opened it on *this* client. A client bound to a different pool is
+        not enlisted, so the mark would commit on its own connection (breaking exactly-once).
+        """
+
+        return self.client.is_in_transaction()
+
+    # ....................... #
+
     async def mark_if_unseen(self, inbox: str, message_id: str) -> bool:
         table = await self._table()
         stmt = sql.SQL(

@@ -14,14 +14,14 @@ logging on hot paths costs nothing by default. An expected domain failure logs a
 from __future__ import annotations
 
 from time import perf_counter
-from typing import Any
+from typing import Any, AsyncIterator
 
 import attrs
 
 from forze.base.exceptions import CoreException
 from forze.base.logging import Logger, resolve_logger
 
-from .protocol import PortCall, PortNext
+from .protocol import PortCall, PortNext, StreamPortNext
 
 # ----------------------- #
 
@@ -91,3 +91,56 @@ class LoggingInterceptor:
         )
 
         return result
+
+    # ....................... #
+
+    async def around_stream(
+        self, call: PortCall, nxt: StreamPortNext
+    ) -> AsyncIterator[Any]:
+        """Log a streamed port call once for the *whole* stream — its item count and total
+        duration, and a mid-stream failure at the item it broke on — rather than timing only
+        the (near-instant) iterator acquisition and reporting success for a stream that later
+        fails. Same levels as :meth:`around`: success ``trace``, expected ``CoreException``
+        ``debug``, unexpected exception ``warning`` with its traceback."""
+
+        log = resolve_logger(self.logger, domain=_domain_of(call.surface))
+        start = perf_counter()
+        items = 0
+
+        try:
+            async for item in nxt(call):
+                items += 1
+                yield item
+
+        except CoreException as error:
+            log.debug(
+                "port stream failed",
+                surface=call.surface,
+                route=call.route,
+                op=call.op,
+                items=items,
+                duration_ms=round((perf_counter() - start) * 1000, 2),
+                error_kind=error.kind.value,
+            )
+            raise
+
+        except Exception:
+            log.warning(
+                "port stream raised",
+                surface=call.surface,
+                route=call.route,
+                op=call.op,
+                items=items,
+                duration_ms=round((perf_counter() - start) * 1000, 2),
+                exc_info=True,
+            )
+            raise
+
+        log.trace(
+            "port stream",
+            surface=call.surface,
+            route=call.route,
+            op=call.op,
+            items=items,
+            duration_ms=round((perf_counter() - start) * 1000, 2),
+        )

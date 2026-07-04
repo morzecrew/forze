@@ -13,6 +13,14 @@ Errors during a relay pass are classified by **where** they arise:
   ``mark_retry`` with exponential backoff + jitter
   (``retry_base_delay * 2**attempts``, capped at ``retry_max_backoff``) until
   ``max_attempts`` is exhausted, then marked ``failed`` (terminal).
+- **Deployment fault** — an encrypted row met a ``None`` keyring (no keyring
+  wired), so ``decrypt_outbox_payload`` raises
+  ``core.crypto.payload_cipher_missing``. This is a misconfiguration, never row
+  poison: the rows are perfectly good, the process just cannot decrypt them.
+  The pass **aborts** (re-raising, logging loudly) and leaves the rows for
+  reclaim/redelivery once a keyring is wired — the same handling both consumer
+  runners give this code — rather than dead-lettering the whole encrypted
+  backlog at claim-batch rate.
 
 One row's failure never aborts the rest of the claimed batch. Delivery is
 at-least-once and ordering is **not** preserved across failures/retries —
@@ -58,12 +66,14 @@ from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
 from forze.application.contracts.resilience import BackoffStrategy
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.resilience.backoff import compute_delay
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.application.integrations.outbox import (
     decrypt_outbox_payload,
     is_encrypted_payload,
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import current_entropy_source, utcnow
+from forze_kits.integrations._logger import logger
 
 if TYPE_CHECKING:
     from forze.application.contracts.outbox import OutboxClaim
@@ -72,6 +82,12 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 PublishOne = Callable[["OutboxClaim", Any], Awaitable[None]]
+
+# Same taxonomy as the two consumer runners (see
+# ``forze_kits.integrations.consumer``): a decrypt config error (an encrypted row
+# with no keyring wired) is a deployment fault, not a poison row.
+_CIPHER_MISSING_CODE = PAYLOAD_CIPHER_MISSING_CODE
+"""Decrypt config error (no keyring): a deployment fault, not a poison row."""
 
 
 def _under_claim_tenant(
@@ -266,6 +282,28 @@ async def relay_outbox_claims(
                     event_id=claim.event_id,
                 )
                 payload = outbox_spec.codec.decode_mapping(decrypted)
+
+        except CoreException as decode_error:
+            if decode_error.code == _CIPHER_MISSING_CODE:
+                # A deployment fault, not row poison: encrypted rows met a ``None``
+                # keyring (no CryptoDepsModule wired). Marking failed here would
+                # dead-letter the whole encrypted backlog at claim-batch rate. Abort
+                # the pass instead — leave the rows to be reclaimed/redelivered — and
+                # log loudly, mirroring what both consumer runners do for this code.
+                logger.error(
+                    "Outbox relay for %r hit an encrypted row with no keyring wired "
+                    "(%s); aborting the pass and leaving rows for redelivery — wire a "
+                    "CryptoDepsModule or disable encryption for this route.",
+                    str(outbox_spec.name),
+                    decode_error.code,
+                )
+                raise
+
+            # Genuine poison (a decode error with the keyring present). Terminal path
+            # stays per-row: rare, and error fidelity matters.
+            await query.mark_failed([claim.id], error=str(decode_error))
+            failed += 1
+            continue
 
         except Exception as e:
             # Terminal path stays per-row: rare, and error fidelity matters.

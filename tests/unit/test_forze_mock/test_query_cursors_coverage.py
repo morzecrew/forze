@@ -50,8 +50,17 @@ def test_cursor_start_and_limit_before_nonzero() -> None:
 
 
 def test_cursor_default_limit_and_no_cursor() -> None:
-    start, lim = _mock_cursor_start_and_limit(None, default_limit=15)
-    assert (start, lim) == (0, 15)
+    # No cursor -> start 0, the shared default page size.
+    start, lim = _mock_cursor_start_and_limit(None)
+    assert (start, lim) == (0, 10)
+
+
+def test_cursor_limit_clamped_and_coerced() -> None:
+    # A huge limit is clamped (not an unbounded scan); a non-integer is a clean 400.
+    _, lim = _mock_cursor_start_and_limit({"limit": 10**9})
+    assert lim == 10_000
+    with pytest.raises(CoreException, match="integer"):
+        _mock_cursor_start_and_limit({"limit": "abc"})
 
 
 def test_cursor_dual_token_rejected() -> None:
