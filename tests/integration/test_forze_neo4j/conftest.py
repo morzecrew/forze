@@ -39,8 +39,23 @@ async def neo4j_client(neo4j_container: Neo4jContainer) -> AsyncIterator[Neo4jCl
         auth=(neo4j_container.username, neo4j_container.password),
     )
 
-    await client.run("MATCH (n) DETACH DELETE n")
+    await _reset_database(client)
 
     yield client
 
     await client.close()
+
+
+async def _reset_database(client: Neo4jClient) -> None:
+    """Wipe data *and* schema so provisioning tests don't leak constraints/indexes."""
+
+    await client.run("MATCH (n) DETACH DELETE n")
+
+    for row in await client.run("SHOW CONSTRAINTS YIELD name RETURN name"):
+        await client.run(f"DROP CONSTRAINT `{row['name']}` IF EXISTS")
+
+    # Drop constraints first (removes their backing indexes); then any standalone index,
+    # skipping the built-in token-lookup indexes which cannot be dropped by name.
+    for row in await client.run("SHOW INDEXES YIELD name, type RETURN name, type"):
+        if row["type"] != "LOOKUP":
+            await client.run(f"DROP INDEX `{row['name']}` IF EXISTS")

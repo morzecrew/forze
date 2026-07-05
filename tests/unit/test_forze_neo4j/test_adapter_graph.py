@@ -16,6 +16,7 @@ from forze.application.contracts.graph import (
     GraphNodeSpec,
     GraphQueryPort,
     GraphRawQueryPort,
+    ShortestPathParams,
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
@@ -298,6 +299,106 @@ async def test_raw_query_fails_closed_without_tenant() -> None:
         await adapter.run("MATCH (n) RETURN n")
 
     assert client.calls == []  # never reached the client
+
+
+# ----------------------- #
+# schema provisioning (GraphManagementPort)
+
+
+class RatedRead(BaseModel):
+    ref: str
+    stars: int | None = None
+
+
+def _keyed_spec() -> GraphModuleSpec:
+    return GraphModuleSpec(
+        name="social",
+        nodes=(GraphNodeSpec(name="User", read=UserRead, create=UserCreate),),
+        edges=(
+            GraphEdgeSpec(
+                name="RATED",
+                read=RatedRead,
+                identity="key",
+                key_field="ref",
+                endpoints=(GraphEdgeEndpoint(from_kind="User", to_kind="User"),),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_schema_provisions_constraints_and_index() -> None:
+    client = _FakeClient()
+    adapter = Neo4jGraphAdapter(
+        spec=_keyed_spec(),
+        client=client,
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=uuid4()),
+    )
+
+    await adapter.ensure_schema()
+    stmts = [q for q, _ in client.calls]
+
+    # composite node uniqueness (tenant-scoped) + tenant index + keyed-edge uniqueness
+    assert any("REQUIRE (n.`id`, n.`tenant_id`) IS UNIQUE" in q for q in stmts)
+    assert any("CREATE INDEX" in q and "ON (n.`tenant_id`)" in q for q in stmts)
+    assert any("FOR ()-[r:`RATED`]-() REQUIRE r.`ref` IS UNIQUE" in q for q in stmts)
+    assert all("IF NOT EXISTS" in q for q in stmts)  # idempotent
+
+
+@pytest.mark.asyncio
+async def test_k_shortest_paths_maps_each_row() -> None:
+    row = {
+        "vertices": [{"id": "a"}, {"id": "b"}],
+        "vertex_labels": [["User"], ["User"]],
+        "edges": [{"weight": 1}],
+        "edge_types": ["FOLLOWS"],
+    }
+    adapter, _ = _adapter(rows=[row, row])
+
+    results = await adapter.k_shortest_paths(
+        VertexRef(kind="User", key="a"),
+        VertexRef(kind="User", key="b"),
+        ShortestPathParams(max_hops=3),
+        k=2,
+    )
+
+    assert len(results) == 2
+    assert results[0].vertices[0].id == "a"
+    assert results[0].vertices[-1].id == "b"
+    assert len(results[0].edges) == 1
+
+
+@pytest.mark.asyncio
+async def test_k_shortest_paths_k_zero_short_circuits() -> None:
+    adapter, client = _adapter(rows=[])
+
+    out = await adapter.k_shortest_paths(
+        VertexRef(kind="User", key="a"),
+        VertexRef(kind="User", key="b"),
+        ShortestPathParams(max_hops=3),
+        k=0,
+    )
+
+    assert out == []
+    assert client.calls == []  # never reached the client
+
+
+@pytest.mark.asyncio
+async def test_drop_schema_matches_ensure_object_names() -> None:
+    client = _FakeClient()
+    adapter = Neo4jGraphAdapter(spec=_keyed_spec(), client=client, tenant_aware=False)
+
+    await adapter.ensure_schema()
+    created = len(client.calls)  # single-prop node uniqueness + edge uniqueness
+    client.calls.clear()
+
+    await adapter.drop_schema()
+    dropped = [q for q, _ in client.calls]
+
+    assert len(dropped) == created
+    assert all("IF EXISTS" in q for q in dropped)
 
 
 @pytest.mark.asyncio

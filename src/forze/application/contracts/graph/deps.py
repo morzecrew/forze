@@ -1,7 +1,12 @@
 """Dependency keys, factory protocols, and resolver for graph module ports."""
 
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
-from .ports import GraphCommandPort, GraphQueryPort, GraphRawQueryPort
+from .ports import (
+    GraphCommandPort,
+    GraphManagementPort,
+    GraphQueryPort,
+    GraphRawQueryPort,
+)
 from .specs import GraphModuleSpec
 
 # ----------------------- #
@@ -15,6 +20,9 @@ GraphCommandDepPort = ConfigurableDepPort[GraphModuleSpec, GraphCommandPort]
 GraphRawQueryDepPort = ConfigurableDepPort[GraphModuleSpec, GraphRawQueryPort]
 """Graph raw-query (escape hatch) dependency port."""
 
+GraphManagementDepPort = ConfigurableDepPort[GraphModuleSpec, GraphManagementPort]
+"""Graph schema-management (control-plane) dependency port."""
+
 # ....................... #
 
 GraphQueryDepKey = DepKey[GraphQueryDepPort]("graph_query")
@@ -25,6 +33,9 @@ GraphCommandDepKey = DepKey[GraphCommandDepPort]("graph_command")
 
 GraphRawQueryDepKey = DepKey[GraphRawQueryDepPort]("graph_raw_query")
 """Key to register a ``GraphRawQueryDepPort`` implementation (opt-in)."""
+
+GraphManagementDepKey = DepKey[GraphManagementDepPort]("graph_management")
+"""Key to register a ``GraphManagementDepPort`` implementation (opt-in)."""
 
 # ....................... #
 
@@ -50,3 +61,10 @@ class GraphDeps(ConvenientDeps):
         """Resolve the engine-specific raw-query escape hatch (opt-in, non-portable)."""
 
         return self._resolve_configurable(GraphRawQueryDepKey, spec, route=spec.name)
+
+    # ....................... #
+
+    def management(self, spec: GraphModuleSpec) -> GraphManagementPort:
+        """Resolve the schema-management (control-plane) port for the given module spec."""
+
+        return self._resolve_configurable(GraphManagementDepKey, spec, route=spec.name)

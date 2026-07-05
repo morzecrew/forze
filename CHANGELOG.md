@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Wiring check (`check_wiring`)** — opt-in dry-run resolving every registered operation against a throwaway context, so a missing/misrouted dependency surfaces at test/startup instead of first live call; one resolve covers the handler, hooks, tx-scope stages and saga targets (and the QUERY read-only bind). `WiringReport.raise_if_failed()`; `check_facade_factory_wiring` for facade factories. Diagnostic only (lifecycle steps are validated by opening a scope).
 
+- **Neo4j transaction manager** — `Neo4jTxManagerAdapter` (`IsolationAware`, declares `READ_COMMITTED`) enlists the client transaction into the framework transaction scope, so a handler's graph writes commit or roll back as a unit; bind it via `Neo4jDepsModule(tx={…})`. Not co-transactional with the outbox or other backends (no cross-database two-phase commit) — it makes only the graph statements atomic among themselves.
+
 **Querying & read models**
 
 - **Nested-field projection & sorting** — projection `fields` and sort keys may be dotted paths into nested Pydantic sub-models and `str`-keyed mappings (`project(filters, ["contract.reg_number"])`, `sorts={"addr.city": "asc"}`); a path crossing a list maps the selection over each element. Resolved across `project_*` / `project_search_*` and offset/keyset reads on every backend (mock, Postgres, Mongo, Firestore). *Behavior change:* the mock now nests a dotted projection key instead of emitting it flat. Sorting on a nested path whose root column is field-encrypted is rejected.
@@ -38,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Query parameters** — `ctx.document.query(spec).with_parameters(P(...))` binds a typed `query_params` contract as query-scoped session settings (Postgres documents plus a programmable mock); capability-gated and fail-closed.
 
 - **`QueryCapabilities.supports_aggregates`** — a backend that can't compile aggregates (the Firestore MVP) rejects `find_many(aggregates=…)` / `find_many_aggregates` / `count_aggregates` with `precondition` (`query_feature_unsupported`) instead of an opaque `internal`.
+
+- **Graph schema provisioning + k-shortest paths (Neo4j)** — a new `GraphManagementPort` (`ctx.graph.management(spec)`) with idempotent `ensure_schema()` / `drop_schema()` provisions node key-uniqueness constraints (composite with the tenant property under tagged tenancy), keyed-edge key-uniqueness constraints (so a concurrent `ensure_edge` can no longer create duplicate keyed edges — the in-query `MERGE` alone races), and tenant-property indexes; Community-edition uniqueness (NODE KEY stays an Enterprise upgrade). `k_shortest_paths` is implemented on Neo4j via the native Cypher `SHORTEST k` selector (unweighted / hop-bounded, matching `ShortestPathParams`; tenant-scoped like `shortest_path`) — no GDS/APOC plugin required.
 
 **Search**
 

@@ -12,7 +12,7 @@ require_neo4j()
 
 # ....................... #
 
-from .adapters import Neo4jGraphAdapter
+from .adapters import Neo4jGraphAdapter, Neo4jTxManagerAdapter, Neo4jTxScopeKey
 from .execution import (
     ConfigurableNeo4jGraph,
     Neo4jClientDepKey,
@@ -44,6 +44,8 @@ __all__ = [
     "Neo4jClientPort",
     "Neo4jConfig",
     "Neo4jGraphAdapter",
+    "Neo4jTxManagerAdapter",
+    "Neo4jTxScopeKey",
     "Neo4jDepsModule",
     "Neo4jClientDepKey",
     "Neo4jGraphConfig",

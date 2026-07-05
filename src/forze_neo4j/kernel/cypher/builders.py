@@ -337,3 +337,102 @@ def shortest_path(
         f"[e IN relationships(path) | properties(e)] AS edges, "
         f"[e IN relationships(path) | type(e)] AS edge_types"
     )
+
+
+# ....................... #
+
+
+def k_shortest_paths(
+    *,
+    from_label: str,
+    from_key_field: str,
+    to_label: str,
+    to_key_field: str,
+    direction: GraphDirection,
+    edge_types: Iterable[str],
+    max_hops: int,
+    k: int,
+    tenant_field: str | None = None,
+    interior: bool = False,
+) -> str:
+    """Up to *k* shortest (simple) paths a→b via Neo4j 5's native ``SHORTEST k``.
+
+    Unweighted / hop-bounded, matching the ``ShortestPathParams`` contract (no edge weights).
+    ``k`` and the ``*..n`` bound are inlined (a selective path selector / quantifier cannot be
+    parameterized), so both are ``int()``-coerced. Tenant scoping reuses the same all-path-nodes
+    predicate as :func:`shortest_path`, applied during path selection.
+    """
+
+    rel = _rel(direction, _type_pattern(edge_types), quant=f"*..{int(max_hops)}")
+
+    return (
+        f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')}), "
+        f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
+        f"MATCH path = SHORTEST {int(k)} (a){rel}(b)\n"
+        f"{_path_tenant_pred(tenant_field, interior=interior)}"
+        f"RETURN [n IN nodes(path) | properties(n)] AS vertices, "
+        f"[n IN nodes(path) | labels(n)] AS vertex_labels, "
+        f"[e IN relationships(path) | properties(e)] AS edges, "
+        f"[e IN relationships(path) | type(e)] AS edge_types\n"
+        f"ORDER BY length(path)"
+    )
+
+
+# ....................... #
+# Schema provisioning (constraints / indexes)
+
+
+def node_uniqueness_constraint(
+    name: str,
+    label: str,
+    key_field: str,
+    *,
+    tenant_field: str | None = None,
+) -> str:
+    """A node key-uniqueness constraint (composite with ``tenant_field`` when given).
+
+    Under tagged tenancy the key is unique *within* a tenant, so the constraint is composite
+    (``(n.key, n.tenant)``); otherwise it is a single-property uniqueness. Composite
+    uniqueness is Community-edition (a NODE KEY constraint, which also enforces existence, is
+    Enterprise-only).
+    """
+
+    if tenant_field:
+        require = f"(n.{quote(key_field)}, n.{quote(tenant_field)})"
+    else:
+        require = f"n.{quote(key_field)}"
+
+    return (
+        f"CREATE CONSTRAINT {quote(name)} IF NOT EXISTS "
+        f"FOR (n:{quote(label)}) REQUIRE {require} IS UNIQUE"
+    )
+
+
+def edge_uniqueness_constraint(name: str, edge_type: str, key_field: str) -> str:
+    """A relationship key-uniqueness constraint (Neo4j 5.7+).
+
+    Backs keyed-edge identity so a concurrent ``ensure_edge`` cannot create two edges of the
+    type with the same key (the in-query ``MERGE`` alone races).
+    """
+
+    return (
+        f"CREATE CONSTRAINT {quote(name)} IF NOT EXISTS "
+        f"FOR ()-[r:{quote(edge_type)}]-() REQUIRE r.{quote(key_field)} IS UNIQUE"
+    )
+
+
+def property_index(name: str, label: str, field: str) -> str:
+    """A single-property node index (e.g. the tenant discriminator for scoped matches)."""
+
+    return (
+        f"CREATE INDEX {quote(name)} IF NOT EXISTS "
+        f"FOR (n:{quote(label)}) ON (n.{quote(field)})"
+    )
+
+
+def drop_constraint(name: str) -> str:
+    return f"DROP CONSTRAINT {quote(name)} IF EXISTS"
+
+
+def drop_index(name: str) -> str:
+    return f"DROP INDEX {quote(name)} IF EXISTS"

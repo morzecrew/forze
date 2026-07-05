@@ -74,6 +74,40 @@ def test_create_edge_keyed_create_does_not_add_key_pattern() -> None:
     assert "$edge_key" not in created
 
 
+# ----------------------- #
+# schema provisioning
+
+
+def test_node_uniqueness_constraint_single_vs_composite() -> None:
+    single = builders.node_uniqueness_constraint("c1", "User", "id")
+    assert single == (
+        "CREATE CONSTRAINT `c1` IF NOT EXISTS FOR (n:`User`) REQUIRE n.`id` IS UNIQUE"
+    )
+
+    composite = builders.node_uniqueness_constraint(
+        "c2", "User", "id", tenant_field="tenant_id"
+    )
+    # Tenant-scoped uniqueness is composite (key unique within a tenant).
+    assert "REQUIRE (n.`id`, n.`tenant_id`) IS UNIQUE" in composite
+    assert composite.endswith("IS UNIQUE")
+
+
+def test_edge_uniqueness_constraint_targets_relationship() -> None:
+    stmt = builders.edge_uniqueness_constraint("c3", "TRANSFER", "ref")
+    assert stmt == (
+        "CREATE CONSTRAINT `c3` IF NOT EXISTS "
+        "FOR ()-[r:`TRANSFER`]-() REQUIRE r.`ref` IS UNIQUE"
+    )
+
+
+def test_property_index_and_drops() -> None:
+    assert builders.property_index("i1", "User", "tenant_id") == (
+        "CREATE INDEX `i1` IF NOT EXISTS FOR (n:`User`) ON (n.`tenant_id`)"
+    )
+    assert builders.drop_constraint("c1") == "DROP CONSTRAINT `c1` IF EXISTS"
+    assert builders.drop_index("i1") == "DROP INDEX `i1` IF EXISTS"
+
+
 def test_neighbors_direction_arrows() -> None:
     out = builders.neighbors(
         label="User", key_field="id", direction=GraphDirection.OUT, edge_types=["FOLLOWS"]
@@ -114,6 +148,52 @@ def test_shortest_path_inlines_hops() -> None:
     )
     assert "shortestPath((a)" in q
     assert "*..5" in q
+
+
+def test_k_shortest_paths_uses_native_shortest_k() -> None:
+    q = builders.k_shortest_paths(
+        from_label="User",
+        from_key_field="id",
+        to_label="User",
+        to_key_field="id",
+        direction=GraphDirection.OUT,
+        edge_types=["FOLLOWS"],
+        max_hops=5,
+        k=3,
+    )
+    assert "SHORTEST 3 (a)" in q
+    assert "*..5" in q
+    assert "ORDER BY length(path)" in q
+
+
+def test_k_shortest_paths_coerces_k_and_hops() -> None:
+    with pytest.raises(ValueError):
+        builders.k_shortest_paths(
+            from_label="User",
+            from_key_field="id",
+            to_label="User",
+            to_key_field="id",
+            direction=GraphDirection.OUT,
+            edge_types=[],
+            max_hops=5,
+            k="3) MATCH (x) DETACH DELETE x //",  # type: ignore[arg-type]
+        )
+
+
+def test_k_shortest_paths_scopes_interior_nodes_by_tenant() -> None:
+    q = builders.k_shortest_paths(
+        from_label="User",
+        from_key_field="id",
+        to_label="User",
+        to_key_field="id",
+        direction=GraphDirection.OUT,
+        edge_types=[],
+        max_hops=4,
+        k=2,
+        tenant_field="tenant_id",
+        interior=True,
+    )
+    assert "all(_n IN nodes(path) WHERE _n.`tenant_id` = $tenant)" in q
 
 
 def test_shortest_path_coerces_max_hops_blocking_injection() -> None:

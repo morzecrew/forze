@@ -1,19 +1,21 @@
 """Neo4j graph adapter implementing the graph query/command/raw ports.
 
 **MVP surface — not a full port implementation.** Implemented: vertex/edge CRUD,
-``ensure_edge``, ``neighbors``, ``expand``, ``shortest_path``, and the raw escape hatch.
-The remaining port methods (roughly the read-introspection and bulk half —
-``get_vertices``/``get_edges``/``edge_exists``, ``count_*``, ``find_*``, ``vertex_degree``,
-``k_shortest_paths``, ``update_edge``/``delete_edge``, the ``*_many`` bulk writes) raise a
-clear ``exc.precondition`` (code ``graph_not_implemented``). The in-memory mock implements a
-*different* subset, so no single adapter yet covers the whole ``GraphQueryPort`` contract —
-treat the graph plane as community-tier and pin usage to the implemented slice.
+``ensure_edge``, ``neighbors``, ``expand``, ``shortest_path``, ``k_shortest_paths`` (native
+Neo4j 5 ``SHORTEST k``), and the raw escape hatch. The remaining port methods (roughly the
+read-introspection and bulk half — ``get_vertices``/``get_edges``/``edge_exists``,
+``count_*``, ``find_*``, ``vertex_degree``, ``update_edge``/``delete_edge``, the ``*_many``
+bulk writes) raise a clear ``exc.precondition`` (code ``graph_not_implemented``). The
+in-memory mock implements a *different* subset, so no single adapter yet covers the whole
+``GraphQueryPort`` contract — treat the graph plane as community-tier and pin usage to the
+implemented slice.
 
-**No schema/constraint/index provisioning.** This adapter issues no ``CREATE CONSTRAINT`` /
-``CREATE INDEX``: node/edge key uniqueness and lookup performance depend on constraints the
-operator must create out of band. In particular keyed-edge identity is enforced only at
-``MERGE`` time (in-query), not by a database uniqueness constraint, so a concurrent
-``ensure_edge`` race can still create duplicate keyed edges until such a constraint exists.
+**Schema provisioning** is available via :meth:`ensure_schema` (the ``GraphManagementPort``):
+it creates node key-uniqueness constraints (composite with the tenant property under tagged
+tenancy), keyed-edge key-uniqueness constraints — so a concurrent ``ensure_edge`` cannot
+create duplicate keyed edges, not just the in-query ``MERGE`` — and tenant-property indexes.
+It is opt-in (run it at startup); the constraints are Community-edition uniqueness (a NODE KEY
+constraint, which also enforces existence, is Enterprise-only).
 
 Tenancy uses property partition: a ``tenant_property`` is stamped on writes and constrains
 anchor-node matches.
@@ -463,7 +465,13 @@ class Neo4jGraphAdapter(TenancyMixin):
         if not rows:
             return None
 
-        row = rows[0]
+        return await self._map_path_row(rows[0])
+
+    # ....................... #
+
+    async def _map_path_row(self, row: JsonDict) -> ShortestPathResult:
+        """Materialize one path row (parallel vertex/edge property lists) into models."""
+
         vertices = tuple(
             [
                 await self._vertex_model(self._node_kind_from_labels(labels), props)
@@ -699,6 +707,71 @@ class Neo4jGraphAdapter(TenancyMixin):
         return await self.client.run(query, merged or None, database=await self._resolved_database())
 
     # ....................... #
+    # GraphManagementPort — schema provisioning
+
+    def _schema_name(self, kind: str, subject: str, field: str) -> str:
+        # Deterministic (no hashing — a name must match across processes for drop_schema):
+        # sanitize to Neo4j-safe identifier chars and scope by module so two modules sharing
+        # a label on one database do not collide.
+        raw = f"{self.spec.name}_{kind}_{subject}_{field}"
+        safe = "".join(c if c.isalnum() else "_" for c in raw)
+        return f"forze_{safe}"
+
+    def _schema_plan(self) -> list[tuple[str, str]]:
+        """``(create_cypher, drop_cypher)`` for every constraint/index this module needs."""
+
+        tenant_field = self._tenant_field
+        plan: list[tuple[str, str]] = []
+
+        for node in self.spec.nodes:
+            label = str(node.name)
+            nk = self._schema_name("nk", label, node.key_field)
+            plan.append(
+                (
+                    builders.node_uniqueness_constraint(
+                        nk, label, node.key_field, tenant_field=tenant_field
+                    ),
+                    builders.drop_constraint(nk),
+                )
+            )
+
+            if tenant_field is not None:
+                nt = self._schema_name("nt", label, tenant_field)
+                plan.append(
+                    (
+                        builders.property_index(nt, label, tenant_field),
+                        builders.drop_index(nt),
+                    )
+                )
+
+        for edge in self.spec.edges:
+            if edge.identity == "key" and edge.key_field is not None:
+                etype = str(edge.name)
+                ek = self._schema_name("ek", etype, edge.key_field)
+                plan.append(
+                    (
+                        builders.edge_uniqueness_constraint(ek, etype, edge.key_field),
+                        builders.drop_constraint(ek),
+                    )
+                )
+
+        return plan
+
+    async def ensure_schema(self) -> None:
+        # Schema commands run one per statement in their own auto-commit (Neo4j forbids
+        # mixing schema and data in one transaction) — never inside a caller transaction.
+        database = await self._resolved_database()
+
+        for create_cypher, _drop in self._schema_plan():
+            await self.client.run(create_cypher, None, database=database)
+
+    async def drop_schema(self) -> None:
+        database = await self._resolved_database()
+
+        for _create, drop_cypher in self._schema_plan():
+            await self.client.run(drop_cypher, None, database=database)
+
+    # ....................... #
     # Deferred GraphQueryPort methods
 
     async def get_vertices(self, refs: Sequence[VertexRef]) -> Sequence[BaseModel]:
@@ -746,7 +819,30 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         k: int,
     ) -> Sequence[ShortestPathResult]:
-        raise _nyi("k_shortest_paths")
+        if k <= 0:
+            return []
+
+        from_node = self._node(from_ref.kind)
+        to_node = self._node(to_ref.kind)
+        query = builders.k_shortest_paths(
+            from_label=from_ref.kind,
+            from_key_field=from_node.key_field,
+            to_label=to_ref.kind,
+            to_key_field=to_node.key_field,
+            direction=GraphDirection.OUT,
+            edge_types=params.edge_kinds,
+            max_hops=params.max_hops,
+            k=k,
+            tenant_field=self._tenant_field,
+            interior=self._interior_scope,
+        )
+        rows = await self.client.run(
+            query,
+            self._params(from_key=from_ref.key, to_key=to_ref.key),
+            database=await self._resolved_database(),
+        )
+
+        return [await self._map_path_row(row) for row in rows]
 
     async def find_vertices(
         self,
