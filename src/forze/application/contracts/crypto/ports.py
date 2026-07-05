@@ -3,7 +3,7 @@
 from typing import AsyncIterator, Awaitable, Iterable, Protocol, runtime_checkable
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.crypto import DEFAULT_CHUNK_SIZE, EncryptedEnvelope
+from forze.base.crypto import DEFAULT_CHUNK_SIZE, ChunkFrame, EncryptedEnvelope
 
 from .value_objects import DataKey, KeyRef
 
@@ -165,6 +165,38 @@ class FieldCipherPort(Protocol):
 
 
 @runtime_checkable
+class ChunkedStreamOpener(Protocol):
+    """Random-access reader over one chunked-AEAD object (its data key already unwrapped).
+
+    Returned by :meth:`StreamingBytesCipherPort.open_chunked_stream` after the header is
+    parsed and the tenant authorized: it exposes the layout a caller needs to seek
+    (:attr:`chunk_size`, :attr:`header_len`) and opens an individual parsed frame at its
+    index. Lets a storage adapter fetch and decrypt only the chunks a byte range covers.
+    """
+
+    @property
+    def chunk_size(self) -> int:
+        """Plaintext bytes per (non-final) chunk — the range→chunk mapping unit."""
+        ...  # pragma: no cover
+
+    @property
+    def header_len(self) -> int:
+        """Byte length of the stream header (where the first frame begins)."""
+        ...  # pragma: no cover
+
+    def open_frame(self, index: int, frame: ChunkFrame) -> bytes:
+        """Verify and decrypt the frame at position *index*.
+
+        :raises CoreException: ``validation`` on an authentication failure (tampered,
+            reordered — wrong *index* — or mis-flagged chunk).
+        """
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
 class StreamingBytesCipherPort(Protocol):
     """Encrypt/decrypt a byte value chunk-by-chunk for bounded-memory large blobs.
 
@@ -211,6 +243,26 @@ class StreamingBytesCipherPort(Protocol):
         :raises CoreException: ``validation`` on a malformed/truncated stream, an
             authentication failure, an algorithm mismatch, or a
             ``core.crypto.key_id_unauthorized`` key-id/tenant mismatch.
+        """
+
+        ...  # pragma: no cover
+
+    def open_chunked_stream(
+        self,
+        header_bytes: bytes,
+        *,
+        aad: bytes = b"",
+        tenant: TenantIdentity | None = None,
+    ) -> Awaitable["ChunkedStreamOpener"]:
+        """Parse a chunked stream's *header_bytes* and return a random-access opener.
+
+        Authorizes the header's key id against *tenant* (confused-deputy guard) and
+        unwraps the data key **once**, so the caller can then fetch and decrypt only the
+        chunks a byte range covers (see :class:`ChunkedStreamOpener`). *header_bytes* must
+        contain at least the full header; *aad* is the object's base associated data.
+
+        :raises CoreException: ``validation`` on a malformed/truncated header, an
+            algorithm mismatch, or a ``core.crypto.key_id_unauthorized`` mismatch.
         """
 
         ...  # pragma: no cover

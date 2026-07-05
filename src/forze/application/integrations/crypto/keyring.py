@@ -38,12 +38,14 @@ from forze.base.crypto import (
     Aead,
     ChunkedHeader,
     ChunkedStreamReader,
+    ChunkFrame,
     EncryptedEnvelope,
     ensure_algorithm,
     open_chunk,
     pack_chunked_header,
     pack_envelope,
     seal_chunk,
+    unpack_chunked_header,
     unpack_envelope,
 )
 from forze.base.exceptions import exc
@@ -56,6 +58,8 @@ _NONE_TENANT = "\x00none"
 
 _LOCK_STRIPES = 64
 """Fixed number of fill-lock stripes (bounds the lock set regardless of key count)."""
+
+# ....................... #
 
 
 def _tenant_cache_key(tenant: TenantIdentity | None) -> str:
@@ -96,6 +100,8 @@ class _FrozenFieldCipher:
     async def warm(self, tenant: TenantIdentity | None) -> None:
         return None
 
+    # ....................... #
+
     async def ensure_unwrapped(
         self,
         envelopes: Iterable[EncryptedEnvelope],
@@ -104,10 +110,18 @@ class _FrozenFieldCipher:
     ) -> None:
         return None
 
+    # ....................... #
+
     def encrypt_sync(
-        self, plaintext: bytes, *, tenant: TenantIdentity | None, aad: bytes = b""
+        self,
+        plaintext: bytes,
+        *,
+        tenant: TenantIdentity | None,
+        aad: bytes = b"",
     ) -> bytes:
         raise exc.internal("frozen field cipher is decrypt-only")
+
+    # ....................... #
 
     def decrypt_sync(self, blob: bytes, *, aad: bytes = b"") -> bytes:
         envelope = unpack_envelope(blob)
@@ -125,6 +139,9 @@ class _FrozenFieldCipher:
         )
 
 
+# ....................... #
+
+
 def _lru_get(cache: OrderedDict[Any, Any], key: Any) -> Any:
     value = cache.get(key)
 
@@ -132,6 +149,9 @@ def _lru_get(cache: OrderedDict[Any, Any], key: Any) -> Any:
         cache.move_to_end(key)
 
     return value
+
+
+# ....................... #
 
 
 def _lru_put(cache: OrderedDict[Any, Any], key: Any, value: Any, *, cap: int) -> None:
@@ -146,7 +166,8 @@ def _lru_put(cache: OrderedDict[Any, Any], key: Any, value: Any, *, cap: int) ->
 
 
 async def _rechunk(
-    source: AsyncIterator[bytes], chunk_size: int
+    source: AsyncIterator[bytes],
+    chunk_size: int,
 ) -> AsyncIterator[tuple[bytes, bool]]:
     """Re-chunk *source*'s arbitrary byte runs into ``(chunk, is_final)`` of *chunk_size*.
 
@@ -177,6 +198,7 @@ async def _rechunk(
     if buffer:
         yield pending, False
         yield bytes(buffer), True
+
     else:
         yield pending, True  # the last full chunk terminates the stream
 
@@ -194,9 +216,17 @@ class _ActiveDataKey:
     of the keyring or its caches can print it (mirrors ``DataKey.plaintext``)."""
 
     wrapped: bytes = attrs.field(repr=False)
+    """Wrapped data-encryption key — ``repr`` suppressed (mirrors ``DataKey.wrapped``)."""
+
     key_id: str
+    """ID of the data key."""
+
     key_version: str | None
+    """Version of the data key."""
+
     uses: int = 0
+    """Number of times the data key has been used."""
+
     expires_at: float | None = None
     """Monotonic deadline after which this cached key is stale and must be regenerated
     (``None`` = no TTL). Bounds how long a rotated/revoked KEK's data key stays live."""
@@ -215,6 +245,46 @@ class _CachedDek:
 
     expires_at: float | None = None
     """Monotonic deadline after which the entry is treated as a miss and re-unwrapped."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True)
+class _ChunkedStreamOpener:
+    """Random-access opener over one chunked object with its data key resolved.
+
+    Built by :meth:`Keyring.open_chunked_stream`; opens an individual frame at its index
+    against the pre-unwrapped data key, so a ranged reader can decrypt only the chunks a
+    byte range covers.
+    """
+
+    aead: Aead
+    """Local authenticated cipher applied under each data key."""
+
+    _dek: bytes = attrs.field(repr=False, alias="dek")
+    """Pre-unwrapped data key."""
+
+    _aad: bytes = attrs.field(repr=False, alias="aad")
+    """Additional authenticated data."""
+
+    chunk_size: int
+    """Size of each chunk."""
+
+    header_len: int
+    """Length of the header."""
+
+    # ....................... #
+
+    def open_frame(self, index: int, frame: ChunkFrame) -> bytes:
+        return open_chunk(
+            self.aead,
+            key=self._dek,
+            base_aad=self._aad,
+            index=index,
+            frame=frame,
+        )
 
 
 # ....................... #
@@ -252,14 +322,20 @@ class Keyring:
     TTL to bound that window: once elapsed, the entry is treated as a miss and the key
     is regenerated / re-unwrapped through the KMS (which re-checks the KEK)."""
 
+    # ....................... #
+
     _enc_cache: OrderedDict[str, _ActiveDataKey] = attrs.field(
-        factory=OrderedDict, init=False, repr=False
+        factory=OrderedDict,
+        init=False,
+        repr=False,
     )
     """key_id → active data key (encrypt path, LRU). ``repr`` suppressed — holds
     plaintext data keys."""
 
     _dec_cache: OrderedDict[bytes, _CachedDek] = attrs.field(
-        factory=OrderedDict, init=False, repr=False
+        factory=OrderedDict,
+        init=False,
+        repr=False,
     )
     """wrapped data key → cached plaintext data key (decrypt path, LRU). ``repr``
     suppressed — the entries hold plaintext data keys."""
@@ -360,6 +436,7 @@ class Keyring:
 
     async def _resolve_key_ref(self, tenant: TenantIdentity | None) -> KeyRef:
         key_ref = await self.directory.resolve(tenant)
+
         _lru_put(
             self._tenant_key,
             _tenant_cache_key(tenant),
@@ -515,9 +592,7 @@ class Keyring:
                 await self._authorize_key_id_value(header.key_id, tenant)
                 dek = await self.kms.unwrap_data_key(
                     wrapped=header.wrapped_dek,
-                    key_ref=KeyRef(
-                        key_id=header.key_id, version=header.key_version
-                    ),
+                    key_ref=KeyRef(key_id=header.key_id, version=header.key_version),
                 )
                 self._n_unwrapped += 1
 
@@ -555,6 +630,47 @@ class Keyring:
                 "Chunked stream carries trailing bytes after its final chunk",
                 code="core.crypto.chunked_trailing_data",
             )
+
+    # ....................... #
+
+    async def open_chunked_stream(
+        self,
+        header_bytes: bytes,
+        *,
+        aad: bytes = b"",
+        tenant: TenantIdentity | None = None,
+    ) -> _ChunkedStreamOpener:
+        """Parse a chunked header and return a random-access opener (data key unwrapped once).
+
+        The header's key id is authorized against *tenant* (confused-deputy guard) before
+        the KMS unwrap, mirroring :meth:`decrypt_stream`.
+        """
+
+        header, header_len = unpack_chunked_header(header_bytes)
+
+        if header.alg != self.aead.algorithm:
+            raise exc.validation(
+                f"Stream was sealed with {header.alg!r} but the wired cipher is "
+                f"{self.aead.algorithm!r}; the matching AEAD is required to decrypt it",
+                code="core.crypto.algorithm_mismatch",
+            )
+
+        await self._authorize_key_id_value(header.key_id, tenant)
+
+        dek = await self.kms.unwrap_data_key(
+            wrapped=header.wrapped_dek,
+            key_ref=KeyRef(key_id=header.key_id, version=header.key_version),
+        )
+
+        self._n_unwrapped += 1
+
+        return _ChunkedStreamOpener(
+            aead=self.aead,
+            dek=dek,
+            aad=aad,
+            chunk_size=header.chunk_size,
+            header_len=header_len,
+        )
 
     # ....................... #
 
@@ -660,7 +776,8 @@ class Keyring:
     # ....................... #
 
     def freeze_decryptor(
-        self, envelopes: Iterable[EncryptedEnvelope]
+        self,
+        envelopes: Iterable[EncryptedEnvelope],
     ) -> _FrozenFieldCipher:
         """Resolve *envelopes*' data keys into a thread-local snapshot for offloaded decrypt.
 
@@ -686,7 +803,10 @@ class Keyring:
     # ....................... #
 
     async def _active_data_key(
-        self, key_ref: KeyRef, *, consume: bool = True
+        self,
+        key_ref: KeyRef,
+        *,
+        consume: bool = True,
     ) -> _ActiveDataKey:
         """Resolve (and cache) the active data key for *key_ref*.
 
@@ -708,10 +828,14 @@ class Keyring:
                 if consume:
                     self._n_enc_hits += 1
                     cached.uses += 1
+
                 return cached
 
             data_key = await self.kms.generate_data_key(key_ref)
-            self._n_generated += 1  # count only an actual KMS round-trip, not a failed one
+
+            # count only an actual KMS round-trip, not a failed one
+            self._n_generated += 1
+
             active = _ActiveDataKey(
                 plaintext=data_key.plaintext,
                 wrapped=data_key.wrapped,
@@ -720,22 +844,26 @@ class Keyring:
                 uses=1 if consume else 0,
                 expires_at=self._expiry(),
             )
-            _lru_put(
-                self._enc_cache, key_ref.key_id, active, cap=self.enc_cache_max
-            )
+            _lru_put(self._enc_cache, key_ref.key_id, active, cap=self.enc_cache_max)
+
             # Seed the decrypt cache so a read-after-write is a hit.
             self._store_dek(data_key.wrapped, data_key.plaintext)
+
             return active
 
     # ....................... #
 
     async def _unwrap(
-        self, envelope: EncryptedEnvelope, *, tenant: TenantIdentity | None = None
+        self,
+        envelope: EncryptedEnvelope,
+        *,
+        tenant: TenantIdentity | None = None,
     ) -> bytes:
         cached = self._cached_dek(envelope.wrapped_dek)
 
         if cached is not None:
             self._n_dec_hits += 1
+
             return cached
 
         async with self._lock_for(envelope.key_id):
@@ -743,6 +871,7 @@ class Keyring:
 
             if cached is not None:
                 self._n_dec_hits += 1
+
                 return cached
 
             await self._authorize_key_id(envelope, tenant)
@@ -750,14 +879,19 @@ class Keyring:
                 wrapped=envelope.wrapped_dek,
                 key_ref=KeyRef(key_id=envelope.key_id, version=envelope.key_version),
             )
-            self._n_unwrapped += 1  # count only an actual KMS round-trip, not a failed one
+
+            # count only an actual KMS round-trip, not a failed one
+            self._n_unwrapped += 1
             self._store_dek(envelope.wrapped_dek, dek)
+
             return dek
 
     # ....................... #
 
     async def _authorize_key_id(
-        self, envelope: EncryptedEnvelope, tenant: TenantIdentity | None
+        self,
+        envelope: EncryptedEnvelope,
+        tenant: TenantIdentity | None,
     ) -> None:
         """Fail closed before a KMS unwrap if the envelope names a key the tenant lacks.
 
@@ -774,7 +908,9 @@ class Keyring:
     # ....................... #
 
     async def _authorize_key_id_value(
-        self, key_id: str, tenant: TenantIdentity | None
+        self,
+        key_id: str,
+        tenant: TenantIdentity | None,
     ) -> None:
         """The key-id/tenant confused-deputy check over a bare key id (envelope or stream)."""
 

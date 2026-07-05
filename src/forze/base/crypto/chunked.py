@@ -220,7 +220,7 @@ def open_chunk(
 
 
 def _try_take(
-    buf: bytearray, offset: int, length: int
+    buf: bytes | bytearray, offset: int, length: int
 ) -> tuple[bytes, int] | None:
     end = offset + length
     if end > len(buf):
@@ -229,13 +229,174 @@ def _try_take(
 
 
 def _try_take_var(
-    buf: bytearray, offset: int, length_struct: struct.Struct
+    buf: bytes | bytearray, offset: int, length_struct: struct.Struct
 ) -> tuple[bytes, int] | None:
     if offset + length_struct.size > len(buf):
         return None
 
     (length,) = length_struct.unpack_from(buf, offset)
     return _try_take(buf, offset + length_struct.size, length)
+
+
+# ....................... #
+
+
+def _try_parse_header(
+    blob: bytes | bytearray, offset: int = 0
+) -> tuple[ChunkedHeader, int] | None:
+    """Parse a header at *offset*; ``None`` when incomplete, raising when malformed."""
+
+    if len(blob) - offset < _HEADER.size:
+        return None
+
+    magic, scheme = _HEADER.unpack_from(blob, offset)
+
+    if magic != _CHUNK_MAGIC:
+        raise exc.validation(
+            "Not a chunked-AEAD stream (missing magic marker)",
+            code="core.crypto.chunked_bad_magic",
+        )
+
+    if scheme != _CHUNK_SCHEME_VERSION:
+        raise exc.validation(
+            f"Unsupported chunked scheme version {scheme}",
+            code="core.crypto.chunked_unsupported_scheme",
+            details={"scheme": scheme, "supported": _CHUNK_SCHEME_VERSION},
+        )
+
+    pos = offset + _HEADER.size
+    fields: list[bytes] = []
+
+    for length_struct in (_U8, _U16, _U8, _U16):
+        taken = _try_take_var(blob, pos, length_struct)
+        if taken is None:
+            return None
+        value, pos = taken
+        fields.append(value)
+
+    chunk_size_raw = _try_take(blob, pos, _U32.size)
+    if chunk_size_raw is None:
+        return None
+    cs_bytes, pos = chunk_size_raw
+
+    alg_raw, key_id_raw, key_version_raw, wrapped_dek = fields
+
+    try:
+        alg = alg_raw.decode("utf-8")
+        key_id = key_id_raw.decode("utf-8")
+        key_version = key_version_raw.decode("utf-8") or None
+    except UnicodeDecodeError as error:
+        raise exc.validation(
+            "Malformed chunked header: text field is not valid UTF-8",
+            code="core.crypto.chunked_bad_encoding",
+        ) from error
+
+    return (
+        ChunkedHeader(
+            alg=alg,
+            key_id=key_id,
+            key_version=key_version,
+            wrapped_dek=wrapped_dek,
+            chunk_size=int.from_bytes(cs_bytes, "big"),
+        ),
+        pos,
+    )
+
+
+# ....................... #
+
+
+def _try_parse_frame(
+    blob: bytes | bytearray, offset: int = 0
+) -> tuple[ChunkFrame, int] | None:
+    """Parse a frame at *offset*; ``None`` when the buffer lacks a complete frame."""
+
+    if offset >= len(blob):
+        return None
+
+    is_final = blob[offset] != 0
+    pos = offset + 1
+
+    nonce_taken = _try_take_var(blob, pos, _U8)
+    if nonce_taken is None:
+        return None
+    nonce, pos = nonce_taken
+
+    ct_taken = _try_take_var(blob, pos, _U32)
+    if ct_taken is None:
+        return None
+    ciphertext, pos = ct_taken
+
+    return ChunkFrame(is_final=is_final, nonce=nonce, ciphertext=ciphertext), pos
+
+
+# ....................... #
+
+
+def unpack_chunked_header(blob: bytes) -> tuple[ChunkedHeader, int]:
+    """Parse a chunked header from the start of *blob*, returning ``(header, header_len)``.
+
+    Random-access counterpart to :meth:`ChunkedStreamReader.take_header`: the caller has
+    fetched at least the header region, so an incomplete buffer is a truncation error.
+
+    :raises CoreException: ``validation`` when *blob* is not a chunked stream, uses an
+        unsupported scheme, or is truncated/malformed.
+    """
+
+    parsed = _try_parse_header(blob, 0)
+
+    if parsed is None:
+        raise exc.validation(
+            "Truncated chunked header",
+            code="core.crypto.chunked_truncated",
+        )
+
+    return parsed
+
+
+# ....................... #
+
+
+def parse_frame(blob: bytes, offset: int = 0) -> tuple[ChunkFrame, int]:
+    """Parse one frame from *blob* at *offset*, returning ``(frame, end_offset)``.
+
+    :raises CoreException: ``validation`` when the buffer does not hold a complete frame.
+    """
+
+    parsed = _try_parse_frame(blob, offset)
+
+    if parsed is None:
+        raise exc.validation(
+            "Truncated chunked frame",
+            code="core.crypto.chunked_truncated",
+        )
+
+    return parsed
+
+
+# ....................... #
+
+
+def chunk_frame_stride(blob: bytes, offset: int = 0) -> int | None:
+    """Return a frame's total byte length from its length prefixes, or ``None`` if short.
+
+    Reads only the framing (``is_final`` + nonce length + ciphertext length), not the
+    ciphertext itself, so a small prefix read yields the per-chunk stride used to seek to
+    later chunks — every non-final frame is exactly this size.
+    """
+
+    if offset + 2 > len(blob):
+        return None
+
+    nonce_len = blob[offset + 1]
+    ct_len_pos = offset + 2 + nonce_len
+
+    if ct_len_pos + _U32.size > len(blob):
+        return None
+
+    (ct_len,) = _U32.unpack_from(blob, ct_len_pos)
+
+    return 2 + nonce_len + _U32.size + ct_len
 
 
 # ....................... #
@@ -267,61 +428,16 @@ class ChunkedStreamReader:
         if self._header_taken:
             raise exc.internal("Chunked header already taken from this reader")
 
-        if len(self._buf) < _HEADER.size:
+        parsed = _try_parse_header(self._buf, 0)
+
+        if parsed is None:
             return None
 
-        magic, scheme = _HEADER.unpack_from(self._buf, 0)
-
-        if magic != _CHUNK_MAGIC:
-            raise exc.validation(
-                "Not a chunked-AEAD stream (missing magic marker)",
-                code="core.crypto.chunked_bad_magic",
-            )
-
-        if scheme != _CHUNK_SCHEME_VERSION:
-            raise exc.validation(
-                f"Unsupported chunked scheme version {scheme}",
-                code="core.crypto.chunked_unsupported_scheme",
-                details={"scheme": scheme, "supported": _CHUNK_SCHEME_VERSION},
-            )
-
-        offset = _HEADER.size
-        fields: list[bytes] = []
-
-        for length_struct in (_U8, _U16, _U8, _U16):
-            taken = _try_take_var(self._buf, offset, length_struct)
-            if taken is None:
-                return None
-            value, offset = taken
-            fields.append(value)
-
-        chunk_size_raw = _try_take(self._buf, offset, _U32.size)
-        if chunk_size_raw is None:
-            return None
-        cs_bytes, offset = chunk_size_raw
-
-        alg_raw, key_id_raw, key_version_raw, wrapped_dek = fields
-
-        try:
-            alg = alg_raw.decode("utf-8")
-            key_id = key_id_raw.decode("utf-8")
-            key_version = key_version_raw.decode("utf-8") or None
-        except UnicodeDecodeError as error:
-            raise exc.validation(
-                "Malformed chunked header: text field is not valid UTF-8",
-                code="core.crypto.chunked_bad_encoding",
-            ) from error
-
-        del self._buf[:offset]
+        header, end = parsed
+        del self._buf[:end]
         self._header_taken = True
 
-        return ChunkedHeader(
-            alg=alg,
-            key_id=key_id,
-            key_version=key_version,
-            wrapped_dek=wrapped_dek,
-            chunk_size=int.from_bytes(cs_bytes, "big"),
-        )
+        return header
 
     # ....................... #
 
@@ -329,24 +445,14 @@ class ChunkedStreamReader:
         """Yield and consume every complete frame currently buffered (partial stays)."""
 
         while True:
-            if not self._buf:
+            parsed = _try_parse_frame(self._buf, 0)
+
+            if parsed is None:
                 return
 
-            is_final = self._buf[0] != 0
-            offset = 1
-
-            nonce_taken = _try_take_var(self._buf, offset, _U8)
-            if nonce_taken is None:
-                return
-            nonce, offset = nonce_taken
-
-            ct_taken = _try_take_var(self._buf, offset, _U32)
-            if ct_taken is None:
-                return
-            ciphertext, offset = ct_taken
-
-            del self._buf[:offset]
-            yield ChunkFrame(is_final=is_final, nonce=nonce, ciphertext=ciphertext)
+            frame, end = parsed
+            del self._buf[:end]
+            yield frame
 
     # ....................... #
 

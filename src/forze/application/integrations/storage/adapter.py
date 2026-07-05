@@ -14,6 +14,7 @@ import attrs
 
 from forze.application.contracts.crypto import (
     BytesCipherPort,
+    ChunkedStreamOpener,
     StreamingBytesCipherPort,
 )
 from forze.application.contracts.resolution import (
@@ -44,6 +45,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStoragePartInfo,
     ObjectStorageSSE,
+    unsatisfiable_range,
     validate_range,
 )
 from forze.application.integrations.storage.codec import default_path_codec
@@ -51,7 +53,13 @@ from forze.application.integrations.storage.metadata import (
     object_metadata_from_user_metadata,
 )
 from forze.base.codecs import AsciiB64Codec
-from forze.base.crypto import DEFAULT_CHUNK_SIZE, is_chunked_envelope, is_envelope
+from forze.base.crypto import (
+    DEFAULT_CHUNK_SIZE,
+    chunk_frame_stride,
+    is_chunked_envelope,
+    is_envelope,
+    parse_frame,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, OnceCell, utcnow, uuid7
 
@@ -65,6 +73,15 @@ _DEFAULT_STREAM_PART_SIZE = 8 * 1024 * 1024
 Above S3's 5 MiB minimum non-final part, and the memory ceiling of a streamed
 transfer (roughly one part plus one crypto chunk). Distinct from the crypto
 ``chunk_size`` — this is the storage transfer granularity, not the AEAD framing."""
+
+_HEADER_PROBE_SIZE = 8192
+"""Leading bytes fetched to parse a chunked object's header + first frame prefix on a
+ranged read. Comfortably covers the header (magic + key ids + wrapped DEK + chunk size)
+and the ~18-byte first-frame length prefix used to derive the per-chunk stride."""
+
+_FRAME_PREFIX_MAX = 512
+"""Upper bound on a frame's length-prefix region (is_final + nonce + ct-length), used
+for the rare header-probe-too-small fallback when deriving the stride."""
 
 
 async def _count_bytes(
@@ -858,27 +875,31 @@ class ObjectStorageAdapter(
         ``GET`` to the client. An unsatisfiable range (``start`` beyond the
         object) surfaces as a precondition error (the 416 equivalent).
 
-        Refused when client-side encryption is enabled: a slice of an encryption
-        envelope cannot be decrypted, so a partial read would return ciphertext.
+        On a client-side-encrypting route, a chunked-AEAD object (written via
+        :meth:`upload_stream`) is served by decrypting only the chunks the range covers
+        (bounded memory); a legacy whole-payload envelope cannot be sliced and is refused
+        (use :meth:`download` / :meth:`download_stream`); a plaintext object passes through.
         """
-
-        if self.cipher is not None:
-            raise exc.precondition(
-                "Ranged downloads are unavailable when client-side encryption "
-                "is enabled: a byte slice of the encryption envelope cannot be "
-                "decrypted.",
-            )
 
         validate_range(start, end)
         self._validate_key(key)
         bucket = await self._resolved_bucket()
 
+        if self.cipher is not None:
+            return await self._encrypted_download_range(
+                bucket, key, start=start, end=end
+            )
+
+        return await self._raw_download_range(bucket, key, start=start, end=end)
+
+    # ....................... #
+
+    async def _raw_download_range(
+        self, bucket: str, key: str, *, start: int, end: int | None
+    ) -> RangedDownload:
         async with self.client.client():
             body, content_range, total = await self.client.download_range_bytes(
-                bucket=bucket,
-                key=key,
-                start=start,
-                end=end,
+                bucket=bucket, key=key, start=start, end=end
             )
 
         return RangedDownload(
@@ -887,6 +908,147 @@ class ObjectStorageAdapter(
             content_range=content_range,
             total_size=total,
         )
+
+    # ....................... #
+
+    async def _encrypted_download_range(
+        self, bucket: str, key: str, *, start: int, end: int | None
+    ) -> RangedDownload:
+        """Serve a ranged read against a client-side-encrypted object by stored format."""
+
+        head = await self.head(key)
+        raw_total = head.size
+
+        if raw_total >= 4:  # need the 4-byte magic to classify the object
+            async with self.client.client():
+                probe, _cr, _t = await self.client.download_range_bytes(
+                    bucket=bucket,
+                    key=key,
+                    start=0,
+                    end=min(_HEADER_PROBE_SIZE, raw_total) - 1,
+                )
+
+            magic = probe.data[:4]
+
+            if is_chunked_envelope(magic):
+                return await self._chunked_download_range(
+                    bucket,
+                    key,
+                    start=start,
+                    end=end,
+                    raw_total=raw_total,
+                    content_type=head.content_type,
+                    probe=probe.data,
+                )
+
+            if is_envelope(magic):
+                raise exc.precondition(
+                    "Ranged downloads are unavailable for a whole-payload encrypted "
+                    "object (a single AEAD blob cannot be sliced); use download() or "
+                    "download_stream().",
+                    code="core.storage.range_whole_payload_unsupported",
+                )
+
+        # Plaintext (migration tolerance) — pass the ranged GET straight through.
+        return await self._raw_download_range(bucket, key, start=start, end=end)
+
+    # ....................... #
+
+    async def _chunked_download_range(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        start: int,
+        end: int | None,
+        raw_total: int,
+        content_type: str,
+        probe: bytes,
+    ) -> RangedDownload:
+        """Decrypt only the chunks a byte range covers, then trim to the exact bytes."""
+
+        opener = await self._streaming_cipher().open_chunked_stream(
+            probe, aad=self._encryption_aad(bucket, key), tenant=self._cipher_tenant()
+        )
+        chunk_size = opener.chunk_size
+
+        stride = chunk_frame_stride(probe, opener.header_len)
+
+        if stride is None:  # header larger than the probe — widen and retry (rare)
+            async with self.client.client():
+                wider, _c, _t = await self.client.download_range_bytes(
+                    bucket=bucket,
+                    key=key,
+                    start=opener.header_len,
+                    end=min(opener.header_len + _FRAME_PREFIX_MAX, raw_total) - 1,
+                )
+            stride = chunk_frame_stride(wider.data, 0)
+
+            if stride is None:
+                raise exc.internal(
+                    "Could not determine the chunked frame stride from the object header",
+                )
+
+        # Chunk count and plaintext total (the last chunk's length is only known once
+        # decrypted, so read it — it is also reused if the range covers it).
+        num_chunks = -(-(raw_total - opener.header_len) // stride)  # ceil division
+        last_index = num_chunks - 1
+        last_plaintext = await self._open_chunk_at(
+            bucket, key, opener, stride, last_index, raw_total
+        )
+        plaintext_total = last_index * chunk_size + len(last_plaintext)
+
+        if start >= plaintext_total:
+            raise unsatisfiable_range(start, plaintext_total)
+
+        end_byte = plaintext_total - 1 if end is None else min(end, plaintext_total - 1)
+        first_chunk = start // chunk_size
+        last_chunk = end_byte // chunk_size
+
+        out = bytearray()
+
+        for index in range(first_chunk, last_chunk + 1):
+            out += (
+                last_plaintext
+                if index == last_index
+                else await self._open_chunk_at(
+                    bucket, key, opener, stride, index, raw_total
+                )
+            )
+
+        front = start - first_chunk * chunk_size
+        data = bytes(out[front : front + (end_byte - start + 1)])
+
+        return RangedDownload(
+            data=data,
+            content_type=content_type,
+            content_range=f"bytes {start}-{end_byte}/{plaintext_total}",
+            total_size=plaintext_total,
+        )
+
+    # ....................... #
+
+    async def _open_chunk_at(
+        self,
+        bucket: str,
+        key: str,
+        opener: ChunkedStreamOpener,
+        stride: int,
+        index: int,
+        raw_total: int,
+    ) -> bytes:
+        """Fetch and decrypt a single chunk by index (ranged GET of its frame)."""
+
+        offset = opener.header_len + index * stride
+        end = min(offset + stride, raw_total) - 1  # over-read clamps to the final frame
+
+        async with self.client.client():
+            body, _cr, _t = await self.client.download_range_bytes(
+                bucket=bucket, key=key, start=offset, end=end
+            )
+
+        frame, _consumed = parse_frame(body.data, 0)
+        return opener.open_frame(index, frame)
 
     # ....................... #
 

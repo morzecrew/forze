@@ -32,6 +32,7 @@ from .directory import (
 from .field_encryption import FieldEncryption
 from .ports import (
     BytesCipherPort,
+    ChunkedStreamOpener,
     DeterministicFieldCipherPort,
     FieldCipherPort,
     KeyManagementPort,
@@ -72,6 +73,7 @@ __all__ = [
     "EnvelopeCipher",
     "BytesCipherPort",
     "FieldCipherPort",
+    "ChunkedStreamOpener",
     "KeyringPort",
     "StreamingBytesCipherPort",
     "DeterministicFieldCipherPort",

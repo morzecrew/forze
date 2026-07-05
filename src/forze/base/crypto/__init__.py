@@ -14,10 +14,13 @@ from .chunked import (
     ChunkedHeader,
     ChunkedStreamReader,
     ChunkFrame,
+    chunk_frame_stride,
     is_chunked_envelope,
     open_chunk,
     pack_chunked_header,
+    parse_frame,
     seal_chunk,
+    unpack_chunked_header,
 )
 from .ciphers import AesGcmAead, ChaCha20Poly1305Aead
 from .envelope import (
@@ -42,12 +45,15 @@ __all__ = [
     "ChunkedHeader",
     "ChunkedStreamReader",
     "EncryptedEnvelope",
+    "chunk_frame_stride",
     "ensure_algorithm",
     "is_chunked_envelope",
     "is_envelope",
     "open_chunk",
     "pack_chunked_header",
     "pack_envelope",
+    "parse_frame",
     "seal_chunk",
+    "unpack_chunked_header",
     "unpack_envelope",
 ]

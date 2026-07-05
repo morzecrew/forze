@@ -8,12 +8,15 @@ from forze.base.crypto import (
     AesGcmAead,
     ChunkedHeader,
     ChunkedStreamReader,
+    chunk_frame_stride,
     is_chunked_envelope,
     is_envelope,
     open_chunk,
     pack_chunked_header,
     pack_envelope,
+    parse_frame,
     seal_chunk,
+    unpack_chunked_header,
     unpack_envelope,
 )
 from forze.base.crypto.envelope import EncryptedEnvelope
@@ -261,3 +264,64 @@ def test_bad_chunk_size_rejected() -> None:
                     chunk_size=bad,
                 )
             )
+
+
+# ....................... #
+# random-access primitives (Phase 5)
+
+
+def test_unpack_chunked_header_round_trips_with_length() -> None:
+    header = _header(chunk_size=256)
+    packed = pack_chunked_header(header)
+
+    parsed, header_len = unpack_chunked_header(packed + b"following frame bytes")
+
+    assert parsed == header
+    assert header_len == len(packed)
+
+
+def test_unpack_chunked_header_rejects_truncated() -> None:
+    packed = pack_chunked_header(_header())
+    with pytest.raises(CoreException):
+        unpack_chunked_header(packed[:5])
+
+
+def test_chunk_frame_stride_matches_frame_length() -> None:
+    stream = _seal_stream([(b"a" * 64, False), (b"b" * 64, False), (b"c", True)])
+    _header_obj, header_len = unpack_chunked_header(stream)
+
+    _frame, frame_end = parse_frame(stream, header_len)
+
+    assert chunk_frame_stride(stream, header_len) == frame_end - header_len
+
+
+def test_chunk_frame_stride_none_when_prefix_incomplete() -> None:
+    stream = _seal_stream([(b"x" * 64, True)])
+    _header_obj, header_len = unpack_chunked_header(stream)
+
+    # One byte past the header: not enough for the frame's length prefix.
+    assert chunk_frame_stride(stream[: header_len + 1], header_len) is None
+
+
+def test_parse_frame_raises_on_truncation() -> None:
+    stream = _seal_stream([(b"x" * 64, True)])
+    _header_obj, header_len = unpack_chunked_header(stream)
+
+    with pytest.raises(CoreException):
+        parse_frame(stream[: header_len + 3], header_len)
+
+
+def test_random_access_opens_a_middle_chunk() -> None:
+    """A chunk can be fetched and opened by index using stride arithmetic."""
+
+    chunks = [(bytes([i]) * 64, False) for i in range(4)] + [(b"tail", True)]
+    stream = _seal_stream(chunks)
+    _header_obj, header_len = unpack_chunked_header(stream)
+    stride = chunk_frame_stride(stream, header_len)
+    assert stride is not None
+
+    # Seek straight to chunk index 2 without parsing 0 and 1.
+    frame, _end = parse_frame(stream, header_len + 2 * stride)
+    plaintext = open_chunk(_AEAD, key=_DEK, base_aad=_AAD, index=2, frame=frame)
+
+    assert plaintext == bytes([2]) * 64

@@ -44,6 +44,7 @@ class _FakeClient:
         self.sessions: dict[str, dict[int, bytes]] = {}
         self.part_sizes: list[int] = []
         self.aborted: list[str] = []
+        self.range_reads: list[tuple[int, int | None]] = []
 
     def client(self):  # type: ignore[no-untyped-def]
         @contextlib.asynccontextmanager
@@ -81,6 +82,7 @@ class _FakeClient:
     async def download_range_bytes(
         self, bucket: str, key: str, *, start: int, end: int | None = None
     ) -> tuple[ObjectBody, str, int]:
+        self.range_reads.append((start, end))
         data = self.objects[key]
         total = len(data)
         last = total - 1 if end is None else min(end, total - 1)
@@ -336,3 +338,87 @@ async def test_streaming_cipher_required_when_encrypting() -> None:
     with pytest.raises(CoreException) as ei:
         await adapter.upload_stream(_aiter(b"data"), filename="f.bin")
     assert "streaming" in str(ei.value).lower()
+
+
+# ....................... #
+# ranged reads over encrypted (chunked) objects (Phase 5)
+
+
+@pytest.mark.parametrize(
+    "start,end",
+    [(0, 9), (5, 40), (0, None), (63, 66), (100, 100), (0, 299), (298, None)],
+)
+async def test_encrypted_ranged_read_matches_full(start: int, end: int | None) -> None:
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1024)
+    data = bytes((i * 13) % 256 for i in range(300))
+    stored = await adapter.upload_stream(_aiter(data), filename="f.bin", chunk_size=32)
+
+    rd = await adapter.download_range(stored.key, start=start, end=end)
+
+    end_byte = len(data) - 1 if end is None else min(end, len(data) - 1)
+    assert rd.data == data[start : end_byte + 1]
+    assert rd.total_size == len(data)
+    assert rd.content_range == f"bytes {start}-{end_byte}/{len(data)}"
+
+
+async def test_encrypted_ranged_read_unsatisfiable_is_416() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1024)
+    stored = await adapter.upload_stream(_aiter(b"x" * 50), filename="f.bin", chunk_size=32)
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download_range(stored.key, start=100)
+    assert ei.value.code == "range_not_satisfiable"
+
+
+async def test_encrypted_ranged_read_only_fetches_covering_chunks() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1 << 20)
+    data = b"y" * 1000
+    stored = await adapter.upload_stream(_aiter(data), filename="f.bin", chunk_size=100)
+
+    client.range_reads.clear()
+    rd = await adapter.download_range(stored.key, start=250, end=350)  # chunks 2,3 of 10
+
+    assert rd.data == data[250:351]
+    # probe + last-chunk (for total) + the two covering chunks — not all ten.
+    assert len(client.range_reads) <= 5
+
+
+async def test_ranged_read_refuses_whole_payload_encrypted() -> None:
+    from forze.application.contracts.storage import UploadedObject
+
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring())
+    stored = await adapter.upload(
+        UploadedObject(filename="a.bin", data=b"whole payload secret")
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download_range(stored.key, start=0, end=3)
+    assert ei.value.code == "core.storage.range_whole_payload_unsupported"
+
+
+async def test_ranged_read_plaintext_passthrough_on_encrypting_route() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring())
+    client.objects["raw/k"] = b"plain data here"
+    client.content_types["raw/k"] = "text/plain"
+
+    rd = await adapter.download_range("raw/k", start=6, end=9)
+    assert rd.data == b"data"
+
+
+async def test_encrypted_ranged_read_detects_tamper() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1 << 20)
+    data = b"z" * 200
+    stored = await adapter.upload_stream(_aiter(data), filename="f.bin", chunk_size=64)
+
+    blob = bytearray(client.objects[stored.key])
+    blob[-1] ^= 0x01  # corrupt the final chunk's tag
+    client.objects[stored.key] = bytes(blob)
+
+    with pytest.raises(CoreException):
+        await adapter.download_range(stored.key, start=0, end=10)

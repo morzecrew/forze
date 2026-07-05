@@ -181,3 +181,44 @@ async def test_trailing_bytes_after_final_are_rejected() -> None:
         "core.crypto.chunked_trailing_data",
         "core.crypto.chunked_truncated",
     )
+
+
+# ....................... #
+# random-access opener (Phase 5)
+
+
+async def test_open_chunked_stream_opens_frames_by_index() -> None:
+    from forze.base.crypto import chunk_frame_stride, parse_frame, unpack_chunked_header
+
+    ring = _keyring()
+    data = b"".join(bytes([i]) * 32 for i in range(5))
+    stream = await _seal(ring, data, chunk_size=32)
+
+    opener = await ring.open_chunked_stream(stream, aad=b"")
+    _header, header_len = unpack_chunked_header(stream)
+    stride = chunk_frame_stride(stream, header_len)
+    assert stride is not None
+    assert opener.chunk_size == 32
+    assert opener.header_len == header_len
+
+    # Open chunk index 3 directly.
+    frame, _end = parse_frame(stream, header_len + 3 * stride)
+    assert opener.open_frame(3, frame) == bytes([3]) * 32
+
+
+async def test_open_chunked_stream_rejects_foreign_tenant() -> None:
+    kms = MockKeyManagement()
+    directory = TenantTemplateKeyDirectory(
+        template="tenant/{tenant_id}/cmk", default_key_id="default"
+    )
+    writer = _keyring(kms, directory=directory)
+    reader = _keyring(kms, directory=directory)
+
+    tenant_a = TenantIdentity(tenant_id=uuid4())
+    tenant_b = TenantIdentity(tenant_id=uuid4())
+
+    stream = await _seal(writer, b"secret" * 8, tenant=tenant_a, chunk_size=16)
+
+    with pytest.raises(CoreException) as ei:
+        await reader.open_chunked_stream(stream, aad=b"", tenant=tenant_b)
+    assert ei.value.code == "core.crypto.key_id_unauthorized"
