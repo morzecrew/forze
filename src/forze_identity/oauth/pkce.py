@@ -6,7 +6,7 @@ from typing import final
 
 import attrs
 
-from forze.base.primitives import token_urlsafe
+from forze.base.primitives import secure_token_urlsafe
 
 # ----------------------- #
 
@@ -29,7 +29,7 @@ class PkcePair:
 def generate_pkce() -> PkcePair:
     """Generate a PKCE pair suitable for OAuth 2.1 (RFC 7636)."""
 
-    verifier = token_urlsafe(48)
+    verifier = secure_token_urlsafe(48)
     digest = hashlib.sha256(verifier.encode()).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return PkcePair(code_verifier=verifier, code_challenge=challenge)

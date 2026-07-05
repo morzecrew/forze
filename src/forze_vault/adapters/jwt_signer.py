@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives import serialization
 from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, current_time_source
 
 from ..kernel.client import VaultClientPort
 
@@ -50,12 +50,20 @@ class VaultTransitSigner:
     algorithm: str = "RS256"  #! probably enforce Literal
     """JWS algorithm written to the token header: ``RS256`` or ``ES256``."""
 
+    public_key_ttl_seconds: float = 300.0
+    """Lifetime of the cached public key. After it elapses the key is re-fetched from
+    Vault, so a Transit key rotation is picked up (for verification and the published
+    JWKS) without a process restart. The private key never leaves Vault regardless."""
+
     _public_pem: str | None = attrs.field(default=None, init=False, repr=False)
-    """Cached PEM public key (fetched once from Vault)."""
+    """Cached PEM public key (re-fetched from Vault once the TTL elapses)."""
 
     _public_key_obj: Any = attrs.field(default=None, init=False, repr=False)
     """Cached parsed public key, so local verification (per token) does not re-parse
-    the PEM on every call."""
+    the PEM on every call. Reset whenever the PEM is re-fetched."""
+
+    _fetched_at: float | None = attrs.field(default=None, init=False, repr=False)
+    """Monotonic time the cached PEM was fetched, for TTL expiry."""
 
     # ....................... #
 
@@ -75,8 +83,16 @@ class VaultTransitSigner:
     # ....................... #
 
     async def _public_key_pem(self) -> str:
-        if self._public_pem is None:
+        now = current_time_source().monotonic()
+        expired = (
+            self._fetched_at is not None
+            and now - self._fetched_at >= self.public_key_ttl_seconds
+        )
+
+        if self._public_pem is None or expired:
             self._public_pem = await self.client.transit_public_key(self.key_name)
+            self._public_key_obj = None  # the parsed key must track the re-fetched PEM
+            self._fetched_at = now
 
         return self._public_pem
 
@@ -96,10 +112,12 @@ class VaultTransitSigner:
     # ....................... #
 
     async def _public_key(self) -> Any:
+        # Resolve the PEM first so the TTL check runs on every call; a re-fetch resets
+        # the parsed key, forcing a re-parse below.
+        pem = await self._public_key_pem()
+
         if self._public_key_obj is None:
-            self._public_key_obj = serialization.load_pem_public_key(
-                (await self._public_key_pem()).encode()
-            )
+            self._public_key_obj = serialization.load_pem_public_key(pem.encode())
 
         return self._public_key_obj
 

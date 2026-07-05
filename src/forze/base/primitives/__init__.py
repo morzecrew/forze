@@ -33,6 +33,9 @@ from .entropy_source import (
     bind_entropy_source,
     current_entropy_source,
     derive_seed,
+    permit_insecure_entropy,
+    secure_random_bytes,
+    secure_token_urlsafe,
     token_urlsafe,
 )
 from .fingerprint import (
@@ -113,6 +116,9 @@ __all__ = [
     "bind_entropy_source",
     "derive_seed",
     "current_entropy_source",
+    "permit_insecure_entropy",
+    "secure_random_bytes",
+    "secure_token_urlsafe",
     "token_urlsafe",
     "CacheLane",
     "InflightLane",

@@ -276,3 +276,62 @@ async def test_batched_decode_decrypts_lazily_per_batch() -> None:
 
     assert calls == 10  # every row decrypted exactly once across the full pass
     assert [m.email for m in (*first, *rest)] == [f"e{i}@x.com" for i in range(5)]
+
+
+# ....................... #
+# reject_plaintext (post-migration strict mode)
+
+
+def _strict_codec(
+    cipher: Keyring,
+    *,
+    fields: frozenset[str] = frozenset({"email", "prefs"}),
+) -> EncryptingModelCodec[_Profile]:
+    return EncryptingModelCodec(
+        inner=default_model_codec(_Profile),
+        cipher=cipher,
+        fields=fields,
+        tenant_provider=lambda: None,
+        reject_plaintext=True,
+    )
+
+
+async def test_strict_mode_rejects_plaintext_in_encrypted_field() -> None:
+    """Once migration is complete, a non-ciphertext value in a marked field is refused."""
+
+    ring = _keyring()
+    codec = _strict_codec(ring)
+    await codec.prepare_encrypt()
+
+    legacy = {"id": "2", "name": "Bob", "email": "bob@example.com", "prefs": {}}
+
+    with pytest.raises(CoreException) as excinfo:
+        codec.decode_mapping(legacy)
+
+    assert excinfo.value.kind is ExceptionKind.VALIDATION
+    assert excinfo.value.code == "core.crypto.plaintext_rejected"
+
+
+async def test_strict_mode_still_round_trips_real_ciphertext() -> None:
+    ring = _keyring()
+    codec = _strict_codec(ring)
+    await codec.prepare_encrypt()
+
+    mapping = codec.encode_persistence_mapping(_PROFILE)
+    assert codec.decode_mapping(mapping) == _PROFILE
+
+
+async def test_strict_mode_tolerates_absent_encrypted_field() -> None:
+    """A genuinely absent encrypted field is not a plaintext leak — skip it, don't raise."""
+
+    ring = _keyring()
+    codec = _strict_codec(ring)
+    await codec.prepare_encrypt()
+
+    mapping = codec.encode_persistence_mapping(_PROFILE)
+    # Drop the optional 'prefs' encrypted field entirely (a row that never set it).
+    del mapping["prefs"]
+
+    restored = codec.decode_mapping(mapping)
+    assert restored.email == "alice@example.com"
+    assert restored.prefs == {}  # model default, not a rejected plaintext

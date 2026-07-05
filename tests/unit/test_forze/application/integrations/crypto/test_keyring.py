@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import attrs
@@ -19,6 +20,7 @@ from forze.application.integrations.crypto import Keyring
 from forze.application.integrations.crypto.keyring import _LOCK_STRIPES
 from forze.base.crypto import unpack_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import bind_time_source
 from forze_mock import MockKeyManagement
 
 # ----------------------- #
@@ -392,3 +394,176 @@ def test_fill_lock_is_stable_per_key_and_bounded() -> None:
     # parallelize in the common case) but never grow the lock set past the stripe count.
     locks = {id(ring._lock_for(f"tenant/{i}/cmk")) for i in range(500)}  # type: ignore[attr-defined]
     assert 1 < len(locks) <= _LOCK_STRIPES
+
+
+# ....................... #
+
+
+async def test_repr_never_leaks_plaintext_data_keys() -> None:
+    """No ``repr`` of the keyring, its caches, or a frozen decryptor may print a raw DEK.
+
+    A log line, DST trace, or debugger dump that reprs a keyring must not expose the
+    plaintext data-encryption keys it caches — the ``repr=False`` discipline that
+    ``DataKey.plaintext`` already follows.
+    """
+
+    ring = _keyring()
+    blob = await ring.encrypt(b"secret", tenant=None)
+
+    active = next(iter(ring._enc_cache.values()))  # type: ignore[attr-defined]
+    plaintext_dek = active.plaintext
+    dek_literal = repr(plaintext_dek)  # e.g. b'\\x1f...'
+
+    assert plaintext_dek  # the fixture actually cached a key
+    # The realistic dump vectors: repr of the keyring, of an active-key entry, of the
+    # encrypt cache (an OrderedDict of _ActiveDataKey, whose own repr is now guarded),
+    # and of a frozen decryptor. The bare decrypt cache is a plain OrderedDict[bytes,
+    # bytes] that no code logs directly; repr=False keeps it out of the keyring repr.
+    assert dek_literal not in repr(ring)
+    assert dek_literal not in repr(active)
+    assert dek_literal not in repr(ring._enc_cache)  # type: ignore[attr-defined]
+
+    frozen = ring.freeze_decryptor([unpack_envelope(blob)])
+    assert dek_literal not in repr(frozen)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _ManualClock:
+    """A time source whose monotonic reading is advanced by the test."""
+
+    t: float = 0.0
+
+    def now(self) -> datetime:
+        return datetime(2020, 1, 1, tzinfo=UTC)
+
+    def uuid(self):  # type: ignore[no-untyped-def]
+        return uuid4()
+
+    def monotonic(self) -> float:
+        return self.t
+
+
+async def test_dek_ttl_expires_encrypt_and_decrypt_cache() -> None:
+    """With a TTL, an elapsed data key is regenerated / re-unwrapped through the KMS,
+    so a rotated or revoked KEK stops being served from cache within the window."""
+
+    clock = _ManualClock()
+    kms = _CountingKms(inner=MockKeyManagement())
+
+    with bind_time_source(clock):
+        ring = Keyring(
+            kms=kms,
+            aead=AesGcmAead(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+            dek_ttl_seconds=10.0,
+        )
+
+        blob = await ring.encrypt(b"secret", tenant=None)
+        assert kms.generated == 1
+        assert await ring.decrypt(blob) == b"secret"
+        assert kms.unwrapped == 0  # served from the encrypt-seeded decrypt cache
+
+        # Within the TTL: still cached, no new KMS round-trips.
+        clock.t = 5.0
+        await ring.encrypt(b"again", tenant=None)
+        assert kms.generated == 1
+
+        # Past the TTL: both caches miss and re-resolve through the KMS.
+        clock.t = 11.0
+        await ring.encrypt(b"third", tenant=None)
+        assert kms.generated == 2
+
+        assert await ring.decrypt(blob) == b"secret"
+        assert kms.unwrapped == 1  # the original data key was re-unwrapped after expiry
+
+
+async def test_dek_ttl_none_keeps_key_indefinitely() -> None:
+    """The default (no TTL) keeps a data key cached regardless of elapsed time."""
+
+    clock = _ManualClock()
+    kms = _CountingKms(inner=MockKeyManagement())
+
+    with bind_time_source(clock):
+        ring = Keyring(
+            kms=kms,
+            aead=AesGcmAead(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        )
+
+        await ring.encrypt(b"secret", tenant=None)
+        clock.t = 1_000_000.0
+        await ring.encrypt(b"again", tenant=None)
+
+        assert kms.generated == 1  # never regenerated
+
+
+# ....................... #
+# confused-deputy guard: an envelope's key id is authorized against the tenant
+
+
+def _per_tenant_ring(kms) -> Keyring:  # type: ignore[no-untyped-def]
+    return Keyring(
+        kms=kms,
+        aead=AesGcmAead(),
+        directory=TenantTemplateKeyDirectory(
+            template="tenant/{tenant_id}/cmk",
+            default_key_id="default",
+        ),
+    )
+
+
+async def test_decrypt_rejects_foreign_tenant_key_id_without_kms_call() -> None:
+    """A caller cannot make the backend unwrap a key id its tenant does not own —
+    the mismatch fails closed before any KMS unwrap (cross-tenant confused-deputy)."""
+
+    kms = _CountingKms(MockKeyManagement())
+    writer = _per_tenant_ring(kms)
+    tenant_a = TenantIdentity(tenant_id=uuid4())
+    tenant_b = TenantIdentity(tenant_id=uuid4())
+
+    blob = await writer.encrypt(b"a-secret", tenant=tenant_a)
+
+    # A fresh reader (cold cache) so the unwrap path — not a cache hit — is exercised.
+    reader = _per_tenant_ring(kms)
+    unwrapped_before = kms.unwrapped
+
+    with pytest.raises(CoreException) as excinfo:
+        await reader.decrypt(blob, tenant=tenant_b)
+
+    assert excinfo.value.kind is ExceptionKind.VALIDATION
+    assert excinfo.value.code == "core.crypto.key_id_unauthorized"
+    assert kms.unwrapped == unwrapped_before  # no KMS unwrap on the unauthorized key id
+
+    # The rightful tenant still decrypts (the guard only blocks a mismatch).
+    assert await reader.decrypt(blob, tenant=tenant_a) == b"a-secret"
+
+
+async def test_decrypt_without_tenant_skips_authorization() -> None:
+    """The single-key path (tenant=None) is unchanged — no key-id authorization."""
+
+    ring = _keyring()
+    blob = await ring.encrypt(b"secret", tenant=None)
+
+    assert await ring.decrypt(blob) == b"secret"
+
+
+async def test_ensure_unwrapped_rejects_foreign_key_id() -> None:
+    """The sync-decode pre-pass authorizes each envelope's key id against the tenant."""
+
+    kms = _CountingKms(MockKeyManagement())
+    writer = _per_tenant_ring(kms)
+    tenant_a = TenantIdentity(tenant_id=uuid4())
+    tenant_b = TenantIdentity(tenant_id=uuid4())
+
+    blob = await writer.encrypt(b"a-secret", tenant=tenant_a)
+    envelope = unpack_envelope(blob)
+
+    reader = _per_tenant_ring(kms)
+
+    with pytest.raises(CoreException) as excinfo:
+        await reader.ensure_unwrapped([envelope], tenant=tenant_b)
+
+    assert excinfo.value.code == "core.crypto.key_id_unauthorized"

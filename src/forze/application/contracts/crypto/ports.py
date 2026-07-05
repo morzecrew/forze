@@ -74,12 +74,23 @@ class BytesCipherPort(Protocol):
 
         ...  # pragma: no cover
 
-    def decrypt(self, blob: bytes, *, aad: bytes = b"") -> Awaitable[bytes]:
+    def decrypt(
+        self,
+        blob: bytes,
+        *,
+        aad: bytes = b"",
+        tenant: TenantIdentity | None = None,
+    ) -> Awaitable[bytes]:
         """Decrypt a packed envelope; the key is resolved from the envelope itself.
 
         :param aad: Must equal the value passed to :meth:`encrypt`.
-        :raises CoreException: ``validation`` on a malformed envelope or an
-            authentication failure (tamper / wrong ``aad`` / wrong tenant).
+        :param tenant: When given, the envelope's key id is checked against the
+            tenant's own key-encryption key *before* any KMS unwrap, so a caller
+            cannot make the backend unwrap under a key id it names but does not own
+            (a cross-tenant confused-deputy). ``None`` skips the check (single-key).
+        :raises CoreException: ``validation`` on a malformed envelope, an
+            authentication failure (tamper / wrong ``aad`` / wrong tenant), or a
+            ``core.crypto.key_id_unauthorized`` key-id/tenant mismatch.
         """
 
         ...  # pragma: no cover
@@ -113,8 +124,15 @@ class FieldCipherPort(Protocol):
     def ensure_unwrapped(
         self,
         envelopes: Iterable[EncryptedEnvelope],
+        *,
+        tenant: TenantIdentity | None = None,
     ) -> Awaitable[None]:
-        """Unwrap and cache the data keys for *envelopes* for sync decrypts."""
+        """Unwrap and cache the data keys for *envelopes* for sync decrypts.
+
+        :param tenant: When given, each envelope's key id is checked against the
+            tenant's key-encryption key before it is unwrapped, so a foreign key id
+            fails closed (``core.crypto.key_id_unauthorized``) with no KMS call.
+        """
 
         ...  # pragma: no cover
 

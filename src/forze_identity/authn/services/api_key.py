@@ -6,7 +6,7 @@ from datetime import timedelta
 import attrs
 
 from forze.base.exceptions import exc
-from forze.base.primitives import current_entropy_source
+from forze.base.primitives import secure_random_bytes
 
 # ----------------------- #
 
@@ -64,7 +64,7 @@ class ApiKeyService:
     # ....................... #
 
     def generate_key(self, *, prefix: str | None = None) -> str | tuple[str, str]:
-        raw = current_entropy_source().random_bytes(self.config.length)
+        raw = secure_random_bytes(self.config.length)
         key = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
         actual_prefix = self.config.prefix if prefix is None else prefix

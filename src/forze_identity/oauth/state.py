@@ -6,7 +6,7 @@ storage port on purpose — the session *is* the storage (see the social sign-in
 recipe's callback hardening checklist).
 """
 
-from forze.base.primitives import token_urlsafe
+from forze.base.primitives import secure_token_urlsafe
 
 # ----------------------- #
 
@@ -19,7 +19,7 @@ def generate_nonce() -> str:
     :func:`forze_identity.oidc.verify_id_token_nonce`.
     """
 
-    return token_urlsafe(32)
+    return secure_token_urlsafe(32)
 
 
 # ....................... #
@@ -32,4 +32,4 @@ def generate_state() -> str:
     the returned ``state`` with :func:`hmac.compare_digest` before anything else.
     """
 
-    return token_urlsafe(32)
+    return secure_token_urlsafe(32)

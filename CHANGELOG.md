@@ -273,6 +273,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Keyring fill-lock stripe uses a stable hash** — PYTHONHASHSEED-independent, for deterministic-simulation replay; a guard bans `hash(x) % n`.
 
+**Field encryption & KMS hardening**
+
+- **Entropy seam fails closed for secrets** — AEAD nonces, refresh/invite tokens, API keys, and OAuth `state`/PKCE now draw through `secure_random_bytes` / `secure_token_urlsafe`, which refuse a non-CSPRNG entropy source (`core.crypto.insecure_entropy`) unless a deterministic simulation explicitly permits it (`permit_insecure_entropy`, bound by `run_simulation`). A seeded source leaking into a context that mints a real secret can no longer produce a predictable nonce/token. Production and simulation output are unchanged.
+
+- **Opt-in strict mode for encrypted fields (`reject_plaintext`)** — the field codec's read-path plaintext tolerance is a permanent fail-open hole once a migration is done: chosen plaintext written to an encrypted column was accepted as authentic. `EncryptingModelCodec(reject_plaintext=True)` / `encrypting_document_codecs(reject_plaintext=…)` flips it after backfill — a non-ciphertext value in an encrypted or searchable field is rejected (`core.crypto.plaintext_rejected`), and record-id AAD binding stops falling back to the legacy id-less AAD (a pre-binding ciphertext no longer reads). Default `False` keeps zero-downtime rollout behavior.
+
+- **Plaintext data keys no longer reachable via `repr`** — the keyring's active-key entry, its encrypt/decrypt caches, and the frozen decryptor suppress `repr` of the raw DEK bytes (matching `DataKey.plaintext`), so a log line, DST trace, or debugger dump can't print them.
+
+- **Cached data keys honor a TTL** — `Keyring(dek_ttl_seconds=…)` bounds how long a plaintext DEK is served from cache on both the encrypt and decrypt paths, so a KEK rotation or revocation takes effect within the window instead of only after a restart (default `None` = unchanged, cache-until-eviction).
+
+- **Confused-deputy guard on decrypt** — when a tenant is supplied, the keyring authorizes an envelope's `key_id` against the tenant's own key *before* any KMS unwrap and rejects a mismatch (`core.crypto.key_id_unauthorized`) with no backend call, so a caller can't drive a cross-tenant unwrap under a key id it names but does not own. The field codec threads the tenant through its decrypt pre-pass; `BytesCipherPort.decrypt` / `FieldCipherPort.ensure_unwrapped` gain an optional `tenant` (single-key `None` unchanged).
+
+- **Vault Transit signer picks up key rotation** — `VaultTransitSigner(public_key_ttl_seconds=…, default 300s)` re-fetches the cached public key after the TTL, so a rotated Transit key is honored for verification and the published JWKS without a process restart.
+
 **Adapters & security**
 
 - **Temporal default workflow id is a real UUID** — the default `workflow_id_factory` called `str(uuid4)` (the function's repr), so every unnamed `start()`/`schedule()` shared one garbage id and collided; now `str(uuid4())`.
