@@ -224,3 +224,4 @@ mempalace.yaml
 entities.json
 
 rfcs/
+.claude/projects/

@@ -55,6 +55,13 @@ class FirestoreClientPort(Protocol):
         merge: bool = False,
     ) -> Awaitable[None]: ...  # pragma: no cover
 
+    def create_document(
+        self,
+        coll: AsyncCollectionReference,
+        doc_id: str,
+        data: Mapping[str, Any],
+    ) -> Awaitable[None]: ...  # pragma: no cover
+
     def delete_document(
         self,
         coll: AsyncCollectionReference,
@@ -95,4 +102,5 @@ class FirestoreClientPort(Protocol):
         documents: Sequence[tuple[str, Mapping[str, Any]]],
         *,
         batch_size: int = 200,
+        create_only: bool = False,
     ) -> Awaitable[None]: ...  # pragma: no cover
