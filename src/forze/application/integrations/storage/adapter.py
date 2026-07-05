@@ -265,8 +265,7 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
-    @staticmethod
-    def _validate_key(key: str) -> None:
+    def _validate_key(self, key: str) -> None:
         """Reject object keys that could escape the bucket/tenant prefix.
 
         Keys minted by this adapter are a validated prefix plus a generated id, so a
@@ -275,6 +274,15 @@ class ObjectStorageAdapter(
         (path traversal, absolute path, control characters) is rejected instead of
         being forwarded to the object store, blunting cross-object access from
         untrusted input.
+
+        For a **tenant-aware** adapter the key must additionally lie within the active
+        tenant's prefix. Every key this adapter mints carries that prefix
+        (:meth:`construct_key` / :meth:`construct_path` prepend it), so a caller-supplied
+        key that names a *different* tenant (e.g. ``tenant_<other>/xyz``) is a
+        cross-tenant reference and is refused before it reaches the store. Under the
+        ``tagged`` isolation tier (one shared bucket) this key check is the *only* thing
+        isolating tenants on the read/delete/copy/presign/tag paths, which — unlike
+        upload/list — take the key verbatim.
         """
 
         if not key or not re.match(r"^[a-zA-Z0-9!\-_.*'()/]+$", key):
@@ -282,6 +290,16 @@ class ObjectStorageAdapter(
 
         if key.startswith("/") or ".." in key.split("/"):
             raise exc.precondition(f"Unsafe object storage key: {key!r}")
+
+        tenant_prefix = self.__tenant_prefix()
+
+        if tenant_prefix is not None and not (
+            key == tenant_prefix or key.startswith(f"{tenant_prefix}/")
+        ):
+            raise exc.precondition(
+                f"Object storage key {key!r} is outside the active tenant's namespace",
+                code="core.storage.key_outside_tenant",
+            )
 
     # ....................... #
 

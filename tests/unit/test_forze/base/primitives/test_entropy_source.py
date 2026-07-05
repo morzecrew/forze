@@ -42,6 +42,22 @@ class TestDefaultBehavior:
         value = SystemEntropySource().random()
         assert 0.0 <= value < 1.0
 
+    def test_random_is_csprng_not_global_mersenne_twister(self) -> None:
+        """``random()`` must draw from os.urandom (as the source claims), not the
+        process-global Mersenne Twister — so seeding ``random`` can't make it reproduce."""
+
+        import random as _stdlib_random
+
+        _stdlib_random.seed(12345)
+        first = SystemEntropySource().random()
+        _stdlib_random.seed(12345)
+        second = SystemEntropySource().random()
+
+        # With the global MT these would be identical; from os.urandom they (almost
+        # surely, ~2**-53 collision) differ.
+        assert first != second
+        assert 0.0 <= first < 1.0
+
     def test_uuid4_is_version_4(self) -> None:
         assert SystemEntropySource().uuid4().version == 4
 

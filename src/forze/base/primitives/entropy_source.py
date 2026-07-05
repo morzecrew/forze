@@ -77,6 +77,12 @@ class EntropySource(Protocol):
 # ....................... #
 
 
+_SYSTEM_RANDOM = random.SystemRandom()
+"""Process-wide os.urandom-backed generator (stateless, thread-safe) so every
+:class:`SystemEntropySource` read — floats included — is CSPRNG-backed, not the
+process-global Mersenne Twister."""
+
+
 @final
 @attrs.define(slots=True, frozen=True)
 class SystemEntropySource:
@@ -93,7 +99,9 @@ class SystemEntropySource:
         return secrets.randbits(k)
 
     def random(self) -> float:  # noqa: PYL-R0201
-        return random.random()  # nosec B311 - system CSPRNG default
+        # os.urandom-backed, not the process-global Mersenne Twister (``random.random``),
+        # so this source is CSPRNG-backed across *all* reads as its name/docstring claim.
+        return _SYSTEM_RANDOM.random()
 
     def uuid4(self) -> UUID:  # noqa: PYL-R0201
         return uuid4_func()

@@ -279,6 +279,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Entropy seam fails closed for secrets** — AEAD nonces, refresh/invite tokens, API keys, and OAuth `state`/PKCE now draw through `secure_random_bytes` / `secure_token_urlsafe`, which refuse a non-CSPRNG entropy source (`core.crypto.insecure_entropy`) unless a deterministic simulation explicitly permits it (`permit_insecure_entropy`, bound by `run_simulation`). A seeded source leaking into a context that mints a real secret can no longer produce a predictable nonce/token. Production and simulation output are unchanged.
 
+- **`SystemEntropySource.random()` is now CSPRNG-backed** — it drew floats from the process-global Mersenne Twister while the source advertised the system CSPRNG; it now reads `os.urandom` (a shared `random.SystemRandom`), so every read from the default source is truly CSPRNG-backed. Only jitter/backoff use this float today, but the mismatch was a latent trap for a future secret-shaped float.
+
 - **Opt-in strict mode for encrypted fields (`reject_plaintext`)** — the field codec's read-path plaintext tolerance is a permanent fail-open hole once a migration is done: chosen plaintext written to an encrypted column was accepted as authentic. `EncryptingModelCodec(reject_plaintext=True)` / `encrypting_document_codecs(reject_plaintext=…)` flips it after backfill — a non-ciphertext value in an encrypted or searchable field is rejected (`core.crypto.plaintext_rejected`), and record-id AAD binding stops falling back to the legacy id-less AAD (a pre-binding ciphertext no longer reads). Default `False` keeps zero-downtime rollout behavior.
 
 - **Plaintext data keys no longer reachable via `repr`** — the keyring's active-key entry, its encrypt/decrypt caches, and the frozen decryptor suppress `repr` of the raw DEK bytes (matching `DataKey.plaintext`), so a log line, DST trace, or debugger dump can't print them.
@@ -309,6 +311,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **VK login** no longer copies the untrusted introspection envelope into claims (keeps only the masked `user`).
 
+- **Object storage tenant isolation now covers reads, not just writes** — for a tenant-aware adapter, `download` / `head` / `download_range` / `download_if_changed` / `delete` / `copy` / `move` / `presign_download` / `presign_upload` / `put_object_tags` took a caller-supplied key verbatim, so under the `tagged` isolation tier (one shared bucket) a key like `tenant_<other>/…` could read/delete/presign another tenant's object. The key check now also requires the key to lie within the active tenant's prefix (`core.storage.key_outside_tenant`); keys minted by `upload`/`construct_key` already carry it, so legitimate round-trips are unaffected. No-op for non-tenant-aware adapters.
+
 - **Mongo** query renderer rejects `$`-prefixed field names (injection); index introspection keeps string index directions verbatim (text/2dsphere/2d/hashed/vector).
 
 - **FastAPI `X-API-Key`** splits `prefix:secret` on the first colon (matching `forze_mcp`); bare keys still authenticate.
@@ -318,6 +322,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres** schema validation accepts parameterized column types (`NUMERIC(10,2)`, `TIMESTAMP(3) WITH TIME ZONE`); search index-definition parsing hardened (balanced-delimiter, dollar-quote-aware).
 
 - **Log scrubbing closes three leaks** — console render mode (the default) no longer hands the raw exception to Rich when `sanitize_logs=True`, so a credential in an exception message (e.g. a DSN) is scrubbed in both the message and the rendered traceback (pretty tracebacks stay when scrubbing is off); assignment scrubbing now covers a bounded suffix (`secret_key=`, `aws_secret_access_key=`, `token_value=`), the whole `Authorization:` header, and a scheme-agnostic `scheme://user:pass@` DSN (ClickHouse/Mongo/HTTP, not just the four SQL schemes); and a non-str dict key no longer raises `TypeError` into the caller's log site.
+
+- **`configure_logging()` no longer silently drops unlisted loggers** — with no `logger_names` it attached a handler to *nothing*, so every INFO log hit Python's WARNING-level last-resort handler and vanished; it now configures the **root** logger by default (an explicit `logger_names` list is still honored verbatim as an allowlist), so a caller who omits or forgets a name keeps seeing their logs.
 
 - **Misc** — BigQuery empty-array/null params typed from annotations; Meilisearch strips embedded quotes; numeric timezone offsets validated; `forze dst --seeds` parsing fails loud; S3 multipart-ETag normalization and unknown-total range downloads; `If-None-Match` parsed per RFC 7232; `forze_http` suppresses its default bearer when an `Authorization` header is set; GCS rejects reserved `forze-tag-` metadata keys.
 
