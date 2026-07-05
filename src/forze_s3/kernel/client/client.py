@@ -1027,6 +1027,44 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
+    @exc_interceptor.coroutine("s3.upload_multipart_part")
+    async def upload_multipart_part(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+        sse: ObjectStorageSSE | None = None,
+    ) -> ObjectStoragePartInfo:
+        """Upload one part's bytes via ``UploadPart`` and return its ``ETag``.
+
+        SSE is **not** passed here: S3 applies the upload's encryption (bound on
+        ``CreateMultipartUpload``) to every part, and ``UploadPart`` rejects per-part
+        SSE headers — so *sse* is accepted for port symmetry and ignored.
+        """
+
+        _ = sse
+
+        c = self.__require_client()
+
+        resp = await c.upload_part(
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id,
+            PartNumber=part_number,
+            Body=data,
+        )
+
+        return ObjectStoragePartInfo(
+            part_number=part_number,
+            etag=str(resp.get("ETag", "")).strip('"'),
+            size=len(data),
+        )
+
+    # ....................... #
+
     @exc_interceptor.coroutine("s3.presign_multipart_part")
     async def presign_multipart_part(
         self,

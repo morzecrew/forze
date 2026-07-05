@@ -258,6 +258,28 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 sse=sse,
             )
 
+    async def upload_multipart_part(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+        sse: ObjectStorageSSE | None = None,
+    ) -> ObjectStoragePartInfo:
+        inner = await self._get_client()
+
+        async with inner.client():
+            return await inner.upload_multipart_part(
+                bucket,
+                key,
+                upload_id=upload_id,
+                part_number=part_number,
+                data=data,
+                sse=sse,
+            )
+
     async def presign_multipart_part(
         self,
         bucket: str,

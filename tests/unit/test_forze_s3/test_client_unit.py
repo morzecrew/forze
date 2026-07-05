@@ -951,3 +951,37 @@ async def test_initialize_without_region_omits_region_from_config(
     call = fake_session.client_calls[0]
     assert "region_name" not in call
     await client.close()
+
+
+class _FakeMultipartApi:
+    def __init__(self) -> None:
+        self.upload_part_calls: list[dict[str, Any]] = []
+
+    async def upload_part(self, **kwargs: Any) -> dict[str, Any]:
+        self.upload_part_calls.append(kwargs)
+        return {"ETag": '"etag-xyz"'}
+
+
+@pytest.mark.asyncio
+async def test_upload_multipart_part_uploads_bytes_and_returns_part_info() -> None:
+    client = S3Client()
+    api = _FakeMultipartApi()
+    token = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+
+    try:
+        info = await client.upload_multipart_part(
+            "bucket", "docs/k", upload_id="u1", part_number=3, data=b"hello"
+        )
+    finally:
+        client._S3Client__ctx_client.reset(token)
+
+    assert info.part_number == 3
+    assert info.etag == "etag-xyz"  # surrounding quotes stripped
+    assert info.size == 5
+    assert api.upload_part_calls[0] == {
+        "Bucket": "bucket",
+        "Key": "docs/k",
+        "UploadId": "u1",
+        "PartNumber": 3,
+        "Body": b"hello",
+    }

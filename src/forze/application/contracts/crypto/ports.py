@@ -1,6 +1,6 @@
 """Ports for key management and value-level encryption."""
 
-from typing import AsyncIterator, Awaitable, Iterable, Protocol
+from typing import AsyncIterator, Awaitable, Iterable, Protocol, runtime_checkable
 
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.crypto import DEFAULT_CHUNK_SIZE, EncryptedEnvelope
@@ -164,6 +164,7 @@ class FieldCipherPort(Protocol):
 # ....................... #
 
 
+@runtime_checkable
 class StreamingBytesCipherPort(Protocol):
     """Encrypt/decrypt a byte value chunk-by-chunk for bounded-memory large blobs.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import builtins
 import hashlib
 import mimetypes
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from datetime import datetime, timedelta
 from typing import (
     Any,
@@ -25,10 +25,12 @@ from forze.application.contracts.storage import (
     StorageQueryPort,
     StorageUploadSessionPort,
     StoredObject,
+    StreamedDownload,
     UploadedObject,
     UploadPart,
     UploadSession,
 )
+from forze.base.crypto import DEFAULT_CHUNK_SIZE
 from forze.application.integrations.storage.adapter import (
     _reject_duplicate_part_numbers,  # pyright: ignore[reportPrivateUsage]
 )
@@ -117,6 +119,81 @@ class MockStorageAdapter(
             self._payloads()[key] = bytes(data)
             self._record_sse(key)
         return stored
+
+    # ....................... #
+
+    async def upload_stream(
+        self,
+        chunks: AsyncIterator[bytes],
+        *,
+        filename: str,
+        prefix: str | None = None,
+        description: str | None = None,
+        tags: Mapping[str, str] | None = None,
+        content_type: str | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> StoredObject:
+        """Drain the stream into the in-memory store (the mock holds no cipher).
+
+        Memory is irrelevant in-process, so the mock simply accumulates and stores
+        the plaintext; ``chunk_size`` (the crypto framing granularity) is a no-op here.
+        """
+
+        _ = chunk_size
+
+        buffer = bytearray()
+        async for piece in chunks:
+            buffer.extend(piece)
+
+        data = bytes(buffer)
+        key = f"{prefix.strip('/') + '/' if prefix else ''}{uuid7()}"
+        resolved_type = (
+            content_type
+            or mimetypes.guess_type(filename)[0]
+            or "application/octet-stream"
+        )
+
+        stored = StoredObject(
+            key=key,
+            filename=filename,
+            description=description,
+            content_type=resolved_type,
+            size=len(data),
+            created_at=utcnow(),
+            tags=dict(tags) if tags else None,
+        )
+
+        with self.state.lock:
+            self._objects()[key] = stored
+            self._payloads()[key] = data
+            self._record_sse(key)
+
+        return stored
+
+    # ....................... #
+
+    async def download_stream(self, key: str) -> StreamedDownload:
+        """Return the stored bytes as a chunked async body (bounded-memory shape)."""
+
+        with self.state.lock:
+            if key not in self._objects() or key not in self._payloads():
+                raise exc.not_found(f"Object not found: {key}")
+
+            obj = self._objects()[key]
+            payload = self._payloads()[key]
+
+        step = 64 * 1024
+
+        async def _body() -> AsyncIterator[bytes]:
+            for start in range(0, len(payload), step):
+                yield payload[start : start + step]
+
+        return StreamedDownload(
+            content_type=obj.content_type,
+            filename=obj.filename,
+            chunks=_body(),
+            size=len(payload),
+        )
 
     # ....................... #
 

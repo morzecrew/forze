@@ -899,6 +899,34 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
+    @exc_interceptor.coroutine("gcs.upload_multipart_part")
+    async def upload_multipart_part(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+        sse: ObjectStorageSSE | None = None,
+    ) -> ObjectStoragePartInfo:
+        """Write one part's bytes to its temp object; ``compose`` assembles it later.
+
+        SSE is applied to the **final** destination at ``complete_multipart_upload``
+        (compose under CMEK), not to the temp parts, so *sse* is ignored here.
+        """
+
+        _ = sse
+
+        storage = self.__require_storage()
+        part_key = self._mpu_part_key(key, upload_id, part_number)
+
+        await storage.upload(bucket, part_key, data, timeout=self.__timeout())
+
+        return ObjectStoragePartInfo(part_number=part_number, size=len(data))
+
+    # ....................... #
+
     @exc_interceptor.coroutine("gcs.presign_multipart_part")
     async def presign_multipart_part(
         self,
