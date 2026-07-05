@@ -70,6 +70,12 @@ class _FakeClient:
         self.objects[key] = bytes(data)
         self.content_types[key] = content_type or "application/octet-stream"
 
+    async def download_bytes(self, bucket: str, key: str) -> ObjectBody:
+        return ObjectBody(
+            data=self.objects[key],
+            content_type=self.content_types.get(key, "application/octet-stream"),
+        )
+
     async def head_object(
         self, bucket: str, key: str, *, include_tags: bool = False
     ) -> ObjectStorageHead:
@@ -422,3 +428,45 @@ async def test_encrypted_ranged_read_detects_tamper() -> None:
 
     with pytest.raises(CoreException):
         await adapter.download_range(stored.key, start=0, end=10)
+
+
+# ....................... #
+# whole-object download of a streamed (chunked) object (review fix)
+
+
+async def test_download_decrypts_chunked_object_from_upload_stream() -> None:
+    """A non-ranged download() must decrypt an object written via upload_stream (FZEc),
+    not return raw ciphertext."""
+
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1 << 20)
+    data = b"streamed-then-fully-downloaded-" * 40
+
+    stored = await adapter.upload_stream(_aiter(data), filename="f.bin", chunk_size=256)
+
+    downloaded = await adapter.download(stored.key)
+    assert downloaded.data == data
+
+
+async def test_download_if_changed_decrypts_chunked_object() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1 << 20)
+    data = b"conditional-streamed-body-" * 30
+
+    stored = await adapter.upload_stream(_aiter(data), filename="f.bin", chunk_size=256)
+
+    # The fake client returns the stored body for a changed conditional GET.
+    client.download_bytes_conditional = _conditional_body(client, stored.key)
+
+    result = await adapter.download_if_changed(stored.key, if_none_match="stale")
+    assert result is not None
+    assert result.data == data
+
+
+def _conditional_body(client: "_FakeClient", key: str):  # type: ignore[name-defined]
+    async def _download_bytes_conditional(
+        bucket: str, key: str, *, if_none_match=None, if_modified_since=None
+    ):
+        return ObjectBody(data=client.objects[key], content_type="application/octet-stream")
+
+    return _download_bytes_conditional

@@ -105,6 +105,12 @@ async def _prepend(
     async for piece in rest:
         yield piece
 
+
+async def _aiter_once(data: bytes) -> AsyncIterator[bytes]:
+    """A single-element async byte stream (feeds a fully-buffered blob to a stream API)."""
+
+    yield data
+
 # ....................... #
 
 
@@ -783,6 +789,40 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
+    async def _decrypt_full(self, data: bytes, bucket: str, key: str) -> bytes:
+        """Decrypt a fully-buffered object body according to its stored format.
+
+        Recognizes both stored ciphertext shapes: a whole-payload envelope (``FZEv``)
+        and a chunked-AEAD object (``FZEc``, written by :meth:`upload_stream`) — the
+        latter is opened chunk-by-chunk and reassembled. A value that is neither is
+        legacy plaintext, returned untouched (migration tolerance). The tenant is bound
+        so the confused-deputy key-id guard runs, matching :meth:`download_stream` and
+        the ranged path. A no-op when no cipher is wired.
+        """
+
+        if self.cipher is None:
+            return data
+
+        aad = self._encryption_aad(bucket, key)
+        tenant = self._cipher_tenant()
+
+        if is_chunked_envelope(data):
+            out = bytearray()
+
+            async for piece in self._streaming_cipher().decrypt_stream(
+                _aiter_once(data), aad=aad, tenant=tenant
+            ):
+                out += piece
+
+            return bytes(out)
+
+        if is_envelope(data):
+            return await self.cipher.decrypt(data, aad=aad, tenant=tenant)
+
+        return data
+
+    # ....................... #
+
     async def download(self, key: str) -> DownloadedObject:
         """Download an object by key and return its data with metadata.
 
@@ -791,6 +831,10 @@ class ObjectStorageAdapter(
         filename/description are decoded as on :meth:`upload`; when it is absent
         — an object written through a presigned ``PUT`` (the completion seam) —
         the filename falls back to the key's basename instead of raising.
+
+        Both stored ciphertext formats decrypt transparently — a whole-payload
+        envelope and a chunked object written by :meth:`upload_stream`; a legacy
+        plaintext object is served as-is.
         """
 
         self._validate_key(key)
@@ -799,16 +843,7 @@ class ObjectStorageAdapter(
         async with self.client.client():
             body = await self.client.download_bytes(bucket=bucket, key=key)
 
-            data = body.data
-
-            # Decrypt only when encryption is enabled AND the bytes are an
-            # envelope — objects written before encryption was turned on are
-            # served as-is (migration tolerance).
-            if self.cipher is not None and is_envelope(data):
-                data = await self.cipher.decrypt(
-                    data,
-                    aad=self._encryption_aad(bucket, key),
-                )
+            data = await self._decrypt_full(body.data, bucket, key)
 
             filename = self._filename_from_metadata(key, body.metadata)
 
@@ -1091,13 +1126,7 @@ class ObjectStorageAdapter(
             if body is None:
                 return None
 
-            data = body.data
-
-            if self.cipher is not None and is_envelope(data):
-                data = await self.cipher.decrypt(
-                    data,
-                    aad=self._encryption_aad(bucket, key),
-                )
+            data = await self._decrypt_full(body.data, bucket, key)
 
             filename = self._filename_from_metadata(key, body.metadata)
 
