@@ -12,10 +12,12 @@ Targets ``write.py`` blocks the existing suite misses:
 
 from uuid import uuid4
 
+import attrs
 import pytest
 
 from forze.application.contracts.document import DocumentWriteTypes
 from forze.application.execution import Deps
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -82,6 +84,34 @@ async def _make_gw(pg_client: PostgresClient):
         bookkeeping_strategy="application",
         tenant_aware=False,
     )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_update_matching_fails_closed_over_row_cap(
+    pg_client: PostgresClient,
+) -> None:
+    """A filter matching more than ``update_matching_max_rows`` fails closed rather than
+    snapshotting an unbounded key set into memory; under the cap it still works."""
+
+    write = await _make_gw(pg_client)
+    capped = attrs.evolve(write, update_matching_max_rows=2)
+
+    for i in range(3):
+        await write.create(WmCreate(name=f"n{i}", category="x"))
+
+    with pytest.raises(CoreException) as ei:
+        await capped.update_matching(
+            {"$values": {"category": "x"}}, WmUpdate(category="patched")
+        )
+    assert ei.value.code == "core.document.update_matching_too_broad"
+
+    # A filter within the cap still succeeds.
+    count, rows = await capped.update_matching(
+        {"$values": {"name": "n0"}}, WmUpdate(category="patched")
+    )
+    assert count == 1
+    assert rows[0].category == "patched"
 
 
 @pytest.mark.integration

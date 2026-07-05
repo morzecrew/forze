@@ -126,6 +126,15 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     conflict_target: tuple[str, ...] | None = attrs.field(default=None)
     """``ON CONFLICT`` columns for :meth:`ensure` / :meth:`upsert`; ``None`` infers PRIMARY KEY."""
 
+    update_matching_max_rows: int | None = attrs.field(default=1_000_000)
+    """Cap on how many rows a single :meth:`update_matching` may touch.
+
+    The call snapshots the matching primary keys into memory (to keep the matched set
+    stable across the chunked update), so an over-broad filter would otherwise pull an
+    unbounded number of keys in. When a filter matches more than this, the call fails
+    with ``precondition`` instead — narrow the filter or paginate. ``None`` disables the
+    cap (accept the unbounded snapshot). Default one million."""
+
     _conflict_target_cell: OnceCell[tuple[str, ...]] = attrs.field(
         factory=OnceCell,
         init=False,
@@ -1130,6 +1139,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         single unbounded statement; the whole loop is one transaction. Revision is
         bumped with ``rev = rev + 1`` when :attr:`strategy` is ``"application"``; for
         ``"database"`` the revision is left to triggers.
+
+        The matched primary keys are snapshotted into memory (to keep the set stable
+        across chunks); a filter matching more than :attr:`update_matching_max_rows`
+        fails with ``precondition`` rather than pulling an unbounded key set in.
         """
 
         self._require_update_cmd()
@@ -1185,14 +1198,34 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             # ``WHERE filters`` per chunk under READ COMMITTED would drift as rows are
             # concurrently inserted/updated, unlike the prior single statement. The
             # whole thing runs in one transaction (``_write_tx``), so it stays atomic.
+            id_stmt = sql.SQL(
+                "SELECT {pk} FROM {table} WHERE {where} ORDER BY {pk}"
+            ).format(pk=pk, table=table, where=where_sql)
+            id_params = list(where_params)
+
+            # Bound the id snapshot: fetch at most ``max_rows + 1`` (a probe) so an
+            # over-broad filter fails closed instead of pulling an unbounded key set into
+            # memory. ``None`` opts into the unbounded snapshot.
+            cap = self.update_matching_max_rows
+
+            if cap is not None:
+                id_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+                id_params.append(cap + 1)
+
             id_rows = await self.client.fetch_all(
-                sql.SQL("SELECT {pk} FROM {table} WHERE {where} ORDER BY {pk}").format(
-                    pk=pk, table=table, where=where_sql
-                ),
-                list(where_params),
+                id_stmt,
+                id_params,
                 row_factory="dict",
                 commit=False,
             )
+
+            if cap is not None and len(id_rows) > cap:
+                raise exc.precondition(
+                    f"update_matching would touch more than {cap} rows; narrow the "
+                    "filter or paginate (or raise/disable update_matching_max_rows).",
+                    code="core.document.update_matching_too_broad",
+                )
+
             ids = [_pk_from_row(r) for r in id_rows]
 
             total = 0

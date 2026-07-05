@@ -163,6 +163,36 @@ async def test_a_later_binding_reshuffles_the_ranking(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_bound_params_do_not_leak_past_the_read(
+    pg_client: PostgresClient,
+) -> None:
+    """A param-bound read inside a caller transaction must not leak its ``SET LOCAL`` GUCs
+    into the surrounding transaction (they are transaction-scoped, not savepoint-scoped)."""
+
+    view = await _make_view(pg_client)
+    gw = read_gw(
+        _ctx(pg_client),
+        read_type=Standing,
+        read_relation=("public", view),
+        tenant_aware=False,
+        params_required=True,
+    )
+    march = attrs.evolve(gw, bound_params=AsOf(as_of=date(2026, 3, 1)))
+
+    # An outer caller transaction: the read's own transaction becomes a savepoint on this
+    # same connection, so a leaked SET LOCAL would be visible here after the read.
+    async with pg_client.transaction():
+        await march.find_many({"$values": {"region": "eu"}}, sorts={"rank": "asc"})
+
+        leaked = await pg_client.fetch_value(
+            "SELECT current_setting('forze.as_of', true)", None
+        )
+
+    assert leaked != "2026-03-01"  # the param value did not survive the read
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_count_composes_over_the_bound_view(pg_client: PostgresClient) -> None:
     """``count`` runs in the same bound transaction, so the view still sees the setting."""
 

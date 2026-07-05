@@ -305,6 +305,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OIDC assertion records the validated audience** — for a multi-audience `id_token`, the mapper recorded `aud[0]`, which may be a different party than the one the verifier validated against its configured audience; it now records the matched (validated) audience.
 
+**PostgreSQL hardening**
+
+- **Query parameters no longer leak across reads in a caller transaction** — the bound-parameter GUCs are set with `SET LOCAL` (transaction-scoped), but a read inside a caller transaction runs in a *savepoint*, and on its release the settings merged into the outer transaction — leaking one read's parameters into later statements. Each param-bound read now resets its GUCs after the fetch, confining them to that read.
+
+- **`find_many` signals when its implicit row cap truncates** — an uncapped `find_many` (and `find_many_aggregates`) silently returned the default 10 000-row limit with no indication more existed. It now probes one row past the cap and logs a warning when it actually truncates, so the reconcile-everything footgun is visible; pass an explicit `limit` or paginate to read past it.
+
+- **`update_matching` bounds its primary-key snapshot** — it snapshots the matching PKs to keep the set stable across the chunked update, but the snapshot `SELECT` was unbounded (a broad filter pulled millions of keys into memory). It now caps at `PostgresWriteGateway(update_matching_max_rows=…)` (default 1 M) and fails closed (`core.document.update_matching_too_broad`) when a filter matches more; `None` opts back into unbounded.
+
+- **Recovery/claim schemas document their indexes** — the durable-run, durable-schedule, and outbox stores' documented table schemas now include the recommended (partial) `CREATE INDEX` for their `FOR UPDATE SKIP LOCKED` claim scans, which otherwise seq-scan and sort under lock as the table grows. The outbox docstring also spells out its delivery model: at-least-once (no fence — the inbox dedup makes the effect exactly-once), and per-`ordering_key` FIFO is not guaranteed with concurrent relays.
+
 **Adapters & security**
 
 - **Temporal default workflow id is a real UUID** — the default `workflow_id_factory` called `str(uuid4)` (the function's repr), so every unnamed `start()`/`schedule()` shared one garbage id and collided; now `str(uuid4())`.

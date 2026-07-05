@@ -109,6 +109,12 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
             UNIQUE (idempotency_key)
         );
 
+        -- Recommended: back the recovery scan (claim_abandoned), which filters on
+        -- status/available_at/leased_until and orders by created_at under
+        -- FOR UPDATE SKIP LOCKED. Without it the claim seq-scans + sorts under lock as
+        -- the table grows.
+        CREATE INDEX ON <relation> (status, created_at);
+
     ``attempts`` doubles as the fence token (advances under a row lock on each claim);
     ``available_at`` delays when a ``PENDING`` run may be claimed. Concurrent scanners are
     safe (``FOR UPDATE SKIP LOCKED``) and a terminal write can be fenced against a

@@ -98,12 +98,30 @@ async def test_bound_params_apply_set_config_in_tx() -> None:
     await gw.find_many(None)
 
     assert client.transaction.called  # wrapped in a transaction
-    assert client.execute.await_count == 1  # one set_config batch before the fetch
-    rendered = _rendered(client.execute.await_args[0][0])
-    assert "set_config" in rendered
-    assert "forze.window" in rendered
-    assert "2026-01-01" in rendered
+    # One set_config batch applies the params before the fetch, one resets them after.
+    assert client.execute.await_count == 2
+    applied = _rendered(client.execute.await_args_list[0][0][0])
+    assert "set_config" in applied
+    assert "forze.window" in applied
+    assert "2026-01-01" in applied
     assert client.fetch_all.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_bound_params_reset_to_null_after_read() -> None:
+    """The params are reset (NULL) after the fetch so SET LOCAL can't outlive the read's
+    savepoint and leak into the caller's outer transaction."""
+
+    client = _client()
+    gw = _gw(client, params_required=True, bound_params=_Params(window="2026-01-01"))
+
+    await gw.find_many(None)
+
+    reset = _rendered(client.execute.await_args_list[-1][0][0])  # the last execute
+    assert "set_config" in reset
+    assert "forze.window" in reset
+    assert "NULL" in reset
+    assert "2026-01-01" not in reset  # the value is cleared, not re-set
 
 
 @pytest.mark.asyncio
@@ -148,7 +166,7 @@ async def test_structured_params_are_json_encoded() -> None:
 
     await gw.find_many(None)
 
-    rendered = _rendered(client.execute.await_args[0][0])
+    rendered = _rendered(client.execute.await_args_list[0][0][0])  # the apply call
     assert "[1, 2]" in rendered  # JSON array, not a Python repr
     assert '{"on": true}' in rendered  # JSON object with lowercase bool
 
