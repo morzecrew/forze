@@ -21,7 +21,7 @@ cache is a pure latency optimization: a cold value simply pays one KMS call inli
 import asyncio
 import zlib
 from collections import OrderedDict
-from typing import Any, Iterable, final
+from typing import Any, AsyncIterator, Iterable, final
 
 import attrs
 
@@ -33,10 +33,17 @@ from forze.application.contracts.crypto import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.crypto import (
+    DEFAULT_CHUNK_SIZE,
+    MAX_CHUNK_SIZE,
     Aead,
+    ChunkedHeader,
+    ChunkedStreamReader,
     EncryptedEnvelope,
     ensure_algorithm,
+    open_chunk,
+    pack_chunked_header,
     pack_envelope,
+    seal_chunk,
     unpack_envelope,
 )
 from forze.base.exceptions import exc
@@ -133,6 +140,45 @@ def _lru_put(cache: OrderedDict[Any, Any], key: Any, value: Any, *, cap: int) ->
 
     while len(cache) > cap:
         cache.popitem(last=False)
+
+
+# ....................... #
+
+
+async def _rechunk(
+    source: AsyncIterator[bytes], chunk_size: int
+) -> AsyncIterator[tuple[bytes, bool]]:
+    """Re-chunk *source*'s arbitrary byte runs into ``(chunk, is_final)`` of *chunk_size*.
+
+    Holds one chunk of lookahead so exactly one chunk is flagged final — even when the
+    input is empty (one empty final chunk) or an exact multiple of *chunk_size* (no
+    spurious trailing empty chunk).
+    """
+
+    buffer = bytearray()
+    pending: bytes | None = None
+
+    async for piece in source:
+        buffer.extend(piece)
+
+        while len(buffer) >= chunk_size:
+            full = bytes(buffer[:chunk_size])
+            del buffer[:chunk_size]
+
+            if pending is not None:
+                yield pending, False
+
+            pending = full
+
+    if pending is None:
+        yield bytes(buffer), True  # whole (possibly empty) input fit in one chunk
+        return
+
+    if buffer:
+        yield pending, False
+        yield bytes(buffer), True
+    else:
+        yield pending, True  # the last full chunk terminates the stream
 
 
 # ....................... #
@@ -380,6 +426,138 @@ class Keyring:
 
     # ....................... #
 
+    async def encrypt_stream(
+        self,
+        plaintext: AsyncIterator[bytes],
+        *,
+        tenant: TenantIdentity | None,
+        aad: bytes = b"",
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Encrypt *plaintext* as a chunked-AEAD stream (bounded to one chunk in memory).
+
+        One data key is generated for the whole stream and wrapped in the header; each
+        re-chunked piece is sealed under it with an AAD binding *aad* plus the chunk's
+        position and terminator flag.
+        """
+
+        if chunk_size < 1 or chunk_size > MAX_CHUNK_SIZE:
+            raise exc.validation(
+                f"Chunk size must be in [1, {MAX_CHUNK_SIZE}], got {chunk_size}",
+                code="core.crypto.chunked_bad_chunk_size",
+            )
+
+        key_ref = await self._resolve_key_ref(tenant)
+        data_key = await self.kms.generate_data_key(key_ref)
+        self._n_generated += 1
+
+        yield pack_chunked_header(
+            ChunkedHeader(
+                alg=self.aead.algorithm,
+                key_id=data_key.key_id,
+                key_version=data_key.key_version,
+                wrapped_dek=data_key.wrapped,
+                chunk_size=chunk_size,
+            )
+        )
+
+        index = 0
+
+        async for chunk, is_final in _rechunk(plaintext, chunk_size):
+            yield seal_chunk(
+                self.aead,
+                key=data_key.plaintext,
+                base_aad=aad,
+                index=index,
+                is_final=is_final,
+                plaintext=chunk,
+            )
+            index += 1
+
+    # ....................... #
+
+    async def decrypt_stream(
+        self,
+        ciphertext: AsyncIterator[bytes],
+        *,
+        aad: bytes = b"",
+        tenant: TenantIdentity | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Decrypt a chunked-AEAD stream, yielding plaintext one chunk at a time.
+
+        The header's key id is authorized against *tenant* (when given) before the data
+        key is unwrapped. A stream that ends without a terminating chunk (truncation) or
+        carries trailing bytes after it is rejected.
+        """
+
+        reader = ChunkedStreamReader()
+        header: ChunkedHeader | None = None
+        dek: bytes | None = None
+        index = 0
+        seen_final = False
+
+        async for piece in ciphertext:
+            reader.feed(piece)
+
+            if header is None:
+                header = reader.take_header()
+
+                if header is None:
+                    continue
+
+                if header.alg != self.aead.algorithm:
+                    raise exc.validation(
+                        f"Stream was sealed with {header.alg!r} but the wired cipher is "
+                        f"{self.aead.algorithm!r}; the matching AEAD is required to decrypt it",
+                        code="core.crypto.algorithm_mismatch",
+                    )
+
+                await self._authorize_key_id_value(header.key_id, tenant)
+                dek = await self.kms.unwrap_data_key(
+                    wrapped=header.wrapped_dek,
+                    key_ref=KeyRef(
+                        key_id=header.key_id, version=header.key_version
+                    ),
+                )
+                self._n_unwrapped += 1
+
+            for frame in reader.take_frames():
+                if seen_final:
+                    raise exc.validation(
+                        "Chunked stream carries a frame after its final chunk",
+                        code="core.crypto.chunked_trailing_data",
+                    )
+
+                yield open_chunk(
+                    self.aead,
+                    key=dek,  # type: ignore[arg-type]  # set once the header is parsed
+                    base_aad=aad,
+                    index=index,
+                    frame=frame,
+                )
+                index += 1
+                seen_final = frame.is_final
+
+        if header is None:
+            raise exc.validation(
+                "Chunked stream ended before its header was complete",
+                code="core.crypto.chunked_truncated",
+            )
+
+        if not seen_final:
+            raise exc.validation(
+                "Chunked stream ended without a final chunk (truncated)",
+                code="core.crypto.chunked_truncated",
+            )
+
+        if reader.has_buffered_bytes():
+            raise exc.validation(
+                "Chunked stream carries trailing bytes after its final chunk",
+                code="core.crypto.chunked_trailing_data",
+            )
+
+    # ....................... #
+
     async def warm(self, tenant: TenantIdentity | None) -> None:
         """Pre-resolve *tenant*'s active data key so a later (a)sync encrypt pays no KMS call.
 
@@ -591,6 +769,15 @@ class Keyring:
         unauthorized key id. ``None`` (single-key deployments) skips the check.
         """
 
+        await self._authorize_key_id_value(envelope.key_id, tenant)
+
+    # ....................... #
+
+    async def _authorize_key_id_value(
+        self, key_id: str, tenant: TenantIdentity | None
+    ) -> None:
+        """The key-id/tenant confused-deputy check over a bare key id (envelope or stream)."""
+
         if tenant is None:
             return
 
@@ -601,7 +788,7 @@ class Keyring:
         if expected is None:
             expected = (await self._resolve_key_ref(tenant)).key_id
 
-        if envelope.key_id != expected:
+        if key_id != expected:
             raise exc.validation(
                 "Envelope key id does not belong to the active tenant; refusing to "
                 "unwrap under a key the caller does not own.",

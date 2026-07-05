@@ -36,6 +36,7 @@ from .ports import (
     FieldCipherPort,
     KeyManagementPort,
     KeyringPort,
+    StreamingBytesCipherPort,
 )
 from .payload_envelope import (
     ENCRYPTED_PAYLOAD_KEY,
@@ -72,6 +73,7 @@ __all__ = [
     "BytesCipherPort",
     "FieldCipherPort",
     "KeyringPort",
+    "StreamingBytesCipherPort",
     "DeterministicFieldCipherPort",
     # key directory (tenant → key)
     "KeyDirectoryPort",

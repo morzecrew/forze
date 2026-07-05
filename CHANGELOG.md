@@ -83,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`EncryptionReach` ladder (`none < at_rest < end_to_end`)** — names the outbox/messaging reach; `OutboxEncryptionTier` is now a back-compat alias and `MessageEncryptionTier` its transport subset. `CryptoDepsModule(required_reach="end_to_end"|"at_rest")` refuses a weaker outbox/transport route at resolve (opt-in).
 
+- **Chunked-AEAD streaming cipher (foundation for bounded-memory encrypted blobs)** — a new `forze.base.crypto` chunked wire format (magic `FZEc`, distinct from the whole-payload `FZEv`) frames a value into a header plus independently-sealed chunks, each bound to its position and a terminator flag for reordering and truncation resistance (`ChunkedHeader` / `ChunkedStreamReader` / `seal_chunk` / `open_chunk` / `pack_chunked_header` / `is_chunked_envelope`). The keyring implements a new `StreamingBytesCipherPort` (`encrypt_stream` / `decrypt_stream` over `AsyncIterator[bytes]`) that generates one data key per stream, KMS-wraps it in the header, and holds only a single chunk in memory — reusing the tenant key-id confused-deputy guard on read. This is the crypto core; wiring it into object storage (streaming `upload`/`download`, lifting the multipart-under-encryption restriction) is a follow-up.
+
 **Realtime**
 
 - **Server push (egress) + offline store-and-forward** — a handler publishes a `RealtimeSignal` to a principal/topic through messaging ports; the Socket.IO gateway bridges to a tenant-scoped room (ephemeral at-most-once or durable exactly-once), and a durable principal-addressed signal is mailboxed for an offline recipient and replayed per-device on reconnect. Read-only operations cannot publish.

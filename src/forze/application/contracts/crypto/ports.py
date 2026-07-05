@@ -1,9 +1,9 @@
 """Ports for key management and value-level encryption."""
 
-from typing import Awaitable, Iterable, Protocol
+from typing import AsyncIterator, Awaitable, Iterable, Protocol
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.crypto import EncryptedEnvelope
+from forze.base.crypto import DEFAULT_CHUNK_SIZE, EncryptedEnvelope
 
 from .value_objects import DataKey, KeyRef
 
@@ -164,13 +164,69 @@ class FieldCipherPort(Protocol):
 # ....................... #
 
 
-class KeyringPort(BytesCipherPort, FieldCipherPort, Protocol):
-    """The keyring's full surface: the async value cipher plus the sync field path.
+class StreamingBytesCipherPort(Protocol):
+    """Encrypt/decrypt a byte value chunk-by-chunk for bounded-memory large blobs.
 
-    A single registration (``KeyringDepKey``) serves both consumers — object
-    storage uses the async :class:`BytesCipherPort` half, the field codec uses the
-    :class:`FieldCipherPort` half. The :class:`~forze.application.integrations.crypto.Keyring`
-    implements all of it.
+    The whole-value :class:`BytesCipherPort` needs the entire plaintext (and its
+    ciphertext) in memory at once. This seam frames the value into independently
+    sealed chunks (see :mod:`forze.base.crypto.chunked`) so a producer/consumer holds
+    only one chunk at a time — the basis for streaming a large object through the
+    object store. One data key is generated per stream and KMS-wrapped in the stream
+    header; the reader unwraps it once, then opens each chunk against it.
+    """
+
+    def encrypt_stream(
+        self,
+        plaintext: AsyncIterator[bytes],
+        *,
+        tenant: TenantIdentity | None,
+        aad: bytes = b"",
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Yield a chunked-AEAD stream (header then sealed chunks) for *plaintext*.
+
+        *plaintext* is re-chunked to *chunk_size* internally, so the caller may feed
+        arbitrary byte runs. *aad* is the base associated data (typically the object's
+        bucket/key/tenant binding); each chunk additionally binds its position and a
+        terminator flag, giving reordering and truncation resistance.
+        """
+
+        ...  # pragma: no cover
+
+    def decrypt_stream(
+        self,
+        ciphertext: AsyncIterator[bytes],
+        *,
+        aad: bytes = b"",
+        tenant: TenantIdentity | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Yield plaintext chunks for a chunked-AEAD stream produced by :meth:`encrypt_stream`.
+
+        *aad* must equal the base value passed to :meth:`encrypt_stream`. When *tenant*
+        is given, the header's key id is authorized against the tenant's own key before
+        the data key is unwrapped (confused-deputy guard). A stream that ends without a
+        terminating chunk (truncation) or carries trailing bytes is rejected.
+
+        :raises CoreException: ``validation`` on a malformed/truncated stream, an
+            authentication failure, an algorithm mismatch, or a
+            ``core.crypto.key_id_unauthorized`` key-id/tenant mismatch.
+        """
+
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class KeyringPort(
+    BytesCipherPort, FieldCipherPort, StreamingBytesCipherPort, Protocol
+):
+    """The keyring's full surface: the async value cipher, the sync field path, and streaming.
+
+    A single registration (``KeyringDepKey``) serves every consumer — object storage
+    uses the async :class:`BytesCipherPort` and :class:`StreamingBytesCipherPort` halves,
+    the field codec uses the :class:`FieldCipherPort` half. The
+    :class:`~forze.application.integrations.crypto.Keyring` implements all of it.
     """
 
 
