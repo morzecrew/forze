@@ -107,6 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mock document adapter — tenant scoping on every write** — the in-memory mock injects the tenant column on ensure/upsert/update/touch (not only create), matching Postgres.
 
+- **Telegram Login Widget verifier** — `TelegramWidgetVerifier` (in the Telegram builtin preset) verifies Login Widget callback data via Telegram's HMAC-SHA256 scheme — the data-check-string authenticated by `HMAC(SHA256(bot_token), …)`, compared constant-time, with an `auth_date` freshness (replay) bound — and emits the canonical `VerifiedAssertion` (Telegram user id as subject). `verify(data)` for a parsed field map, or the `TokenVerifierPort` `verify_token` for the widget query string; pure-stdlib crypto (no JWT). Complements the existing Telegram Login *OIDC* flow.
+
 **Deterministic Simulation Testing (`forze_dst`)** — new package
 
 - **Point-at-a-real-app simulation** — `Simulation` / `SimulationConfig`, `Simulation.run(config, ...)`: one master seed reproduces a whole run (schedule, faults, latency, inputs, crashes, partitions) over real registries and runtimes, single-process or N-node, with no app changes; a violation minimizes to a reproducible counterexample.
