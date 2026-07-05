@@ -130,4 +130,40 @@ class OidcTokenVerifier(TokenVerifierPort):
                 code="invalid_oidc_token",
             ) from e
 
-        return self.claim_mapper.map(claims)
+        return self.claim_mapper.map(
+            claims,
+            validated_audience=self._validated_audience(claims.get("aud")),
+        )
+
+    # ....................... #
+
+    def _validated_audience(self, token_aud: object) -> str | None:
+        """The configured audience that the token actually presented, or ``None``.
+
+        ``jwt_decode`` has already verified that at least one configured audience is
+        among the token's ``aud`` — this returns that matched entry so the assertion
+        records the audience that was validated rather than an arbitrary ``aud[0]``.
+        Returns ``None`` when no audience is enforced (leaving the mapper's own default).
+        """
+
+        if self.audience is None:
+            return None
+
+        configured = (
+            (self.audience,) if isinstance(self.audience, str) else tuple(self.audience)
+        )
+
+        if isinstance(token_aud, str):
+            presented: set[str] = {token_aud}
+
+        elif isinstance(token_aud, (list, tuple)):
+            presented = {
+                aud
+                for aud in token_aud  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(aud, str)
+            }
+
+        else:
+            presented = set()
+
+        return next((aud for aud in configured if aud in presented), None)

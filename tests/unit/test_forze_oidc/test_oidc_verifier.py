@@ -88,6 +88,21 @@ class TestOidcClaimMapper:
         )
         assert a.audience == "api-1"
 
+    def test_validated_audience_overrides_first_array_entry(self) -> None:
+        """When the verifier passes the audience it validated, record *that* — not the
+        arbitrary first entry of a multi-audience token (which may be another party)."""
+
+        mapper = OidcClaimMapper()
+        a = mapper.map(
+            {
+                "iss": "issuer",
+                "sub": "u",
+                "aud": ["other-party", "my-app"],
+            },
+            validated_audience="my-app",
+        )
+        assert a.audience == "my-app"
+
     def test_tenant_claim_override(self) -> None:
         mapper = OidcClaimMapper(tenant_claim="firebase_tenant")
         a = mapper.map(
@@ -154,6 +169,29 @@ class TestOidcTokenVerifier:
 
         assert assertion.issuer == "https://issuer.example"
         assert assertion.subject == sub
+        assert assertion.audience == "my-app"
+
+    @pytest.mark.asyncio
+    async def test_records_validated_audience_from_array(self) -> None:
+        """A multi-audience token records the configured audience the verifier matched,
+        not ``aud[0]`` — so the assertion reflects what was actually validated."""
+
+        secret = secrets.token_bytes(32)
+        verifier = OidcTokenVerifier(
+            key_provider=StaticKeyProvider(key=secret),
+            algorithms=("HS256",),
+            issuer="https://issuer.example",
+            audience="my-app",
+        )
+
+        token = _hs256_token(
+            secret,
+            issuer="https://issuer.example",
+            subject="u",
+            extra={"aud": ["other-party", "my-app"]},  # configured aud is not first
+        )
+        assertion = await verifier.verify_token(AccessTokenCredentials(token=token))
+
         assert assertion.audience == "my-app"
 
     @pytest.mark.asyncio

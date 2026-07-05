@@ -44,7 +44,12 @@ class OidcClaimMapper:
 
     # ....................... #
 
-    def map(self, claims: Mapping[str, Any]) -> VerifiedAssertion:
+    def map(
+        self,
+        claims: Mapping[str, Any],
+        *,
+        validated_audience: str | None = None,
+    ) -> VerifiedAssertion:
         issuer_raw = claims.get(self.issuer_claim)
         subject_raw = claims.get(self.subject_claim)
 
@@ -59,14 +64,22 @@ class OidcClaimMapper:
             )
 
         audience: str | None = None
-        if self.audience_claim is not None:
+
+        if validated_audience is not None:
+            # The verifier passes the ``aud`` entry it actually validated against its
+            # configured audience — record *that*, not an arbitrary first element of a
+            # multi-audience token (which may be a different party's audience).
+            audience = validated_audience
+
+        elif self.audience_claim is not None:
             aud_raw = claims.get(self.audience_claim)
 
             if isinstance(aud_raw, str):
                 audience = aud_raw
 
             elif isinstance(aud_raw, list) and aud_raw and isinstance(aud_raw[0], str):
-                # OIDC permits aud as an array; take the first string entry.
+                # No audience was enforced (mapper used standalone); OIDC permits aud as
+                # an array, so fall back to the first string entry.
                 audience = aud_raw[0]
 
         issuer_tenant_hint: str | None = None

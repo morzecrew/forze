@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from forze.application.contracts.authz import AuthzScope
 from forze.application.contracts.base.value_objects import CountlessPage
 from forze.base.exceptions import CoreException
 from forze_identity.authz.domain.models.bindings import (
@@ -183,6 +184,48 @@ class TestAuthzGrantResolver:
         grants = await resolver.resolve_effective_grants(uuid4())
         assert grants.roles == frozenset()
         assert grants.permissions == frozenset()
+
+    async def test_scope_tenant_mismatch_is_refused(self) -> None:
+        """A scope naming a different tenant than the invocation is refused (the queries
+        would otherwise run against the ambient tenant's bindings)."""
+
+        invocation_tenant = uuid4()
+        other_tenant = uuid4()
+        resolver = AuthzGrantResolver(
+            deps=_empty_deps(), invocation_tenant_id=invocation_tenant
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await resolver.resolve_effective_grants(
+                uuid4(), scope=AuthzScope(tenant_id=other_tenant)
+            )
+        assert ei.value.code == "authz.scope_tenant_mismatch"
+
+        with pytest.raises(CoreException) as ei2:
+            await resolver.list_assigned_roles(
+                uuid4(), scope=AuthzScope(tenant_id=other_tenant)
+            )
+        assert ei2.value.code == "authz.scope_tenant_mismatch"
+
+    async def test_scope_tenant_match_is_allowed(self) -> None:
+        tenant = uuid4()
+        resolver = AuthzGrantResolver(
+            deps=_empty_deps(), invocation_tenant_id=tenant
+        )
+
+        grants = await resolver.resolve_effective_grants(
+            uuid4(), scope=AuthzScope(tenant_id=tenant)
+        )
+        assert grants.permissions == frozenset()
+
+    async def test_no_invocation_tenant_skips_check(self) -> None:
+        """Backward-compatible: without a bound invocation tenant the check is a no-op."""
+
+        resolver = AuthzGrantResolver(deps=_empty_deps())  # invocation_tenant_id=None
+        grants = await resolver.resolve_effective_grants(
+            uuid4(), scope=AuthzScope(tenant_id=uuid4())
+        )
+        assert grants.roles == frozenset()
 
     async def test_direct_role_permissions_with_lineage(self) -> None:
         principal_id = uuid4()

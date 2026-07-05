@@ -287,6 +287,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Vault Transit signer picks up key rotation** — `VaultTransitSigner(public_key_ttl_seconds=…, default 300s)` re-fetches the cached public key after the TTL, so a rotated Transit key is honored for verification and the published JWKS without a process restart.
 
+**Identity & authorization hardening**
+
+- **OIDC verifier no longer re-fetches JWKS per request** — `ConfigurableOidcIdpVerifier` (and the Google/Telegram builtin factories) built a fresh `JwksKeyProvider` on every call, so the 300s JWKS cache never spanned requests and every token-authenticated request hit the IdP's JWKS endpoint — an amplifier a spray of garbage bearer tokens could turn into a DoS / egress rate-limit. The verifier and its key provider are now built once and reused, so the cache works as intended.
+
+- **Nonce enforcement reachable through presets** — `OidcIdpPreset(require_nonce=…)` (and the Google/Telegram configs) now forward `require_nonce` to `OidcTokenVerifier`, so a deployment can reject an `id_token` carrying no `nonce` claim (presence check; value binding stays `verify_id_token_nonce`'s job). Default `False` (unchanged).
+
+- **`ForzeJwtTokenVerifier` guards its session spec** — it now applies the same `forbid_cache_and_history` construction-time check every sibling credential verifier uses, so a cached or history-enabled session query can't serve a revoked/rotated session row and defeat logout/refresh revocation.
+
+- **Authz grant resolution cross-checks the tenant** — `AuthzGrantResolver` now takes the invocation tenant and refuses a caller-supplied `AuthzScope` naming a different tenant (`authz.scope_tenant_mismatch`) instead of silently resolving grants against the ambient tenant's bindings — defense-in-depth beside the storage layer's auto-scoping. No-op when no tenant is bound.
+
+- **OIDC assertion records the validated audience** — for a multi-audience `id_token`, the mapper recorded `aud[0]`, which may be a different party than the one the verifier validated against its configured audience; it now records the matched (validated) audience.
+
 **Adapters & security**
 
 - **Temporal default workflow id is a real UUID** — the default `workflow_id_factory` called `str(uuid4)` (the function's repr), so every unnamed `start()`/`schedule()` shared one garbage id and collided; now `str(uuid4())`.

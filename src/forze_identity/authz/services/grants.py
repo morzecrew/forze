@@ -97,6 +97,39 @@ class AuthzGrantResolver:
 
     deps: AuthzGrantResolverDeps
 
+    invocation_tenant_id: UUID | None = None
+    """The tenant bound on the invocation context, when known (the tenant the storage
+    layer auto-scopes binding queries to). Used only as a defense-in-depth cross-check:
+    a caller-supplied :class:`AuthzScope` naming a *different* tenant is refused rather
+    than silently resolved against the ambient tenant's bindings. ``None`` disables the
+    check (the historical behavior, and correct for untenanted / single-tenant use)."""
+
+    # ....................... #
+
+    def _require_scope_matches_invocation(self, scope: AuthzScope | None) -> None:
+        """Fail closed when a requested scope tenant disagrees with the invocation tenant.
+
+        Tenant isolation of grant resolution is enforced by the storage layer scoping
+        binding queries to the ambient invocation tenant. This adds a second, independent
+        layer: if the caller passes a scope for a tenant other than the one the queries
+        will actually run under, refuse — the grants would otherwise come from the ambient
+        tenant while appearing to answer for the requested one. Only fires when both
+        tenants are present; a bare scope or an untenanted invocation is left untouched.
+        """
+
+        if scope is None or scope.tenant_id is None:
+            return
+
+        if (
+            self.invocation_tenant_id is not None
+            and scope.tenant_id != self.invocation_tenant_id
+        ):
+            raise exc.internal(
+                "AuthzScope.tenant_id disagrees with the invocation tenant; refusing to "
+                "resolve grants against a different tenant's bindings.",
+                code="authz.scope_tenant_mismatch",
+            )
+
     # ....................... #
 
     async def _expand_role_lineage(self, root_role_id: UUID) -> frozenset[UUID]:
@@ -125,7 +158,7 @@ class AuthzGrantResolver:
     ) -> frozenset[RoleRef]:
         """Roles from principal-role and group-role bindings (no lineage expansion)."""
 
-        _ = scope
+        self._require_scope_matches_invocation(scope)
 
         direct_ids = await self._direct_role_ids(principal_id)
 
@@ -147,7 +180,7 @@ class AuthzGrantResolver:
     ) -> EffectiveGrants:
         """Union permissions from expanded roles, direct principal and group grants."""
 
-        _ = scope
+        self._require_scope_matches_invocation(scope)
 
         deps = self.deps
 

@@ -30,6 +30,9 @@ class GoogleOidcConfig:
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
     """JWT clock-skew leeway."""
 
+    require_nonce: bool = attrs.field(default=False)
+    """When ``True``, reject an ``id_token`` with no ``nonce`` claim (presence-only)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -45,4 +48,5 @@ class GoogleOidcConfig:
             audience=self.client_id,
             leeway=self.leeway,
             tenant_claim=self.tenant_claim,
+            require_nonce=self.require_nonce,
         )

@@ -73,7 +73,52 @@ class TestVerifiedAssertion:
 # ....................... #
 
 
+def _session_qry() -> MagicMock:
+    """A session query-port mock whose spec passes the verifier's cache/history guard."""
+
+    qry = MagicMock()
+    qry.spec.cache = None
+    qry.spec.history_enabled = False
+    return qry
+
+
 class TestForzeJwtSessionVerifier:
+    def test_cached_session_spec_rejected_at_construction(self) -> None:
+        """A cached session spec would serve a revoked row from cache — refuse it."""
+
+        import secrets
+
+        svc = AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32)))
+        session_qry = MagicMock()
+        session_qry.spec.cache = object()  # caching enabled
+        session_qry.spec.history_enabled = False
+
+        with pytest.raises(CoreException) as ei:
+            ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        assert "caching is forbidden" in str(ei.value).lower()
+
+    def test_history_session_spec_rejected_at_construction(self) -> None:
+        import secrets
+
+        svc = AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32)))
+        session_qry = MagicMock()
+        session_qry.spec.cache = None
+        session_qry.spec.history_enabled = True
+
+        with pytest.raises(CoreException) as ei:
+            ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        assert "history is forbidden" in str(ei.value).lower()
+
+    def test_no_session_qry_needs_no_spec(self) -> None:
+        """Without session binding there is no spec to guard — construction succeeds."""
+
+        import secrets
+
+        svc = AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32)))
+        ForzeJwtTokenVerifier(access_svc=svc)
+
     @pytest.mark.asyncio
     async def test_active_session_passes(self) -> None:
         import secrets
@@ -89,7 +134,7 @@ class TestForzeJwtSessionVerifier:
         session.tenant_id = None
         session.revoked_at = None
         session.rotated_at = None
-        session_qry = MagicMock()
+        session_qry = _session_qry()
         session_qry.find = AsyncMock(return_value=session)
 
         verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
@@ -105,7 +150,7 @@ class TestForzeJwtSessionVerifier:
         secret = secrets.token_bytes(32)
         svc = AccessTokenService(signer=Hs256Signer(secret=secret))
         token = await svc.issue_token(principal_id=uuid4())
-        session_qry = MagicMock()
+        session_qry = _session_qry()
 
         verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
 
@@ -126,7 +171,7 @@ class TestForzeJwtSessionVerifier:
         session = MagicMock()
         session.revoked_at = datetime.now(tz=UTC)
         session.rotated_at = None
-        session_qry = MagicMock()
+        session_qry = _session_qry()
         session_qry.find = AsyncMock(return_value=session)
 
         verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
@@ -147,7 +192,7 @@ class TestForzeJwtSessionVerifier:
         session = MagicMock()
         session.revoked_at = None
         session.rotated_at = datetime.now(tz=UTC)
-        session_qry = MagicMock()
+        session_qry = _session_qry()
         session_qry.find = AsyncMock(return_value=session)
 
         verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
@@ -172,7 +217,7 @@ class TestForzeJwtSessionVerifier:
         session.tenant_id = None
         session.revoked_at = None
         session.rotated_at = None
-        session_qry = MagicMock()
+        session_qry = _session_qry()
         session_qry.find = AsyncMock(return_value=session)
 
         verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
@@ -202,7 +247,7 @@ class TestForzeJwtSessionVerifier:
         session.tenant_id = session_tid
         session.revoked_at = None
         session.rotated_at = None
-        session_qry = MagicMock()
+        session_qry = _session_qry()
         session_qry.find = AsyncMock(return_value=session)
 
         verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
@@ -227,7 +272,7 @@ class TestForzeJwtSessionVerifier:
         session.tenant_id = session_tid
         session.revoked_at = None
         session.rotated_at = None
-        session_qry = MagicMock()
+        session_qry = _session_qry()
         session_qry.find = AsyncMock(return_value=session)
 
         verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
