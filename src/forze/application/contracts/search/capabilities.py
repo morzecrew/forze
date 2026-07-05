@@ -95,6 +95,12 @@ class SearchCapabilities:
     backends leave it off and refuse the stream methods rather than emulate them via deep
     offset (which would silently truncate)."""
 
+    exact_total_count: bool = True
+    """Whether a ``return_count`` / ``*_page`` total is exact rather than an estimate. ``True``
+    for a backend that computes a real ``COUNT(*)`` (Postgres, Mongo). Engines that only report
+    an estimated total (Meilisearch's ``estimatedTotalHits``, capped at ``maxTotalHits``) set it
+    ``False`` so a caller can tell the page total is approximate, not authoritative."""
+
     def __attrs_post_init__(self) -> None:
         # A filtered-ANN strategy only exists where there is a vector stage; a keyword-only
         # adapter (supports_vector=False) must keep filtered_ann="none".

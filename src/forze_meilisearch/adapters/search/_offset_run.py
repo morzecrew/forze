@@ -25,6 +25,7 @@ from forze.application.integrations.search.offset_executor import (
     execute_simple_offset_search_with_snapshot,
     offset_from_dict,
 )
+from forze.base.exceptions import exc
 from forze_meilisearch.adapters.search._facets_highlights import (
     FacetPlan,
     HighlightPlan,
@@ -88,21 +89,40 @@ class _MeilisearchOffsetHooks:
             search_kwargs["highlight_post_tag"] = self.highlight_plan.post_tag
 
         if want_snap:
-            if window.fetch_offset:
-                search_kwargs["offset"] = window.fetch_offset
-
-            if window.fetch_limit is not None:
-                search_kwargs["limit"] = window.fetch_limit
-
-        else:
-            offset = offset_from_dict(self.pagination_dict)
-            limit = self.pagination_dict.get("limit")
+            offset = window.fetch_offset
+            limit = window.fetch_limit
 
             if offset:
                 search_kwargs["offset"] = offset
 
             if limit is not None:
-                search_kwargs["limit"] = int(limit)
+                search_kwargs["limit"] = limit
+
+        else:
+            offset = offset_from_dict(self.pagination_dict)
+            raw_limit = self.pagination_dict.get("limit")
+            limit = int(raw_limit) if raw_limit is not None else None
+
+            if offset:
+                search_kwargs["offset"] = offset
+
+            if limit is not None:
+                search_kwargs["limit"] = limit
+
+        # Meilisearch caps a query at ``maxTotalHits`` (index setting, default 1000):
+        # a window reaching past it comes back silently short. Fail closed so deep
+        # pagination / snapshot builds don't quietly drop rows.
+        max_total_hits = self.gw.config.max_total_hits
+        far_edge = offset + (limit if limit is not None else 0)
+
+        if far_edge > max_total_hits:
+            raise exc.precondition(
+                f"Requested window (offset {offset} + limit {limit}) exceeds "
+                f"Meilisearch maxTotalHits ({max_total_hits}); Meilisearch would "
+                "silently truncate. Narrow the query or raise the index's "
+                "maxTotalHits and this route's max_total_hits.",
+                code="core.search.max_total_hits_exceeded",
+            )
 
         if self.return_fields is not None:
             phys_fields = self.gw.physical_paths(self.return_fields)

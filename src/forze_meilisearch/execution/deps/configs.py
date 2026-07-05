@@ -1,5 +1,6 @@
 """Meilisearch dependency configuration types."""
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 import attrs
@@ -79,6 +80,15 @@ class MeilisearchSearchConfig(TenantAwareIntegrationConfig):
 
     wait_for_tasks: bool = True
     """When True, await Meilisearch task completion after writes."""
+
+    task_wait_timeout: timedelta = timedelta(seconds=60)
+    """Upper bound on awaiting a single Meilisearch task (raises rather than hanging
+    forever). Raise it for very large batch indexing tasks."""
+
+    max_total_hits: int = 1000
+    """Mirror of the index's ``maxTotalHits`` setting (Meilisearch default 1000). A read
+    window reaching past it fails closed instead of silently truncating; keep it in sync
+    with the value provisioned on the index."""
 
     # ....................... #
 

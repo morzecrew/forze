@@ -2,6 +2,7 @@
 
 from typing import Any, Sequence
 
+import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
@@ -9,7 +10,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
 )
-from forze.application.contracts.search import SearchOptions
+from forze.application.contracts.search import SearchCapabilities, SearchOptions
 from forze.application.integrations.search import SimpleSearchPortMixin
 from forze.base.exceptions import exc
 
@@ -25,6 +26,12 @@ class MeilisearchSearchPortMixin[M: BaseModel](SimpleSearchPortMixin[M]):
     inherits the raising ``_cursor_search_impl`` below, while the federated
     adapter overrides it with a real implementation.
     """
+
+    @property
+    def search_capabilities(self) -> SearchCapabilities:
+        # Meilisearch reports estimatedTotalHits (capped at maxTotalHits), never an
+        # exact COUNT(*), so page totals are approximate.
+        return attrs.evolve(super().search_capabilities, exact_total_count=False)
 
     def _raise_cursor_not_supported(self) -> None:
         raise exc.precondition(

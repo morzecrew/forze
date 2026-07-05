@@ -125,7 +125,10 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
     @property
     def search_capabilities(self) -> SearchCapabilities:
         # Cross-index fusion; reciprocal rank fusion is the advertised strategy.
-        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
+        # Totals are estimated (Meilisearch estimatedTotalHits), never exact.
+        return SearchCapabilities(
+            hybrid_fusion=frozenset({"rrf"}), exact_total_count=False
+        )
 
     # ....................... #
 
@@ -551,6 +554,11 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             return search_page_from_limit_offset(empty, pagination or {}, total=None)
 
         leg_cap = max(1, int(self.rrf_per_leg_limit))
+        # A leg returns at most its index's maxTotalHits (Meilisearch caps the candidate
+        # pool there), so clamp the fusion pool to that ceiling instead of over-requesting
+        # a window the offset guard would reject / Meilisearch would silently truncate.
+        # Fusion therefore considers the top-maxTotalHits candidates per leg.
+        leg_cap = min(leg_cap, *(p.config.max_total_hits for _n, p, _w in active))
         leg_page: PaginationExpression = {"limit": leg_cap}
 
         snapshot_write = (

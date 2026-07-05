@@ -52,7 +52,7 @@ async def test_management_adapter_resolves_dynamic_index_uid() -> None:
     index = MagicMock()
     index.update_settings = AsyncMock(return_value=MagicMock())
     client.get_or_create_index = AsyncMock(return_value=index)
-    client.wait_for_task = AsyncMock()
+    client.wait_for_task = AsyncMock(return_value=MagicMock(status="succeeded"))
 
     adapter = MeilisearchSearchManagementAdapter(
         spec=spec,

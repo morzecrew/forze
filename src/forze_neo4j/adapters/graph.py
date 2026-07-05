@@ -1,9 +1,21 @@
 """Neo4j graph adapter implementing the graph query/command/raw ports.
 
-Focused vertical slice: vertex/edge CRUD, ``ensure_edge``, ``neighbors``, ``expand``,
-``shortest_path``, and the raw escape hatch. The remaining port methods raise a clear
-``exc.precondition`` (code ``graph_not_implemented``) and are filled in follow-ups. Tenancy
-uses property partition: a ``tenant_property`` is stamped on writes and constrains
+**MVP surface — not a full port implementation.** Implemented: vertex/edge CRUD,
+``ensure_edge``, ``neighbors``, ``expand``, ``shortest_path``, and the raw escape hatch.
+The remaining port methods (roughly the read-introspection and bulk half —
+``get_vertices``/``get_edges``/``edge_exists``, ``count_*``, ``find_*``, ``vertex_degree``,
+``k_shortest_paths``, ``update_edge``/``delete_edge``, the ``*_many`` bulk writes) raise a
+clear ``exc.precondition`` (code ``graph_not_implemented``). The in-memory mock implements a
+*different* subset, so no single adapter yet covers the whole ``GraphQueryPort`` contract —
+treat the graph plane as community-tier and pin usage to the implemented slice.
+
+**No schema/constraint/index provisioning.** This adapter issues no ``CREATE CONSTRAINT`` /
+``CREATE INDEX``: node/edge key uniqueness and lookup performance depend on constraints the
+operator must create out of band. In particular keyed-edge identity is enforced only at
+``MERGE`` time (in-query), not by a database uniqueness constraint, so a concurrent
+``ensure_edge`` race can still create duplicate keyed edges until such a constraint exists.
+
+Tenancy uses property partition: a ``tenant_property`` is stamped on writes and constrains
 anchor-node matches.
 """
 
@@ -611,6 +623,22 @@ class Neo4jGraphAdapter(TenancyMixin):
                 code="graph_edge_endpoints_required",
             )
 
+        # A keyed edge kind is identified by its key property: an ``ensure`` (MERGE)
+        # must match on that key so two distinct keyed edges between the same pair
+        # stay separate. A keyless MERGE matches any edge of the type and collapses
+        # them.
+        edge_key = None
+
+        if merge and edge.key_field is not None:
+            edge_key = data.get(edge.key_field)
+
+            if edge_key is None:
+                raise exc.validation(
+                    f"Keyed edge command for {edge_kind!r} must include "
+                    f"{edge.key_field!r} to ensure a stable identity",
+                    code="graph_edge_key_required",
+                )
+
         query = builders.create_edge(
             from_label=endpoint.from_kind,
             from_key_field=from_node.key_field,
@@ -619,10 +647,16 @@ class Neo4jGraphAdapter(TenancyMixin):
             edge_type=edge_kind,
             merge=merge,
             tenant_field=self._tenant_field,
+            key_field=edge.key_field if merge else None,
         )
+        params = {"props": data, **self._params(from_key=from_key, to_key=to_key)}
+
+        if edge_key is not None:
+            params["edge_key"] = edge_key
+
         rows = await self.client.run(
             query,
-            {"props": data, **self._params(from_key=from_key, to_key=to_key)},
+            params,
             database=await self._resolved_database(),
         )
 

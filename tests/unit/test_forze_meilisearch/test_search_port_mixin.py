@@ -27,3 +27,9 @@ async def test_search_cursor_raises() -> None:
 
     with pytest.raises(CoreException):
         await adapter.search_cursor("q")
+
+
+def test_capabilities_declare_estimated_total() -> None:
+    """Meilisearch reports estimatedTotalHits, so page totals are flagged approximate."""
+
+    assert _Adapter().search_capabilities.exact_total_count is False

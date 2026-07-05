@@ -175,8 +175,16 @@ def create_edge(
     edge_type: str,
     merge: bool,
     tenant_field: str | None = None,
+    key_field: str | None = None,
+    key_param: str = "edge_key",
 ) -> str:
-    """Create (or, when ``merge``, idempotently ensure) a directed edge a→b."""
+    """Create (or, when ``merge``, idempotently ensure) a directed edge a→b.
+
+    For a *keyed* edge (``key_field`` set) a ``merge`` includes the key in the
+    relationship pattern (``MERGE (a)-[r:T {<key_field>: $edge_key}]->(b)``) so
+    distinct keyed edges between the same pair are separate identities — without it
+    the ``MERGE`` matches any edge of the type and collapses them.
+    """
 
     head = (
         f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')}), "
@@ -184,7 +192,10 @@ def create_edge(
     )
 
     if merge:
-        body = f"MERGE (a)-[r:{quote(edge_type)}]->(b)\nON CREATE SET r += $props\n"
+        rel_key = f" {{{quote(key_field)}: ${key_param}}}" if key_field else ""
+        body = (
+            f"MERGE (a)-[r:{quote(edge_type)}{rel_key}]->(b)\nON CREATE SET r += $props\n"
+        )
     else:
         body = f"CREATE (a)-[r:{quote(edge_type)}]->(b)\nSET r += $props\n"
 
@@ -305,7 +316,10 @@ def shortest_path(
     tenant_field: str | None = None,
     interior: bool = False,
 ) -> str:
-    rel = _rel(direction, _type_pattern(edge_types), quant=f"*..{max_hops}")
+    # Coerce to int before inlining: the ``*..n`` quantifier can't be parameterized, so
+    # this value is interpolated into the query text — ``int()`` keeps a non-integer from
+    # ever reaching it (defense-in-depth even though the field is typed).
+    rel = _rel(direction, _type_pattern(edge_types), quant=f"*..{int(max_hops)}")
 
     # In full-path mode (``interior=True``) the ``all(nodes(path) ...)`` tenant predicate is the
     # canonical all-path-nodes form: Neo4j runs an *exhaustive* shortest-path search and returns

@@ -1,5 +1,7 @@
 """Unit tests for the openCypher string builders."""
 
+import pytest
+
 from forze.application.contracts.graph import GraphDirection
 from forze_neo4j.kernel.cypher import builders
 
@@ -38,6 +40,38 @@ def test_create_edge_merge_vs_create() -> None:
     )
     assert "MERGE (a)-[r:`FOLLOWS`]->(b)" in merged
     assert "ON CREATE SET r += $props" in merged
+
+
+def test_create_edge_keyed_merge_matches_on_key() -> None:
+    """A keyed-edge MERGE must carry the key so distinct keyed edges stay separate."""
+
+    merged = builders.create_edge(
+        from_label="Account",
+        from_key_field="id",
+        to_label="Account",
+        to_key_field="id",
+        edge_type="TRANSFER",
+        merge=True,
+        key_field="ref",
+    )
+    # The key is part of the relationship identity, not just set as a property.
+    assert "MERGE (a)-[r:`TRANSFER` {`ref`: $edge_key}]->(b)" in merged
+
+
+def test_create_edge_keyed_create_does_not_add_key_pattern() -> None:
+    """``merge=False`` never keys the pattern (CREATE always makes a fresh edge)."""
+
+    created = builders.create_edge(
+        from_label="Account",
+        from_key_field="id",
+        to_label="Account",
+        to_key_field="id",
+        edge_type="TRANSFER",
+        merge=False,
+        key_field="ref",
+    )
+    assert "CREATE (a)-[r:`TRANSFER`]->(b)" in created
+    assert "$edge_key" not in created
 
 
 def test_neighbors_direction_arrows() -> None:
@@ -80,6 +114,22 @@ def test_shortest_path_inlines_hops() -> None:
     )
     assert "shortestPath((a)" in q
     assert "*..5" in q
+
+
+def test_shortest_path_coerces_max_hops_blocking_injection() -> None:
+    """The inlined quantifier goes through ``int()`` — a non-integer string can't reach
+    the query text (defense-in-depth even though the field is typed ``int``)."""
+
+    with pytest.raises(ValueError):
+        builders.shortest_path(
+            from_label="User",
+            from_key_field="id",
+            to_label="User",
+            to_key_field="id",
+            direction=GraphDirection.OUT,
+            edge_types=[],
+            max_hops="5]->() DETACH DELETE n //",  # type: ignore[arg-type]
+        )
 
 
 # ----------------------- #

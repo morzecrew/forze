@@ -204,6 +204,13 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         if pk_val is not None:
             out[pk] = pk_val
 
+        # Tagged tenancy: stamp the tenant discriminator so tenant-filtered reads and
+        # tenant-scoped deletes can isolate this document (a shared index otherwise
+        # mixes every tenant's rows). Fails closed if tenant-aware but no tenant bound.
+        if self.tenant_aware:
+            tenant_id = self.require_tenant_if_aware()
+            out[self.physical_path(TENANT_ID_FIELD)] = str(tenant_id)
+
         return out
 
     def from_hit(self, hit: dict[str, Any]) -> dict[str, Any]:
