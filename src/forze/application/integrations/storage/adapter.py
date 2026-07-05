@@ -540,6 +540,7 @@ class ObjectStorageAdapter(
             raise exc.configuration(
                 "The wired cipher does not support streaming encryption; a keyring "
                 "(StreamingBytesCipherPort) is required for upload_stream/download_stream.",
+                code="core.storage.streaming_cipher_required",
             )
 
         return self.cipher

@@ -343,7 +343,7 @@ async def test_streaming_cipher_required_when_encrypting() -> None:
 
     with pytest.raises(CoreException) as ei:
         await adapter.upload_stream(_aiter(b"data"), filename="f.bin")
-    assert "streaming" in str(ei.value).lower()
+    assert ei.value.code == "core.storage.streaming_cipher_required"
 
 
 # ....................... #

@@ -49,6 +49,12 @@ DEFAULT_CHUNK_SIZE = 1 << 20
 MAX_CHUNK_SIZE = (1 << 32) - 1
 """Largest declarable chunk size (the u32 ceiling)."""
 
+_MAX_TAG_OVERHEAD = 256
+"""Generous upper bound on an AEAD's per-chunk ciphertext expansion (tag) over the
+plaintext. A frame's ciphertext is ``chunk_size + tag``; anything beyond
+``chunk_size + _MAX_TAG_OVERHEAD`` is malformed, so the reader rejects it before
+buffering (bounding memory even on hostile input; real tags are 16 bytes)."""
+
 _HEADER = struct.Struct(">4sB")
 """Magic (4 bytes) + scheme version (1 byte)."""
 
@@ -307,9 +313,17 @@ def _try_parse_header(
 
 
 def _try_parse_frame(
-    blob: bytes | bytearray, offset: int = 0
+    blob: bytes | bytearray,
+    offset: int = 0,
+    *,
+    max_ciphertext: int | None = None,
 ) -> tuple[ChunkFrame, int] | None:
-    """Parse a frame at *offset*; ``None`` when the buffer lacks a complete frame."""
+    """Parse a frame at *offset*; ``None`` when the buffer lacks a complete frame.
+
+    When *max_ciphertext* is set, the declared ciphertext length is checked against it
+    *before* the payload is buffered, so a malformed frame claiming an oversized chunk
+    fails fast (``chunked_frame_too_large``) instead of accumulating unbounded input.
+    """
 
     if offset >= len(blob):
         return None
@@ -322,7 +336,19 @@ def _try_parse_frame(
         return None
     nonce, pos = nonce_taken
 
-    ct_taken = _try_take_var(blob, pos, _U32)
+    # Peek the declared ciphertext length before taking (buffering) its payload.
+    if pos + _U32.size > len(blob):
+        return None
+    (ct_len,) = _U32.unpack_from(blob, pos)
+
+    if max_ciphertext is not None and ct_len > max_ciphertext:
+        raise exc.validation(
+            f"Chunked frame ciphertext length {ct_len} exceeds the maximum "
+            f"{max_ciphertext} for the negotiated chunk size",
+            code="core.crypto.chunked_frame_too_large",
+        )
+
+    ct_taken = _try_take(blob, pos + _U32.size, ct_len)
     if ct_taken is None:
         return None
     ciphertext, pos = ct_taken
@@ -414,6 +440,7 @@ class ChunkedStreamReader:
 
     _buf: bytearray = attrs.field(factory=bytearray, init=False, repr=False)
     _header_taken: bool = attrs.field(default=False, init=False)
+    _max_ciphertext: int | None = attrs.field(default=None, init=False)
 
     # ....................... #
 
@@ -436,16 +463,25 @@ class ChunkedStreamReader:
         header, end = parsed
         del self._buf[:end]
         self._header_taken = True
+        # Bound how much a single frame may buffer, so a malformed stream declaring a
+        # huge chunk cannot make the (streaming) reader accumulate the whole object.
+        self._max_ciphertext = header.chunk_size + _MAX_TAG_OVERHEAD
 
         return header
 
     # ....................... #
 
     def take_frames(self) -> Iterator[ChunkFrame]:
-        """Yield and consume every complete frame currently buffered (partial stays)."""
+        """Yield and consume every complete frame currently buffered (partial stays).
+
+        Once the header is taken, an oversized frame (ciphertext beyond the negotiated
+        chunk size) fails fast (``chunked_frame_too_large``) rather than buffering.
+        """
 
         while True:
-            parsed = _try_parse_frame(self._buf, 0)
+            parsed = _try_parse_frame(
+                self._buf, 0, max_ciphertext=self._max_ciphertext
+            )
 
             if parsed is None:
                 return

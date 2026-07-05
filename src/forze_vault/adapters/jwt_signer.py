@@ -14,6 +14,7 @@ Supports two algorithms, matched to the Transit key type:
   so it returns the raw ``r||s`` an ES256 JWS expects (no DER→raw conversion here).
 """
 
+import asyncio
 import json
 from typing import Any, final
 
@@ -65,6 +66,11 @@ class VaultTransitSigner:
     _fetched_at: float | None = attrs.field(default=None, init=False, repr=False)
     """Monotonic time the cached PEM was fetched, for TTL expiry."""
 
+    _refresh_lock: asyncio.Lock = attrs.field(
+        factory=asyncio.Lock, init=False, repr=False
+    )
+    """Serializes the re-fetch so a concurrent TTL expiry doesn't stampede Vault."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -82,19 +88,28 @@ class VaultTransitSigner:
 
     # ....................... #
 
+    def _is_fresh(self) -> bool:
+        if self._public_pem is None or self._fetched_at is None:
+            return False
+
+        age = current_time_source().monotonic() - self._fetched_at
+        return age < self.public_key_ttl_seconds
+
+    # ....................... #
+
     async def _public_key_pem(self) -> str:
-        now = current_time_source().monotonic()
-        expired = (
-            self._fetched_at is not None
-            and now - self._fetched_at >= self.public_key_ttl_seconds
-        )
+        # Fast path: a still-fresh cache needs no lock.
+        if self._is_fresh():
+            return self._public_pem  # type: ignore[return-value]  # fresh ⇒ non-None
 
-        if self._public_pem is None or expired:
-            self._public_pem = await self.client.transit_public_key(self.key_name)
-            self._public_key_obj = None  # the parsed key must track the re-fetched PEM
-            self._fetched_at = now
+        async with self._refresh_lock:
+            # Double-checked: another caller may have refreshed while we waited.
+            if not self._is_fresh():
+                self._public_pem = await self.client.transit_public_key(self.key_name)
+                self._public_key_obj = None  # parsed key must track the re-fetched PEM
+                self._fetched_at = current_time_source().monotonic()
 
-        return self._public_pem
+            return self._public_pem  # type: ignore[return-value]  # set above
 
     # ....................... #
 

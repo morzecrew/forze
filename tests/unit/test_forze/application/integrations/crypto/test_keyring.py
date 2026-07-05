@@ -541,6 +541,26 @@ async def test_decrypt_rejects_foreign_tenant_key_id_without_kms_call() -> None:
     assert await reader.decrypt(blob, tenant=tenant_a) == b"a-secret"
 
 
+async def test_authorization_runs_on_a_warm_cache_hit() -> None:
+    """A foreign tenant is rejected even when the wrapped_dek is already cached — the
+    key-id guard runs before the DEK cache lookup, so a warm entry can't bypass it."""
+
+    kms = _CountingKms(MockKeyManagement())
+    ring = _per_tenant_ring(kms)
+    tenant_a = TenantIdentity(tenant_id=uuid4())
+    tenant_b = TenantIdentity(tenant_id=uuid4())
+
+    # Tenant A legitimately decrypts, warming the decrypt cache for this wrapped_dek.
+    blob = await ring.encrypt(b"a-secret", tenant=tenant_a)
+    assert await ring.decrypt(blob, tenant=tenant_a) == b"a-secret"
+
+    # The same blob (tenant A's key id) presented under tenant B is still refused,
+    # despite the warm cache entry.
+    with pytest.raises(CoreException) as excinfo:
+        await ring.decrypt(blob, tenant=tenant_b)
+    assert excinfo.value.code == "core.crypto.key_id_unauthorized"
+
+
 async def test_decrypt_without_tenant_skips_authorization() -> None:
     """The single-key path (tenant=None) is unchanged — no key-id authorization."""
 

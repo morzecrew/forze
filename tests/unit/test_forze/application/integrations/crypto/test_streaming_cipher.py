@@ -177,9 +177,12 @@ async def test_trailing_bytes_after_final_are_rejected() -> None:
 
     with pytest.raises(CoreException) as ei:
         await _collect(ring.decrypt_stream(_aiter(tampered)))
+    # Trailing garbage is rejected — either as trailing data, a truncated tail, or (when
+    # the garbage parses as a frame header) an oversized-frame declaration.
     assert ei.value.code in (
         "core.crypto.chunked_trailing_data",
         "core.crypto.chunked_truncated",
+        "core.crypto.chunked_frame_too_large",
     )
 
 

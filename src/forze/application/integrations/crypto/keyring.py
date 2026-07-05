@@ -859,6 +859,12 @@ class Keyring:
         *,
         tenant: TenantIdentity | None = None,
     ) -> bytes:
+        # Authorize the key id against the tenant *before* any cache lookup, so a warm
+        # cached ``wrapped_dek`` can never return a data key for an envelope the tenant is
+        # not entitled to (a cross-tenant confused-deputy on a cache hit). The check is
+        # cheap and cached (``_tenant_key`` LRU); a ``None`` tenant is a no-op.
+        await self._authorize_key_id(envelope, tenant)
+
         cached = self._cached_dek(envelope.wrapped_dek)
 
         if cached is not None:
@@ -874,7 +880,6 @@ class Keyring:
 
                 return cached
 
-            await self._authorize_key_id(envelope, tenant)
             dek = await self.kms.unwrap_data_key(
                 wrapped=envelope.wrapped_dek,
                 key_ref=KeyRef(key_id=envelope.key_id, version=envelope.key_version),

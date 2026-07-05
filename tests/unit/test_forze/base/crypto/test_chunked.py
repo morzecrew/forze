@@ -325,3 +325,21 @@ def test_random_access_opens_a_middle_chunk() -> None:
     plaintext = open_chunk(_AEAD, key=_DEK, base_aad=_AAD, index=2, frame=frame)
 
     assert plaintext == bytes([2]) * 64
+
+
+def test_oversized_frame_rejected_before_buffering() -> None:
+    """A frame declaring more ciphertext than the chunk size fails fast (bounded memory)."""
+
+    import struct
+
+    reader = ChunkedStreamReader()
+    reader.feed(pack_chunked_header(_header(chunk_size=64)))
+    assert reader.take_header() is not None
+
+    # A frame claiming a ~1 GiB ciphertext while only a few bytes are actually fed.
+    oversized = bytes([0, 12]) + b"n" * 12 + struct.pack(">I", 1 << 30) + b"xx"
+    reader.feed(oversized)
+
+    with pytest.raises(CoreException) as ei:
+        list(reader.take_frames())
+    assert ei.value.code == "core.crypto.chunked_frame_too_large"
