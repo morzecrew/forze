@@ -16,6 +16,7 @@ from .config import (
 )
 from .deps import ConfigurableTelegramLoginOidcVerifier
 from .exchange import TelegramTokenResponse, exchange_authorization_code
+from .widget import TELEGRAM_LOGIN_WIDGET_ISSUER, TelegramWidgetVerifier
 from .wiring import telegram_login_identity_deps
 
 # ----------------------- #
@@ -26,8 +27,10 @@ __all__ = [
     "TELEGRAM_LOGIN_JWKS_URI",
     "TELEGRAM_LOGIN_OIDC_ISSUER",
     "TELEGRAM_LOGIN_TOKEN_ENDPOINT",
+    "TELEGRAM_LOGIN_WIDGET_ISSUER",
     "TelegramLoginOidcConfig",
     "TelegramTokenResponse",
+    "TelegramWidgetVerifier",
     "exchange_authorization_code",
     "generate_pkce",
     "telegram_login_identity_deps",

@@ -32,10 +32,12 @@ from .directory import (
 from .field_encryption import FieldEncryption
 from .ports import (
     BytesCipherPort,
+    ChunkedStreamOpener,
     DeterministicFieldCipherPort,
     FieldCipherPort,
     KeyManagementPort,
     KeyringPort,
+    StreamingBytesCipherPort,
 )
 from .payload_envelope import (
     ENCRYPTED_PAYLOAD_KEY,
@@ -71,7 +73,9 @@ __all__ = [
     "EnvelopeCipher",
     "BytesCipherPort",
     "FieldCipherPort",
+    "ChunkedStreamOpener",
     "KeyringPort",
+    "StreamingBytesCipherPort",
     "DeterministicFieldCipherPort",
     # key directory (tenant → key)
     "KeyDirectoryPort",

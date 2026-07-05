@@ -160,6 +160,33 @@ class TestForeignLoggerAttachment:
 
 
 class TestConfigureLogging:
+    def test_configure_logging_without_names_configures_root(self) -> None:
+        """Omitting ``logger_names`` configures the root logger, so a logger the caller
+        never listed still reaches the stream instead of being silently dropped."""
+
+        stream = io.StringIO()
+        root = logging.getLogger()
+        saved_handlers = list(root.handlers)
+        saved_level = root.level
+
+        try:
+            configure_logging(
+                level="info",
+                render_mode="json",
+                stream=stream,
+                logger_names=None,
+            )
+
+            assert len(root.handlers) == 1
+
+            logging.getLogger("some.unlisted.logger").info("hello-unlisted")
+
+            assert "hello-unlisted" in stream.getvalue()
+
+        finally:
+            root.handlers[:] = saved_handlers
+            root.setLevel(saved_level)
+
     def test_configure_logging_clears_existing_handlers_for_targets(self) -> None:
         stream = io.StringIO()
         logger = logging.getLogger("forze.test")

@@ -266,15 +266,33 @@ async def test_download_range_rejects_traversal_key(
 
 
 @pytest.mark.asyncio
-async def test_download_range_refused_when_encrypted() -> None:
+async def test_download_range_refused_for_whole_payload_encrypted() -> None:
+    """A legacy whole-payload (FZEv) encrypted object cannot be sliced — still refused.
+
+    (Chunked-AEAD objects *are* served ranged; that end-to-end path is covered in
+    test_streaming.py against an in-memory fake client.)
+    """
+
     cipher = MagicMock(spec=BytesCipherPort)
     adapter = _adapter(cipher=cipher)
-    adapter.client.download_range_bytes = AsyncMock()
+    adapter.client.head_object = AsyncMock(
+        return_value=ObjectStorageHead(content_type="application/octet-stream", size=64)
+    )
+    adapter.client.download_range_bytes = AsyncMock(
+        return_value=(
+            ObjectBody(
+                data=b"FZEv-whole-payload-envelope-bytes",
+                content_type="application/octet-stream",
+            ),
+            "bytes 0-32/64",
+            64,
+        )
+    )
 
-    with pytest.raises(CoreException, match="encryption"):
+    with pytest.raises(CoreException) as ei:
         await adapter.download_range("docs/k1", start=0, end=4)
 
-    adapter.client.download_range_bytes.assert_not_called()
+    assert ei.value.code == "core.storage.range_whole_payload_unsupported"
 
 
 # ----------------------- #

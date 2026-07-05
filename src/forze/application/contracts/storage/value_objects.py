@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal, Mapping, final
+from typing import AsyncIterator, Literal, Mapping, final
 
 import attrs
 
@@ -159,6 +159,34 @@ class RangedDownload:
 
     total_size: int
     """Full object size in bytes (the ``total`` in :attr:`content_range`)."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class StreamedDownload:
+    """A bounded-memory download whose body is consumed one chunk at a time.
+
+    The :attr:`chunks` async iterator yields decoded plaintext in transport-sized
+    pieces, so a large (optionally client-side-encrypted) object never has to be
+    held whole in memory. Iterate it exactly once.
+    """
+
+    content_type: str
+    """MIME content type of the object."""
+
+    filename: str
+    """Best-known filename (metadata-envelope filename when present, else the key's
+    basename — streamed/raw objects carry no envelope)."""
+
+    chunks: AsyncIterator[bytes] = attrs.field(eq=False, repr=False)
+    """The plaintext body as an async stream of byte pieces (single-use)."""
+
+    size: int | None = None
+    """Full plaintext size when known up front (``None`` for a client-side-encrypted
+    object, whose plaintext length is not recorded in the raw stored size)."""
 
 
 # ....................... #

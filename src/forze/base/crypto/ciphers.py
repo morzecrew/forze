@@ -17,7 +17,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 
 from ..exceptions import exc
-from ..primitives.entropy_source import current_entropy_source
+from ..primitives.entropy_source import secure_random_bytes
 
 # ----------------------- #
 
@@ -75,7 +75,7 @@ class AesGcmAead:
         plaintext: bytes,
         aad: bytes = b"",
     ) -> tuple[bytes, bytes]:
-        nonce = current_entropy_source().random_bytes(_NONCE_SIZE)
+        nonce = secure_random_bytes(_NONCE_SIZE)
         ciphertext = AESGCM(key).encrypt(nonce, plaintext, aad)
 
         return nonce, ciphertext
@@ -128,7 +128,7 @@ class ChaCha20Poly1305Aead:
         plaintext: bytes,
         aad: bytes = b"",
     ) -> tuple[bytes, bytes]:
-        nonce = current_entropy_source().random_bytes(_NONCE_SIZE)
+        nonce = secure_random_bytes(_NONCE_SIZE)
         ciphertext = ChaCha20Poly1305(key).encrypt(nonce, plaintext, aad)
 
         return nonce, ciphertext

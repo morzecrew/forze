@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
+from forze.base.exceptions import CoreException
 from forze.base.primitives import (
     FrozenTimeSource,
     SeededEntropySource,
@@ -12,6 +15,9 @@ from forze.base.primitives import (
     bind_time_source,
     current_entropy_source,
     derive_seed,
+    permit_insecure_entropy,
+    secure_random_bytes,
+    secure_token_urlsafe,
     uuid4,
     uuid7,
 )
@@ -35,6 +41,22 @@ class TestDefaultBehavior:
     def test_random_in_unit_interval(self) -> None:
         value = SystemEntropySource().random()
         assert 0.0 <= value < 1.0
+
+    def test_random_is_csprng_not_global_mersenne_twister(self) -> None:
+        """``random()`` must draw from os.urandom (as the source claims), not the
+        process-global Mersenne Twister — so seeding ``random`` can't make it reproduce."""
+
+        import random as _stdlib_random
+
+        _stdlib_random.seed(12345)
+        first = SystemEntropySource().random()
+        _stdlib_random.seed(12345)
+        second = SystemEntropySource().random()
+
+        # With the global MT these would be identical; from os.urandom they (almost
+        # surely, ~2**-53 collision) differ.
+        assert first != second
+        assert 0.0 <= first < 1.0
 
     def test_uuid4_is_version_4(self) -> None:
         assert SystemEntropySource().uuid4().version == 4
@@ -143,3 +165,57 @@ class TestDeriveSeed:
         before = derive_seed(5, "schedule")
         derive_seed(5, "a_new_stream_added_later")
         assert derive_seed(5, "schedule") == before
+
+
+# ....................... #
+
+
+class TestSecureEntropyGuard:
+    """secure_* helpers fail closed on a non-CSPRNG source unless explicitly permitted."""
+
+    def test_system_source_is_secure(self) -> None:
+        assert SystemEntropySource().is_cryptographically_secure is True
+
+    def test_seeded_source_is_insecure(self) -> None:
+        assert SeededEntropySource(seed=1).is_cryptographically_secure is False
+
+    def test_secure_helpers_work_under_default_source(self) -> None:
+        assert len(secure_random_bytes(12)) == 12
+        assert isinstance(secure_token_urlsafe(16), str)
+
+    def test_secure_random_bytes_refuses_seeded_source(self) -> None:
+        with bind_entropy_source(SeededEntropySource(seed=1)):
+            with pytest.raises(CoreException) as excinfo:
+                secure_random_bytes(12)
+
+        assert excinfo.value.code == "core.crypto.insecure_entropy"
+
+    def test_secure_token_refuses_seeded_source(self) -> None:
+        with bind_entropy_source(SeededEntropySource(seed=1)):
+            with pytest.raises(CoreException) as excinfo:
+                secure_token_urlsafe(16)
+
+        assert excinfo.value.code == "core.crypto.insecure_entropy"
+
+    def test_permit_insecure_entropy_allows_seeded_draw(self) -> None:
+        with bind_entropy_source(SeededEntropySource(seed=1)):
+            with permit_insecure_entropy():
+                # Deterministic under the seed — the sim path, not a raise.
+                assert len(secure_random_bytes(12)) == 12
+                assert isinstance(secure_token_urlsafe(16), str)
+
+    def test_permit_scope_does_not_leak_out(self) -> None:
+        with bind_entropy_source(SeededEntropySource(seed=1)):
+            with permit_insecure_entropy():
+                secure_random_bytes(4)
+
+            with pytest.raises(CoreException):
+                secure_random_bytes(4)
+
+    def test_non_secret_seam_still_deterministic_under_seed(self) -> None:
+        # The plain (non-secure) seam is unaffected — jitter/ids stay seedable.
+        with bind_entropy_source(SeededEntropySource(seed=7)):
+            a = current_entropy_source().random_bytes(8)
+        with bind_entropy_source(SeededEntropySource(seed=7)):
+            b = current_entropy_source().random_bytes(8)
+        assert a == b

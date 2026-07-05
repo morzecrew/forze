@@ -531,6 +531,29 @@ class ObjectStorageClientPort(Protocol):
         """
         ...  # pragma: no cover
 
+    def upload_multipart_part(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+        sse: ObjectStorageSSE | None = None,
+    ) -> Awaitable[ObjectStoragePartInfo]:
+        """Upload one part's bytes directly (app-mediated, not via a presigned URL).
+
+        The presign path (:meth:`presign_multipart_part`) has an outside HTTP client
+        ``PUT`` the part bytes; this uploads bytes the application itself holds — needed
+        when each part must be transformed first (client-side chunked encryption). S3
+        issues ``UploadPart`` and returns the part ``ETag``; GCS writes the temp part
+        object the compose-at-complete assembles. *part_number* is 1-indexed.
+
+        :returns: The part's :class:`ObjectStoragePartInfo` (with backend ETag/size) to
+            carry into :meth:`complete_multipart_upload`.
+        """
+        ...  # pragma: no cover
+
     def presign_multipart_part(
         self,
         bucket: str,

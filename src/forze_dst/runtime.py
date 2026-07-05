@@ -21,6 +21,7 @@ from forze.base.primitives import (
     bind_cpu_executor,
     bind_entropy_source,
     bind_time_source,
+    permit_insecure_entropy,
 )
 
 from .cpu import CpuCostModel, SimulationCpuExecutor
@@ -92,6 +93,10 @@ def run_simulation[T](
         with (
             bind_time_source(time_source),
             bind_entropy_source(entropy),
+            # The seeded source is not a CSPRNG, so the secure_* entropy helpers refuse it
+            # by default; a sanctioned simulation opts in so nonces/tokens/keys still draw
+            # deterministically from the seed instead of raising.
+            permit_insecure_entropy(),
             bind_cpu_executor(SimulationCpuExecutor(cost=cpu_cost)),
             bind_interceptors(CooperativeInterceptor(latency=latency)),
         ):

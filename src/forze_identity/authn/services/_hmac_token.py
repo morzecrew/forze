@@ -7,7 +7,7 @@ from typing import Protocol
 
 import attrs
 
-from forze.base.primitives import current_entropy_source
+from forze.base.primitives import secure_random_bytes
 
 # ----------------------- #
 
@@ -37,7 +37,7 @@ class HmacTokenService:
     # ....................... #
 
     def generate_token(self) -> str:
-        raw = current_entropy_source().random_bytes(self.config.length)
+        raw = secure_random_bytes(self.config.length)
 
         return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 

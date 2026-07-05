@@ -201,3 +201,64 @@ async def test_patch_without_id_allows_plaintext_only_fields() -> None:
 
     assert patch["name"] == "renamed"
     assert "email" not in patch
+
+
+# ....................... #
+# reject_plaintext (post-migration): the legacy id-less AAD downgrade is disabled
+
+
+def _strict_codec(
+    cipher: Keyring,
+    *,
+    record_id_field: str | None = "id",
+) -> EncryptingModelCodec[_Profile]:
+    return EncryptingModelCodec(
+        inner=default_model_codec(_Profile),
+        cipher=cipher,
+        fields=frozenset({"email"}),
+        tenant_provider=lambda: None,
+        record_id_field=record_id_field,
+        reject_plaintext=True,
+    )
+
+
+async def test_strict_mode_rejects_legacy_unbound_ciphertext() -> None:
+    """With reject_plaintext on, a pre-binding (id-less AAD) ciphertext no longer reads."""
+
+    ring = _keyring()
+    legacy = _codec(ring, record_id_field=None)
+    await legacy.prepare_encrypt()
+    legacy_stored = legacy.encode_persistence_mapping(_A)
+
+    strict = _strict_codec(ring)  # same warm keyring, binding + strict
+
+    with pytest.raises(CoreException) as excinfo:
+        strict.decode_mapping(legacy_stored)
+
+    # No legacy downgrade: the id-bound AAD fails to authenticate the unbound ciphertext.
+    assert excinfo.value.code == "core.crypto.aead_auth_failed"
+
+
+async def test_strict_mode_still_reads_bound_ciphertext() -> None:
+    ring = _keyring()
+    codec = _strict_codec(ring)
+    await codec.prepare_encrypt()
+
+    stored = codec.encode_persistence_mapping(_A)
+    assert codec.decode_mapping(stored).email == "a@example.com"
+
+
+async def test_strict_mode_missing_record_id_requires_it() -> None:
+    """Strict binding makes the id mandatory — no id-less fallback attempt."""
+
+    ring = _keyring()
+    codec = _strict_codec(ring)
+    await codec.prepare_encrypt()
+
+    stored = codec.encode_persistence_mapping(_A)
+    without_id = {"name": "Alice", "email": stored["email"]}
+
+    with pytest.raises(CoreException) as excinfo:
+        codec.decode_mapping(without_id)
+
+    assert excinfo.value.code == "core.crypto.record_id_required"

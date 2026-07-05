@@ -152,6 +152,23 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
     Never applied to :attr:`searchable_fields` — deterministic ciphertext must stay
     record-independent for equality queries to match across rows."""
 
+    reject_plaintext: bool = False
+    """Once a field-encryption migration is complete, refuse plaintext on read.
+
+    The decrypt path tolerates a non-envelope value in an encrypted slot so a
+    zero-downtime rollout can encrypt in place while legacy rows are still plaintext.
+    That tolerance is also a fail-open hole once the backfill is done: an attacker with
+    write access could replace a ciphertext with chosen plaintext and have it accepted,
+    forfeiting AEAD integrity. Set this ``True`` after backfill to flip the switch:
+
+    - a value present in a :attr:`fields` / :attr:`searchable_fields` slot that is not a
+      valid Forze ciphertext raises ``core.crypto.plaintext_rejected`` instead of passing
+      through, and
+    - record-id binding (:attr:`record_id_field`) stops falling back to the legacy
+      id-less AAD, so a pre-binding (id-less) ciphertext is no longer accepted.
+
+    Default ``False`` preserves the migration-tolerant behavior."""
+
     # ....................... #
 
     @property
@@ -182,7 +199,11 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         ]
 
         if envelopes:
-            await self.cipher.ensure_unwrapped(envelopes)
+            # Pass the tenant so the keyring authorizes each envelope's key id against
+            # the tenant's own key before unwrapping (confused-deputy guard).
+            await self.cipher.ensure_unwrapped(
+                envelopes, tenant=self.tenant_provider()
+            )
 
     # ....................... #
     # field crypto helpers
@@ -349,6 +370,21 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
 
         return attrs.evolve(self, cipher=frozen_cipher, deterministic=frozen_det)
 
+    def _reject_plaintext(self, field: str) -> CoreException:
+        """The error for an unencrypted value in an encrypted slot under strict mode.
+
+        Raised only when :attr:`reject_plaintext` is set (post-migration): a marked
+        field holding a non-ciphertext value is a fail-open plaintext leak, not a
+        legacy row to tolerate.
+        """
+
+        return exc.validation(
+            f"Encrypted field {field!r} holds a non-ciphertext value while "
+            "reject_plaintext is set (migration complete). Refusing to accept "
+            "plaintext in an encrypted field.",
+            code="core.crypto.plaintext_rejected",
+        )
+
     def _decrypt_fields(self, mapping: JsonDict) -> JsonDict:
         if not self.fields and not self.searchable_fields:
             return mapping
@@ -359,12 +395,14 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         for field in self.fields:
             value = mapping.get(field)
 
-            if not isinstance(value, str):
+            if value is None:
                 continue
 
-            blob = _maybe_envelope(value)
-
-            if blob is None:
+            if not isinstance(value, str) or (blob := _maybe_envelope(value)) is None:
+                # A marked field holding a non-envelope value: legacy plaintext to
+                # tolerate during a rollout, or a fail-open leak to reject post-migration.
+                if self.reject_plaintext:
+                    raise self._reject_plaintext(field)
                 continue
 
             if tenant is _UNSET:
@@ -383,13 +421,20 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             for field in self.searchable_fields:
                 value = mapping.get(field)
 
+                if value is None:
+                    continue
+
                 if not isinstance(value, str):
+                    if self.reject_plaintext:
+                        raise self._reject_plaintext(field)
                     continue
 
                 try:
                     ciphertext = base64.b64decode(value, validate=True)
 
-                except (binascii.Error, ValueError):
+                except (binascii.Error, ValueError) as error:
+                    if self.reject_plaintext:
+                        raise self._reject_plaintext(field) from error
                     continue  # legacy plaintext
 
                 if tenant is _UNSET:
@@ -402,7 +447,11 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
                         ciphertext=ciphertext,
                     )
 
-                except CoreException:
+                except CoreException as error:
+                    if self.reject_plaintext:
+                        # Valid base64 but not our authentic ciphertext: a tamper /
+                        # plaintext signal post-migration, not a legacy row.
+                        raise self._reject_plaintext(field) from error
                     continue  # valid base64 but not our ciphertext → legacy plaintext
 
                 if out is None:
@@ -425,6 +474,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         failure (only) retry with the legacy AAD, so ciphertext written before
         binding was enabled still reads. A transplanted id-bound ciphertext fails
         both AADs and stays rejected; any non-auth failure propagates unchanged.
+
+        When :attr:`reject_plaintext` is set (migration complete), the legacy id-less
+        fallback is disabled: a value must authenticate under the id-bound AAD, so a
+        pre-binding ciphertext is no longer accepted and the id is mandatory.
         """
 
         if self.record_id_field is None:
@@ -439,28 +492,37 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
                 )
 
             except CoreException as error:
-                if error.code != _AEAD_AUTH_FAILED_CODE:
+                if error.code != _AEAD_AUTH_FAILED_CODE or self.reject_plaintext:
+                    # Strict mode: no legacy downgrade — the value must authenticate
+                    # under the id-bound AAD or stay rejected.
                     raise
                 # Pre-binding ciphertext: retry the legacy id-less AAD. A transplanted
                 # id-bound value fails this too and stays rejected (aead_auth_failed).
                 return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
 
-        # Binding is configured but the record id is absent from this row. A legacy
-        # (pre-binding) value still reads id-less; an id-bound value fails — surface the
-        # missing id as a clear misconfiguration rather than an opaque tamper error
-        # (e.g. a projection that selected the encrypted field but not its id column).
+        # Binding is configured but the record id is absent from this row. Under strict
+        # mode the id is mandatory (no id-less fallback); otherwise a legacy (pre-binding)
+        # value still reads id-less. Either way, surface the missing id as a clear
+        # misconfiguration rather than an opaque tamper error (e.g. a projection that
+        # selected the encrypted field but not its id column).
+        if self.reject_plaintext:
+            raise self._record_id_required(field)
+
         try:
             return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
 
         except CoreException as error:
             if error.code != _AEAD_AUTH_FAILED_CODE:
                 raise
-            raise exc.precondition(
-                f"Cannot decrypt id-bound field {field!r}: its record id field "
-                f"({self.record_id_field!r}) is absent from the row — include it in the "
-                "projection (or the value predates record-id binding).",
-                code="core.crypto.record_id_required",
-            ) from error
+            raise self._record_id_required(field) from error
+
+    def _record_id_required(self, field: str) -> CoreException:
+        return exc.precondition(
+            f"Cannot decrypt id-bound field {field!r}: its record id field "
+            f"({self.record_id_field!r}) is absent from the row — include it in the "
+            "projection (or the value predates record-id binding).",
+            code="core.crypto.record_id_required",
+        )
 
     # ....................... #
     # query rewrite (deterministic searchable fields)
@@ -785,6 +847,7 @@ def encrypting_document_codecs(
     searchable_fields: frozenset[str] = frozenset(),
     deterministic: DeterministicFieldCipherPort | None = None,
     record_id_field: str | None = None,
+    reject_plaintext: bool = False,
 ) -> DocumentCodecs[Any, Any, Any, Any]:
     """Wrap a document codec bundle so fields are encrypted on the persistence path.
 
@@ -797,6 +860,10 @@ def encrypting_document_codecs(
 
     *record_id_field* (e.g. ``"id"``) opts the randomized *fields* into record-id AAD
     binding (transplant resistance); ``None`` keeps the legacy unbound AAD.
+
+    *reject_plaintext* (post-migration) makes the read path refuse a non-ciphertext
+    value in an encrypted field and disables the legacy id-less AAD fallback — closing
+    the fail-open plaintext tolerance once every row is encrypted. Default ``False``.
     """
 
     def _wrap(inner: ModelCodec[Any, Any]) -> EncryptingModelCodec[Any]:
@@ -809,6 +876,7 @@ def encrypting_document_codecs(
             deterministic=deterministic,
             label=label,
             record_id_field=record_id_field,
+            reject_plaintext=reject_plaintext,
         )
 
     return DocumentCodecs(

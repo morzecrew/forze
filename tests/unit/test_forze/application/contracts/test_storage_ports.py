@@ -1,7 +1,7 @@
 """Tests for forze.application.contracts.storage.ports."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Mapping, Optional
+from typing import AsyncIterator, Mapping, Optional
 
 from forze.application.contracts.storage import (
     DownloadedObject,
@@ -9,6 +9,7 @@ from forze.application.contracts.storage import (
     PresignedUrl,
     RangedDownload,
     StoredObject,
+    StreamedDownload,
     UploadedObject,
 )
 from forze.application.contracts.storage.ports import (
@@ -35,6 +36,40 @@ class _StubStorage:
             data=b"content",
             content_type="application/octet-stream",
             filename=key.split("/")[-1],
+        )
+
+    async def download_stream(self, key: str) -> StreamedDownload:
+        async def _body() -> AsyncIterator[bytes]:
+            yield b"content"
+
+        return StreamedDownload(
+            content_type="application/octet-stream",
+            filename=key.split("/")[-1],
+            chunks=_body(),
+        )
+
+    async def upload_stream(
+        self,
+        chunks: AsyncIterator[bytes],
+        *,
+        filename: str,
+        prefix: Optional[str] = None,
+        description: Optional[str] = None,
+        tags: Optional[Mapping[str, str]] = None,
+        content_type: Optional[str] = None,
+        chunk_size: int = 1 << 20,
+    ) -> StoredObject:
+        total = 0
+        async for piece in chunks:
+            total += len(piece)
+
+        return StoredObject(
+            key=f"{prefix or ''}/{filename}",
+            filename=filename,
+            description=description,
+            content_type=content_type or "application/octet-stream",
+            size=total,
+            created_at=datetime.now(),
         )
 
     async def presign_download(

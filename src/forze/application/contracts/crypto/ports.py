@@ -1,9 +1,9 @@
 """Ports for key management and value-level encryption."""
 
-from typing import Awaitable, Iterable, Protocol
+from typing import AsyncIterator, Awaitable, Iterable, Protocol, runtime_checkable
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.crypto import EncryptedEnvelope
+from forze.base.crypto import DEFAULT_CHUNK_SIZE, ChunkFrame, EncryptedEnvelope
 
 from .value_objects import DataKey, KeyRef
 
@@ -74,12 +74,23 @@ class BytesCipherPort(Protocol):
 
         ...  # pragma: no cover
 
-    def decrypt(self, blob: bytes, *, aad: bytes = b"") -> Awaitable[bytes]:
+    def decrypt(
+        self,
+        blob: bytes,
+        *,
+        aad: bytes = b"",
+        tenant: TenantIdentity | None = None,
+    ) -> Awaitable[bytes]:
         """Decrypt a packed envelope; the key is resolved from the envelope itself.
 
         :param aad: Must equal the value passed to :meth:`encrypt`.
-        :raises CoreException: ``validation`` on a malformed envelope or an
-            authentication failure (tamper / wrong ``aad`` / wrong tenant).
+        :param tenant: When given, the envelope's key id is checked against the
+            tenant's own key-encryption key *before* any KMS unwrap, so a caller
+            cannot make the backend unwrap under a key id it names but does not own
+            (a cross-tenant confused-deputy). ``None`` skips the check (single-key).
+        :raises CoreException: ``validation`` on a malformed envelope, an
+            authentication failure (tamper / wrong ``aad`` / wrong tenant), or a
+            ``core.crypto.key_id_unauthorized`` key-id/tenant mismatch.
         """
 
         ...  # pragma: no cover
@@ -113,8 +124,15 @@ class FieldCipherPort(Protocol):
     def ensure_unwrapped(
         self,
         envelopes: Iterable[EncryptedEnvelope],
+        *,
+        tenant: TenantIdentity | None = None,
     ) -> Awaitable[None]:
-        """Unwrap and cache the data keys for *envelopes* for sync decrypts."""
+        """Unwrap and cache the data keys for *envelopes* for sync decrypts.
+
+        :param tenant: When given, each envelope's key id is checked against the
+            tenant's key-encryption key before it is unwrapped, so a foreign key id
+            fails closed (``core.crypto.key_id_unauthorized``) with no KMS call.
+        """
 
         ...  # pragma: no cover
 
@@ -146,13 +164,122 @@ class FieldCipherPort(Protocol):
 # ....................... #
 
 
-class KeyringPort(BytesCipherPort, FieldCipherPort, Protocol):
-    """The keyring's full surface: the async value cipher plus the sync field path.
+@runtime_checkable
+class ChunkedStreamOpener(Protocol):
+    """Random-access reader over one chunked-AEAD object (its data key already unwrapped).
 
-    A single registration (``KeyringDepKey``) serves both consumers — object
-    storage uses the async :class:`BytesCipherPort` half, the field codec uses the
-    :class:`FieldCipherPort` half. The :class:`~forze.application.integrations.crypto.Keyring`
-    implements all of it.
+    Returned by :meth:`StreamingBytesCipherPort.open_chunked_stream` after the header is
+    parsed and the tenant authorized: it exposes the layout a caller needs to seek
+    (:attr:`chunk_size`, :attr:`header_len`) and opens an individual parsed frame at its
+    index. Lets a storage adapter fetch and decrypt only the chunks a byte range covers.
+    """
+
+    @property
+    def chunk_size(self) -> int:
+        """Plaintext bytes per (non-final) chunk — the range→chunk mapping unit."""
+        ...  # pragma: no cover
+
+    @property
+    def header_len(self) -> int:
+        """Byte length of the stream header (where the first frame begins)."""
+        ...  # pragma: no cover
+
+    def open_frame(self, index: int, frame: ChunkFrame) -> bytes:
+        """Verify and decrypt the frame at position *index*.
+
+        :raises CoreException: ``validation`` on an authentication failure (tampered,
+            reordered — wrong *index* — or mis-flagged chunk).
+        """
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class StreamingBytesCipherPort(Protocol):
+    """Encrypt/decrypt a byte value chunk-by-chunk for bounded-memory large blobs.
+
+    The whole-value :class:`BytesCipherPort` needs the entire plaintext (and its
+    ciphertext) in memory at once. This seam frames the value into independently
+    sealed chunks (see :mod:`forze.base.crypto.chunked`) so a producer/consumer holds
+    only one chunk at a time — the basis for streaming a large object through the
+    object store. One data key is generated per stream and KMS-wrapped in the stream
+    header; the reader unwraps it once, then opens each chunk against it.
+    """
+
+    def encrypt_stream(
+        self,
+        plaintext: AsyncIterator[bytes],
+        *,
+        tenant: TenantIdentity | None,
+        aad: bytes = b"",
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Yield a chunked-AEAD stream (header then sealed chunks) for *plaintext*.
+
+        *plaintext* is re-chunked to *chunk_size* internally, so the caller may feed
+        arbitrary byte runs. *aad* is the base associated data (typically the object's
+        bucket/key/tenant binding); each chunk additionally binds its position and a
+        terminator flag, giving reordering and truncation resistance.
+        """
+
+        ...  # pragma: no cover
+
+    def decrypt_stream(
+        self,
+        ciphertext: AsyncIterator[bytes],
+        *,
+        aad: bytes = b"",
+        tenant: TenantIdentity | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Yield plaintext chunks for a chunked-AEAD stream produced by :meth:`encrypt_stream`.
+
+        *aad* must equal the base value passed to :meth:`encrypt_stream`. When *tenant*
+        is given, the header's key id is authorized against the tenant's own key before
+        the data key is unwrapped (confused-deputy guard). A stream that ends without a
+        terminating chunk (truncation) or carries trailing bytes is rejected.
+
+        :raises CoreException: ``validation`` on a malformed/truncated stream, an
+            authentication failure, an algorithm mismatch, or a
+            ``core.crypto.key_id_unauthorized`` key-id/tenant mismatch.
+        """
+
+        ...  # pragma: no cover
+
+    def open_chunked_stream(
+        self,
+        header_bytes: bytes,
+        *,
+        aad: bytes = b"",
+        tenant: TenantIdentity | None = None,
+    ) -> Awaitable["ChunkedStreamOpener"]:
+        """Parse a chunked stream's *header_bytes* and return a random-access opener.
+
+        Authorizes the header's key id against *tenant* (confused-deputy guard) and
+        unwraps the data key **once**, so the caller can then fetch and decrypt only the
+        chunks a byte range covers (see :class:`ChunkedStreamOpener`). *header_bytes* must
+        contain at least the full header; *aad* is the object's base associated data.
+
+        :raises CoreException: ``validation`` on a malformed/truncated header, an
+            algorithm mismatch, or a ``core.crypto.key_id_unauthorized`` mismatch.
+        """
+
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class KeyringPort(
+    BytesCipherPort, FieldCipherPort, StreamingBytesCipherPort, Protocol
+):
+    """The keyring's full surface: the async value cipher, the sync field path, and streaming.
+
+    A single registration (``KeyringDepKey``) serves every consumer — object storage
+    uses the async :class:`BytesCipherPort` and :class:`StreamingBytesCipherPort` halves,
+    the field codec uses the :class:`FieldCipherPort` half. The
+    :class:`~forze.application.integrations.crypto.Keyring` implements all of it.
     """
 
 

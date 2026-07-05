@@ -21,6 +21,16 @@ class ConfigurableGoogleOidcVerifier:
     config: GoogleOidcConfig
     """Google client id and optional claim overrides."""
 
+    _inner: ConfigurableOidcIdpVerifier = attrs.field(
+        init=False,
+        repr=False,
+        default=attrs.Factory(
+            lambda self: ConfigurableOidcIdpVerifier(preset=self.config.to_preset()),
+            takes_self=True,
+        ),
+    )
+    """The generic OIDC verifier factory, built once so its JWKS cache spans requests."""
+
     # ....................... #
 
     def __call__(
@@ -28,4 +38,4 @@ class ConfigurableGoogleOidcVerifier:
         ctx: ExecutionContext,
         spec: AuthnSpec,
     ) -> TokenVerifierPort:
-        return ConfigurableOidcIdpVerifier(preset=self.config.to_preset())(ctx, spec)
+        return self._inner(ctx, spec)

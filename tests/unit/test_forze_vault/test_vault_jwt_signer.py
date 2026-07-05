@@ -176,3 +176,61 @@ def test_unsupported_algorithm_rejected() -> None:
 
     with pytest.raises(CoreException):
         VaultTransitSigner(client=client, key_name="k", algorithm="HS256")
+
+
+# ....................... #
+# public-key TTL refresh (rotation picked up without a restart)
+
+
+import attrs  # noqa: E402
+from datetime import UTC, datetime  # noqa: E402
+
+from forze.base.primitives import bind_time_source  # noqa: E402
+
+
+@attrs.define(slots=True)
+class _ManualClock:
+    t: float = 0.0
+
+    def now(self) -> datetime:
+        return datetime(2020, 1, 1, tzinfo=UTC)
+
+    def uuid(self):  # type: ignore[no-untyped-def]
+        return uuid4()
+
+    def monotonic(self) -> float:
+        return self.t
+
+
+async def test_public_key_refetched_after_ttl() -> None:
+    """Once the TTL elapses the public key is re-fetched, so a rotated Vault key is
+    picked up for verification and the JWKS without a process restart."""
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client = MagicMock(spec=VaultClientPort)
+    client.transit_sign = AsyncMock(
+        side_effect=lambda _n, data, **_k: private_key.sign(
+            data, padding.PKCS1v15(), hashes.SHA256()
+        )
+    )
+    client.transit_public_key = AsyncMock(return_value=_pem(private_key.public_key()))
+
+    clock = _ManualClock()
+
+    with bind_time_source(clock):
+        signer = VaultTransitSigner(
+            client=client, key_name="jwt", kid="v1", public_key_ttl_seconds=60.0
+        )
+
+        await signer.public_jwk()
+        assert client.transit_public_key.await_count == 1
+
+        # Within the TTL: still cached.
+        clock.t = 30.0
+        await signer.public_jwk()
+        assert client.transit_public_key.await_count == 1
+
+        # Past the TTL: re-fetched.
+        clock.t = 61.0
+        await signer.public_jwk()
+        assert client.transit_public_key.await_count == 2

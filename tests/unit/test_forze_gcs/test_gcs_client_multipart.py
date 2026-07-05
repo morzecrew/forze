@@ -213,3 +213,24 @@ async def test_abort_deletes_all_temp_parts() -> None:
 
     deleted = {c.args[1] for c in fake.delete.await_args_list}
     assert deleted == {f"{prefix}1", f"{prefix}2"}
+
+
+@pytest.mark.asyncio
+async def test_upload_multipart_part_writes_temp_part_object() -> None:
+    fake = _fake_storage()
+    fake.upload = AsyncMock(return_value=None)
+    client = _client(fake)
+
+    info = await client.upload_multipart_part(
+        "b", "files/k", upload_id="SID", part_number=2, data=b"chunk-bytes"
+    )
+
+    assert isinstance(info, ObjectStoragePartInfo)
+    assert info.part_number == 2
+    assert info.size == len(b"chunk-bytes")
+
+    part_key = GCSClient._mpu_part_key("files/k", "SID", 2)
+    args = fake.upload.await_args
+    assert args.args[0] == "b"
+    assert args.args[1] == part_key
+    assert args.args[2] == b"chunk-bytes"

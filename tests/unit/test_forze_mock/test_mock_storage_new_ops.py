@@ -265,3 +265,37 @@ async def test_put_object_tags_replaces(adapter: MockStorageAdapter) -> None:
 async def test_put_object_tags_missing_raises(adapter: MockStorageAdapter) -> None:
     with pytest.raises(CoreException):
         await adapter.put_object_tags("nope", {"a": "b"})
+
+
+# ----------------------- #
+# streaming (upload_stream / download_stream)
+
+
+async def _aiter(data: bytes, *, piece: int = 50):
+    for i in range(0, len(data), piece):
+        yield data[i : i + piece]
+
+
+@pytest.mark.asyncio
+async def test_upload_stream_round_trip(adapter: MockStorageAdapter) -> None:
+    data = b"streamed payload" * 20
+
+    stored = await adapter.upload_stream(_aiter(data), filename="big.bin", prefix="up")
+
+    assert stored.size == len(data)
+    assert stored.key.startswith("up/")
+
+    dl = await adapter.download_stream(stored.key)
+    out = bytearray()
+    async for piece in dl.chunks:
+        out += piece
+
+    assert bytes(out) == data
+    assert dl.filename == stored.filename
+    assert dl.size == len(data)
+
+
+@pytest.mark.asyncio
+async def test_download_stream_missing_key_raises(adapter: MockStorageAdapter) -> None:
+    with pytest.raises(CoreException):
+        await adapter.download_stream("nope")

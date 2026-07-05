@@ -14,6 +14,7 @@ Supports two algorithms, matched to the Transit key type:
   so it returns the raw ``r||s`` an ES256 JWS expects (no DER→raw conversion here).
 """
 
+import asyncio
 import json
 from typing import Any, final
 
@@ -22,7 +23,7 @@ from cryptography.hazmat.primitives import serialization
 from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, current_time_source
 
 from ..kernel.client import VaultClientPort
 
@@ -50,12 +51,25 @@ class VaultTransitSigner:
     algorithm: str = "RS256"  #! probably enforce Literal
     """JWS algorithm written to the token header: ``RS256`` or ``ES256``."""
 
+    public_key_ttl_seconds: float = 300.0
+    """Lifetime of the cached public key. After it elapses the key is re-fetched from
+    Vault, so a Transit key rotation is picked up (for verification and the published
+    JWKS) without a process restart. The private key never leaves Vault regardless."""
+
     _public_pem: str | None = attrs.field(default=None, init=False, repr=False)
-    """Cached PEM public key (fetched once from Vault)."""
+    """Cached PEM public key (re-fetched from Vault once the TTL elapses)."""
 
     _public_key_obj: Any = attrs.field(default=None, init=False, repr=False)
     """Cached parsed public key, so local verification (per token) does not re-parse
-    the PEM on every call."""
+    the PEM on every call. Reset whenever the PEM is re-fetched."""
+
+    _fetched_at: float | None = attrs.field(default=None, init=False, repr=False)
+    """Monotonic time the cached PEM was fetched, for TTL expiry."""
+
+    _refresh_lock: asyncio.Lock = attrs.field(
+        factory=asyncio.Lock, init=False, repr=False
+    )
+    """Serializes the re-fetch so a concurrent TTL expiry doesn't stampede Vault."""
 
     # ....................... #
 
@@ -74,11 +88,28 @@ class VaultTransitSigner:
 
     # ....................... #
 
-    async def _public_key_pem(self) -> str:
-        if self._public_pem is None:
-            self._public_pem = await self.client.transit_public_key(self.key_name)
+    def _is_fresh(self) -> bool:
+        if self._public_pem is None or self._fetched_at is None:
+            return False
 
-        return self._public_pem
+        age = current_time_source().monotonic() - self._fetched_at
+        return age < self.public_key_ttl_seconds
+
+    # ....................... #
+
+    async def _public_key_pem(self) -> str:
+        # Fast path: a still-fresh cache needs no lock.
+        if self._is_fresh():
+            return self._public_pem  # type: ignore[return-value]  # fresh ⇒ non-None
+
+        async with self._refresh_lock:
+            # Double-checked: another caller may have refreshed while we waited.
+            if not self._is_fresh():
+                self._public_pem = await self.client.transit_public_key(self.key_name)
+                self._public_key_obj = None  # parsed key must track the re-fetched PEM
+                self._fetched_at = current_time_source().monotonic()
+
+            return self._public_pem  # type: ignore[return-value]  # set above
 
     # ....................... #
 
@@ -96,10 +127,12 @@ class VaultTransitSigner:
     # ....................... #
 
     async def _public_key(self) -> Any:
+        # Resolve the PEM first so the TTL check runs on every call; a re-fetch resets
+        # the parsed key, forcing a re-parse below.
+        pem = await self._public_key_pem()
+
         if self._public_key_obj is None:
-            self._public_key_obj = serialization.load_pem_public_key(
-                (await self._public_key_pem()).encode()
-            )
+            self._public_key_obj = serialization.load_pem_public_key(pem.encode())
 
         return self._public_key_obj
 

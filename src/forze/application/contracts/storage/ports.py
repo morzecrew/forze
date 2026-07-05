@@ -1,7 +1,16 @@
 """Storage query and command ports for object storage providers."""
 
 from datetime import datetime, timedelta
-from typing import Awaitable, Mapping, Protocol, Sequence, runtime_checkable
+from typing import (
+    AsyncIterator,
+    Awaitable,
+    Mapping,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
+
+from forze.base.crypto import DEFAULT_CHUNK_SIZE
 
 from .value_objects import (
     DownloadedObject,
@@ -9,6 +18,7 @@ from .value_objects import (
     PresignedUrl,
     RangedDownload,
     StoredObject,
+    StreamedDownload,
     UploadedObject,
     UploadPart,
     UploadSession,
@@ -23,6 +33,21 @@ class StorageQueryPort(Protocol):
 
     def download(self, key: str) -> Awaitable[DownloadedObject]:
         """Download previously stored object data by key."""
+        ...  # pragma: no cover
+
+    def download_stream(
+        self,
+        key: str,
+    ) -> Awaitable[StreamedDownload]:
+        """Download an object as a bounded-memory stream of plaintext chunks.
+
+        The returned :class:`StreamedDownload` carries the content type and a
+        single-use async iterator body, so a large object (client-side-encrypted
+        or not) is never held whole in memory. A client-side-encrypted object
+        written in the chunked format is decrypted chunk-by-chunk; a legacy
+        whole-payload envelope is decrypted in one pass (correct but not bounded);
+        a plaintext object streams straight through.
+        """
         ...  # pragma: no cover
 
     def presign_download(
@@ -182,6 +207,30 @@ class StorageCommandPort(Protocol):
         """Upload an object and return its stored metadata.
 
         :param obj: Uploaded object.
+        """
+        ...  # pragma: no cover
+
+    def upload_stream(
+        self,
+        chunks: AsyncIterator[bytes],
+        *,
+        filename: str,
+        prefix: str | None = None,
+        description: str | None = None,
+        tags: Mapping[str, str] | None = None,
+        content_type: str | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> Awaitable[StoredObject]:
+        """Upload an object from a stream of byte chunks, in bounded memory.
+
+        The bytes are consumed from *chunks* and pushed to the backend as a
+        multipart upload, so a large object never has to be buffered whole. On a
+        client-side-encrypting route the stream is sealed chunk-by-chunk in the
+        chunked-AEAD format (*chunk_size* is the crypto framing granularity);
+        otherwise the plaintext is streamed as-is. Unlike :meth:`upload`, a
+        streamed object carries no filename/description metadata envelope (the
+        returned :class:`StoredObject` reflects the provided values and the
+        streamed size).
         """
         ...  # pragma: no cover
 

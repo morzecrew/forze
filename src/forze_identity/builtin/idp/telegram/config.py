@@ -49,6 +49,9 @@ class TelegramLoginOidcConfig:
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
     """Clock-skew leeway for JWT validation."""
 
+    require_nonce: bool = attrs.field(default=False)
+    """When ``True``, reject an ``id_token`` with no ``nonce`` claim (presence-only)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -78,4 +81,5 @@ class TelegramLoginOidcConfig:
             audience=self.client_id,
             leeway=self.leeway,
             tenant_claim=self.tenant_claim,
+            require_nonce=self.require_nonce,
         )

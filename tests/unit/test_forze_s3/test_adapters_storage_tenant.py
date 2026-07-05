@@ -5,11 +5,14 @@ import pytest
 
 from forze.application.contracts.storage import UploadedObject
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException
 
 from forze_s3.adapters.storage import S3StorageAdapter
 
 
 _TENANT = UUID("12345678-1234-5678-1234-567812345678")
+_OWN_KEY = f"tenant_{_TENANT}/docs/object.txt"
+_CROSS_TENANT_KEY = "tenant_00000000-0000-0000-0000-0000deadbeef/docs/object.txt"
 
 
 @pytest.fixture
@@ -57,3 +60,93 @@ async def test_list_with_tenant(storage_adapter_with_tenant: S3StorageAdapter) -
         offset=0,
         include_tags=False,
     )
+
+
+# ....................... #
+# Tenant isolation on the read/mutate paths (caller-supplied keys)
+
+
+def _wire_client_cm(adapter: S3StorageAdapter) -> None:
+    adapter.client.client.return_value.__aenter__ = AsyncMock()
+    adapter.client.client.return_value.__aexit__ = AsyncMock()
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_cross_tenant_key(
+    storage_adapter_with_tenant: S3StorageAdapter,
+) -> None:
+    storage_adapter_with_tenant.client.download_bytes = AsyncMock()
+
+    with pytest.raises(CoreException) as ei:
+        await storage_adapter_with_tenant.download(_CROSS_TENANT_KEY)
+
+    assert ei.value.code == "core.storage.key_outside_tenant"
+    storage_adapter_with_tenant.client.download_bytes.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_cross_tenant_key(
+    storage_adapter_with_tenant: S3StorageAdapter,
+) -> None:
+    storage_adapter_with_tenant.client.delete_object = AsyncMock()
+
+    with pytest.raises(CoreException) as ei:
+        await storage_adapter_with_tenant.delete(_CROSS_TENANT_KEY)
+
+    assert ei.value.code == "core.storage.key_outside_tenant"
+    storage_adapter_with_tenant.client.delete_object.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_presign_download_rejects_cross_tenant_key(
+    storage_adapter_with_tenant: S3StorageAdapter,
+) -> None:
+    from datetime import timedelta
+
+    with pytest.raises(CoreException) as ei:
+        await storage_adapter_with_tenant.presign_download(
+            _CROSS_TENANT_KEY, expires_in=timedelta(minutes=5)
+        )
+
+    assert ei.value.code == "core.storage.key_outside_tenant"
+
+
+@pytest.mark.asyncio
+async def test_copy_rejects_cross_tenant_source(
+    storage_adapter_with_tenant: S3StorageAdapter,
+) -> None:
+    with pytest.raises(CoreException) as ei:
+        await storage_adapter_with_tenant.copy(_CROSS_TENANT_KEY, _OWN_KEY)
+
+    assert ei.value.code == "core.storage.key_outside_tenant"
+
+
+@pytest.mark.asyncio
+async def test_put_object_tags_rejects_cross_tenant_key(
+    storage_adapter_with_tenant: S3StorageAdapter,
+) -> None:
+    with pytest.raises(CoreException) as ei:
+        await storage_adapter_with_tenant.put_object_tags(
+            _CROSS_TENANT_KEY, {"k": "v"}
+        )
+
+    assert ei.value.code == "core.storage.key_outside_tenant"
+
+
+@pytest.mark.asyncio
+async def test_download_allows_own_tenant_key(
+    storage_adapter_with_tenant: S3StorageAdapter,
+) -> None:
+    """A key inside the active tenant's own prefix (as minted by upload) still works."""
+
+    _wire_client_cm(storage_adapter_with_tenant)
+    body = MagicMock()
+    body.data = b"hello"
+    body.metadata = {}
+    body.content_type = "text/plain"
+    storage_adapter_with_tenant.client.download_bytes = AsyncMock(return_value=body)
+
+    result = await storage_adapter_with_tenant.download(_OWN_KEY)
+
+    assert result.data == b"hello"
+    storage_adapter_with_tenant.client.download_bytes.assert_awaited_once()

@@ -11,6 +11,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..domain.models.session import ReadSession
 from ..services import AccessTokenClaims, AccessTokenService
@@ -40,6 +41,15 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
 
     session_qry: DocumentQueryPort[ReadSession] | None = None
     """When set, enforce session binding via the ``sid`` claim."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # A cached or history-enabled session spec would serve a revoked/rotated row
+        # from cache (or resurrect a soft-deleted one), defeating the very revocation
+        # check below — the same guard every sibling credential verifier applies.
+        if self.session_qry is not None:
+            forbid_cache_and_history(self.session_qry.spec, label="Session")
 
     # ....................... #
 

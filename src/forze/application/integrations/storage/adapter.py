@@ -4,7 +4,7 @@ import asyncio
 import builtins
 import mimetypes
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Mapping
@@ -12,7 +12,11 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.crypto import BytesCipherPort
+from forze.application.contracts.crypto import (
+    BytesCipherPort,
+    ChunkedStreamOpener,
+    StreamingBytesCipherPort,
+)
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     is_static_named_resource,
@@ -30,6 +34,7 @@ from forze.application.contracts.storage.value_objects import (
     PresignedUrl,
     RangedDownload,
     StoredObject,
+    StreamedDownload,
     UploadedObject,
     UploadPart,
     UploadSession,
@@ -40,6 +45,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStoragePartInfo,
     ObjectStorageSSE,
+    unsatisfiable_range,
     validate_range,
 )
 from forze.application.integrations.storage.codec import default_path_codec
@@ -47,13 +53,63 @@ from forze.application.integrations.storage.metadata import (
     object_metadata_from_user_metadata,
 )
 from forze.base.codecs import AsciiB64Codec
-from forze.base.crypto import is_envelope
+from forze.base.crypto import (
+    DEFAULT_CHUNK_SIZE,
+    chunk_frame_stride,
+    is_chunked_envelope,
+    is_envelope,
+    parse_frame,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, OnceCell, utcnow, uuid7
 
 # ----------------------- #
 
 default_b64_codec = AsciiB64Codec()
+
+_DEFAULT_STREAM_PART_SIZE = 8 * 1024 * 1024
+"""Default transfer part size for streaming uploads/downloads (8 MiB).
+
+Above S3's 5 MiB minimum non-final part, and the memory ceiling of a streamed
+transfer (roughly one part plus one crypto chunk). Distinct from the crypto
+``chunk_size`` — this is the storage transfer granularity, not the AEAD framing."""
+
+_HEADER_PROBE_SIZE = 8192
+"""Leading bytes fetched to parse a chunked object's header + first frame prefix on a
+ranged read. Comfortably covers the header (magic + key ids + wrapped DEK + chunk size)
+and the ~18-byte first-frame length prefix used to derive the per-chunk stride."""
+
+_FRAME_PREFIX_MAX = 512
+"""Upper bound on a frame's length-prefix region (is_final + nonce + ct-length), used
+for the rare header-probe-too-small fallback when deriving the stride."""
+
+
+async def _count_bytes(
+    source: AsyncIterator[bytes], total: list[int]
+) -> AsyncIterator[bytes]:
+    """Pass *source* through untouched while tallying its byte count into ``total[0]``."""
+
+    async for piece in source:
+        total[0] += len(piece)
+        yield piece
+
+
+async def _prepend(
+    first: bytes, rest: AsyncIterator[bytes]
+) -> AsyncIterator[bytes]:
+    """Yield *first* (when non-empty) then the remaining pieces of *rest*."""
+
+    if first:
+        yield first
+
+    async for piece in rest:
+        yield piece
+
+
+async def _aiter_once(data: bytes) -> AsyncIterator[bytes]:
+    """A single-element async byte stream (feeds a fully-buffered blob to a stream API)."""
+
+    yield data
 
 # ....................... #
 
@@ -129,6 +185,11 @@ class ObjectStorageAdapter(
     trigger the refusals of — :attr:`cipher` (client-side envelope). ``None``
     leaves the bucket's default encryption in effect. Set from per-route config
     by the integration factory."""
+
+    stream_part_size: int = _DEFAULT_STREAM_PART_SIZE
+    """Transfer part size for :meth:`upload_stream` / read granularity for
+    :meth:`download_stream`. Must clear the backend's minimum non-final part size
+    (S3's 5 MiB); the crypto ``chunk_size`` is independent. Lowerable for tests."""
 
     # ....................... #
 
@@ -265,8 +326,7 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
-    @staticmethod
-    def _validate_key(key: str) -> None:
+    def _validate_key(self, key: str) -> None:
         """Reject object keys that could escape the bucket/tenant prefix.
 
         Keys minted by this adapter are a validated prefix plus a generated id, so a
@@ -275,6 +335,15 @@ class ObjectStorageAdapter(
         (path traversal, absolute path, control characters) is rejected instead of
         being forwarded to the object store, blunting cross-object access from
         untrusted input.
+
+        For a **tenant-aware** adapter the key must additionally lie within the active
+        tenant's prefix. Every key this adapter mints carries that prefix
+        (:meth:`construct_key` / :meth:`construct_path` prepend it), so a caller-supplied
+        key that names a *different* tenant (e.g. ``tenant_<other>/xyz``) is a
+        cross-tenant reference and is refused before it reaches the store. Under the
+        ``tagged`` isolation tier (one shared bucket) this key check is the *only* thing
+        isolating tenants on the read/delete/copy/presign/tag paths, which — unlike
+        upload/list — take the key verbatim.
         """
 
         if not key or not re.match(r"^[a-zA-Z0-9!\-_.*'()/]+$", key):
@@ -282,6 +351,16 @@ class ObjectStorageAdapter(
 
         if key.startswith("/") or ".." in key.split("/"):
             raise exc.precondition(f"Unsafe object storage key: {key!r}")
+
+        tenant_prefix = self.__tenant_prefix()
+
+        if tenant_prefix is not None and not (
+            key == tenant_prefix or key.startswith(f"{tenant_prefix}/")
+        ):
+            raise exc.precondition(
+                f"Object storage key {key!r} is outside the active tenant's namespace",
+                code="core.storage.key_outside_tenant",
+            )
 
     # ....................... #
 
@@ -454,6 +533,297 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
+    def _streaming_cipher(self) -> StreamingBytesCipherPort:
+        """The wired cipher, asserted to support the chunked streaming path."""
+
+        if not isinstance(self.cipher, StreamingBytesCipherPort):
+            raise exc.configuration(
+                "The wired cipher does not support streaming encryption; a keyring "
+                "(StreamingBytesCipherPort) is required for upload_stream/download_stream.",
+                code="core.storage.streaming_cipher_required",
+            )
+
+        return self.cipher
+
+    # ....................... #
+
+    async def upload_stream(
+        self,
+        chunks: AsyncIterator[bytes],
+        *,
+        filename: str,
+        prefix: str | None = None,
+        description: str | None = None,
+        tags: Mapping[str, str] | None = None,
+        content_type: str | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> StoredObject:
+        """Stream an object to the store in bounded memory via a multipart upload.
+
+        On an encrypting route the plaintext is sealed chunk-by-chunk (chunked-AEAD)
+        before it is buffered into transfer parts; otherwise it streams through. The
+        object carries no metadata envelope (like a presigned/multipart object), so a
+        later read falls back to the key's basename for the filename.
+        """
+
+        self._validate_prefix(prefix)
+        key = self.construct_key(prefix)
+        resolved_type = content_type or self._guess_content_type(filename, b"")
+        tag_map = dict(tags) if tags else None
+        bucket = await self._resolved_bucket()
+
+        # Count plaintext bytes for the returned StoredObject (the encrypted byte
+        # stream is longer; the meaningful size is the logical, pre-encryption one).
+        size_box = [0]
+        counted = _count_bytes(chunks, size_box)
+
+        if self.cipher is not None:
+            byte_source: AsyncIterator[bytes] = self._streaming_cipher().encrypt_stream(
+                counted,
+                tenant=self._cipher_tenant(),
+                aad=self._encryption_aad(bucket, key),
+                chunk_size=chunk_size,
+            )
+        else:
+            byte_source = counted
+
+        async with self.client.client():
+            await self.client.ensure_bucket(bucket)
+            upload_id = await self.client.create_multipart_upload(
+                bucket=bucket,
+                key=key,
+                content_type=resolved_type,
+                sse=self.sse,
+            )
+
+            try:
+                parts = await self._upload_stream_parts(
+                    bucket, key, upload_id, byte_source
+                )
+                await self.client.complete_multipart_upload(
+                    bucket=bucket,
+                    key=key,
+                    upload_id=upload_id,
+                    parts=parts,
+                    content_type=resolved_type,
+                    sse=self.sse,
+                )
+
+            except BaseException:
+                with suppress(Exception):
+                    await self.client.abort_multipart_upload(
+                        bucket=bucket, key=key, upload_id=upload_id
+                    )
+                raise
+
+        return StoredObject(
+            key=key,
+            filename=filename,
+            description=description,
+            content_type=resolved_type,
+            size=size_box[0],
+            created_at=utcnow(),
+            tags=tag_map,
+        )
+
+    # ....................... #
+
+    async def _upload_stream_parts(
+        self,
+        bucket: str,
+        key: str,
+        upload_id: str,
+        byte_source: AsyncIterator[bytes],
+    ) -> list[ObjectStoragePartInfo]:
+        """Buffer *byte_source* into ``stream_part_size`` parts and upload each.
+
+        Non-final parts are exactly ``stream_part_size`` (clearing the backend
+        minimum); the trailing bytes form the final part. Always uploads at least
+        one part so an empty stream still completes.
+        """
+
+        parts: list[ObjectStoragePartInfo] = []
+        buffer = bytearray()
+        part_number = 1
+
+        async for piece in byte_source:
+            buffer.extend(piece)
+
+            while len(buffer) >= self.stream_part_size:
+                part = bytes(buffer[: self.stream_part_size])
+                del buffer[: self.stream_part_size]
+                parts.append(
+                    await self.client.upload_multipart_part(
+                        bucket=bucket,
+                        key=key,
+                        upload_id=upload_id,
+                        part_number=part_number,
+                        data=part,
+                        sse=self.sse,
+                    )
+                )
+                part_number += 1
+
+        # The remaining bytes are the final part; upload it (or a single empty part
+        # when the whole stream was empty) so completion always has ≥1 part.
+        if buffer or not parts:
+            parts.append(
+                await self.client.upload_multipart_part(
+                    bucket=bucket,
+                    key=key,
+                    upload_id=upload_id,
+                    part_number=part_number,
+                    data=bytes(buffer),
+                    sse=self.sse,
+                )
+            )
+
+        return parts
+
+    # ....................... #
+
+    async def download_stream(self, key: str) -> StreamedDownload:
+        """Download an object as a bounded-memory plaintext stream (see the port doc)."""
+
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+        head = await self.head(key)
+
+        filename = (
+            self._filename_from_metadata(key, head.metadata)
+            if head.metadata
+            else self._key_basename(key)
+        )
+
+        raw = self._raw_ranges(bucket, key, head.size)
+        body = raw if self.cipher is None else self._decrypt_ranges(raw, bucket, key)
+        # The plaintext size is known only for a non-encrypted object (the stored
+        # size is the raw bytes; encryption/​framing makes it larger than plaintext).
+        size = head.size if self.cipher is None else None
+
+        return StreamedDownload(
+            content_type=head.content_type,
+            filename=filename,
+            chunks=body,
+            size=size,
+        )
+
+    # ....................... #
+
+    async def _raw_ranges(
+        self, bucket: str, key: str, total: int
+    ) -> AsyncIterator[bytes]:
+        """Yield an object's raw bytes in ``stream_part_size`` ranged GETs.
+
+        Holds the client connection open across the whole iteration, so the caller
+        must consume (or close) the stream promptly.
+        """
+
+        async with self.client.client():
+            offset = 0
+
+            while offset < total:
+                end = offset + self.stream_part_size - 1
+                body, _content_range, _real_total = (
+                    await self.client.download_range_bytes(
+                        bucket=bucket, key=key, start=offset, end=end
+                    )
+                )
+
+                if not body.data:
+                    break
+
+                offset += len(body.data)
+                yield body.data
+
+    # ....................... #
+
+    async def _decrypt_ranges(
+        self,
+        raw: AsyncIterator[bytes],
+        bucket: str,
+        key: str,
+    ) -> AsyncIterator[bytes]:
+        """Decrypt a raw byte stream, dispatching on its stored format.
+
+        Peeks the leading magic: a chunked-AEAD object (``FZEc``) is decrypted
+        chunk-by-chunk (bounded memory); a legacy whole-payload envelope (``FZEv``)
+        is buffered and decrypted in one pass; anything else is legacy plaintext and
+        passes straight through (migration tolerance, like :meth:`download`).
+        """
+
+        aad = self._encryption_aad(bucket, key)
+        tail = raw.__aiter__()
+        prefix = bytearray()
+
+        async for piece in tail:
+            prefix.extend(piece)
+            if len(prefix) >= 4:  # both magics are 4 bytes
+                break
+        else:
+            # Fewer than 4 bytes total: cannot be an envelope — legacy plaintext.
+            if prefix:
+                yield bytes(prefix)
+            return
+
+        magic = bytes(prefix[:4])
+
+        if is_chunked_envelope(magic):
+            async for plaintext in self._streaming_cipher().decrypt_stream(
+                _prepend(bytes(prefix), tail),
+                aad=aad,
+                tenant=self._cipher_tenant(),
+            ):
+                yield plaintext
+
+        elif is_envelope(magic):
+            whole = bytearray(prefix)
+            async for piece in tail:
+                whole.extend(piece)
+            yield await self.cipher.decrypt(  # type: ignore[union-attr]  # cipher set on this path
+                bytes(whole), aad=aad, tenant=self._cipher_tenant()
+            )
+
+        else:
+            async for piece in _prepend(bytes(prefix), tail):
+                yield piece
+
+    # ....................... #
+
+    async def _decrypt_full(self, data: bytes, bucket: str, key: str) -> bytes:
+        """Decrypt a fully-buffered object body according to its stored format.
+
+        Recognizes both stored ciphertext shapes: a whole-payload envelope (``FZEv``)
+        and a chunked-AEAD object (``FZEc``, written by :meth:`upload_stream`) — the
+        latter is opened chunk-by-chunk and reassembled. A value that is neither is
+        legacy plaintext, returned untouched (migration tolerance). The tenant is bound
+        so the confused-deputy key-id guard runs, matching :meth:`download_stream` and
+        the ranged path. A no-op when no cipher is wired.
+        """
+
+        if self.cipher is None:
+            return data
+
+        aad = self._encryption_aad(bucket, key)
+        tenant = self._cipher_tenant()
+
+        if is_chunked_envelope(data):
+            out = bytearray()
+
+            async for piece in self._streaming_cipher().decrypt_stream(
+                _aiter_once(data), aad=aad, tenant=tenant
+            ):
+                out += piece
+
+            return bytes(out)
+
+        if is_envelope(data):
+            return await self.cipher.decrypt(data, aad=aad, tenant=tenant)
+
+        return data
+
+    # ....................... #
+
     async def download(self, key: str) -> DownloadedObject:
         """Download an object by key and return its data with metadata.
 
@@ -462,6 +832,10 @@ class ObjectStorageAdapter(
         filename/description are decoded as on :meth:`upload`; when it is absent
         — an object written through a presigned ``PUT`` (the completion seam) —
         the filename falls back to the key's basename instead of raising.
+
+        Both stored ciphertext formats decrypt transparently — a whole-payload
+        envelope and a chunked object written by :meth:`upload_stream`; a legacy
+        plaintext object is served as-is.
         """
 
         self._validate_key(key)
@@ -470,16 +844,7 @@ class ObjectStorageAdapter(
         async with self.client.client():
             body = await self.client.download_bytes(bucket=bucket, key=key)
 
-            data = body.data
-
-            # Decrypt only when encryption is enabled AND the bytes are an
-            # envelope — objects written before encryption was turned on are
-            # served as-is (migration tolerance).
-            if self.cipher is not None and is_envelope(data):
-                data = await self.cipher.decrypt(
-                    data,
-                    aad=self._encryption_aad(bucket, key),
-                )
+            data = await self._decrypt_full(body.data, bucket, key)
 
             filename = self._filename_from_metadata(key, body.metadata)
 
@@ -546,27 +911,31 @@ class ObjectStorageAdapter(
         ``GET`` to the client. An unsatisfiable range (``start`` beyond the
         object) surfaces as a precondition error (the 416 equivalent).
 
-        Refused when client-side encryption is enabled: a slice of an encryption
-        envelope cannot be decrypted, so a partial read would return ciphertext.
+        On a client-side-encrypting route, a chunked-AEAD object (written via
+        :meth:`upload_stream`) is served by decrypting only the chunks the range covers
+        (bounded memory); a legacy whole-payload envelope cannot be sliced and is refused
+        (use :meth:`download` / :meth:`download_stream`); a plaintext object passes through.
         """
-
-        if self.cipher is not None:
-            raise exc.precondition(
-                "Ranged downloads are unavailable when client-side encryption "
-                "is enabled: a byte slice of the encryption envelope cannot be "
-                "decrypted.",
-            )
 
         validate_range(start, end)
         self._validate_key(key)
         bucket = await self._resolved_bucket()
 
+        if self.cipher is not None:
+            return await self._encrypted_download_range(
+                bucket, key, start=start, end=end
+            )
+
+        return await self._raw_download_range(bucket, key, start=start, end=end)
+
+    # ....................... #
+
+    async def _raw_download_range(
+        self, bucket: str, key: str, *, start: int, end: int | None
+    ) -> RangedDownload:
         async with self.client.client():
             body, content_range, total = await self.client.download_range_bytes(
-                bucket=bucket,
-                key=key,
-                start=start,
-                end=end,
+                bucket=bucket, key=key, start=start, end=end
             )
 
         return RangedDownload(
@@ -575,6 +944,147 @@ class ObjectStorageAdapter(
             content_range=content_range,
             total_size=total,
         )
+
+    # ....................... #
+
+    async def _encrypted_download_range(
+        self, bucket: str, key: str, *, start: int, end: int | None
+    ) -> RangedDownload:
+        """Serve a ranged read against a client-side-encrypted object by stored format."""
+
+        head = await self.head(key)
+        raw_total = head.size
+
+        if raw_total >= 4:  # need the 4-byte magic to classify the object
+            async with self.client.client():
+                probe, _cr, _t = await self.client.download_range_bytes(
+                    bucket=bucket,
+                    key=key,
+                    start=0,
+                    end=min(_HEADER_PROBE_SIZE, raw_total) - 1,
+                )
+
+            magic = probe.data[:4]
+
+            if is_chunked_envelope(magic):
+                return await self._chunked_download_range(
+                    bucket,
+                    key,
+                    start=start,
+                    end=end,
+                    raw_total=raw_total,
+                    content_type=head.content_type,
+                    probe=probe.data,
+                )
+
+            if is_envelope(magic):
+                raise exc.precondition(
+                    "Ranged downloads are unavailable for a whole-payload encrypted "
+                    "object (a single AEAD blob cannot be sliced); use download() or "
+                    "download_stream().",
+                    code="core.storage.range_whole_payload_unsupported",
+                )
+
+        # Plaintext (migration tolerance) — pass the ranged GET straight through.
+        return await self._raw_download_range(bucket, key, start=start, end=end)
+
+    # ....................... #
+
+    async def _chunked_download_range(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        start: int,
+        end: int | None,
+        raw_total: int,
+        content_type: str,
+        probe: bytes,
+    ) -> RangedDownload:
+        """Decrypt only the chunks a byte range covers, then trim to the exact bytes."""
+
+        opener = await self._streaming_cipher().open_chunked_stream(
+            probe, aad=self._encryption_aad(bucket, key), tenant=self._cipher_tenant()
+        )
+        chunk_size = opener.chunk_size
+
+        stride = chunk_frame_stride(probe, opener.header_len)
+
+        if stride is None:  # header larger than the probe — widen and retry (rare)
+            async with self.client.client():
+                wider, _c, _t = await self.client.download_range_bytes(
+                    bucket=bucket,
+                    key=key,
+                    start=opener.header_len,
+                    end=min(opener.header_len + _FRAME_PREFIX_MAX, raw_total) - 1,
+                )
+            stride = chunk_frame_stride(wider.data, 0)
+
+            if stride is None:
+                raise exc.internal(
+                    "Could not determine the chunked frame stride from the object header",
+                )
+
+        # Chunk count and plaintext total (the last chunk's length is only known once
+        # decrypted, so read it — it is also reused if the range covers it).
+        num_chunks = -(-(raw_total - opener.header_len) // stride)  # ceil division
+        last_index = num_chunks - 1
+        last_plaintext = await self._open_chunk_at(
+            bucket, key, opener, stride, last_index, raw_total
+        )
+        plaintext_total = last_index * chunk_size + len(last_plaintext)
+
+        if start >= plaintext_total:
+            raise unsatisfiable_range(start, plaintext_total)
+
+        end_byte = plaintext_total - 1 if end is None else min(end, plaintext_total - 1)
+        first_chunk = start // chunk_size
+        last_chunk = end_byte // chunk_size
+
+        out = bytearray()
+
+        for index in range(first_chunk, last_chunk + 1):
+            out += (
+                last_plaintext
+                if index == last_index
+                else await self._open_chunk_at(
+                    bucket, key, opener, stride, index, raw_total
+                )
+            )
+
+        front = start - first_chunk * chunk_size
+        data = bytes(out[front : front + (end_byte - start + 1)])
+
+        return RangedDownload(
+            data=data,
+            content_type=content_type,
+            content_range=f"bytes {start}-{end_byte}/{plaintext_total}",
+            total_size=plaintext_total,
+        )
+
+    # ....................... #
+
+    async def _open_chunk_at(
+        self,
+        bucket: str,
+        key: str,
+        opener: ChunkedStreamOpener,
+        stride: int,
+        index: int,
+        raw_total: int,
+    ) -> bytes:
+        """Fetch and decrypt a single chunk by index (ranged GET of its frame)."""
+
+        offset = opener.header_len + index * stride
+        end = min(offset + stride, raw_total) - 1  # over-read clamps to the final frame
+
+        async with self.client.client():
+            body, _cr, _t = await self.client.download_range_bytes(
+                bucket=bucket, key=key, start=offset, end=end
+            )
+
+        frame, _consumed = parse_frame(body.data, 0)
+        return opener.open_frame(index, frame)
 
     # ....................... #
 
@@ -617,13 +1127,7 @@ class ObjectStorageAdapter(
             if body is None:
                 return None
 
-            data = body.data
-
-            if self.cipher is not None and is_envelope(data):
-                data = await self.cipher.decrypt(
-                    data,
-                    aad=self._encryption_aad(bucket, key),
-                )
+            data = await self._decrypt_full(body.data, bucket, key)
 
             filename = self._filename_from_metadata(key, body.metadata)
 

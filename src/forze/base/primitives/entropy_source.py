@@ -29,12 +29,25 @@ from uuid import uuid4 as uuid4_func
 
 import attrs
 
+from ..exceptions import exc
+
 # ----------------------- #
 
 
 @runtime_checkable
 class EntropySource(Protocol):
     """A source of random bytes, bits, floats, and random (v4) ids."""
+
+    @property
+    def is_cryptographically_secure(self) -> bool:
+        """Whether draws from this source are safe to mint durable secrets.
+
+        ``True`` for a CSPRNG-backed source (the production default); ``False`` for a
+        seeded/replayable simulation source. The :func:`secure_random_bytes` /
+        :func:`secure_token_urlsafe` helpers fail closed on a non-secure source unless
+        insecure entropy is explicitly permitted (:func:`permit_insecure_entropy`).
+        """
+        ...  # pragma: no cover
 
     def random_bytes(self, n: int) -> bytes:
         """Return *n* fresh random bytes (e.g. an AEAD nonce or opaque token)."""
@@ -64,10 +77,20 @@ class EntropySource(Protocol):
 # ....................... #
 
 
+_SYSTEM_RANDOM = random.SystemRandom()
+"""Process-wide os.urandom-backed generator (stateless, thread-safe) so every
+:class:`SystemEntropySource` read — floats included — is CSPRNG-backed, not the
+process-global Mersenne Twister."""
+
+
 @final
 @attrs.define(slots=True, frozen=True)
 class SystemEntropySource:
     """The real system CSPRNG — the default source (identical to direct stdlib reads)."""
+
+    @property
+    def is_cryptographically_secure(self) -> bool:  # noqa: PYL-R0201
+        return True
 
     def random_bytes(self, n: int) -> bytes:  # noqa: PYL-R0201
         return secrets.token_bytes(n)
@@ -76,7 +99,9 @@ class SystemEntropySource:
         return secrets.randbits(k)
 
     def random(self) -> float:  # noqa: PYL-R0201
-        return random.random()  # nosec B311 - system CSPRNG default
+        # os.urandom-backed, not the process-global Mersenne Twister (``random.random``),
+        # so this source is CSPRNG-backed across *all* reads as its name/docstring claim.
+        return _SYSTEM_RANDOM.random()
 
     def uuid4(self) -> UUID:  # noqa: PYL-R0201
         return uuid4_func()
@@ -112,6 +137,12 @@ class SeededEntropySource:
     )
 
     # ....................... #
+
+    @property
+    def is_cryptographically_secure(self) -> bool:  # noqa: PYL-R0201
+        # A seeded Mersenne Twister — replayable, therefore predictable. Never safe to
+        # mint a durable secret; the secure_* helpers refuse it outside a sanctioned sim.
+        return False
 
     def random_bytes(self, n: int) -> bytes:
         return self._rng.randbytes(n)
@@ -167,15 +198,103 @@ def bind_entropy_source(source: EntropySource) -> Iterator[None]:
 
 # ....................... #
 
+_ALLOW_INSECURE_ENTROPY: ContextVar[bool] = ContextVar(
+    "allow_insecure_entropy",
+    default=False,
+)
+"""Whether a non-CSPRNG entropy source is permitted to feed a secure draw.
+
+Off by default: :func:`secure_random_bytes` / :func:`secure_token_urlsafe` fail closed
+on a seeded source, so a simulation binding that leaks into a context minting a *real*
+secret cannot silently produce a predictable nonce/token. A sanctioned deterministic
+run (``run_simulation``) opts in via :func:`permit_insecure_entropy` so those paths
+still exercise deterministically."""
+
+
+@contextmanager
+def permit_insecure_entropy() -> Iterator[None]:
+    """Allow secure draws to accept a non-CSPRNG source for the duration of the block.
+
+    Bound only by the deterministic-simulation runtime, so its seeded source can drive
+    the security-sensitive paths (AEAD nonces, tokens, keys) reproducibly. Never bind
+    this in production: it disables the fail-closed guard that keeps a predictable
+    source from minting a real secret.
+    """
+
+    token = _ALLOW_INSECURE_ENTROPY.set(True)
+
+    try:
+        yield
+
+    finally:
+        _ALLOW_INSECURE_ENTROPY.reset(token)
+
+
+# ....................... #
+
+
+def _require_secure_source() -> EntropySource:
+    """Return the active source, refusing a non-CSPRNG one unless explicitly permitted."""
+
+    source = current_entropy_source()
+
+    # Lenient default (True) for a third-party source that predates this attribute —
+    # only a source that *declares itself* insecure (the seeded sim source) is refused.
+    if getattr(source, "is_cryptographically_secure", True):
+        return source
+
+    if _ALLOW_INSECURE_ENTROPY.get():
+        return source
+
+    raise exc.internal(
+        "A non-cryptographic entropy source is active while minting a secret "
+        "(nonce/token/key). This is only permitted inside a deterministic simulation "
+        "(permit_insecure_entropy). Refusing to produce a predictable secret.",
+        code="core.crypto.insecure_entropy",
+    )
+
+
+# ....................... #
+
+
+def secure_random_bytes(n: int) -> bytes:
+    """Return *n* random bytes for a durable secret, failing closed on an insecure source.
+
+    The security-sensitive twin of ``current_entropy_source().random_bytes`` — use it
+    for AEAD nonces, opaque tokens, API keys and OAuth state, where a predictable draw
+    is catastrophic. Byte-identical to a direct read under the production CSPRNG.
+    """
+
+    return _require_secure_source().random_bytes(n)
+
+
+# ....................... #
+
 
 def token_urlsafe(nbytes: int) -> str:
     """Seam-routed equivalent of :func:`secrets.token_urlsafe`.
 
     Returns a URL-safe base64 text token (padding stripped) drawn from the active
     entropy source — so opaque tokens become deterministic under a bound source.
+
+    Not fail-closed — for a security-sensitive token use :func:`secure_token_urlsafe`.
     """
 
     raw = current_entropy_source().random_bytes(nbytes)
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+# ....................... #
+
+
+def secure_token_urlsafe(nbytes: int) -> str:
+    """Fail-closed :func:`token_urlsafe` for security-sensitive tokens (OAuth state, PKCE).
+
+    Refuses a non-CSPRNG source unless insecure entropy is explicitly permitted, so a
+    leaked seeded source cannot mint a predictable token.
+    """
+
+    raw = secure_random_bytes(nbytes)
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 

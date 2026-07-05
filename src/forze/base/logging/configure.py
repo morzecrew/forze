@@ -232,7 +232,9 @@ def configure_logging(
         entirely; pass ``level="trace"`` to emit them.
     :param render_mode: The render mode to use: "console", "json".
     :param custom_console_renderer: A custom console renderer to use for the console mode.
-    :param logger_names: The logger names to configure logging for.
+    :param logger_names: The logger names to attach handlers to (an explicit allowlist).
+        When omitted or empty, the **root** logger is configured so no logger's output is
+        silently dropped; pass a list only to deliberately narrow capture to those names.
     :param stream: The stream to use for logging (default: stdout).
     :param sanitize_logs: Scrub sensitive keys (and optionally text PII) from log event fields.
     :param text_scrub: Apply scrub to string values in log extras when ``sanitize_logs`` is true.
@@ -295,7 +297,14 @@ def configure_logging(
         ],
     )
 
-    for name in _cast_logger_names(logger_names or []):
+    # With no explicit allowlist, configure the *root* logger so every logger in the
+    # process is captured. Attaching handlers only to a caller-supplied list (the else
+    # branch) silently drops INFO from any logger not on it — Python's WARNING-level
+    # last-resort handler swallows them — so a caller who omits the list (or forgets a
+    # name) would lose logs invisibly. An explicit list is still honored verbatim.
+    names = _cast_logger_names(logger_names) if logger_names else [""]
+
+    for name in names:
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.setLevel(LogLevelToRank.get(level, 0))

@@ -83,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`EncryptionReach` ladder (`none < at_rest < end_to_end`)** — names the outbox/messaging reach; `OutboxEncryptionTier` is now a back-compat alias and `MessageEncryptionTier` its transport subset. `CryptoDepsModule(required_reach="end_to_end"|"at_rest")` refuses a weaker outbox/transport route at resolve (opt-in).
 
+- **Bounded-memory streaming for object storage (incl. client-side-encrypted blobs)** — `StorageQueryPort.download_stream(key)` and `StorageCommandPort.upload_stream(chunks, …)` transfer a large object through fixed memory instead of buffering it whole. Upload streams the bytes to the backend as a multipart upload (a new client `upload_multipart_part` — app-provided part bytes — on S3 and GCS); download reads it back in ranged GETs. On a client-side-encrypting route the stream is sealed/opened chunk-by-chunk via a new chunked-AEAD wire format (`forze.base.crypto`: magic `FZEc` vs the whole-payload `FZEv`; `ChunkedHeader` / `ChunkedStreamReader` / `seal_chunk` / `open_chunk` / `is_chunked_envelope`) — each chunk bound to its position and a terminator flag for reordering/truncation resistance, one KMS-wrapped data key per stream, reusing the tenant key-id confused-deputy guard. This lifts the multipart-under-encryption restriction for the app-mediated path (presigned uploads remain incompatible with client-side encryption). The keyring exposes it as `StreamingBytesCipherPort` (`encrypt_stream` / `decrypt_stream`); the ports are general (a non-encrypting route streams plaintext straight through), and `download_stream` still reads legacy whole-payload (`FZEv`) objects (buffered decrypt) and plaintext objects. `ObjectStorageAdapter(stream_part_size=…)` tunes the transfer part size. **`download_range` now works on client-side-encrypted objects too:** a chunked (`FZEc`) object is served by fetching and decrypting only the chunks the byte range covers (`StreamingBytesCipherPort.open_chunked_stream` + a random-access opener) and trimming to the exact bytes — bounded to the covering chunks; a legacy whole-payload object stays refused (a single AEAD blob can't be sliced), and a plaintext object passes through.
+
 **Realtime**
 
 - **Server push (egress) + offline store-and-forward** — a handler publishes a `RealtimeSignal` to a principal/topic through messaging ports; the Socket.IO gateway bridges to a tenant-scoped room (ephemeral at-most-once or durable exactly-once), and a durable principal-addressed signal is mailboxed for an offline recipient and replayed per-device on reconnect. Read-only operations cannot publish.
@@ -106,6 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shared error helpers** — `error_envelope()` and `guard_frame()` give one client-safe `CoreException` projection and a shared guarded boundary; `http_status_for_kind(kind)` maps an `ExceptionKind` to its HTTP status. FastAPI and Socket.IO render through them.
 
 - **Mock document adapter — tenant scoping on every write** — the in-memory mock injects the tenant column on ensure/upsert/update/touch (not only create), matching Postgres.
+
+- **Telegram Login Widget verifier** — `TelegramWidgetVerifier` (in the Telegram builtin preset) verifies Login Widget callback data via Telegram's HMAC-SHA256 scheme — the data-check-string authenticated by `HMAC(SHA256(bot_token), …)`, compared constant-time, with an `auth_date` freshness (replay) bound — and emits the canonical `VerifiedAssertion` (Telegram user id as subject). `verify(data)` for a parsed field map, or the `TokenVerifierPort` `verify_token` for the widget query string; pure-stdlib crypto (no JWT). Complements the existing Telegram Login *OIDC* flow.
 
 **Deterministic Simulation Testing (`forze_dst`)** — new package
 
@@ -273,6 +277,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Keyring fill-lock stripe uses a stable hash** — PYTHONHASHSEED-independent, for deterministic-simulation replay; a guard bans `hash(x) % n`.
 
+**Field encryption & KMS hardening**
+
+- **Entropy seam fails closed for secrets** — AEAD nonces, refresh/invite tokens, API keys, and OAuth `state`/PKCE now draw through `secure_random_bytes` / `secure_token_urlsafe`, which refuse a non-CSPRNG entropy source (`core.crypto.insecure_entropy`) unless a deterministic simulation explicitly permits it (`permit_insecure_entropy`, bound by `run_simulation`). A seeded source leaking into a context that mints a real secret can no longer produce a predictable nonce/token. Production and simulation output are unchanged.
+
+- **`SystemEntropySource.random()` is now CSPRNG-backed** — it drew floats from the process-global Mersenne Twister while the source advertised the system CSPRNG; it now reads `os.urandom` (a shared `random.SystemRandom`), so every read from the default source is truly CSPRNG-backed. Only jitter/backoff use this float today, but the mismatch was a latent trap for a future secret-shaped float.
+
+- **Opt-in strict mode for encrypted fields (`reject_plaintext`)** — the field codec's read-path plaintext tolerance is a permanent fail-open hole once a migration is done: chosen plaintext written to an encrypted column was accepted as authentic. `EncryptingModelCodec(reject_plaintext=True)` / `encrypting_document_codecs(reject_plaintext=…)` flips it after backfill — a non-ciphertext value in an encrypted or searchable field is rejected (`core.crypto.plaintext_rejected`), and record-id AAD binding stops falling back to the legacy id-less AAD (a pre-binding ciphertext no longer reads). Default `False` keeps zero-downtime rollout behavior.
+
+- **Plaintext data keys no longer reachable via `repr`** — the keyring's active-key entry, its encrypt/decrypt caches, and the frozen decryptor suppress `repr` of the raw DEK bytes (matching `DataKey.plaintext`), so a log line, DST trace, or debugger dump can't print them.
+
+- **Cached data keys honor a TTL** — `Keyring(dek_ttl_seconds=…)` bounds how long a plaintext DEK is served from cache on both the encrypt and decrypt paths, so a KEK rotation or revocation takes effect within the window instead of only after a restart (default `None` = unchanged, cache-until-eviction).
+
+- **Confused-deputy guard on decrypt** — when a tenant is supplied, the keyring authorizes an envelope's `key_id` against the tenant's own key *before* any KMS unwrap and rejects a mismatch (`core.crypto.key_id_unauthorized`) with no backend call, so a caller can't drive a cross-tenant unwrap under a key id it names but does not own. The field codec threads the tenant through its decrypt pre-pass; `BytesCipherPort.decrypt` / `FieldCipherPort.ensure_unwrapped` gain an optional `tenant` (single-key `None` unchanged).
+
+- **Vault Transit signer picks up key rotation** — `VaultTransitSigner(public_key_ttl_seconds=…, default 300s)` re-fetches the cached public key after the TTL, so a rotated Transit key is honored for verification and the published JWKS without a process restart.
+
+**Identity & authorization hardening**
+
+- **OIDC verifier no longer re-fetches JWKS per request** — `ConfigurableOidcIdpVerifier` (and the Google/Telegram builtin factories) built a fresh `JwksKeyProvider` on every call, so the 300s JWKS cache never spanned requests and every token-authenticated request hit the IdP's JWKS endpoint — an amplifier a spray of garbage bearer tokens could turn into a DoS / egress rate-limit. The verifier and its key provider are now built once and reused, so the cache works as intended.
+
+- **Nonce enforcement reachable through presets** — `OidcIdpPreset(require_nonce=…)` (and the Google/Telegram configs) now forward `require_nonce` to `OidcTokenVerifier`, so a deployment can reject an `id_token` carrying no `nonce` claim (presence check; value binding stays `verify_id_token_nonce`'s job). Default `False` (unchanged).
+
+- **`ForzeJwtTokenVerifier` guards its session spec** — it now applies the same `forbid_cache_and_history` construction-time check every sibling credential verifier uses, so a cached or history-enabled session query can't serve a revoked/rotated session row and defeat logout/refresh revocation.
+
+- **Authz grant resolution cross-checks the tenant** — `AuthzGrantResolver` now takes the invocation tenant and refuses a caller-supplied `AuthzScope` naming a different tenant (`authz.scope_tenant_mismatch`) instead of silently resolving grants against the ambient tenant's bindings — defense-in-depth beside the storage layer's auto-scoping. No-op when no tenant is bound.
+
+- **OIDC assertion records the validated audience** — for a multi-audience `id_token`, the mapper recorded `aud[0]`, which may be a different party than the one the verifier validated against its configured audience; it now records the matched (validated) audience.
+
 **Adapters & security**
 
 - **Temporal default workflow id is a real UUID** — the default `workflow_id_factory` called `str(uuid4)` (the function's repr), so every unnamed `start()`/`schedule()` shared one garbage id and collided; now `str(uuid4())`.
@@ -280,6 +312,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Redis idempotency store can't be corrupted via the idempotency key** — the untrusted `Idempotency-Key` is hashed and the result body moved to a disjoint key scope, so a key containing the codec separator (e.g. one ending in `:body`) can no longer alias and overwrite another key's stored result; `commit`/`fail` became Lua compare-and-set/delete fenced on the caller's own PENDING claim. `RedisKeyCodec.join` no longer silently aliases distinct inputs (empty parts rejected, edge separators preserved). *Compat:* the idempotency key format changed, so the in-flight dedup window resets once on upgrade (old records expire by TTL — no corruption; a safe re-execute).
 
 - **VK login** no longer copies the untrusted introspection envelope into claims (keeps only the masked `user`).
+
+- **Object storage tenant isolation now covers reads, not just writes** — for a tenant-aware adapter, `download` / `head` / `download_range` / `download_if_changed` / `delete` / `copy` / `move` / `presign_download` / `presign_upload` / `put_object_tags` took a caller-supplied key verbatim, so under the `tagged` isolation tier (one shared bucket) a key like `tenant_<other>/…` could read/delete/presign another tenant's object. The key check now also requires the key to lie within the active tenant's prefix (`core.storage.key_outside_tenant`); keys minted by `upload`/`construct_key` already carry it, so legitimate round-trips are unaffected. No-op for non-tenant-aware adapters.
 
 - **Mongo** query renderer rejects `$`-prefixed field names (injection); index introspection keeps string index directions verbatim (text/2dsphere/2d/hashed/vector).
 
@@ -290,6 +324,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres** schema validation accepts parameterized column types (`NUMERIC(10,2)`, `TIMESTAMP(3) WITH TIME ZONE`); search index-definition parsing hardened (balanced-delimiter, dollar-quote-aware).
 
 - **Log scrubbing closes three leaks** — console render mode (the default) no longer hands the raw exception to Rich when `sanitize_logs=True`, so a credential in an exception message (e.g. a DSN) is scrubbed in both the message and the rendered traceback (pretty tracebacks stay when scrubbing is off); assignment scrubbing now covers a bounded suffix (`secret_key=`, `aws_secret_access_key=`, `token_value=`), the whole `Authorization:` header, and a scheme-agnostic `scheme://user:pass@` DSN (ClickHouse/Mongo/HTTP, not just the four SQL schemes); and a non-str dict key no longer raises `TypeError` into the caller's log site.
+
+- **`configure_logging()` no longer silently drops unlisted loggers** — with no `logger_names` it attached a handler to *nothing*, so every INFO log hit Python's WARNING-level last-resort handler and vanished; it now configures the **root** logger by default (an explicit `logger_names` list is still honored verbatim as an allowlist), so a caller who omits or forgets a name keeps seeing their logs.
 
 - **Misc** — BigQuery empty-array/null params typed from annotations; Meilisearch strips embedded quotes; numeric timezone offsets validated; `forze dst --seeds` parsing fails loud; S3 multipart-ETag normalization and unknown-total range downloads; `If-None-Match` parsed per RFC 7232; `forze_http` suppresses its default bearer when an `Authorization` header is set; GCS rejects reserved `forze-tag-` metadata keys.
 
