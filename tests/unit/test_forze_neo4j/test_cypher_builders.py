@@ -180,6 +180,45 @@ def test_k_shortest_paths_coerces_k_and_hops() -> None:
         )
 
 
+def test_gds_project_weighted_tenant_filters_and_maps_weight() -> None:
+    q = builders.gds_project_weighted(
+        edge_types=["FOLLOWS"], weight_property="cost", tenant_field="tenant_id"
+    )
+    assert "MATCH (s)-[r:`FOLLOWS`]->(t)" in q
+    assert "WHERE s.`tenant_id` = $tenant AND t.`tenant_id` = $tenant" in q
+    assert "relationshipProperties: {weight: r.`cost`}" in q
+    assert "gds.graph.project($graph_name" in q
+
+
+def test_gds_project_weighted_untenanted_has_no_where() -> None:
+    q = builders.gds_project_weighted(edge_types=[], weight_property="cost")
+    assert "WHERE" not in q
+    assert "MATCH (s)-[r]->(t)" in q
+
+
+def test_gds_weighted_paths_uses_yens_and_rebuilds_edges() -> None:
+    q = builders.gds_weighted_paths(
+        from_label="User",
+        from_key_field="id",
+        to_label="User",
+        to_key_field="id",
+        edge_types=["FOLLOWS"],
+        weight_property="cost",
+        tenant_field=None,
+    )
+    assert "gds.shortestPath.yens.stream($graph_name" in q
+    assert "relationshipWeightProperty: 'weight'" in q
+    # edges rebuilt as the min-weight real edge between consecutive nodes
+    assert "gds.util.asNode(nodeIds[i])" in q
+    assert "ORDER BY coalesce(r.`cost`, 0.0) ASC LIMIT 1" in q
+
+
+def test_gds_drop_is_non_failing() -> None:
+    assert builders.gds_drop() == (
+        "CALL gds.graph.drop($graph_name, false) YIELD graphName RETURN graphName"
+    )
+
+
 def test_k_shortest_paths_scopes_interior_nodes_by_tenant() -> None:
     q = builders.k_shortest_paths(
         from_label="User",

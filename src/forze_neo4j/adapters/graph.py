@@ -55,12 +55,13 @@ from forze.application.contracts.resolution import (
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.graph import GraphCodecs, GraphKindCipher
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict, OnceCell
+from forze.base.primitives import JsonDict, OnceCell, uuid4
 from forze.base.serialization import default_model_codec
 
 from ..kernel.client import Neo4jClientPort
 from ..kernel.cypher import builders
 from ..kernel.relation import resolve_neo4j_database
+from ._logger import logger
 
 # ----------------------- #
 
@@ -126,6 +127,10 @@ class Neo4jGraphAdapter(TenancyMixin):
     ``True`` to opt in where trusted raw Cypher is genuinely needed — otherwise use the
     structured ports (full-path scoped) and :meth:`scoped_walk` instead.
     """
+
+    graph_algorithms: bool = False
+    """Whether weighted-path queries may use the GDS engine (opt-in); see
+    :attr:`~forze_neo4j.execution.deps.configs.Neo4jGraphConfig.graph_algorithms`."""
 
     # ....................... #
     # tenancy / database resolution
@@ -443,6 +448,11 @@ class Neo4jGraphAdapter(TenancyMixin):
         to_ref: VertexRef,
         params: ShortestPathParams,
     ) -> ShortestPathResult | None:
+        if params.weight_property is not None:
+            # Weighted single shortest path = Yen's with k=1.
+            weighted = await self._weighted_paths(from_ref, to_ref, params, k=1)
+            return weighted[0] if weighted else None
+
         from_node = self._node(from_ref.kind)
         to_node = self._node(to_ref.kind)
         query = builders.shortest_path(
@@ -490,6 +500,101 @@ class Neo4jGraphAdapter(TenancyMixin):
         )
 
         return ShortestPathResult(vertices=vertices, edges=edges)
+
+    # ....................... #
+    # Weighted paths via GDS
+
+    def _weighted_edge_types(self, params: ShortestPathParams) -> frozenset[str]:
+        """Relationship types to project — the requested kinds, or all module edge kinds."""
+
+        if params.edge_kinds:
+            return params.edge_kinds
+
+        return frozenset(str(edge.name) for edge in self.spec.edges)
+
+    async def _ensure_gds_available(self) -> None:
+        """Fail closed unless the GDS engine is both opted in and actually installed."""
+
+        if not self.graph_algorithms:
+            raise exc.precondition(
+                "Weighted paths need the graph-algorithms engine: set graph_algorithms=True "
+                "on the Neo4j graph config and install Neo4j GDS.",
+                code="graph_algorithm_unavailable",
+            )
+
+        try:
+            await self.client.run(
+                "CALL gds.version()", None, database=await self._resolved_database()
+            )
+
+        except CoreException as err:
+            raise exc.precondition(
+                "graph_algorithms is enabled but Neo4j GDS is not installed on the server.",
+                code="graph_algorithm_unavailable",
+            ) from err
+
+    async def _weighted_paths(
+        self,
+        from_ref: VertexRef,
+        to_ref: VertexRef,
+        params: ShortestPathParams,
+        *,
+        k: int,
+    ) -> list[ShortestPathResult]:
+        await self._ensure_gds_available()
+
+        weight = params.weight_property
+
+        if weight is None:  # dispatched only for weighted params; narrows the type
+            raise exc.internal("weighted path requested without a weight_property")
+
+        from_node = self._node(from_ref.kind)
+        to_node = self._node(to_ref.kind)
+        edge_types = self._weighted_edge_types(params)
+        database = await self._resolved_database()
+
+        # A per-call named projection (GDS catalog graphs are DB-global, so a unique name
+        # avoids collisions and the ``finally`` drop keeps the catalog from leaking).
+        graph_name = f"forze_gds_{uuid4().hex}"
+
+        project = builders.gds_project_weighted(
+            edge_types=edge_types,
+            weight_property=weight,
+            tenant_field=self._tenant_field,
+        )
+        query = builders.gds_weighted_paths(
+            from_label=from_ref.kind,
+            from_key_field=from_node.key_field,
+            to_label=to_ref.kind,
+            to_key_field=to_node.key_field,
+            edge_types=edge_types,
+            weight_property=weight,
+            tenant_field=self._tenant_field,
+        )
+
+        try:
+            await self.client.run(
+                project, self._params(graph_name=graph_name), database=database
+            )
+            rows = await self.client.run(
+                query,
+                self._params(from_key=from_ref.key, to_key=to_ref.key, graph_name=graph_name, k=k),
+                database=database,
+            )
+
+        finally:
+            try:
+                await self.client.run(
+                    builders.gds_drop(), {"graph_name": graph_name}, database=database
+                )
+            except CoreException:
+                # Best-effort cleanup — never mask the real result/error with a drop failure.
+                logger.debug("Failed to drop GDS projection %s", graph_name)
+
+        results = [await self._map_path_row(row) for row in rows]
+
+        # Weighted paths are selected by cost, not hop count, so honor max_hops as a post-filter.
+        return [r for r in results if len(r.edges) <= params.max_hops]
 
     # ....................... #
 
@@ -821,6 +926,9 @@ class Neo4jGraphAdapter(TenancyMixin):
     ) -> Sequence[ShortestPathResult]:
         if k <= 0:
             return []
+
+        if params.weight_property is not None:
+            return await self._weighted_paths(from_ref, to_ref, params, k=k)
 
         from_node = self._node(from_ref.kind)
         to_node = self._node(to_ref.kind)

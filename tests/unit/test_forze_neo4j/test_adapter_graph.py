@@ -371,6 +371,23 @@ async def test_k_shortest_paths_maps_each_row() -> None:
 
 
 @pytest.mark.asyncio
+async def test_weighted_path_without_graph_algorithms_fails_closed() -> None:
+    """A weighted request on a module without graph_algorithms fails before any DB call."""
+
+    adapter, client = _adapter(rows=[])  # graph_algorithms=False by default
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.shortest_path(
+            VertexRef(kind="User", key="a"),
+            VertexRef(kind="User", key="b"),
+            ShortestPathParams(max_hops=3, weight_property="w"),
+        )
+
+    assert ei.value.code == "graph_algorithm_unavailable"
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_k_shortest_paths_k_zero_short_circuits() -> None:
     adapter, client = _adapter(rows=[])
 

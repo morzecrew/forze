@@ -436,3 +436,86 @@ def drop_constraint(name: str) -> str:
 
 def drop_index(name: str) -> str:
     return f"DROP INDEX {quote(name)} IF EXISTS"
+
+
+# ....................... #
+# Weighted paths via GDS (graph-algorithms engine)
+#
+# GDS runs on a named in-memory projection, so a weighted path is three statements:
+#   1. project a tenant-filtered subgraph over the weighted edge types (``gds_project_weighted``),
+#   2. run Yen's k-shortest on it and rebuild typed vertices/edges (``gds_weighted_paths``;
+#      Yen's with ``k=1`` is the single weighted shortest path),
+#   3. drop the projection (``gds_drop`` — always, in a ``finally``, or the catalog leaks).
+# The graph name is a ``$graph_name`` parameter; the weight alias inside the projection is the
+# fixed literal ``weight`` (the caller's real property is read as ``r.<weight_property>``).
+
+
+def gds_project_weighted(
+    *,
+    edge_types: Iterable[str],
+    weight_property: str,
+    tenant_field: str | None = None,
+) -> str:
+    """Project a tenant-filtered subgraph (over the weighted edge types) into the GDS catalog."""
+
+    rel = _type_pattern(edge_types)
+    where = (
+        f"WHERE s.{quote(tenant_field)} = $tenant AND t.{quote(tenant_field)} = $tenant\n"
+        if tenant_field
+        else ""
+    )
+
+    return (
+        f"MATCH (s)-[r{rel}]->(t)\n"
+        f"{where}"
+        f"WITH gds.graph.project($graph_name, s, t, "
+        f"{{relationshipProperties: {{weight: r.{quote(weight_property)}}}}}) AS g\n"
+        f"RETURN g.graphName AS name"
+    )
+
+
+def gds_weighted_paths(
+    *,
+    from_label: str,
+    from_key_field: str,
+    to_label: str,
+    to_key_field: str,
+    edge_types: Iterable[str],
+    weight_property: str,
+    tenant_field: str | None = None,
+) -> str:
+    """Yen's k-shortest weighted paths on the projection, rebuilt as typed vertices/edges.
+
+    GDS returns node ids and costs, and its own ``path`` uses *virtual* relationships — so the
+    typed edges are rebuilt by matching, for each consecutive node pair, the minimum-weight real
+    edge (the one Yen's used). ``k`` is a ``$k`` parameter.
+    """
+
+    rel = _type_pattern(edge_types)
+
+    return (
+        f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')}), "
+        f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
+        f"CALL gds.shortestPath.yens.stream($graph_name, {{sourceNode: a, targetNode: b, "
+        f"k: $k, relationshipWeightProperty: 'weight'}}) YIELD index, nodeIds, totalCost\n"
+        f"CALL {{ WITH nodeIds\n"
+        f"  UNWIND range(0, size(nodeIds) - 1) AS i\n"
+        f"  WITH gds.util.asNode(nodeIds[i]) AS n, i ORDER BY i\n"
+        f"  RETURN collect(properties(n)) AS vertices, collect(labels(n)) AS vertex_labels }}\n"
+        f"CALL {{ WITH nodeIds\n"
+        f"  UNWIND range(0, size(nodeIds) - 2) AS i\n"
+        f"  CALL {{ WITH nodeIds, i\n"
+        f"    WITH gds.util.asNode(nodeIds[i]) AS u, gds.util.asNode(nodeIds[i + 1]) AS v\n"
+        f"    MATCH (u)-[r{rel}]->(v)\n"
+        f"    RETURN r ORDER BY coalesce(r.{quote(weight_property)}, 0.0) ASC LIMIT 1 }}\n"
+        f"  WITH i, r ORDER BY i\n"
+        f"  RETURN collect(properties(r)) AS edges, collect(type(r)) AS edge_types }}\n"
+        f"RETURN vertices, vertex_labels, edges, edge_types, totalCost\n"
+        f"ORDER BY totalCost, index"
+    )
+
+
+def gds_drop() -> str:
+    """Drop the per-call projection (``false`` = do not error if already gone)."""
+
+    return "CALL gds.graph.drop($graph_name, false) YIELD graphName RETURN graphName"

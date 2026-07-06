@@ -283,6 +283,16 @@ class ShortestPathParams:
     allowed kinds in the module spec are considered.
     """
 
+    weight_property: str | None = attrs.field(default=None)
+    """Optional edge property to minimize (a *weighted* shortest path).
+
+    ``None`` (default) = unweighted, shortest by hop count. When set, the path minimizes the
+    sum of this numeric edge property; it must exist on every traversed edge kind. Weighted
+    paths require a backend with a graph-algorithms engine (Neo4j GDS); a backend without one
+    rejects the request (``graph_algorithm_unavailable``). Because a weighted-shortest path is
+    selected by cost, ``max_hops`` is applied as a post-filter (a weighted result longer than
+    ``max_hops`` edges is dropped)."""
+
 
 # ....................... #
 
