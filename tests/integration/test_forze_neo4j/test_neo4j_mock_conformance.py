@@ -20,6 +20,10 @@ from forze.application.contracts.graph import (
     GraphEdgeSpec,
     GraphModuleSpec,
     GraphNodeSpec,
+    GraphPathStep,
+    GraphWalkParams,
+    ScopedWalkParams,
+    ShortestPathParams,
     VertexRef,
 )
 from forze.application.execution import ExecutionContext
@@ -292,6 +296,54 @@ async def test_mock_matches_neo4j_multi_endpoint_edges(neo4j_client: Neo4jClient
 
     assert mock_snap == neo_snap
     assert neo_snap == {"count": 2, "post_edge_exists": True, "note_edge_exists": True}
+
+
+async def _traversal_apply(cmd: Any) -> None:
+    for k in ("a", "b", "c", "d"):
+        await cmd.create_vertex("User", UserCreate(id=k))
+    # weighted diamond: direct a->c (5) vs detour a->b->c (1+1); plus a->d
+    await cmd.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="b", weight=1))
+    await cmd.create_edge("FOLLOWS", FollowsCreate(from_key="b", to_key="c", weight=1))
+    await cmd.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="c", weight=5))
+    await cmd.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="d", weight=1))
+
+
+async def _traversal_snapshot(port: Any) -> dict[str, Any]:
+    steps = await port.expand(
+        _u("a"),
+        GraphWalkParams(max_depth=2, max_results=100, direction=GraphDirection.OUT),
+    )
+    sp = await port.shortest_path(
+        _u("a"), _u("c"), ShortestPathParams(max_hops=5, edge_kinds=frozenset({"FOLLOWS"}))
+    )
+    one = GraphPathStep(edge_kinds=frozenset({"FOLLOWS"}), direction=GraphDirection.OUT)
+    walk1 = await port.scoped_walk(_u("a"), ScopedWalkParams(steps=(one,), target_kind="User"))
+    walk2 = await port.scoped_walk(
+        _u("a"), ScopedWalkParams(steps=(one, one), target_kind="User")
+    )
+
+    return {
+        # invariant multiset (intra-depth order is unspecified in Neo4j)
+        "expand": sorted(
+            (s.depth, s.vertex.id, s.parent_ref.key, s.from_parent.weight) for s in steps
+        ),
+        "sp_len": None if sp is None else len(sp.edges),
+        "sp_ends": None if sp is None else (sp.vertices[0].id, sp.vertices[-1].id),
+        "walk1": sorted(v.id for v in walk1),
+        "walk2": sorted(v.id for v in walk2),
+    }
+
+
+async def test_mock_matches_neo4j_traversal_invariants(neo4j_client: Neo4jClient) -> None:
+    spec = _spec()
+
+    mock_ctx: ExecutionContext = context_from_deps(MockDepsModule(state=MockState())())
+    await _traversal_apply(mock_ctx.graph.command(spec))
+
+    neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client)
+    await _traversal_apply(neo)
+
+    assert await _traversal_snapshot(mock_ctx.graph.query(spec)) == await _traversal_snapshot(neo)
 
 
 async def test_mock_matches_neo4j_read_surface(neo4j_client: Neo4jClient) -> None:

@@ -126,12 +126,17 @@ async def test_ensure_edge_idempotent(ctx: ExecutionContext) -> None:
 
 
 @pytest.mark.asyncio
-async def test_expand_not_implemented(ctx: ExecutionContext) -> None:
+async def test_expand_on_missing_start_is_empty(ctx: ExecutionContext) -> None:
     from forze.application.contracts.graph import GraphWalkParams
 
     qry = ctx.graph.query(_spec())
-    with pytest.raises(NotImplementedError):
-        await qry.expand(VertexRef(kind="User", key="a"), GraphWalkParams(max_depth=2, max_results=10))
+    # expand is implemented now; a missing start returns [] rather than raising.
+    assert (
+        await qry.expand(
+            VertexRef(kind="User", key="a"), GraphWalkParams(max_depth=2, max_results=10)
+        )
+        == []
+    )
 
 
 # ----------------------- #

@@ -283,28 +283,34 @@ class TestNeighborsFilters:
 # ....................... #
 
 
-class TestTraversalStubs:
+class TestTraversalOnMissing:
+    """Traversal from a missing/empty start returns empty rather than raising (now implemented)."""
+
     @pytest.mark.asyncio
-    async def test_expand_not_implemented(self, ctx: ExecutionContext) -> None:
+    async def test_expand_missing_start_is_empty(self, ctx: ExecutionContext) -> None:
         qry = ctx.graph.query(_spec())
-        with pytest.raises(NotImplementedError, match="expand"):
+        assert (
             await qry.expand(
                 VertexRef(kind="User", key="a"),
                 GraphWalkParams(max_depth=2, max_results=10),
             )
+            == []
+        )
 
     @pytest.mark.asyncio
-    async def test_shortest_path_not_implemented(self, ctx: ExecutionContext) -> None:
+    async def test_shortest_path_missing_is_none(self, ctx: ExecutionContext) -> None:
         qry = ctx.graph.query(_spec())
-        with pytest.raises(NotImplementedError, match="shortest_path"):
+        assert (
             await qry.shortest_path(
                 VertexRef(kind="User", key="a"),
                 VertexRef(kind="User", key="b"),
                 ShortestPathParams(max_hops=3),
             )
+            is None
+        )
 
     @pytest.mark.asyncio
-    async def test_scoped_walk_not_implemented(self, ctx: ExecutionContext) -> None:
+    async def test_scoped_walk_missing_is_empty(self, ctx: ExecutionContext) -> None:
         from forze.application.contracts.graph import GraphPathStep
 
         qry = ctx.graph.query(_spec())
@@ -317,8 +323,7 @@ class TestTraversalStubs:
             ),
             target_kind="User",
         )
-        with pytest.raises(NotImplementedError, match="scoped_walk"):
-            await qry.scoped_walk(VertexRef(kind="User", key="a"), params)
+        assert await qry.scoped_walk(VertexRef(kind="User", key="a"), params) == []
 
 
 # ....................... #
