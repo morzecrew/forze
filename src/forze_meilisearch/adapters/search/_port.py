@@ -1,6 +1,6 @@
 """Meilisearch search port delegation; cursor pagination is unsupported."""
 
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 import attrs
 from pydantic import BaseModel
@@ -13,6 +13,9 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import SearchCapabilities, SearchOptions
 from forze.application.integrations.search import SimpleSearchPortMixin
 from forze.base.exceptions import exc
+
+if TYPE_CHECKING:
+    from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 
 # ----------------------- #
 
@@ -27,11 +30,16 @@ class MeilisearchSearchPortMixin[M: BaseModel](SimpleSearchPortMixin[M]):
     adapter overrides it with a real implementation.
     """
 
+    config: "MeilisearchSearchConfig"  # supplied by the concrete gateway adapter
+
     @property
     def search_capabilities(self) -> SearchCapabilities:
-        # Meilisearch reports estimatedTotalHits (capped at maxTotalHits), never an
-        # exact COUNT(*), so page totals are approximate.
-        return attrs.evolve(super().search_capabilities, exact_total_count=False)
+        # Meilisearch defaults to estimatedTotalHits (approximate); a route can opt into an
+        # exact page-mode count (bounded by maxTotalHits) via ``exact_total_count``.
+        return attrs.evolve(
+            super().search_capabilities,
+            exact_total_count=self.config.exact_total_count,
+        )
 
     def _raise_cursor_not_supported(self) -> None:
         raise exc.precondition(

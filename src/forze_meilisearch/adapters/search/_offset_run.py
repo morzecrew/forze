@@ -61,7 +61,24 @@ class _MeilisearchOffsetHooks:
     highlight_plan: HighlightPlan | None = None
 
     async def fetch_count(self) -> int | None:
-        return None
+        # By default the total comes cheaply from the search result's ``estimatedTotalHits``
+        # (see ``fetch_rows``). When the route opts into exact counts, run one extra page-mode
+        # query — Meilisearch's ``totalHits`` is exact (bounded by ``maxTotalHits``).
+        if not (self.return_count and self.gw.config.exact_total_count):
+            return None
+
+        kwargs: dict[str, Any] = {"hits_per_page": 1, "page": 1}
+
+        if self.filter_str is not None:
+            kwargs["filter"] = self.filter_str
+
+        index = self.client.index(
+            await self.gw._resolved_index_uid()  # pyright: ignore[reportPrivateUsage]
+        )
+        result = await index.search(self.query_string, **kwargs)
+        total = getattr(result, "total_hits", None)
+
+        return int(total) if total is not None else None
 
     async def fetch_rows(
         self,

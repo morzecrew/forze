@@ -138,6 +138,30 @@ async def test_delete_all_is_tenant_scoped_when_tagged() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ensure_index_provisions_max_total_hits() -> None:
+    """ensure_index sets the index pagination cap to the route's max_total_hits."""
+
+    index = MagicMock()
+    index.update_settings = AsyncMock(return_value=MagicMock(task_uid=1))
+    client = _client_with_index(index)
+    client.wait_for_task = AsyncMock(return_value=MagicMock(status="succeeded"))
+
+    spec = SearchSpec(name="items", model_type=_Doc, fields=["title"])
+    adapter = MeilisearchSearchManagementAdapter(
+        spec=spec,
+        config=MeilisearchSearchConfig(
+            index_uid="items_idx", max_total_hits=2500, wait_for_tasks=False
+        ),
+        client=client,
+    )
+
+    await adapter.ensure_index()
+
+    settings = index.update_settings.await_args[0][0]
+    assert settings.pagination.max_total_hits == 2500
+
+
+@pytest.mark.asyncio
 async def test_delete_by_id_is_tenant_scoped_when_tagged() -> None:
     """``delete(ids)`` under tagged tenancy scopes the delete to this tenant's rows."""
 

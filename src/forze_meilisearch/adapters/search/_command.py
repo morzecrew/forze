@@ -182,6 +182,7 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
         from meilisearch_python_sdk.models.settings import (
             FilterableAttributes,
             MeilisearchSettings,
+            Pagination,
         )
 
         index = await self.client.get_or_create_index(
@@ -199,6 +200,9 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
             ),
             sortable_attributes=self._sortable_attributes(),
             ranking_rules=list(rules) if rules is not None else None,
+            # Provision the index's own cap to match the route's ``max_total_hits`` so the
+            # fail-closed read guard and the engine agree on the ceiling.
+            pagination=Pagination(max_total_hits=self.config.max_total_hits),
         )
 
         task = await index.update_settings(settings)

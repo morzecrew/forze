@@ -87,8 +87,16 @@ class MeilisearchSearchConfig(TenantAwareIntegrationConfig):
 
     max_total_hits: int = 1000
     """Mirror of the index's ``maxTotalHits`` setting (Meilisearch default 1000). A read
-    window reaching past it fails closed instead of silently truncating; keep it in sync
-    with the value provisioned on the index."""
+    window reaching past it fails closed instead of silently truncating; ``ensure_index``
+    provisions this exact value on the index, so the two stay in sync."""
+
+    exact_total_count: bool = False
+    """When True, a ``return_count`` read reports an **exact** total (Meilisearch page-mode
+    ``totalHits``) via one extra lightweight query, instead of the cheap ``estimatedTotalHits``.
+
+    Still bounded by :attr:`max_total_hits` — the count is exact only up to that ceiling
+    (a larger match reports the ceiling). Off by default (estimate is cheaper); turning it on
+    also flips ``SearchCapabilities.exact_total_count`` to ``True``."""
 
     # ....................... #
 

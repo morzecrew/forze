@@ -33,3 +33,15 @@ def test_capabilities_declare_estimated_total() -> None:
     """Meilisearch reports estimatedTotalHits, so page totals are flagged approximate."""
 
     assert _Adapter().search_capabilities.exact_total_count is False
+
+
+class _ExactAdapter(MeilisearchSearchPortMixin[_M]):
+    spec = SearchSpec(name="s", model_type=_M, fields=["title"])
+    model_type = _M
+    config: MeilisearchSearchConfig = MeilisearchSearchConfig(
+        index_uid="items", exact_total_count=True
+    )
+
+
+def test_capabilities_reflect_exact_total_count_opt_in() -> None:
+    assert _ExactAdapter().search_capabilities.exact_total_count is True

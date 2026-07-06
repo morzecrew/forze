@@ -34,6 +34,44 @@ def _hooks(pagination_dict: dict, *, max_total_hits: int = 1000) -> _Meilisearch
     )
 
 
+def _count_hooks(*, exact: bool, total_hits: int = 42) -> _MeilisearchOffsetHooks:
+    gw = MagicMock()
+    gw.config = MagicMock(max_total_hits=1000, exact_total_count=exact)
+    gw._resolved_index_uid = AsyncMock(return_value="idx")
+    index = MagicMock()
+    index.search = AsyncMock(return_value=MagicMock(total_hits=total_hits))
+    client = MagicMock()
+    client.index = MagicMock(return_value=index)
+    return _MeilisearchOffsetHooks(
+        gw=gw,
+        client=client,
+        query_string="q",
+        filter_str=None,
+        attrs=None,
+        sort_list=None,
+        pagination_dict={},
+        return_count=True,
+        return_fields=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_count_none_when_not_exact() -> None:
+    # Default: the total comes cheaply from the search's estimatedTotalHits, so no count query.
+    assert await _count_hooks(exact=False).fetch_count() is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_count_exact_uses_page_mode_total_hits() -> None:
+    hooks = _count_hooks(exact=True, total_hits=42)
+
+    assert await hooks.fetch_count() == 42
+
+    index = hooks.client.index.return_value
+    kwargs = index.search.await_args.kwargs
+    assert kwargs["hits_per_page"] == 1 and kwargs["page"] == 1
+
+
 @pytest.mark.asyncio
 async def test_window_past_max_total_hits_fails_closed() -> None:
     hooks = _hooks({"offset": 990, "limit": 50})  # far edge 1040 > 1000
