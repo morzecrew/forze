@@ -38,7 +38,7 @@ from forze.base.serialization import (
     ModelCodec,
 )
 from forze_mock.adapters.queue import (
-    _sleep_interval,  # type: ignore[reportPrivateUsage]
+    _sleep_interval,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_mock.query._types import M
 from forze_mock.state import MockState
@@ -214,7 +214,7 @@ class MockAckStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M]):
     # ....................... #
 
     def _group_state(self, group: str, stream: str) -> _MockGroupState:
-        store = cast(dict[str, Any], self.stream._stream_store())  # type: ignore[reportPrivateUsage]
+        store = cast(dict[str, Any], self.stream._stream_store())  # pyright: ignore[reportPrivateUsage]
         holder = cast(list[Any], store.setdefault(_GROUPS_KEY, [{}]))
         groups = cast(dict[tuple[str, str], _MockGroupState], holder[0])
         key = (group, stream)
@@ -242,7 +242,7 @@ class MockAckStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M]):
         with self.state.lock:
             for stream, cursor in stream_mapping.items():
                 gs = self._group_state(group, stream)
-                entries: list[StreamMessage[M]] = self.stream._stream_store().setdefault(  # type: ignore[reportPrivateUsage]
+                entries: list[StreamMessage[M]] = self.stream._stream_store().setdefault(  # pyright: ignore[reportPrivateUsage]
                     stream,
                     [],
                 )
@@ -250,7 +250,7 @@ class MockAckStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M]):
                 if cursor == ">":
                     # New entries: deliver once per group, record as pending.
                     for msg in entries:
-                        num = self.stream._id_to_int(msg.id)  # type: ignore[reportPrivateUsage]
+                        num = self.stream._id_to_int(msg.id)  # pyright: ignore[reportPrivateUsage]
 
                         if num <= gs.last_delivered:
                             continue
@@ -270,10 +270,10 @@ class MockAckStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M]):
                     # strictly after the given id (acked entries excluded).
                     # Like Redis, the history read leaves delivery time and
                     # count untouched.
-                    last_num = self.stream._id_to_int(cursor)  # type: ignore[reportPrivateUsage]
+                    last_num = self.stream._id_to_int(cursor)  # pyright: ignore[reportPrivateUsage]
 
                     for msg in entries:
-                        if self.stream._id_to_int(msg.id) <= last_num:  # type: ignore[reportPrivateUsage]
+                        if self.stream._id_to_int(msg.id) <= last_num:  # pyright: ignore[reportPrivateUsage]
                             continue
 
                         meta = gs.pending.get(msg.id)
@@ -310,7 +310,7 @@ class MockAckStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M]):
     # ....................... #
 
     async def ack(self, group: str, stream: str, ids: Sequence[str]) -> int:
-        key = (self.stream._ns(), group, stream)  # type: ignore[reportPrivateUsage]
+        key = (self.stream._ns(), group, stream)  # pyright: ignore[reportPrivateUsage]
         with self.state.lock:
             gs = self._group_state(group, stream)
             removed: list[str] = [i for i in ids if gs.pending.pop(i, None) is not None]
@@ -335,7 +335,7 @@ class MockAckStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M]):
 
         with self.state.lock:
             gs = self._group_state(group, stream)
-            entries: list[StreamMessage[M]] = self.stream._stream_store().setdefault(  # type: ignore[reportPrivateUsage]
+            entries: list[StreamMessage[M]] = self.stream._stream_store().setdefault(  # pyright: ignore[reportPrivateUsage]
                 stream,
                 [],
             )
@@ -378,7 +378,7 @@ class MockAckStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M]):
 
         with self.state.lock:
             gs = self._group_state(group, stream)
-            entries: list[StreamMessage[M]] = self.stream._stream_store().setdefault(  # type: ignore[reportPrivateUsage]
+            entries: list[StreamMessage[M]] = self.stream._stream_store().setdefault(  # pyright: ignore[reportPrivateUsage]
                 stream,
                 [],
             )
@@ -424,7 +424,7 @@ class MockAckStreamGroupAdminAdapter[M: BaseModel](AckStreamGroupAdminPort):
 
     async def ensure_group(self, group: str, stream: str, *, start_id: str = "$") -> None:
         with self.state.lock:
-            store = cast(dict[str, Any], self.stream._stream_store())  # type: ignore[reportPrivateUsage]
+            store = cast(dict[str, Any], self.stream._stream_store())  # pyright: ignore[reportPrivateUsage]
             groups = cast(
                 dict[tuple[str, str], _MockGroupState],
                 store.setdefault(_GROUPS_KEY, [{}])[0],
@@ -439,12 +439,12 @@ class MockAckStreamGroupAdminAdapter[M: BaseModel](AckStreamGroupAdminPort):
                 # "$": deliver only entries appended after creation (cursor at the tail)
                 entries = cast(list[Any], store.setdefault(stream, []))
                 gs.last_delivered = max(
-                    (self.stream._id_to_int(m.id) for m in entries),  # type: ignore[reportPrivateUsage]
+                    (self.stream._id_to_int(m.id) for m in entries),  # pyright: ignore[reportPrivateUsage]
                     default=0,
                 )
             elif start_id not in ("0", "0-0"):
                 # an explicit cursor: deliver entries strictly after it ("0"/"0-0" stays at 0)
-                gs.last_delivered = self.stream._id_to_int(start_id)  # type: ignore[reportPrivateUsage]
+                gs.last_delivered = self.stream._id_to_int(start_id)  # pyright: ignore[reportPrivateUsage]
 
             groups[(group, stream)] = gs
 
@@ -522,16 +522,16 @@ class MockCommitStreamGroupAdapter[M: BaseModel](CommitStreamGroupQueryPort[M]):
 
     def _partitions(self, topic: str) -> int:
         return self.state.commit_stream_partitions.get(
-            (self.stream._ns(), topic),  # type: ignore[reportPrivateUsage]
+            (self.stream._ns(), topic),  # pyright: ignore[reportPrivateUsage]
             1,
         )
 
     def _log(self, topic: str) -> list[StreamMessage[M]]:
-        return self.stream._stream_store().setdefault(topic, [])  # type: ignore[reportPrivateUsage]
+        return self.stream._stream_store().setdefault(topic, [])  # pyright: ignore[reportPrivateUsage]
 
     def _cursor(self, group: str, topic: str, partition: int) -> int:
         return self.state.commit_stream_offsets.get(
-            (self.stream._ns(), group, topic, partition),  # type: ignore[reportPrivateUsage]
+            (self.stream._ns(), group, topic, partition),  # pyright: ignore[reportPrivateUsage]
             0,
         )
 
@@ -597,7 +597,7 @@ class MockCommitStreamGroupAdapter[M: BaseModel](CommitStreamGroupQueryPort[M]):
     async def commit(self, group: str, positions: Sequence[StreamPosition]) -> None:
         with self.state.lock:
             for pos in positions:
-                key = (self.stream._ns(), group, pos.stream, pos.partition)  # type: ignore[reportPrivateUsage]
+                key = (self.stream._ns(), group, pos.stream, pos.partition)  # pyright: ignore[reportPrivateUsage]
                 nxt = pos.offset + 1
 
                 if nxt > self.state.commit_stream_offsets.get(key, 0):
@@ -641,13 +641,13 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
     # ....................... #
 
     def _ns(self) -> str:
-        return self.stream._ns()  # type: ignore[reportPrivateUsage]
+        return self.stream._ns()  # pyright: ignore[reportPrivateUsage]
 
     def _partitions(self, topic: str) -> int:
         return self.state.commit_stream_partitions.get((self._ns(), topic), 1)
 
     def _log(self, topic: str) -> list[StreamMessage[Any]]:
-        return self.stream._stream_store().setdefault(topic, [])  # type: ignore[reportPrivateUsage]
+        return self.stream._stream_store().setdefault(topic, [])  # pyright: ignore[reportPrivateUsage]
 
     def _end_offsets(self, topic: str) -> dict[int, int]:
         partitions = self._partitions(topic)
@@ -661,7 +661,7 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
         return counts
 
     def _all_topics(self) -> list[str]:
-        return [k for k in self.stream._stream_store() if k != _GROUPS_KEY]  # type: ignore[reportPrivateUsage]
+        return [k for k in self.stream._stream_store() if k != _GROUPS_KEY]  # pyright: ignore[reportPrivateUsage]
 
     def _offset_at_timestamp(
         self, when: datetime | None, *, end: int, topic: str, partition: int

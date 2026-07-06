@@ -20,12 +20,14 @@ from typing import final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.graph import (
     EdgeRef,
     GraphDirection,
     GraphEdgeSpec,
     GraphModuleSpec,
     GraphNodeSpec,
+    GraphPathStep,
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
@@ -171,12 +173,14 @@ class MockGraphAdapter(MockTenancyMixin):
         )
 
     @staticmethod
-    def _validate_filter(property_filter: JsonDict | None, encryption: object) -> None:
+    def _validate_filter(
+        property_filter: JsonDict | None, encryption: FieldEncryption | None
+    ) -> None:
         if not property_filter:
             return
 
-        sealed: frozenset[str] = (  # pyright: ignore[reportUnknownVariableType]
-            encryption.encrypted | encryption.searchable  # type: ignore[attr-defined]
+        sealed: frozenset[str] = (
+            encryption.encrypted | encryption.searchable
             if encryption is not None
             else frozenset()
         )
@@ -935,14 +939,14 @@ def _dijkstra_shortest(
 
 def _advance_segment(
     frontier: set[tuple[_Node, frozenset[int]]],
-    step: object,
+    step: GraphPathStep,
     adj: _Adjacency,
     verts: dict[_Node, JsonDict],
 ) -> set[tuple[_Node, frozenset[int]]]:
     """Advance each ``(node, used_edges)`` by one ``*min..max`` segment (edge-simple)."""
 
-    min_hops: int = step.min_hops  # type: ignore[attr-defined]
-    max_hops: int = step.max_hops  # type: ignore[attr-defined]
+    min_hops: int = step.min_hops
+    max_hops: int = step.max_hops
     results: set[tuple[_Node, frozenset[int]]] = set()
 
     for start_node, used0 in frontier:
@@ -951,7 +955,7 @@ def _advance_segment(
         if min_hops == 0:
             results |= current
 
-        for hop in range(1, max_hops + 1):  # pyright: ignore[reportUnknownArgumentType]
+        for hop in range(1, max_hops + 1):
             nxt: set[tuple[_Node, frozenset[int]]] = set()
 
             for node, used in current:

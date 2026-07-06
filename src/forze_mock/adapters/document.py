@@ -68,13 +68,13 @@ from forze_mock.query._types import (
     U,
 )
 from forze_mock.query.cursors import (
-    _mock_keyset_window,  # type: ignore[reportPrivateUsage]
+    _mock_keyset_window,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_mock.query.matching import (
-    _aggregate_docs,  # type: ignore[reportPrivateUsage]
-    _match_filters,  # type: ignore[reportPrivateUsage]
-    _project,  # type: ignore[reportPrivateUsage]
-    _sort_docs,  # type: ignore[reportPrivateUsage]
+    _aggregate_docs,  # pyright: ignore[reportPrivateUsage]
+    _match_filters,  # pyright: ignore[reportPrivateUsage]
+    _project,  # pyright: ignore[reportPrivateUsage]
+    _sort_docs,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
@@ -439,7 +439,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     def _validate_filter_types(
         self,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
     ) -> None:
         """Operator/field-type validation, mirroring the real gateways' ``compile_filters``.
 
@@ -464,7 +464,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     async def find(
         self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        filters: QueryFilterExpression,
         *,
         for_update: RowLockMode = False,
     ) -> R | None:
@@ -487,7 +487,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     async def project(
         self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        filters: QueryFilterExpression,
         fields: Sequence[str],
         *,
         for_update: RowLockMode = False,
@@ -512,7 +512,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     async def select(
         self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        filters: QueryFilterExpression,
         return_type: type[T],
         *,
         for_update: RowLockMode = False,
@@ -539,7 +539,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[False],
@@ -552,7 +552,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[True],
@@ -565,7 +565,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[False],
@@ -578,7 +578,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[True],
@@ -591,7 +591,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[False],
@@ -604,7 +604,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[True],
@@ -617,7 +617,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[False],
@@ -630,7 +630,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[True],
@@ -643,7 +643,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[False],
@@ -656,7 +656,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: Literal[True],
@@ -668,7 +668,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_offset_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_count: bool,
@@ -751,7 +751,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     async def find_many(
         self,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> CountlessPage[R]:
@@ -770,7 +770,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def project_many(
         self,
         fields: Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> CountlessPage[JsonDict]:
@@ -789,7 +789,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def select_many(
         self,
         return_type: type[T],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> CountlessPage[T]:
@@ -807,7 +807,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     async def find_page(
         self,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> Page[R]:
@@ -826,7 +826,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def project_page(
         self,
         fields: Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> Page[JsonDict]:
@@ -845,7 +845,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def select_page(
         self,
         return_type: type[T],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> Page[T]:
@@ -864,7 +864,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def aggregate_many(
         self,
         aggregates: AggregatesExpression,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> CountlessPage[JsonDict]:
@@ -883,7 +883,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def aggregate_page(
         self,
         aggregates: AggregatesExpression,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> Page[JsonDict]:
@@ -903,7 +903,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self,
         return_type: type[T],
         aggregates: AggregatesExpression,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> CountlessPage[T]:
@@ -923,7 +923,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self,
         return_type: type[T],
         aggregates: AggregatesExpression,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> Page[T]:
@@ -941,7 +941,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     async def find_cursor(
         self,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> CursorPage[R]:
@@ -957,7 +957,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def project_cursor(
         self,
         fields: Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> CursorPage[JsonDict]:
@@ -973,7 +973,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def select_cursor(
         self,
         return_type: type[T],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
     ) -> CursorPage[T]:
@@ -981,7 +981,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # Python-mode dump keeps UUID/datetime objects intact, matching the
         # offset select path (audit: cursor vs offset value-type parity).
         return CursorPage(
-            hits=[default_model_codec(return_type).decode_mapping(hit.model_dump(mode="python")) for hit in page.hits],  # type: ignore[union-attr]
+            hits=[default_model_codec(return_type).decode_mapping(hit.model_dump(mode="python")) for hit in page.hits],
             next_cursor=page.next_cursor,
             prev_cursor=page.prev_cursor,
             has_more=page.has_more,
@@ -991,7 +991,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     async def find_stream(
         self,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
@@ -1030,7 +1030,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def project_stream(
         self,
         fields: Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
@@ -1074,7 +1074,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def select_stream(
         self,
         return_type: type[T],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
@@ -1119,7 +1119,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_cursor_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         cursor: CursorPaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_fields: None,
@@ -1129,7 +1129,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_cursor_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         cursor: CursorPaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_fields: Sequence[str],
@@ -1138,7 +1138,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     async def _mock_cursor_page(
         self,
         *,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         cursor: CursorPaginationExpression | None,
         sorts: QuerySortExpression | None,
         return_fields: Sequence[str] | None,
@@ -1215,7 +1215,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
-    async def count(self, filters: QueryFilterExpression | None = None) -> int:  # type: ignore[valid-type, return-value]
+    async def count(self, filters: QueryFilterExpression | None = None) -> int:
         self._validate_filter_types(filters)
 
         docs = self._candidate_docs()

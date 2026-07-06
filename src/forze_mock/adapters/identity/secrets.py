@@ -22,7 +22,7 @@ class MockSecretsPort(SecretsPort):
         identity = self.state.identity
         secrets = identity.setdefault("secrets", {})
         assert isinstance(secrets, dict)  # nosec: B101
-        return secrets  # type: ignore[return-value]
+        return secrets  # pyright: ignore[reportUnknownVariableType]
 
     async def resolve_str(self, ref: SecretRef) -> str:
         with self.state.lock:

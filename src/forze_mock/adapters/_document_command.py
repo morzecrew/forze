@@ -23,7 +23,7 @@ from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import AggregateRoot
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.query._types import C, D, R, U
-from forze_mock.query.matching import _match_filters  # type: ignore[reportPrivateUsage]
+from forze_mock.query.matching import _match_filters  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from forze.application.contracts.base import CountlessPage
@@ -70,9 +70,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         def project_many(
             self,
             fields: Sequence[str],
-            filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+            filters: QueryFilterExpression | None = None,
             pagination: PaginationExpression | None = None,
-            sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
+            sorts: QuerySortExpression | None = None,
         ) -> Awaitable[CountlessPage[JsonDict]]: ...
 
     # ....................... #
@@ -173,7 +173,18 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         id: UUID | None = None,
         return_new: bool = True,
-        conflict_on_duplicate: bool = True,
+    ) -> R | None:
+        return await self._insert(
+            payload, id=id, return_new=return_new, conflict_on_duplicate=True
+        )
+
+    async def _insert(
+        self,
+        payload: C,
+        *,
+        id: UUID | None,
+        return_new: bool,
+        conflict_on_duplicate: bool,
     ) -> R | None:
         # ``conflict_on_duplicate`` is the plain-INSERT contract (a duplicate id is a unique
         # violation). ``upsert`` sets it False for its create arm, which is ``ON CONFLICT DO
@@ -360,16 +371,14 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         with self.state.lock:
             if id in self._store():
                 rev = self._to_domain(dict(self._store()[id])).rev
-                return await self.update(  # type: ignore[call-overload]
-                    id,
-                    rev,
-                    update,
-                    return_new=return_new,
-                )
+                if return_new:
+                    return await self.update(id, rev, update, return_new=True)
+                await self.update(id, rev, update, return_new=False)
+                return None
             # ``ON CONFLICT DO NOTHING`` idempotency: a concurrent upsert of the same id must not
             # raise a unique violation (the real adapters converge silently), so the create arm opts
             # out of the publish-time duplicate guard.
-            return await self.create(  # type: ignore[call-overload]
+            return await self._insert(
                 create,
                 id=id,
                 return_new=return_new,
@@ -599,7 +608,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def update_matching(
         self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        filters: QueryFilterExpression,
         dto: U,
         *,
         return_new: Literal[True] = True,
@@ -608,7 +617,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def update_matching(
         self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        filters: QueryFilterExpression,
         dto: U,
         *,
         return_new: Literal[False],
@@ -616,7 +625,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def update_matching(
         self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        filters: QueryFilterExpression,
         dto: U,
         *,
         return_new: bool = True,
@@ -691,7 +700,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def update_matching_strict(
         self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        filters: QueryFilterExpression,
         dto: U,
         *,
         return_new: Literal[True] = True,
@@ -701,7 +710,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def update_matching_strict(
         self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        filters: QueryFilterExpression,
         dto: U,
         *,
         return_new: Literal[False],
@@ -710,7 +719,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def update_matching_strict(
         self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        filters: QueryFilterExpression,
         dto: U,
         *,
         return_new: bool = True,
@@ -729,7 +738,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         last_id: UUID | None = None
 
         while True:
-            chunk_filter: QueryFilterExpression = (  # type: ignore[valid-type]
+            chunk_filter: QueryFilterExpression = (
                 filters
                 if last_id is None
                 else {

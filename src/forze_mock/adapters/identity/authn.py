@@ -64,7 +64,10 @@ def _route_store(state: MockState, route: str) -> dict[str, Any]:
     identity = state.identity
     authn = identity.setdefault("authn", {})
     assert isinstance(authn, dict)  # nosec: B101
-    return authn.setdefault(route, {})  # type: ignore[assignment]
+
+    return authn.setdefault(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        route, {}
+    )  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
 # ....................... #
@@ -120,7 +123,7 @@ def _sessions(store: dict[str, Any]) -> dict[str, dict[str, Any]]:
     rows of the real adapter (see :data:`MockState.TX_IDENTITY_SUBSTORES`).
     """
 
-    return store.setdefault("sessions", {})  # type: ignore[no-any-return]
+    return store.setdefault("sessions", {})
 
 
 # ....................... #
@@ -129,7 +132,7 @@ def _sessions(store: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _access_tokens(store: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Access tokens issued by :class:`MockTokenLifecyclePort` (token → record)."""
 
-    return store.setdefault("access_tokens", {})  # type: ignore[no-any-return]
+    return store.setdefault("access_tokens", {})
 
 
 # ....................... #
@@ -207,14 +210,22 @@ class MockPasswordVerifierPort(PasswordVerifierPort):
         credentials: PasswordCredentials,
     ) -> VerifiedAssertion:
         store = _route_store(self.state, self.route)
-        entry = store.get("passwords", {}).get(credentials.login)  # type: ignore[union-attr]
+        entry = store.get("passwords", {}).get(credentials.login)
+
         if entry is None:
             raise exc.authentication("Invalid login or password")
+
         assert isinstance(entry, dict)  # nosec: B101
 
-        if entry.get("password") != credentials.password:  # type: ignore[union-attr]
+        if (
+            entry.get("password")  # pyright: ignore[reportUnknownMemberType]
+            != credentials.password
+        ):
             raise exc.authentication("Invalid login or password")
-        return _assertion_from_store(entry)  # type: ignore[arg-type]
+
+        return _assertion_from_store(
+            entry  # pyright: ignore[reportUnknownArgumentType]
+        )
 
 
 # ....................... #
@@ -245,11 +256,13 @@ class MockTokenVerifierPort(TokenVerifierPort):
     ) -> VerifiedAssertion:
         with self.state.lock:
             store = _route_store(self.state, self.route)
-            entry = store.get("tokens", {}).get(credentials.token)  # type: ignore[union-attr]
+            entry = store.get("tokens", {}).get(credentials.token)
 
             if entry is not None:
                 assert isinstance(entry, dict)  # nosec: B101
-                return _assertion_from_store(entry)  # type: ignore[arg-type]
+                return _assertion_from_store(
+                    entry  # pyright: ignore[reportUnknownArgumentType]
+                )
 
             return self._verify_issued(store, credentials.token)
 
@@ -302,11 +315,13 @@ class MockApiKeyVerifierPort(ApiKeyVerifierPort):
         credentials: ApiKeyCredentials,
     ) -> VerifiedAssertion:
         store = _route_store(self.state, self.route)
-        entry = store.get("api_keys", {}).get(credentials.key)  # type: ignore[union-attr]
+        entry = store.get("api_keys", {}).get(credentials.key)
         if entry is None:
             raise exc.authentication("Invalid API key")
         assert isinstance(entry, dict)  # nosec: B101
-        return _assertion_from_store(entry)  # type: ignore[arg-type]
+        return _assertion_from_store(
+            entry  # pyright: ignore[reportUnknownArgumentType]
+        )
 
 
 @final
@@ -322,7 +337,11 @@ class MockPrincipalResolverPort(PrincipalResolverPort):
 
         key = assertion.subject
         if key in mapping:
-            return AuthnIdentity(principal_id=UUID(str(mapping[key])))  # type: ignore[arg-type]
+            return AuthnIdentity(
+                principal_id=UUID(
+                    str(mapping[key])  # pyright: ignore[reportUnknownArgumentType]
+                )
+            )
         pid = UUID(
             str(store.get("default_principal", "00000000-0000-4000-8000-000000000001"))
         )
@@ -655,8 +674,8 @@ class MockPasswordLifecyclePort(PasswordLifecyclePort):
             entry = next(
                 (
                     entry
-                    for entry in passwords.values()  # type: ignore[union-attr]
-                    if str(mapping.get(str(entry.get("subject")))) == principal_id  # type: ignore[union-attr]
+                    for entry in passwords.values()
+                    if str(mapping.get(str(entry.get("subject")))) == principal_id
                 ),
                 None,
             )
@@ -729,7 +748,7 @@ class MockPasswordResetPort(PasswordResetPort):
 
     @staticmethod
     def _resets(store: dict[str, Any]) -> dict[str, dict[str, Any]]:
-        return store.setdefault("password_resets", {})  # type: ignore[no-any-return]
+        return store.setdefault("password_resets", {})
 
     # ....................... #
 
@@ -739,8 +758,8 @@ class MockPasswordResetPort(PasswordResetPort):
 
         with self.state.lock:
             store = _route_store(self.state, self.route)
-            entry = store.get("passwords", {}).get(login)  # type: ignore[union-attr]
-            principal = store.get("principal_map", {}).get(login)  # type: ignore[union-attr]
+            entry = store.get("passwords", {}).get(login)
+            principal = store.get("principal_map", {}).get(login)
 
         if entry is None or entry.get("password") is None or principal is None:
             return None
@@ -815,7 +834,7 @@ class MockPasswordResetPort(PasswordResetPort):
             ):
                 raise exc.authentication("Invalid or expired reset token")
 
-            entry = store.get("passwords", {}).get(str(record["login"]))  # type: ignore[union-attr]
+            entry = store.get("passwords", {}).get(str(record["login"]))
 
             if entry is None:
                 raise exc.authentication("Invalid or expired reset token")

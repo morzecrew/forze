@@ -23,24 +23,23 @@ from typing import (
 from forze.application.contracts.querying import (
     AggregatesExpression,
     AggregatesExpressionParser,
+    GroupField,
+    GroupTrunc,
     QuerySortExpression,
     compile_filter,
     ordered_compare,
     resolve_sort_keys,
 )
-from forze.base.primitives.projection import MISSING as _MISSING
-from forze.base.primitives.projection import build_projection
-from forze.base.primitives.projection import path_get as _path_get
 from forze.application.contracts.querying.internal.matching import (
-    _coerce_set,  # type: ignore[reportPrivateUsage]
-    _is_descendant_path,  # type: ignore[reportPrivateUsage]
-    _match_expr,  # type: ignore[reportPrivateUsage]
-    _match_field,  # type: ignore[reportPrivateUsage]
-    _match_filters,  # type: ignore[reportPrivateUsage]
-    _match_text,  # type: ignore[reportPrivateUsage]
-    _memb_contains,  # type: ignore[reportPrivateUsage]
-    _normalize_array_value,  # type: ignore[reportPrivateUsage]
-    _value_is_empty,  # type: ignore[reportPrivateUsage]
+    _coerce_set,  # pyright: ignore[reportPrivateUsage]
+    _is_descendant_path,  # pyright: ignore[reportPrivateUsage]
+    _match_expr,  # pyright: ignore[reportPrivateUsage]
+    _match_field,  # pyright: ignore[reportPrivateUsage]
+    _match_filters,  # pyright: ignore[reportPrivateUsage]
+    _match_text,  # pyright: ignore[reportPrivateUsage]
+    _memb_contains,  # pyright: ignore[reportPrivateUsage]
+    _normalize_array_value,  # pyright: ignore[reportPrivateUsage]
+    _value_is_empty,  # pyright: ignore[reportPrivateUsage]
 )
 from forze.application.contracts.querying.internal.time_bucket import (
     floor_to_time_bucket,
@@ -48,6 +47,9 @@ from forze.application.contracts.querying.internal.time_bucket import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.primitives.projection import MISSING as _MISSING
+from forze.base.primitives.projection import build_projection
+from forze.base.primitives.projection import path_get as _path_get
 
 # The matcher privates are re-exported (sourced from core) so existing
 # ``from forze_mock.query.matching import …`` imports — adapters and the matcher coverage test —
@@ -71,7 +73,7 @@ __all__ = [
 ]
 
 
-def _path_text(obj: Any, path: str) -> str:  # type: ignore[reportPrivateUsage]
+def _path_text(obj: Any, path: str) -> str:  # pyright: ignore[reportPrivateUsage]
     value = _path_get(obj, path)
     if value is _MISSING or value is None:
         return ""
@@ -88,14 +90,16 @@ def _path_text(obj: Any, path: str) -> str:  # type: ignore[reportPrivateUsage]
     return str(value)
 
 
-def _project(doc: JsonDict, return_fields: Sequence[str] | None) -> JsonDict:  # type: ignore[reportPrivateUsage]
+def _project(
+    doc: JsonDict, return_fields: Sequence[str] | None
+) -> JsonDict:  # pyright: ignore[reportPrivateUsage]
     # Delegate to the shared reshaper so the mock (the cross-backend parity oracle) emits the
     # same nested shape as the real backends: a dotted path like ``contract.reg_number`` yields
     # ``{"contract": {"reg_number": ...}}`` rather than a flat ``contract.reg_number`` key.
     return build_projection(doc, return_fields)
 
 
-def _sort_docs(  # type: ignore[reportPrivateUsage]
+def _sort_docs(  # pyright: ignore[reportPrivateUsage]
     docs: list[JsonDict],
     sorts: QuerySortExpression | None,
 ) -> list[JsonDict]:
@@ -190,13 +194,12 @@ def _coerce_datetime_for_bucket(raw: Any) -> datetime:
     raise exc.internal(f"Invalid timestamp for $trunc: {raw!r}")
 
 
-def _group_key_part(doc: JsonDict, expr: object) -> Any:
-    from forze.application.contracts.querying import GroupField, GroupTrunc
-
+def _group_key_part(doc: JsonDict, expr: GroupField | GroupTrunc) -> Any:
     match expr:
         case GroupField(field=field):
             value = _path_get(doc, field)
             return None if value is _MISSING else value
+
         case GroupTrunc(field=field, unit=unit, timezone=tz):
             raw_ts = _path_get(doc, field)
             if raw_ts is _MISSING:
@@ -208,11 +211,12 @@ def _group_key_part(doc: JsonDict, expr: object) -> Any:
                 tz=tb_tz,
             )
             return floored.isoformat()
-        case _:
+
+        case _:  # pyright: ignore[reportUnnecessaryComparison]
             raise exc.internal(f"Unsupported group expression: {expr!r}")
 
 
-def _aggregate_docs(  # type: ignore[reportPrivateUsage]
+def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
     docs: Sequence[JsonDict], aggregates: AggregatesExpression
 ) -> list[JsonDict]:
     parsed = AggregatesExpressionParser.parse(aggregates)
@@ -243,9 +247,7 @@ def _aggregate_docs(  # type: ignore[reportPrivateUsage]
             parsed.computed_fields, computed_matchers, strict=True
         ):
             computed_items = (
-                [doc for doc in items if matcher(doc)]
-                if matcher is not None
-                else items
+                [doc for doc in items if matcher(doc)] if matcher is not None else items
             )
 
             if computed.function == "$count":

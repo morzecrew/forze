@@ -37,7 +37,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
     async def search_cursor(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -50,7 +50,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         self,
         fields: Sequence[str],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -64,7 +64,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         self,
         fields: Sequence[str],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -78,7 +78,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         self,
         fields: Sequence[str],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -91,7 +91,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         self,
         return_type: type[T],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -105,7 +105,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         self,
         return_type: type[T],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -119,7 +119,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         self,
         return_type: type[T],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -135,7 +135,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
     async def search_stream(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
@@ -149,7 +149,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         self,
         fields: Sequence[str],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
@@ -163,7 +163,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         self,
         return_type: type[T],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,

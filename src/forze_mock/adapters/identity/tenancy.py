@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Sequence, final
+from datetime import datetime
+from typing import Sequence, TypedDict, final
 from uuid import UUID
 
 import attrs
@@ -20,6 +21,18 @@ from forze_mock.state import MockState
 # ----------------------- #
 
 
+class _TenantEntry(TypedDict, total=False):
+    """Per-tenant record kept in the mock identity plane (tenant_id → entry)."""
+
+    tenant_key: str
+    principals: list[UUID]
+    active: bool
+    created_at: datetime
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True)
 class _TenantRouteStore:
     """Shared per-route tenant store accessor for the mock tenancy ports."""
@@ -27,11 +40,10 @@ class _TenantRouteStore:
     state: MockState
     route: str = "main"
 
-    def _tenants(self) -> dict[str, dict[str, object]]:
+    def _tenants(self) -> dict[str, _TenantEntry]:
         identity = self.state.identity
         tenants = identity.setdefault("tenants", {})
-        assert isinstance(tenants, dict)  # nosec: B101
-        return tenants.setdefault(self.route, {})  # type: ignore[return-value]
+        return tenants.setdefault(self.route, {})
 
 
 # ----------------------- #
@@ -65,7 +77,7 @@ class MockTenantResolverPort(_TenantRouteStore, TenantResolverPort):
             member_of = [
                 (tid, entry)
                 for tid, entry in tenants.items()
-                if principal_id in entry.get("principals", [])  # type: ignore[operator]
+                if principal_id in entry.get("principals", [])
             ]
 
             if requested_tenant_id is not None:
@@ -147,8 +159,14 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
             if entry is None:
                 raise exc.not_found(f"Tenant {tenant_id!r} not found")
             principals = entry.setdefault("principals", [])
-            if isinstance(principals, list) and principal_id not in principals:
-                principals.append(principal_id)  # type: ignore[arg-type]
+
+            if (
+                isinstance(
+                    principals, list
+                )  # pyright: ignore[reportUnnecessaryIsInstance]
+                and principal_id not in principals
+            ):
+                principals.append(principal_id)
 
     async def detach_principal(
         self,
@@ -163,8 +181,13 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
 
             principals = entry.get("principals", [])
 
-            if isinstance(principals, list) and principal_id in principals:
-                principals.remove(principal_id)  # type: ignore[arg-type]
+            if (
+                isinstance(
+                    principals, list
+                )  # pyright: ignore[reportUnnecessaryIsInstance]
+                and principal_id in principals
+            ):
+                principals.remove(principal_id)
 
     async def list_principal_tenants(
         self,
@@ -178,7 +201,7 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
                 )
                 for tid, entry in self._tenants().items()
                 if entry.get("active", True)
-                and principal_id in entry.get("principals", [])  # type: ignore[operator]
+                and principal_id in entry.get("principals", [])
             ]
 
     async def list_tenant_principals(
@@ -195,7 +218,9 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
 
             return (
                 list(principals)  # pyright: ignore[reportUnknownArgumentType]
-                if isinstance(principals, list)
+                if isinstance(
+                    principals, list
+                )  # pyright: ignore[reportUnnecessaryIsInstance]
                 else []
             )
 
@@ -211,11 +236,15 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
 
         with self.state.lock:
             entry = self._tenants().get(str(tenant_id))
+
             if entry is None:
                 # Mirror the real adapter, which loads the tenant (a document ``get``
                 # that raises on a missing row) before tearing down its infrastructure.
                 raise exc.not_found(f"Tenant {tenant_id!r} not found")
-            key = str(entry["tenant_key"])
+
+            key = str(
+                entry["tenant_key"]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+            )
 
         await self.provisioner.deprovision(
             TenantIdentity(tenant_id=tenant_id, tenant_key=key)

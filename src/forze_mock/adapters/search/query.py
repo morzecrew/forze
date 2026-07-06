@@ -60,17 +60,17 @@ from forze_mock.query._types import (
     T,
 )
 from forze_mock.query.cursors import (
-    _mock_cursor_start_and_limit,  # type: ignore[reportPrivateUsage]
-    _mock_cursor_tokens,  # type: ignore[reportPrivateUsage]
+    _mock_cursor_start_and_limit,  # pyright: ignore[reportPrivateUsage]
+    _mock_cursor_tokens,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_mock.adapters.search._facets_highlights import (
     compute_facets,
     compute_highlights,
 )
 from forze_mock.query.matching import (
-    _path_text,  # type: ignore[reportPrivateUsage]
-    _project,  # type: ignore[reportPrivateUsage]
-    _sort_docs,  # type: ignore[reportPrivateUsage]
+    _path_text,  # pyright: ignore[reportPrivateUsage]
+    _project,  # pyright: ignore[reportPrivateUsage]
+    _sort_docs,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
@@ -218,7 +218,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     def _full_ordered_search_documents(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,
         sorts: QuerySortExpression | None,
         options: SearchOptions | None,
     ) -> list[JsonDict]:
@@ -298,7 +298,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _offset_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -313,7 +313,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _offset_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -328,7 +328,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _offset_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -343,7 +343,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _offset_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -358,7 +358,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _offset_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -373,7 +373,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _offset_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -387,7 +387,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _offset_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -472,7 +472,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def search(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -494,7 +494,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def search_page(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -517,7 +517,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         self,
         fields: Sequence[str],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -540,7 +540,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         self,
         fields: Sequence[str],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -563,7 +563,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         self,
         return_type: type[T],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -586,7 +586,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         self,
         return_type: type[T],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -611,7 +611,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _cursor_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -624,7 +624,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _cursor_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -637,7 +637,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _cursor_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -649,7 +649,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def _cursor_search_impl(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -702,7 +702,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     async def search_cursor(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -722,7 +722,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         self,
         fields: Sequence[str],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -742,7 +742,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         self,
         return_type: type[T],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
@@ -786,7 +786,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     def search_stream(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
@@ -803,7 +803,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         self,
         fields: Sequence[str],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
@@ -820,7 +820,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         self,
         return_type: type[T],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
