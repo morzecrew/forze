@@ -242,6 +242,74 @@ async def test_update_edge_endpoints_and_missing(ctx: ExecutionContext) -> None:
         await cmd.update_edge(EdgeRef.by_key("RATED", "nope"), RatedUpdate(score=1))
 
 
+class _TagCreate(BaseModel):
+    id: str
+
+
+class _TaggedCreate(BaseModel):
+    from_key: str
+    to_key: str
+    from_kind: str | None = None
+    to_kind: str | None = None
+
+
+def _multi_spec() -> GraphModuleSpec:
+    from forze.application.contracts.graph import (
+        GraphEdgeDirectionality,
+        GraphEdgeEndpoint,
+        GraphEdgeSpec,
+    )
+
+    class TaggedRead(BaseModel):
+        weight: int | None = None
+
+    return GraphModuleSpec(
+        name="multi",
+        nodes=(
+            GraphNodeSpec(name="Post", read=UserRead, create=_TagCreate),
+            GraphNodeSpec(name="Note", read=UserRead, create=_TagCreate),
+            GraphNodeSpec(name="Tag", read=UserRead, create=_TagCreate),
+        ),
+        edges=(
+            GraphEdgeSpec(
+                name="TAGGED",
+                read=TaggedRead,
+                identity="endpoints",
+                endpoints=(
+                    GraphEdgeEndpoint(from_kind="Post", to_kind="Tag"),
+                    GraphEdgeEndpoint(from_kind="Note", to_kind="Tag"),
+                ),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_mock_multi_endpoint_distinct_by_kind() -> None:
+    spec = _multi_spec()
+    ctx = context_from_deps(MockDepsModule(state=MockState())())
+    cmd = ctx.graph.command(spec)
+    qry = ctx.graph.query(spec)
+
+    await cmd.create_vertex("Post", _TagCreate(id="1"))
+    await cmd.create_vertex("Note", _TagCreate(id="1"))
+    await cmd.create_vertex("Tag", _TagCreate(id="x"))
+    # same key values, different endpoint kinds -> two distinct edges
+    await cmd.create_edge(
+        "TAGGED", _TaggedCreate(from_key="1", to_key="x", from_kind="Post", to_kind="Tag")
+    )
+    await cmd.create_edge(
+        "TAGGED", _TaggedCreate(from_key="1", to_key="x", from_kind="Note", to_kind="Tag")
+    )
+
+    assert await qry.count_edges("TAGGED") == 2
+
+    with pytest.raises(CoreException) as ei:
+        await cmd.create_edge("TAGGED", _TaggedCreate(from_key="1", to_key="x"))
+    assert ei.value.code == "graph_edge_endpoint_kind_required"
+
+
 @pytest.mark.asyncio
 async def test_filter_on_encrypted_field_rejected() -> None:
     """A filter on a sealed property fails closed (can't match ciphertext)."""

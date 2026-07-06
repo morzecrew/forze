@@ -30,6 +30,7 @@ from forze.application.contracts.graph import (
     ShortestPathResult,
     VertexRef,
 )
+from forze.application.integrations.graph import resolve_write_endpoint
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
@@ -321,7 +322,6 @@ class MockGraphAdapter(MockTenancyMixin):
         return_new: bool,
     ) -> BaseModel | None:
         edge = self._edge(edge_kind)
-        endpoint = edge.endpoints[0]
         data = cmd.model_dump(mode="json", exclude_none=True)
         from_key = data.pop("from_key", None)
         to_key = data.pop("to_key", None)
@@ -332,6 +332,9 @@ class MockGraphAdapter(MockTenancyMixin):
                 code="graph_edge_endpoints_required",
             )
 
+        # Single-endpoint kinds are implicit; multi-endpoint kinds name the pair via
+        # from_kind/to_kind (popped from ``data``).
+        endpoint = resolve_write_endpoint(edge, data)
         rec = {
             "kind": edge_kind,
             "from_kind": endpoint.from_kind,
@@ -346,9 +349,13 @@ class MockGraphAdapter(MockTenancyMixin):
 
             if merge:
                 for existing in store:
+                    # Identity includes the endpoint *kinds*, so two multi-endpoint edges with
+                    # the same key values but different kinds stay distinct.
                     if (
                         existing["kind"] == edge_kind
+                        and existing["from_kind"] == rec["from_kind"]
                         and existing["from_key"] == rec["from_key"]
+                        and existing["to_kind"] == rec["to_kind"]
                         and existing["to_key"] == rec["to_key"]
                     ):
                         return (

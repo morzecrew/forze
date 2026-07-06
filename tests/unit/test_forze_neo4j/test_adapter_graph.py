@@ -500,15 +500,15 @@ async def test_scoped_walk_fails_closed_without_tenant() -> None:
     assert client.calls == []
 
 
-@pytest.mark.asyncio
-async def test_multi_endpoint_edge_write_not_implemented() -> None:
-    """The one remaining deferral: an edge kind with >1 endpoint pair."""
+class _LinkCreate(BaseModel):
+    from_key: str
+    to_key: str
+    from_kind: str | None = None
+    to_kind: str | None = None
 
-    class LinkCreate(BaseModel):
-        from_key: str
-        to_key: str
 
-    spec = GraphModuleSpec(
+def _multi_spec() -> GraphModuleSpec:
+    return GraphModuleSpec(
         name="multi",
         nodes=(
             GraphNodeSpec(name="A", read=UserRead, create=UserCreate),
@@ -527,12 +527,37 @@ async def test_multi_endpoint_edge_write_not_implemented() -> None:
             ),
         ),
     )
-    adapter = Neo4jGraphAdapter(spec=spec, client=_FakeClient())
 
-    with pytest.raises(
-        CoreException, match="not implemented by the neo4j backend yet"
-    ) as ei:
-        await adapter.create_edge("LINK", LinkCreate(from_key="a", to_key="b"))
 
-    assert ei.value.kind is ExceptionKind.PRECONDITION
-    assert ei.value.code == "graph_not_implemented"
+@pytest.mark.asyncio
+async def test_multi_endpoint_edge_requires_endpoint_kinds() -> None:
+    adapter = Neo4jGraphAdapter(spec=_multi_spec(), client=_FakeClient())
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.create_edge("LINK", _LinkCreate(from_key="a", to_key="b"))
+    assert ei.value.code == "graph_edge_endpoint_kind_required"
+
+
+@pytest.mark.asyncio
+async def test_multi_endpoint_edge_rejects_undeclared_pair() -> None:
+    adapter = Neo4jGraphAdapter(spec=_multi_spec(), client=_FakeClient())
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.create_edge(
+            "LINK", _LinkCreate(from_key="a", to_key="b", from_kind="B", to_kind="A")
+        )
+    assert ei.value.code == "graph_edge_unknown_endpoint"
+
+
+@pytest.mark.asyncio
+async def test_multi_endpoint_edge_routes_to_declared_pair() -> None:
+    client = _FakeClient(rows=[{"r": {"weight": 1}}])
+    adapter = Neo4jGraphAdapter(spec=_multi_spec(), client=client)
+
+    await adapter.create_edge(
+        "LINK", _LinkCreate(from_key="a", to_key="b", from_kind="A", to_kind="B")
+    )
+
+    query, _params = client.calls[-1]
+    # The A→B pair drives the MATCH labels; routing hints are not stored as props.
+    assert "(a:`A`" in query and "(b:`B`" in query

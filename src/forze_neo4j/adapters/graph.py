@@ -6,9 +6,10 @@ vertex/edge CRUD and bulk (``create_vertices``/``create_edges``/``delete_vertice
 read-introspection (``get_vertices``/``get_edges``/``edge_exists``, ``count_*``,
 ``vertex_degree``/``count_neighbors``/``incident_edges``, ``find_*``), and traversal/paths
 (``neighbors``/``expand``/``scoped_walk``/``shortest_path``/``k_shortest_paths`` — native
-``SHORTEST k`` plus weighted via GDS). The one remaining gap is a **multi-endpoint edge
-kind** (an edge whose spec declares more than one ``(from, to)`` label pair), which raises
-``graph_not_implemented``; single-endpoint edges are fully supported.
+``SHORTEST k`` plus weighted via GDS). A **multi-endpoint edge kind** (a spec declaring more
+than one ``(from, to)`` label pair) is supported too: its create/ensure command names the
+pair via ``from_kind`` / ``to_kind`` (see :func:`~forze.application.integrations.graph.\
+resolve_write_endpoint`).
 
 **Schema provisioning** is available via :meth:`ensure_schema` (the ``GraphManagementPort``):
 it creates node key-uniqueness constraints (composite with the tenant property under tagged
@@ -53,7 +54,11 @@ from forze.application.contracts.resolution import (
     resolve_scoped_namespace,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.application.integrations.graph import GraphCodecs, GraphKindCipher
+from forze.application.integrations.graph import (
+    GraphCodecs,
+    GraphKindCipher,
+    resolve_write_endpoint,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, OnceCell, uuid4
 from forze.base.serialization import default_model_codec
@@ -64,22 +69,6 @@ from ..kernel.relation import resolve_neo4j_database
 from ._logger import logger
 
 # ----------------------- #
-
-
-def _nyi(method: str) -> CoreException:
-    """Build the standard not-implemented error for a deferred port slice.
-
-    Stays inside the :class:`~forze.base.exceptions.CoreException` taxonomy so
-    egress mapping can classify it (a bare ``NotImplementedError`` cannot be).
-    """
-
-    return exc.precondition(
-        f"{method} is not implemented by the neo4j backend yet",
-        code="graph_not_implemented",
-    )
-
-
-# ....................... #
 
 
 @final
@@ -781,16 +770,14 @@ class Neo4jGraphAdapter(TenancyMixin):
     ) -> BaseModel | None:
         edge = self._edge(edge_kind)
 
-        if len(edge.endpoints) != 1:
-            raise _nyi(f"multi-endpoint edge kind {edge_kind!r}")
-
-        endpoint = edge.endpoints[0]
-        from_node = self._node(endpoint.from_kind)
-        to_node = self._node(endpoint.to_kind)
-
         data = await self._encode(cmd, self._edge_cipher(edge_kind))
         from_key = data.pop("from_key", None)
         to_key = data.pop("to_key", None)
+        # Resolve the endpoint pair (single kinds are implicit; multi-endpoint kinds name it
+        # via from_kind/to_kind in the command). Pops the routing hints from ``data``.
+        endpoint = resolve_write_endpoint(edge, data)
+        from_node = self._node(endpoint.from_kind)
+        to_node = self._node(endpoint.to_kind)
 
         if from_key is None or to_key is None:
             raise exc.validation(

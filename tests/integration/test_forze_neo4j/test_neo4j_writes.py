@@ -142,6 +142,61 @@ async def test_bulk_create_and_delete(neo4j_client: Neo4jClient) -> None:
     assert await adapter.count_vertices("User") == 1  # only c remains
 
 
+class TaggedCreate(BaseModel):
+    from_key: str
+    to_key: str
+    from_kind: str
+    to_kind: str
+
+
+class TaggedRead(BaseModel):
+    weight: int | None = None
+
+
+def _multi_adapter(client: Neo4jClient) -> Neo4jGraphAdapter:
+    spec = GraphModuleSpec(
+        name="wm",
+        nodes=(
+            GraphNodeSpec(name="Post", read=UserRead, create=UserCreate),
+            GraphNodeSpec(name="Note", read=UserRead, create=UserCreate),
+            GraphNodeSpec(name="Tag", read=UserRead, create=UserCreate),
+        ),
+        edges=(
+            GraphEdgeSpec(
+                name="TAGGED",
+                read=TaggedRead,
+                identity="endpoints",
+                endpoints=(
+                    GraphEdgeEndpoint(from_kind="Post", to_kind="Tag"),
+                    GraphEdgeEndpoint(from_kind="Note", to_kind="Tag"),
+                ),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+    return Neo4jGraphAdapter(spec=spec, client=client)
+
+
+async def test_multi_endpoint_edges_routed_by_kind(neo4j_client: Neo4jClient) -> None:
+    adapter = _multi_adapter(neo4j_client)
+    await adapter.create_vertex("Post", UserCreate(id="1"))
+    await adapter.create_vertex("Note", UserCreate(id="1"))
+    await adapter.create_vertex("Tag", UserCreate(id="x"))
+
+    await adapter.create_edge(
+        "TAGGED", TaggedCreate(from_key="1", to_key="x", from_kind="Post", to_kind="Tag")
+    )
+    await adapter.create_edge(
+        "TAGGED", TaggedCreate(from_key="1", to_key="x", from_kind="Note", to_kind="Tag")
+    )
+
+    assert await adapter.count_edges("TAGGED") == 2  # distinct despite identical keys
+    post_ref = EdgeRef.by_endpoints(
+        "TAGGED", VertexRef(kind="Post", key="1"), VertexRef(kind="Tag", key="x")
+    )
+    assert await adapter.edge_exists(post_ref) is True
+
+
 async def test_delete_vertices_is_tenant_scoped(neo4j_client: Neo4jClient) -> None:
     ta = _adapter(
         neo4j_client, tenant_aware=True, tenant_provider=lambda: TenantIdentity(tenant_id=UUID(int=1))

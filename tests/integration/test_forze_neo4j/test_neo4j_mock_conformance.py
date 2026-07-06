@@ -210,6 +210,90 @@ async def test_mock_matches_neo4j_write_effects(neo4j_client: Neo4jClient) -> No
     assert await _write_snapshot(mock_ctx.graph.query(spec)) == await _write_snapshot(neo)
 
 
+class TagRead(BaseModel):
+    id: str
+
+
+class TagCreate(BaseModel):
+    id: str
+
+
+class TaggedCreate(BaseModel):
+    from_key: str
+    to_key: str
+    from_kind: str
+    to_kind: str
+
+
+class TaggedRead(BaseModel):
+    weight: int | None = None
+
+
+def _multi_spec() -> GraphModuleSpec:
+    return GraphModuleSpec(
+        name="multi",
+        nodes=(
+            GraphNodeSpec(name="Post", read=TagRead, create=TagCreate),
+            GraphNodeSpec(name="Note", read=TagRead, create=TagCreate),
+            GraphNodeSpec(name="Tag", read=TagRead, create=TagCreate),
+        ),
+        edges=(
+            GraphEdgeSpec(
+                name="TAGGED",
+                read=TaggedRead,
+                identity="endpoints",
+                endpoints=(
+                    GraphEdgeEndpoint(from_kind="Post", to_kind="Tag"),
+                    GraphEdgeEndpoint(from_kind="Note", to_kind="Tag"),
+                ),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+
+
+async def _multi_apply(cmd: Any) -> None:
+    await cmd.create_vertex("Post", TagCreate(id="1"))
+    await cmd.create_vertex("Note", TagCreate(id="1"))  # same key, different kind
+    await cmd.create_vertex("Tag", TagCreate(id="x"))
+    # Two edges with identical key VALUES ("1"→"x") but different endpoint kinds — distinct.
+    await cmd.create_edge(
+        "TAGGED", TaggedCreate(from_key="1", to_key="x", from_kind="Post", to_kind="Tag")
+    )
+    await cmd.create_edge(
+        "TAGGED", TaggedCreate(from_key="1", to_key="x", from_kind="Note", to_kind="Tag")
+    )
+
+
+async def _multi_snapshot(port: Any) -> dict[str, Any]:
+    def _ref(kind: str) -> EdgeRef:
+        return EdgeRef.by_endpoints(
+            "TAGGED", VertexRef(kind=kind, key="1"), VertexRef(kind="Tag", key="x")
+        )
+
+    return {
+        "count": await port.count_edges("TAGGED"),
+        "post_edge_exists": await port.edge_exists(_ref("Post")),
+        "note_edge_exists": await port.edge_exists(_ref("Note")),
+    }
+
+
+async def test_mock_matches_neo4j_multi_endpoint_edges(neo4j_client: Neo4jClient) -> None:
+    spec = _multi_spec()
+
+    mock_ctx: ExecutionContext = context_from_deps(MockDepsModule(state=MockState())())
+    await _multi_apply(mock_ctx.graph.command(spec))
+
+    neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client)
+    await _multi_apply(neo)
+
+    mock_snap = await _multi_snapshot(mock_ctx.graph.query(spec))
+    neo_snap = await _multi_snapshot(neo)
+
+    assert mock_snap == neo_snap
+    assert neo_snap == {"count": 2, "post_edge_exists": True, "note_edge_exists": True}
+
+
 async def test_mock_matches_neo4j_read_surface(neo4j_client: Neo4jClient) -> None:
     spec = _spec()
 
