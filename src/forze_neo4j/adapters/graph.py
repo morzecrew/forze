@@ -1,14 +1,14 @@
 """Neo4j graph adapter implementing the graph query/command/raw ports.
 
-**MVP surface — not yet a full port implementation.** Implemented: vertex/edge CRUD,
-``ensure_edge``, ``neighbors``, ``expand``, ``shortest_path``, ``k_shortest_paths`` (native
-Neo4j 5 ``SHORTEST k``, plus weighted via GDS), the read-introspection set
-(``get_vertices``/``get_edges``/``edge_exists``, ``count_vertices``/``count_edges``,
-``vertex_degree``/``count_neighbors``/``incident_edges``, ``find_vertices``/``find_edges``),
-and the raw escape hatch. The remaining port methods (the write set — ``update_edge``/
-``delete_edge``, ``ensure_vertex``, and the ``*_vertices``/``*_edges`` bulk writes) raise a
-clear ``exc.precondition`` (code ``graph_not_implemented``). Multi-endpoint edge kinds are
-likewise deferred.
+**Full ``GraphQueryPort`` / ``GraphCommandPort`` coverage**, plus the raw escape hatch:
+vertex/edge CRUD and bulk (``create_vertices``/``create_edges``/``delete_vertices``/
+``delete_edges``, ``ensure_vertex``/``ensure_edge``, ``update_edge``/``delete_edge``),
+read-introspection (``get_vertices``/``get_edges``/``edge_exists``, ``count_*``,
+``vertex_degree``/``count_neighbors``/``incident_edges``, ``find_*``), and traversal/paths
+(``neighbors``/``expand``/``scoped_walk``/``shortest_path``/``k_shortest_paths`` — native
+``SHORTEST k`` plus weighted via GDS). The one remaining gap is a **multi-endpoint edge
+kind** (an edge whose spec declares more than one ``(from, to)`` label pair), which raises
+``graph_not_implemented``; single-endpoint edges are fully supported.
 
 **Schema provisioning** is available via :meth:`ensure_schema` (the ``GraphManagementPort``):
 it creates node key-uniqueness constraints (composite with the tenant property under tagged
@@ -1227,10 +1227,67 @@ class Neo4jGraphAdapter(TenancyMixin):
     # Deferred GraphCommandPort methods
 
     async def update_edge(self, ref: EdgeRef, cmd: BaseModel) -> BaseModel:
-        raise _nyi("update_edge")
+        props = await self._encode(
+            cmd,
+            self._edge_cipher(ref.kind),
+            record_id=ref.key if ref.is_keyed else None,
+        )
+        # An update patches the edge's own properties — it can't move endpoints or rekey.
+        props.pop("from_key", None)
+        props.pop("to_key", None)
+
+        if ref.is_keyed:
+            edge = self._edge(ref.kind)
+
+            if edge.key_field is None:
+                raise exc.configuration(
+                    f"Edge kind {ref.kind!r} has no key_field but a keyed EdgeRef was used",
+                    code="graph_edge_missing_key_field",
+                )
+
+            query = builders.update_edge_by_key(
+                ref.kind, edge.key_field, tenant_field=self._tenant_field
+            )
+            params = {"props": props, **self._params(key=ref.key)}
+
+        else:
+            query, base = self._endpoints_edge_query(
+                ref, builders.update_edge_by_endpoints
+            )
+            params = {"props": props, **base}
+
+        rows = await self.client.run(
+            query, params, database=await self._resolved_database()
+        )
+
+        if not rows:
+            raise exc.not_found(
+                f"Edge {ref.kind!r} not found", code="graph_edge_not_found"
+            )
+
+        return await self._edge_model(ref.kind, rows[0]["r"])
 
     async def delete_edge(self, ref: EdgeRef) -> None:
-        raise _nyi("delete_edge")
+        if ref.is_keyed:
+            edge = self._edge(ref.kind)
+
+            if edge.key_field is None:
+                raise exc.configuration(
+                    f"Edge kind {ref.kind!r} has no key_field but a keyed EdgeRef was used",
+                    code="graph_edge_missing_key_field",
+                )
+
+            query = builders.delete_edge_by_key(
+                ref.kind, edge.key_field, tenant_field=self._tenant_field
+            )
+            params = self._params(key=ref.key)
+
+        else:
+            query, params = self._endpoints_edge_query(
+                ref, builders.delete_edge_by_endpoints
+            )
+
+        await self.client.run(query, params, database=await self._resolved_database())
 
     async def create_vertices(
         self,
@@ -1238,7 +1295,33 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         return_new: bool = True,
     ) -> Sequence[BaseModel] | None:
-        raise _nyi("create_vertices")
+        if not items:
+            return [] if return_new else None
+
+        database = await self._resolved_database()
+        by_kind: dict[str, list[tuple[int, JsonDict]]] = {}
+
+        for i, (kind, cmd) in enumerate(items):
+            props = await self._encode(cmd, self._node_cipher(kind))
+            by_kind.setdefault(kind, []).append((i, props))
+
+        results: dict[int, BaseModel] = {}
+
+        for kind, entries in by_kind.items():
+            query = builders.create_vertices(kind)
+            rows = await self.client.run(
+                query,
+                {"rows": [props for _, props in entries], **self._params()},
+                database=database,
+            )
+
+            for (idx, _props), row in zip(entries, rows, strict=True):
+                results[idx] = await self._vertex_model(kind, row["n"])
+
+        if not return_new:
+            return None
+
+        return [results[i] for i in range(len(items))]
 
     async def create_edges(
         self,
@@ -1246,7 +1329,19 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         return_new: bool = True,
     ) -> Sequence[BaseModel] | None:
-        raise _nyi("create_edges")
+        # Edges need per-item endpoint matching (encode + tenant + not-found), so this reuses
+        # single-edge create rather than one UNWIND — order-preserving, not one round-trip.
+        if not items:
+            return [] if return_new else None
+
+        created: list[BaseModel] = []
+
+        for kind, cmd in items:
+            edge = await self.create_edge(kind, cmd, return_new=return_new)
+            if return_new and edge is not None:
+                created.append(edge)
+
+        return created if return_new else None
 
     async def ensure_vertex(
         self,
@@ -1255,10 +1350,65 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         return_new: bool = True,
     ) -> BaseModel | None:
-        raise _nyi("ensure_vertex")
+        node = self._node(node_kind)
+        props = await self._encode(cmd, self._node_cipher(node_kind))
+        key = str(props[node.key_field])  # the key field is the plaintext identity
+        query = builders.ensure_vertex(
+            node_kind, node.key_field, tenant_field=self._tenant_field
+        )
+        rows = await self.client.run(
+            query,
+            {"props": props, **self._params(key=key)},
+            database=await self._resolved_database(),
+        )
+
+        if not return_new:
+            return None
+
+        return await self._vertex_model(node_kind, rows[0]["n"])
 
     async def delete_vertices(self, refs: Sequence[VertexRef]) -> None:
-        raise _nyi("delete_vertices")
+        if not refs:
+            return
+
+        database = await self._resolved_database()
+        by_kind: dict[str, list[str]] = {}
+
+        for ref in refs:
+            by_kind.setdefault(ref.kind, []).append(ref.key)
+
+        for kind, keys in by_kind.items():
+            node = self._node(kind)
+            query = builders.delete_vertices(
+                kind, node.key_field, tenant_field=self._tenant_field
+            )
+            await self.client.run(
+                query, self._params(keys=list(set(keys))), database=database
+            )
 
     async def delete_edges(self, refs: Sequence[EdgeRef]) -> None:
-        raise _nyi("delete_edges")
+        if not refs:
+            return
+
+        database = await self._resolved_database()
+        keyed_by_kind: dict[str, list[str]] = {}
+
+        for ref in refs:
+            if ref.is_keyed and ref.key is not None:
+                keyed_by_kind.setdefault(ref.kind, []).append(ref.key)
+            else:
+                await self.delete_edge(ref)  # endpoints, one pair at a time
+
+        for kind, keys in keyed_by_kind.items():
+            edge = self._edge(kind)
+
+            if edge.key_field is None:
+                raise exc.configuration(
+                    f"Edge kind {kind!r} has no key_field but a keyed EdgeRef was used",
+                    code="graph_edge_missing_key_field",
+                )
+
+            query = builders.delete_edges_by_keys(
+                kind, edge.key_field, tenant_field=self._tenant_field
+            )
+            await self.client.run(query, self._params(keys=keys), database=database)

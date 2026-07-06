@@ -158,6 +158,58 @@ async def _read_snapshot(port: Any) -> dict[str, Any]:
     }
 
 
+class RatedUpdate(BaseModel):
+    score: int
+
+
+async def _apply_writes(cmd: Any) -> None:
+    # bulk create
+    await cmd.create_vertices(
+        [
+            ("User", UserCreate(id="a", name="A")),
+            ("User", UserCreate(id="b", name="B")),
+            ("User", UserCreate(id="c", name="C")),
+        ]
+    )
+    # ensure: existing 'a' stays unchanged, 'd' is created
+    await cmd.ensure_vertex("User", UserCreate(id="a", name="CHANGED"))
+    await cmd.ensure_vertex("User", UserCreate(id="d", name="D"))
+    # bulk edges, then update one, delete another
+    await cmd.create_edges(
+        [
+            ("RATED", RatedCreate(id="r1", from_key="a", to_key="b", score=5)),
+            ("RATED", RatedCreate(id="r2", from_key="a", to_key="c", score=3)),
+        ]
+    )
+    await cmd.update_edge(EdgeRef.by_key("RATED", "r1"), RatedUpdate(score=9))
+    await cmd.delete_edge(EdgeRef.by_key("RATED", "r2"))
+    # bulk delete a vertex
+    await cmd.delete_vertices([_u("c")])
+
+
+async def _write_snapshot(port: Any) -> dict[str, Any]:
+    return {
+        "users": [m.model_dump() for m in await port.find_vertices("User")],
+        "rated": [m.model_dump() for m in await port.find_edges("RATED")],
+        "count_users": await port.count_vertices("User"),
+        "count_rated": await port.count_edges("RATED"),
+        "r1_exists": await port.edge_exists(EdgeRef.by_key("RATED", "r1")),
+        "r2_exists": await port.edge_exists(EdgeRef.by_key("RATED", "r2")),
+    }
+
+
+async def test_mock_matches_neo4j_write_effects(neo4j_client: Neo4jClient) -> None:
+    spec = _spec()
+
+    mock_ctx: ExecutionContext = context_from_deps(MockDepsModule(state=MockState())())
+    await _apply_writes(mock_ctx.graph.command(spec))
+
+    neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client)
+    await _apply_writes(neo)
+
+    assert await _write_snapshot(mock_ctx.graph.query(spec)) == await _write_snapshot(neo)
+
+
 async def test_mock_matches_neo4j_read_surface(neo4j_client: Neo4jClient) -> None:
     spec = _spec()
 

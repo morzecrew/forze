@@ -1,8 +1,11 @@
-"""In-memory mock graph adapter (vertex/edge CRUD + neighbors).
+"""In-memory mock graph adapter.
 
-Exists so handlers/kits can exercise the graph ports without a real engine. Traversal
-beyond one hop (expand / shortest_path) and the raw escape hatch raise
-``NotImplementedError`` — use ``forze_neo4j`` for those.
+Exists so handlers/kits can exercise the graph ports without a real engine. Covers the full
+``GraphCommandPort`` (vertex/edge CRUD + bulk + ensure/update/delete) and the
+read-introspection + ``find_*`` half of ``GraphQueryPort``, matching ``forze_neo4j`` result
+semantics (a differential conformance test pins mock ≡ Neo4j). Multi-hop traversal
+(``expand`` / ``shortest_path`` / ``scoped_walk`` / ``k_shortest_paths``) and the raw escape
+hatch raise ``NotImplementedError`` — use ``forze_neo4j`` for those.
 """
 
 from __future__ import annotations
@@ -561,31 +564,106 @@ class MockGraphAdapter(MockTenancyMixin):
         return len(neighbors)
 
     async def update_edge(self, ref: EdgeRef, cmd: BaseModel) -> BaseModel:
-        raise _nyi("update_edge")
+        patch = cmd.model_dump(mode="json", exclude_none=True)
+        patch.pop("from_key", None)
+        patch.pop("to_key", None)
+
+        with self.state.lock:
+            rec = self._find_edge_rec(ref, self._edges_store())
+
+            if rec is None:
+                raise exc.not_found(
+                    f"Edge {ref.kind!r} not found", code="graph_edge_not_found"
+                )
+
+            rec["props"] = {**rec["props"], **patch}
+            merged = rec["props"]
+
+        return self._emodel(ref.kind, merged)
 
     async def delete_edge(self, ref: EdgeRef) -> None:
-        raise _nyi("delete_edge")
+        with self.state.lock:
+            store = self._edges_store()
+            rec = self._find_edge_rec(ref, store)
+
+            if rec is not None:
+                store.remove(rec)
 
     async def create_vertices(
         self, items: Sequence[tuple[str, BaseModel]], *, return_new: bool = True
     ) -> Sequence[BaseModel] | None:
-        raise _nyi("create_vertices")
+        if not items:
+            return [] if return_new else None
+
+        stored: list[tuple[str, JsonDict]] = []
+
+        with self.state.lock:
+            verts = self._verts()
+
+            for kind, cmd in items:
+                node = self._node(kind)
+                props = cmd.model_dump(mode="json", exclude_none=True)
+                verts[(kind, str(props[node.key_field]))] = props
+                stored.append((kind, props))
+
+        if not return_new:
+            return None
+
+        return [self._vmodel(kind, props) for kind, props in stored]
 
     async def create_edges(
         self, items: Sequence[tuple[str, BaseModel]], *, return_new: bool = True
     ) -> Sequence[BaseModel] | None:
-        raise _nyi("create_edges")
+        if not items:
+            return [] if return_new else None
+
+        created: list[BaseModel] = []
+
+        for kind, cmd in items:
+            edge = await self.create_edge(kind, cmd, return_new=return_new)
+            if return_new and edge is not None:
+                created.append(edge)
+
+        return created if return_new else None
 
     async def ensure_vertex(
         self, node_kind: str, cmd: BaseModel, *, return_new: bool = True
     ) -> BaseModel | None:
-        raise _nyi("ensure_vertex")
+        node = self._node(node_kind)
+        props = cmd.model_dump(mode="json", exclude_none=True)
+        key = str(props[node.key_field])
+
+        with self.state.lock:
+            verts = self._verts()
+            existing = verts.get((node_kind, key))
+
+            if existing is None:
+                verts[(node_kind, key)] = props
+                stored = props
+            else:
+                stored = existing  # create-if-missing: existing returned unchanged
+
+        return self._vmodel(node_kind, stored) if return_new else None
 
     async def delete_vertices(self, refs: Sequence[VertexRef]) -> None:
-        raise _nyi("delete_vertices")
+        if not refs:
+            return
+
+        with self.state.lock:
+            verts = self._verts()
+            for ref in refs:
+                verts.pop((ref.kind, ref.key), None)
 
     async def delete_edges(self, refs: Sequence[EdgeRef]) -> None:
-        raise _nyi("delete_edges")
+        if not refs:
+            return
+
+        with self.state.lock:
+            store = self._edges_store()
+            for ref in refs:
+                rec = self._find_edge_rec(ref, store)
+                if rec is not None:
+                    store.remove(rec)
 
 
 # ----------------------- #

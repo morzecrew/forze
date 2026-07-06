@@ -501,12 +501,38 @@ async def test_scoped_walk_fails_closed_without_tenant() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deferred_method_raises() -> None:
-    adapter, _ = _adapter()
+async def test_multi_endpoint_edge_write_not_implemented() -> None:
+    """The one remaining deferral: an edge kind with >1 endpoint pair."""
+
+    class LinkCreate(BaseModel):
+        from_key: str
+        to_key: str
+
+    spec = GraphModuleSpec(
+        name="multi",
+        nodes=(
+            GraphNodeSpec(name="A", read=UserRead, create=UserCreate),
+            GraphNodeSpec(name="B", read=UserRead, create=UserCreate),
+        ),
+        edges=(
+            GraphEdgeSpec(
+                name="LINK",
+                read=FollowsRead,
+                identity="endpoints",
+                endpoints=(
+                    GraphEdgeEndpoint(from_kind="A", to_kind="A"),
+                    GraphEdgeEndpoint(from_kind="A", to_kind="B"),
+                ),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+    adapter = Neo4jGraphAdapter(spec=spec, client=_FakeClient())
+
     with pytest.raises(
         CoreException, match="not implemented by the neo4j backend yet"
     ) as ei:
-        await adapter.create_vertices([("User", UserCreate(id="a"))])  # still deferred (WS4)
+        await adapter.create_edge("LINK", LinkCreate(from_key="a", to_key="b"))
 
     assert ei.value.kind is ExceptionKind.PRECONDITION
     assert ei.value.code == "graph_not_implemented"

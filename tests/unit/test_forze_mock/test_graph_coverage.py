@@ -345,24 +345,6 @@ class TestDeferredStubs:
         with pytest.raises(NotImplementedError):
             await qry.k_shortest_paths(u, v, sp, k=2)
 
-    @pytest.mark.asyncio
-    async def test_deferred_command_methods(self, ctx: ExecutionContext) -> None:
-        cmd = ctx.graph.command(_spec())
-        u = VertexRef(kind="User", key="a")
-        ekind = EdgeRef.by_key("RATED", "e1")
-
-        for coro in (
-            cmd.update_edge(ekind, RatedCreate(from_key="a", to_key="m", edge_id="e1")),
-            cmd.delete_edge(ekind),
-            cmd.create_vertices([("User", UserCreate(id="a"))]),
-            cmd.create_edges([("RATED", RatedCreate(from_key="a", to_key="m", edge_id="e1"))]),
-            cmd.ensure_vertex("User", UserCreate(id="a")),
-            cmd.delete_vertices([u]),
-            cmd.delete_edges([ekind]),
-        ):
-            with pytest.raises(NotImplementedError):
-                await coro
-
 
 # ....................... #
 

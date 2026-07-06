@@ -704,3 +704,96 @@ def find_edges(
         f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
         f"RETURN properties(r) AS r\n{order}SKIP $offset LIMIT $limit"
     )
+
+
+# ....................... #
+# Writes (update / delete / ensure / bulk)
+
+
+def update_edge_by_key(
+    edge_type: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
+    return (
+        f"MATCH ()-[r:{quote(edge_type)} {_match_map(key_field, tenant_field)}]->()\n"
+        f"SET r += $props\nRETURN properties(r) AS r"
+    )
+
+
+def update_edge_by_endpoints(
+    *,
+    edge_type: str,
+    from_label: str,
+    from_key_field: str,
+    to_label: str,
+    to_key_field: str,
+    tenant_field: str | None = None,
+) -> str:
+    return (
+        f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')})"
+        f"-[r:{quote(edge_type)}]->"
+        f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
+        f"SET r += $props\nRETURN properties(r) AS r"
+    )
+
+
+def delete_edge_by_key(
+    edge_type: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
+    return (
+        f"MATCH ()-[r:{quote(edge_type)} {_match_map(key_field, tenant_field)}]->()\n"
+        f"DELETE r"
+    )
+
+
+def delete_edge_by_endpoints(
+    *,
+    edge_type: str,
+    from_label: str,
+    from_key_field: str,
+    to_label: str,
+    to_key_field: str,
+    tenant_field: str | None = None,
+) -> str:
+    return (
+        f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')})"
+        f"-[r:{quote(edge_type)}]->"
+        f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
+        f"DELETE r"
+    )
+
+
+def ensure_vertex(
+    label: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
+    """MERGE on the key (+ tenant); populate only on create, so an existing vertex is
+    returned unchanged (create-if-missing semantics)."""
+
+    return (
+        f"MERGE (n:{quote(label)} {_match_map(key_field, tenant_field)})\n"
+        f"ON CREATE SET n = $props\nRETURN properties(n) AS n"
+    )
+
+
+def create_vertices(label: str) -> str:
+    return (
+        f"UNWIND $rows AS props\nCREATE (n:{quote(label)})\nSET n = props\n"
+        f"RETURN properties(n) AS n"
+    )
+
+
+def delete_vertices(
+    label: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
+    where = _where(f"n.{quote(key_field)} IN $keys", _tenant_pred("n", tenant_field))
+    return f"MATCH (n:{quote(label)})\n{where}DETACH DELETE n"
+
+
+def delete_edges_by_keys(
+    edge_type: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
+    where = _where(
+        f"r.{quote(key_field)} IN $keys",
+        _tenant_pred("a", tenant_field),
+        _tenant_pred("b", tenant_field),
+    )
+    return f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}DELETE r"

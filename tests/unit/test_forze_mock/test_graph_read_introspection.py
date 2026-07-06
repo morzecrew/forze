@@ -180,6 +180,68 @@ async def test_find_edges_keyed(ctx: ExecutionContext) -> None:
     assert await q.find_edges("RATED", property_filter={"score": 99}) == []
 
 
+class FollowsUpdate(BaseModel):
+    weight: int | None = None
+
+
+class RatedUpdate(BaseModel):
+    score: int
+
+
+@pytest.mark.asyncio
+async def test_ensure_vertex_create_then_unchanged(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    qry = ctx.graph.query(spec)
+
+    first = await cmd.ensure_vertex("User", UserCreate(id="a", name="first"))
+    assert first.name == "first"
+    again = await cmd.ensure_vertex("User", UserCreate(id="a", name="second"))
+    assert again.name == "first"  # existing returned unchanged
+    assert (await qry.get_vertex(_u("a"))).name == "first"
+
+
+@pytest.mark.asyncio
+async def test_bulk_create_update_delete(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    qry = ctx.graph.query(spec)
+
+    out = await cmd.create_vertices([("User", UserCreate(id=k)) for k in ("a", "b", "c")])
+    assert [v.id for v in out] == ["a", "b", "c"]
+
+    await cmd.create_edges(
+        [
+            ("RATED", RatedCreate(id="r1", from_key="a", to_key="b", score=1)),
+            ("RATED", RatedCreate(id="r2", from_key="a", to_key="c", score=2)),
+        ]
+    )
+    updated = await cmd.update_edge(EdgeRef.by_key("RATED", "r1"), RatedUpdate(score=9))
+    assert updated.score == 9
+
+    await cmd.delete_edges([EdgeRef.by_key("RATED", "r1")])
+    assert await qry.count_edges("RATED") == 1
+
+    await cmd.delete_vertices([_u("a"), _u("b")])
+    assert await qry.count_vertices("User") == 1
+
+
+@pytest.mark.asyncio
+async def test_update_edge_endpoints_and_missing(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+
+    await cmd.create_vertex("User", UserCreate(id="a"))
+    await cmd.create_vertex("User", UserCreate(id="b"))
+    await cmd.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="b", weight=1))
+
+    ref = EdgeRef.by_endpoints("FOLLOWS", _u("a"), _u("b"))
+    assert (await cmd.update_edge(ref, FollowsUpdate(weight=7))).weight == 7
+
+    with pytest.raises(CoreException, match="graph_edge_not_found"):
+        await cmd.update_edge(EdgeRef.by_key("RATED", "nope"), RatedUpdate(score=1))
+
+
 @pytest.mark.asyncio
 async def test_filter_on_encrypted_field_rejected() -> None:
     """A filter on a sealed property fails closed (can't match ciphertext)."""
