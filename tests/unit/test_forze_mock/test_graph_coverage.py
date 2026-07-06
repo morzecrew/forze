@@ -115,17 +115,17 @@ class TestUnknownKinds:
 
 class TestGetEdge:
     @pytest.mark.asyncio
-    async def test_get_edge_endpoints_mode_not_implemented(
+    async def test_get_edge_endpoints_mode_returns_none_when_absent(
         self, ctx: ExecutionContext
     ) -> None:
+        # Endpoints mode is now supported: a missing edge returns None (no longer NYI).
         qry = ctx.graph.query(_spec())
         ref = EdgeRef.by_endpoints(
             "FOLLOWS",
             VertexRef(kind="User", key="a"),
             VertexRef(kind="User", key="b"),
         )
-        with pytest.raises(NotImplementedError, match="get_edge in endpoints mode"):
-            await qry.get_edge(ref)
+        assert await qry.get_edge(ref) is None
 
     @pytest.mark.asyncio
     async def test_get_edge_without_key_field_raises(
@@ -335,24 +335,16 @@ class TestDeferredStubs:
 
     @pytest.mark.asyncio
     async def test_deferred_query_methods(self, ctx: ExecutionContext) -> None:
+        # WS2 read-introspection is implemented; these remain deferred on the mock.
         qry = ctx.graph.query(_spec())
         u = VertexRef(kind="User", key="a")
         v = VertexRef(kind="User", key="b")
-        ekind = EdgeRef.by_key("RATED", "e1")
         sp = ShortestPathParams(max_hops=2)
 
         for coro in (
-            qry.get_vertices([u]),
-            qry.get_edges([ekind]),
-            qry.edge_exists(ekind),
-            qry.count_vertices("User"),
-            qry.count_edges("RATED"),
-            qry.incident_edges(u, GraphDirection.OUT, frozenset({"RATED"}), limit=5),
             qry.k_shortest_paths(u, v, sp, k=2),
             qry.find_vertices("User"),
             qry.find_edges("RATED"),
-            qry.vertex_degree(u),
-            qry.count_neighbors(u),
         ):
             with pytest.raises(NotImplementedError):
                 await coro

@@ -519,3 +519,188 @@ def gds_drop() -> str:
     """Drop the per-call projection (``false`` = do not error if already gone)."""
 
     return "CALL gds.graph.drop($graph_name, false) YIELD graphName RETURN graphName"
+
+
+# ....................... #
+# Read introspection (get/exists/count/degree/find)
+
+
+def _tenant_pred(alias: str, tenant_field: str | None) -> str:
+    return f"{alias}.{quote(tenant_field)} = $tenant" if tenant_field else ""
+
+
+def _where(*preds: str) -> str:
+    active = [p for p in preds if p]
+    return f"WHERE {' AND '.join(active)}\n" if active else ""
+
+
+def property_predicate(alias: str, keys: Sequence[str]) -> str:
+    """Equality ``AND`` predicate over *keys* (params ``$pf_<key>``); empty for no keys."""
+
+    return " AND ".join(f"{alias}.{quote(k)} = $pf_{k}" for k in keys)
+
+
+def get_vertices_by_keys(
+    label: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
+    where = _where(f"n.{quote(key_field)} IN $keys", _tenant_pred("n", tenant_field))
+    return (
+        f"MATCH (n:{quote(label)})\n{where}"
+        f"RETURN properties(n) AS n, n.{quote(key_field)} AS _key"
+    )
+
+
+def get_edges_by_keys(
+    edge_type: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
+    where = _where(
+        f"r.{quote(key_field)} IN $keys",
+        _tenant_pred("a", tenant_field),
+        _tenant_pred("b", tenant_field),
+    )
+    return (
+        f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
+        f"RETURN properties(r) AS r, r.{quote(key_field)} AS _key"
+    )
+
+
+def edge_exists_by_key(
+    edge_type: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
+    where = _where(
+        f"r.{quote(key_field)} = $key",
+        _tenant_pred("a", tenant_field),
+        _tenant_pred("b", tenant_field),
+    )
+    return f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}RETURN count(r) > 0 AS exists"
+
+
+def edge_exists_by_endpoints(
+    *,
+    edge_type: str,
+    from_label: str,
+    from_key_field: str,
+    to_label: str,
+    to_key_field: str,
+    tenant_field: str | None = None,
+) -> str:
+    return (
+        f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')})"
+        f"-[r:{quote(edge_type)}]->"
+        f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
+        f"RETURN count(r) > 0 AS exists"
+    )
+
+
+def get_edge_by_endpoints(
+    *,
+    edge_type: str,
+    from_label: str,
+    from_key_field: str,
+    to_label: str,
+    to_key_field: str,
+    tenant_field: str | None = None,
+) -> str:
+    return (
+        f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')})"
+        f"-[r:{quote(edge_type)}]->"
+        f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
+        f"RETURN properties(r) AS r"
+    )
+
+
+def count_vertices(
+    label: str, *, tenant_field: str | None = None, filter_keys: Sequence[str] = ()
+) -> str:
+    where = _where(_tenant_pred("n", tenant_field), property_predicate("n", filter_keys))
+    return f"MATCH (n:{quote(label)})\n{where}RETURN count(n) AS c"
+
+
+def count_edges(
+    edge_type: str, *, tenant_field: str | None = None, filter_keys: Sequence[str] = ()
+) -> str:
+    where = _where(
+        _tenant_pred("a", tenant_field),
+        _tenant_pred("b", tenant_field),
+        property_predicate("r", filter_keys),
+    )
+    return f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}RETURN count(r) AS c"
+
+
+def vertex_degree(
+    label: str,
+    key_field: str,
+    direction: GraphDirection,
+    edge_types: Iterable[str],
+    *,
+    tenant_field: str | None = None,
+) -> str:
+    rel = _rel(direction, _type_pattern(edge_types))
+    return (
+        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}()\n"
+        f"RETURN count(r) AS c"
+    )
+
+
+def count_neighbors(
+    label: str,
+    key_field: str,
+    direction: GraphDirection,
+    edge_types: Iterable[str],
+    *,
+    tenant_field: str | None = None,
+) -> str:
+    rel = _rel(direction, _type_pattern(edge_types))
+    return (
+        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}(m)\n"
+        f"RETURN count(DISTINCT m) AS c"
+    )
+
+
+def incident_edges(
+    label: str,
+    key_field: str,
+    direction: GraphDirection,
+    edge_types: Iterable[str],
+    *,
+    tenant_field: str | None = None,
+) -> str:
+    rel = _rel(direction, _type_pattern(edge_types))
+    return (
+        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}()\n"
+        f"RETURN properties(r) AS r, type(r) AS t\nLIMIT $limit"
+    )
+
+
+def find_vertices(
+    label: str,
+    key_field: str,
+    *,
+    tenant_field: str | None = None,
+    filter_keys: Sequence[str] = (),
+) -> str:
+    where = _where(_tenant_pred("n", tenant_field), property_predicate("n", filter_keys))
+    return (
+        f"MATCH (n:{quote(label)})\n{where}"
+        f"RETURN properties(n) AS n\n"
+        f"ORDER BY n.{quote(key_field)}\nSKIP $offset LIMIT $limit"
+    )
+
+
+def find_edges(
+    edge_type: str,
+    *,
+    order_field: str | None = None,
+    tenant_field: str | None = None,
+    filter_keys: Sequence[str] = (),
+) -> str:
+    where = _where(
+        _tenant_pred("a", tenant_field),
+        _tenant_pred("b", tenant_field),
+        property_predicate("r", filter_keys),
+    )
+    order = f"ORDER BY r.{quote(order_field)}\n" if order_field else ""
+    return (
+        f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
+        f"RETURN properties(r) AS r\n{order}SKIP $offset LIMIT $limit"
+    )

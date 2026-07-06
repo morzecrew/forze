@@ -113,24 +113,76 @@ class MockGraphAdapter(MockTenancyMixin):
             return (ref.kind, ref.key) in self._verts()
 
     async def get_edge(self, ref: EdgeRef) -> BaseModel | None:
-        if not ref.is_keyed:
-            raise _nyi("get_edge in endpoints mode")
+        with self.state.lock:
+            rec = self._find_edge_rec(ref, self._edges_store())
 
-        edge = self._edge(ref.kind)
-        kf = edge.key_field
+        return self._emodel(ref.kind, rec["props"]) if rec is not None else None
 
-        if kf is None:
+    def _find_edge_rec(
+        self,
+        ref: EdgeRef,
+        edges: Sequence[JsonDict],
+    ) -> JsonDict | None:
+        """Locate the edge record for *ref* (keyed by key, else by endpoint pair)."""
+
+        if ref.is_keyed:
+            kf = self._edge(ref.kind).key_field
+
+            if kf is None:
+                raise exc.configuration(
+                    f"Edge kind {ref.kind!r} has no key_field",
+                    code="graph_edge_missing_key_field",
+                )
+
+            for rec in edges:
+                if rec["kind"] == ref.kind and str(rec["props"].get(kf)) == ref.key:
+                    return rec
+
+            return None
+
+        if ref.from_ref is None or ref.to_ref is None:
             raise exc.configuration(
-                f"Edge kind {ref.kind!r} has no key_field",
-                code="graph_edge_missing_key_field",
+                f"Endpoints EdgeRef for {ref.kind!r} must carry from_ref and to_ref",
+                code="graph_edge_missing_endpoints",
             )
 
-        with self.state.lock:
-            for rec in self._edges_store():
-                if rec["kind"] == ref.kind and str(rec["props"].get(kf)) == ref.key:
-                    return self._emodel(ref.kind, rec["props"])
+        return next(
+            (
+                rec
+                for rec in edges
+                if (
+                    rec["kind"] == ref.kind
+                    and rec["from_key"] == ref.from_ref.key
+                    and rec["to_key"] == ref.to_ref.key
+                )
+            ),
+            None,
+        )
 
-        return None
+    @staticmethod
+    def _validate_filter(property_filter: JsonDict | None, encryption: object) -> None:
+        if not property_filter:
+            return
+
+        sealed: frozenset[str] = (  # pyright: ignore[reportUnknownVariableType]
+            encryption.encrypted | encryption.searchable  # type: ignore[attr-defined]
+            if encryption is not None
+            else frozenset()
+        )
+
+        if blocked := sorted(k for k in property_filter if k in sealed):
+            raise exc.precondition(
+                f"Cannot filter on encrypted graph properties {blocked} (sealed at rest); "
+                "filter on a plaintext property instead.",
+                code="graph_filter_on_encrypted_field",
+            )
+
+    @staticmethod
+    def _matches(props: JsonDict, property_filter: JsonDict | None) -> bool:
+        if not property_filter:
+            return True
+
+        return all(props.get(k) == v for k, v in property_filter.items())
 
     async def neighbors(
         self,
@@ -318,25 +370,69 @@ class MockGraphAdapter(MockTenancyMixin):
     # Deferred
 
     async def get_vertices(self, refs: Sequence[VertexRef]) -> Sequence[BaseModel]:
-        raise _nyi("get_vertices")
+        if not refs:
+            return []
+
+        with self.state.lock:
+            verts = dict(self._verts())
+
+        # Input order, found-only (missing refs omitted — batch-get semantics).
+        return [
+            self._vmodel(ref.kind, verts[(ref.kind, ref.key)])
+            for ref in refs
+            if (ref.kind, ref.key) in verts
+        ]
 
     async def get_edges(self, refs: Sequence[EdgeRef]) -> Sequence[BaseModel]:
-        raise _nyi("get_edges")
+        if not refs:
+            return []
+
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        out: list[BaseModel] = []
+
+        for ref in refs:
+            rec = self._find_edge_rec(ref, edges)
+            if rec is not None:
+                out.append(self._emodel(ref.kind, rec["props"]))
+
+        return out
 
     async def edge_exists(self, ref: EdgeRef) -> bool:
-        raise _nyi("edge_exists")
+        with self.state.lock:
+            return self._find_edge_rec(ref, self._edges_store()) is not None
 
     async def count_vertices(
         self, node_kind: str, *, property_filter: JsonDict | None = None
     ) -> int:
-        del property_filter
-        raise _nyi("count_vertices")
+        node = self._node(node_kind)
+        self._validate_filter(property_filter, node.encryption)
+
+        with self.state.lock:
+            verts = list(self._verts().items())
+
+        return sum(
+            bool(kind == node_kind and self._matches(props, property_filter))
+            for (kind, _key), props in verts
+        )
 
     async def count_edges(
         self, edge_kind: str, *, property_filter: JsonDict | None = None
     ) -> int:
-        del property_filter
-        raise _nyi("count_edges")
+        edge = self._edge(edge_kind)
+        self._validate_filter(property_filter, edge.encryption)
+
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        return sum(
+            bool(
+                rec["kind"] == edge_kind
+                and self._matches(rec["props"], property_filter)
+            )
+            for rec in edges
+        )
 
     async def incident_edges(
         self,
@@ -346,7 +442,25 @@ class MockGraphAdapter(MockTenancyMixin):
         *,
         limit: int,
     ) -> Sequence[BaseModel]:
-        raise _nyi("incident_edges")
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        out: list[BaseModel] = []
+
+        for rec in edges:
+            if edge_kinds and rec["kind"] not in edge_kinds:
+                continue
+
+            other_kind, _other_key = _other_endpoint(rec, origin, direction)
+            if other_kind is None:
+                continue
+
+            out.append(self._emodel(rec["kind"], rec["props"]))
+
+            if len(out) >= limit:
+                break
+
+        return out
 
     async def k_shortest_paths(
         self,
@@ -387,7 +501,16 @@ class MockGraphAdapter(MockTenancyMixin):
         direction: GraphDirection = GraphDirection.BOTH,
         edge_kinds: frozenset[str] | None = None,
     ) -> int:
-        raise _nyi("vertex_degree")
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        return sum(
+            bool(
+                not (edge_kinds and rec["kind"] not in edge_kinds)
+                and _other_endpoint(rec, ref, direction)[0] is not None
+            )
+            for rec in edges
+        )
 
     async def count_neighbors(
         self,
@@ -396,7 +519,20 @@ class MockGraphAdapter(MockTenancyMixin):
         direction: GraphDirection = GraphDirection.BOTH,
         edge_kinds: frozenset[str] | None = None,
     ) -> int:
-        raise _nyi("count_neighbors")
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        neighbors: set[tuple[str, str]] = set()
+
+        for rec in edges:
+            if edge_kinds and rec["kind"] not in edge_kinds:
+                continue
+
+            other_kind, other_key = _other_endpoint(rec, ref, direction)
+            if other_kind is not None and other_key is not None:
+                neighbors.add((other_kind, other_key))
+
+        return len(neighbors)
 
     async def update_edge(self, ref: EdgeRef, cmd: BaseModel) -> BaseModel:
         raise _nyi("update_edge")
