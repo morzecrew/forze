@@ -145,6 +145,16 @@ async def _read_snapshot(port: Any) -> dict[str, Any]:
             _u("a"), direction=GraphDirection.OUT, edge_kinds=frozenset({"FOLLOWS"})
         ),
         "incident_count": len(incident),
+        # find_* (deterministic order: vertices by id, keyed edges by key)
+        "find_vertices_all": [m.model_dump() for m in await port.find_vertices("User")],
+        "find_vertices_paged": [
+            m.model_dump() for m in await port.find_vertices("User", limit=1, offset=1)
+        ],
+        "find_vertices_filtered": [
+            m.model_dump()
+            for m in await port.find_vertices("User", property_filter={"name": "Ana"})
+        ],
+        "find_edges_rated": [m.model_dump() for m in await port.find_edges("RATED")],
     }
 
 

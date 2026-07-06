@@ -335,19 +335,15 @@ class TestDeferredStubs:
 
     @pytest.mark.asyncio
     async def test_deferred_query_methods(self, ctx: ExecutionContext) -> None:
-        # WS2 read-introspection is implemented; these remain deferred on the mock.
+        # WS2 read-introspection + WS3 find_* are implemented; k_shortest_paths remains
+        # deferred on the mock (Neo4j-only for now).
         qry = ctx.graph.query(_spec())
         u = VertexRef(kind="User", key="a")
         v = VertexRef(kind="User", key="b")
         sp = ShortestPathParams(max_hops=2)
 
-        for coro in (
-            qry.k_shortest_paths(u, v, sp, k=2),
-            qry.find_vertices("User"),
-            qry.find_edges("RATED"),
-        ):
-            with pytest.raises(NotImplementedError):
-                await coro
+        with pytest.raises(NotImplementedError):
+            await qry.k_shortest_paths(u, v, sp, k=2)
 
     @pytest.mark.asyncio
     async def test_deferred_command_methods(self, ctx: ExecutionContext) -> None:

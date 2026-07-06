@@ -4,11 +4,11 @@
 ``ensure_edge``, ``neighbors``, ``expand``, ``shortest_path``, ``k_shortest_paths`` (native
 Neo4j 5 ``SHORTEST k``, plus weighted via GDS), the read-introspection set
 (``get_vertices``/``get_edges``/``edge_exists``, ``count_vertices``/``count_edges``,
-``vertex_degree``/``count_neighbors``/``incident_edges``), and the raw escape hatch. The
-remaining port methods (``find_*`` and the write set — ``update_edge``/``delete_edge``,
-``ensure_vertex``, and the ``*_vertices``/``*_edges`` bulk writes) raise a clear
-``exc.precondition`` (code ``graph_not_implemented``). Multi-endpoint edge kinds are likewise
-deferred.
+``vertex_degree``/``count_neighbors``/``incident_edges``, ``find_vertices``/``find_edges``),
+and the raw escape hatch. The remaining port methods (the write set — ``update_edge``/
+``delete_edge``, ``ensure_vertex``, and the ``*_vertices``/``*_edges`` bulk writes) raise a
+clear ``exc.precondition`` (code ``graph_not_implemented``). Multi-endpoint edge kinds are
+likewise deferred.
 
 **Schema provisioning** is available via :meth:`ensure_schema` (the ``GraphManagementPort``):
 it creates node key-uniqueness constraints (composite with the tenant property under tagged
@@ -1145,8 +1145,20 @@ class Neo4jGraphAdapter(TenancyMixin):
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[BaseModel]:
-        del property_filter
-        raise _nyi("find_vertices")
+        node = self._node(node_kind)
+        params = self._filter_params(property_filter, self._sealed_fields(node.encryption))
+        query = builders.find_vertices(
+            node_kind,
+            node.key_field,
+            tenant_field=self._tenant_field,
+            filter_keys=list(property_filter or {}),
+        )
+        rows = await self.client.run(
+            query,
+            self._params(offset=offset, limit=limit, **params),
+            database=await self._resolved_database(),
+        )
+        return [await self._vertex_model(node_kind, row["n"]) for row in rows]
 
     async def find_edges(
         self,
@@ -1156,8 +1168,20 @@ class Neo4jGraphAdapter(TenancyMixin):
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[BaseModel]:
-        del property_filter
-        raise _nyi("find_edges")
+        edge = self._edge(edge_kind)
+        params = self._filter_params(property_filter, self._sealed_fields(edge.encryption))
+        query = builders.find_edges(
+            edge_kind,
+            order_field=edge.key_field,  # stable order for keyed edges; unordered otherwise
+            tenant_field=self._tenant_field,
+            filter_keys=list(property_filter or {}),
+        )
+        rows = await self.client.run(
+            query,
+            self._params(offset=offset, limit=limit, **params),
+            database=await self._resolved_database(),
+        )
+        return [await self._edge_model(edge_kind, row["r"]) for row in rows]
 
     async def vertex_degree(
         self,

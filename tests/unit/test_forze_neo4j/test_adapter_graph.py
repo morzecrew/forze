@@ -506,7 +506,7 @@ async def test_deferred_method_raises() -> None:
     with pytest.raises(
         CoreException, match="not implemented by the neo4j backend yet"
     ) as ei:
-        await adapter.find_vertices("User")  # still deferred (WS3)
+        await adapter.create_vertices([("User", UserCreate(id="a"))])  # still deferred (WS4)
 
     assert ei.value.kind is ExceptionKind.PRECONDITION
     assert ei.value.code == "graph_not_implemented"

@@ -158,6 +158,29 @@ async def test_degree_neighbors_incident(ctx: ExecutionContext) -> None:
 
 
 @pytest.mark.asyncio
+async def test_find_vertices_orders_paginates_filters(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    await _seed(ctx.graph.command(spec))
+    q = ctx.graph.query(spec)
+
+    assert [v.id for v in await q.find_vertices("User")] == ["a", "b", "c"]
+    assert [v.id for v in await q.find_vertices("User", limit=1, offset=1)] == ["b"]
+    assert [
+        v.id for v in await q.find_vertices("User", property_filter={"name": "Ana"})
+    ] == ["a", "c"]
+
+
+@pytest.mark.asyncio
+async def test_find_edges_keyed(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    await _seed(ctx.graph.command(spec))
+    q = ctx.graph.query(spec)
+
+    assert [getattr(e, "id", None) for e in await q.find_edges("RATED")] == ["r1"]
+    assert await q.find_edges("RATED", property_filter={"score": 99}) == []
+
+
+@pytest.mark.asyncio
 async def test_filter_on_encrypted_field_rejected() -> None:
     """A filter on a sealed property fails closed (can't match ciphertext)."""
 

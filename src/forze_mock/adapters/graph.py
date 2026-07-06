@@ -480,8 +480,20 @@ class MockGraphAdapter(MockTenancyMixin):
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[BaseModel]:
-        del property_filter
-        raise _nyi("find_vertices")
+        node = self._node(node_kind)
+        self._validate_filter(property_filter, node.encryption)
+
+        with self.state.lock:
+            matches = [
+                (key, props)
+                for (kind, key), props in self._verts().items()
+                if kind == node_kind and self._matches(props, property_filter)
+            ]
+
+        # Order by key (matches Neo4j's ``ORDER BY n.<key_field>``) for stable pagination.
+        matches.sort(key=lambda item: item[0])
+        window = matches[offset : offset + limit]
+        return [self._vmodel(node_kind, props) for _key, props in window]
 
     async def find_edges(
         self,
@@ -491,8 +503,22 @@ class MockGraphAdapter(MockTenancyMixin):
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[BaseModel]:
-        del property_filter
-        raise _nyi("find_edges")
+        edge = self._edge(edge_kind)
+        self._validate_filter(property_filter, edge.encryption)
+
+        with self.state.lock:
+            matches = [
+                rec
+                for rec in self._edges_store()
+                if rec["kind"] == edge_kind and self._matches(rec["props"], property_filter)
+            ]
+
+        if edge.key_field is not None:
+            key_field = edge.key_field
+            matches.sort(key=lambda rec: str(rec["props"].get(key_field)))
+
+        window = matches[offset : offset + limit]
+        return [self._emodel(edge_kind, rec["props"]) for rec in window]
 
     async def vertex_degree(
         self,

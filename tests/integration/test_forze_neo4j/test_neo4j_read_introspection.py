@@ -164,6 +164,31 @@ async def test_degree_neighbors_incident(neo4j_client: Neo4jClient) -> None:
     assert len(incident) == 2
 
 
+async def test_find_vertices_orders_paginates_and_filters(
+    neo4j_client: Neo4jClient,
+) -> None:
+    adapter = _adapter(neo4j_client)
+    await _seed(adapter)
+
+    all_users = await adapter.find_vertices("User")
+    assert [v.id for v in all_users] == ["a", "b", "c"]  # ordered by key
+
+    page = await adapter.find_vertices("User", limit=1, offset=1)
+    assert [v.id for v in page] == ["b"]
+
+    named = await adapter.find_vertices("User", property_filter={"name": "Ana"})
+    assert [v.id for v in named] == ["a", "c"]
+
+
+async def test_find_edges_keyed(neo4j_client: Neo4jClient) -> None:
+    adapter = _adapter(neo4j_client)
+    await _seed(adapter)
+
+    out = await adapter.find_edges("RATED")
+    assert [getattr(e, "id", None) for e in out] == ["r1"]
+    assert await adapter.find_edges("RATED", property_filter={"score": 99}) == []
+
+
 async def test_read_introspection_is_tenant_scoped(neo4j_client: Neo4jClient) -> None:
     ta = _adapter(
         neo4j_client, tenant_aware=True, tenant_provider=lambda: TenantIdentity(tenant_id=UUID(int=1))
