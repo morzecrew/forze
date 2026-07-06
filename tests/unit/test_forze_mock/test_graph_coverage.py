@@ -392,6 +392,35 @@ class TestWriteEdgeValidation:
         assert out is None
 
     @pytest.mark.asyncio
+    async def test_keyed_ensure_distinct_keys_stay_separate(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The key is part of a keyed edge's identity (mirrors Neo4j), so two different keys
+        # between the same pair are separate edges rather than collapsing into one.
+        cmd = ctx.graph.command(_spec())
+        qry = ctx.graph.query(_spec())
+        await cmd.create_vertex("User", UserCreate(id="a"))
+        await cmd.create_vertex("Movie", UserCreate(id="m"))
+
+        await cmd.ensure_edge(
+            "RATED", RatedCreate(from_key="a", to_key="m", edge_id="r1", score=1)
+        )
+        await cmd.ensure_edge(
+            "RATED", RatedCreate(from_key="a", to_key="m", edge_id="r2", score=2)
+        )
+
+        r1 = await qry.get_edge(EdgeRef.by_key("RATED", "r1"))
+        r2 = await qry.get_edge(EdgeRef.by_key("RATED", "r2"))
+        assert r1 is not None and r1.score == 1
+        assert r2 is not None and r2.score == 2
+
+        # Re-ensuring an existing key merges (idempotent) onto the same edge.
+        again = await cmd.ensure_edge(
+            "RATED", RatedCreate(from_key="a", to_key="m", edge_id="r1", score=9)
+        )
+        assert again is not None and again.score == 1  # merged, not a fresh edge
+
+    @pytest.mark.asyncio
     async def test_update_vertex_missing_raises(self, ctx: ExecutionContext) -> None:
         cmd = ctx.graph.command(_spec())
         with pytest.raises(CoreException, match="graph_vertex_not_found"):

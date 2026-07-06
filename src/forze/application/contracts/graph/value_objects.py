@@ -289,9 +289,9 @@ class ShortestPathParams:
     ``None`` (default) = unweighted, shortest by hop count. When set, the path minimizes the
     sum of this numeric edge property; it must exist on every traversed edge kind. Weighted
     paths require a backend with a graph-algorithms engine (Neo4j GDS); a backend without one
-    rejects the request (``graph_algorithm_unavailable``). Because a weighted-shortest path is
-    selected by cost, ``max_hops`` is applied as a post-filter (a weighted result longer than
-    ``max_hops`` edges is dropped)."""
+    rejects the request (``graph_algorithm_unavailable``). ``max_hops`` bounds the search: the
+    cheapest path using at most ``max_hops`` edges is returned — a cheaper path that exists only
+    beyond the bound does not suppress a valid bounded one."""
 
 
 # ....................... #

@@ -125,6 +125,32 @@ async def test_bound_params_reset_to_null_after_read() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reset_clears_applied_fields_even_if_bound_params_change() -> None:
+    """Reset targets the exact fields apply set — not whatever ``bound_params`` holds at reset
+    time — so a bound model mutated/re-bound mid-read can't leave a GUC it set uncleared (or
+    clear one it never set)."""
+
+    client = _client()
+    params = _OptionalParams(window="w", region=None)  # apply sets only ``window``
+    gw = _gw(client, params_required=True, bound_params=params)
+
+    # Flip the bound model between apply and reset: the field apply set becomes None and a field
+    # it skipped becomes set. Re-reading ``bound_params`` at reset would clear the wrong field.
+    async def _mutate_then_return(*a: Any, **k: Any) -> Any:
+        params.window = None
+        params.region = "r"
+        return []
+
+    client.fetch_all = AsyncMock(side_effect=_mutate_then_return)
+
+    await gw.find_many(None)
+
+    reset = _rendered(client.execute.await_args_list[-1][0][0])
+    assert "forze.window" in reset and "NULL" in reset  # the field apply set is cleared
+    assert "forze.region" not in reset  # a field apply never set is left untouched
+
+
+@pytest.mark.asyncio
 async def test_none_param_is_skipped_not_empty_string() -> None:
     client = _client()
     gw = _gw(

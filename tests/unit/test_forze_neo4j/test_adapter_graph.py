@@ -340,10 +340,14 @@ async def test_ensure_schema_provisions_constraints_and_index() -> None:
     await adapter.ensure_schema()
     stmts = [q for q, _ in client.calls]
 
-    # composite node uniqueness (tenant-scoped) + tenant index + keyed-edge uniqueness
+    # composite node uniqueness (tenant-scoped) + tenant index + composite keyed-edge
+    # uniqueness (edge key unique *within* a tenant, not globally)
     assert any("REQUIRE (n.`id`, n.`tenant_id`) IS UNIQUE" in q for q in stmts)
     assert any("CREATE INDEX" in q and "ON (n.`tenant_id`)" in q for q in stmts)
-    assert any("FOR ()-[r:`RATED`]-() REQUIRE r.`ref` IS UNIQUE" in q for q in stmts)
+    assert any(
+        "FOR ()-[r:`RATED`]-() REQUIRE (r.`ref`, r.`tenant_id`) IS UNIQUE" in q
+        for q in stmts
+    )
     assert all("IF NOT EXISTS" in q for q in stmts)  # idempotent
 
 

@@ -43,6 +43,30 @@ def _match_map(
 # ....................... #
 
 
+def _rel_key_map(
+    key_field: str | None, tenant_field: str | None, *, key_param: str
+) -> str:
+    """Inline the keyed-edge ``MERGE`` relationship map.
+
+    Empty for a keyless merge; ``{<key>: $key_param}`` for a keyed edge, with
+    ``, <tenant>: $tenant`` folded in under tagged tenancy so the merge identity
+    (and the stamped relationship property) is scoped per tenant.
+    """
+
+    if not key_field:
+        return ""
+
+    if tenant_field:
+        return (
+            f" {{{quote(key_field)}: ${key_param}, {quote(tenant_field)}: $tenant}}"
+        )
+
+    return f" {{{quote(key_field)}: ${key_param}}}"
+
+
+# ....................... #
+
+
 def _tenant_only_map(tenant_field: str | None, *, interior: bool) -> str:
     """Inline ``{<tenant_field>: $tenant}`` for an adjacent (keyless) traversal node."""
 
@@ -183,7 +207,11 @@ def create_edge(
     For a *keyed* edge (``key_field`` set) a ``merge`` includes the key in the
     relationship pattern (``MERGE (a)-[r:T {<key_field>: $edge_key}]->(b)``) so
     distinct keyed edges between the same pair are separate identities — without it
-    the ``MERGE`` matches any edge of the type and collapses them.
+    the ``MERGE`` matches any edge of the type and collapses them. Under tagged
+    tenancy the ``tenant_field`` is folded into that same map so the merge identity
+    is ``(key, tenant)``: a foreign tenant reusing the key gets its own edge (and the
+    property is stamped for the composite edge-uniqueness constraint) rather than
+    matching another tenant's relationship.
     """
 
     head = (
@@ -192,7 +220,7 @@ def create_edge(
     )
 
     if merge:
-        rel_key = f" {{{quote(key_field)}: ${key_param}}}" if key_field else ""
+        rel_key = _rel_key_map(key_field, tenant_field, key_param=key_param)
         body = (
             f"MERGE (a)-[r:{quote(edge_type)}{rel_key}]->(b)\nON CREATE SET r += $props\n"
         )
@@ -408,16 +436,25 @@ def node_uniqueness_constraint(
     )
 
 
-def edge_uniqueness_constraint(name: str, edge_type: str, key_field: str) -> str:
+def edge_uniqueness_constraint(
+    name: str, edge_type: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
     """A relationship key-uniqueness constraint (Neo4j 5.7+).
 
     Backs keyed-edge identity so a concurrent ``ensure_edge`` cannot create two edges of the
-    type with the same key (the in-query ``MERGE`` alone races).
+    type with the same key (the in-query ``MERGE`` alone races). Under tagged tenancy the key
+    is unique *within* a tenant, so the constraint is composite (``(r.key, r.tenant)``) —
+    otherwise a second tenant reusing a key would collide with the first tenant's edge.
     """
+
+    if tenant_field:
+        require = f"(r.{quote(key_field)}, r.{quote(tenant_field)})"
+    else:
+        require = f"r.{quote(key_field)}"
 
     return (
         f"CREATE CONSTRAINT {quote(name)} IF NOT EXISTS "
-        f"FOR ()-[r:{quote(edge_type)}]-() REQUIRE r.{quote(key_field)} IS UNIQUE"
+        f"FOR ()-[r:{quote(edge_type)}]-() REQUIRE {require} IS UNIQUE"
     )
 
 
@@ -488,7 +525,12 @@ def gds_weighted_paths(
 
     GDS returns node ids and costs, and its own ``path`` uses *virtual* relationships — so the
     typed edges are rebuilt by matching, for each consecutive node pair, the minimum-weight real
-    edge (the one Yen's used). ``k`` is a ``$k`` parameter.
+    edge (the one Yen's used).
+
+    ``max_hops`` bounds the *search*, not just the result: Yen's has no native hop limit, so we
+    over-fetch ``$candidate_k`` cost-ordered candidates, drop any exceeding ``$max_hops`` edges,
+    then keep the cheapest ``$k``. This returns the cheapest path *within* the bound instead of
+    dropping it when a cheaper over-long path exists (which post-filtering the top-``k`` would do).
     """
 
     rel = _type_pattern(edge_types)
@@ -497,7 +539,8 @@ def gds_weighted_paths(
         f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')}), "
         f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
         f"CALL gds.shortestPath.yens.stream($graph_name, {{sourceNode: a, targetNode: b, "
-        f"k: $k, relationshipWeightProperty: 'weight'}}) YIELD index, nodeIds, totalCost\n"
+        f"k: $candidate_k, relationshipWeightProperty: 'weight'}}) YIELD index, nodeIds, totalCost\n"
+        f"WITH index, nodeIds, totalCost WHERE size(nodeIds) - 1 <= $max_hops\n"
         f"CALL {{ WITH nodeIds\n"
         f"  UNWIND range(0, size(nodeIds) - 1) AS i\n"
         f"  WITH gds.util.asNode(nodeIds[i]) AS n, i ORDER BY i\n"
@@ -511,7 +554,8 @@ def gds_weighted_paths(
         f"  WITH i, r ORDER BY i\n"
         f"  RETURN collect(properties(r)) AS edges, collect(type(r)) AS edge_types }}\n"
         f"RETURN vertices, vertex_labels, edges, edge_types, totalCost\n"
-        f"ORDER BY totalCost, index"
+        f"ORDER BY totalCost, index\n"
+        f"LIMIT $k"
     )
 
 

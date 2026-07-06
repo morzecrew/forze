@@ -132,8 +132,9 @@ async def test_weighted_k_shortest_in_increasing_cost(
     assert [v.id for v in paths[1].vertices] == ["a", "b"]  # cost 1.0 second
 
 
-async def test_weighted_max_hops_post_filter(gds_neo4j_client: Neo4jClient) -> None:
-    """max_hops drops a cheaper-but-longer weighted path (applied after cost selection)."""
+async def test_weighted_max_hops_bounds_search(gds_neo4j_client: Neo4jClient) -> None:
+    """max_hops bounds the search: the cheapest path *within* the bound is returned, not the
+    global cheapest with an over-long result silently dropped."""
 
     adapter = _adapter(gds_neo4j_client, graph_algorithms=True)
     # direct a→b is expensive (5.0) but 1 hop; detour is cheap (0.2) but 2 hops.
@@ -148,6 +149,27 @@ async def test_weighted_max_hops_post_filter(gds_neo4j_client: Neo4jClient) -> N
 
     assert len(paths) == 1
     assert [v.id for v in paths[0].vertices] == ["a", "b"]
+
+
+async def test_weighted_shortest_returns_bounded_path_over_cheaper_long_one(
+    gds_neo4j_client: Neo4jClient,
+) -> None:
+    """Single weighted shortest path with a tight hop bound: the cheaper 2-hop detour is out of
+    reach, so the direct 1-hop route is returned rather than nothing (regression for the old
+    top-k post-filter, which dropped the cheapest path and returned None)."""
+
+    adapter = _adapter(gds_neo4j_client, graph_algorithms=True)
+    # direct a→b expensive (5.0) 1 hop; detour a→c→b cheap (0.2) 2 hops.
+    await _triangle(adapter, direct_w=5.0)
+
+    path = await adapter.shortest_path(
+        VertexRef(kind="WUser", key="a"),
+        VertexRef(kind="WUser", key="b"),
+        ShortestPathParams(max_hops=1, weight_property="w"),
+    )
+
+    assert path is not None
+    assert [v.id for v in path.vertices] == ["a", "b"]
 
 
 async def test_weighted_is_tenant_scoped(gds_neo4j_client: Neo4jClient) -> None:

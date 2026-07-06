@@ -136,11 +136,13 @@ async def test_shortest_path_weighted_prefers_low_cost(ctx: ExecutionContext) ->
     assert path is not None
     assert [v.id for v in path.vertices] == ["a", "b", "c"]  # cheaper 2-hop route
 
-    # max_hops post-filter drops the cheaper-but-longer path
+    # max_hops bounds the search: with only 1 hop allowed the cheaper 2-hop detour is out of
+    # reach, so the direct (costlier but bounded) a->c route is returned — not dropped.
     capped = await q.shortest_path(
         _u("a"), _u("c"), ShortestPathParams(max_hops=1, weight_property="weight")
     )
-    assert capped is None
+    assert capped is not None
+    assert [v.id for v in capped.vertices] == ["a", "c"]
 
 
 @pytest.mark.asyncio

@@ -136,7 +136,7 @@ class PostgresReadGateway[M: BaseModel](
 
     # ....................... #
 
-    async def _apply_params(self) -> None:
+    async def _apply_params(self) -> list[str]:
         """Apply bound query parameters as transaction-local session settings.
 
         Emits ``set_config('<namespace>.<field>', <value>, true)`` for each field — equivalent to
@@ -152,30 +152,36 @@ class PostgresReadGateway[M: BaseModel](
         Strings pass through bare (for ``::date``/``::int`` casts); every other value is
         JSON-encoded so a view can read containers/bools with ``current_setting(...)::jsonb`` —
         see :func:`_param_text`.
+
+        Returns the fields it set so :meth:`_reset_params` clears exactly those — never re-reading
+        ``bound_params``, which may have been re-bound on a reused gateway between apply and reset.
         """
 
         if self.bound_params is None:
-            return
+            return []
 
         data = self.bound_params.model_dump(mode="json")
+
+        applied = [field for field, value in data.items() if value is not None]
+
+        if not applied:
+            return []
 
         calls = [
             sql.SQL("set_config({name}, {val}, true)").format(
                 name=sql.Literal(f"{self.param_namespace}.{field}"),
-                val=sql.Literal(_param_text(value)),
+                val=sql.Literal(_param_text(data[field])),
             )
-            for field, value in data.items()
-            if value is not None
+            for field in applied
         ]
-
-        if not calls:
-            return
 
         await self.client.execute(sql.SQL("SELECT {}").format(sql.SQL(", ").join(calls)))
 
+        return applied
+
     # ....................... #
 
-    async def _reset_params(self) -> None:
+    async def _reset_params(self, fields: list[str]) -> None:
         """Clear the transaction-local param GUCs so they don't outlive this read.
 
         ``set_config(..., true)`` is transaction-scoped, not savepoint-scoped: when the
@@ -183,26 +189,23 @@ class PostgresReadGateway[M: BaseModel](
         and on its RELEASE the settings merge into the outer transaction — leaking a read's
         parameters into later statements. Resetting each param GUC to its default (``NULL``)
         after the fetch, still inside the savepoint, keeps every read's parameters confined
-        to itself. Only the fields :meth:`_apply_params` set (non-``None``) are reset — the
-        exact set this read dirtied, so a later read that also binds them re-sets them and one
-        that leaves them ``None`` sees the reset (unset) value.
+        to itself.
+
+        *fields* is the exact set :meth:`_apply_params` returned for this read — resetting those
+        rather than re-deriving them from ``bound_params`` keeps a read that re-binds the gateway
+        mid-flight (apply, then a concurrent re-bind, then reset) from leaving a GUC it set unset
+        while clearing one it never touched.
         """
 
-        if self.bound_params is None:
+        if not fields:
             return
-
-        data = self.bound_params.model_dump(mode="json")
 
         calls = [
             sql.SQL("set_config({name}, NULL, true)").format(
                 name=sql.Literal(f"{self.param_namespace}.{field}"),
             )
-            for field, value in data.items()
-            if value is not None
+            for field in fields
         ]
-
-        if not calls:
-            return
 
         await self.client.execute(sql.SQL("SELECT {}").format(sql.SQL(", ").join(calls)))
 
@@ -221,11 +224,11 @@ class PostgresReadGateway[M: BaseModel](
             return await self.client.fetch_one(stmt, params, row_factory=row_factory)
 
         async with self.client.transaction():
-            await self._apply_params()
+            applied = await self._apply_params()
             try:
                 return await self.client.fetch_one(stmt, params, row_factory=row_factory)
             finally:
-                await self._reset_params()
+                await self._reset_params(applied)
 
     async def _read_all(
         self,
@@ -240,11 +243,11 @@ class PostgresReadGateway[M: BaseModel](
             return await self.client.fetch_all(stmt, params, row_factory=row_factory)
 
         async with self.client.transaction():
-            await self._apply_params()
+            applied = await self._apply_params()
             try:
                 return await self.client.fetch_all(stmt, params, row_factory=row_factory)
             finally:
-                await self._reset_params()
+                await self._reset_params(applied)
 
     async def _read_value(self, stmt: Any, params: Any, *, default: Any = None) -> Any:
         self._require_params_bound()
@@ -253,11 +256,11 @@ class PostgresReadGateway[M: BaseModel](
             return await self.client.fetch_value(stmt, params, default=default)
 
         async with self.client.transaction():
-            await self._apply_params()
+            applied = await self._apply_params()
             try:
                 return await self.client.fetch_value(stmt, params, default=default)
             finally:
-                await self._reset_params()
+                await self._reset_params(applied)
 
     async def _read_batched(
         self,
@@ -277,14 +280,14 @@ class PostgresReadGateway[M: BaseModel](
             return
 
         async with self.client.transaction():
-            await self._apply_params()
+            applied = await self._apply_params()
             try:
                 async for batch in self.client.fetch_all_batched(
                     stmt, params, batch_size=batch_size, row_factory=row_factory
                 ):
                     yield batch
             finally:
-                await self._reset_params()
+                await self._reset_params(applied)
 
     # ....................... #
 

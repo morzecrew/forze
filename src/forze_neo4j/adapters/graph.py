@@ -70,6 +70,13 @@ from ._logger import logger
 
 # ----------------------- #
 
+# Extra cost-ordered Yen's candidates fetched beyond the requested ``k`` for weighted paths, so a
+# cheaper path exceeding ``max_hops`` cannot push a valid bounded path out of the candidate window
+# before the hop filter runs. Yen's has no native hop bound; a small buffer covers realistic graphs.
+_WEIGHTED_HOP_CANDIDATE_BUFFER = 32
+
+# ----------------------- #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -623,13 +630,25 @@ class Neo4jGraphAdapter(TenancyMixin):
             tenant_field=self._tenant_field,
         )
 
+        # Yen's ranks by cost with no hop limit; the query drops over-long candidates and keeps the
+        # cheapest ``k`` within ``max_hops``. Over-fetch beyond ``k`` so a cheaper over-long path
+        # cannot starve a valid bounded one out of the candidate window.
+        candidate_k = k + _WEIGHTED_HOP_CANDIDATE_BUFFER
+
         try:
             await self.client.run(
                 project, self._params(graph_name=graph_name), database=database
             )
             rows = await self.client.run(
                 query,
-                self._params(from_key=from_ref.key, to_key=to_ref.key, graph_name=graph_name, k=k),
+                self._params(
+                    from_key=from_ref.key,
+                    to_key=to_ref.key,
+                    graph_name=graph_name,
+                    k=k,
+                    candidate_k=candidate_k,
+                    max_hops=params.max_hops,
+                ),
                 database=database,
             )
 
@@ -642,10 +661,7 @@ class Neo4jGraphAdapter(TenancyMixin):
                 # Best-effort cleanup — never mask the real result/error with a drop failure.
                 logger.debug("Failed to drop GDS projection %s", graph_name)
 
-        results = [await self._map_path_row(row) for row in rows]
-
-        # Weighted paths are selected by cost, not hop count, so honor max_hops as a post-filter.
-        return [r for r in results if len(r.edges) <= params.max_hops]
+        return [await self._map_path_row(row) for row in rows]
 
     # ....................... #
 
@@ -904,7 +920,9 @@ class Neo4jGraphAdapter(TenancyMixin):
                 ek = self._schema_name("ek", etype, edge.key_field)
                 plan.append(
                     (
-                        builders.edge_uniqueness_constraint(ek, etype, edge.key_field),
+                        builders.edge_uniqueness_constraint(
+                            ek, etype, edge.key_field, tenant_field=tenant_field
+                        ),
                         builders.drop_constraint(ek),
                     )
                 )

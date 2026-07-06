@@ -58,6 +58,25 @@ def test_create_edge_keyed_merge_matches_on_key() -> None:
     assert "MERGE (a)-[r:`TRANSFER` {`ref`: $edge_key}]->(b)" in merged
 
 
+def test_create_edge_keyed_merge_scopes_identity_by_tenant() -> None:
+    """Under tagged tenancy the tenant is folded into the keyed merge identity so a
+    foreign tenant reusing the key gets its own edge (not the other tenant's)."""
+
+    merged = builders.create_edge(
+        from_label="Account",
+        from_key_field="id",
+        to_label="Account",
+        to_key_field="id",
+        edge_type="TRANSFER",
+        merge=True,
+        key_field="ref",
+        tenant_field="tenant_id",
+    )
+    assert (
+        "MERGE (a)-[r:`TRANSFER` {`ref`: $edge_key, `tenant_id`: $tenant}]->(b)" in merged
+    )
+
+
 def test_create_edge_keyed_create_does_not_add_key_pattern() -> None:
     """``merge=False`` never keys the pattern (CREATE always makes a fresh edge)."""
 
@@ -98,6 +117,16 @@ def test_edge_uniqueness_constraint_targets_relationship() -> None:
         "CREATE CONSTRAINT `c3` IF NOT EXISTS "
         "FOR ()-[r:`TRANSFER`]-() REQUIRE r.`ref` IS UNIQUE"
     )
+
+
+def test_edge_uniqueness_constraint_composite_under_tenancy() -> None:
+    # Tenant-scoped edge-key uniqueness is composite (key unique within a tenant), so two
+    # tenants may validly reuse a key without a cross-tenant conflict.
+    stmt = builders.edge_uniqueness_constraint(
+        "c3", "TRANSFER", "ref", tenant_field="tenant_id"
+    )
+    assert "REQUIRE (r.`ref`, r.`tenant_id`) IS UNIQUE" in stmt
+    assert stmt.endswith("IS UNIQUE")
 
 
 def test_property_index_and_drops() -> None:
@@ -211,6 +240,11 @@ def test_gds_weighted_paths_uses_yens_and_rebuilds_edges() -> None:
     # edges rebuilt as the min-weight real edge between consecutive nodes
     assert "gds.util.asNode(nodeIds[i])" in q
     assert "ORDER BY coalesce(r.`cost`, 0.0) ASC LIMIT 1" in q
+    # max_hops bounds the search: over-fetch cost-ordered candidates, drop over-long ones,
+    # then keep the cheapest k (not a post-filter of the top-k).
+    assert "k: $candidate_k" in q
+    assert "WHERE size(nodeIds) - 1 <= $max_hops" in q
+    assert q.rstrip().endswith("LIMIT $k")
 
 
 def test_gds_drop_is_non_failing() -> None:

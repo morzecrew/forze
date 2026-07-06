@@ -437,15 +437,31 @@ class MockGraphAdapter(MockTenancyMixin):
             store = self._edges_store()
 
             if merge:
+                key_field = edge.key_field
+                edge_key = data.get(key_field) if key_field is not None else None
+
+                if key_field is not None and edge_key is None:
+                    raise exc.validation(
+                        f"Keyed edge command for {edge_kind!r} must include {key_field!r} "
+                        "to ensure a stable identity",
+                        code="graph_edge_key_required",
+                    )
+
                 for existing in store:
-                    # Identity includes the endpoint *kinds*, so two multi-endpoint edges with
-                    # the same key values but different kinds stay distinct.
+                    # Identity includes the endpoint *kinds* (so two multi-endpoint edges with the
+                    # same key values but different kinds stay distinct) and, for a keyed edge kind,
+                    # the key value — mirroring Neo4j's ``MERGE (a)-[r:T {<key>}]->(b)`` so two
+                    # distinct keys between the same pair are separate edges, not collapsed into one.
                     if (
                         existing["kind"] == edge_kind
                         and existing["from_kind"] == rec["from_kind"]
                         and existing["from_key"] == rec["from_key"]
                         and existing["to_kind"] == rec["to_kind"]
                         and existing["to_key"] == rec["to_key"]
+                        and (
+                            key_field is None
+                            or existing["props"].get(key_field) == edge_key
+                        )
                     ):
                         return (
                             self._emodel(edge_kind, existing["props"])
@@ -907,34 +923,75 @@ def _dijkstra_shortest(
     weight_property: str,
     max_hops: int,
 ) -> tuple[list[_Node], list[JsonDict]] | None:
-    """Least-cost path src -> dst minimizing the summed edge ``weight_property``."""
+    """Least-cost path src -> dst (summed edge ``weight_property``) using at most ``max_hops`` edges.
 
-    dist: dict[_Node, float] = {src: 0.0}
-    prev: dict[_Node, tuple[_Node, JsonDict] | None] = {src: None}
-    heap: list[tuple[float, int, _Node]] = [(0.0, 0, src)]
+    Dijkstra over ``(node, hops)`` states so ``max_hops`` bounds the *search*: the cheapest path
+    *within* the bound is returned even when a cheaper path exists only beyond it. A plain
+    cheapest-then-reject (global cheapest, drop if too long) would instead return nothing when a
+    cheaper over-long path pre-empts a valid bounded one.
+    """
+
+    # State is (node, hops-so-far); popping in cost order means the first settled state on ``dst``
+    # is the cheapest path reaching it within the bound.
+    dist: dict[tuple[_Node, int], float] = {(src, 0): 0.0}
+    prev: dict[tuple[_Node, int], tuple[_Node, int, JsonDict] | None] = {(src, 0): None}
+    heap: list[tuple[float, int, tuple[_Node, int]]] = [(0.0, 0, (src, 0))]
     counter = 1
-    settled: set[_Node] = set()
+    settled: set[tuple[_Node, int]] = set()
 
     while heap:
-        cost, _, node = heapq.heappop(heap)
-        if node in settled:
+        cost, _, state = heapq.heappop(heap)
+        if state in settled:
             continue
-        settled.add(node)
+        settled.add(state)
+        node, hops = state
+
         if node == dst:
-            break
+            return _reconstruct_hopped(state, prev)
+
+        if hops >= max_hops:
+            continue
 
         for _idx, rec, neighbor in adj.get(node, ()):
             if neighbor not in verts:
                 continue
             weight = float(rec["props"].get(weight_property, 0.0) or 0.0)
+            nxt = (neighbor, hops + 1)
             new_cost = cost + weight
-            if neighbor not in dist or new_cost < dist[neighbor]:
-                dist[neighbor] = new_cost
-                prev[neighbor] = (node, rec)
-                heapq.heappush(heap, (new_cost, counter, neighbor))
+            if nxt not in dist or new_cost < dist[nxt]:
+                dist[nxt] = new_cost
+                prev[nxt] = (node, hops, rec)
+                heapq.heappush(heap, (new_cost, counter, nxt))
                 counter += 1
 
-    return None if dst not in prev else _reconstruct(dst, prev, max_hops)
+    return None
+
+
+def _reconstruct_hopped(
+    dst_state: tuple[_Node, int],
+    prev: dict[tuple[_Node, int], tuple[_Node, int, JsonDict] | None],
+) -> tuple[list[_Node], list[JsonDict]]:
+    """Walk the ``(node, hops)`` predecessor chain back to the source."""
+
+    nodes: list[_Node] = []
+    edges: list[JsonDict] = []
+    cur: tuple[_Node, int] | None = dst_state
+
+    while cur is not None:  # pyright: ignore[reportUnnecessaryComparison]
+        nodes.append(cur[0])
+        link = prev[cur]
+
+        if link is None:
+            break
+
+        parent, parent_hops, rec = link
+        edges.append(rec)
+        cur = (parent, parent_hops)
+
+    nodes.reverse()
+    edges.reverse()
+
+    return nodes, edges
 
 
 def _advance_segment(
