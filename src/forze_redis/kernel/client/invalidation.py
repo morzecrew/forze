@@ -198,6 +198,14 @@ class InvalidationHub:
         conn = await self.acquire_connection()
 
         try:
+            # RESP3 is required for server ``invalidate`` push frames. redis-py 8 negotiates
+            # it by default; guard against a client explicitly pinned to RESP2.
+            if getattr(conn, "protocol", None) != 3:
+                raise RuntimeError(
+                    "Client-side caching requires a RESP3 connection; configure the Redis "
+                    "client with protocol=3."
+                )
+
             # The parser-level handler is where redis-py (8+) routes RESP3
             # ``invalidate`` push frames; without one they are dropped.
             conn._parser.set_invalidation_push_handler(self._on_push)  # noqa: SLF001

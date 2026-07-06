@@ -295,6 +295,10 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         Returns ``None`` (push unavailable) when the feature is disabled, the
         namespace is dynamic (per-tenant-resolved namespaces have no stable
         broadcast prefix), or the client cannot track (tenant-routed clients).
+
+        **Requires redis-py 8+** (the RESP3 push API); on redis-py 7 the client raises
+        ``configuration`` (``redis.client_side_caching_unsupported``). Everything else in
+        ``forze_redis`` works on redis-py 7.3+.
         """
 
         if not self.invalidation_push:
