@@ -84,6 +84,11 @@ class DurableRunRecord:
     """Earliest instant the run may be claimed (``None`` = immediately). Set for a delayed
     run; the recovery scan skips a ``PENDING`` run until it is due."""
 
+    created_at: datetime | None = None
+    """When the run was first enqueued. Populated by the store on read; ``None`` on a record
+    built before persistence. Runs are ordered newest-first on ``(created_at, run_id)`` by
+    :meth:`~forze.application.contracts.durable.function.DurableRunAdminPort.list_runs`."""
+
 
 # ....................... #
 

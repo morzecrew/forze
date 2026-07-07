@@ -187,3 +187,94 @@ async def test_durable_fails_closed_without_tenant() -> None:
 
     with pytest.raises(CoreException, match="tenant_required"):
         await cmd.start(_In(n=1))
+
+
+# ....................... #
+
+
+class TestMockListRuns:
+    """`DurableRunAdminPort.list_runs` on the mock: ordering, filters, keyset paging.
+
+    # covers: DurableRunAdminPort.list_runs
+    """
+
+    async def test_lists_newest_first_and_filters(self) -> None:
+        from forze.application.contracts.durable.function import DurableRunStatus
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        store = MockDurableRunStore(state=MockState())
+        r1 = await store.enqueue("a", input_json=None)
+        r2 = await store.enqueue("b", input_json=None)
+        r3 = await store.enqueue("a", input_json=None)
+
+        # Newest first.
+        page = await store.list_runs(limit=10)
+        assert [r.run_id for r in page.records] == [r3.run_id, r2.run_id, r1.run_id]
+        assert page.next_cursor is None
+        assert all(r.created_at is not None for r in page.records)
+
+        # Name filter.
+        only_a = await store.list_runs(name="a", limit=10)
+        assert [r.run_id for r in only_a.records] == [r3.run_id, r1.run_id]
+
+        # Status filter.
+        await store.begin(r2.run_id, lease_for=timedelta(minutes=5))
+        await store.complete(r2.run_id, output_json=None)
+        done = await store.list_runs(status=DurableRunStatus.COMPLETED, limit=10)
+        assert [r.run_id for r in done.records] == [r2.run_id]
+
+    async def test_keyset_paging_walks_the_whole_set(self) -> None:
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        store = MockDurableRunStore(state=MockState())
+        runs = [await store.enqueue("fn", input_json=None) for _ in range(5)]
+        newest_first = [r.run_id for r in reversed(runs)]
+
+        seen: list[str] = []
+        cursor: str | None = None
+
+        while True:
+            page = await store.list_runs(limit=2, cursor=cursor)
+            seen.extend(r.run_id for r in page.records)
+            if page.next_cursor is None:
+                break
+            cursor = page.next_cursor
+
+        assert seen == newest_first  # no gaps, no repeats
+
+    async def test_rejects_bad_limit_and_cursor(self) -> None:
+        from forze.base.exceptions import CoreException
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        store = MockDurableRunStore(state=MockState())
+
+        with pytest.raises(CoreException):
+            await store.list_runs(limit=0)
+
+        with pytest.raises(CoreException):
+            await store.list_runs(cursor="not-a-real-cursor")
+
+    async def test_scopes_to_bound_tenant_and_spans_when_unbound(self) -> None:
+        from uuid import uuid4
+
+        from forze.application.contracts.tenancy import TenantIdentity
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        t1, t2 = uuid4(), uuid4()
+        state = MockState()
+
+        writer = MockDurableRunStore(state=state)
+        await writer.enqueue("a", input_json=None, tenant_id=t1)
+        await writer.enqueue("b", input_json=None, tenant_id=t2)
+
+        # Bound to t1 → only that tenant's runs.
+        bound = MockDurableRunStore(
+            state=state, tenant_provider=lambda: TenantIdentity(tenant_id=t1)
+        )
+        scoped = await bound.list_runs(limit=10)
+        assert {r.name for r in scoped.records} == {"a"}
+        assert all(r.tenant_id == t1 for r in scoped.records)
+
+        # Unbound → spans every tenant's runs (operator view).
+        spanning = await writer.list_runs(limit=10)
+        assert {r.name for r in spanning.records} == {"a", "b"}

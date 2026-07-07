@@ -12,9 +12,13 @@ from psycopg.types.json import Jsonb
 
 from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.durable.function import (
+    DurableRunAdminPort,
+    DurableRunPage,
     DurableRunRecord,
     DurableRunStatus,
     DurableRunStorePort,
+    build_run_page,
+    decode_run_cursor,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -33,13 +37,13 @@ from forze_postgres.kernel.relation import resolve_postgres_qname
 
 _COLUMNS = (
     "run_id, name, status, idempotency_key, input, output, error, tenant_id, "
-    "attempts, available_at"
+    "attempts, available_at, created_at"
 )
 """Row projection for plain single-table SELECTs."""
 
 _T_COLUMNS = (
     "t.run_id, t.name, t.status, t.idempotency_key, t.input, t.output, "
-    "t.error, t.tenant_id, t.attempts, t.available_at"
+    "t.error, t.tenant_id, t.attempts, t.available_at, t.created_at"
 )
 """Row projection for RETURNING out of an ``UPDATE ... FROM picked`` join (qualified to
 resolve the ``run_id`` shared with the ``picked`` CTE); column names stay unqualified."""
@@ -73,7 +77,7 @@ def _unscope_idem(stored: str | None, tenant_id: UUID | None) -> str | None:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
+class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdminPort):
     """Postgres-backed durable-run store.
 
     Records run instances and hands out claims for execution and crash recovery. A crashed
@@ -117,6 +121,16 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
         -- On a shared tagged table claim_abandoned also filters `tenant_id = …` for a bound
         -- tenant, so lead the index with tenant_id to skip other tenants' rows:
         CREATE INDEX ON <relation> (tenant_id, status, created_at);
+
+        -- Recommended: back the admin listing (list_runs), which orders newest-first by
+        -- (created_at DESC, run_id DESC) and keyset-seeks on (created_at, run_id). Without a
+        -- matching index it seq-scans + sorts the whole relation. On a namespace (per-tenant)
+        -- table the ordering columns suffice:
+        CREATE INDEX ON <relation> (created_at DESC, run_id DESC);
+        -- On a shared tagged table list_runs filters `tenant_id = …` for a bound tenant, so
+        -- lead with tenant_id (an optional `status`/`name` filter is an extra residual
+        -- predicate on top of this keyset order):
+        CREATE INDEX ON <relation> (tenant_id, created_at DESC, run_id DESC);
 
     ``attempts`` doubles as the fence token (advances under a row lock on each claim);
     ``available_at`` delays when a ``PENDING`` run may be claimed. Concurrent scanners are
@@ -199,6 +213,7 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
                 tenant_id=tenant_id,
                 attempts=0,
                 available_at=available_at,
+                created_at=now,
             )
 
         # A run already exists for this idempotency key: converge on it. Look up by the
@@ -412,6 +427,73 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
 
     # ....................... #
 
+    async def list_runs(
+        self,
+        *,
+        status: DurableRunStatus | None = None,
+        name: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> DurableRunPage:
+        if limit < 1:
+            raise exc.validation("Durable run list limit must be >= 1.")
+
+        table = await self._table()
+        params: dict[str, object] = {"limit": limit + 1}
+        clauses: list[sql.Composable] = []
+
+        # Scope to the bound tenant when one is bound (per-tenant ops view over a tagged
+        # table); unbound, list every tenant's runs. On a namespace table the resolved table
+        # is already per-tenant, so the filter is a redundant no-op.
+        tenant_id = self._tenant_id_for_resolve()
+
+        if tenant_id is not None:
+            clauses.append(sql.SQL("tenant_id = %(tenant_id)s"))
+            params["tenant_id"] = tenant_id
+
+        if status is not None:
+            clauses.append(sql.SQL("status = %(status)s"))
+            params["status"] = str(status)
+
+        if name is not None:
+            clauses.append(sql.SQL("name = %(name)s"))
+            params["name"] = name
+
+        if cursor is not None:
+            # Keyset seek past the last row of the previous page: a row-value comparison keeps
+            # the same (created_at DESC, run_id DESC) order the ORDER BY imposes.
+            cursor_ts, cursor_id = decode_run_cursor(cursor)
+            clauses.append(
+                sql.SQL("(created_at, run_id) < (%(cursor_ts)s, %(cursor_id)s)")
+            )
+            params["cursor_ts"] = cursor_ts
+            params["cursor_id"] = cursor_id
+
+        where: sql.Composable = sql.SQL("")
+
+        if clauses:
+            where = sql.SQL("WHERE ") + sql.SQL(" AND ").join(clauses)
+
+        # Over-fetch one row so build_run_page can tell whether an older page follows without
+        # a second round trip.
+        rows = await self.client.fetch_all(
+            sql.SQL(
+                "SELECT {columns} FROM {table} {where} "
+                "ORDER BY created_at DESC, run_id DESC LIMIT %(limit)s"
+            ).format(
+                columns=sql.SQL(_COLUMNS),
+                table=table.ident(),
+                where=where,
+            ),
+            params,
+        )
+
+        records = [await self._record_from_row(row) for row in rows]
+
+        return build_run_page(records, limit)
+
+    # ....................... #
+
     async def _finish(
         self,
         run_id: str,
@@ -500,6 +582,7 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
             tenant_id=tenant_id,
             attempts=row["attempts"],
             available_at=row["available_at"],
+            created_at=row["created_at"],
         )
 
     # ....................... #

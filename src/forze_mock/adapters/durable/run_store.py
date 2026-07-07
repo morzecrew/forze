@@ -9,11 +9,16 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.durable.function import (
+    DurableRunAdminPort,
+    DurableRunPage,
     DurableRunRecord,
     DurableRunStatus,
     DurableRunStorePort,
+    build_run_page,
+    decode_run_cursor,
 )
 from forze.application.contracts.tenancy import TenantProviderPort
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze_mock.state import MockState
 
@@ -22,7 +27,7 @@ from forze_mock.state import MockState
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class MockDurableRunStore(DurableRunStorePort):
+class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
     """Back durable runs with :attr:`MockState.durable_runs`.
 
     Same lifecycle and lease/claim semantics as the Postgres store (``PENDING`` →
@@ -203,6 +208,52 @@ class MockDurableRunStore(DurableRunStorePort):
 
     # ....................... #
 
+    async def list_runs(
+        self,
+        *,
+        status: DurableRunStatus | None = None,
+        name: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> DurableRunPage:
+        if limit < 1:
+            raise exc.validation("Durable run list limit must be >= 1.")
+
+        bound_tenant = self._bound_tenant()
+        after = decode_run_cursor(cursor) if cursor is not None else None
+
+        # Hold the lock across the whole read path — filter, sort, cursor-seek, and convert —
+        # so a concurrent begin / renew / _finish / claim_abandoned cannot mutate a run dict
+        # mid-read (a torn record). Matches load() and the mutating methods.
+        with self.state.lock:
+            matched = [
+                data
+                for data in self.state.durable_runs.values()
+                if (bound_tenant is None or data["tenant_id"] == bound_tenant)
+                and (status is None or data["status"] == status.value)
+                and (name is None or data["name"] == name)
+            ]
+
+            # Newest first on (created_at, run_id) — run_id is a uuid7, so it breaks a
+            # same-instant tie in creation order, matching the Postgres ORDER BY.
+            matched.sort(
+                key=lambda data: (data["created_at"], data["run_id"]), reverse=True
+            )
+
+            if after is not None:
+                matched = [
+                    data
+                    for data in matched
+                    if (data["created_at"], data["run_id"]) < after
+                ]
+
+            # Over-fetch one so build_run_page can seed next_cursor (mirrors Postgres).
+            records = [_to_record(data) for data in matched[: limit + 1]]
+
+        return build_run_page(records, limit)
+
+    # ....................... #
+
     def _lease(self, data: dict[str, Any], lease_for: timedelta) -> None:
         data["status"] = DurableRunStatus.RUNNING.value
         data["attempts"] += 1
@@ -270,4 +321,5 @@ def _to_record(data: dict[str, Any]) -> DurableRunRecord:
         tenant_id=data["tenant_id"],
         attempts=data["attempts"],
         available_at=data["available_at"],
+        created_at=data["created_at"],
     )

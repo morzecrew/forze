@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, cast
 from forze.application.contracts.durable.function import (
     DurableFunctionStepDepKey,
     DurableFunctionStepPort,
+    DurableRunAdminDepKey,
+    DurableRunAdminPort,
     DurableRunStoreDepKey,
     DurableRunStorePort,
     DurableScheduleStoreDepKey,
@@ -54,4 +56,16 @@ def resolve_durable_schedule_store(ctx: ExecutionContext) -> DurableScheduleStor
     return cast(
         "DurableScheduleStorePort",
         ctx.deps.resolve_simple(ctx, DurableScheduleStoreDepKey),
+    )
+
+
+# ....................... #
+
+
+def resolve_durable_run_admin(ctx: ExecutionContext) -> DurableRunAdminPort:
+    """Resolve the durable run admin/list port bound in *ctx* (read-only ``list_runs``)."""
+
+    return cast(
+        "DurableRunAdminPort",
+        ctx.deps.resolve_simple(ctx, DurableRunAdminDepKey),
     )
