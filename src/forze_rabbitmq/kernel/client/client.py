@@ -103,6 +103,7 @@ class RabbitMQClient(RabbitMQClientPort):
         init=False,
     )
     __pending_watermark_warned: bool = attrs.field(default=False, init=False)
+    __dead_letter_ready: bool = attrs.field(default=False, init=False)
     __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
@@ -169,6 +170,9 @@ class RabbitMQClient(RabbitMQClientPort):
         async with self.__pending_lock:
             self.__pending.clear()
             self.__pending_watermark_warned = False
+
+        # A fresh connection must re-declare the DLX topology.
+        self.__dead_letter_ready = False
 
     # ....................... #
 
@@ -324,6 +328,12 @@ class RabbitMQClient(RabbitMQClientPort):
         schema-drift message) is dead-lettered to the DLX and lands in ``<dlx>.dlq`` rather than
         being silently discarded. Idempotent (declares are declarative).
 
+        Declared **once per client** (guarded by ``__dead_letter_ready``): the DLX topology is
+        broker-global and durable, so re-running the three declares on every work-queue
+        declaration only burns round-trips. The flag is reset on teardown so a fresh connection
+        re-declares. A benign race on the first burst (two callers both declaring) is harmless —
+        the declares are idempotent.
+
         The DLQ is declared **without** retention bounds (no ``x-message-ttl`` / ``x-max-length``)
         on purpose: it exists to *retain* poison for inspection, and a bound would silently drop
         the very messages the DLX captured. Operators who need to cap it should set an explicit
@@ -332,7 +342,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
         dlx = self.__config.dead_letter_exchange
 
-        if dlx is None:
+        if dlx is None or self.__dead_letter_ready:
             return
 
         exchange = await channel.declare_exchange(
@@ -342,6 +352,7 @@ class RabbitMQClient(RabbitMQClientPort):
             f"{dlx}{_DLQ_SUFFIX}", durable=self.__config.queue_durable
         )
         await dlq.bind(exchange)
+        self.__dead_letter_ready = True
 
     # ....................... #
 

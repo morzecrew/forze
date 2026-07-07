@@ -79,6 +79,8 @@ def test_all_function_config_fields_forwarded_to_sdk() -> None:
 
     opts = _register(config)._opts  # pyright: ignore[reportPrivateUsage]
 
+    assert opts.retries == 5
+    assert opts.idempotency == "event.data.id"
     assert opts.concurrency == [inngest.Concurrency(limit=2)]
     assert opts.rate_limit == inngest.RateLimit(limit=5, period=timedelta(seconds=60))
     assert opts.throttle == inngest.Throttle(limit=4, period=timedelta(seconds=30))
