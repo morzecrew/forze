@@ -474,10 +474,14 @@ class SQSClient(SQSClientPort):
         if self.__is_queue_url(queue):
             return queue
 
-        queue_name = self.__sanitize_queue_name(queue)
-
+        # Serve an already-resolved URL before re-validating the name: once we've talked to a
+        # queue, it must stay ack/nack-able even if its logical name trips the length guard —
+        # re-sanitizing here would raise and strand pending deliveries in a redelivery loop. Only
+        # the first resolution of a never-seen name pays the fail-closed check below.
         if queue in self.__queue_url_cache:
             return self.__queue_url_cache[queue]
+
+        queue_name = self.__sanitize_queue_name(queue)
 
         if queue_name in self.__queue_url_cache:
             return self.__queue_url_cache[queue_name]
@@ -1029,6 +1033,7 @@ class SQSClient(SQSClientPort):
 
         queue_url = await self.__resolve_queue_url(queue)
         c = self.__require_client()
+        is_fifo = self.__is_fifo_target(queue, queue_url)
 
         resp = await c.receive_message(
             QueueUrl=queue_url,
@@ -1075,15 +1080,41 @@ class SQSClient(SQSClientPort):
                 )
             except CoreException as e:
                 # A malformed message (e.g. a non-base64 body) must not poison the rest of the
-                # batch. Skip it — left in-flight, so SQS redelivery and the queue's redrive
-                # policy (maxReceiveCount → DLQ) handle the poison — while the good messages in
-                # this batch are still returned and registered for ack/nack.
-                logger.warning(
-                    "SQS message %s on queue %s could not be decoded, skipping: %s",
+                # batch. Standard queue: skip it — left in-flight, so SQS redelivery and the
+                # queue's redrive policy (maxReceiveCount → DLQ) handle the poison, while the good
+                # messages in this batch are still returned and registered for ack/nack.
+                if not is_fifo:
+                    logger.warning(
+                        "SQS message %s on queue %s could not be decoded, skipping: %s",
+                        message_id,
+                        queue,
+                        e,
+                    )
+                    continue
+
+                # FIFO queue: a skipped-but-undeleted message stays at the head of its message
+                # group and blocks every later message in that group until the visibility timeout,
+                # then redelivers at the head again — a hard deadlock when no redrive policy trims
+                # it. There is no client-side per-message DLQ, so delete it to unblock the group and
+                # log the raw body at error (recoverable from logs). Best-effort: a failed delete
+                # only leaves the group blocked until redrive/visibility, no worse than before.
+                logger.error(
+                    "SQS FIFO message %s on queue %s could not be decoded; deleting to unblock "
+                    "its message group (raw body: %r): %s",
                     message_id,
                     queue,
+                    body,
                     e,
                 )
+                try:
+                    await c.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt)
+                except Exception as del_err:
+                    logger.warning(
+                        "SQS FIFO poison delete failed for message %s on queue %s: %s",
+                        message_id,
+                        queue,
+                        del_err,
+                    )
                 continue
 
             out.append(message)

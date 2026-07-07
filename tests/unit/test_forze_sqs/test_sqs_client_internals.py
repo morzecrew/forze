@@ -216,6 +216,18 @@ async def test_queue_url_uses_in_memory_cache() -> None:
     await client.close()
 
 @pytest.mark.asyncio
+async def test_resolve_over_length_name_served_from_cache_without_re_sanitizing() -> None:
+    # Once a queue's URL is resolved, ack/nack/enqueue must keep working even for a name that
+    # trips the length guard — the cache is consulted before re-sanitizing, so pending
+    # deliveries are never stranded in a redelivery loop by a raise.
+    client = SQSClient()
+    long_name = "a" * 120
+    resolve = client._SQSClient__resolve_queue_url  # type: ignore[attr-defined]
+    client._SQSClient__queue_url_cache[long_name] = "https://x/y/long"  # type: ignore[attr-defined]
+
+    assert await resolve(long_name) == "https://x/y/long"
+
+@pytest.mark.asyncio
 async def test_initialize_without_config_leaves_opts_config_none() -> None:
     client = SQSClient()
     await client.initialize(

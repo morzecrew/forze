@@ -173,10 +173,10 @@ class RabbitMQClient(RabbitMQClientPort):
     # ....................... #
 
     async def __nack_pending_on_close(self) -> None:
-        """Best-effort ``nack(requeue=True)`` of every pending delivery.
+        """Best-effort requeue of every pending delivery.
 
         Failures are logged and swallowed: the broker redelivers unacked
-        messages once the connection drops anyway, so a failed nack only
+        messages once the connection drops anyway, so a failed requeue only
         delays redelivery — it must not turn ``close()`` into an error path.
         """
 
@@ -186,6 +186,10 @@ class RabbitMQClient(RabbitMQClientPort):
             self.__pending_watermark_warned = False
 
         if not entries:
+            return
+
+        if self.__config.redelivery_counting:
+            await self.__requeue_counted_on_close(entries)
             return
 
         results = await asyncio.gather(
@@ -200,6 +204,38 @@ class RabbitMQClient(RabbitMQClientPort):
                     "(broker redelivers it after the connection drops): %s",
                     message_id,
                     result,
+                )
+
+    # ....................... #
+
+    async def __requeue_counted_on_close(
+        self,
+        entries: Sequence[tuple[str, tuple[str, AbstractIncomingMessage]]],
+    ) -> None:
+        """Counted requeue of pending deliveries at close, grouped per queue.
+
+        Uses the same republish-with-incremented-``x-forze-delivery`` path as
+        ``nack(requeue=True)`` so a poison message left pending across a worker
+        shutdown keeps advancing its delivery count (otherwise it would stall at
+        the broker's ``redelivered``-flag ceiling and never reach parking).
+        Best-effort per queue — a failure only delays redelivery.
+        """
+
+        by_queue: dict[str, list[AbstractIncomingMessage]] = {}
+        for _, (queue, message) in entries:
+            by_queue.setdefault(queue, []).append(message)
+
+        for queue, raws in by_queue.items():
+            try:
+                await self.__requeue_counted(queue, raws)
+            except Exception as e:
+                logger.warning(
+                    "RabbitMQ close: counted requeue of %d pending message(s) on "
+                    "queue %s failed (broker redelivers after the connection "
+                    "drops): %s",
+                    len(raws),
+                    queue,
+                    e,
                 )
 
     # ....................... #
@@ -1060,10 +1096,20 @@ class RabbitMQClient(RabbitMQClientPort):
 
         return Message(
             body=raw.body,
+            # Carry the full AMQP property set across the republish — otherwise a counted retry
+            # would strip expiration (message TTL stops applying), priority, and the RPC-routing
+            # fields (correlation_id / reply_to), silently breaking TTLs and reply correlation.
             content_type=raw.content_type or "application/json",
+            content_encoding=raw.content_encoding,
             delivery_mode=delivery_mode,
+            priority=raw.priority,
+            correlation_id=raw.correlation_id,
+            reply_to=raw.reply_to,
+            expiration=raw.expiration,
             message_id=raw.message_id,  # preserved so consumer inbox dedup still collapses copies
             timestamp=raw.timestamp,
             type=raw.type,
+            user_id=raw.user_id,
+            app_id=raw.app_id,
             headers=headers,  # type: ignore[arg-type]
         )
