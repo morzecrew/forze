@@ -1100,15 +1100,17 @@ class SQSClient(SQSClientPort):
                 # FIFO queue: a skipped-but-undeleted message stays at the head of its message
                 # group and blocks every later message in that group until the visibility timeout,
                 # then redelivers at the head again — a hard deadlock when no redrive policy trims
-                # it. There is no client-side per-message DLQ, so delete it to unblock the group and
-                # log the raw body at error (recoverable from logs). Best-effort: a failed delete
-                # only leaves the group blocked until redrive/visibility, no worse than before.
+                # it. There is no client-side per-message DLQ, so delete it to unblock the group.
+                # The raw body is NOT logged: a malformed/attacker-supplied payload can carry
+                # production data, and this lands in central error logs — only its size and the
+                # (bounded) decode error are recorded. Best-effort: a failed delete only leaves the
+                # group blocked until redrive/visibility, no worse than before.
                 logger.error(
-                    "SQS FIFO message %s on queue %s could not be decoded; deleting to unblock "
-                    "its message group (raw body: %r): %s",
+                    "SQS FIFO message %s on queue %s could not be decoded (body %d bytes); "
+                    "deleting to unblock its message group: %s",
                     message_id,
                     queue,
-                    body,
+                    len(body),
                     e,
                 )
                 try:
