@@ -523,9 +523,12 @@ def gds_weighted_paths(
 ) -> str:
     """Yen's k-shortest weighted paths on the projection, rebuilt as typed vertices/edges.
 
-    GDS returns node ids and costs, and its own ``path`` uses *virtual* relationships — so the
-    typed edges are rebuilt by matching, for each consecutive node pair, the minimum-weight real
-    edge (the one Yen's used).
+    GDS returns node ids and per-node cumulative ``costs``, and its own ``path`` uses *virtual*
+    relationships — so the typed edges are rebuilt by matching, for each consecutive node pair, the
+    real edge whose weight equals the per-hop cost GDS charged (``costs[i+1] - costs[i]``). Picking
+    by that cost — not simply the cheapest edge — recovers the exact relationship Yen's ranked when
+    parallel edges of different weights connect the same pair (a later, costlier path would
+    otherwise be rebuilt from a different, cheaper relationship).
 
     ``max_hops`` bounds the *search*, not just the result, but Yen's has no native hop limit — so
     this yields **one row per candidate** in cost order, carrying ``hops`` (= ``size(nodeIds) - 1``)
@@ -542,18 +545,19 @@ def gds_weighted_paths(
         f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')}), "
         f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
         f"CALL gds.shortestPath.yens.stream($graph_name, {{sourceNode: a, targetNode: b, "
-        f"k: $candidate_k, relationshipWeightProperty: 'weight'}}) YIELD index, nodeIds, totalCost\n"
-        f"WITH index, nodeIds, totalCost, size(nodeIds) - 1 AS hops\n"
+        f"k: $candidate_k, relationshipWeightProperty: 'weight'}}) YIELD index, nodeIds, costs, totalCost\n"
+        f"WITH index, nodeIds, costs, totalCost, size(nodeIds) - 1 AS hops\n"
         f"CALL {{ WITH nodeIds, hops\n"
         f"  UNWIND (CASE WHEN hops <= $max_hops THEN range(0, size(nodeIds) - 1) ELSE [] END) AS i\n"
         f"  WITH gds.util.asNode(nodeIds[i]) AS n, i ORDER BY i\n"
         f"  RETURN collect(properties(n)) AS vertices, collect(labels(n)) AS vertex_labels }}\n"
-        f"CALL {{ WITH nodeIds, hops\n"
+        f"CALL {{ WITH nodeIds, costs, hops\n"
         f"  UNWIND (CASE WHEN hops <= $max_hops THEN range(0, size(nodeIds) - 2) ELSE [] END) AS i\n"
-        f"  CALL {{ WITH nodeIds, i\n"
-        f"    WITH gds.util.asNode(nodeIds[i]) AS u, gds.util.asNode(nodeIds[i + 1]) AS v\n"
+        f"  CALL {{ WITH nodeIds, costs, i\n"
+        f"    WITH gds.util.asNode(nodeIds[i]) AS u, gds.util.asNode(nodeIds[i + 1]) AS v, "
+        f"costs[i + 1] - costs[i] AS hop_cost\n"
         f"    MATCH (u)-[r{rel}]->(v)\n"
-        f"    RETURN r ORDER BY coalesce(r.{quote(weight_property)}, 0.0) ASC LIMIT 1 }}\n"
+        f"    RETURN r ORDER BY abs(coalesce(r.{quote(weight_property)}, 0.0) - hop_cost) ASC LIMIT 1 }}\n"
         f"  WITH i, r ORDER BY i\n"
         f"  RETURN collect(properties(r)) AS edges, collect(type(r)) AS edge_types }}\n"
         f"RETURN index, hops, vertices, vertex_labels, edges, edge_types, totalCost\n"

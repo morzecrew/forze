@@ -237,9 +237,12 @@ def test_gds_weighted_paths_uses_yens_and_rebuilds_edges() -> None:
     )
     assert "gds.shortestPath.yens.stream($graph_name" in q
     assert "relationshipWeightProperty: 'weight'" in q
-    # edges rebuilt as the min-weight real edge between consecutive nodes
+    # edges rebuilt as the real edge whose weight matches GDS's per-hop cost (disambiguates
+    # parallel edges), using the yielded per-node cumulative ``costs``.
+    assert "YIELD index, nodeIds, costs, totalCost" in q
     assert "gds.util.asNode(nodeIds[i])" in q
-    assert "ORDER BY coalesce(r.`cost`, 0.0) ASC LIMIT 1" in q
+    assert "costs[i + 1] - costs[i] AS hop_cost" in q
+    assert "ORDER BY abs(coalesce(r.`cost`, 0.0) - hop_cost) ASC LIMIT 1" in q
     # max_hops bounds the search: one cost-ordered row per candidate reports its ``hops`` and
     # rebuilds only within-bound rows, so the caller can grow the window (no fixed cap / LIMIT).
     assert "k: $candidate_k" in q

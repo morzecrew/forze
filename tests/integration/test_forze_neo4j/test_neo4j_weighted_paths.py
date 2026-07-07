@@ -232,3 +232,28 @@ async def test_weighted_is_tenant_scoped(gds_neo4j_client: Neo4jClient) -> None:
         ShortestPathParams(max_hops=5, weight_property="w"),
     )
     assert path is None
+
+
+async def test_weighted_k_shortest_rebuilds_correct_parallel_edge(
+    gds_neo4j_client: Neo4jClient,
+) -> None:
+    """Parallel edges of different weights between the same pair: each ranked path is rebuilt from
+    the relationship GDS actually charged (matched by per-hop cost), not always the cheapest — so a
+    later, costlier path does not surface the cheaper edge's properties."""
+
+    adapter = _adapter(gds_neo4j_client, graph_algorithms=True)
+    await adapter.create_vertex("WUser", WUserCreate(id="a"))
+    await adapter.create_vertex("WUser", WUserCreate(id="b"))
+    # Two parallel a→b relationships with distinct weights.
+    await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key="b", w=1.0))
+    await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key="b", w=3.0))
+
+    paths = await adapter.k_shortest_paths(
+        VertexRef(kind="WUser", key="a"),
+        VertexRef(kind="WUser", key="b"),
+        ShortestPathParams(max_hops=1, weight_property="w"),
+        k=2,
+    )
+
+    # The cheaper path carries the w=1 edge; the second carries the w=3 edge (not a second w=1).
+    assert [round(p.edges[0].w, 3) for p in paths] == [1.0, 3.0]
