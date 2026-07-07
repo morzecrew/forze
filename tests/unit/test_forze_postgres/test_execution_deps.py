@@ -136,6 +136,7 @@ class TestPostgresDepsModule:
     def test_registers_durable_ports_when_configured(self) -> None:
         from forze.application.contracts.durable.function import (
             DurableFunctionStepDepKey,
+            DurableRunAdminDepKey,
             DurableRunStoreDepKey,
             DurableScheduleStoreDepKey,
         )
@@ -160,10 +161,32 @@ class TestPostgresDepsModule:
         assert deps.exists(DurableFunctionStepDepKey)
         assert deps.exists(DurableRunStoreDepKey)
         assert deps.exists(DurableScheduleStoreDepKey)
+        # The read-only admin plane is opt-in, so it is off unless admin=True.
+        assert not deps.exists(DurableRunAdminDepKey)
+
+    def test_registers_run_admin_when_opted_in(self) -> None:
+        from forze.application.contracts.durable.function import (
+            DurableRunAdminDepKey,
+            DurableRunStoreDepKey,
+        )
+        from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
+
+        module = PostgresDepsModule(
+            client=MagicMock(spec=PostgresClient),
+            durable_run=PostgresDurableRunConfig(
+                relation=("public", "durable_run"), admin=True
+            ),
+        )
+
+        deps = module()
+
+        assert deps.exists(DurableRunStoreDepKey)
+        assert deps.exists(DurableRunAdminDepKey)
 
     def test_omits_durable_ports_by_default(self) -> None:
         from forze.application.contracts.durable.function import (
             DurableFunctionStepDepKey,
+            DurableRunAdminDepKey,
             DurableRunStoreDepKey,
             DurableScheduleStoreDepKey,
         )
@@ -172,6 +195,7 @@ class TestPostgresDepsModule:
 
         assert not deps.exists(DurableFunctionStepDepKey)
         assert not deps.exists(DurableRunStoreDepKey)
+        assert not deps.exists(DurableRunAdminDepKey)
         assert not deps.exists(DurableScheduleStoreDepKey)
 
     def test_introspector_receives_cache_ttl(self) -> None:

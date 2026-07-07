@@ -6,6 +6,7 @@ the mock under tests / simulation).
 """
 
 from ._resolve import (
+    resolve_durable_run_admin,
     resolve_durable_run_store,
     resolve_durable_schedule_store,
     resolve_durable_step,
@@ -55,6 +56,7 @@ __all__ = [
     "durable_recovery_background_lifecycle_step",
     "durable_saga_handler",
     "durable_scheduler_background_lifecycle_step",
+    "resolve_durable_run_admin",
     "resolve_durable_run_store",
     "resolve_durable_runner",
     "resolve_durable_schedule_store",

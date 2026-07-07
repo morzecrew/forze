@@ -48,6 +48,14 @@ class PostgresDurableRunConfig(TenantAwareIntegrationConfig):
     When ``True`` the factory fails closed at resolve if no keyring is registered.
     """
 
+    admin: bool = False
+    """Also expose the read-only :class:`DurableRunAdminPort` (``list_runs``) over this table.
+
+    Opt-in so a deployment publishes the ops read-plane explicitly. When ``True`` the module
+    registers ``DurableRunAdminDepKey`` alongside the run store — a CQRS ``QUERY`` handler can
+    list runs without acquiring the claim/write store.
+    """
+
 
 # ....................... #
 

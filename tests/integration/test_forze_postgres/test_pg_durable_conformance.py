@@ -13,7 +13,7 @@ byte-identical on both (the JSON-projection divergence is documented, not exerci
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any, Callable, cast
 from uuid import uuid4
 
 import pytest
@@ -21,7 +21,9 @@ from psycopg import sql
 
 from forze.application.contracts.durable.function import (
     DurableFunctionStepPort,
+    DurableRunAdminPort,
     DurableRunContext,
+    DurableRunStatus,
     DurableRunStorePort,
     bind_durable_run,
     reset_durable_run,
@@ -130,6 +132,49 @@ async def _scenario(
 # ....................... #
 
 
+async def _list_scenario(store: DurableRunStorePort) -> dict[str, Any]:
+    """Drive `list_runs` and collect plane-independent observables (names / counts).
+
+    Run ids and timestamps differ between the two engines (each generates its own), so the
+    outcomes compared are the *names* in newest-first order, page shapes, and filter counts —
+    all identical across a faithful stand-in.
+    """
+
+    admin = cast(DurableRunAdminPort, store)
+
+    records = [await store.enqueue(f"fn{i}", input_json={"i": i}) for i in range(5)]
+
+    # Complete the middle run so the status filter has something to select.
+    mid = records[2]
+    await store.begin(mid.run_id, lease_for=timedelta(minutes=5))
+    await store.complete(mid.run_id, output_json={"ok": True})
+
+    out: dict[str, Any] = {}
+
+    full = await admin.list_runs(limit=10)
+    out["all_names_newest_first"] = [r.name for r in full.records]
+    out["all_next_cursor_is_none"] = full.next_cursor is None
+    out["created_at_populated"] = all(r.created_at is not None for r in full.records)
+
+    page1 = await admin.list_runs(limit=2)
+    out["page1_names"] = [r.name for r in page1.records]
+    out["page1_has_cursor"] = page1.next_cursor is not None
+
+    page2 = await admin.list_runs(limit=2, cursor=page1.next_cursor)
+    out["page2_names"] = [r.name for r in page2.records]
+
+    completed = await admin.list_runs(status=DurableRunStatus.COMPLETED, limit=10)
+    out["completed_names"] = [r.name for r in completed.records]
+
+    by_name = await admin.list_runs(name="fn0", limit=10)
+    out["by_name_count"] = len(by_name.records)
+
+    return out
+
+
+# ....................... #
+
+
 class TestDurableMockVsPostgres:
     async def test_mock_matches_postgres_for_the_durable_lifecycle(
         self, pg_client: PostgresClient, run_table: str, step_table: str
@@ -155,3 +200,23 @@ class TestDurableMockVsPostgres:
         assert mock_out == pg_out
         assert mock_out["step_ran_once"] == 1
         assert mock_out["final_status"] == "completed"
+
+    async def test_mock_matches_postgres_for_list_runs(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        mock_out = await _list_scenario(MockDurableRunStore(state=MockState()))
+
+        pg_out = await _list_scenario(
+            PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+            )
+        )
+
+        assert mock_out == pg_out
+        # Anchor the shared expectation (newest-first, keyset paging, filters).
+        assert mock_out["all_names_newest_first"] == ["fn4", "fn3", "fn2", "fn1", "fn0"]
+        assert mock_out["page1_names"] == ["fn4", "fn3"]
+        assert mock_out["page2_names"] == ["fn2", "fn1"]
+        assert mock_out["completed_names"] == ["fn2"]
+        assert mock_out["by_name_count"] == 1

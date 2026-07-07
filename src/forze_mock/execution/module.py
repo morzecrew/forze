@@ -61,6 +61,7 @@ from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepKey,
     DurableFunctionStepDepKey,
+    DurableRunAdminDepKey,
     DurableRunStoreDepKey,
     DurableScheduleStoreDepKey,
 )
@@ -417,6 +418,7 @@ class MockDepsModule(DepsModule):
             ),
             DurableFunctionStepDepKey: ConfigurableMockDurableFunctionStep(module=self),
             DurableRunStoreDepKey: ConfigurableMockDurableRunStore(module=self),
+            DurableRunAdminDepKey: ConfigurableMockDurableRunStore(module=self),
             DurableScheduleStoreDepKey: ConfigurableMockDurableSchedule(module=self),
             SecretsDepKey: secrets,
             KeyManagementDepKey: crypto_kms,

@@ -18,6 +18,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.durable.function import (
     DurableFunctionStepDepKey,
+    DurableRunAdminDepKey,
     DurableRunStoreDepKey,
     DurableScheduleStoreDepKey,
 )
@@ -31,7 +32,7 @@ from forze.application.contracts.search import (
     SearchQueryDepKey,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
-from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.deps import DepKey, Deps, DepsModule
 from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
@@ -622,13 +623,17 @@ class PostgresDepsModule(DepsModule):
         durable_run_deps = Deps()
 
         if self.durable_run is not None:
-            durable_run_deps = Deps.plain(
-                {
-                    DurableRunStoreDepKey: ConfigurablePostgresDurableRun(
-                        config=self.durable_run
-                    ),
-                }
-            )
+            # The dual-port store implements both the run store and the admin/list port; the
+            # same factory registers under both keys when admin listing is opted in.
+            run_factory = ConfigurablePostgresDurableRun(config=self.durable_run)
+            run_registrations: dict[DepKey[Any], Any] = {
+                DurableRunStoreDepKey: run_factory
+            }
+
+            if self.durable_run.admin:
+                run_registrations[DurableRunAdminDepKey] = run_factory
+
+            durable_run_deps = Deps.plain(run_registrations)
 
         durable_schedule_deps = Deps()
 
