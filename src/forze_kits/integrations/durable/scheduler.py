@@ -28,13 +28,17 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
-def cron_schedule_id(spec: DurableFunctionSpec[Any, Any], index: int = 0) -> str:
-    """Return the schedule id a cron trigger at *index* on *spec* is registered under.
+def cron_schedule_id(spec: DurableFunctionSpec[Any, Any], index: int) -> str:
+    """Return the schedule id the cron trigger at *index* on *spec* is registered under.
 
     The convention ``{spec.name}:cron:{index}`` is shared by
     :meth:`DurableScheduler.ensure_cron_schedules` (which registers the schedules) and any
     control plane that later enables/disables or otherwise targets one — call this instead of
     re-deriving the string, so the registrar and the caller never drift apart.
+
+    *index* is required (no default): the registrar keys each schedule by the trigger's real
+    position in ``spec.triggers``, so a caller targeting a second cron trigger must pass its
+    index rather than silently defaulting to the first.
     """
 
     return f"{spec.name}:cron:{index}"

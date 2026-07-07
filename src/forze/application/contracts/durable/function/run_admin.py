@@ -41,10 +41,19 @@ def decode_run_cursor(cursor: str) -> tuple[datetime, str]:
 
     try:
         payload = _CURSOR_CODEC.loads(cursor)
-        return datetime.fromisoformat(payload["ts"]), payload["id"]
+        created_at = datetime.fromisoformat(payload["ts"])
+        run_id = payload["id"]
 
     except (CoreException, ValueError, KeyError, TypeError) as error:
         raise exc.validation("Malformed durable-run list cursor.") from error
+
+    # A genuine cursor is always minted from a tz-aware ``created_at`` (``utcnow``); a naive
+    # timestamp can only be a hand-crafted token. Reject it rather than let a backend compare
+    # it against a ``timestamptz`` in the server timezone and skip / repeat runs at the seam.
+    if created_at.tzinfo is None:
+        raise exc.validation("Durable-run list cursor timestamp must be timezone-aware.")
+
+    return created_at, run_id
 
 
 # ....................... #
@@ -79,8 +88,16 @@ def build_run_page(records: Sequence[DurableRunRecord], limit: int) -> DurableRu
     if len(records) > limit and page:
         last = page[-1]
 
-        if last.created_at is not None:
-            next_cursor = encode_run_cursor(last.created_at, last.run_id)
+        # A further page exists, so a cursor must be minted. A boundary record without a
+        # ``created_at`` (e.g. built before persistence) would otherwise truncate the listing
+        # and hide older runs — fail loud instead, since a listing store always sets it.
+        if last.created_at is None:
+            raise exc.internal(
+                "Cannot build a durable-run page cursor: the boundary record has no "
+                "created_at.",
+            )
+
+        next_cursor = encode_run_cursor(last.created_at, last.run_id)
 
     return DurableRunPage(records=page, next_cursor=next_cursor)
 

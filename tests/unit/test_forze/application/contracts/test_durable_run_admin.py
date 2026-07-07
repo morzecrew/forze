@@ -18,11 +18,13 @@ from forze.application.contracts.durable.function import (
     decode_run_cursor,
     encode_run_cursor,
 )
+from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import CoreException
 
 # ----------------------- #
 
 UTC = timezone.utc
+_CURSOR_CODEC = B64UrlJsonCodec()  # same encoding decode_run_cursor consumes
 
 
 def _record(run_id: str, created_at: datetime) -> DurableRunRecord:
@@ -55,6 +57,14 @@ class TestRunCursorCodec:
         with pytest.raises(CoreException):
             decode_run_cursor(bad)
 
+    def test_rejects_naive_timestamp_cursor(self) -> None:
+        # A well-formed token whose ts is timezone-naive can only be hand-crafted; accepting
+        # it would let Postgres reinterpret the boundary in the server timezone.
+        naive = _CURSOR_CODEC.dumps({"ts": "2026-07-07T12:00:00", "id": "run-1"})
+
+        with pytest.raises(CoreException):
+            decode_run_cursor(naive)
+
 
 class TestBuildRunPage:
     def test_trims_overfetch_and_seeds_next_cursor(self) -> None:
@@ -77,3 +87,17 @@ class TestBuildRunPage:
 
         assert [r.run_id for r in page.records] == ["r0", "r1"]
         assert page.next_cursor is None
+
+    def test_raises_when_boundary_record_has_no_created_at(self) -> None:
+        ts = datetime(2026, 7, 7, tzinfo=UTC)
+        # A further page exists but the boundary record carries no timestamp: silently ending
+        # would hide older runs, so building the page must fail loud.
+        records = [
+            DurableRunRecord(
+                run_id="r0", name="fn", status=DurableRunStatus.PENDING, created_at=None
+            ),
+            _record("r1", ts),
+        ]
+
+        with pytest.raises(CoreException):
+            build_run_page(records, limit=1)
