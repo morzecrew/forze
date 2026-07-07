@@ -527,10 +527,13 @@ def gds_weighted_paths(
     typed edges are rebuilt by matching, for each consecutive node pair, the minimum-weight real
     edge (the one Yen's used).
 
-    ``max_hops`` bounds the *search*, not just the result: Yen's has no native hop limit, so we
-    over-fetch ``$candidate_k`` cost-ordered candidates, drop any exceeding ``$max_hops`` edges,
-    then keep the cheapest ``$k``. This returns the cheapest path *within* the bound instead of
-    dropping it when a cheaper over-long path exists (which post-filtering the top-``k`` would do).
+    ``max_hops`` bounds the *search*, not just the result, but Yen's has no native hop limit — so
+    this yields **one row per candidate** in cost order, carrying ``hops`` (= ``size(nodeIds) - 1``)
+    and rebuilding vertices/edges only for rows within ``$max_hops`` (empty lists otherwise, kept
+    cheap). The caller filters to bounded rows and keeps the cheapest ``k``; because every candidate
+    is reported, it can also tell whether Yen's was exhausted (fewer rows than ``$candidate_k``) and
+    grow the window if a bounded path is still hiding behind cheaper over-long ones — so no valid
+    bounded path is dropped by a fixed window size.
     """
 
     rel = _type_pattern(edge_types)
@@ -540,22 +543,21 @@ def gds_weighted_paths(
         f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
         f"CALL gds.shortestPath.yens.stream($graph_name, {{sourceNode: a, targetNode: b, "
         f"k: $candidate_k, relationshipWeightProperty: 'weight'}}) YIELD index, nodeIds, totalCost\n"
-        f"WITH index, nodeIds, totalCost WHERE size(nodeIds) - 1 <= $max_hops\n"
-        f"CALL {{ WITH nodeIds\n"
-        f"  UNWIND range(0, size(nodeIds) - 1) AS i\n"
+        f"WITH index, nodeIds, totalCost, size(nodeIds) - 1 AS hops\n"
+        f"CALL {{ WITH nodeIds, hops\n"
+        f"  UNWIND (CASE WHEN hops <= $max_hops THEN range(0, size(nodeIds) - 1) ELSE [] END) AS i\n"
         f"  WITH gds.util.asNode(nodeIds[i]) AS n, i ORDER BY i\n"
         f"  RETURN collect(properties(n)) AS vertices, collect(labels(n)) AS vertex_labels }}\n"
-        f"CALL {{ WITH nodeIds\n"
-        f"  UNWIND range(0, size(nodeIds) - 2) AS i\n"
+        f"CALL {{ WITH nodeIds, hops\n"
+        f"  UNWIND (CASE WHEN hops <= $max_hops THEN range(0, size(nodeIds) - 2) ELSE [] END) AS i\n"
         f"  CALL {{ WITH nodeIds, i\n"
         f"    WITH gds.util.asNode(nodeIds[i]) AS u, gds.util.asNode(nodeIds[i + 1]) AS v\n"
         f"    MATCH (u)-[r{rel}]->(v)\n"
         f"    RETURN r ORDER BY coalesce(r.{quote(weight_property)}, 0.0) ASC LIMIT 1 }}\n"
         f"  WITH i, r ORDER BY i\n"
         f"  RETURN collect(properties(r)) AS edges, collect(type(r)) AS edge_types }}\n"
-        f"RETURN vertices, vertex_labels, edges, edge_types, totalCost\n"
-        f"ORDER BY totalCost, index\n"
-        f"LIMIT $k"
+        f"RETURN index, hops, vertices, vertex_labels, edges, edge_types, totalCost\n"
+        f"ORDER BY totalCost, index"
     )
 
 

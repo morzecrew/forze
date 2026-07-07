@@ -172,6 +172,37 @@ async def test_weighted_shortest_returns_bounded_path_over_cheaper_long_one(
     assert [v.id for v in path.vertices] == ["a", "b"]
 
 
+async def test_weighted_shortest_grows_window_past_candidate_buffer(
+    gds_neo4j_client: Neo4jClient,
+) -> None:
+    """More cheaper-but-over-long paths than the fixed candidate buffer must not hide a valid
+    bounded path: the adaptive window grows until the bounded route is found (regression for the
+    fixed ``k + buffer`` over-fetch, which filled the window with over-long paths and returned
+    nothing)."""
+
+    adapter = _adapter(gds_neo4j_client, graph_algorithms=True)
+    await adapter.create_vertex("WUser", WUserCreate(id="a"))
+    await adapter.create_vertex("WUser", WUserCreate(id="b"))
+    # Expensive direct a→b (1 hop) — the only route within max_hops=1.
+    await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key="b", w=100.0))
+    # 40 cheap 2-hop detours a→mᵢ→b, well past the 32-candidate buffer and each far cheaper than
+    # the direct edge — so Yen's fills a fixed window with these over-long paths before the direct.
+    for i in range(40):
+        mid = f"m{i}"
+        await adapter.create_vertex("WUser", WUserCreate(id=mid))
+        await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key=mid, w=1.0))
+        await adapter.create_edge("WLINK", WEdgeCreate(from_key=mid, to_key="b", w=1.0))
+
+    path = await adapter.shortest_path(
+        VertexRef(kind="WUser", key="a"),
+        VertexRef(kind="WUser", key="b"),
+        ShortestPathParams(max_hops=1, weight_property="w"),
+    )
+
+    assert path is not None
+    assert [v.id for v in path.vertices] == ["a", "b"]
+
+
 async def test_weighted_is_tenant_scoped(gds_neo4j_client: Neo4jClient) -> None:
     """A cross-tenant weighted route is excluded — the projection is tenant-filtered."""
 

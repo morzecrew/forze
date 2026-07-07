@@ -240,11 +240,13 @@ def test_gds_weighted_paths_uses_yens_and_rebuilds_edges() -> None:
     # edges rebuilt as the min-weight real edge between consecutive nodes
     assert "gds.util.asNode(nodeIds[i])" in q
     assert "ORDER BY coalesce(r.`cost`, 0.0) ASC LIMIT 1" in q
-    # max_hops bounds the search: over-fetch cost-ordered candidates, drop over-long ones,
-    # then keep the cheapest k (not a post-filter of the top-k).
+    # max_hops bounds the search: one cost-ordered row per candidate reports its ``hops`` and
+    # rebuilds only within-bound rows, so the caller can grow the window (no fixed cap / LIMIT).
     assert "k: $candidate_k" in q
-    assert "WHERE size(nodeIds) - 1 <= $max_hops" in q
-    assert q.rstrip().endswith("LIMIT $k")
+    assert "size(nodeIds) - 1 AS hops" in q
+    assert "CASE WHEN hops <= $max_hops" in q
+    assert "RETURN index, hops, vertices" in q
+    assert "LIMIT $k" not in q
 
 
 def test_gds_drop_is_non_failing() -> None:

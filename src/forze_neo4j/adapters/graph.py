@@ -70,9 +70,11 @@ from ._logger import logger
 
 # ----------------------- #
 
-# Extra cost-ordered Yen's candidates fetched beyond the requested ``k`` for weighted paths, so a
-# cheaper path exceeding ``max_hops`` cannot push a valid bounded path out of the candidate window
-# before the hop filter runs. Yen's has no native hop bound; a small buffer covers realistic graphs.
+# Initial extra Yen's candidates fetched beyond the requested ``k`` for weighted paths, so the
+# common case (few over-long cheaper paths) resolves in one round-trip. This is only a head-start,
+# not a cap: ``_weighted_paths`` grows the window until it has ``k`` paths within ``max_hops`` or
+# Yen's is exhausted, so a valid bounded path is never dropped for hiding behind more than the
+# buffer's worth of cheaper over-long ones.
 _WEIGHTED_HOP_CANDIDATE_BUFFER = 32
 
 # ----------------------- #
@@ -630,27 +632,40 @@ class Neo4jGraphAdapter(TenancyMixin):
             tenant_field=self._tenant_field,
         )
 
-        # Yen's ranks by cost with no hop limit; the query drops over-long candidates and keeps the
-        # cheapest ``k`` within ``max_hops``. Over-fetch beyond ``k`` so a cheaper over-long path
-        # cannot starve a valid bounded one out of the candidate window.
+        # Yen's ranks by cost with no hop limit, so the cheapest candidates may all exceed
+        # ``max_hops``. Fetch a cost-ordered window (each row reports its ``hops``) and grow it
+        # until we have ``k`` paths within the bound or Yen's is exhausted — a *fixed* over-fetch
+        # would drop a valid bounded path hiding behind more than the buffer's worth of cheaper
+        # over-long ones. The buffer is only the initial head-start (one round-trip in the common
+        # case), not a cap.
         candidate_k = k + _WEIGHTED_HOP_CANDIDATE_BUFFER
+        bounded: list[JsonDict] = []
 
         try:
             await self.client.run(
                 project, self._params(graph_name=graph_name), database=database
             )
-            rows = await self.client.run(
-                query,
-                self._params(
-                    from_key=from_ref.key,
-                    to_key=to_ref.key,
-                    graph_name=graph_name,
-                    k=k,
-                    candidate_k=candidate_k,
-                    max_hops=params.max_hops,
-                ),
-                database=database,
-            )
+            while True:
+                rows = await self.client.run(
+                    query,
+                    self._params(
+                        from_key=from_ref.key,
+                        to_key=to_ref.key,
+                        graph_name=graph_name,
+                        candidate_k=candidate_k,
+                        max_hops=params.max_hops,
+                    ),
+                    database=database,
+                )
+                # Rows are cost-ordered; keep the ones within the hop bound.
+                bounded = [row for row in rows if row["hops"] <= params.max_hops]
+
+                # Enough within the bound, or Yen's returned fewer candidates than asked (so no
+                # further paths exist to grow into) — either way we have the cheapest bounded set.
+                if len(bounded) >= k or len(rows) < candidate_k:
+                    break
+
+                candidate_k *= 2
 
         finally:
             try:
@@ -661,7 +676,7 @@ class Neo4jGraphAdapter(TenancyMixin):
                 # Best-effort cleanup — never mask the real result/error with a drop failure.
                 logger.debug("Failed to drop GDS projection %s", graph_name)
 
-        return [await self._map_path_row(row) for row in rows]
+        return [await self._map_path_row(row) for row in bounded[:k]]
 
     # ....................... #
 
