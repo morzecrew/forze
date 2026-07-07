@@ -6,19 +6,45 @@ activity-shaped steps. Temporal owns durability, retries, timeouts, and resume (
 semantics, via the same :class:`~forze.application.contracts.saga.SagaProgress` the
 in-process executor uses — so both drivers stay in lock-step.
 
-Imports no ``temporalio`` (the activity calls are supplied by the caller as thunks), so it is
-safe to import inside the workflow sandbox.
+Imports no ``temporalio`` at module load (the activity calls are supplied by the caller as
+thunks), so it is safe to import inside the workflow sandbox; the failure path lazily imports
+``temporalio.exceptions`` to convert a saga :class:`CoreException` into an ``ApplicationError``
+(see :func:`_as_application_error`).
 """
 
-from typing import Awaitable, Callable, final
+from typing import TYPE_CHECKING, Awaitable, Callable, final
 
 import attrs
 
 from forze.application.contracts.saga import SagaProgress, SagaStepKind
+from forze.base.exceptions import CoreException, exception_egress_policy
 
 from .execution._logger import logger
 
+if TYPE_CHECKING:
+    from temporalio.exceptions import ApplicationError
+
 # ----------------------- #
+
+
+def _as_application_error(error: CoreException) -> "ApplicationError":
+    """Convert a saga :class:`CoreException` into a temporalio ``ApplicationError``.
+
+    A non-``FailureError`` raised out of ``@workflow.run`` fails the *workflow task* (which
+    Temporal retries forever — the workflow never reaches ``FAILED``); an ``ApplicationError``
+    fails the *workflow*. ``non_retryable`` follows the framework's per-kind retryability policy,
+    so a deterministic saga failure (e.g. ``saga.step_failed`` = ``domain``) is marked
+    non-retryable while an infrastructure failure stays retryable. Imported lazily so this module
+    still loads without ``temporalio`` (the failure path only runs inside a workflow).
+    """
+
+    from temporalio.exceptions import ApplicationError
+
+    return ApplicationError(
+        error.summary,
+        type=error.code,
+        non_retryable=not exception_egress_policy(error.kind).retryable,
+    )
 
 
 @final
@@ -79,10 +105,14 @@ class TemporalSaga:
 
         except Exception as error:
             if self._progress.committed:
-                raise self._progress.forward_incomplete_error(index, error) from error
+                raise _as_application_error(
+                    self._progress.forward_incomplete_error(index, error)
+                ) from error
 
             comp_errors = await self._compensate()
-            raise self._progress.step_failed_error(index, error, comp_errors) from error
+            raise _as_application_error(
+                self._progress.step_failed_error(index, error, comp_errors)
+            ) from error
 
         self._progress.record_success(index)
 

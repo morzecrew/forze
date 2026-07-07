@@ -138,6 +138,18 @@ class TestPendingWatermark:
         with pytest.raises(CoreException):
             RabbitMQConfig(pending_watermark=0)
 
+    def test_redelivery_counting_requires_publisher_confirms(self) -> None:
+        # Counted requeue republishes then acks the original — fire-and-forget publishing
+        # (no confirms) would ack a message that never reached the broker. Reject the combo.
+        from forze.base.exceptions import CoreException
+
+        with pytest.raises(CoreException):
+            RabbitMQConfig(redelivery_counting=True, publisher_confirms=False)
+
+        # The safe combinations still construct.
+        RabbitMQConfig(redelivery_counting=True)  # publisher_confirms defaults True
+        RabbitMQConfig(redelivery_counting=False, publisher_confirms=False)
+
     # ....................... #
 
     @staticmethod
@@ -198,3 +210,71 @@ class TestPendingWatermark:
         await register("q", [_FakePendingMessage(f"m{i}") for i in range(10)])
 
         assert stub.warnings == []
+
+
+# ....................... #
+
+
+class TestCloseCountedRequeue:
+    """With ``redelivery_counting`` on, close-time requeues go through the counted republish
+    path (per queue) so a poison message left pending at shutdown keeps advancing its count."""
+
+    @pytest.mark.asyncio
+    async def test_close_routes_pending_through_counted_requeue(self) -> None:
+        from unittest.mock import AsyncMock
+
+        client = RabbitMQClient()
+        client._RabbitMQClient__config = RabbitMQConfig(  # type: ignore[attr-defined]
+            redelivery_counting=True
+        )
+        channel = _FakeChannel()
+        client._RabbitMQClient__pending_channel = channel  # type: ignore[attr-defined]
+
+        m_a1, m_a2, m_b = (
+            _FakePendingMessage("a1"),
+            _FakePendingMessage("a2"),
+            _FakePendingMessage("b1"),
+        )
+        pending = client._RabbitMQClient__pending  # type: ignore[attr-defined]
+        pending["a1"] = ("qa", m_a1)
+        pending["a2"] = ("qa", m_a2)
+        pending["b1"] = ("qb", m_b)
+
+        counted = AsyncMock()
+        client._RabbitMQClient__requeue_counted = counted  # type: ignore[attr-defined]
+
+        await client.close()
+
+        # Grouped per queue; the plain broker nack path is never taken.
+        by_queue = {
+            call.args[0]: [m.message_id for m in call.args[1]]
+            for call in counted.await_args_list
+        }
+        assert by_queue == {"qa": ["a1", "a2"], "qb": ["b1"]}
+        assert m_a1.nack_calls == [] and m_a2.nack_calls == [] and m_b.nack_calls == []
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_counted_requeue_failure_is_swallowed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        stub = _LoggerStub()
+        monkeypatch.setattr("forze_rabbitmq.kernel.client.client.logger", stub)
+
+        client = RabbitMQClient()
+        client._RabbitMQClient__config = RabbitMQConfig(  # type: ignore[attr-defined]
+            redelivery_counting=True
+        )
+        client._RabbitMQClient__pending_channel = _FakeChannel()  # type: ignore[attr-defined]
+        client._RabbitMQClient__pending["x"] = ("qx", _FakePendingMessage("x"))  # type: ignore[attr-defined]
+
+        client._RabbitMQClient__requeue_counted = AsyncMock(  # type: ignore[attr-defined]
+            side_effect=RuntimeError("channel gone")
+        )
+
+        await client.close()  # must not raise
+
+        assert any("qx" in entry for entry in stub.warnings)
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]

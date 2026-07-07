@@ -22,6 +22,19 @@ import ``coverage.env``, which calls ``platform.python_implementation()`` at mod
 workflow-task failures indefinitely, so a coverage-instrumented test run **hangs** instead of
 failing. Passing ``coverage`` through lets its machinery import and run unrestricted.
 
+:mod:`forze.base.primitives` is passed through for correctness, not just import safety. The
+replay-deterministic clock (:class:`TemporalWorkflowTimeSource`) is bound by the context
+interceptor into the module-level ``_TIME_SOURCE`` ``ContextVar`` of the *host* copy of
+``forze.base.primitives.time_source``. Without passthrough, a plain ``import forze`` inside a
+workflow re-imports a *second* copy of the primitives with its own ``ContextVar`` still defaulted
+to the wall clock, so ``utcnow()`` / ``uuid7()`` go non-deterministic — and re-importing the
+primitives tree under the sandbox also trips restricted-module access, failing the workflow task
+(retried forever → hang). Both only avoided today if the author remembered
+``workflow.unsafe.imports_passed_through()``. Passing the whole (deterministic-by-design)
+primitives package through gives a single shared module tree — one ``ContextVar`` the interceptor
+binds and workflow code reads — so time/id are deterministic no matter how the workflow imported
+forze. Package prefix, so submodules (``time_source`` / ``datetime`` / ``uuid`` / …) are covered.
+
 Use :func:`sandboxed_workflow_runner` as the ``workflow_runner`` for any
 :class:`temporalio.worker.Worker` in a process that may also import the Forze MCP stack or run
 under coverage.
@@ -38,8 +51,14 @@ from temporalio.worker.workflow_sandbox import (
 
 #: Modules that must bypass the workflow sandbox. ``beartype`` installs a global import hook
 #: (via the MCP stack) that breaks the sandbox's per-workflow module re-import; ``coverage``
-#: traces sandboxed workflow code and trips restricted access during its lazy imports.
-PASSTHROUGH_MODULES: tuple[str, ...] = ("beartype", "coverage")
+#: traces sandboxed workflow code and trips restricted access during its lazy imports;
+#: ``forze.base.primitives`` holds the deterministic clock/id sources (and the ``ContextVar`` the
+#: interceptor binds), so it must be a single copy shared with the host (see module docstring).
+PASSTHROUGH_MODULES: tuple[str, ...] = (
+    "beartype",
+    "coverage",
+    "forze.base.primitives",
+)
 
 
 def default_sandbox_restrictions() -> SandboxRestrictions:

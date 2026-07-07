@@ -6,7 +6,11 @@ from .deps import (
     get_function_bindings,
 )
 from .lifecycle import inngest_lifecycle_step, routed_inngest_lifecycle_step
-from .registration import InngestFunctionBinding, register_functions
+from .registration import (
+    InngestFunctionBinding,
+    InngestFunctionConfig,
+    register_functions,
+)
 
 __all__ = [
     "ConfigurableInngestEventCommand",
@@ -14,6 +18,7 @@ __all__ = [
     "InngestDepsModule",
     "InngestEventConfig",
     "InngestFunctionBinding",
+    "InngestFunctionConfig",
     "get_function_bindings",
     "inngest_lifecycle_step",
     "routed_inngest_lifecycle_step",

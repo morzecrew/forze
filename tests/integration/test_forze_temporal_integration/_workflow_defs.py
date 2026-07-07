@@ -72,6 +72,22 @@ class ItClockProbeWorkflow:
         return f"{same_now}:{version}"
 
 
+@workflow.defn(name="ItClockProbeNonPassthroughWorkflow")
+class ItClockProbeNonPassthroughWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        # A *plain* import — NOT wrapped in workflow.unsafe.imports_passed_through(). This is the
+        # case the passthrough of ``forze.base.primitives.time_source`` fixes: even a normal
+        # ``import forze`` must resolve to the single host ``_TIME_SOURCE`` ContextVar the
+        # interceptor bound, so utcnow()/uuid7() stay deterministic (were silently the wall clock).
+        from forze.base.primitives import utcnow, uuid7
+
+        same_now = utcnow() == workflow.now()
+        version = uuid7().version
+
+        return f"{same_now}:{version}"
+
+
 class SumIn(BaseModel):
     """Pydantic input for :class:`ItSumWorkflow`."""
 
@@ -152,7 +168,6 @@ class ItCheckoutSagaWorkflow:
     async def run(self, fail_at: str) -> SagaOut:
         with workflow.unsafe.imports_passed_through():
             from forze.application.contracts.saga import SagaStepKind
-            from forze.base.exceptions import CoreException
 
             from forze_temporal import TemporalSaga
 
@@ -185,7 +200,9 @@ class ItCheckoutSagaWorkflow:
                 kind=SagaStepKind.RETRYABLE,
             )
 
-        except CoreException as error:
-            return SagaOut(status="failed", code=error.code)
+        except ApplicationError as error:
+            # TemporalSaga now raises an ApplicationError (so an *uncaught* saga failure fails the
+            # workflow instead of retrying the task forever); its ``type`` carries the saga code.
+            return SagaOut(status="failed", code=error.type or "")
 
         return SagaOut(status="completed")

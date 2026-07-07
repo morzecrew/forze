@@ -52,3 +52,25 @@ async def test_enqueue_many_sets_delay_seconds_on_batch_entry() -> None:
 
     entries = mock_boto.send_message_batch.await_args.kwargs["Entries"]
     assert entries[0]["DelaySeconds"] == 12
+
+
+@pytest.mark.asyncio
+async def test_enqueue_many_fifo_rejects_per_message_delay() -> None:
+    # SQS rejects per-message DelaySeconds on FIFO queues; fail closed before the AWS call.
+    client = SQSClient()
+    mock_boto = AsyncMock()
+
+    with patch.object(
+        client,
+        "_SQSClient__resolve_queue_url",
+        AsyncMock(return_value="https://sqs/q.fifo"),
+    ):
+        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+            with patch.object(client, "_SQSClient__is_fifo_target", return_value=True):
+                with pytest.raises(CoreException) as ei:
+                    await client.enqueue_many(
+                        "jobs.fifo", [b"body"], delay=timedelta(seconds=12), key="g1"
+                    )
+
+    assert ei.value.code == "sqs.fifo_per_message_delay"
+    mock_boto.send_message_batch.assert_not_called()  # never reached the AWS call

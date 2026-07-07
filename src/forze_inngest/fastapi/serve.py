@@ -24,8 +24,14 @@ def serve(
     *,
     ctx_factory: Callable[[], ExecutionContext],
     registry: FrozenOperationRegistry | None = None,
+    bind_identity_from_event: bool = False,
 ) -> None:
-    """Register Inngest functions and mount the Inngest serve handler on ``app``."""
+    """Register Inngest functions and mount the Inngest serve handler on ``app``.
+
+    ``bind_identity_from_event`` (default ``False``) is forwarded to :func:`register_functions`:
+    the event's ``_forze`` principal/tenant are untrusted, so only bind them for trusted-producer
+    deployments.
+    """
 
     require_fastapi()
 
@@ -36,6 +42,7 @@ def serve(
         bindings,
         ctx_factory=ctx_factory,
         registry=registry,
+        bind_identity_from_event=bind_identity_from_event,
     )
 
     inngest_serve(app, client.native, functions)

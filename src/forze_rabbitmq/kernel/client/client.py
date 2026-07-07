@@ -9,10 +9,10 @@ require_rabbitmq()
 import asyncio
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Mapping, Sequence, final
+from typing import Any, AsyncGenerator, Mapping, Sequence, final
 
 import attrs
-from aio_pika import DeliveryMode, Message, connect_robust
+from aio_pika import DeliveryMode, ExchangeType, Message, connect_robust
 from aio_pika.abc import (
     AbstractChannel,
     AbstractIncomingMessage,
@@ -45,6 +45,12 @@ caller-visible ``headers`` mapping on read."""
 
 _DELAY_QUEUE_SUFFIX = ".__forze_delay"
 """Suffix for the per-delay-value DLX queues paired with a work queue."""
+
+_DLQ_SUFFIX = ".dlq"
+"""Suffix for the dead-letter queue bound to a configured ``dead_letter_exchange``."""
+
+_DELIVERY_HEADER = "x-forze-delivery"
+"""Client-maintained redelivery counter (survives ``nack(requeue=True)`` republish)."""
 
 _RABBITMQ_MAX_EXPIRATION_MS = 2**32 - 1
 """Upper bound for TTL/expiry values (milliseconds) on the wire."""
@@ -97,6 +103,7 @@ class RabbitMQClient(RabbitMQClientPort):
         init=False,
     )
     __pending_watermark_warned: bool = attrs.field(default=False, init=False)
+    __dead_letter_ready: bool = attrs.field(default=False, init=False)
     __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
@@ -164,13 +171,16 @@ class RabbitMQClient(RabbitMQClientPort):
             self.__pending.clear()
             self.__pending_watermark_warned = False
 
+        # A fresh connection must re-declare the DLX topology.
+        self.__dead_letter_ready = False
+
     # ....................... #
 
     async def __nack_pending_on_close(self) -> None:
-        """Best-effort ``nack(requeue=True)`` of every pending delivery.
+        """Best-effort requeue of every pending delivery.
 
         Failures are logged and swallowed: the broker redelivers unacked
-        messages once the connection drops anyway, so a failed nack only
+        messages once the connection drops anyway, so a failed requeue only
         delays redelivery — it must not turn ``close()`` into an error path.
         """
 
@@ -180,6 +190,10 @@ class RabbitMQClient(RabbitMQClientPort):
             self.__pending_watermark_warned = False
 
         if not entries:
+            return
+
+        if self.__config.redelivery_counting:
+            await self.__requeue_counted_on_close(entries)
             return
 
         results = await asyncio.gather(
@@ -194,6 +208,38 @@ class RabbitMQClient(RabbitMQClientPort):
                     "(broker redelivers it after the connection drops): %s",
                     message_id,
                     result,
+                )
+
+    # ....................... #
+
+    async def __requeue_counted_on_close(
+        self,
+        entries: Sequence[tuple[str, tuple[str, AbstractIncomingMessage]]],
+    ) -> None:
+        """Counted requeue of pending deliveries at close, grouped per queue.
+
+        Uses the same republish-with-incremented-``x-forze-delivery`` path as
+        ``nack(requeue=True)`` so a poison message left pending across a worker
+        shutdown keeps advancing its delivery count (otherwise it would stall at
+        the broker's ``redelivered``-flag ceiling and never reach parking).
+        Best-effort per queue — a failure only delays redelivery.
+        """
+
+        by_queue: dict[str, list[AbstractIncomingMessage]] = {}
+        for _, (queue, message) in entries:
+            by_queue.setdefault(queue, []).append(message)
+
+        for queue, raws in by_queue.items():
+            try:
+                await self.__requeue_counted(queue, raws)
+            except Exception as e:
+                logger.warning(
+                    "RabbitMQ close: counted requeue of %d pending message(s) on "
+                    "queue %s failed (broker redelivers after the connection "
+                    "drops): %s",
+                    len(raws),
+                    queue,
+                    e,
                 )
 
     # ....................... #
@@ -255,10 +301,58 @@ class RabbitMQClient(RabbitMQClientPort):
         channel: AbstractChannel,
         queue: str,
     ) -> AbstractQueue:
+        if self.__config.dead_letter_exchange is None:
+            # Unchanged declaration (no arguments) when no poison sink is configured.
+            return await channel.declare_queue(
+                queue,
+                durable=self.__config.queue_durable,
+            )
+
+        await self.__ensure_dead_letter(channel)
+        arguments: dict[str, Any] = {
+            "x-dead-letter-exchange": self.__config.dead_letter_exchange
+        }
+
         return await channel.declare_queue(
             queue,
             durable=self.__config.queue_durable,
+            arguments=arguments,
         )
+
+    # ....................... #
+
+    async def __ensure_dead_letter(self, channel: AbstractChannel) -> None:
+        """Declare the configured DLX (fanout) + a bound durable dead-letter queue.
+
+        A message rejected on a work queue (``nack(requeue=False)`` — an undecodable /
+        schema-drift message) is dead-lettered to the DLX and lands in ``<dlx>.dlq`` rather than
+        being silently discarded. Idempotent (declares are declarative).
+
+        Declared **once per client** (guarded by ``__dead_letter_ready``): the DLX topology is
+        broker-global and durable, so re-running the three declares on every work-queue
+        declaration only burns round-trips. The flag is reset on teardown so a fresh connection
+        re-declares. A benign race on the first burst (two callers both declaring) is harmless —
+        the declares are idempotent.
+
+        The DLQ is declared **without** retention bounds (no ``x-message-ttl`` / ``x-max-length``)
+        on purpose: it exists to *retain* poison for inspection, and a bound would silently drop
+        the very messages the DLX captured. Operators who need to cap it should set an explicit
+        RabbitMQ policy (TTL / max-length / overflow) on ``<dlx>.dlq`` and alert on its depth.
+        """
+
+        dlx = self.__config.dead_letter_exchange
+
+        if dlx is None or self.__dead_letter_ready:
+            return
+
+        exchange = await channel.declare_exchange(
+            dlx, ExchangeType.FANOUT, durable=self.__config.queue_durable
+        )
+        dlq = await channel.declare_queue(
+            f"{dlx}{_DLQ_SUFFIX}", durable=self.__config.queue_durable
+        )
+        await dlq.bind(exchange)
+        self.__dead_letter_ready = True
 
     # ....................... #
 
@@ -447,6 +541,14 @@ class RabbitMQClient(RabbitMQClientPort):
         """
 
         headers = raw.headers or {}
+
+        # When redelivery counting is enabled, a client-maintained ``x-forze-delivery`` counter
+        # survives ``nack(requeue=True)`` (a plain broker requeue never advances the count past the
+        # ``redelivered``-flag ceiling of 2). The header records prior deliveries; +1 for this one.
+        forze_delivery = headers.get(_DELIVERY_HEADER)
+        if isinstance(forze_delivery, int):
+            return forze_delivery + 1
+
         x_death = headers.get("x-death")
         rejected = 0
 
@@ -954,11 +1056,100 @@ class RabbitMQClient(RabbitMQClientPort):
         if not messages:
             return 0
 
-        await asyncio.gather(
-            *(message.nack(requeue=requeue) for _, message in messages)
-        )
+        if requeue and self.__config.redelivery_counting:
+            await self.__requeue_counted(queue, [raw for _, raw in messages])
+        else:
+            await asyncio.gather(
+                *(message.nack(requeue=requeue) for _, message in messages)
+            )
+
         nacked_ids = [message_id for message_id, _ in messages]
 
         await self.__drop_pending_many(nacked_ids)
 
         return len(nacked_ids)
+
+    # ....................... #
+
+    async def __requeue_counted(
+        self, queue: str, raws: Sequence[AbstractIncomingMessage]
+    ) -> None:
+        """Requeue by republishing each message with an incremented ``x-forze-delivery`` header,
+        then ack the original — so the delivery count survives the requeue (making
+        ``max_deliveries`` parking reachable). Publish-then-ack preserves at-least-once: a crash in
+        the window redelivers the original *and* the republished copy, which consumer inbox dedup
+        collapses (the message id is preserved). Moves the message to the queue tail.
+
+        A per-message republish failure is isolated, not fatal to the batch: only the originals
+        whose copy actually reached the broker are acked. An original whose republish failed is
+        left **unacked** so the broker redelivers it (acking it would drop the message — the copy
+        never landed); a duplicate from a partially-published batch is collapsed by inbox dedup.
+        """
+
+        delivery_mode = (
+            DeliveryMode.PERSISTENT
+            if self.__config.persistent_messages
+            else DeliveryMode.NOT_PERSISTENT
+        )
+
+        async with self.channel() as channel:
+            await self.__declare_queue(channel, queue)
+            publish_results = await asyncio.gather(
+                *(
+                    channel.default_exchange.publish(
+                        self.__with_incremented_delivery(raw, delivery_mode),
+                        routing_key=queue,
+                    )
+                    for raw in raws
+                ),
+                return_exceptions=True,
+            )
+
+        # Ack only the originals whose republished copy is on the broker; leave a failed-republish
+        # original unacked for broker redelivery (never ack it — that would lose the message).
+        republished: list[AbstractIncomingMessage] = []
+        for raw, result in zip(raws, publish_results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "RabbitMQ counted requeue: republish failed for message %s on queue %s; "
+                    "leaving it unacked for broker redelivery: %s",
+                    raw.message_id,
+                    queue,
+                    result,
+                )
+            else:
+                republished.append(raw)
+
+        # Best-effort acks: a failed ack just redelivers the original (inbox dedup collapses it).
+        if republished:
+            await asyncio.gather(
+                *(raw.ack() for raw in republished), return_exceptions=True
+            )
+
+    @staticmethod
+    def __with_incremented_delivery(
+        raw: AbstractIncomingMessage, delivery_mode: DeliveryMode
+    ) -> Message:
+        headers = dict(raw.headers or {})
+        prior = headers.get(_DELIVERY_HEADER)
+        headers[_DELIVERY_HEADER] = (prior + 1) if isinstance(prior, int) else 1
+
+        return Message(
+            body=raw.body,
+            # Carry the full AMQP property set across the republish — otherwise a counted retry
+            # would strip expiration (message TTL stops applying), priority, and the RPC-routing
+            # fields (correlation_id / reply_to), silently breaking TTLs and reply correlation.
+            content_type=raw.content_type or "application/json",
+            content_encoding=raw.content_encoding,
+            delivery_mode=delivery_mode,
+            priority=raw.priority,
+            correlation_id=raw.correlation_id,
+            reply_to=raw.reply_to,
+            expiration=raw.expiration,
+            message_id=raw.message_id,  # preserved so consumer inbox dedup still collapses copies
+            timestamp=raw.timestamp,
+            type=raw.type,
+            user_id=raw.user_id,
+            app_id=raw.app_id,
+            headers=headers,  # type: ignore[arg-type]
+        )

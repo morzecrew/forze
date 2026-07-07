@@ -23,12 +23,14 @@ from tests.support.execution_context import context_from_deps
 from forze_temporal.interceptors.context import ExecutionContextInterceptor
 from forze_temporal.sandbox import sandboxed_workflow_runner
 
-from ._workflow_defs import CTX_BOX, ItClockProbeWorkflow
+from ._workflow_defs import (
+    CTX_BOX,
+    ItClockProbeNonPassthroughWorkflow,
+    ItClockProbeWorkflow,
+)
 
 
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_workflow_clock_routes_to_deterministic_temporal_source() -> None:
+async def _run_clock_probe(workflow_cls: type, task_queue: str) -> str:
     exec_ctx = context_from_deps(Deps.plain({}))
     CTX_BOX["exec"] = exec_ctx
 
@@ -40,12 +42,10 @@ async def test_workflow_clock_routes_to_deterministic_temporal_source() -> None:
         )
 
         try:
-            task_queue = "it-forze-clock-probe"
-
             async with Worker(
                 env.client,
                 task_queue=task_queue,
-                workflows=[ItClockProbeWorkflow],
+                workflows=[workflow_cls],
                 workflow_runner=sandboxed_workflow_runner(),
             ):
                 with exec_ctx.inv_ctx.bind(
@@ -56,17 +56,34 @@ async def test_workflow_clock_routes_to_deterministic_temporal_source() -> None:
                     ),
                 ):
                     handle = await env.client.start_workflow(
-                        ItClockProbeWorkflow.run,
-                        id=f"clock-probe-{uuid7()}",
+                        workflow_cls.run,
+                        id=f"{task_queue}-{uuid7()}",
                         task_queue=task_queue,
                     )
-                    out = await handle.result()
-
-            # "True" -> utcnow() == workflow.now(); "4" -> uuid7() routed to workflow.uuid4().
-            assert out == "True:4"
+                    return await handle.result()
 
         finally:
             await env.shutdown()
 
     finally:
         CTX_BOX["exec"] = None
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_workflow_clock_routes_to_deterministic_temporal_source() -> None:
+    # "True" -> utcnow() == workflow.now(); "4" -> uuid7() routed to workflow.uuid4().
+    out = await _run_clock_probe(ItClockProbeWorkflow, "it-forze-clock-probe")
+    assert out == "True:4"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_workflow_clock_deterministic_for_plain_import() -> None:
+    # A plain ``import forze`` inside the workflow (no imports_passed_through) must still get the
+    # deterministic clock — regression for the time_source-module passthrough. Without it the
+    # workflow re-imported a second _TIME_SOURCE ContextVar and silently read the wall clock.
+    out = await _run_clock_probe(
+        ItClockProbeNonPassthroughWorkflow, "it-forze-clock-probe-plain"
+    )
+    assert out == "True:4"

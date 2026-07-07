@@ -266,3 +266,50 @@ async def test_adapter_forwards_headers_to_client() -> None:
 
     await adapter.enqueue_many("jobs", [_Payload(value="x")], headers={"a": "b"})
     assert client.enqueue_many.await_args.kwargs["headers"] == {"a": "b"}
+
+
+# ----------------------- #
+# Counted-requeue republish preserves the full AMQP property set.
+
+
+class TestWithIncrementedDelivery:
+    @staticmethod
+    def _raw() -> Mock:
+        raw = Mock()
+        raw.body = b'{"v":1}'
+        raw.content_type = "application/json"
+        raw.content_encoding = "gzip"
+        raw.priority = 5
+        raw.correlation_id = "corr-1"
+        raw.reply_to = "reply-q"
+        raw.expiration = 5.0
+        raw.message_id = "mid-1"
+        raw.timestamp = None
+        raw.type = "job"
+        raw.user_id = None
+        raw.app_id = "app-1"
+        raw.headers = {"trace": "t-1"}
+
+        return raw
+
+    def test_full_property_set_carried_over(self) -> None:
+        from aio_pika import DeliveryMode
+
+        from forze_rabbitmq.kernel.client.client import _DELIVERY_HEADER
+
+        msg = RabbitMQClient._RabbitMQClient__with_incremented_delivery(
+            self._raw(), DeliveryMode.PERSISTENT
+        )
+
+        # RPC/routing + TTL fields survive the republish (a counted retry must not strip them).
+        assert msg.correlation_id == "corr-1"
+        assert msg.reply_to == "reply-q"
+        assert msg.priority == 5
+        assert msg.content_encoding == "gzip"
+        assert msg.app_id == "app-1"
+        assert msg.expiration == 5.0
+
+        # Id preserved for inbox dedup; delivery counter incremented; caller headers kept.
+        assert msg.message_id == "mid-1"
+        assert msg.headers[_DELIVERY_HEADER] == 1
+        assert msg.headers["trace"] == "t-1"

@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_delay
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import clamp, uuid4
 
 from .._logger import logger
@@ -292,19 +292,25 @@ class SQSClient(SQSClientPort):
     def __sanitize_queue_name(queue: str) -> str:
         """Normalize queue name for SQS-compatible backends.
 
-        Replaces unsupported characters with ``_`` and preserves ``.fifo`` suffix.
+        Replaces unsupported characters with ``_`` and preserves the ``.fifo`` suffix. Fails
+        closed on an over-length name rather than truncating: SQS caps a queue name at 80 chars
+        (75 + ``.fifo`` for FIFO), and silently truncating would let two distinct logical names
+        collapse onto one physical queue (cross-talk).
         """
         is_fifo = queue.endswith(".fifo")
         base = queue[:-5] if is_fifo else queue
         base = _RE_UNSUPPORTED_CHARS.sub("_", base)
         base = _RE_MULTI_UNDERSCORE.sub("_", base).strip("_") or "queue"
 
-        if is_fifo:
-            max_base = 75  # 80 - len(".fifo")
-            base = base[:max_base]
-            return f"{base}.fifo"
+        max_base = 75 if is_fifo else 80
+        if len(base) > max_base:
+            raise exc.precondition(
+                f"SQS queue name {queue!r} exceeds the {max_base}-char limit after "
+                f"sanitization ({base!r}); shorten it — truncating would alias distinct queues.",
+                code="sqs.queue_name_too_long",
+            )
 
-        return base[:80]
+        return f"{base}.fifo" if is_fifo else base
 
     # ....................... #
 
@@ -468,10 +474,14 @@ class SQSClient(SQSClientPort):
         if self.__is_queue_url(queue):
             return queue
 
-        queue_name = self.__sanitize_queue_name(queue)
-
+        # Serve an already-resolved URL before re-validating the name: once we've talked to a
+        # queue, it must stay ack/nack-able even if its logical name trips the length guard —
+        # re-sanitizing here would raise and strand pending deliveries in a redelivery loop. Only
+        # the first resolution of a never-seen name pays the fail-closed check below.
         if queue in self.__queue_url_cache:
             return self.__queue_url_cache[queue]
+
+        queue_name = self.__sanitize_queue_name(queue)
 
         if queue_name in self.__queue_url_cache:
             return self.__queue_url_cache[queue_name]
@@ -771,6 +781,11 @@ class SQSClient(SQSClientPort):
         publish can give each message distinct attributes (and distinct dedup
         ids). ``None`` keeps every entry on the shared *headers*.
 
+        A FIFO target rejects a per-message *delay* / *not_before* — SQS allows only a
+        queue-level delay on a FIFO queue — so it raises ``sqs.fifo_per_message_delay`` rather
+        than letting the broker reject the whole batch; use a queue-level delay or a standard
+        queue.
+
         Splits into chunks bounded by **both** the 10-entry count
         (:data:`_SQS_SEND_MESSAGE_BATCH_MAX`) and *max_batch_payload_bytes* (the queue's total
         request-payload limit; default :data:`SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES` = 256 KiB,
@@ -836,6 +851,15 @@ class SQSClient(SQSClientPort):
         delay_seconds = self._resolve_sqs_delay_seconds(
             delay=delay, not_before=not_before
         )
+
+        if is_fifo and delay_seconds is not None:
+            # SQS rejects per-message DelaySeconds on a FIFO queue (only a queue-level delay is
+            # allowed there), so the whole batch send would fail — fail closed with a clear reason.
+            raise exc.precondition(
+                f"SQS FIFO queue {queue!r} does not support per-message delay; configure a "
+                "queue-level delay or send to a standard queue.",
+                code="sqs.fifo_per_message_delay",
+            )
 
         def _entries_for_chunk(
             chunk: list[bytes],
@@ -1014,6 +1038,7 @@ class SQSClient(SQSClientPort):
 
         queue_url = await self.__resolve_queue_url(queue)
         c = self.__require_client()
+        is_fifo = self.__is_fifo_target(queue, queue_url)
 
         resp = await c.receive_message(
             QueueUrl=queue_url,
@@ -1046,8 +1071,8 @@ class SQSClient(SQSClientPort):
             system_attrs = raw.get("Attributes")
             system_attrs = system_attrs if isinstance(system_attrs, dict) else None
 
-            out.append(
-                SQSQueueMessage(
+            try:
+                message = SQSQueueMessage(
                     queue=queue,
                     id=message_id,
                     receipt_handle=receipt,
@@ -1058,7 +1083,48 @@ class SQSClient(SQSClientPort):
                     headers=self.__extract_headers(attrs_),  # type: ignore[arg-type]
                     delivery_count=self.__extract_delivery_count(system_attrs),  # type: ignore[arg-type]
                 )
-            )
+            except CoreException as e:
+                # A malformed message (e.g. a non-base64 body) must not poison the rest of the
+                # batch. Standard queue: skip it — left in-flight, so SQS redelivery and the
+                # queue's redrive policy (maxReceiveCount → DLQ) handle the poison, while the good
+                # messages in this batch are still returned and registered for ack/nack.
+                if not is_fifo:
+                    logger.warning(
+                        "SQS message %s on queue %s could not be decoded, skipping: %s",
+                        message_id,
+                        queue,
+                        e,
+                    )
+                    continue
+
+                # FIFO queue: a skipped-but-undeleted message stays at the head of its message
+                # group and blocks every later message in that group until the visibility timeout,
+                # then redelivers at the head again — a hard deadlock when no redrive policy trims
+                # it. There is no client-side per-message DLQ, so delete it to unblock the group.
+                # The raw body is NOT logged: a malformed/attacker-supplied payload can carry
+                # production data, and this lands in central error logs — only its size and the
+                # (bounded) decode error are recorded. Best-effort: a failed delete only leaves the
+                # group blocked until redrive/visibility, no worse than before.
+                logger.error(
+                    "SQS FIFO message %s on queue %s could not be decoded (body %d bytes); "
+                    "deleting to unblock its message group: %s",
+                    message_id,
+                    queue,
+                    len(body),
+                    e,
+                )
+                try:
+                    await c.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt)
+                except Exception as del_err:
+                    logger.warning(
+                        "SQS FIFO poison delete failed for message %s on queue %s: %s",
+                        message_id,
+                        queue,
+                        del_err,
+                    )
+                continue
+
+            out.append(message)
 
         if out:
             async with self.__pending_lock:
@@ -1121,9 +1187,15 @@ class SQSClient(SQSClientPort):
                     timeout=timedelta(seconds=wait_seconds),
                 )
 
-            except Exception:
-                # Back off so a persistently failing receive does not
-                # hot-loop; the idle deadline (when set) still terminates.
+            except Exception as e:  # noqa: BLE001 — surface + back off, never hot-loop silently
+                # Log so a persistently failing receive is observable rather than a silent retry
+                # loop, then back off; the idle deadline (when set) still terminates.
+                logger.warning(
+                    "SQS consume receive failed on queue %s; backing off %.1fs: %s",
+                    queue,
+                    backoff,
+                    e,
+                )
                 await asyncio.sleep(backoff)
 
                 backoff = min(backoff * 2, _CONSUME_ERROR_BACKOFF_MAX)
