@@ -49,6 +49,31 @@ Out = TypeVar("Out", bound=BaseModel)
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class InngestFunctionConfig:
+    """Optional Inngest function-level controls forwarded to ``@sdk.create_function``.
+
+    All fields default to ``None`` (the SDK's own defaults), so an unset config changes nothing.
+    Values are the Inngest SDK's native types (``inngest.Concurrency`` / ``RateLimit`` / …).
+    """
+
+    retries: int | None = None
+    concurrency: list[inngest.Concurrency] | None = None
+    rate_limit: inngest.RateLimit | None = None
+    throttle: inngest.Throttle | None = None
+    idempotency: str | None = None
+    priority: inngest.Priority | None = None
+    debounce: inngest.Debounce | None = None
+    batch_events: inngest.Batch | None = None
+    timeouts: inngest.Timeouts | None = None
+    singleton: inngest.Singleton | None = None
+    cancel: list[inngest.Cancel] | None = None
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class InngestFunctionBinding(Generic[In, Out]):
     """Binds a :class:`DurableFunctionSpec` to a handler or frozen registry."""
 
@@ -60,6 +85,9 @@ class InngestFunctionBinding(Generic[In, Out]):
 
     registry: FrozenOperationRegistry | None = None
     """Frozen registry for :attr:`~DurableFunctionSpec.operation` (optional if passed to :func:`register_functions`)."""
+
+    config: InngestFunctionConfig | None = None
+    """Optional Inngest function-level config (retries / concurrency / rate-limit / …)."""
 
     def __attrs_post_init__(self) -> None:
         if self.spec.operation is not None and self.handler_factory is not None:
@@ -191,9 +219,22 @@ def _register_one(
     else:
         trigger = triggers
 
+    cfg = binding.config or InngestFunctionConfig()
+
     @sdk.create_function(
         fn_id=str(spec.name),
         trigger=trigger,
+        retries=cfg.retries,
+        concurrency=cfg.concurrency,
+        rate_limit=cfg.rate_limit,
+        throttle=cfg.throttle,
+        idempotency=cfg.idempotency,
+        priority=cfg.priority,
+        debounce=cfg.debounce,
+        batch_events=cfg.batch_events,
+        timeouts=cfg.timeouts,
+        singleton=cfg.singleton,
+        cancel=cfg.cancel,
     )
     async def _handler(ctx: inngest.Context) -> Any:
         raw_data: dict[str, Any] = dict(ctx.event.data) if ctx.event else {}

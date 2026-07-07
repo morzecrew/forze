@@ -28,6 +28,27 @@ class RabbitMQConfig:
     the warning surfaces without changing delivery behavior.
     """
 
+    dead_letter_exchange: str | None = attrs.field(default=None)
+    """Opt-in poison sink. When set, work queues are declared with this DLX
+    (``x-dead-letter-exchange``), and a fanout exchange of this name plus a bound
+    durable dead-letter queue (``<dlx>.dlq``) are declared on first use — so a
+    ``nack(requeue=False)`` (an undecodable / schema-drift message) dead-letters there
+    instead of being silently dropped. Default ``None`` keeps the current
+    drop-on-reject behaviour. **Enabling it on a pre-existing queue requires recreating
+    that queue** — AMQP queue arguments are immutable, so re-declaring with a new DLX
+    fails with ``PRECONDITION_FAILED``.
+    """
+
+    redelivery_counting: bool = attrs.field(default=False)
+    """Opt-in per-message redelivery counting. When ``True``, ``nack(requeue=True)``
+    republishes the message with an incremented ``x-forze-delivery`` header and acks the
+    original (instead of a plain broker requeue), so the delivery count survives the requeue
+    and ``max_deliveries >= 2`` poison-parking actually fires — a plain requeue never advances
+    the count past the broker's ``redelivered``-flag ceiling of ``2``. Consumer inbox dedup
+    covers the brief republish→ack crash window (the message id is preserved). Default ``False``
+    keeps in-place requeue (original position/order).
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

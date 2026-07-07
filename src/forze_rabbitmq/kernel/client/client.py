@@ -9,10 +9,10 @@ require_rabbitmq()
 import asyncio
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Mapping, Sequence, final
+from typing import Any, AsyncGenerator, Mapping, Sequence, final
 
 import attrs
-from aio_pika import DeliveryMode, Message, connect_robust
+from aio_pika import DeliveryMode, ExchangeType, Message, connect_robust
 from aio_pika.abc import (
     AbstractChannel,
     AbstractIncomingMessage,
@@ -45,6 +45,12 @@ caller-visible ``headers`` mapping on read."""
 
 _DELAY_QUEUE_SUFFIX = ".__forze_delay"
 """Suffix for the per-delay-value DLX queues paired with a work queue."""
+
+_DLQ_SUFFIX = ".dlq"
+"""Suffix for the dead-letter queue bound to a configured ``dead_letter_exchange``."""
+
+_DELIVERY_HEADER = "x-forze-delivery"
+"""Client-maintained redelivery counter (survives ``nack(requeue=True)`` republish)."""
 
 _RABBITMQ_MAX_EXPIRATION_MS = 2**32 - 1
 """Upper bound for TTL/expiry values (milliseconds) on the wire."""
@@ -255,10 +261,46 @@ class RabbitMQClient(RabbitMQClientPort):
         channel: AbstractChannel,
         queue: str,
     ) -> AbstractQueue:
+        if self.__config.dead_letter_exchange is None:
+            # Unchanged declaration (no arguments) when no poison sink is configured.
+            return await channel.declare_queue(
+                queue,
+                durable=self.__config.queue_durable,
+            )
+
+        await self.__ensure_dead_letter(channel)
+        arguments: dict[str, Any] = {
+            "x-dead-letter-exchange": self.__config.dead_letter_exchange
+        }
+
         return await channel.declare_queue(
             queue,
             durable=self.__config.queue_durable,
+            arguments=arguments,
         )
+
+    # ....................... #
+
+    async def __ensure_dead_letter(self, channel: AbstractChannel) -> None:
+        """Declare the configured DLX (fanout) + a bound durable dead-letter queue.
+
+        A message rejected on a work queue (``nack(requeue=False)`` — an undecodable /
+        schema-drift message) is dead-lettered to the DLX and lands in ``<dlx>.dlq`` rather than
+        being silently discarded. Idempotent (declares are declarative).
+        """
+
+        dlx = self.__config.dead_letter_exchange
+
+        if dlx is None:
+            return
+
+        exchange = await channel.declare_exchange(
+            dlx, ExchangeType.FANOUT, durable=self.__config.queue_durable
+        )
+        dlq = await channel.declare_queue(
+            f"{dlx}{_DLQ_SUFFIX}", durable=self.__config.queue_durable
+        )
+        await dlq.bind(exchange)
 
     # ....................... #
 
@@ -447,6 +489,14 @@ class RabbitMQClient(RabbitMQClientPort):
         """
 
         headers = raw.headers or {}
+
+        # When redelivery counting is enabled, a client-maintained ``x-forze-delivery`` counter
+        # survives ``nack(requeue=True)`` (a plain broker requeue never advances the count past the
+        # ``redelivered``-flag ceiling of 2). The header records prior deliveries; +1 for this one.
+        forze_delivery = headers.get(_DELIVERY_HEADER)
+        if isinstance(forze_delivery, int):
+            return forze_delivery + 1
+
         x_death = headers.get("x-death")
         rejected = 0
 
@@ -954,11 +1004,66 @@ class RabbitMQClient(RabbitMQClientPort):
         if not messages:
             return 0
 
-        await asyncio.gather(
-            *(message.nack(requeue=requeue) for _, message in messages)
-        )
+        if requeue and self.__config.redelivery_counting:
+            await self.__requeue_counted(queue, [raw for _, raw in messages])
+        else:
+            await asyncio.gather(
+                *(message.nack(requeue=requeue) for _, message in messages)
+            )
+
         nacked_ids = [message_id for message_id, _ in messages]
 
         await self.__drop_pending_many(nacked_ids)
 
         return len(nacked_ids)
+
+    # ....................... #
+
+    async def __requeue_counted(
+        self, queue: str, raws: Sequence[AbstractIncomingMessage]
+    ) -> None:
+        """Requeue by republishing each message with an incremented ``x-forze-delivery`` header,
+        then ack the original — so the delivery count survives the requeue (making
+        ``max_deliveries`` parking reachable). Publish-then-ack preserves at-least-once: a crash in
+        the window redelivers the original *and* the republished copy, which consumer inbox dedup
+        collapses (the message id is preserved). Moves the message to the queue tail.
+        """
+
+        delivery_mode = (
+            DeliveryMode.PERSISTENT
+            if self.__config.persistent_messages
+            else DeliveryMode.NOT_PERSISTENT
+        )
+
+        async with self.channel() as channel:
+            await self.__declare_queue(channel, queue)
+            await asyncio.gather(
+                *(
+                    channel.default_exchange.publish(
+                        self.__with_incremented_delivery(raw, delivery_mode),
+                        routing_key=queue,
+                    )
+                    for raw in raws
+                )
+            )
+
+        # Ack the originals only after the republished copies are on the broker.
+        await asyncio.gather(*(raw.ack() for raw in raws))
+
+    @staticmethod
+    def __with_incremented_delivery(
+        raw: AbstractIncomingMessage, delivery_mode: DeliveryMode
+    ) -> Message:
+        headers = dict(raw.headers or {})
+        prior = headers.get(_DELIVERY_HEADER)
+        headers[_DELIVERY_HEADER] = (prior + 1) if isinstance(prior, int) else 1
+
+        return Message(
+            body=raw.body,
+            content_type=raw.content_type or "application/json",
+            delivery_mode=delivery_mode,
+            message_id=raw.message_id,  # preserved so consumer inbox dedup still collapses copies
+            timestamp=raw.timestamp,
+            type=raw.type,
+            headers=headers,  # type: ignore[arg-type]
+        )
