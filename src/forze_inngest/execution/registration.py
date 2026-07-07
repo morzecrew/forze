@@ -107,19 +107,30 @@ def _map_trigger(
 def _bind_invocation(
     ctx: ExecutionContext,
     envelope: InngestDecodedContext,
+    *,
+    bind_identity: bool,
 ) -> Iterator[None]:
+    # The ``_forze`` envelope is plaintext, attacker-controllable event data — any producer able to
+    # emit an event can set ``principal_id`` / ``tenant_id`` to whatever it likes. So the claimed
+    # identity is bound only when the caller opted in (``bind_identity_from_event=True``, for a
+    # deployment where every event producer is trusted); by default it is dropped, otherwise any
+    # event would impersonate any principal in any tenant. Metadata (correlation/execution ids) is
+    # tracing context, not an authority, so it always propagates.
+    authn = envelope.authn if bind_identity else None
+    tenant = envelope.tenant if bind_identity else None
+
     if envelope.metadata is not None:
         with ctx.inv_ctx.bind(
             metadata=envelope.metadata,
-            authn=envelope.authn,
-            tenant=envelope.tenant,
+            authn=authn,
+            tenant=tenant,
         ):
             yield
 
     else:
         with ctx.inv_ctx.bind_identity(
-            authn=envelope.authn,
-            tenant=envelope.tenant,
+            authn=authn,
+            tenant=tenant,
         ):
             yield
 
@@ -162,6 +173,7 @@ def _register_one(
     *,
     ctx_factory: ExecutionContextFactory,
     registry: FrozenOperationRegistry | None,
+    bind_identity_from_event: bool,
 ) -> inngest.Function[Any]:
     spec = binding.spec
     handler_factory = _resolve_handler_factory(binding, registry=registry)
@@ -214,7 +226,9 @@ def _register_one(
         logger.debug("Inngest function invoked", function=str(spec.name))
 
         try:
-            with _bind_invocation(execution_ctx, envelope):
+            with _bind_invocation(
+                execution_ctx, envelope, bind_identity=bind_identity_from_event
+            ):
                 handler = handler_factory(execution_ctx)
                 return await handler(args)
 
@@ -241,8 +255,19 @@ def register_functions(
     *,
     ctx_factory: ExecutionContextFactory,
     registry: FrozenOperationRegistry | None = None,
+    bind_identity_from_event: bool = False,
 ) -> list[inngest.Function[Any]]:
-    """Build Inngest SDK functions from Forze bindings."""
+    """Build Inngest SDK functions from Forze bindings.
+
+    ``bind_identity_from_event`` (default ``False``) controls whether the ``principal_id`` /
+    ``tenant_id`` carried in the event's plaintext ``_forze`` envelope are bound as the invocation
+    identity. That envelope is **untrusted** — any producer able to emit an event sets it — so it
+    stays off by default: enabling it lets an event impersonate any principal in any tenant, so
+    only turn it on for a deployment where every event producer is trusted (mirrors the inbox
+    consumer's ``bind_tenant_from_headers``). Tracing metadata (correlation/execution ids) is
+    propagated regardless; end-to-end payload decryption still uses the envelope tenant for AAD,
+    which is self-authenticating (a forged tenant fails the AEAD open).
+    """
 
     sdk = client.native
 
@@ -252,6 +277,7 @@ def register_functions(
             binding,
             ctx_factory=ctx_factory,
             registry=registry,
+            bind_identity_from_event=bind_identity_from_event,
         )
         for binding in bindings
     ]
