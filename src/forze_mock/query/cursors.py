@@ -50,13 +50,15 @@ def _b64url_json_loads_dict(token: str) -> dict[str, int]:
     return {"s": int(cast(Any, data_any["s"]))}
 
 
-def _mock_cursor_start_and_limit(  # type: ignore[reportPrivateUsage]
+def _mock_cursor_start_and_limit(  # pyright: ignore[reportPrivateUsage, reportUnusedFunction]
     cursor: CursorPaginationExpression | None,
 ) -> tuple[int, int]:
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
+        raise exc.validation(
+            "Cursor pagination: pass at most one of 'after' or 'before'"
+        )
 
     # Shared coerce + positive-check + clamp to [1, MAX_CURSOR_LIMIT] (a non-int is a 400,
     # a huge value is bounded), keeping the mock's paging identical to the real backends.
@@ -86,7 +88,7 @@ def _mock_cursor_start_and_limit(  # type: ignore[reportPrivateUsage]
     return start, int(lim)
 
 
-def _mock_keyset_parse(  # type: ignore[reportPrivateUsage]
+def _mock_keyset_parse(  # pyright: ignore[reportPrivateUsage]
     cursor: CursorPaginationExpression | None,
 ) -> tuple[int, bool, bool]:
     """Return ``(limit, use_after, use_before)`` from a cursor expression."""
@@ -94,7 +96,9 @@ def _mock_keyset_parse(  # type: ignore[reportPrivateUsage]
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
+        raise exc.validation(
+            "Cursor pagination: pass at most one of 'after' or 'before'"
+        )
 
     # Coerced + clamped like the offset path above and the real backends: a non-integer is a
     # clean 400 (not a raw ValueError) and a huge value is clamped to MAX_CURSOR_LIMIT rather
@@ -104,7 +108,7 @@ def _mock_keyset_parse(  # type: ignore[reportPrivateUsage]
     return lim, c.get("after") is not None, c.get("before") is not None
 
 
-def _mock_keyset_sort_docs(  # type: ignore[reportPrivateUsage]
+def _mock_keyset_sort_docs(  # pyright: ignore[reportPrivateUsage]
     docs: list[JsonDict],
     *,
     sort_keys: Sequence[str],
@@ -137,7 +141,7 @@ def _mock_keyset_sort_docs(  # type: ignore[reportPrivateUsage]
     return sorted(docs, key=cmp_to_key(_cmp))
 
 
-def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
+def _mock_keyset_window(  # pyright: ignore[reportPrivateUsage, reportUnusedFunction]
     docs: list[JsonDict],
     *,
     cursor: CursorPaginationExpression | None,
@@ -203,7 +207,7 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
     )
 
 
-def _mock_cursor_tokens(  # type: ignore[reportPrivateUsage]
+def _mock_cursor_tokens(  # pyright: ignore[reportPrivateUsage, reportUnusedFunction]
     start: int,
     page_len: int,
     *,

@@ -6,6 +6,7 @@ import attrs
 
 from forze.application.contracts.graph import (
     GraphCommandDepKey,
+    GraphManagementDepKey,
     GraphQueryDepKey,
     GraphRawQueryDepKey,
 )
@@ -14,16 +15,18 @@ from forze.application.contracts.tenancy import (
     TenantIsolationMode,
     validate_module_tenancy,
 )
+from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.contracts.deps import Deps, DepsModule
 from forze.application.contracts.deps import (
     merge_deps,
+    routed_constant,
     routed_shared_factories,
 )
-from forze.base.primitives import MappingConverter, StrKeyMapping
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel.client import Neo4jClientPort, RoutedNeo4jClient
 from .configs import Neo4jGraphConfig
-from .factories import ConfigurableNeo4jGraph
+from .factories import ConfigurableNeo4jGraph, neo4j_txmanager
 from .keys import Neo4jClientDepKey
 
 # ----------------------- #
@@ -54,6 +57,14 @@ class Neo4jDepsModule(DepsModule):
     per-tenant ``database`` resolver — a per-tenant database on a shared cluster, Neo4j 4+
     multi-database), and ``dedicated`` (a :class:`RoutedNeo4jClient` — per-tenant
     instance / credentials).
+    """
+
+    tx: set[StrKey] | None = attrs.field(default=None)
+    """Transaction-scope route names that resolve the Neo4j transaction manager.
+
+    Bind the operation's ``tx_route`` to one of these so the framework transaction scope
+    opens a Neo4j transaction (a handler's graph writes then commit/roll back as a unit).
+    Neo4j is not co-transactional with other backends (no cross-database two-phase commit).
     """
 
     # ....................... #
@@ -88,8 +99,13 @@ class Neo4jDepsModule(DepsModule):
                     GraphQueryDepKey,
                     GraphCommandDepKey,
                     GraphRawQueryDepKey,
+                    GraphManagementDepKey,
                 ],
                 factory=ConfigurableNeo4jGraph,
+            ),
+            routed_constant(
+                self.tx,
+                bindings=[(TransactionManagerDepKey, neo4j_txmanager)],
             ),
             plain={Neo4jClientDepKey: self.client},
         )

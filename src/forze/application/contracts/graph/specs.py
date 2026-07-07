@@ -77,6 +77,11 @@ class GraphEdgeSpec[R: BaseModel](BaseSpec):
     ``GraphNodeSpec.name`` entries in the same ``GraphModuleSpec``.
     Use more than one pair when a single logical edge kind links different
     node kinds (e.g. one ``TAGGED`` kind from ``Post``→``Tag`` and ``Note``→``Tag``).
+
+    A **multi-endpoint** kind (more than one pair) is ambiguous on create, so its
+    create/ensure command must name the pair with ``from_kind`` / ``to_kind`` alongside the
+    usual ``from_key`` / ``to_key`` — transient routing fields, not stored as edge properties.
+    A single-endpoint kind infers the pair and needs neither.
     """
 
     directionality: GraphEdgeDirectionality

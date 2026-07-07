@@ -14,6 +14,11 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
+from forze.base.exceptions import exc
+from forze_meilisearch.adapters.search._filter_render import (
+    format_literal,
+    safe_attribute,
+)
 from forze_meilisearch.adapters.search.base import MeilisearchSearchGateway
 from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
@@ -42,7 +47,22 @@ class _MeilisearchSearchWriteBase[M: BaseModel](MeilisearchSearchGateway[M]):
             return
 
         uid = int(getattr(task_info, "task_uid", getattr(task_info, "taskUid", 0)))
-        await self.client.wait_for_task(uid)
+        # Bound the wait so a stuck task raises (via the client's timeout mapping)
+        # instead of hanging the caller forever.
+        task = await self.client.wait_for_task(
+            uid, timeout=self.config.task_wait_timeout
+        )
+
+        # A completed Meilisearch task can still have *failed* — treat any terminal
+        # status other than ``succeeded`` as an error rather than silent success.
+        status = str(getattr(task, "status", "") or "").lower()
+
+        if status and status != "succeeded":
+            error = getattr(task, "error", None)
+            raise exc.infrastructure(
+                f"Meilisearch task {uid} did not succeed (status={status})",
+                details={"task_uid": uid, "status": status, "error": str(error)},
+            )
 
 
 @final
@@ -80,7 +100,19 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
             return
 
         index = self.client.index(await self._resolved_index_uid())
-        task = await index.delete_documents(list(ids))
+        tenant_filter = self._tenant_filter()
+
+        if tenant_filter is not None:
+            # Tagged tenancy: scope the delete so a foreign/guessed id in the shared
+            # index can't remove another tenant's document.
+            id_attr = safe_attribute(self.primary_key)
+            id_list = ", ".join(format_literal(i) for i in ids)
+            task = await index.delete_documents_by_filter(
+                f"({id_attr} IN [{id_list}]) AND {tenant_filter}"
+            )
+        else:
+            task = await index.delete_documents(list(ids))
+
         await self._await_task(task)
 
 
@@ -150,6 +182,7 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
         from meilisearch_python_sdk.models.settings import (
             FilterableAttributes,
             MeilisearchSettings,
+            Pagination,
         )
 
         index = await self.client.get_or_create_index(
@@ -167,6 +200,9 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
             ),
             sortable_attributes=self._sortable_attributes(),
             ranking_rules=list(rules) if rules is not None else None,
+            # Provision the index's own cap to match the route's ``max_total_hits`` so the
+            # fail-closed read guard and the engine agree on the ceiling.
+            pagination=Pagination(max_total_hits=self.config.max_total_hits),
         )
 
         task = await index.update_settings(settings)
@@ -174,5 +210,13 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
 
     async def delete_all(self) -> None:
         index = self.client.index(await self._resolved_index_uid())
-        task = await index.delete_all_documents()
+        tenant_filter = self._tenant_filter()
+
+        if tenant_filter is not None:
+            # Tagged tenancy: only this tenant's documents, never the whole shared
+            # index — ``delete_all_documents`` would wipe every tenant.
+            task = await index.delete_documents_by_filter(tenant_filter)
+        else:
+            task = await index.delete_all_documents()
+
         await self._await_task(task)

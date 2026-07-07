@@ -24,7 +24,7 @@ from forze.base.serialization import (
     ModelCodec,
 )
 from forze_mock.adapters.queue import (
-    _sleep_interval,  # type: ignore[reportPrivateUsage]
+    _sleep_interval,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_mock.query._types import M
 from forze_mock.state import MockState

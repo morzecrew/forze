@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import cast, final
+from typing import TypedDict, cast, final
 from uuid import UUID
 
 import attrs
@@ -38,13 +38,29 @@ from forze_mock.state import MockState
 # ----------------------- #
 
 
-def _route_store(state: MockState, route: str) -> dict[str, object]:
+class _AuthzRouteStore(TypedDict, total=False):
+    """Per-route authz scratch store kept on the mock identity plane."""
+
+    principals: dict[UUID, str]
+    """Principal id → :class:`PrincipalKind` value."""
+
+    inactive: list[UUID]
+    """Deactivated principal ids."""
+
+    delegations: set[tuple[str, str]]
+    """Pairwise ``(actor, subject)`` delegation grants."""
+
+    grants: set[tuple[str, str, str | None]]
+    """Seeded ``(principal, permission_key, tenant_id | None)`` permission grants."""
+
+
+# ....................... #
+
+
+def _route_store(state: MockState, route: str) -> _AuthzRouteStore:
     identity = state.identity
     authz = identity.setdefault("authz", {})
-    assert isinstance(authz, dict)  # nosec: B101
-    store = authz.setdefault(route, {})  # type: ignore[assignment]
-    assert isinstance(store, dict)  # nosec: B101
-    return store  # type: ignore[return-value]
+    return authz.setdefault(route, {})
 
 
 @final
@@ -69,21 +85,16 @@ class MockPrincipalRegistryPort(PrincipalRegistryPort):
     async def get_principal(self, principal_id: UUID) -> PrincipalRef | None:
         store = _route_store(self.state, self.route)
         principals = store.setdefault("principals", {})
-        assert isinstance(principals, dict)  # nosec: B101
         if principal_id not in principals:
             return None
-        kind = principals[principal_id]  # type: ignore[index]
-        assert isinstance(kind, str)  # nosec: B101
         return PrincipalRef(
             principal_id=principal_id,
-            kind=cast(PrincipalKind, kind),
+            kind=cast(PrincipalKind, principals[principal_id]),
         )
 
     async def deactivate_principal(self, principal_id: UUID) -> None:
         store = _route_store(self.state, self.route)
-        inactive = store.setdefault("inactive", [])
-        assert isinstance(inactive, list)  # nosec: B101
-        inactive.append(principal_id)  # type: ignore[arg-type]
+        store.setdefault("inactive", []).append(principal_id)
 
 
 @final
@@ -131,10 +142,7 @@ class MockGrantQueryPort(GrantQueryPort):
 
 
 def _delegation_store(state: MockState, route: str) -> set[tuple[str, str]]:
-    store = _route_store(state, route)
-    delegations = store.setdefault("delegations", set())  # type: ignore[assignment]
-    assert isinstance(delegations, set)  # nosec: B101
-    return delegations  # type: ignore[return-value]
+    return _route_store(state, route).setdefault("delegations", set())
 
 
 @final
@@ -217,10 +225,7 @@ class MockDelegationPort(DelegationPort):
 def _grant_store(state: MockState, route: str) -> set[tuple[str, str, str | None]]:
     """Seeded permission grants: ``(principal_id, permission_key, tenant_id | None)``."""
 
-    store = _route_store(state, route)
-    grants = store.setdefault("grants", set())  # type: ignore[assignment]
-    assert isinstance(grants, set)  # nosec: B101
-    return grants  # type: ignore[return-value]
+    return _route_store(state, route).setdefault("grants", set())
 
 
 @final

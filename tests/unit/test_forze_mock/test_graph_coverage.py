@@ -115,17 +115,17 @@ class TestUnknownKinds:
 
 class TestGetEdge:
     @pytest.mark.asyncio
-    async def test_get_edge_endpoints_mode_not_implemented(
+    async def test_get_edge_endpoints_mode_returns_none_when_absent(
         self, ctx: ExecutionContext
     ) -> None:
+        # Endpoints mode is now supported: a missing edge returns None (no longer NYI).
         qry = ctx.graph.query(_spec())
         ref = EdgeRef.by_endpoints(
             "FOLLOWS",
             VertexRef(kind="User", key="a"),
             VertexRef(kind="User", key="b"),
         )
-        with pytest.raises(NotImplementedError, match="get_edge in endpoints mode"):
-            await qry.get_edge(ref)
+        assert await qry.get_edge(ref) is None
 
     @pytest.mark.asyncio
     async def test_get_edge_without_key_field_raises(
@@ -283,28 +283,34 @@ class TestNeighborsFilters:
 # ....................... #
 
 
-class TestTraversalStubs:
+class TestTraversalOnMissing:
+    """Traversal from a missing/empty start returns empty rather than raising (now implemented)."""
+
     @pytest.mark.asyncio
-    async def test_expand_not_implemented(self, ctx: ExecutionContext) -> None:
+    async def test_expand_missing_start_is_empty(self, ctx: ExecutionContext) -> None:
         qry = ctx.graph.query(_spec())
-        with pytest.raises(NotImplementedError, match="expand"):
+        assert (
             await qry.expand(
                 VertexRef(kind="User", key="a"),
                 GraphWalkParams(max_depth=2, max_results=10),
             )
+            == []
+        )
 
     @pytest.mark.asyncio
-    async def test_shortest_path_not_implemented(self, ctx: ExecutionContext) -> None:
+    async def test_shortest_path_missing_is_none(self, ctx: ExecutionContext) -> None:
         qry = ctx.graph.query(_spec())
-        with pytest.raises(NotImplementedError, match="shortest_path"):
+        assert (
             await qry.shortest_path(
                 VertexRef(kind="User", key="a"),
                 VertexRef(kind="User", key="b"),
                 ShortestPathParams(max_hops=3),
             )
+            is None
+        )
 
     @pytest.mark.asyncio
-    async def test_scoped_walk_not_implemented(self, ctx: ExecutionContext) -> None:
+    async def test_scoped_walk_missing_is_empty(self, ctx: ExecutionContext) -> None:
         from forze.application.contracts.graph import GraphPathStep
 
         qry = ctx.graph.query(_spec())
@@ -317,8 +323,7 @@ class TestTraversalStubs:
             ),
             target_kind="User",
         )
-        with pytest.raises(NotImplementedError, match="scoped_walk"):
-            await qry.scoped_walk(VertexRef(kind="User", key="a"), params)
+        assert await qry.scoped_walk(VertexRef(kind="User", key="a"), params) == []
 
 
 # ....................... #
@@ -335,45 +340,15 @@ class TestDeferredStubs:
 
     @pytest.mark.asyncio
     async def test_deferred_query_methods(self, ctx: ExecutionContext) -> None:
+        # WS2 read-introspection + WS3 find_* are implemented; k_shortest_paths remains
+        # deferred on the mock (Neo4j-only for now).
         qry = ctx.graph.query(_spec())
         u = VertexRef(kind="User", key="a")
         v = VertexRef(kind="User", key="b")
-        ekind = EdgeRef.by_key("RATED", "e1")
         sp = ShortestPathParams(max_hops=2)
 
-        for coro in (
-            qry.get_vertices([u]),
-            qry.get_edges([ekind]),
-            qry.edge_exists(ekind),
-            qry.count_vertices("User"),
-            qry.count_edges("RATED"),
-            qry.incident_edges(u, GraphDirection.OUT, frozenset({"RATED"}), limit=5),
-            qry.k_shortest_paths(u, v, sp, k=2),
-            qry.find_vertices("User"),
-            qry.find_edges("RATED"),
-            qry.vertex_degree(u),
-            qry.count_neighbors(u),
-        ):
-            with pytest.raises(NotImplementedError):
-                await coro
-
-    @pytest.mark.asyncio
-    async def test_deferred_command_methods(self, ctx: ExecutionContext) -> None:
-        cmd = ctx.graph.command(_spec())
-        u = VertexRef(kind="User", key="a")
-        ekind = EdgeRef.by_key("RATED", "e1")
-
-        for coro in (
-            cmd.update_edge(ekind, RatedCreate(from_key="a", to_key="m", edge_id="e1")),
-            cmd.delete_edge(ekind),
-            cmd.create_vertices([("User", UserCreate(id="a"))]),
-            cmd.create_edges([("RATED", RatedCreate(from_key="a", to_key="m", edge_id="e1"))]),
-            cmd.ensure_vertex("User", UserCreate(id="a")),
-            cmd.delete_vertices([u]),
-            cmd.delete_edges([ekind]),
-        ):
-            with pytest.raises(NotImplementedError):
-                await coro
+        with pytest.raises(NotImplementedError):
+            await qry.k_shortest_paths(u, v, sp, k=2)
 
 
 # ....................... #
@@ -415,6 +390,35 @@ class TestWriteEdgeValidation:
             "FOLLOWS", FollowsCreate(from_key="a", to_key="b"), return_new=False
         )
         assert out is None
+
+    @pytest.mark.asyncio
+    async def test_keyed_ensure_distinct_keys_stay_separate(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The key is part of a keyed edge's identity (mirrors Neo4j), so two different keys
+        # between the same pair are separate edges rather than collapsing into one.
+        cmd = ctx.graph.command(_spec())
+        qry = ctx.graph.query(_spec())
+        await cmd.create_vertex("User", UserCreate(id="a"))
+        await cmd.create_vertex("Movie", UserCreate(id="m"))
+
+        await cmd.ensure_edge(
+            "RATED", RatedCreate(from_key="a", to_key="m", edge_id="r1", score=1)
+        )
+        await cmd.ensure_edge(
+            "RATED", RatedCreate(from_key="a", to_key="m", edge_id="r2", score=2)
+        )
+
+        r1 = await qry.get_edge(EdgeRef.by_key("RATED", "r1"))
+        r2 = await qry.get_edge(EdgeRef.by_key("RATED", "r2"))
+        assert r1 is not None and r1.score == 1
+        assert r2 is not None and r2.score == 2
+
+        # Re-ensuring an existing key merges (idempotent) onto the same edge.
+        again = await cmd.ensure_edge(
+            "RATED", RatedCreate(from_key="a", to_key="m", edge_id="r1", score=9)
+        )
+        assert again is not None and again.score == 1  # merged, not a fresh edge
 
     @pytest.mark.asyncio
     async def test_update_vertex_missing_raises(self, ctx: ExecutionContext) -> None:

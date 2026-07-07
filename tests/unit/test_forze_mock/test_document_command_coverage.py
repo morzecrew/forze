@@ -356,6 +356,17 @@ class TestUpsert:
         assert out.name == "new"
         assert len(_docs(state)) == 1
 
+    async def test_upsert_update_path_existing_doc_return_new_false(self) -> None:
+        state = MockState()
+        adapter = _plain_adapter(state)
+        pk = uuid4()
+        await adapter.create(ThingCreate(name="orig"), id=pk)
+        out = await adapter.upsert(
+            pk, ThingCreate(name="x"), ThingUpdate(name="new"), return_new=False
+        )
+        assert out is None  # update applied, nothing returned
+        assert [d["name"] for d in _docs(state).values()] == ["new"]
+
     async def test_upsert_create_path(self) -> None:
         state = MockState()
         adapter = _plain_adapter(state)

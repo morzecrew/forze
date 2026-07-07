@@ -33,7 +33,32 @@ from forze_postgres.kernel.relation import resolve_postgres_qname
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
-    """Postgres-backed outbox persistence and query port."""
+    """Postgres-backed outbox persistence and query port.
+
+    **Delivery model — at-least-once.** :meth:`claim_pending` moves rows to ``processing``
+    under ``FOR UPDATE SKIP LOCKED`` and there is no fence token: a relay that is merely
+    slow can have its rows reclaimed by :meth:`reclaim_stale_processing` and both may
+    publish. This is intentional — the consumer's inbox dedup makes the *effect*
+    exactly-once, so a duplicate publish is tolerated rather than fenced.
+
+    **Ordering.** ``ordering_key`` is *not* guaranteed FIFO under concurrent relays:
+    ``SKIP LOCKED`` hands disjoint row sets to different relays, so two messages sharing an
+    ``ordering_key`` can publish out of order. Per-key order is preserved only with a single
+    relay (or a deployment that pins each ``ordering_key`` to one relay, e.g. partition
+    affinity). Within one relay's claim, rows are emitted in ``hlc``/``created_at`` order.
+
+    **Recommended index.** Back :meth:`claim_pending` / :meth:`reclaim_stale_processing`
+    (``WHERE outbox_route = … AND status = 'pending' AND (available_at IS NULL OR
+    available_at <= now()) [AND tenant_id = …] ORDER BY [hlc NULLS LAST,] created_at`` under
+    ``FOR UPDATE SKIP LOCKED``) — pick the shape matching the route's config::
+
+        -- base
+        CREATE INDEX ON <relation> (outbox_route, status, created_at);
+        -- with hlc_ordering enabled (the ORDER BY leads with hlc)
+        CREATE INDEX ON <relation> (outbox_route, status, hlc, created_at);
+        -- on a shared tagged table (the claim filters tenant_id) — lead with it
+        CREATE INDEX ON <relation> (tenant_id, outbox_route, status, created_at);
+    """
 
     client: PostgresClientPort
     spec: OutboxSpec[M]

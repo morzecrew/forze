@@ -420,6 +420,28 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
+    @exc_interceptor.coroutine("firestore.create_document")  # type: ignore[untyped-decorator]
+    async def create_document(
+        self,
+        coll: AsyncCollectionReference,
+        doc_id: str,
+        data: Mapping[str, Any],
+    ) -> None:
+        # ``create`` is the fail-closed counterpart of ``set``: Firestore raises
+        # ALREADY_EXISTS (mapped to ``conflict``) when the document is already
+        # present, so a write that must not clobber an existing id surfaces the
+        # collision instead of silently overwriting it.
+        tx = await self._transaction_for_op()
+        ref = coll.document(doc_id)
+
+        if tx is not None:
+            tx.create(ref, dict(data))  # type: ignore[untyped-call]
+
+        else:
+            await ref.create(dict(data))  # type: ignore[untyped-call]
+
+    # ....................... #
+
     @exc_interceptor.coroutine("firestore.delete_document")  # type: ignore[untyped-decorator]
     async def delete_document(
         self,
@@ -574,7 +596,12 @@ class FirestoreClient(FirestoreClientPort):
         documents: Sequence[tuple[str, Mapping[str, Any]]],
         *,
         batch_size: int = 200,
+        create_only: bool = False,
     ) -> None:
+        # ``create_only`` selects the fail-closed batch primitive: ``create`` raises
+        # ALREADY_EXISTS (→ ``conflict``) for an id that is already present, matching
+        # a create's insert semantics. The default (``set``) upserts, which callers
+        # writing idempotent snapshots (e.g. history) rely on.
         if not documents:
             return
 
@@ -582,10 +609,12 @@ class FirestoreClient(FirestoreClientPort):
 
         if tx is not None:
             for doc_id, data in documents:
-                tx.set(  # type: ignore[untyped-call]
-                    coll.document(doc_id),
-                    dict(data),
-                )
+                ref = coll.document(doc_id)
+
+                if create_only:
+                    tx.create(ref, dict(data))  # type: ignore[untyped-call]
+                else:
+                    tx.set(ref, dict(data))  # type: ignore[untyped-call]
 
             return
 
@@ -596,9 +625,11 @@ class FirestoreClient(FirestoreClientPort):
             batch = client.batch()
 
             for doc_id, data in chunk:
-                batch.set(  # type: ignore[untyped-call]
-                    coll.document(doc_id),
-                    dict(data),
-                )
+                ref = coll.document(doc_id)
+
+                if create_only:
+                    batch.create(ref, dict(data))  # type: ignore[untyped-call]
+                else:
+                    batch.set(ref, dict(data))  # type: ignore[untyped-call]
 
             await batch.commit()

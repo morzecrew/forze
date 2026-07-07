@@ -25,9 +25,9 @@ from forze.application.contracts.search import (
 )
 from forze.base.primitives import JsonDict
 from forze_mock.query.matching import (
-    _MISSING,  # type: ignore[reportPrivateUsage]
-    _path_get,  # type: ignore[reportPrivateUsage]
-    _path_text,  # type: ignore[reportPrivateUsage]
+    _MISSING,  # pyright: ignore[reportPrivateUsage]
+    _path_get,  # pyright: ignore[reportPrivateUsage]
+    _path_text,  # pyright: ignore[reportPrivateUsage]
 )
 
 # ----------------------- #

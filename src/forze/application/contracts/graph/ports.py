@@ -330,3 +330,27 @@ class GraphRawQueryPort(BaseGraphModulePort, Protocol):
     ) -> Awaitable[Sequence[JsonDict]]:
         """Execute *query* with *params* and return raw result rows as mappings."""
         ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class GraphManagementPort(BaseGraphModulePort, Protocol):
+    """Control-plane schema provisioning for a single ``GraphModuleSpec``.
+
+    Separate from the data-plane query/command ports (mirrors the search port split): it
+    creates the constraints and indexes that back node/edge key identity and tenant lookups —
+    node key uniqueness (composite with the tenant property under tagged tenancy), keyed-edge
+    key uniqueness (so concurrent ``ensure_edge`` cannot create duplicate keyed edges), and a
+    tenant-property index. Not every backend provisions schema; where it does, the operations
+    are idempotent.
+    """
+
+    def ensure_schema(self) -> Awaitable[None]:
+        """Create the module's constraints/indexes if absent (idempotent)."""
+        ...  # pragma: no cover
+
+    def drop_schema(self) -> Awaitable[None]:
+        """Drop the module's constraints/indexes if present (teardown / tests)."""
+        ...  # pragma: no cover

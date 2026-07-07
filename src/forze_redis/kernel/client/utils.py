@@ -2,16 +2,10 @@
 
 from typing import Any, Iterable, cast
 
-from redis.typing import (
-    StreamEntry,
-    StreamRangeResponse,
-    XReadGroupResponse,
-    XReadGroupStreamResponse,
-    XReadResponse,
-)
-
 from .types import (
     RawRedisPubSubMessage,
+    RawRedisStreamEntry,
+    RawRedisStreamMessages,
     RawRedisStreamResponse,
     RedisAutoClaimResponse,
     RedisPendingEntry,
@@ -74,7 +68,7 @@ def parse_xautoclaim_response(raw: list[Any]) -> RedisAutoClaimResponse:
 
     return (
         next_cursor,
-        _parse_stream_messages(cast(list[StreamEntry], entries_raw)),
+        _parse_stream_messages(cast(RawRedisStreamMessages, entries_raw)),
         [_to_str(d) for d in cast(Iterable[Any], deleted_raw)],
     )
 
@@ -143,46 +137,48 @@ def parse_pubsub_message(raw: RawRedisPubSubMessage) -> RedisPubSubMessage | Non
 
 
 def _iter_stream_batches(
-    raw: XReadResponse | XReadGroupResponse,
-) -> Iterable[tuple[str | bytes, StreamRangeResponse | list[StreamRangeResponse]]]:
+    raw: list[Any] | dict[Any, Any],
+) -> Iterable[tuple[Any, Any]]:
     """Yield ``(stream_name, messages)`` from any redis-py XREAD wire shape."""
 
     if isinstance(raw, dict):
-        yield from raw.items()  # type: ignore[misc]
+        yield from raw.items()
         return
 
-    for stream, messages in raw:
-        yield stream, messages
+    yield from raw
 
 
 # ....................... #
 
 
-def _flatten_stream_messages(
-    messages: (
-        StreamRangeResponse | list[StreamRangeResponse] | XReadGroupStreamResponse
-    ),
-) -> list[StreamEntry]:
-    """Flatten per-stream message containers to a single entry list."""
+def _flatten_stream_messages(messages: Any) -> list[RawRedisStreamEntry]:
+    """Flatten per-stream message containers to a single entry list.
+
+    *messages* is a raw redis-py per-stream container (a list of entries, or — for XREADGROUP
+    — a list of such lists); its precise shape varies by version/RESP, so it is typed loosely
+    and inspected structurally.
+    """
 
     if not messages:
         return []
 
     if isinstance(messages[0], list):
-        flattened: list[StreamEntry] = []
+        flattened: list[RawRedisStreamEntry] = []
 
         for batch in messages:
-            flattened.extend(cast(StreamRangeResponse, batch))  # type: ignore[redundant-cast]
+            flattened.extend(batch)
 
         return flattened
 
-    return cast(StreamRangeResponse, messages)  # type: ignore[redundant-cast]
+    return messages
 
 
 # ....................... #
 
 
-def _parse_stream_messages(messages: list[StreamEntry]) -> list[RedisStreamEntry]:
+def _parse_stream_messages(
+    messages: list[RawRedisStreamEntry],
+) -> list[RedisStreamEntry]:
     """Parse a list of raw stream messages into normalized entries."""
 
     out: list[RedisStreamEntry] = []

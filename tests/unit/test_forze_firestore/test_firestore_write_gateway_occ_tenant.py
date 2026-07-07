@@ -187,6 +187,57 @@ class _FakeFirestore:
         version = (prev[0] if prev else 0) + 1
         self.store[key] = [version, payload]
 
+    async def create_document(
+        self,
+        coll: str,
+        doc_id: str,
+        data: Mapping[str, Any],
+    ) -> None:
+        """Create-only write: raise ``conflict`` when the id already exists.
+
+        Models Firestore's ``create`` (ALREADY_EXISTS → ``conflict``) as opposed
+        to ``set``'s upsert, so a create that would clobber an existing document
+        fails closed instead.
+        """
+
+        key = (coll, doc_id)
+
+        if self._snapshot(key) is not None:
+            raise CoreException.conflict("Document already exists.")
+
+        payload = dict(data)
+
+        if self._depth > 0:
+            self._writes[key] = payload
+            return
+
+        prev = self.store.get(key)
+        version = (prev[0] if prev else 0) + 1
+        self.store[key] = [version, payload]
+
+    async def insert_many(
+        self,
+        coll: str,
+        documents: list[tuple[str, Mapping[str, Any]]],
+        *,
+        batch_size: int = 200,
+        create_only: bool = False,
+    ) -> None:
+        _ = batch_size
+
+        if create_only:
+            # Firestore's WriteBatch.commit() is all-or-nothing: validate the whole batch for
+            # conflicts *before* applying any write, so a later conflict can't leave earlier
+            # documents created.
+            for doc_id, _data in documents:
+                if self._snapshot((coll, doc_id)) is not None:
+                    raise CoreException.conflict("Document already exists.")
+            for doc_id, data in documents:
+                await self.create_document(coll, doc_id, data)
+        else:
+            for doc_id, data in documents:
+                await self.set_document(coll, doc_id, data)
+
     async def delete_document(self, coll: str, doc_id: str) -> None:
         key = (coll, doc_id)
 
@@ -383,3 +434,89 @@ async def test_kill_many_does_not_touch_cross_tenant_document() -> None:
 
     assert _kind(ei.value) is ExceptionKind.NOT_FOUND
     assert ("docs", str(other_id)) in client.store
+
+
+# ----------------------- #
+# BUG 3 — create fails closed instead of silently overwriting
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_existing_id() -> None:
+    """``create`` with an id that already exists conflicts, matching PG/Mongo —
+    it must not silently overwrite the existing document."""
+
+    client = _FakeFirestore()
+    write = _gateways(client)
+
+    first = await write.create(_Create(name="original"), id=uuid4())
+    key = ("docs", str(first.id))
+
+    with pytest.raises(CoreException) as ei:
+        await write.create(_Create(name="clobber"), id=first.id)
+
+    assert _kind(ei.value) is ExceptionKind.CONFLICT
+    assert client.store[key][1]["name"] == "original"  # untouched
+
+
+@pytest.mark.asyncio
+async def test_ensure_returns_existing_without_overwriting() -> None:
+    """``ensure`` on an already-present id returns it unchanged (no overwrite)."""
+
+    client = _FakeFirestore()
+    write = _gateways(client)
+
+    first = await write.create(_Create(name="original"), id=uuid4())
+    key = ("docs", str(first.id))
+    version_before = client.store[key][0]
+
+    got = await write.ensure(first.id, _Create(name="would-overwrite"))
+
+    assert got.id == first.id
+    assert got.name == "original"
+    assert client.store[key][1]["name"] == "original"
+    assert client.store[key][0] == version_before  # no write happened
+
+
+@pytest.mark.asyncio
+async def test_ensure_wins_create_race_returns_existing() -> None:
+    """A concurrent writer creates the id between ensure's read and its create.
+
+    The now fail-closed create conflicts; ensure catches it, re-reads, and
+    returns the winner's document instead of surfacing the conflict.
+    """
+
+    client = _FakeFirestore()
+    write = _gateways(client)
+
+    target = uuid4()
+    key = ("docs", str(target))
+
+    # After ensure's initial (missing) read, a competitor commits the document.
+    client.after_read = lambda: client.seed(
+        "docs", str(target), {"id": str(target), "rev": 1, "name": "winner"}
+    )
+
+    got = await write.ensure(target, _Create(name="loser"))
+
+    assert got.name == "winner"  # existing row, not our clobbering create
+    assert client.store[key][1]["name"] == "winner"
+
+
+@pytest.mark.asyncio
+async def test_upsert_wins_create_race_updates_existing() -> None:
+    """When upsert loses the create race, it updates the now-existing row."""
+
+    client = _FakeFirestore()
+    write = _gateways(client)
+
+    target = uuid4()
+    key = ("docs", str(target))
+
+    client.after_read = lambda: client.seed(
+        "docs", str(target), {"id": str(target), "rev": 1, "name": "winner"}
+    )
+
+    got = await write.upsert(target, _Create(name="loser"), _Update(note="patched"))
+
+    assert got.note == "patched"  # update applied to the raced-in row
+    assert client.store[key][1]["name"] == "winner"

@@ -29,7 +29,7 @@ def resolve_mock_namespace_sync(
 
     if relation is not None:
         if isinstance(relation, tuple):
-            ns, name = relation  # type: ignore[misc]
+            ns, name = relation  # pyright: ignore[reportUnknownVariableType]
             return f"{ns}/{name}"
 
         if isinstance(relation, str):
@@ -42,13 +42,13 @@ def resolve_mock_namespace_sync(
 
 
 async def resolve_mock_namespace(
-    spec: str | ValueResolver[str] | RelationSpec,
+    spec: str | ValueResolver[str] | tuple[str, str],
     tenant_id: UUID | None,
 ) -> str:
     """Resolve a namespace string from a static name, resolver, or relation pair."""
 
     if isinstance(spec, tuple):
-        ns, name = spec  # type: ignore[misc]
+        ns, name = spec  # pyright: ignore[reportUnknownVariableType]
         return f"{ns}/{name}"
 
-    return await resolve_value(spec, tenant_id)  # type: ignore[arg-type]
+    return await resolve_value(spec, tenant_id)

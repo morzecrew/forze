@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from forze_mock.query._types import _MISSING  # type: ignore[reportPrivateUsage]
+from forze_mock.query._types import _MISSING  # pyright: ignore[reportPrivateUsage]
 from forze_mock.query.cursors import (
-    _mock_cursor_start_and_limit,  # type: ignore[reportPrivateUsage]
-    _mock_cursor_tokens,  # type: ignore[reportPrivateUsage]
+    _mock_cursor_start_and_limit,  # pyright: ignore[reportPrivateUsage]
+    _mock_cursor_tokens,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_mock.query.matching import (
-    _aggregate_docs,  # type: ignore[reportPrivateUsage]
-    _match_expr,  # type: ignore[reportPrivateUsage]
-    _match_field,  # type: ignore[reportPrivateUsage]
-    _match_filters,  # type: ignore[reportPrivateUsage]
-    _path_get,  # type: ignore[reportPrivateUsage]
-    _path_text,  # type: ignore[reportPrivateUsage]
-    _project,  # type: ignore[reportPrivateUsage]
-    _sort_docs,  # type: ignore[reportPrivateUsage]
+    _aggregate_docs,  # pyright: ignore[reportPrivateUsage]
+    _match_expr,  # pyright: ignore[reportPrivateUsage]
+    _match_field,  # pyright: ignore[reportPrivateUsage]
+    _match_filters,  # pyright: ignore[reportPrivateUsage]
+    _path_get,  # pyright: ignore[reportPrivateUsage]
+    _path_text,  # pyright: ignore[reportPrivateUsage]
+    _project,  # pyright: ignore[reportPrivateUsage]
+    _sort_docs,  # pyright: ignore[reportPrivateUsage]
 )
 
 __all__ = [

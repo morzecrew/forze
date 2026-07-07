@@ -36,6 +36,7 @@ from forze.application.contracts.querying import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, build_projection
 from forze.domain.constants import ID_FIELD
+from forze_postgres.kernel._logger import logger
 from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
 from forze.application.contracts.querying import (
@@ -135,7 +136,7 @@ class PostgresReadGateway[M: BaseModel](
 
     # ....................... #
 
-    async def _apply_params(self) -> None:
+    async def _apply_params(self) -> list[str]:
         """Apply bound query parameters as transaction-local session settings.
 
         Emits ``set_config('<namespace>.<field>', <value>, true)`` for each field — equivalent to
@@ -151,24 +152,60 @@ class PostgresReadGateway[M: BaseModel](
         Strings pass through bare (for ``::date``/``::int`` casts); every other value is
         JSON-encoded so a view can read containers/bools with ``current_setting(...)::jsonb`` —
         see :func:`_param_text`.
+
+        Returns the fields it set so :meth:`_reset_params` clears exactly those — never re-reading
+        ``bound_params``, which may have been re-bound on a reused gateway between apply and reset.
         """
 
         if self.bound_params is None:
-            return
+            return []
 
         data = self.bound_params.model_dump(mode="json")
+
+        applied = [field for field, value in data.items() if value is not None]
+
+        if not applied:
+            return []
 
         calls = [
             sql.SQL("set_config({name}, {val}, true)").format(
                 name=sql.Literal(f"{self.param_namespace}.{field}"),
-                val=sql.Literal(_param_text(value)),
+                val=sql.Literal(_param_text(data[field])),
             )
-            for field, value in data.items()
-            if value is not None
+            for field in applied
         ]
 
-        if not calls:
+        await self.client.execute(sql.SQL("SELECT {}").format(sql.SQL(", ").join(calls)))
+
+        return applied
+
+    # ....................... #
+
+    async def _reset_params(self, fields: list[str]) -> None:
+        """Clear the transaction-local param GUCs so they don't outlive this read.
+
+        ``set_config(..., true)`` is transaction-scoped, not savepoint-scoped: when the
+        read runs inside a caller transaction, :meth:`_read_one` etc. open a *savepoint*,
+        and on its RELEASE the settings merge into the outer transaction — leaking a read's
+        parameters into later statements. Resetting each param GUC to its default (``NULL``)
+        after the fetch, still inside the savepoint, keeps every read's parameters confined
+        to itself.
+
+        *fields* is the exact set :meth:`_apply_params` returned for this read — resetting those
+        rather than re-deriving them from ``bound_params`` keeps a read that re-binds the gateway
+        mid-flight (apply, then a concurrent re-bind, then reset) from leaving a GUC it set unset
+        while clearing one it never touched.
+        """
+
+        if not fields:
             return
+
+        calls = [
+            sql.SQL("set_config({name}, NULL, true)").format(
+                name=sql.Literal(f"{self.param_namespace}.{field}"),
+            )
+            for field in fields
+        ]
 
         await self.client.execute(sql.SQL("SELECT {}").format(sql.SQL(", ").join(calls)))
 
@@ -187,8 +224,11 @@ class PostgresReadGateway[M: BaseModel](
             return await self.client.fetch_one(stmt, params, row_factory=row_factory)
 
         async with self.client.transaction():
-            await self._apply_params()
-            return await self.client.fetch_one(stmt, params, row_factory=row_factory)
+            applied = await self._apply_params()
+            try:
+                return await self.client.fetch_one(stmt, params, row_factory=row_factory)
+            finally:
+                await self._reset_params(applied)
 
     async def _read_all(
         self,
@@ -203,8 +243,11 @@ class PostgresReadGateway[M: BaseModel](
             return await self.client.fetch_all(stmt, params, row_factory=row_factory)
 
         async with self.client.transaction():
-            await self._apply_params()
-            return await self.client.fetch_all(stmt, params, row_factory=row_factory)
+            applied = await self._apply_params()
+            try:
+                return await self.client.fetch_all(stmt, params, row_factory=row_factory)
+            finally:
+                await self._reset_params(applied)
 
     async def _read_value(self, stmt: Any, params: Any, *, default: Any = None) -> Any:
         self._require_params_bound()
@@ -213,8 +256,11 @@ class PostgresReadGateway[M: BaseModel](
             return await self.client.fetch_value(stmt, params, default=default)
 
         async with self.client.transaction():
-            await self._apply_params()
-            return await self.client.fetch_value(stmt, params, default=default)
+            applied = await self._apply_params()
+            try:
+                return await self.client.fetch_value(stmt, params, default=default)
+            finally:
+                await self._reset_params(applied)
 
     async def _read_batched(
         self,
@@ -234,11 +280,14 @@ class PostgresReadGateway[M: BaseModel](
             return
 
         async with self.client.transaction():
-            await self._apply_params()
-            async for batch in self.client.fetch_all_batched(
-                stmt, params, batch_size=batch_size, row_factory=row_factory
-            ):
-                yield batch
+            applied = await self._apply_params()
+            try:
+                async for batch in self.client.fetch_all_batched(
+                    stmt, params, batch_size=batch_size, row_factory=row_factory
+                ):
+                    yield batch
+            finally:
+                await self._reset_params(applied)
 
     # ....................... #
 
@@ -249,6 +298,51 @@ class PostgresReadGateway[M: BaseModel](
             return limit
 
         return self.find_many_implicit_limit
+
+    # ....................... #
+
+    def _cap_probe_limit(self, limit: int | None) -> tuple[int | None, int | None]:
+        """Return ``(sql_limit, implicit_cap)`` for a ``find_many``-style read.
+
+        When the caller omits *limit* and an implicit cap applies, the SQL ``LIMIT`` becomes
+        ``cap + 1`` — one probe row past the cap — so :meth:`_truncate_at_cap` can tell whether
+        results were actually truncated (and warn) rather than silently returning ``cap`` rows
+        with no signal. Otherwise the caller's *limit* is used and no cap applies.
+        """
+
+        if limit is not None:
+            return limit, None
+
+        cap = self.find_many_implicit_limit
+
+        if cap is None:
+            return None, None
+
+        return cap + 1, cap
+
+    # ....................... #
+
+    def _truncate_at_cap(
+        self, rows: list[JsonDict], implicit_cap: int | None
+    ) -> list[JsonDict]:
+        """Drop the probe row and warn when an implicit-cap read found more rows than the cap.
+
+        A ``find_many`` without an explicit limit that hits the default cap silently loses
+        rows; this surfaces it in logs so the footgun is visible, and returns exactly the
+        first ``implicit_cap`` rows.
+        """
+
+        if implicit_cap is None or len(rows) <= implicit_cap:
+            return rows
+
+        logger.warning(
+            "find_many hit the implicit row cap and more rows exist; pass an explicit "
+            "limit or paginate to read them all.",
+            relation=self.model_type.__name__,
+            implicit_cap=implicit_cap,
+        )
+
+        return rows[:implicit_cap]
 
     # ....................... #
 
@@ -520,17 +614,19 @@ class PostgresReadGateway[M: BaseModel](
         if sort_clause is not None:
             stmt += sql.SQL(" ORDER BY {sort}").format(sort=sort_clause)
 
-        eff_limit = self._effective_sql_limit(limit)
+        sql_limit, implicit_cap = self._cap_probe_limit(limit)
 
-        if eff_limit is not None:
+        if sql_limit is not None:
             stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(eff_limit)
+            params.append(sql_limit)
 
         if offset is not None:
             stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(offset)
 
-        rows = await self._read_all(stmt, params, row_factory="dict")
+        rows = self._truncate_at_cap(
+            await self._read_all(stmt, params, row_factory="dict"), implicit_cap
+        )
 
         if return_model is not None:
             return await self._adecode_rows(rows, model=return_model)
@@ -666,17 +762,19 @@ class PostgresReadGateway[M: BaseModel](
         if sort_clause is not None:
             stmt += sql.SQL(" ORDER BY {sort}").format(sort=sort_clause)
 
-        eff_limit = self._effective_sql_limit(limit)
+        sql_limit, implicit_cap = self._cap_probe_limit(limit)
 
-        if eff_limit is not None:
+        if sql_limit is not None:
             stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(eff_limit)
+            params.append(sql_limit)
 
         if offset is not None:
             stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(offset)
 
-        rows = await self._read_all(stmt, params, row_factory="dict")
+        rows = self._truncate_at_cap(
+            await self._read_all(stmt, params, row_factory="dict"), implicit_cap
+        )
 
         if return_model is not None:
             return await self._adecode_rows(rows, model=return_model)

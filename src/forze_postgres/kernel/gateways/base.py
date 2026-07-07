@@ -136,10 +136,12 @@ class PostgresGateway[M: BaseModel](
     """SQL alias for the filtered relation (e.g. search projection ``v``)."""
 
     find_many_implicit_limit: int | None = 10_000
-    """When ``limit`` is omitted on :meth:`~forze_postgres.kernel.gateways.read.PostgresReadGateway.find_many` (and aggregate variants), cap rows at this count.
+    """When ``limit`` is omitted on :meth:`~forze_postgres.kernel.gateways.read.PostgresReadGateway.find_many` (and ``find_many_aggregates``), cap rows at this count.
 
     ``None`` disables the cap (unbounded reads). Defaults to ``10_000`` to reduce
-    accidental full-table scans in application code.
+    accidental full-table scans in application code. When the cap actually truncates a
+    result (more rows exist), a warning is logged — the read is not silent — so pass an
+    explicit ``limit`` or paginate to read past it.
     """
 
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)

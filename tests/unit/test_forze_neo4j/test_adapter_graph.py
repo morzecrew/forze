@@ -16,6 +16,7 @@ from forze.application.contracts.graph import (
     GraphNodeSpec,
     GraphQueryPort,
     GraphRawQueryPort,
+    ShortestPathParams,
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
@@ -300,6 +301,127 @@ async def test_raw_query_fails_closed_without_tenant() -> None:
     assert client.calls == []  # never reached the client
 
 
+# ----------------------- #
+# schema provisioning (GraphManagementPort)
+
+
+class RatedRead(BaseModel):
+    ref: str
+    stars: int | None = None
+
+
+def _keyed_spec() -> GraphModuleSpec:
+    return GraphModuleSpec(
+        name="social",
+        nodes=(GraphNodeSpec(name="User", read=UserRead, create=UserCreate),),
+        edges=(
+            GraphEdgeSpec(
+                name="RATED",
+                read=RatedRead,
+                identity="key",
+                key_field="ref",
+                endpoints=(GraphEdgeEndpoint(from_kind="User", to_kind="User"),),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_schema_provisions_constraints_and_index() -> None:
+    client = _FakeClient()
+    adapter = Neo4jGraphAdapter(
+        spec=_keyed_spec(),
+        client=client,
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=uuid4()),
+    )
+
+    await adapter.ensure_schema()
+    stmts = [q for q, _ in client.calls]
+
+    # composite node uniqueness (tenant-scoped) + tenant index + composite keyed-edge
+    # uniqueness (edge key unique *within* a tenant, not globally)
+    assert any("REQUIRE (n.`id`, n.`tenant_id`) IS UNIQUE" in q for q in stmts)
+    assert any("CREATE INDEX" in q and "ON (n.`tenant_id`)" in q for q in stmts)
+    assert any(
+        "FOR ()-[r:`RATED`]-() REQUIRE (r.`ref`, r.`tenant_id`) IS UNIQUE" in q
+        for q in stmts
+    )
+    assert all("IF NOT EXISTS" in q for q in stmts)  # idempotent
+
+
+@pytest.mark.asyncio
+async def test_k_shortest_paths_maps_each_row() -> None:
+    row = {
+        "vertices": [{"id": "a"}, {"id": "b"}],
+        "vertex_labels": [["User"], ["User"]],
+        "edges": [{"weight": 1}],
+        "edge_types": ["FOLLOWS"],
+    }
+    adapter, _ = _adapter(rows=[row, row])
+
+    results = await adapter.k_shortest_paths(
+        VertexRef(kind="User", key="a"),
+        VertexRef(kind="User", key="b"),
+        ShortestPathParams(max_hops=3),
+        k=2,
+    )
+
+    assert len(results) == 2
+    assert results[0].vertices[0].id == "a"
+    assert results[0].vertices[-1].id == "b"
+    assert len(results[0].edges) == 1
+
+
+@pytest.mark.asyncio
+async def test_weighted_path_without_graph_algorithms_fails_closed() -> None:
+    """A weighted request on a module without graph_algorithms fails before any DB call."""
+
+    adapter, client = _adapter(rows=[])  # graph_algorithms=False by default
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.shortest_path(
+            VertexRef(kind="User", key="a"),
+            VertexRef(kind="User", key="b"),
+            ShortestPathParams(max_hops=3, weight_property="w"),
+        )
+
+    assert ei.value.code == "graph_algorithm_unavailable"
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_k_shortest_paths_k_zero_short_circuits() -> None:
+    adapter, client = _adapter(rows=[])
+
+    out = await adapter.k_shortest_paths(
+        VertexRef(kind="User", key="a"),
+        VertexRef(kind="User", key="b"),
+        ShortestPathParams(max_hops=3),
+        k=0,
+    )
+
+    assert out == []
+    assert client.calls == []  # never reached the client
+
+
+@pytest.mark.asyncio
+async def test_drop_schema_matches_ensure_object_names() -> None:
+    client = _FakeClient()
+    adapter = Neo4jGraphAdapter(spec=_keyed_spec(), client=client, tenant_aware=False)
+
+    await adapter.ensure_schema()
+    created = len(client.calls)  # single-prop node uniqueness + edge uniqueness
+    client.calls.clear()
+
+    await adapter.drop_schema()
+    dropped = [q for q, _ in client.calls]
+
+    assert len(dropped) == created
+    assert all("IF EXISTS" in q for q in dropped)
+
+
 @pytest.mark.asyncio
 async def test_raw_query_passthrough_when_not_tenant_aware() -> None:
     adapter, client = _adapter(rows=[], allow_raw_query=True)
@@ -382,13 +504,64 @@ async def test_scoped_walk_fails_closed_without_tenant() -> None:
     assert client.calls == []
 
 
-@pytest.mark.asyncio
-async def test_deferred_method_raises() -> None:
-    adapter, _ = _adapter()
-    with pytest.raises(
-        CoreException, match="not implemented by the neo4j backend yet"
-    ) as ei:
-        await adapter.count_vertices("User")
+class _LinkCreate(BaseModel):
+    from_key: str
+    to_key: str
+    from_kind: str | None = None
+    to_kind: str | None = None
 
-    assert ei.value.kind is ExceptionKind.PRECONDITION
-    assert ei.value.code == "graph_not_implemented"
+
+def _multi_spec() -> GraphModuleSpec:
+    return GraphModuleSpec(
+        name="multi",
+        nodes=(
+            GraphNodeSpec(name="A", read=UserRead, create=UserCreate),
+            GraphNodeSpec(name="B", read=UserRead, create=UserCreate),
+        ),
+        edges=(
+            GraphEdgeSpec(
+                name="LINK",
+                read=FollowsRead,
+                identity="endpoints",
+                endpoints=(
+                    GraphEdgeEndpoint(from_kind="A", to_kind="A"),
+                    GraphEdgeEndpoint(from_kind="A", to_kind="B"),
+                ),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_multi_endpoint_edge_requires_endpoint_kinds() -> None:
+    adapter = Neo4jGraphAdapter(spec=_multi_spec(), client=_FakeClient())
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.create_edge("LINK", _LinkCreate(from_key="a", to_key="b"))
+    assert ei.value.code == "graph_edge_endpoint_kind_required"
+
+
+@pytest.mark.asyncio
+async def test_multi_endpoint_edge_rejects_undeclared_pair() -> None:
+    adapter = Neo4jGraphAdapter(spec=_multi_spec(), client=_FakeClient())
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.create_edge(
+            "LINK", _LinkCreate(from_key="a", to_key="b", from_kind="B", to_kind="A")
+        )
+    assert ei.value.code == "graph_edge_unknown_endpoint"
+
+
+@pytest.mark.asyncio
+async def test_multi_endpoint_edge_routes_to_declared_pair() -> None:
+    client = _FakeClient(rows=[{"r": {"weight": 1}}])
+    adapter = Neo4jGraphAdapter(spec=_multi_spec(), client=client)
+
+    await adapter.create_edge(
+        "LINK", _LinkCreate(from_key="a", to_key="b", from_kind="A", to_kind="B")
+    )
+
+    query, _params = client.calls[-1]
+    # The A→B pair drives the MATCH labels; routing hints are not stored as props.
+    assert "(a:`A`" in query and "(b:`B`" in query

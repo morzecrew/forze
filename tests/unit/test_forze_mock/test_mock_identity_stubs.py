@@ -245,6 +245,27 @@ async def test_deprovision_missing_tenant_raises_like_real_adapter() -> None:
     assert excinfo.value.kind is ExceptionKind.NOT_FOUND
 
 
+async def test_tenant_management_lifecycle_edge_cases() -> None:
+    state = MockState()
+    mgmt = MockTenantManagementPort(state=state, provisioner=NoopTenantProvisioner())
+
+    # provision runs the wired provisioner.
+    tenant = await mgmt.provision_tenant(tenant_key="acme")
+
+    # attach to a missing tenant fails closed; detach from a missing tenant is a no-op.
+    with pytest.raises(CoreException) as ei:
+        await mgmt.attach_principal(uuid4(), uuid4())
+    assert ei.value.kind is ExceptionKind.NOT_FOUND
+    await mgmt.detach_principal(uuid4(), uuid4())
+
+    # deactivate an existing tenant, then deprovision it (loads the entry + runs teardown).
+    await mgmt.deactivate_tenant(tenant.tenant_id)
+    await mgmt.deprovision_tenant(tenant.tenant_id)
+
+    # deprovision without a wired provisioner short-circuits (no lookup, no error).
+    await MockTenantManagementPort(state=state).deprovision_tenant(uuid4())
+
+
 async def test_tenant_resolver_resolves_member_requested_tenant() -> None:
     state = MockState()
     mgmt = MockTenantManagementPort(state=state)

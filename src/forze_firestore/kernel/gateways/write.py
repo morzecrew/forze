@@ -210,7 +210,10 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         data = await self._encode_domain_one(model)
         data = self.adapt_payload_for_write(data, create=True)
         coll = await self.coll()
-        await self.client.set_document(coll, self._storage_pk(model.id), data)
+        # Fail closed on an existing id (``conflict``) rather than overwriting it,
+        # matching the Postgres/Mongo ``create`` contract. Callers wanting
+        # insert-or-replace use ``ensure``/``upsert``.
+        await self.client.create_document(coll, self._storage_pk(model.id), data)
         if self.client.is_in_transaction():
             created = self._materialize_after_write(data)
         else:
@@ -237,8 +240,10 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             (self._storage_pk(m.id), dict(p))
             for m, p in zip(models, write_payloads, strict=True)
         ]
+        # Create-only so a colliding id fails closed (``conflict``) instead of
+        # silently overwriting, matching single-document ``create``.
         await self.client.insert_many(
-            await self.coll(), documents, batch_size=batch_size
+            await self.coll(), documents, batch_size=batch_size, create_only=True
         )
         if self.client.is_in_transaction():
             created = [self._materialize_after_write(dict(p)) for p in write_payloads]
@@ -359,10 +364,21 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return await self.read_gw.get(id)
 
         except CoreException as err:
-            if err.kind is ExceptionKind.NOT_FOUND:
-                return await self.create(payload, id=id)
+            if err.kind is not ExceptionKind.NOT_FOUND:
+                raise
 
-            raise
+        try:
+            return await self.create(payload, id=id)
+
+        except CoreException as race_err:
+            # Lost the create race: another writer inserted this id between the
+            # read above and this (now fail-closed) create. Ensure's contract is
+            # to return the existing row, so re-read it rather than surfacing the
+            # conflict.
+            if race_err.kind is not ExceptionKind.CONFLICT:
+                raise
+
+            return await self.read_gw.get(id)
 
     # ....................... #
 
@@ -395,10 +411,20 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             current = await self.read_gw.get(id)
 
         except CoreException as err:
-            if err.kind is ExceptionKind.NOT_FOUND:
+            if err.kind is not ExceptionKind.NOT_FOUND:
+                raise
+
+            try:
                 return await self.create(create, id=id)
 
-            raise
+            except CoreException as create_err:
+                # Lost the create race: another writer inserted this id between
+                # the read above and this (now fail-closed) create. Fall through
+                # to update the now-existing row, preserving upsert semantics.
+                if create_err.kind is not ExceptionKind.CONFLICT:
+                    raise
+
+            current = await self.read_gw.get(id)
 
         updated, _ = await self.update(current.id, update, rev=current.rev)
         return updated

@@ -4,6 +4,8 @@ from .deps import (
     GraphCommandDepKey,
     GraphCommandDepPort,
     GraphDeps,
+    GraphManagementDepKey,
+    GraphManagementDepPort,
     GraphQueryDepKey,
     GraphQueryDepPort,
     GraphRawQueryDepKey,
@@ -12,6 +14,7 @@ from .deps import (
 from .ports import (
     BaseGraphModulePort,
     GraphCommandPort,
+    GraphManagementPort,
     GraphQueryPort,
     GraphRawQueryPort,
 )
@@ -51,6 +54,9 @@ __all__ = [
     "GraphEdgeEndpoint",
     "GraphEdgeIdentity",
     "GraphEdgeSpec",
+    "GraphManagementDepKey",
+    "GraphManagementDepPort",
+    "GraphManagementPort",
     "GraphModuleSpec",
     "GraphNodeSpec",
     "GraphQueryDepKey",

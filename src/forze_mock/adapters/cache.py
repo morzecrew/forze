@@ -16,7 +16,7 @@ from forze.application.contracts.cache import CachePort
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
 
-from ..query._types import _MISSING  # type: ignore[reportPrivateUsage]
+from ..query._types import _MISSING  # pyright: ignore[reportPrivateUsage]
 
 
 @final

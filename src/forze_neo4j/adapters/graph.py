@@ -1,9 +1,24 @@
 """Neo4j graph adapter implementing the graph query/command/raw ports.
 
-Focused vertical slice: vertex/edge CRUD, ``ensure_edge``, ``neighbors``, ``expand``,
-``shortest_path``, and the raw escape hatch. The remaining port methods raise a clear
-``exc.precondition`` (code ``graph_not_implemented``) and are filled in follow-ups. Tenancy
-uses property partition: a ``tenant_property`` is stamped on writes and constrains
+**Full ``GraphQueryPort`` / ``GraphCommandPort`` coverage**, plus the raw escape hatch:
+vertex/edge CRUD and bulk (``create_vertices``/``create_edges``/``delete_vertices``/
+``delete_edges``, ``ensure_vertex``/``ensure_edge``, ``update_edge``/``delete_edge``),
+read-introspection (``get_vertices``/``get_edges``/``edge_exists``, ``count_*``,
+``vertex_degree``/``count_neighbors``/``incident_edges``, ``find_*``), and traversal/paths
+(``neighbors``/``expand``/``scoped_walk``/``shortest_path``/``k_shortest_paths`` — native
+``SHORTEST k`` plus weighted via GDS). A **multi-endpoint edge kind** (a spec declaring more
+than one ``(from, to)`` label pair) is supported too: its create/ensure command names the
+pair via ``from_kind`` / ``to_kind`` (see :func:`~forze.application.integrations.graph.\
+resolve_write_endpoint`).
+
+**Schema provisioning** is available via :meth:`ensure_schema` (the ``GraphManagementPort``):
+it creates node key-uniqueness constraints (composite with the tenant property under tagged
+tenancy), keyed-edge key-uniqueness constraints — so a concurrent ``ensure_edge`` cannot
+create duplicate keyed edges, not just the in-query ``MERGE`` — and tenant-property indexes.
+It is opt-in (run it at startup); the constraints are Community-edition uniqueness (a NODE KEY
+constraint, which also enforces existence, is Enterprise-only).
+
+Tenancy uses property partition: a ``tenant_property`` is stamped on writes and constrains
 anchor-node matches.
 """
 
@@ -39,32 +54,30 @@ from forze.application.contracts.resolution import (
     resolve_scoped_namespace,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.application.integrations.graph import GraphCodecs, GraphKindCipher
+from forze.application.integrations.graph import (
+    GraphCodecs,
+    GraphKindCipher,
+    resolve_write_endpoint,
+)
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict, OnceCell
+from forze.base.primitives import JsonDict, OnceCell, uuid4
 from forze.base.serialization import default_model_codec
 
 from ..kernel.client import Neo4jClientPort
 from ..kernel.cypher import builders
 from ..kernel.relation import resolve_neo4j_database
+from ._logger import logger
 
 # ----------------------- #
 
+# Initial extra Yen's candidates fetched beyond the requested ``k`` for weighted paths, so the
+# common case (few over-long cheaper paths) resolves in one round-trip. This is only a head-start,
+# not a cap: ``_weighted_paths`` grows the window until it has ``k`` paths within ``max_hops`` or
+# Yen's is exhausted, so a valid bounded path is never dropped for hiding behind more than the
+# buffer's worth of cheaper over-long ones.
+_WEIGHTED_HOP_CANDIDATE_BUFFER = 32
 
-def _nyi(method: str) -> CoreException:
-    """Build the standard not-implemented error for a deferred port slice.
-
-    Stays inside the :class:`~forze.base.exceptions.CoreException` taxonomy so
-    egress mapping can classify it (a bare ``NotImplementedError`` cannot be).
-    """
-
-    return exc.precondition(
-        f"{method} is not implemented by the neo4j backend yet",
-        code="graph_not_implemented",
-    )
-
-
-# ....................... #
+# ----------------------- #
 
 
 @final
@@ -112,6 +125,10 @@ class Neo4jGraphAdapter(TenancyMixin):
     ``True`` to opt in where trusted raw Cypher is genuinely needed — otherwise use the
     structured ports (full-path scoped) and :meth:`scoped_walk` instead.
     """
+
+    graph_algorithms: bool = False
+    """Whether weighted-path queries may use the GDS engine (opt-in); see
+    :attr:`~forze_neo4j.execution.deps.configs.Neo4jGraphConfig.graph_algorithms`."""
 
     # ....................... #
     # tenancy / database resolution
@@ -219,6 +236,39 @@ class Neo4jGraphAdapter(TenancyMixin):
         return await self._edge_cipher(kind).open(self._strip_internal(props))
 
     # ....................... #
+    # property-filter helpers (count / find)
+
+    @staticmethod
+    def _sealed_fields(encryption: Any) -> frozenset[str]:
+        if encryption is None:
+            return frozenset()
+
+        return encryption.encrypted | encryption.searchable
+
+    def _filter_params(
+        self, property_filter: JsonDict | None, sealed: frozenset[str]
+    ) -> JsonDict:
+        """Validate an equality filter and render it to ``$pf_<key>`` params.
+
+        Rejects a filter on a sealed (encrypted) property — its stored value is ciphertext,
+        so an equality match against a plaintext value can never be correct.
+        """
+
+        if not property_filter:
+            return {}
+
+        blocked = sorted(k for k in property_filter if k in sealed)
+
+        if blocked:
+            raise exc.precondition(
+                f"Cannot filter on encrypted graph properties {blocked} (sealed at rest); "
+                "filter on a plaintext property instead.",
+                code="graph_filter_on_encrypted_field",
+            )
+
+        return {f"pf_{k}": v for k, v in property_filter.items()}
+
+    # ....................... #
     # tenancy helpers
 
     @property
@@ -299,28 +349,57 @@ class Neo4jGraphAdapter(TenancyMixin):
     # ....................... #
 
     async def get_edge(self, ref: EdgeRef) -> BaseModel | None:
-        if not ref.is_keyed:
-            raise _nyi("get_edge in endpoints mode")
+        database = await self._resolved_database()
 
-        edge = self._edge(ref.kind)
+        if ref.is_keyed:
+            edge = self._edge(ref.kind)
 
-        if edge.key_field is None:
-            raise exc.configuration(
-                f"Edge kind {ref.kind!r} has no key_field but a keyed EdgeRef was used",
-                code="graph_edge_missing_key_field",
+            if edge.key_field is None:
+                raise exc.configuration(
+                    f"Edge kind {ref.kind!r} has no key_field but a keyed EdgeRef was used",
+                    code="graph_edge_missing_key_field",
+                )
+
+            query = builders.get_edge_by_key(
+                ref.kind, edge.key_field, tenant_field=self._tenant_field
+            )
+            params = self._params(key=ref.key)
+
+        else:
+            query, params = self._endpoints_edge_query(
+                ref, builders.get_edge_by_endpoints
             )
 
-        query = builders.get_edge_by_key(
-            ref.kind, edge.key_field, tenant_field=self._tenant_field
-        )
-        rows = await self.client.run(
-            query, self._params(key=ref.key), database=await self._resolved_database()
-        )
+        rows = await self.client.run(query, params, database=database)
 
         if not rows:
             return None
 
         return await self._edge_model(ref.kind, rows[0]["r"])
+
+    def _endpoints_edge_query(
+        self, ref: EdgeRef, builder: Any
+    ) -> tuple[str, JsonDict]:
+        """Build an endpoints-mode edge query (shared by get_edge / edge_exists / delete)."""
+
+        if ref.from_ref is None or ref.to_ref is None:
+            raise exc.configuration(
+                f"Endpoints EdgeRef for {ref.kind!r} must carry from_ref and to_ref",
+                code="graph_edge_missing_endpoints",
+            )
+
+        from_node = self._node(ref.from_ref.kind)
+        to_node = self._node(ref.to_ref.kind)
+        query = builder(
+            edge_type=ref.kind,
+            from_label=ref.from_ref.kind,
+            from_key_field=from_node.key_field,
+            to_label=ref.to_ref.kind,
+            to_key_field=to_node.key_field,
+            tenant_field=self._tenant_field,
+        )
+
+        return query, self._params(from_key=ref.from_ref.key, to_key=ref.to_ref.key)
 
     # ....................... #
 
@@ -429,6 +508,11 @@ class Neo4jGraphAdapter(TenancyMixin):
         to_ref: VertexRef,
         params: ShortestPathParams,
     ) -> ShortestPathResult | None:
+        if params.weight_property is not None:
+            # Weighted single shortest path = Yen's with k=1.
+            weighted = await self._weighted_paths(from_ref, to_ref, params, k=1)
+            return weighted[0] if weighted else None
+
         from_node = self._node(from_ref.kind)
         to_node = self._node(to_ref.kind)
         query = builders.shortest_path(
@@ -451,7 +535,13 @@ class Neo4jGraphAdapter(TenancyMixin):
         if not rows:
             return None
 
-        row = rows[0]
+        return await self._map_path_row(rows[0])
+
+    # ....................... #
+
+    async def _map_path_row(self, row: JsonDict) -> ShortestPathResult:
+        """Materialize one path row (parallel vertex/edge property lists) into models."""
+
         vertices = tuple(
             [
                 await self._vertex_model(self._node_kind_from_labels(labels), props)
@@ -470,6 +560,123 @@ class Neo4jGraphAdapter(TenancyMixin):
         )
 
         return ShortestPathResult(vertices=vertices, edges=edges)
+
+    # ....................... #
+    # Weighted paths via GDS
+
+    def _weighted_edge_types(self, params: ShortestPathParams) -> frozenset[str]:
+        """Relationship types to project — the requested kinds, or all module edge kinds."""
+
+        if params.edge_kinds:
+            return params.edge_kinds
+
+        return frozenset(str(edge.name) for edge in self.spec.edges)
+
+    async def _ensure_gds_available(self) -> None:
+        """Fail closed unless the GDS engine is both opted in and actually installed."""
+
+        if not self.graph_algorithms:
+            raise exc.precondition(
+                "Weighted paths need the graph-algorithms engine: set graph_algorithms=True "
+                "on the Neo4j graph config and install Neo4j GDS.",
+                code="graph_algorithm_unavailable",
+            )
+
+        try:
+            await self.client.run(
+                "CALL gds.version()", None, database=await self._resolved_database()
+            )
+
+        except CoreException as err:
+            raise exc.precondition(
+                "graph_algorithms is enabled but Neo4j GDS is not installed on the server.",
+                code="graph_algorithm_unavailable",
+            ) from err
+
+    async def _weighted_paths(
+        self,
+        from_ref: VertexRef,
+        to_ref: VertexRef,
+        params: ShortestPathParams,
+        *,
+        k: int,
+    ) -> list[ShortestPathResult]:
+        await self._ensure_gds_available()
+
+        weight = params.weight_property
+
+        if weight is None:  # dispatched only for weighted params; narrows the type
+            raise exc.internal("weighted path requested without a weight_property")
+
+        from_node = self._node(from_ref.kind)
+        to_node = self._node(to_ref.kind)
+        edge_types = self._weighted_edge_types(params)
+        database = await self._resolved_database()
+
+        # A per-call named projection (GDS catalog graphs are DB-global, so a unique name
+        # avoids collisions and the ``finally`` drop keeps the catalog from leaking).
+        graph_name = f"forze_gds_{uuid4().hex}"
+
+        project = builders.gds_project_weighted(
+            edge_types=edge_types,
+            weight_property=weight,
+            tenant_field=self._tenant_field,
+        )
+        query = builders.gds_weighted_paths(
+            from_label=from_ref.kind,
+            from_key_field=from_node.key_field,
+            to_label=to_ref.kind,
+            to_key_field=to_node.key_field,
+            edge_types=edge_types,
+            weight_property=weight,
+            tenant_field=self._tenant_field,
+        )
+
+        # Yen's ranks by cost with no hop limit, so the cheapest candidates may all exceed
+        # ``max_hops``. Fetch a cost-ordered window (each row reports its ``hops``) and grow it
+        # until we have ``k`` paths within the bound or Yen's is exhausted — a *fixed* over-fetch
+        # would drop a valid bounded path hiding behind more than the buffer's worth of cheaper
+        # over-long ones. The buffer is only the initial head-start (one round-trip in the common
+        # case), not a cap.
+        candidate_k = k + _WEIGHTED_HOP_CANDIDATE_BUFFER
+        bounded: list[JsonDict] = []
+
+        try:
+            await self.client.run(
+                project, self._params(graph_name=graph_name), database=database
+            )
+            while True:
+                rows = await self.client.run(
+                    query,
+                    self._params(
+                        from_key=from_ref.key,
+                        to_key=to_ref.key,
+                        graph_name=graph_name,
+                        candidate_k=candidate_k,
+                        max_hops=params.max_hops,
+                    ),
+                    database=database,
+                )
+                # Rows are cost-ordered; keep the ones within the hop bound.
+                bounded = [row for row in rows if row["hops"] <= params.max_hops]
+
+                # Enough within the bound, or Yen's returned fewer candidates than asked (so no
+                # further paths exist to grow into) — either way we have the cheapest bounded set.
+                if len(bounded) >= k or len(rows) < candidate_k:
+                    break
+
+                candidate_k *= 2
+
+        finally:
+            try:
+                await self.client.run(
+                    builders.gds_drop(), {"graph_name": graph_name}, database=database
+                )
+            except CoreException:
+                # Best-effort cleanup — never mask the real result/error with a drop failure.
+                logger.debug("Failed to drop GDS projection %s", graph_name)
+
+        return [await self._map_path_row(row) for row in bounded[:k]]
 
     # ....................... #
 
@@ -594,22 +801,36 @@ class Neo4jGraphAdapter(TenancyMixin):
     ) -> BaseModel | None:
         edge = self._edge(edge_kind)
 
-        if len(edge.endpoints) != 1:
-            raise _nyi(f"multi-endpoint edge kind {edge_kind!r}")
-
-        endpoint = edge.endpoints[0]
-        from_node = self._node(endpoint.from_kind)
-        to_node = self._node(endpoint.to_kind)
-
         data = await self._encode(cmd, self._edge_cipher(edge_kind))
         from_key = data.pop("from_key", None)
         to_key = data.pop("to_key", None)
+        # Resolve the endpoint pair (single kinds are implicit; multi-endpoint kinds name it
+        # via from_kind/to_kind in the command). Pops the routing hints from ``data``.
+        endpoint = resolve_write_endpoint(edge, data)
+        from_node = self._node(endpoint.from_kind)
+        to_node = self._node(endpoint.to_kind)
 
         if from_key is None or to_key is None:
             raise exc.validation(
                 f"Edge create command for {edge_kind!r} must include 'from_key' and 'to_key'",
                 code="graph_edge_endpoints_required",
             )
+
+        # A keyed edge kind is identified by its key property: an ``ensure`` (MERGE)
+        # must match on that key so two distinct keyed edges between the same pair
+        # stay separate. A keyless MERGE matches any edge of the type and collapses
+        # them.
+        edge_key = None
+
+        if merge and edge.key_field is not None:
+            edge_key = data.get(edge.key_field)
+
+            if edge_key is None:
+                raise exc.validation(
+                    f"Keyed edge command for {edge_kind!r} must include "
+                    f"{edge.key_field!r} to ensure a stable identity",
+                    code="graph_edge_key_required",
+                )
 
         query = builders.create_edge(
             from_label=endpoint.from_kind,
@@ -619,10 +840,16 @@ class Neo4jGraphAdapter(TenancyMixin):
             edge_type=edge_kind,
             merge=merge,
             tenant_field=self._tenant_field,
+            key_field=edge.key_field if merge else None,
         )
+        params = {"props": data, **self._params(from_key=from_key, to_key=to_key)}
+
+        if edge_key is not None:
+            params["edge_key"] = edge_key
+
         rows = await self.client.run(
             query,
-            {"props": data, **self._params(from_key=from_key, to_key=to_key)},
+            params,
             database=await self._resolved_database(),
         )
 
@@ -665,16 +892,174 @@ class Neo4jGraphAdapter(TenancyMixin):
         return await self.client.run(query, merged or None, database=await self._resolved_database())
 
     # ....................... #
+    # GraphManagementPort — schema provisioning
+
+    def _schema_name(self, kind: str, subject: str, field: str) -> str:
+        # Deterministic (no hashing — a name must match across processes for drop_schema):
+        # sanitize to Neo4j-safe identifier chars and scope by module so two modules sharing
+        # a label on one database do not collide.
+        raw = f"{self.spec.name}_{kind}_{subject}_{field}"
+        safe = "".join(c if c.isalnum() else "_" for c in raw)
+        return f"forze_{safe}"
+
+    def _schema_plan(self) -> list[tuple[str, str]]:
+        """``(create_cypher, drop_cypher)`` for every constraint/index this module needs."""
+
+        tenant_field = self._tenant_field
+        plan: list[tuple[str, str]] = []
+
+        for node in self.spec.nodes:
+            label = str(node.name)
+            nk = self._schema_name("nk", label, node.key_field)
+            plan.append(
+                (
+                    builders.node_uniqueness_constraint(
+                        nk, label, node.key_field, tenant_field=tenant_field
+                    ),
+                    builders.drop_constraint(nk),
+                )
+            )
+
+            if tenant_field is not None:
+                nt = self._schema_name("nt", label, tenant_field)
+                plan.append(
+                    (
+                        builders.property_index(nt, label, tenant_field),
+                        builders.drop_index(nt),
+                    )
+                )
+
+        for edge in self.spec.edges:
+            if edge.identity == "key" and edge.key_field is not None:
+                etype = str(edge.name)
+                ek = self._schema_name("ek", etype, edge.key_field)
+                plan.append(
+                    (
+                        builders.edge_uniqueness_constraint(
+                            ek, etype, edge.key_field, tenant_field=tenant_field
+                        ),
+                        builders.drop_constraint(ek),
+                    )
+                )
+
+        return plan
+
+    async def ensure_schema(self) -> None:
+        # Schema commands run one per statement in their own auto-commit (Neo4j forbids
+        # mixing schema and data in one transaction) — never inside a caller transaction.
+        database = await self._resolved_database()
+
+        for create_cypher, _drop in self._schema_plan():
+            await self.client.run(create_cypher, None, database=database)
+
+    async def drop_schema(self) -> None:
+        database = await self._resolved_database()
+
+        for _create, drop_cypher in self._schema_plan():
+            await self.client.run(drop_cypher, None, database=database)
+
+    # ....................... #
     # Deferred GraphQueryPort methods
 
     async def get_vertices(self, refs: Sequence[VertexRef]) -> Sequence[BaseModel]:
-        raise _nyi("get_vertices")
+        if not refs:
+            return []
+
+        database = await self._resolved_database()
+        by_kind: dict[str, list[str]] = {}
+
+        for ref in refs:
+            by_kind.setdefault(ref.kind, []).append(ref.key)
+
+        found: dict[tuple[str, str], BaseModel] = {}
+
+        for kind, keys in by_kind.items():
+            node = self._node(kind)
+            query = builders.get_vertices_by_keys(
+                kind, node.key_field, tenant_field=self._tenant_field
+            )
+            rows = await self.client.run(
+                query, self._params(keys=list(set(keys))), database=database
+            )
+
+            for row in rows:
+                found[(kind, str(row["_key"]))] = await self._vertex_model(kind, row["n"])
+
+        # Input order, found-only (missing refs omitted — batch-get semantics).
+        return [
+            found[(ref.kind, str(ref.key))]
+            for ref in refs
+            if (ref.kind, str(ref.key)) in found
+        ]
 
     async def get_edges(self, refs: Sequence[EdgeRef]) -> Sequence[BaseModel]:
-        raise _nyi("get_edges")
+        if not refs:
+            return []
+
+        database = await self._resolved_database()
+        indexed: list[tuple[int, BaseModel]] = []
+        keyed_by_kind: dict[str, list[tuple[int, str]]] = {}
+
+        for i, ref in enumerate(refs):
+            if ref.is_keyed and ref.key is not None:
+                keyed_by_kind.setdefault(ref.kind, []).append((i, ref.key))
+            else:
+                # Endpoints-mode edges are matched one pair at a time.
+                model = await self.get_edge(ref)
+                if model is not None:
+                    indexed.append((i, model))
+
+        for kind, items in keyed_by_kind.items():
+            edge = self._edge(kind)
+
+            if edge.key_field is None:
+                raise exc.configuration(
+                    f"Edge kind {kind!r} has no key_field but a keyed EdgeRef was used",
+                    code="graph_edge_missing_key_field",
+                )
+
+            query = builders.get_edges_by_keys(
+                kind, edge.key_field, tenant_field=self._tenant_field
+            )
+            rows = await self.client.run(
+                query,
+                self._params(keys=[k for _, k in items]),
+                database=database,
+            )
+            by_key = {str(row["_key"]): row["r"] for row in rows}
+
+            for i, key in items:
+                props = by_key.get(str(key))
+                if props is not None:
+                    indexed.append((i, await self._edge_model(kind, props)))
+
+        indexed.sort(key=lambda pair: pair[0])
+        return [model for _, model in indexed]
 
     async def edge_exists(self, ref: EdgeRef) -> bool:
-        raise _nyi("edge_exists")
+        database = await self._resolved_database()
+
+        if ref.is_keyed:
+            edge = self._edge(ref.kind)
+
+            if edge.key_field is None:
+                raise exc.configuration(
+                    f"Edge kind {ref.kind!r} has no key_field but a keyed EdgeRef was used",
+                    code="graph_edge_missing_key_field",
+                )
+
+            query = builders.edge_exists_by_key(
+                ref.kind, edge.key_field, tenant_field=self._tenant_field
+            )
+            params = self._params(key=ref.key)
+
+        else:
+            query, params = self._endpoints_edge_query(
+                ref, builders.edge_exists_by_endpoints
+            )
+
+        rows = await self.client.run(query, params, database=database)
+        return bool(rows and rows[0]["exists"])
 
     async def count_vertices(
         self,
@@ -682,8 +1067,17 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         property_filter: JsonDict | None = None,
     ) -> int:
-        del property_filter
-        raise _nyi("count_vertices")
+        node = self._node(node_kind)
+        params = self._filter_params(property_filter, self._sealed_fields(node.encryption))
+        query = builders.count_vertices(
+            node_kind,
+            tenant_field=self._tenant_field,
+            filter_keys=list(property_filter or {}),
+        )
+        rows = await self.client.run(
+            query, self._params(**params), database=await self._resolved_database()
+        )
+        return int(rows[0]["c"]) if rows else 0
 
     async def count_edges(
         self,
@@ -691,8 +1085,17 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         property_filter: JsonDict | None = None,
     ) -> int:
-        del property_filter
-        raise _nyi("count_edges")
+        edge = self._edge(edge_kind)
+        params = self._filter_params(property_filter, self._sealed_fields(edge.encryption))
+        query = builders.count_edges(
+            edge_kind,
+            tenant_field=self._tenant_field,
+            filter_keys=list(property_filter or {}),
+        )
+        rows = await self.client.run(
+            query, self._params(**params), database=await self._resolved_database()
+        )
+        return int(rows[0]["c"]) if rows else 0
 
     async def incident_edges(
         self,
@@ -702,7 +1105,21 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         limit: int,
     ) -> Sequence[BaseModel]:
-        raise _nyi("incident_edges")
+        node = self._node(origin.kind)
+        query = builders.incident_edges(
+            origin.kind,
+            node.key_field,
+            direction,
+            edge_kinds,
+            tenant_field=self._tenant_field,
+        )
+        rows = await self.client.run(
+            query,
+            self._params(key=origin.key, limit=limit),
+            database=await self._resolved_database(),
+        )
+
+        return [await self._edge_model(row["t"], row["r"]) for row in rows]
 
     async def k_shortest_paths(
         self,
@@ -712,7 +1129,33 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         k: int,
     ) -> Sequence[ShortestPathResult]:
-        raise _nyi("k_shortest_paths")
+        if k <= 0:
+            return []
+
+        if params.weight_property is not None:
+            return await self._weighted_paths(from_ref, to_ref, params, k=k)
+
+        from_node = self._node(from_ref.kind)
+        to_node = self._node(to_ref.kind)
+        query = builders.k_shortest_paths(
+            from_label=from_ref.kind,
+            from_key_field=from_node.key_field,
+            to_label=to_ref.kind,
+            to_key_field=to_node.key_field,
+            direction=GraphDirection.OUT,
+            edge_types=params.edge_kinds,
+            max_hops=params.max_hops,
+            k=k,
+            tenant_field=self._tenant_field,
+            interior=self._interior_scope,
+        )
+        rows = await self.client.run(
+            query,
+            self._params(from_key=from_ref.key, to_key=to_ref.key),
+            database=await self._resolved_database(),
+        )
+
+        return [await self._map_path_row(row) for row in rows]
 
     async def find_vertices(
         self,
@@ -722,8 +1165,20 @@ class Neo4jGraphAdapter(TenancyMixin):
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[BaseModel]:
-        del property_filter
-        raise _nyi("find_vertices")
+        node = self._node(node_kind)
+        params = self._filter_params(property_filter, self._sealed_fields(node.encryption))
+        query = builders.find_vertices(
+            node_kind,
+            node.key_field,
+            tenant_field=self._tenant_field,
+            filter_keys=list(property_filter or {}),
+        )
+        rows = await self.client.run(
+            query,
+            self._params(offset=offset, limit=limit, **params),
+            database=await self._resolved_database(),
+        )
+        return [await self._vertex_model(node_kind, row["n"]) for row in rows]
 
     async def find_edges(
         self,
@@ -733,8 +1188,20 @@ class Neo4jGraphAdapter(TenancyMixin):
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[BaseModel]:
-        del property_filter
-        raise _nyi("find_edges")
+        edge = self._edge(edge_kind)
+        params = self._filter_params(property_filter, self._sealed_fields(edge.encryption))
+        query = builders.find_edges(
+            edge_kind,
+            order_field=edge.key_field,  # stable order for keyed edges; unordered otherwise
+            tenant_field=self._tenant_field,
+            filter_keys=list(property_filter or {}),
+        )
+        rows = await self.client.run(
+            query,
+            self._params(offset=offset, limit=limit, **params),
+            database=await self._resolved_database(),
+        )
+        return [await self._edge_model(edge_kind, row["r"]) for row in rows]
 
     async def vertex_degree(
         self,
@@ -743,7 +1210,18 @@ class Neo4jGraphAdapter(TenancyMixin):
         direction: GraphDirection = GraphDirection.BOTH,
         edge_kinds: frozenset[str] | None = None,
     ) -> int:
-        raise _nyi("vertex_degree")
+        node = self._node(ref.kind)
+        query = builders.vertex_degree(
+            ref.kind,
+            node.key_field,
+            direction,
+            edge_kinds or frozenset(),
+            tenant_field=self._tenant_field,
+        )
+        rows = await self.client.run(
+            query, self._params(key=ref.key), database=await self._resolved_database()
+        )
+        return int(rows[0]["c"]) if rows else 0
 
     async def count_neighbors(
         self,
@@ -752,16 +1230,84 @@ class Neo4jGraphAdapter(TenancyMixin):
         direction: GraphDirection = GraphDirection.BOTH,
         edge_kinds: frozenset[str] | None = None,
     ) -> int:
-        raise _nyi("count_neighbors")
+        node = self._node(ref.kind)
+        query = builders.count_neighbors(
+            ref.kind,
+            node.key_field,
+            direction,
+            edge_kinds or frozenset(),
+            tenant_field=self._tenant_field,
+        )
+        rows = await self.client.run(
+            query, self._params(key=ref.key), database=await self._resolved_database()
+        )
+        return int(rows[0]["c"]) if rows else 0
 
     # ....................... #
     # Deferred GraphCommandPort methods
 
     async def update_edge(self, ref: EdgeRef, cmd: BaseModel) -> BaseModel:
-        raise _nyi("update_edge")
+        props = await self._encode(
+            cmd,
+            self._edge_cipher(ref.kind),
+            record_id=ref.key if ref.is_keyed else None,
+        )
+        # An update patches the edge's own properties — it can't move endpoints or rekey.
+        props.pop("from_key", None)
+        props.pop("to_key", None)
+
+        if ref.is_keyed:
+            edge = self._edge(ref.kind)
+
+            if edge.key_field is None:
+                raise exc.configuration(
+                    f"Edge kind {ref.kind!r} has no key_field but a keyed EdgeRef was used",
+                    code="graph_edge_missing_key_field",
+                )
+
+            query = builders.update_edge_by_key(
+                ref.kind, edge.key_field, tenant_field=self._tenant_field
+            )
+            params = {"props": props, **self._params(key=ref.key)}
+
+        else:
+            query, base = self._endpoints_edge_query(
+                ref, builders.update_edge_by_endpoints
+            )
+            params = {"props": props, **base}
+
+        rows = await self.client.run(
+            query, params, database=await self._resolved_database()
+        )
+
+        if not rows:
+            raise exc.not_found(
+                f"Edge {ref.kind!r} not found", code="graph_edge_not_found"
+            )
+
+        return await self._edge_model(ref.kind, rows[0]["r"])
 
     async def delete_edge(self, ref: EdgeRef) -> None:
-        raise _nyi("delete_edge")
+        if ref.is_keyed:
+            edge = self._edge(ref.kind)
+
+            if edge.key_field is None:
+                raise exc.configuration(
+                    f"Edge kind {ref.kind!r} has no key_field but a keyed EdgeRef was used",
+                    code="graph_edge_missing_key_field",
+                )
+
+            query = builders.delete_edge_by_key(
+                ref.kind, edge.key_field, tenant_field=self._tenant_field
+            )
+            params = self._params(key=ref.key)
+
+        else:
+            query, params = self._endpoints_edge_query(
+                ref, builders.delete_edge_by_endpoints
+            )
+
+        await self.client.run(query, params, database=await self._resolved_database())
 
     async def create_vertices(
         self,
@@ -769,7 +1315,36 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         return_new: bool = True,
     ) -> Sequence[BaseModel] | None:
-        raise _nyi("create_vertices")
+        if not items:
+            return [] if return_new else None
+
+        database = await self._resolved_database()
+        by_kind: dict[str, list[tuple[int, JsonDict]]] = {}
+
+        for i, (kind, cmd) in enumerate(items):
+            props = await self._encode(cmd, self._node_cipher(kind))
+            by_kind.setdefault(kind, []).append((i, props))
+
+        results: dict[int, BaseModel] = {}
+
+        for kind, entries in by_kind.items():
+            query = builders.create_vertices(kind)
+            rows = await self.client.run(
+                query,
+                {"rows": [props for _, props in entries], **self._params()},
+                database=database,
+            )
+
+            # Skip the per-row decode/decrypt unless the caller wants the models back — the
+            # insert above is the only work a ``return_new=False`` bulk create needs.
+            if return_new:
+                for (idx, _props), row in zip(entries, rows, strict=True):
+                    results[idx] = await self._vertex_model(kind, row["n"])
+
+        if not return_new:
+            return None
+
+        return [results[i] for i in range(len(items))]
 
     async def create_edges(
         self,
@@ -777,7 +1352,19 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         return_new: bool = True,
     ) -> Sequence[BaseModel] | None:
-        raise _nyi("create_edges")
+        # Edges need per-item endpoint matching (encode + tenant + not-found), so this reuses
+        # single-edge create rather than one UNWIND — order-preserving, not one round-trip.
+        if not items:
+            return [] if return_new else None
+
+        created: list[BaseModel] = []
+
+        for kind, cmd in items:
+            edge = await self.create_edge(kind, cmd, return_new=return_new)
+            if return_new and edge is not None:
+                created.append(edge)
+
+        return created if return_new else None
 
     async def ensure_vertex(
         self,
@@ -786,10 +1373,65 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         return_new: bool = True,
     ) -> BaseModel | None:
-        raise _nyi("ensure_vertex")
+        node = self._node(node_kind)
+        props = await self._encode(cmd, self._node_cipher(node_kind))
+        key = str(props[node.key_field])  # the key field is the plaintext identity
+        query = builders.ensure_vertex(
+            node_kind, node.key_field, tenant_field=self._tenant_field
+        )
+        rows = await self.client.run(
+            query,
+            {"props": props, **self._params(key=key)},
+            database=await self._resolved_database(),
+        )
+
+        if not return_new:
+            return None
+
+        return await self._vertex_model(node_kind, rows[0]["n"])
 
     async def delete_vertices(self, refs: Sequence[VertexRef]) -> None:
-        raise _nyi("delete_vertices")
+        if not refs:
+            return
+
+        database = await self._resolved_database()
+        by_kind: dict[str, list[str]] = {}
+
+        for ref in refs:
+            by_kind.setdefault(ref.kind, []).append(ref.key)
+
+        for kind, keys in by_kind.items():
+            node = self._node(kind)
+            query = builders.delete_vertices(
+                kind, node.key_field, tenant_field=self._tenant_field
+            )
+            await self.client.run(
+                query, self._params(keys=list(set(keys))), database=database
+            )
 
     async def delete_edges(self, refs: Sequence[EdgeRef]) -> None:
-        raise _nyi("delete_edges")
+        if not refs:
+            return
+
+        database = await self._resolved_database()
+        keyed_by_kind: dict[str, list[str]] = {}
+
+        for ref in refs:
+            if ref.is_keyed and ref.key is not None:
+                keyed_by_kind.setdefault(ref.kind, []).append(ref.key)
+            else:
+                await self.delete_edge(ref)  # endpoints, one pair at a time
+
+        for kind, keys in keyed_by_kind.items():
+            edge = self._edge(kind)
+
+            if edge.key_field is None:
+                raise exc.configuration(
+                    f"Edge kind {kind!r} has no key_field but a keyed EdgeRef was used",
+                    code="graph_edge_missing_key_field",
+                )
+
+            query = builders.delete_edges_by_keys(
+                kind, edge.key_field, tenant_field=self._tenant_field
+            )
+            await self.client.run(query, self._params(keys=keys), database=database)

@@ -55,3 +55,13 @@ class Neo4jGraphConfig(TenantAwareIntegrationConfig):
     where trusted raw Cypher is genuinely needed; otherwise use the structured ports /
     ``scoped_walk``.
     """
+
+    graph_algorithms: bool = False
+    """Whether weighted-path queries (``ShortestPathParams.weight_property``) may use the
+    Neo4j Graph Data Science (GDS) engine.
+
+    **Off by default** — weighted paths project a tenant-filtered in-memory graph per call, so
+    they are opt-in. When off, a weighted request fails closed (``graph_algorithm_unavailable``);
+    when on, the query still fails closed with the same code if GDS is not actually installed.
+    Unweighted paths never need this.
+    """

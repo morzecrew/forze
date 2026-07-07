@@ -1,6 +1,6 @@
 from pydantic import SecretStr
 
-from forze_redis._compat import require_redis
+from forze_redis._compat import redis_supports_client_side_caching, require_redis
 
 require_redis()
 
@@ -627,6 +627,16 @@ class RedisClient(RedisClientPort):
         """
 
         self.__require_client()
+
+        if not redis_supports_client_side_caching():
+            raise exc.configuration(
+                "Client-side caching invalidation (subscribe_invalidations) requires "
+                "redis-py 8+; the installed redis-py lacks the RESP3 push API. Upgrade "
+                "redis-py, or run without client-side caching (the rest of forze_redis "
+                "supports redis-py 7.3+).",
+                code="redis.client_side_caching_unsupported",
+            )
+
         pool = self.__pool
 
         if pool is None:  # pragma: no cover — require_client guards this

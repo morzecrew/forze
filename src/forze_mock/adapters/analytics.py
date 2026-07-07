@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import (
     Any,
     AsyncGenerator,
+    Literal,
     Sequence,
     cast,
     final,
+    overload,
 )
 
 import attrs
@@ -43,8 +45,8 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
 from forze_mock.query._types import T
 from forze_mock.query.cursors import (
-    _mock_cursor_start_and_limit,  # type: ignore[reportPrivateUsage]
-    _mock_cursor_tokens,  # type: ignore[reportPrivateUsage]
+    _mock_cursor_start_and_limit,  # pyright: ignore[reportPrivateUsage]
+    _mock_cursor_tokens,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
@@ -115,6 +117,32 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         return rows
 
     # ....................... #
+
+    @overload
+    async def _offset_page(
+        self,
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None,
+        *,
+        options: AnalyticsRunOptions | None,
+        return_count: Literal[True],
+        return_type: type[T] | None,
+        return_fields: Sequence[str] | None,
+    ) -> Page[Any]: ...
+
+    @overload
+    async def _offset_page(
+        self,
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None,
+        *,
+        options: AnalyticsRunOptions | None,
+        return_count: Literal[False],
+        return_type: type[T] | None,
+        return_fields: Sequence[str] | None,
+    ) -> CountlessPage[Any]: ...
 
     async def _offset_page(
         self,
@@ -249,7 +277,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None = None,
     ) -> Page[R]:
-        return await self._offset_page(  # type: ignore[return-value]
+        return await self._offset_page(
             query_key,
             params,
             pagination,
@@ -307,7 +335,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None = None,
     ) -> Page[JsonDict]:
-        return await self._offset_page(  # type: ignore[return-value]
+        return await self._offset_page(
             query_key,
             params,
             pagination,
@@ -366,7 +394,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None = None,
     ) -> Page[T]:
-        return await self._offset_page(  # type: ignore[return-value]
+        return await self._offset_page(
             query_key,
             params,
             pagination,

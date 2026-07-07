@@ -39,6 +39,7 @@ async def test_rrf_merge_calls_each_leg_search() -> None:
     leg_a = MagicMock()
     leg_a.index_uid = "idx_a"
     leg_a.spec = _mem("a")
+    leg_a.config.max_total_hits = 1000
     leg_a.search = AsyncMock(
         return_value=page_from_limit_offset([h1, h2], {"offset": 0, "limit": 10}, total=None)
     )
@@ -46,6 +47,7 @@ async def test_rrf_merge_calls_each_leg_search() -> None:
     leg_b = MagicMock()
     leg_b.index_uid = "idx_b"
     leg_b.spec = _mem("b")
+    leg_b.config.max_total_hits = 1000
     leg_b.search = AsyncMock(
         return_value=page_from_limit_offset([h2, h1], {"offset": 0, "limit": 10}, total=None)
     )
@@ -109,6 +111,7 @@ async def test_rrf_all_zero_weights_returns_empty() -> None:
 def _rrf_leg(name: str, hits: list[_Hit]) -> MagicMock:
     leg = MagicMock()
     leg.spec = _mem(name)
+    leg.config.max_total_hits = 1000  # the leg's real Meilisearch maxTotalHits ceiling
     leg.search = AsyncMock(
         return_value=page_from_limit_offset(
             hits, {"offset": 0, "limit": 10}, total=None

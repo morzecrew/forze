@@ -78,6 +78,14 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
             updated_at   timestamptz NOT NULL,
             PRIMARY KEY (schedule_id)
         );
+
+        -- Recommended: back claim_due, which scans `WHERE enabled AND next_fire_at <=
+        -- now() ORDER BY next_fire_at` under FOR UPDATE SKIP LOCKED. A partial index on
+        -- the due predicate keeps the scan/sort off the whole table.
+        CREATE INDEX ON <relation> (next_fire_at) WHERE enabled;
+        -- On a shared tagged table claim_due also filters `tenant_id = …` for a bound tenant,
+        -- so lead with tenant_id to avoid scanning other tenants' due rows:
+        CREATE INDEX ON <relation> (tenant_id, next_fire_at) WHERE enabled;
     """
 
     client: PostgresClientPort

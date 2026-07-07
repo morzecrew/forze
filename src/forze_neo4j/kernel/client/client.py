@@ -31,9 +31,14 @@ from .value_objects import Neo4jConfig
 class Neo4jClient(Neo4jClientPort):
     """Async Neo4j client wrapping :class:`neo4j.AsyncDriver`.
 
-    Runs queries auto-committed by default; when a :meth:`transaction` scope is active
-    on the current context, queries route through that explicit transaction so they
-    commit or roll back as a unit (used by the Forze transaction scope).
+    Runs each query auto-committed by default. Opening a :meth:`transaction` scope binds an
+    explicit Neo4j transaction on the current context so queries inside it commit or roll
+    back as a unit. The framework transaction scope drives this via
+    :class:`~forze_neo4j.adapters.Neo4jTxManagerAdapter` when an operation's ``tx_route`` is
+    bound to the module's ``tx`` group (otherwise open ``async with client.transaction():``
+    explicitly). Graph writes remain **not** co-transactional with the Postgres outbox or any
+    other backend — Neo4j is a separate database and there is no cross-database two-phase
+    commit, so this only makes a handler's *graph* statements atomic among themselves.
     """
 
     _driver: AsyncDriver | None = attrs.field(default=None, init=False)

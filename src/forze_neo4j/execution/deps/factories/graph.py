@@ -65,4 +65,5 @@ class ConfigurableNeo4jGraph:
             database=self.config.database,
             traversal_isolation=self.config.traversal_isolation,
             allow_raw_query=self.config.allow_raw_query,
+            graph_algorithms=self.config.graph_algorithms,
         )

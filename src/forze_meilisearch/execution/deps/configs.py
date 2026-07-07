@@ -1,5 +1,6 @@
 """Meilisearch dependency configuration types."""
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 import attrs
@@ -79,6 +80,23 @@ class MeilisearchSearchConfig(TenantAwareIntegrationConfig):
 
     wait_for_tasks: bool = True
     """When True, await Meilisearch task completion after writes."""
+
+    task_wait_timeout: timedelta = timedelta(seconds=60)
+    """Upper bound on awaiting a single Meilisearch task (raises rather than hanging
+    forever). Raise it for very large batch indexing tasks."""
+
+    max_total_hits: int = 1000
+    """Mirror of the index's ``maxTotalHits`` setting (Meilisearch default 1000). A read
+    window reaching past it fails closed instead of silently truncating; ``ensure_index``
+    provisions this exact value on the index, so the two stay in sync."""
+
+    exact_total_count: bool = False
+    """When True, a ``return_count`` read reports an **exact** total (Meilisearch page-mode
+    ``totalHits``) via one extra lightweight query, instead of the cheap ``estimatedTotalHits``.
+
+    Still bounded by :attr:`max_total_hits` — the count is exact only up to that ceiling
+    (a larger match reports the ceiling). Off by default (estimate is cheaper); turning it on
+    also flips ``SearchCapabilities.exact_total_count`` to ``True``."""
 
     # ....................... #
 

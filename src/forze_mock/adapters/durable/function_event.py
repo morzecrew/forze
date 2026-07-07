@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import final
+from typing import TypedDict, final
 
 import attrs
 from pydantic import BaseModel
@@ -12,10 +12,21 @@ from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandPort,
     DurableFunctionEventSpec,
 )
+from forze.base.primitives import JsonDict
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
 
 # ----------------------- #
+
+
+class _DurableEvent(TypedDict):
+    """One recorded durable-function event envelope."""
+
+    id: str
+    payload: JsonDict
+
+
+# ....................... #
 
 
 @final
@@ -27,7 +38,7 @@ class MockDurableFunctionEventAdapter[M: BaseModel](
     spec: DurableFunctionEventSpec[M]
     state: MockState
 
-    def _events(self) -> list[dict[str, object]]:
+    def _events(self) -> list[_DurableEvent]:
         # Mirrors the real Inngest adapter, which stamps tenant_id into the envelope.
         ns = self._partitioned_namespace(str(self.spec.name))
         with self.state.lock:

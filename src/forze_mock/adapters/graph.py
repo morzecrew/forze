@@ -1,24 +1,33 @@
-"""In-memory mock graph adapter (vertex/edge CRUD + neighbors).
+"""In-memory mock graph adapter.
 
-Exists so handlers/kits can exercise the graph ports without a real engine. Traversal
-beyond one hop (expand / shortest_path) and the raw escape hatch raise
+Exists so handlers/kits can exercise the graph ports without a real engine. Covers the full
+``GraphCommandPort`` (vertex/edge CRUD + bulk + ensure/update/delete), the read-introspection
++ ``find_*`` surface, and multi-hop traversal (``expand`` / ``shortest_path`` — unweighted BFS
+or weighted Dijkstra — / ``scoped_walk``) via a small in-memory traversal core. Because
+Neo4j's traversal ordering/tie-breaking is only partly specified, the differential
+conformance test compares invariants (step multisets, path lengths/costs, reachable target
+sets), not byte-identical output. ``k_shortest_paths`` and the raw escape hatch raise
 ``NotImplementedError`` — use ``forze_neo4j`` for those.
 """
 
 from __future__ import annotations
 
+import heapq
+from collections import deque
 from collections.abc import Sequence
 from typing import final
 
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.graph import (
     EdgeRef,
     GraphDirection,
     GraphEdgeSpec,
     GraphModuleSpec,
     GraphNodeSpec,
+    GraphPathStep,
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
@@ -27,6 +36,7 @@ from forze.application.contracts.graph import (
     ShortestPathResult,
     VertexRef,
 )
+from forze.application.integrations.graph import resolve_write_endpoint
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
@@ -113,24 +123,83 @@ class MockGraphAdapter(MockTenancyMixin):
             return (ref.kind, ref.key) in self._verts()
 
     async def get_edge(self, ref: EdgeRef) -> BaseModel | None:
-        if not ref.is_keyed:
-            raise _nyi("get_edge in endpoints mode")
+        with self.state.lock:
+            rec = self._find_edge_rec(ref, self._edges_store())
 
-        edge = self._edge(ref.kind)
-        kf = edge.key_field
+        return self._emodel(ref.kind, rec["props"]) if rec is not None else None
 
-        if kf is None:
-            raise exc.configuration(
-                f"Edge kind {ref.kind!r} has no key_field",
-                code="graph_edge_missing_key_field",
+    def _find_edge_rec(
+        self,
+        ref: EdgeRef,
+        edges: Sequence[JsonDict],
+    ) -> JsonDict | None:
+        """Locate the edge record for *ref* (keyed by key, else by endpoint pair)."""
+
+        if ref.is_keyed:
+            kf = self._edge(ref.kind).key_field
+
+            if kf is None:
+                raise exc.configuration(
+                    f"Edge kind {ref.kind!r} has no key_field",
+                    code="graph_edge_missing_key_field",
+                )
+
+            return next(
+                (
+                    rec
+                    for rec in edges
+                    if rec["kind"] == ref.kind and str(rec["props"].get(kf)) == ref.key
+                ),
+                None,
             )
 
-        with self.state.lock:
-            for rec in self._edges_store():
-                if rec["kind"] == ref.kind and str(rec["props"].get(kf)) == ref.key:
-                    return self._emodel(ref.kind, rec["props"])
+        if ref.from_ref is None or ref.to_ref is None:
+            raise exc.configuration(
+                f"Endpoints EdgeRef for {ref.kind!r} must carry from_ref and to_ref",
+                code="graph_edge_missing_endpoints",
+            )
 
-        return None
+        return next(
+            (
+                rec
+                for rec in edges
+                if (
+                    rec["kind"] == ref.kind
+                    and rec["from_kind"] == ref.from_ref.kind
+                    and rec["from_key"] == ref.from_ref.key
+                    and rec["to_kind"] == ref.to_ref.kind
+                    and rec["to_key"] == ref.to_ref.key
+                )
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _validate_filter(
+        property_filter: JsonDict | None, encryption: FieldEncryption | None
+    ) -> None:
+        if not property_filter:
+            return
+
+        sealed: frozenset[str] = (
+            encryption.encrypted | encryption.searchable
+            if encryption is not None
+            else frozenset()
+        )
+
+        if blocked := sorted(k for k in property_filter if k in sealed):
+            raise exc.precondition(
+                f"Cannot filter on encrypted graph properties {blocked} (sealed at rest); "
+                "filter on a plaintext property instead.",
+                code="graph_filter_on_encrypted_field",
+            )
+
+    @staticmethod
+    def _matches(props: JsonDict, property_filter: JsonDict | None) -> bool:
+        if not property_filter:
+            return True
+
+        return all(props.get(k) == v for k, v in property_filter.items())
 
     async def neighbors(
         self,
@@ -180,7 +249,27 @@ class MockGraphAdapter(MockTenancyMixin):
     async def expand(
         self, start: VertexRef, params: GraphWalkParams
     ) -> Sequence[GraphWalkStep]:
-        raise _nyi("expand")
+        with self.state.lock:
+            verts = dict(self._verts())
+            edges = list(self._edges_store())
+
+        if (start.kind, start.key) not in verts:
+            return []
+
+        adj = _adjacency(edges, params.direction, params.edge_kinds)
+        steps = _enumerate_expand((start.kind, start.key), adj, verts, params.max_depth)
+        # Neo4j orders by depth (intra-depth order unspecified) then LIMIT max_results.
+        steps.sort(key=lambda step: step[0])
+
+        return [
+            GraphWalkStep(
+                depth=depth,
+                vertex=self._vmodel(node[0], verts[node]),
+                from_parent=self._emodel(rec["kind"], rec["props"]),
+                parent_ref=VertexRef(kind=parent[0], key=parent[1]),
+            )
+            for depth, node, parent, rec in steps[: params.max_results]
+        ]
 
     async def shortest_path(
         self,
@@ -188,14 +277,72 @@ class MockGraphAdapter(MockTenancyMixin):
         to_ref: VertexRef,
         params: ShortestPathParams,
     ) -> ShortestPathResult | None:
-        raise _nyi("shortest_path")
+        with self.state.lock:
+            verts = dict(self._verts())
+            edges = list(self._edges_store())
+
+        src = (from_ref.kind, from_ref.key)
+        dst = (to_ref.kind, to_ref.key)
+
+        if src not in verts or dst not in verts:
+            return None
+
+        # Neo4j drives shortest_path in the OUT direction.
+        adj = _adjacency(edges, GraphDirection.OUT, params.edge_kinds)
+
+        if params.weight_property is None:
+            path = _bfs_shortest(src, dst, adj, verts, params.max_hops)
+        else:
+            path = _dijkstra_shortest(
+                src, dst, adj, verts, params.weight_property, params.max_hops
+            )
+
+        if path is None:
+            return None
+
+        nodes, edge_recs = path
+        return ShortestPathResult(
+            vertices=tuple(self._vmodel(n[0], verts[n]) for n in nodes),
+            edges=tuple(self._emodel(r["kind"], r["props"]) for r in edge_recs),
+        )
 
     async def scoped_walk(
         self,
         anchor: VertexRef,
         params: ScopedWalkParams,
     ) -> Sequence[BaseModel]:
-        raise _nyi("scoped_walk")
+        self._node(anchor.kind)
+        self._node(params.target_kind)  # validate kinds are in the spec
+
+        with self.state.lock:
+            verts = dict(self._verts())
+            edges = list(self._edges_store())
+
+        anchor_node = (anchor.kind, anchor.key)
+
+        if anchor_node not in verts:
+            return []
+
+        frontier: set[tuple[tuple[str, str], frozenset[int]]] = {
+            (anchor_node, frozenset())
+        }
+
+        for step in params.steps:
+            adj = _adjacency(edges, step.direction, step.edge_kinds)
+            frontier = _advance_segment(frontier, step, adj, verts)
+
+        # Distinct target-kind vertices (Neo4j returns DISTINCT m, unordered), capped.
+        targets: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+
+        for node, _used in frontier:
+            if node[0] == params.target_kind and node not in seen:
+                seen.add(node)
+                targets.append(node)
+
+        return [
+            self._vmodel(params.target_kind, verts[n]) for n in targets[: params.limit]
+        ]
 
     # ....................... #
     # GraphCommandPort
@@ -266,7 +413,6 @@ class MockGraphAdapter(MockTenancyMixin):
         return_new: bool,
     ) -> BaseModel | None:
         edge = self._edge(edge_kind)
-        endpoint = edge.endpoints[0]
         data = cmd.model_dump(mode="json", exclude_none=True)
         from_key = data.pop("from_key", None)
         to_key = data.pop("to_key", None)
@@ -277,6 +423,9 @@ class MockGraphAdapter(MockTenancyMixin):
                 code="graph_edge_endpoints_required",
             )
 
+        # Single-endpoint kinds are implicit; multi-endpoint kinds name the pair via
+        # from_kind/to_kind (popped from ``data``).
+        endpoint = resolve_write_endpoint(edge, data)
         rec = {
             "kind": edge_kind,
             "from_kind": endpoint.from_kind,
@@ -290,11 +439,31 @@ class MockGraphAdapter(MockTenancyMixin):
             store = self._edges_store()
 
             if merge:
+                key_field = edge.key_field
+                edge_key = data.get(key_field) if key_field is not None else None
+
+                if key_field is not None and edge_key is None:
+                    raise exc.validation(
+                        f"Keyed edge command for {edge_kind!r} must include {key_field!r} "
+                        "to ensure a stable identity",
+                        code="graph_edge_key_required",
+                    )
+
                 for existing in store:
+                    # Identity includes the endpoint *kinds* (so two multi-endpoint edges with the
+                    # same key values but different kinds stay distinct) and, for a keyed edge kind,
+                    # the key value — mirroring Neo4j's ``MERGE (a)-[r:T {<key>}]->(b)`` so two
+                    # distinct keys between the same pair are separate edges, not collapsed into one.
                     if (
                         existing["kind"] == edge_kind
+                        and existing["from_kind"] == rec["from_kind"]
                         and existing["from_key"] == rec["from_key"]
+                        and existing["to_kind"] == rec["to_kind"]
                         and existing["to_key"] == rec["to_key"]
+                        and (
+                            key_field is None
+                            or existing["props"].get(key_field) == edge_key
+                        )
                     ):
                         return (
                             self._emodel(edge_kind, existing["props"])
@@ -318,25 +487,69 @@ class MockGraphAdapter(MockTenancyMixin):
     # Deferred
 
     async def get_vertices(self, refs: Sequence[VertexRef]) -> Sequence[BaseModel]:
-        raise _nyi("get_vertices")
+        if not refs:
+            return []
+
+        with self.state.lock:
+            verts = dict(self._verts())
+
+        # Input order, found-only (missing refs omitted — batch-get semantics).
+        return [
+            self._vmodel(ref.kind, verts[(ref.kind, ref.key)])
+            for ref in refs
+            if (ref.kind, ref.key) in verts
+        ]
 
     async def get_edges(self, refs: Sequence[EdgeRef]) -> Sequence[BaseModel]:
-        raise _nyi("get_edges")
+        if not refs:
+            return []
+
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        out: list[BaseModel] = []
+
+        for ref in refs:
+            rec = self._find_edge_rec(ref, edges)
+            if rec is not None:
+                out.append(self._emodel(ref.kind, rec["props"]))
+
+        return out
 
     async def edge_exists(self, ref: EdgeRef) -> bool:
-        raise _nyi("edge_exists")
+        with self.state.lock:
+            return self._find_edge_rec(ref, self._edges_store()) is not None
 
     async def count_vertices(
         self, node_kind: str, *, property_filter: JsonDict | None = None
     ) -> int:
-        del property_filter
-        raise _nyi("count_vertices")
+        node = self._node(node_kind)
+        self._validate_filter(property_filter, node.encryption)
+
+        with self.state.lock:
+            verts = list(self._verts().items())
+
+        return sum(
+            bool(kind == node_kind and self._matches(props, property_filter))
+            for (kind, _key), props in verts
+        )
 
     async def count_edges(
         self, edge_kind: str, *, property_filter: JsonDict | None = None
     ) -> int:
-        del property_filter
-        raise _nyi("count_edges")
+        edge = self._edge(edge_kind)
+        self._validate_filter(property_filter, edge.encryption)
+
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        return sum(
+            bool(
+                rec["kind"] == edge_kind
+                and self._matches(rec["props"], property_filter)
+            )
+            for rec in edges
+        )
 
     async def incident_edges(
         self,
@@ -346,7 +559,25 @@ class MockGraphAdapter(MockTenancyMixin):
         *,
         limit: int,
     ) -> Sequence[BaseModel]:
-        raise _nyi("incident_edges")
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        out: list[BaseModel] = []
+
+        for rec in edges:
+            if edge_kinds and rec["kind"] not in edge_kinds:
+                continue
+
+            other_kind, _other_key = _other_endpoint(rec, origin, direction)
+            if other_kind is None:
+                continue
+
+            out.append(self._emodel(rec["kind"], rec["props"]))
+
+            if len(out) >= limit:
+                break
+
+        return out
 
     async def k_shortest_paths(
         self,
@@ -366,8 +597,20 @@ class MockGraphAdapter(MockTenancyMixin):
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[BaseModel]:
-        del property_filter
-        raise _nyi("find_vertices")
+        node = self._node(node_kind)
+        self._validate_filter(property_filter, node.encryption)
+
+        with self.state.lock:
+            matches = [
+                (key, props)
+                for (kind, key), props in self._verts().items()
+                if kind == node_kind and self._matches(props, property_filter)
+            ]
+
+        # Order by key (matches Neo4j's ``ORDER BY n.<key_field>``) for stable pagination.
+        matches.sort(key=lambda item: item[0])
+        window = matches[offset : offset + limit]
+        return [self._vmodel(node_kind, props) for _key, props in window]
 
     async def find_edges(
         self,
@@ -377,8 +620,23 @@ class MockGraphAdapter(MockTenancyMixin):
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[BaseModel]:
-        del property_filter
-        raise _nyi("find_edges")
+        edge = self._edge(edge_kind)
+        self._validate_filter(property_filter, edge.encryption)
+
+        with self.state.lock:
+            matches = [
+                rec
+                for rec in self._edges_store()
+                if rec["kind"] == edge_kind
+                and self._matches(rec["props"], property_filter)
+            ]
+
+        if edge.key_field is not None:
+            key_field = edge.key_field
+            matches.sort(key=lambda rec: str(rec["props"].get(key_field)))
+
+        window = matches[offset : offset + limit]
+        return [self._emodel(edge_kind, rec["props"]) for rec in window]
 
     async def vertex_degree(
         self,
@@ -387,7 +645,14 @@ class MockGraphAdapter(MockTenancyMixin):
         direction: GraphDirection = GraphDirection.BOTH,
         edge_kinds: frozenset[str] | None = None,
     ) -> int:
-        raise _nyi("vertex_degree")
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        return sum(
+            not (edge_kinds and rec["kind"] not in edge_kinds)
+            and _other_endpoint(rec, ref, direction)[0] is not None
+            for rec in edges
+        )
 
     async def count_neighbors(
         self,
@@ -396,34 +661,122 @@ class MockGraphAdapter(MockTenancyMixin):
         direction: GraphDirection = GraphDirection.BOTH,
         edge_kinds: frozenset[str] | None = None,
     ) -> int:
-        raise _nyi("count_neighbors")
+        with self.state.lock:
+            edges = list(self._edges_store())
+
+        neighbors: set[tuple[str, str]] = set()
+
+        for rec in edges:
+            if edge_kinds and rec["kind"] not in edge_kinds:
+                continue
+
+            other_kind, other_key = _other_endpoint(rec, ref, direction)
+            if other_kind is not None and other_key is not None:
+                neighbors.add((other_kind, other_key))
+
+        return len(neighbors)
 
     async def update_edge(self, ref: EdgeRef, cmd: BaseModel) -> BaseModel:
-        raise _nyi("update_edge")
+        patch = cmd.model_dump(mode="json", exclude_none=True)
+        patch.pop("from_key", None)
+        patch.pop("to_key", None)
+
+        with self.state.lock:
+            rec = self._find_edge_rec(ref, self._edges_store())
+
+            if rec is None:
+                raise exc.not_found(
+                    f"Edge {ref.kind!r} not found", code="graph_edge_not_found"
+                )
+
+            rec["props"] = {**rec["props"], **patch}
+            merged = rec["props"]
+
+        return self._emodel(ref.kind, merged)
 
     async def delete_edge(self, ref: EdgeRef) -> None:
-        raise _nyi("delete_edge")
+        with self.state.lock:
+            store = self._edges_store()
+            rec = self._find_edge_rec(ref, store)
+
+            if rec is not None:
+                store.remove(rec)
 
     async def create_vertices(
         self, items: Sequence[tuple[str, BaseModel]], *, return_new: bool = True
     ) -> Sequence[BaseModel] | None:
-        raise _nyi("create_vertices")
+        if not items:
+            return [] if return_new else None
+
+        stored: list[tuple[str, JsonDict]] = []
+
+        with self.state.lock:
+            verts = self._verts()
+
+            for kind, cmd in items:
+                node = self._node(kind)
+                props = cmd.model_dump(mode="json", exclude_none=True)
+                verts[(kind, str(props[node.key_field]))] = props
+                stored.append((kind, props))
+
+        if not return_new:
+            return None
+
+        return [self._vmodel(kind, props) for kind, props in stored]
 
     async def create_edges(
         self, items: Sequence[tuple[str, BaseModel]], *, return_new: bool = True
     ) -> Sequence[BaseModel] | None:
-        raise _nyi("create_edges")
+        if not items:
+            return [] if return_new else None
+
+        created: list[BaseModel] = []
+
+        for kind, cmd in items:
+            edge = await self.create_edge(kind, cmd, return_new=return_new)
+            if return_new and edge is not None:
+                created.append(edge)
+
+        return created if return_new else None
 
     async def ensure_vertex(
         self, node_kind: str, cmd: BaseModel, *, return_new: bool = True
     ) -> BaseModel | None:
-        raise _nyi("ensure_vertex")
+        node = self._node(node_kind)
+        props = cmd.model_dump(mode="json", exclude_none=True)
+        key = str(props[node.key_field])
+
+        with self.state.lock:
+            verts = self._verts()
+            existing = verts.get((node_kind, key))
+
+            if existing is None:
+                verts[(node_kind, key)] = props
+                stored = props
+            else:
+                stored = existing  # create-if-missing: existing returned unchanged
+
+        return self._vmodel(node_kind, stored) if return_new else None
 
     async def delete_vertices(self, refs: Sequence[VertexRef]) -> None:
-        raise _nyi("delete_vertices")
+        if not refs:
+            return
+
+        with self.state.lock:
+            verts = self._verts()
+            for ref in refs:
+                verts.pop((ref.kind, ref.key), None)
 
     async def delete_edges(self, refs: Sequence[EdgeRef]) -> None:
-        raise _nyi("delete_edges")
+        if not refs:
+            return
+
+        with self.state.lock:
+            store = self._edges_store()
+            for ref in refs:
+                rec = self._find_edge_rec(ref, store)
+                if rec is not None:
+                    store.remove(rec)
 
 
 # ----------------------- #
@@ -442,7 +795,235 @@ def _other_endpoint(
     if direction in (GraphDirection.OUT, GraphDirection.BOTH) and out_match:
         return rec["to_kind"], rec["to_key"]
 
-    if direction in (GraphDirection.IN, GraphDirection.BOTH) and in_match:
-        return rec["from_kind"], rec["from_key"]
+    return (
+        (rec["from_kind"], rec["from_key"])
+        if direction in (GraphDirection.IN, GraphDirection.BOTH) and in_match
+        else (None, None)
+    )
 
-    return None, None
+
+# ....................... #
+# In-memory traversal core (expand / shortest_path / scoped_walk)
+
+_Node = tuple[str, str]
+_Adjacency = dict[_Node, list[tuple[int, JsonDict, _Node]]]
+
+
+def _adjacency(
+    edges: Sequence[JsonDict],
+    direction: GraphDirection,
+    edge_kinds: frozenset[str],
+) -> _Adjacency:
+    """Node -> outgoing ``(edge_index, edge_rec, neighbor_node)`` under *direction*/kinds."""
+
+    adj: _Adjacency = {}
+
+    for idx, rec in enumerate(edges):
+        if edge_kinds and rec["kind"] not in edge_kinds:
+            continue
+
+        frm: _Node = (rec["from_kind"], rec["from_key"])
+        to: _Node = (rec["to_kind"], rec["to_key"])
+
+        if direction in (GraphDirection.OUT, GraphDirection.BOTH):
+            adj.setdefault(frm, []).append((idx, rec, to))
+        if direction in (GraphDirection.IN, GraphDirection.BOTH):
+            adj.setdefault(to, []).append((idx, rec, frm))
+
+    return adj
+
+
+def _enumerate_expand(
+    start: _Node,
+    adj: _Adjacency,
+    verts: dict[_Node, JsonDict],
+    max_depth: int,
+) -> list[tuple[int, _Node, _Node, JsonDict]]:
+    """All relationship-simple paths of length 1..max_depth as ``(depth, node, parent, edge)``.
+
+    Relationship-simple mirrors Neo4j's ``*1..d`` (no edge repeated within a path; nodes may
+    repeat). Only steps onto existing vertices are emitted.
+    """
+
+    steps: list[tuple[int, _Node, _Node, JsonDict]] = []
+    frontier: list[tuple[_Node, frozenset[int]]] = [(start, frozenset())]
+
+    for depth in range(1, max_depth + 1):
+        nxt: list[tuple[_Node, frozenset[int]]] = []
+
+        for term, used in frontier:
+            for idx, rec, neighbor in adj.get(term, ()):
+                if idx in used or neighbor not in verts:
+                    continue
+                steps.append((depth, neighbor, term, rec))
+                nxt.append((neighbor, used | {idx}))
+
+        frontier = nxt
+
+    return steps
+
+
+def _reconstruct(
+    dst: _Node,
+    prev: dict[_Node, tuple[_Node, JsonDict] | None],
+    max_hops: int,
+) -> tuple[list[_Node], list[JsonDict]] | None:
+    nodes: list[_Node] = []
+    edges: list[JsonDict] = []
+    cur: _Node | None = dst
+
+    while cur is not None:  # pyright: ignore[reportUnnecessaryComparison]
+        nodes.append(cur)
+        link = prev[cur]
+
+        if link is None:
+            break
+
+        parent, rec = link
+        edges.append(rec)
+        cur = parent
+
+    nodes.reverse()
+    edges.reverse()
+
+    # shortest path exceeds the hop bound -> none qualifies
+    return None if len(edges) > max_hops else (nodes, edges)
+
+
+def _bfs_shortest(
+    src: _Node,
+    dst: _Node,
+    adj: _Adjacency,
+    verts: dict[_Node, JsonDict],
+    max_hops: int,
+) -> tuple[list[_Node], list[JsonDict]] | None:
+    """Fewest-hops path src -> dst (breadth-first)."""
+
+    prev: dict[_Node, tuple[_Node, JsonDict] | None] = {src: None}
+    queue: deque[_Node] = deque([src])
+
+    while queue:
+        node = queue.popleft()
+        if node == dst:
+            break
+        for _idx, rec, neighbor in adj.get(node, ()):
+            if neighbor in prev or neighbor not in verts:
+                continue
+            prev[neighbor] = (node, rec)
+            queue.append(neighbor)
+
+    return None if dst not in prev else _reconstruct(dst, prev, max_hops)
+
+
+def _dijkstra_shortest(
+    src: _Node,
+    dst: _Node,
+    adj: _Adjacency,
+    verts: dict[_Node, JsonDict],
+    weight_property: str,
+    max_hops: int,
+) -> tuple[list[_Node], list[JsonDict]] | None:
+    """Least-cost path src -> dst (summed edge ``weight_property``) using at most ``max_hops`` edges.
+
+    Dijkstra over ``(node, hops)`` states so ``max_hops`` bounds the *search*: the cheapest path
+    *within* the bound is returned even when a cheaper path exists only beyond it. A plain
+    cheapest-then-reject (global cheapest, drop if too long) would instead return nothing when a
+    cheaper over-long path pre-empts a valid bounded one.
+    """
+
+    # State is (node, hops-so-far); popping in cost order means the first settled state on ``dst``
+    # is the cheapest path reaching it within the bound.
+    dist: dict[tuple[_Node, int], float] = {(src, 0): 0.0}
+    prev: dict[tuple[_Node, int], tuple[_Node, int, JsonDict] | None] = {(src, 0): None}
+    heap: list[tuple[float, int, tuple[_Node, int]]] = [(0.0, 0, (src, 0))]
+    counter = 1
+    settled: set[tuple[_Node, int]] = set()
+
+    while heap:
+        cost, _, state = heapq.heappop(heap)
+        if state in settled:
+            continue
+        settled.add(state)
+        node, hops = state
+
+        if node == dst:
+            return _reconstruct_hopped(state, prev)
+
+        if hops >= max_hops:
+            continue
+
+        for _idx, rec, neighbor in adj.get(node, ()):
+            if neighbor not in verts:
+                continue
+            weight = float(rec["props"].get(weight_property, 0.0) or 0.0)
+            nxt = (neighbor, hops + 1)
+            new_cost = cost + weight
+            if nxt not in dist or new_cost < dist[nxt]:
+                dist[nxt] = new_cost
+                prev[nxt] = (node, hops, rec)
+                heapq.heappush(heap, (new_cost, counter, nxt))
+                counter += 1
+
+    return None
+
+
+def _reconstruct_hopped(
+    dst_state: tuple[_Node, int],
+    prev: dict[tuple[_Node, int], tuple[_Node, int, JsonDict] | None],
+) -> tuple[list[_Node], list[JsonDict]]:
+    """Walk the ``(node, hops)`` predecessor chain back to the source."""
+
+    nodes: list[_Node] = []
+    edges: list[JsonDict] = []
+    cur: tuple[_Node, int] | None = dst_state
+
+    while cur is not None:  # pyright: ignore[reportUnnecessaryComparison]
+        nodes.append(cur[0])
+        link = prev[cur]
+
+        if link is None:
+            break
+
+        parent, parent_hops, rec = link
+        edges.append(rec)
+        cur = (parent, parent_hops)
+
+    nodes.reverse()
+    edges.reverse()
+
+    return nodes, edges
+
+
+def _advance_segment(
+    frontier: set[tuple[_Node, frozenset[int]]],
+    step: GraphPathStep,
+    adj: _Adjacency,
+    verts: dict[_Node, JsonDict],
+) -> set[tuple[_Node, frozenset[int]]]:
+    """Advance each ``(node, used_edges)`` by one ``*min..max`` segment (edge-simple)."""
+
+    min_hops: int = step.min_hops
+    max_hops: int = step.max_hops
+    results: set[tuple[_Node, frozenset[int]]] = set()
+
+    for start_node, used0 in frontier:
+        current: set[tuple[_Node, frozenset[int]]] = {(start_node, used0)}
+
+        if min_hops == 0:
+            results |= current
+
+        for hop in range(1, max_hops + 1):
+            nxt: set[tuple[_Node, frozenset[int]]] = set()
+
+            for node, used in current:
+                for idx, _rec, neighbor in adj.get(node, ()):
+                    if idx in used or neighbor not in verts:
+                        continue
+
+                    nxt.add((neighbor, used | frozenset({idx})))
+
+            current = nxt
+            if hop >= min_hops:
+                results |= current
+
+    return results

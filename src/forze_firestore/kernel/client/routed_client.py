@@ -155,6 +155,15 @@ class RoutedFirestoreClient(
         inner = await self._get_client()
         await inner.set_document(coll, doc_id, data, merge=merge)
 
+    async def create_document(
+        self,
+        coll: AsyncCollectionReference,
+        doc_id: str,
+        data: Mapping[str, Any],
+    ) -> None:
+        inner = await self._get_client()
+        await inner.create_document(coll, doc_id, data)
+
     async def delete_document(
         self,
         coll: AsyncCollectionReference,
@@ -218,6 +227,9 @@ class RoutedFirestoreClient(
         documents: Sequence[tuple[str, Mapping[str, Any]]],
         *,
         batch_size: int = 200,
+        create_only: bool = False,
     ) -> None:
         inner = await self._get_client()
-        await inner.insert_many(coll, documents, batch_size=batch_size)
+        await inner.insert_many(
+            coll, documents, batch_size=batch_size, create_only=create_only
+        )

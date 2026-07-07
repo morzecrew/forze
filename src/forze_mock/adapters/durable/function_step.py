@@ -67,7 +67,7 @@ class MockDurableFunctionStepAdapter(DurableFunctionStepPort):
             # an at-least-once effect under a reclaimed lease; keep step bodies idempotent.)
             memo = self.state.durable_step_memo
             if key not in memo:
-                memo[key] = result  # type: ignore[arg-type]
+                memo[key] = result
             winner = memo[key]
 
         record(
