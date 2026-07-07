@@ -1068,6 +1068,11 @@ class RabbitMQClient(RabbitMQClientPort):
         ``max_deliveries`` parking reachable). Publish-then-ack preserves at-least-once: a crash in
         the window redelivers the original *and* the republished copy, which consumer inbox dedup
         collapses (the message id is preserved). Moves the message to the queue tail.
+
+        A per-message republish failure is isolated, not fatal to the batch: only the originals
+        whose copy actually reached the broker are acked. An original whose republish failed is
+        left **unacked** so the broker redelivers it (acking it would drop the message — the copy
+        never landed); a duplicate from a partially-published batch is collapsed by inbox dedup.
         """
 
         delivery_mode = (
@@ -1078,18 +1083,37 @@ class RabbitMQClient(RabbitMQClientPort):
 
         async with self.channel() as channel:
             await self.__declare_queue(channel, queue)
-            await asyncio.gather(
+            publish_results = await asyncio.gather(
                 *(
                     channel.default_exchange.publish(
                         self.__with_incremented_delivery(raw, delivery_mode),
                         routing_key=queue,
                     )
                     for raw in raws
-                )
+                ),
+                return_exceptions=True,
             )
 
-        # Ack the originals only after the republished copies are on the broker.
-        await asyncio.gather(*(raw.ack() for raw in raws))
+        # Ack only the originals whose republished copy is on the broker; leave a failed-republish
+        # original unacked for broker redelivery (never ack it — that would lose the message).
+        republished: list[AbstractIncomingMessage] = []
+        for raw, result in zip(raws, publish_results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "RabbitMQ counted requeue: republish failed for message %s on queue %s; "
+                    "leaving it unacked for broker redelivery: %s",
+                    raw.message_id,
+                    queue,
+                    result,
+                )
+            else:
+                republished.append(raw)
+
+        # Best-effort acks: a failed ack just redelivers the original (inbox dedup collapses it).
+        if republished:
+            await asyncio.gather(
+                *(raw.ack() for raw in republished), return_exceptions=True
+            )
 
     @staticmethod
     def __with_incremented_delivery(
