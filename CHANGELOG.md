@@ -191,6 +191,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Durable-execution & broker failure paths**
+
+- **Temporal — saga failures fail the workflow; deterministic clock survives a plain import** — `TemporalSaga` now converts a saga `CoreException` (`saga.step_failed` / `saga.forward_incomplete`) into a `temporalio.ApplicationError` (`non_retryable` from the framework's per-kind retryability policy), so an *uncaught* saga failure reaches `FAILED` instead of failing the workflow *task* and retrying forever. The replay-deterministic clock is fixed for a workflow that imports forze without `workflow.unsafe.imports_passed_through()`: `forze.base.primitives` is passed through the sandbox so `utcnow()` / `uuid7()` read the interceptor-bound source (were silently the wall clock, or hung the task on a restricted re-import).
+- **Inngest — deterministic failures stop retrying** — a malformed event (`ValidationError`) or a non-retryable `CoreException` from a durable-function handler now raises `inngest.NonRetriableError` (retryability from the same per-kind policy), so Inngest stops retrying a failure that can never converge; retryable kinds (infrastructure / throttled / concurrency) still propagate for Inngest's own retry.
+- **SQS — one poison message no longer poisons the receive batch; louder, fail-closed edges** — `receive()` isolates a per-message base64-decode failure (skip + log, left in-flight for the queue's redrive → DLQ) instead of aborting the whole batch and stranding the good messages; `consume()` now logs a receive failure before backing off; a per-message delay on a FIFO queue (`sqs.fifo_per_message_delay`) and an over-length queue name (`sqs.queue_name_too_long`) fail closed instead of a silent SQS rejection or name-truncation aliasing distinct queues.
+
 **Reliability hardening — durability, shutdown, resilience**
 
 - **Deadlines enforced at the database driver** — a bound deadline sets Postgres `SET LOCAL statement_timeout` (in-tx) and wraps each Mongo op in `pymongo.timeout` (CSOT), remaining-budget + grace, tighten-only; a loose `asyncio.timeout` backstop still fires first so the server cancels the query and returns the connection clean. `push_invocation_deadline` kill switch. (PG autocommit stays asyncio-only.)

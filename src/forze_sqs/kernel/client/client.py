@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_delay
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import clamp, uuid4
 
 from .._logger import logger
@@ -292,19 +292,25 @@ class SQSClient(SQSClientPort):
     def __sanitize_queue_name(queue: str) -> str:
         """Normalize queue name for SQS-compatible backends.
 
-        Replaces unsupported characters with ``_`` and preserves ``.fifo`` suffix.
+        Replaces unsupported characters with ``_`` and preserves the ``.fifo`` suffix. Fails
+        closed on an over-length name rather than truncating: SQS caps a queue name at 80 chars
+        (75 + ``.fifo`` for FIFO), and silently truncating would let two distinct logical names
+        collapse onto one physical queue (cross-talk).
         """
         is_fifo = queue.endswith(".fifo")
         base = queue[:-5] if is_fifo else queue
         base = _RE_UNSUPPORTED_CHARS.sub("_", base)
         base = _RE_MULTI_UNDERSCORE.sub("_", base).strip("_") or "queue"
 
-        if is_fifo:
-            max_base = 75  # 80 - len(".fifo")
-            base = base[:max_base]
-            return f"{base}.fifo"
+        max_base = 75 if is_fifo else 80
+        if len(base) > max_base:
+            raise exc.precondition(
+                f"SQS queue name {queue!r} exceeds the {max_base}-char limit after "
+                f"sanitization ({base!r}); shorten it — truncating would alias distinct queues.",
+                code="sqs.queue_name_too_long",
+            )
 
-        return base[:80]
+        return f"{base}.fifo" if is_fifo else base
 
     # ....................... #
 
@@ -837,6 +843,15 @@ class SQSClient(SQSClientPort):
             delay=delay, not_before=not_before
         )
 
+        if is_fifo and delay_seconds is not None:
+            # SQS rejects per-message DelaySeconds on a FIFO queue (only a queue-level delay is
+            # allowed there), so the whole batch send would fail — fail closed with a clear reason.
+            raise exc.precondition(
+                f"SQS FIFO queue {queue!r} does not support per-message delay; configure a "
+                "queue-level delay or send to a standard queue.",
+                code="sqs.fifo_per_message_delay",
+            )
+
         def _entries_for_chunk(
             chunk: list[bytes],
             chunk_ids: list[str],
@@ -1046,8 +1061,8 @@ class SQSClient(SQSClientPort):
             system_attrs = raw.get("Attributes")
             system_attrs = system_attrs if isinstance(system_attrs, dict) else None
 
-            out.append(
-                SQSQueueMessage(
+            try:
+                message = SQSQueueMessage(
                     queue=queue,
                     id=message_id,
                     receipt_handle=receipt,
@@ -1058,7 +1073,20 @@ class SQSClient(SQSClientPort):
                     headers=self.__extract_headers(attrs_),  # type: ignore[arg-type]
                     delivery_count=self.__extract_delivery_count(system_attrs),  # type: ignore[arg-type]
                 )
-            )
+            except CoreException as e:
+                # A malformed message (e.g. a non-base64 body) must not poison the rest of the
+                # batch. Skip it — left in-flight, so SQS redelivery and the queue's redrive
+                # policy (maxReceiveCount → DLQ) handle the poison — while the good messages in
+                # this batch are still returned and registered for ack/nack.
+                logger.warning(
+                    "SQS message %s on queue %s could not be decoded, skipping: %s",
+                    message_id,
+                    queue,
+                    e,
+                )
+                continue
+
+            out.append(message)
 
         if out:
             async with self.__pending_lock:
@@ -1121,9 +1149,15 @@ class SQSClient(SQSClientPort):
                     timeout=timedelta(seconds=wait_seconds),
                 )
 
-            except Exception:
-                # Back off so a persistently failing receive does not
-                # hot-loop; the idle deadline (when set) still terminates.
+            except Exception as e:  # noqa: BLE001 — surface + back off, never hot-loop silently
+                # Log so a persistently failing receive is observable rather than a silent retry
+                # loop, then back off; the idle deadline (when set) still terminates.
+                logger.warning(
+                    "SQS consume receive failed on queue %s; backing off %.1fs: %s",
+                    queue,
+                    backoff,
+                    e,
+                )
                 await asyncio.sleep(backoff)
 
                 backoff = min(backoff * 2, _CONSUME_ERROR_BACKOFF_MAX)

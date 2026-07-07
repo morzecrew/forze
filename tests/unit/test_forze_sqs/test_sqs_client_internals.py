@@ -22,14 +22,20 @@ def test_sanitize_queue_name_replaces_invalid_chars() -> None:
     assert s("my@queue") == "my_queue"
     assert s("___only___bad___") == "only_bad"
     assert s("!@#") == "queue"
-    assert s("a" * 100) == "a" * 80
+    assert s("a" * 80) == "a" * 80  # exactly at the 80-char limit is fine
+    assert s("x" * 75 + ".fifo") == "x" * 75 + ".fifo"  # FIFO base limit (75) is fine
 
-def test_sanitize_fifo_truncates_base() -> None:
+def test_sanitize_over_length_fails_closed() -> None:
+    # Truncating would let two distinct logical names alias onto one physical queue; fail closed.
     s = SQSClient._SQSClient__sanitize_queue_name
-    long_base = "x" * 90
-    out = s(f"{long_base}.fifo")
-    assert out.endswith(".fifo")
-    assert len(out) == 80
+
+    with pytest.raises(CoreException) as ei:
+        s("a" * 81)
+    assert ei.value.code == "sqs.queue_name_too_long"
+
+    with pytest.raises(CoreException) as ei_fifo:
+        s("x" * 76 + ".fifo")  # FIFO base exceeds 75
+    assert ei_fifo.value.code == "sqs.queue_name_too_long"
 
 def test_is_fifo_target() -> None:
     fifo = SQSClient._SQSClient__is_fifo_target

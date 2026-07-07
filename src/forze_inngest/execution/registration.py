@@ -11,7 +11,7 @@ from typing import Any, Callable, Generic, Iterator, Self, Sequence, TypeVar, fi
 
 import attrs
 import inngest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.durable.function import (
@@ -28,7 +28,7 @@ from forze.application.execution.context import (
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze.application.execution.operations.run import handler_for_registry_operation
 from forze.application.integrations.crypto import is_encrypted_payload
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc, exception_egress_policy
 
 from ..adapters.context import (
     InngestDecodedContext,
@@ -200,7 +200,15 @@ def _register_one(
             )
             payload = await open_event_payload(cipher, payload, tenant=envelope.tenant)
 
-        args = binding.spec.run.args_type.model_validate(payload)
+        try:
+            args = binding.spec.run.args_type.model_validate(payload)
+        except ValidationError as e:
+            # A malformed event is deterministic — retrying it forever never converges, so tell
+            # Inngest to stop.
+            raise inngest.NonRetriableError(
+                f"Invalid event payload for {spec.name!r}: {e}"
+            ) from e
+
         step_token = bind_inngest_step(ctx.step)
 
         logger.debug("Inngest function invoked", function=str(spec.name))
@@ -209,6 +217,14 @@ def _register_one(
             with _bind_invocation(execution_ctx, envelope):
                 handler = handler_factory(execution_ctx)
                 return await handler(args)
+
+        except CoreException as e:
+            # Map a non-retryable-per-policy failure (validation/domain/precondition/auth/…) to
+            # Inngest's NonRetriableError so it stops retrying; retryable kinds (infrastructure,
+            # throttled, concurrency) propagate unchanged so Inngest's own retry policy applies.
+            if not exception_egress_policy(e.kind).retryable:
+                raise inngest.NonRetriableError(str(e)) from e
+            raise
 
         finally:
             reset_inngest_step(step_token)
