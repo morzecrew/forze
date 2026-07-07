@@ -1,6 +1,7 @@
 """InngestFunctionConfig forwards function-level controls (retries / idempotency / …) into the
 SDK's ``create_function``; an unset config leaves the SDK defaults untouched."""
 
+from datetime import timedelta
 from typing import Any
 
 import inngest
@@ -57,6 +58,38 @@ def test_function_config_forwarded_to_sdk() -> None:
     opts = fn._opts  # pyright: ignore[reportPrivateUsage]
     assert opts.retries == 5
     assert opts.idempotency == "event.data.id"
+
+
+def test_all_function_config_fields_forwarded_to_sdk() -> None:
+    # Every field must reach ``sdk.create_function`` — a dropped/renamed forward would silently
+    # ignore the control, so pin each one through ``fn._opts``.
+    config = InngestFunctionConfig(
+        retries=5,
+        idempotency="event.data.id",
+        concurrency=[inngest.Concurrency(limit=2)],
+        rate_limit=inngest.RateLimit(limit=5, period=timedelta(seconds=60)),
+        throttle=inngest.Throttle(limit=4, period=timedelta(seconds=30)),
+        priority=inngest.Priority(run="event.data.p"),
+        debounce=inngest.Debounce(period=timedelta(seconds=10)),
+        batch_events=inngest.Batch(max_size=10, timeout=timedelta(seconds=5)),
+        timeouts=inngest.Timeouts(start=timedelta(seconds=7)),
+        singleton=inngest.Singleton(key="event.data.id", mode="skip"),
+        cancel=[inngest.Cancel(event="app/cancel")],
+    )
+
+    opts = _register(config)._opts  # pyright: ignore[reportPrivateUsage]
+
+    assert opts.concurrency == [inngest.Concurrency(limit=2)]
+    assert opts.rate_limit == inngest.RateLimit(limit=5, period=timedelta(seconds=60))
+    assert opts.throttle == inngest.Throttle(limit=4, period=timedelta(seconds=30))
+    assert opts.priority == inngest.Priority(run="event.data.p")
+    assert opts.debounce == inngest.Debounce(period=timedelta(seconds=10))
+    assert opts.batch_events == inngest.Batch(
+        max_size=10, timeout=timedelta(seconds=5)
+    )
+    assert opts.timeouts == inngest.Timeouts(start=timedelta(seconds=7))
+    assert opts.singleton == inngest.Singleton(key="event.data.id", mode="skip")
+    assert opts.cancel == [inngest.Cancel(event="app/cancel")]
 
 
 def test_no_config_leaves_sdk_defaults() -> None:

@@ -781,6 +781,11 @@ class SQSClient(SQSClientPort):
         publish can give each message distinct attributes (and distinct dedup
         ids). ``None`` keeps every entry on the shared *headers*.
 
+        A FIFO target rejects a per-message *delay* / *not_before* — SQS allows only a
+        queue-level delay on a FIFO queue — so it raises ``sqs.fifo_per_message_delay`` rather
+        than letting the broker reject the whole batch; use a queue-level delay or a standard
+        queue.
+
         Splits into chunks bounded by **both** the 10-entry count
         (:data:`_SQS_SEND_MESSAGE_BATCH_MAX`) and *max_batch_payload_bytes* (the queue's total
         request-payload limit; default :data:`SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES` = 256 KiB,

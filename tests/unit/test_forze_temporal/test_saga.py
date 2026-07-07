@@ -38,6 +38,27 @@ async def test_step_failure_before_pivot_raises_non_retryable_application_error(
     assert isinstance(err.__cause__, Exception)  # original error chained
 
 
+async def test_pre_pivot_compensation_failure_raises_compensation_failed() -> None:
+    saga = TemporalSaga(name="checkout")
+
+    async def _bad_comp() -> None:
+        # The rollback itself fails — the system may be inconsistent.
+        raise exc.infrastructure("rollback down", code="reserve.rollback_failed")
+
+    await saga.step("reserve", lambda: _ok("r"), compensation=_bad_comp)
+
+    async def _boom() -> str:
+        raise exc.validation("bad charge", code="charge.invalid")
+
+    with pytest.raises(ApplicationError) as ei:
+        await saga.step("charge", _boom)
+
+    err = ei.value
+    assert err.type == "saga.compensation_failed"  # rollback failed, not a clean step_failed
+    assert err.non_retryable is False  # infrastructure outcome stays retryable per policy
+    assert isinstance(err.__cause__, Exception)  # original step error chained
+
+
 async def test_forward_failure_after_pivot_raises_retryable_application_error() -> None:
     saga = TemporalSaga(name="checkout")
 

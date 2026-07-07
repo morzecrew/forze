@@ -105,10 +105,12 @@ class InngestFunctionBinding(Generic[In, Out]):
         cls,
         spec: DurableFunctionSpec[In, Out],
         registry: FrozenOperationRegistry,
+        *,
+        config: InngestFunctionConfig | None = None,
     ) -> Self:
         """Bind *spec* with :attr:`~DurableFunctionSpec.operation` to *registry*."""
 
-        return cls(spec=spec, registry=registry)
+        return cls(spec=spec, registry=registry, config=config)
 
 
 # ....................... #
@@ -161,6 +163,24 @@ def _bind_invocation(
             tenant=tenant,
         ):
             yield
+
+
+# ....................... #
+
+
+def _as_non_retriable(e: CoreException) -> "inngest.NonRetriableError | None":
+    """Map a per-policy *terminal* failure to ``NonRetriableError``, else ``None``.
+
+    A non-retryable-per-policy failure (validation / domain / precondition / auth / a
+    forged-tenant AEAD open / …) won't converge on retry, so Inngest should stop. Retryable kinds
+    (infrastructure, throttled, concurrency) return ``None`` so they propagate unchanged and
+    Inngest's own retry policy applies.
+    """
+
+    if not exception_egress_policy(e.kind).retryable:
+        return inngest.NonRetriableError(str(e))
+
+    return None
 
 
 # ....................... #
@@ -251,7 +271,17 @@ def _register_one(
                 if execution_ctx.deps.exists(KeyringDepKey)
                 else None
             )
-            payload = await open_event_payload(cipher, payload, tenant=envelope.tenant)
+            try:
+                payload = await open_event_payload(
+                    cipher, payload, tenant=envelope.tenant
+                )
+            except CoreException as e:
+                # A forged tenant / tampered ciphertext fails the AEAD open deterministically —
+                # retrying never converges. Map a terminal decrypt failure to NonRetriableError
+                # so Inngest stops; a retryable kind (e.g. a transient key fetch) propagates.
+                if (non_retriable := _as_non_retriable(e)) is not None:
+                    raise non_retriable from e
+                raise
 
         try:
             args = binding.spec.run.args_type.model_validate(payload)
@@ -277,8 +307,8 @@ def _register_one(
             # Map a non-retryable-per-policy failure (validation/domain/precondition/auth/…) to
             # Inngest's NonRetriableError so it stops retrying; retryable kinds (infrastructure,
             # throttled, concurrency) propagate unchanged so Inngest's own retry policy applies.
-            if not exception_egress_policy(e.kind).retryable:
-                raise inngest.NonRetriableError(str(e)) from e
+            if (non_retriable := _as_non_retriable(e)) is not None:
+                raise non_retriable from e
             raise
 
         finally:

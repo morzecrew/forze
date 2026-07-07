@@ -323,6 +323,11 @@ class RabbitMQClient(RabbitMQClientPort):
         A message rejected on a work queue (``nack(requeue=False)`` — an undecodable /
         schema-drift message) is dead-lettered to the DLX and lands in ``<dlx>.dlq`` rather than
         being silently discarded. Idempotent (declares are declarative).
+
+        The DLQ is declared **without** retention bounds (no ``x-message-ttl`` / ``x-max-length``)
+        on purpose: it exists to *retain* poison for inspection, and a bound would silently drop
+        the very messages the DLX captured. Operators who need to cap it should set an explicit
+        RabbitMQ policy (TTL / max-length / overflow) on ``<dlx>.dlq`` and alert on its depth.
         """
 
         dlx = self.__config.dead_letter_exchange

@@ -138,6 +138,18 @@ class TestPendingWatermark:
         with pytest.raises(CoreException):
             RabbitMQConfig(pending_watermark=0)
 
+    def test_redelivery_counting_requires_publisher_confirms(self) -> None:
+        # Counted requeue republishes then acks the original — fire-and-forget publishing
+        # (no confirms) would ack a message that never reached the broker. Reject the combo.
+        from forze.base.exceptions import CoreException
+
+        with pytest.raises(CoreException):
+            RabbitMQConfig(redelivery_counting=True, publisher_confirms=False)
+
+        # The safe combinations still construct.
+        RabbitMQConfig(redelivery_counting=True)  # publisher_confirms defaults True
+        RabbitMQConfig(redelivery_counting=False, publisher_confirms=False)
+
     # ....................... #
 
     @staticmethod

@@ -60,3 +60,12 @@ class RabbitMQConfig:
 
         if self.pending_watermark <= 0:
             raise exc.configuration("Pending watermark must be positive")
+
+        if self.redelivery_counting and not self.publisher_confirms:
+            # Counted requeue republishes the message and then acks the original. Without
+            # publisher confirms the republish is fire-and-forget, so a publish that never
+            # reaches the broker would still ack the original — dropping the message. The
+            # publish-then-ack at-least-once guarantee only holds under publisher confirms.
+            raise exc.configuration(
+                "redelivery_counting requires publisher_confirms",
+            )
