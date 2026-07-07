@@ -22,7 +22,10 @@ def test_no_redis_typing_import() -> None:
     offenders = [
         str(path.relative_to(_SRC))
         for path in _SRC.rglob("*.py")
-        if "from redis.typing import" in path.read_text()
+        if any(
+            marker in path.read_text()
+            for marker in ("from redis.typing import", "import redis.typing")
+        )
     ]
     assert offenders == [], f"redis.typing imported in: {offenders}"
 

@@ -165,7 +165,9 @@ class MockGraphAdapter(MockTenancyMixin):
                 for rec in edges
                 if (
                     rec["kind"] == ref.kind
+                    and rec["from_kind"] == ref.from_ref.kind
                     and rec["from_key"] == ref.from_ref.key
+                    and rec["to_kind"] == ref.to_ref.kind
                     and rec["to_key"] == ref.to_ref.key
                 )
             ),
@@ -792,8 +794,6 @@ def _other_endpoint(
 
     if direction in (GraphDirection.OUT, GraphDirection.BOTH) and out_match:
         return rec["to_kind"], rec["to_key"]
-
-    in_match = rec["to_kind"] == origin.kind and rec["to_key"] == origin.key
 
     return (
         (rec["from_kind"], rec["from_key"])

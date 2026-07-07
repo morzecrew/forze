@@ -1320,8 +1320,11 @@ class Neo4jGraphAdapter(TenancyMixin):
                 database=database,
             )
 
-            for (idx, _props), row in zip(entries, rows, strict=True):
-                results[idx] = await self._vertex_model(kind, row["n"])
+            # Skip the per-row decode/decrypt unless the caller wants the models back — the
+            # insert above is the only work a ``return_new=False`` bulk create needs.
+            if return_new:
+                for (idx, _props), row in zip(entries, rows, strict=True):
+                    results[idx] = await self._vertex_model(kind, row["n"])
 
         if not return_new:
             return None

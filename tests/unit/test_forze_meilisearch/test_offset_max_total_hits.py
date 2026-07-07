@@ -83,6 +83,19 @@ async def test_window_past_max_total_hits_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_missing_limit_counts_meili_default_toward_window() -> None:
+    # A window without an explicit ``limit`` still reads Meilisearch's default page (20), so
+    # offset 990 actually reaches 1010 > 1000 — the guard must fail closed rather than treat the
+    # missing limit as 0 and undercount the window.
+    hooks = _hooks({"offset": 990})  # far edge 990 + default 20 = 1010 > 1000
+
+    with pytest.raises(CoreException) as ei:
+        await hooks.fetch_rows(MagicMock(), want_snap=False)
+
+    assert ei.value.code == "core.search.max_total_hits_exceeded"
+
+
+@pytest.mark.asyncio
 async def test_window_within_cap_does_not_trip_the_guard() -> None:
     # far edge 900 <= 1000; the guard passes and the (mock) search is reached.
     hooks = _hooks({"offset": 850, "limit": 50})

@@ -47,11 +47,17 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
     relay (or a deployment that pins each ``ordering_key`` to one relay, e.g. partition
     affinity). Within one relay's claim, rows are emitted in ``hlc``/``created_at`` order.
 
-    **Recommended index.** Back :meth:`claim_pending`
+    **Recommended index.** Back :meth:`claim_pending` / :meth:`reclaim_stale_processing`
     (``WHERE outbox_route = … AND status = 'pending' AND (available_at IS NULL OR
-    available_at <= now()) ORDER BY [hlc,] created_at`` under ``FOR UPDATE SKIP LOCKED``)::
+    available_at <= now()) [AND tenant_id = …] ORDER BY [hlc NULLS LAST,] created_at`` under
+    ``FOR UPDATE SKIP LOCKED``) — pick the shape matching the route's config::
 
+        -- base
         CREATE INDEX ON <relation> (outbox_route, status, created_at);
+        -- with hlc_ordering enabled (the ORDER BY leads with hlc)
+        CREATE INDEX ON <relation> (outbox_route, status, hlc, created_at);
+        -- on a shared tagged table (the claim filters tenant_id) — lead with it
+        CREATE INDEX ON <relation> (tenant_id, outbox_route, status, created_at);
     """
 
     client: PostgresClientPort

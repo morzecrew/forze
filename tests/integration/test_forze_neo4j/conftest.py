@@ -1,5 +1,6 @@
 """Fixtures for forze_neo4j integration tests."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -48,13 +49,27 @@ def _resolve_gds_jar() -> Path | None:
     try:
         with urllib.request.urlopen(_GDS_VERSIONS_URL, timeout=30) as resp:  # noqa: S310
             versions = json.load(resp)
-        url = next(
-            e.get("downloadUrl") or e.get("jar")
-            for e in versions
-            if str(e.get("neo4j", "")).startswith("5.26")
+        entry = next(
+            e for e in versions if str(e.get("neo4j", "")).startswith("5.26")
         )
+        url = entry.get("downloadUrl") or entry.get("jar")
         target = cache / "gds-5.26.jar"
-        urllib.request.urlretrieve(url, target)  # noqa: S310
+        # Download to a temp path and verify integrity before promoting atomically, so a
+        # truncated / HTML-error-page download never lands at the cached path and gets reused by
+        # every GDS test. Prefer the source-provided checksum; fall back to structural validation.
+        tmp = cache / "gds-5.26.jar.part"
+        urllib.request.urlretrieve(url, tmp)  # noqa: S310
+        expected = entry.get("sha256") or entry.get("checksum")
+        payload = tmp.read_bytes()
+        checksum_ok = (
+            hashlib.sha256(payload).hexdigest().lower() == str(expected).lower()
+            if expected
+            else True
+        )
+        if not checksum_ok or len(payload) < 1_000_000 or payload[:4] != b"PK\x03\x04":
+            tmp.unlink(missing_ok=True)
+            return None
+        os.replace(tmp, target)
         return target
     except Exception:
         return None
@@ -66,7 +81,7 @@ def neo4j_container() -> Iterator[Neo4jContainer]:
 
     _ensure_docker()
 
-    with Neo4jContainer(image="neo4j:5.26") as container:
+    with Neo4jContainer(image=_NEO4J_IMAGE) as container:
         yield container
 
 
@@ -110,8 +125,12 @@ def gds_neo4j_container() -> Iterator[Neo4jContainer]:
         .with_env("NEO4J_dbms_security_procedures_allowlist", "gds.*")
     )
 
-    with container as running:
-        yield running
+    try:
+        with container as running:
+            yield running
+    finally:
+        # Remove the copied gds.jar and its temp parent dir once the session ends.
+        shutil.rmtree(plugins, ignore_errors=True)
 
 
 @pytest_asyncio.fixture

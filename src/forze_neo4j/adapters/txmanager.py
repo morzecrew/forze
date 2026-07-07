@@ -81,7 +81,9 @@ class Neo4jTxManagerAdapter(TransactionManagerPort):
             try:
                 yield
 
-            except Exception:
+            except BaseException:
+                # BaseException (not just Exception) so a cancelled/interrupted transaction also
+                # logs the rollback the client will perform as the exception propagates.
                 logger.debug("Neo4j transaction rolled back")
                 raise
 

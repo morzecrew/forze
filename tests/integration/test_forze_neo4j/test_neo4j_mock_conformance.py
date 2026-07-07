@@ -298,6 +298,42 @@ async def test_mock_matches_neo4j_multi_endpoint_edges(neo4j_client: Neo4jClient
     assert neo_snap == {"count": 2, "post_edge_exists": True, "note_edge_exists": True}
 
 
+async def test_mock_matches_neo4j_multi_endpoint_kind_sensitive(
+    neo4j_client: Neo4jClient,
+) -> None:
+    """With only the Post→Tag edge present, an endpoints lookup for the same key values under a
+    different kind pair (Note→Tag) must miss on both planes — proving kind-sensitive matching
+    (same keys, different kinds → distinct identity)."""
+
+    spec = _multi_spec()
+
+    async def _apply_one(cmd: Any) -> None:
+        await cmd.create_vertex("Post", TagCreate(id="1"))
+        await cmd.create_vertex("Note", TagCreate(id="1"))  # same key, different kind
+        await cmd.create_vertex("Tag", TagCreate(id="x"))
+        # Only Post→Tag — no Note→Tag edge is created.
+        await cmd.create_edge(
+            "TAGGED",
+            TaggedCreate(from_key="1", to_key="x", from_kind="Post", to_kind="Tag"),
+        )
+
+    post_ref = EdgeRef.by_endpoints(
+        "TAGGED", VertexRef(kind="Post", key="1"), VertexRef(kind="Tag", key="x")
+    )
+    note_ref = EdgeRef.by_endpoints(
+        "TAGGED", VertexRef(kind="Note", key="1"), VertexRef(kind="Tag", key="x")
+    )
+
+    mock_ctx: ExecutionContext = context_from_deps(MockDepsModule(state=MockState())())
+    await _apply_one(mock_ctx.graph.command(spec))
+    neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client)
+    await _apply_one(neo)
+
+    for port in (mock_ctx.graph.query(spec), neo):
+        assert await port.edge_exists(post_ref) is True
+        assert await port.edge_exists(note_ref) is False  # same keys, wrong kinds → miss
+
+
 async def _traversal_apply(cmd: Any) -> None:
     for k in ("a", "b", "c", "d"):
         await cmd.create_vertex("User", UserCreate(id=k))
@@ -344,6 +380,32 @@ async def test_mock_matches_neo4j_traversal_invariants(neo4j_client: Neo4jClient
     await _traversal_apply(neo)
 
     assert await _traversal_snapshot(mock_ctx.graph.query(spec)) == await _traversal_snapshot(neo)
+
+
+async def test_mock_matches_neo4j_weighted_shortest_path(
+    gds_neo4j_client: Neo4jClient,
+) -> None:
+    """Weighted shortest_path (``weight_property``) conformance on the diamond: both planes take
+    the cheaper 2-hop detour a→b→c over the costly direct a→c edge (needs Neo4j GDS)."""
+
+    spec = _spec()
+
+    mock_ctx: ExecutionContext = context_from_deps(MockDepsModule(state=MockState())())
+    await _traversal_apply(mock_ctx.graph.command(spec))
+
+    neo = Neo4jGraphAdapter(spec=spec, client=gds_neo4j_client, graph_algorithms=True)
+    await _traversal_apply(neo)
+
+    params = ShortestPathParams(
+        max_hops=5, weight_property="weight", edge_kinds=frozenset({"FOLLOWS"})
+    )
+    mock_sp = await mock_ctx.graph.query(spec).shortest_path(_u("a"), _u("c"), params)
+    neo_sp = await neo.shortest_path(_u("a"), _u("c"), params)
+
+    def _route(sp: Any) -> list[str] | None:
+        return None if sp is None else [v.id for v in sp.vertices]
+
+    assert _route(mock_sp) == _route(neo_sp) == ["a", "b", "c"]
 
 
 async def test_mock_matches_neo4j_read_surface(neo4j_client: Neo4jClient) -> None:

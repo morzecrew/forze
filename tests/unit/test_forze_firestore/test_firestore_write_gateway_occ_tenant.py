@@ -224,10 +224,18 @@ class _FakeFirestore:
         create_only: bool = False,
     ) -> None:
         _ = batch_size
-        for doc_id, data in documents:
-            if create_only:
+
+        if create_only:
+            # Firestore's WriteBatch.commit() is all-or-nothing: validate the whole batch for
+            # conflicts *before* applying any write, so a later conflict can't leave earlier
+            # documents created.
+            for doc_id, _data in documents:
+                if self._snapshot((coll, doc_id)) is not None:
+                    raise CoreException.conflict("Document already exists.")
+            for doc_id, data in documents:
                 await self.create_document(coll, doc_id, data)
-            else:
+        else:
+            for doc_id, data in documents:
                 await self.set_document(coll, doc_id, data)
 
     async def delete_document(self, coll: str, doc_id: str) -> None:

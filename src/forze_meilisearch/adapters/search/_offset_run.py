@@ -45,6 +45,13 @@ from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
 # ----------------------- #
 
+# Meilisearch applies this default page size when a search omits ``limit`` — so a limitless query
+# still reads ``offset + 20`` rows, which the ``maxTotalHits`` guard must count (else it undercounts
+# the window and lets a query slip past the cap into silent truncation).
+_MEILI_DEFAULT_SEARCH_LIMIT = 20
+
+# ----------------------- #
+
 
 @attrs.define(slots=True)
 class _MeilisearchOffsetHooks:
@@ -130,11 +137,16 @@ class _MeilisearchOffsetHooks:
         # a window reaching past it comes back silently short. Fail closed so deep
         # pagination / snapshot builds don't quietly drop rows.
         max_total_hits = self.gw.config.max_total_hits
-        far_edge = offset + (limit if limit is not None else 0)
+        # A missing ``limit`` still reads Meilisearch's default page, so count that toward the
+        # window — otherwise the guard undercounts and a deep offset slips past ``maxTotalHits``.
+        effective_limit = (
+            limit if limit is not None else _MEILI_DEFAULT_SEARCH_LIMIT
+        )
+        far_edge = offset + effective_limit
 
         if far_edge > max_total_hits:
             raise exc.precondition(
-                f"Requested window (offset {offset} + limit {limit}) exceeds "
+                f"Requested window (offset {offset} + limit {effective_limit}) exceeds "
                 f"Meilisearch maxTotalHits ({max_total_hits}); Meilisearch would "
                 "silently truncate. Narrow the query or raise the index's "
                 "maxTotalHits and this route's max_total_hits.",

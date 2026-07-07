@@ -108,18 +108,23 @@ async def test_client_insert_many_is_create_only(
 
     coll = await firestore_client.collection(f"client_im_{unique_collection}")
     taken = uuid4().hex
+    fresh = uuid4().hex  # non-conflicting id in the same batch
 
     await firestore_client.create_document(coll, taken, {"v": 1})
 
     with pytest.raises(CoreException) as ei:
         await firestore_client.insert_many(
-            coll, [(uuid4().hex, {"v": 9}), (taken, {"v": 9})], create_only=True
+            coll, [(fresh, {"v": 9}), (taken, {"v": 9})], create_only=True
         )
     assert ei.value.kind is ExceptionKind.CONFLICT
 
     # The pre-existing document is unchanged.
     snap = await firestore_client.get_document(coll, taken)
     assert snap is not None and snap["v"] == 1
+
+    # Atomic: the non-conflicting document from the same batch was not created either
+    # (WriteBatch.commit() is all-or-nothing).
+    assert await firestore_client.get_document(coll, fresh) is None
 
 
 async def test_ensure_returns_existing_without_overwrite(

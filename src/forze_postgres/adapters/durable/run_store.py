@@ -114,6 +114,9 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort):
         -- FOR UPDATE SKIP LOCKED. Without it the claim seq-scans + sorts under lock as
         -- the table grows.
         CREATE INDEX ON <relation> (status, created_at);
+        -- On a shared tagged table claim_abandoned also filters `tenant_id = …` for a bound
+        -- tenant, so lead the index with tenant_id to skip other tenants' rows:
+        CREATE INDEX ON <relation> (tenant_id, status, created_at);
 
     ``attempts`` doubles as the fence token (advances under a row lock on each claim);
     ``available_at`` delays when a ``PENDING`` run may be claimed. Concurrent scanners are
