@@ -21,6 +21,7 @@ from tests.support.execution_context import context_from_modules
 
 from forze_kits.integrations.durable import (
     DurableScheduler,
+    cron_schedule_id,
     durable_scheduler_background_lifecycle_step,
     resolve_durable_schedule_store,
 )
@@ -93,13 +94,16 @@ class TestEnsureCronSchedules:
         ensured = await scheduler.ensure_cron_schedules(ctx, [spec], now=_T0)
         assert ensured == 1  # only the cron trigger
 
-        scheduled = await store.load("report:cron:0")
+        # Load by the published helper, not a literal — guards the registrar and any control
+        # plane against drifting off the `{name}:cron:{index}` convention.
+        assert cron_schedule_id(spec, 0) == "report:cron:0"
+        scheduled = await store.load(cron_schedule_id(spec, 0))
         assert scheduled is not None
         assert scheduled.name == "report"
         assert scheduled.cron == "0 3 * * *"
 
         # The event trigger (index 1) did not create a schedule.
-        assert await store.load("report:cron:1") is None
+        assert await store.load(cron_schedule_id(spec, 1)) is None
 
     async def test_lifecycle_step_auto_registers_at_startup(self) -> None:
         state = MockState()

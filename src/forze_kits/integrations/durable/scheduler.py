@@ -28,6 +28,21 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
+def cron_schedule_id(spec: DurableFunctionSpec[Any, Any], index: int = 0) -> str:
+    """Return the schedule id a cron trigger at *index* on *spec* is registered under.
+
+    The convention ``{spec.name}:cron:{index}`` is shared by
+    :meth:`DurableScheduler.ensure_cron_schedules` (which registers the schedules) and any
+    control plane that later enables/disables or otherwise targets one — call this instead of
+    re-deriving the string, so the registrar and the caller never drift apart.
+    """
+
+    return f"{spec.name}:cron:{index}"
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True)
 class DurableScheduler:
@@ -211,7 +226,7 @@ class DurableScheduler:
 
                 await self.ensure_schedule(
                     ctx,
-                    f"{spec.name}:cron:{index}",
+                    cron_schedule_id(spec, index),
                     str(spec.name),
                     trigger.expression,
                     now=now,

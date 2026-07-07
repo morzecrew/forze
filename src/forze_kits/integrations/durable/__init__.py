@@ -10,6 +10,14 @@ from ._resolve import (
     resolve_durable_schedule_store,
     resolve_durable_step,
 )
+from .deps import (
+    DurableKitsDepsModule,
+    DurableRunnerDepKey,
+    DurableSchedulerDepKey,
+    durable_kits_deps,
+    resolve_durable_runner,
+    resolve_durable_scheduler,
+)
 from .lifecycle import (
     durable_recovery_background_lifecycle_step,
     durable_scheduler_background_lifecycle_step,
@@ -17,7 +25,7 @@ from .lifecycle import (
 from .registry import DurableFunctionHandler, DurableFunctionRegistry
 from .runner import DurableFunctionRunner
 from .saga_executor import DurableSagaExecutor, durable_saga_handler
-from .scheduler import DurableScheduler
+from .scheduler import DurableScheduler, cron_schedule_id
 from .telemetry import (
     DURABLE_RECOVERED_COUNTER,
     DURABLE_RUN_DURATION_HISTOGRAM,
@@ -36,13 +44,20 @@ __all__ = [
     "DurableFunctionHandler",
     "DurableFunctionRegistry",
     "DurableFunctionRunner",
+    "DurableKitsDepsModule",
+    "DurableRunnerDepKey",
     "DurableSagaExecutor",
     "DurableScheduler",
+    "DurableSchedulerDepKey",
     "DurableTelemetry",
+    "cron_schedule_id",
+    "durable_kits_deps",
     "durable_recovery_background_lifecycle_step",
     "durable_saga_handler",
     "durable_scheduler_background_lifecycle_step",
     "resolve_durable_run_store",
+    "resolve_durable_runner",
     "resolve_durable_schedule_store",
+    "resolve_durable_scheduler",
     "resolve_durable_step",
 ]
