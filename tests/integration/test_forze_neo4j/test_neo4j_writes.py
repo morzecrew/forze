@@ -17,6 +17,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException
 from forze_neo4j.adapters import Neo4jGraphAdapter
 from forze_neo4j.kernel.client import Neo4jClient
 
@@ -211,3 +212,50 @@ async def test_delete_vertices_is_tenant_scoped(neo4j_client: Neo4jClient) -> No
 
     assert await ta.count_vertices("User") == 0
     assert await tb.count_vertices("User") == 1  # tenant B's node untouched
+
+
+async def test_bulk_empty_inputs_and_return_new_false(neo4j_client: Neo4jClient) -> None:
+    adapter = _adapter(neo4j_client)
+
+    # Empty inputs short-circuit without touching the DB.
+    assert await adapter.create_vertices([]) == []
+    assert await adapter.create_vertices([], return_new=False) is None
+    assert await adapter.create_edges([]) == []
+    assert await adapter.create_edges([], return_new=False) is None
+    await adapter.delete_vertices([])
+    await adapter.delete_edges([])
+
+    # return_new=False skips the per-row decode and returns None on populated bulk writes.
+    await adapter.create_vertex("User", UserCreate(id="a"))
+    await adapter.create_vertex("User", UserCreate(id="b"))
+    assert (
+        await adapter.create_vertices([("User", UserCreate(id="c"))], return_new=False)
+        is None
+    )
+    assert (
+        await adapter.create_edges(
+            [("FOLLOWS", FollowsCreate(from_key="a", to_key="b"))], return_new=False
+        )
+        is None
+    )
+
+
+async def test_create_edge_missing_endpoints_and_return_new_false(
+    neo4j_client: Neo4jClient,
+) -> None:
+    adapter = _adapter(neo4j_client)
+    await adapter.create_vertex("User", UserCreate(id="a"))
+
+    # Target vertex 'b' does not exist -> the endpoint match returns no rows.
+    with pytest.raises(CoreException, match="graph_edge_endpoints_not_found"):
+        await adapter.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="b"))
+
+    await adapter.create_vertex("User", UserCreate(id="b"))
+    # return_new=False writes the edge but returns None (no decode).
+    assert (
+        await adapter.create_edge(
+            "FOLLOWS", FollowsCreate(from_key="a", to_key="b"), return_new=False
+        )
+        is None
+    )
+    assert await adapter.edge_exists(EdgeRef.by_endpoints("FOLLOWS", _u("a"), _u("b")))
