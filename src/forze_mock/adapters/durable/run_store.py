@@ -222,6 +222,9 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
         bound_tenant = self._bound_tenant()
         after = decode_run_cursor(cursor) if cursor is not None else None
 
+        # Hold the lock across the whole read path — filter, sort, cursor-seek, and convert —
+        # so a concurrent begin / renew / _finish / claim_abandoned cannot mutate a run dict
+        # mid-read (a torn record). Matches load() and the mutating methods.
         with self.state.lock:
             matched = [
                 data
@@ -231,19 +234,21 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
                 and (name is None or data["name"] == name)
             ]
 
-        # Newest first on (created_at, run_id) — run_id is a uuid7, so it breaks a same-instant
-        # tie in creation order, matching the Postgres ORDER BY.
-        matched.sort(key=lambda data: (data["created_at"], data["run_id"]), reverse=True)
+            # Newest first on (created_at, run_id) — run_id is a uuid7, so it breaks a
+            # same-instant tie in creation order, matching the Postgres ORDER BY.
+            matched.sort(
+                key=lambda data: (data["created_at"], data["run_id"]), reverse=True
+            )
 
-        if after is not None:
-            matched = [
-                data
-                for data in matched
-                if (data["created_at"], data["run_id"]) < after
-            ]
+            if after is not None:
+                matched = [
+                    data
+                    for data in matched
+                    if (data["created_at"], data["run_id"]) < after
+                ]
 
-        # Over-fetch one so build_run_page can seed next_cursor (mirrors the Postgres store).
-        records = [_to_record(data) for data in matched[: limit + 1]]
+            # Over-fetch one so build_run_page can seed next_cursor (mirrors Postgres).
+            records = [_to_record(data) for data in matched[: limit + 1]]
 
         return build_run_page(records, limit)
 

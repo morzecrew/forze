@@ -253,3 +253,28 @@ class TestMockListRuns:
 
         with pytest.raises(CoreException):
             await store.list_runs(cursor="not-a-real-cursor")
+
+    async def test_scopes_to_bound_tenant_and_spans_when_unbound(self) -> None:
+        from uuid import uuid4
+
+        from forze.application.contracts.tenancy import TenantIdentity
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        t1, t2 = uuid4(), uuid4()
+        state = MockState()
+
+        writer = MockDurableRunStore(state=state)
+        await writer.enqueue("a", input_json=None, tenant_id=t1)
+        await writer.enqueue("b", input_json=None, tenant_id=t2)
+
+        # Bound to t1 → only that tenant's runs.
+        bound = MockDurableRunStore(
+            state=state, tenant_provider=lambda: TenantIdentity(tenant_id=t1)
+        )
+        scoped = await bound.list_runs(limit=10)
+        assert {r.name for r in scoped.records} == {"a"}
+        assert all(r.tenant_id == t1 for r in scoped.records)
+
+        # Unbound → spans every tenant's runs (operator view).
+        spanning = await writer.list_runs(limit=10)
+        assert {r.name for r in spanning.records} == {"a", "b"}

@@ -122,6 +122,16 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
         -- tenant, so lead the index with tenant_id to skip other tenants' rows:
         CREATE INDEX ON <relation> (tenant_id, status, created_at);
 
+        -- Recommended: back the admin listing (list_runs), which orders newest-first by
+        -- (created_at DESC, run_id DESC) and keyset-seeks on (created_at, run_id). Without a
+        -- matching index it seq-scans + sorts the whole relation. On a namespace (per-tenant)
+        -- table the ordering columns suffice:
+        CREATE INDEX ON <relation> (created_at DESC, run_id DESC);
+        -- On a shared tagged table list_runs filters `tenant_id = …` for a bound tenant, so
+        -- lead with tenant_id (an optional `status`/`name` filter is an extra residual
+        -- predicate on top of this keyset order):
+        CREATE INDEX ON <relation> (tenant_id, created_at DESC, run_id DESC);
+
     ``attempts`` doubles as the fence token (advances under a row lock on each claim);
     ``available_at`` delays when a ``PENDING`` run may be claimed. Concurrent scanners are
     safe (``FOR UPDATE SKIP LOCKED``) and a terminal write can be fenced against a
