@@ -8,11 +8,13 @@ require_fastapi()
 from typing import Final
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from forze.base.exceptions import (
     CoreException,
     error_envelope,
+    exc,
     unhandled_error_envelope,
 )
 from forze.base.logging import Logger
@@ -109,8 +111,42 @@ async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONRespon
 # ....................... #
 
 
+async def _request_validation_handler(
+    _: Request, exc_: RequestValidationError
+) -> JSONResponse:
+    """Render FastAPI's request-validation error in the shared Forze envelope.
+
+    Without this, a body/query/path that fails FastAPI's own parsing returns FastAPI's default
+    422 shape (``{"detail": [{"loc": …}]}``), while a validation error raised inside an operation
+    returns the Forze envelope — two incompatible 422 schemas on one API. Converting it to a
+    ``validation`` :class:`CoreException` unifies both on the same envelope + ``X-Error-Code``. The
+    per-error ``loc`` / ``msg`` / ``type`` are kept (JSON-safe); the raw ``ctx`` / ``input`` are
+    dropped so a non-serializable cause or echoed request input can't leak or break rendering.
+    """
+
+    errors = [
+        {
+            "loc": list(err.get("loc", ())),
+            "msg": err.get("msg", ""),
+            "type": err.get("type", ""),
+        }
+        for err in exc_.errors()
+    ]
+    core = exc.validation(
+        "Request validation failed",
+        code="request_validation_error",
+        details={"errors": errors},
+    )
+
+    return build_core_exception_response(core)
+
+
+# ....................... #
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register exception handlers on *app*."""
 
+    app.exception_handler(RequestValidationError)(_request_validation_handler)
     app.exception_handler(CoreException)(_forze_exception_handler)
     app.exception_handler(Exception)(_unhandled_exception_handler)

@@ -8,11 +8,14 @@ contract); the result is whatever the operation returns, serialized by FastMCP.
 """
 
 import inspect
-from typing import Any, Awaitable, Callable
+import warnings
+from typing import Any, Awaitable, Callable, Final
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
+from pydantic.json_schema import PydanticJsonSchemaWarning
 
 from forze.application.contracts.querying import QUANTIFIER_OPS, QueryDiscovery
 from forze.application.execution.context import ExecutionContextFactory
@@ -21,8 +24,13 @@ from forze.application.execution.operations import (
     OperationCatalogEntry,
     OperationDescriptor,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, error_envelope, exc
 from forze.base.primitives import StrKey
+
+# ----------------------- #
+
+_UNSET: Final[Any] = object()
+"""Sentinel signalling a tool argument the client omitted (see :func:`_flat_tool_handler`)."""
 
 from .dispatch import invoke_operation
 from .identity import MCPIdentityResolver, StaticIdentityResolver
@@ -44,32 +52,51 @@ def _flat_tool_handler(
     FastMCP derives the tool's ``inputSchema`` from the callable's signature, so a flat
     signature (one parameter per DTO field) yields top-level arguments rather than a single
     nested object. The body re-validates against the real DTO (applying its own validators)
-    before dispatching.
+    before dispatching, and translates a boundary :class:`CoreException` into a client-safe
+    :class:`ToolError` (the same egress-masked envelope the HTTP edge renders) so internal
+    error details never leak to an agent while a caller-caused message still gets through.
     """
 
     input_type = descriptor.input_type if descriptor is not None else None
     output_type = descriptor.output_type if descriptor is not None else None
 
     async def _handler(**kwargs: Any) -> Any:
-        return await invoke_operation(
-            registry=registry,
-            ctx_factory=ctx_factory,
-            identity=identity,
-            op=op,
-            descriptor=descriptor,
-            arguments=kwargs,
-        )
+        # Drop arguments the client omitted (FastMCP fills them with the signature default): a
+        # field with a ``default_factory`` must run that factory *per call* inside the DTO, not
+        # reuse a value frozen when the tool was registered (e.g. a stale ``uuid`` / timestamp).
+        arguments = {name: value for name, value in kwargs.items() if value is not _UNSET}
+
+        try:
+            return await invoke_operation(
+                registry=registry,
+                ctx_factory=ctx_factory,
+                identity=identity,
+                op=op,
+                descriptor=descriptor,
+                arguments=arguments,
+            )
+        except CoreException as e:
+            # ``error_envelope`` has already applied the per-kind egress policy — a caller-caused
+            # kind keeps its message, an internal/server error is masked to a generic detail — so
+            # the agent gets an actionable error without any internal specifics.
+            envelope = error_envelope(e)
+            raise ToolError(f"{envelope.code}: {envelope.detail}") from e
 
     params: list[inspect.Parameter] = []
     annotations: dict[str, Any] = {}
 
     if input_type is not None:
         for field_name, field in input_type.model_fields.items():
-            default = (
-                inspect.Parameter.empty
-                if field.is_required()
-                else field.get_default(call_default_factory=True)
-            )
+            if field.is_required():
+                default: Any = inspect.Parameter.empty
+            elif field.default_factory is not None:
+                # Don't freeze the factory value into the signature (FastMCP would forward that
+                # stale value on every omitted call) — mark it optional with a sentinel that the
+                # handler strips so the DTO re-runs the factory.
+                default = _UNSET
+            else:
+                default = field.get_default(call_default_factory=False)
+
             params.append(
                 inspect.Parameter(
                     field_name,
@@ -117,12 +144,10 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
     if entry.descriptor is not None and entry.descriptor.description:
         parts.append(entry.descriptor.description)
 
-    if entry.supports_idempotency_key and not entry.is_read_only:
-        parts.append(
-            "Supports idempotent retries via an invocation-bound idempotency key: "
-            "a duplicate call with the same key replays the stored result instead "
-            "of re-executing."
-        )
+    # NB: idempotency is deliberately NOT advertised here. The MCP boundary binds no idempotency
+    # key (there is no per-call key channel, unlike the HTTP ``Idempotency-Key`` header), so the
+    # operation's idempotency wrap is a no-op — telling an agent a retry is safe when a duplicate
+    # call would re-execute the write would actively invite duplicate writes.
 
     if entry.requires_authn:
         parts.append(
@@ -234,8 +259,12 @@ def register_tools(
         entry = catalog[op]
         descriptor = entry.descriptor
 
-        server.add_tool(
-            Tool.from_function(
+        with warnings.catch_warnings():
+            # A ``default_factory`` field carries no fixed default (it is stripped to the ``_UNSET``
+            # sentinel), so pydantic warns it can't serialize that default into the JSON schema —
+            # which is correct and intended (the field stays optional, just without a frozen default).
+            warnings.simplefilter("ignore", PydanticJsonSchemaWarning)
+            tool = Tool.from_function(
                 _flat_tool_handler(
                     registry=registry,
                     ctx_factory=ctx_factory,
@@ -250,6 +279,7 @@ def register_tools(
                     destructiveHint=not entry.is_read_only,
                 ),
             )
-        )
+
+        server.add_tool(tool)
 
     return list(exposed)

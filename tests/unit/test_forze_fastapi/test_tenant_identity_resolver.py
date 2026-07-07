@@ -208,6 +208,32 @@ async def test_resolve_tenant_identity_header_trusted_when_opted_in() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trust_tenant_header_ignored_for_anonymous_when_resolver_configured() -> None:
+    # A resolver is the tenancy authority. An anonymous request it can't validate must NOT get an
+    # attacker-settable header tenant, even with trust_tenant_header=True — that flag is only the
+    # no-resolver (gateway) fallback.
+    tid = uuid4()
+
+    class _TenantResolver:
+        async def resolve_from_principal(self, principal_id, *, requested_tenant_id=None):
+            return TenantIdentity(tenant_id=tid)
+
+    ctx = context_from_deps(
+        Deps.plain({TenantResolverDepKey: lambda c: _TenantResolver()}),
+    )
+    req = _request(headers=[_tenant_header(tid)])
+
+    out = await resolve_tenant_identity(
+        None,  # anonymous
+        request=req,
+        ctx=ctx,
+        trust_tenant_header=True,
+    )
+
+    assert out is None
+
+
+@pytest.mark.asyncio
 async def test_resolve_tenant_identity_returns_none_without_authn() -> None:
     ctx = context_from_deps(Deps.plain({}))
     req = _request()

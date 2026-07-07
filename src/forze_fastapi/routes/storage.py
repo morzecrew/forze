@@ -158,6 +158,15 @@ def _download_endpoint(
     download. The validators (ETag, Last-Modified) are derived from the
     downloaded bytes, so the route stays decoupled from the storage backend's
     own head call while remaining a faithful HTTP cache/range citizen.
+
+    .. warning::
+       The ``download`` operation returns the whole object in memory, so this route
+       **fully buffers** it (a ``Range`` request slices the buffered bytes — it does not
+       do a ranged backend fetch). For large or untrusted-size objects, expose
+       :attr:`~forze_kits.aggregates.storage.StorageKernelOp.PRESIGN_DOWNLOAD` so the
+       client fetches directly from the backend and the object never transits (or buffers
+       in) the app process. A streaming, backend-ranged download route is tracked as a
+       follow-up.
     """
 
     _ = input_type, op  # download takes a raw storage key; no DTO to derive

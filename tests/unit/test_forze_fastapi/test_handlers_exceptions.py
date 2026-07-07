@@ -272,6 +272,33 @@ class TestRegisterExceptionHandlers:
             assert response.json() == {"detail": "Internal server error"}
             assert needle not in response.text
 
+    def test_request_validation_error_uses_forze_envelope(self) -> None:
+        from pydantic import BaseModel
+
+        app = FastAPI()
+
+        class Body(BaseModel):
+            n: int
+
+        @app.post("/echo")
+        def echo(body: Body) -> dict:  # type: ignore[type-arg]
+            return {"n": body.n}
+
+        register_exception_handlers(app)
+        client = TestClient(app)
+
+        response = client.post("/echo", json={"n": "not-an-int"})
+
+        # Rendered in the shared envelope (not FastAPI's default 422 shape).
+        assert response.status_code == 422
+        assert response.headers.get(ERROR_CODE_HEADER) == "request_validation_error"
+        body = response.json()
+        assert body["detail"] == "Request validation failed"
+        errors = body["context"]["errors"]
+        assert any(e["loc"][-1] == "n" for e in errors)
+        # Only JSON-safe loc/msg/type kept; raw ctx/input dropped.
+        assert all("ctx" not in e and "input" not in e for e in errors)
+
     def test_unhandled_exception_returns_500_json(
         self,
         error_log_buf: io.StringIO,

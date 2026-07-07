@@ -324,6 +324,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OIDC assertion records the validated audience** — for a multi-audience `id_token`, the mapper recorded `aud[0]`, which may be a different party than the one the verifier validated against its configured audience; it now records the matched (validated) audience.
 
+- **`trust_tenant_header` no longer binds an arbitrary tenant for anonymous requests on a resolver-gated app** — the raw `X-Tenant-Id` fallback is now honored only when *no* tenancy resolver is configured (its documented gateway use case). With a resolver present it is the tenancy authority, so an anonymous request it can't validate gets no tenant rather than an attacker-settable one. Verified-credential issuer hints and the authenticated resolver path are unchanged; `trust_tenant_header` still defaults `False`.
+
+**Transport & agent surfaces**
+
+- **MCP no longer leaks internal error details to agents** — `build_mcp_server` sets FastMCP `mask_error_details=True`, and a boundary `CoreException` is translated to a client-safe `ToolError` using the same egress-masked `error_envelope` the HTTP edge renders. A caller-caused error (validation/precondition/…) keeps its actionable message + code; an internal/infrastructure error is masked to a generic detail; any other exception is masked by FastMCP. Previously a tool call surfaced the raw exception message verbatim.
+
+- **MCP stops advertising idempotency it can't honor** — the tool description no longer claims write operations support idempotent-retry replay: the MCP boundary binds no idempotency key (there is no per-call key channel like the HTTP `Idempotency-Key` header), so the wrap is a no-op and a retry would re-execute the write. Telling an agent retries are safe actively invited duplicate writes.
+
+- **MCP tool defaults run their `default_factory` per call** — a flat tool argument backed by a `default_factory` (e.g. a `uuid`/timestamp) was materialized once at registration and reused for every call that omitted it; it is now left unset (a sentinel the handler strips) so the DTO regenerates it per call.
+
+- **Generated FastAPI routes render one 422 shape** — a `RequestValidationError` (FastAPI's own body/query/path parse failure) is now rendered in the shared Forze error envelope + `X-Error-Code` (`request_validation_error`), matching operation-raised validation errors instead of FastAPI's default `{"detail": [...]}`; per-error `loc`/`msg`/`type` are kept, raw `ctx`/`input` dropped.
+
+- **`forze dst replay` survives a bad corpus target** — one unloadable `module:attr` (renamed/moved app) is reported and counted as a failure while the rest of the corpus still replays, instead of aborting the whole run with a raw traceback.
+
+- **Storage download route documents its buffering bound** — the generated `download` route fully buffers the object in memory (a `Range` slices the buffer, not a ranged backend fetch); its docstring now says so and points to `PRESIGN_DOWNLOAD` for large/untrusted-size objects. (A streaming, backend-ranged download route remains a follow-up.)
+
 **PostgreSQL hardening**
 
 - **Query parameters no longer leak across reads in a caller transaction** — the bound-parameter GUCs are set with `SET LOCAL` (transaction-scoped), but a read inside a caller transaction runs in a *savepoint*, and on its release the settings merged into the outer transaction — leaking one read's parameters into later statements. Each param-bound read now resets its GUCs after the fetch, confining them to that read.

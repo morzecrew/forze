@@ -298,6 +298,25 @@ class TestRegressionLoop:
         assert result.exit_code == 0
         assert "no regression seeds" in result.stdout
 
+    def test_replay_bad_target_is_reported_not_a_traceback(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # A corpus entry whose target no longer imports (renamed/moved app) must not abort the
+        # whole replay with a raw traceback — it is reported and counted, others still run.
+        from forze_dst.artifacts import RegressionEntry, append_regression
+
+        corpus = tmp_path / "regressions.jsonl"
+        append_regression(corpus, RegressionEntry(seed=0, target="no.such.module:nope"))
+        append_regression(corpus, RegressionEntry(seed=1, target=_ref("CLEAN")))
+
+        result = runner.invoke(
+            app, ["dst", "replay", "--regression-file", str(corpus)]
+        )
+
+        # A clean typer exit (SystemExit), NOT a propagated loader traceback (ImportError/…).
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert result.exit_code == 1  # the bad target counts as a failure
+        assert "could not be loaded" in result.stdout
+        assert "1 seed(s) skipped" in result.stdout  # the good CLEAN target still replayed
+
 
 class TestCoverage:
     def test_clean_app_reports_coverage_and_exits_zero(self) -> None:

@@ -407,7 +407,19 @@ def replay(
     checked = 0
 
     for app, group in grouped.items():
-        sim = load_simulation(app)
+        try:
+            sim = load_simulation(app)
+        except Exception as e:  # noqa: BLE001 — a bad target must not abort the rest of the corpus
+            # One unloadable target (renamed/moved app, typo) previously raised a raw traceback and
+            # aborted every remaining seed. Report it, count its seeds as failures (non-zero exit),
+            # and keep replaying the other targets.
+            failures += len(group)
+            checked += len(group)
+            typer.echo(
+                f"✗ target {app!r} could not be loaded ({e}); {len(group)} seed(s) skipped"
+            )
+            continue
+
         fingerprint = sim.fingerprint()
         scenario = sim.derive_scenario()
 
@@ -442,7 +454,12 @@ def replay(
                     latency=latency,
                 )
             )
-            report = sim.run(cfg, scenario=scenario)
+            try:
+                report = sim.run(cfg, scenario=scenario)
+            except Exception as e:  # noqa: BLE001 — one seed's replay error must not abort the rest
+                failures += 1
+                typer.echo(f"✗ seed {entry.seed}: replay raised ({e})")
+                continue
 
             if report is not None:
                 failures += 1

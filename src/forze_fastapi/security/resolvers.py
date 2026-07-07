@@ -197,14 +197,20 @@ async def resolve_tenant_identity(
     if requested is None:
         return None
 
-    # No tenancy resolver validated the request. A tenant derived from a verified
-    # credential (issuer hint) is trustworthy, but a tenant taken from the raw
-    # ``X-Tenant-Id`` header is unauthenticated client input: an attacker could set
-    # it to any tenant. Honor the header-only path only when the deployment has
-    # explicitly opted in (e.g. it sits behind a gateway that sets the header).
+    # No resolver validated a tenant for this request (none configured, or the request is
+    # anonymous so the principal-keyed resolver could not run). A tenant derived from a verified
+    # credential (issuer hint) is trustworthy, but a tenant taken from the raw ``X-Tenant-Id``
+    # header is unauthenticated client input: an attacker could set it to any tenant.
     from_verified_credential = parse_tenant_hint(issuer_hint) is not None
 
-    if from_verified_credential or trust_tenant_header:
+    # Header-only trust is the fallback for a deployment WITHOUT a tenancy resolver (e.g. behind a
+    # gateway that sets ``X-Tenant-Id``). When a resolver IS configured it is the tenancy
+    # authority, so an anonymous request — which it cannot validate — gets no tenant rather than an
+    # attacker-settable one; otherwise ``trust_tenant_header`` would bind an arbitrary tenant for
+    # unauthenticated callers even on a resolver-gated app.
+    trust_header = trust_tenant_header and ten is None
+
+    if from_verified_credential or trust_header:
         return TenantIdentity(tenant_id=requested)
 
     return None

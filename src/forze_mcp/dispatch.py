@@ -3,8 +3,10 @@
 The flow mirrors the FastAPI middleware boundary: validate the input DTO, establish a fresh
 execution context, bind invocation metadata + identity, then run the operation through the
 normal pipeline (so authz / tenancy / read-only enforcement / audit all apply). The adapter
-enforces nothing itself — it only binds the boundary context and dispatches. Result
-serialization and error translation are left to the host MCP server (FastMCP).
+enforces nothing itself — it only binds the boundary context and dispatches. Result serialization
+is left to the host MCP server (FastMCP); a boundary ``CoreException`` is translated to a
+client-safe ``ToolError`` at the registration boundary (see :mod:`forze_mcp.registration`), and any
+other exception is masked by the server's ``mask_error_details``.
 """
 
 from typing import Any, Mapping
