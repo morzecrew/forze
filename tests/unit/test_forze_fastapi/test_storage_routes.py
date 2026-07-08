@@ -207,17 +207,18 @@ class TestStorageRoutes:
             "/files/abort_upload",
         }
         assert set(paths["/files/upload"]) == {"post"}
-        assert set(paths["/files/download/{key}"]) == {"get"}
+        # HEAD mirrors the GET download resource on the same path.
+        assert set(paths["/files/download/{key}"]) == {"get", "head"}
         assert set(paths["/files/delete/{key}"]) == {"delete"}
         assert set(paths["/files/begin_upload"]) == {"post"}
         assert set(paths["/files/presign_upload"]) == {"post"}
 
     @pytest.mark.parametrize("style", ["rest", "rpc"])
     def test_operation_ids_are_registry_keys_verbatim(self, style: str) -> None:
-        # head / download_stream / download_range have no standalone route — they are consumed
-        # internally by the streaming download endpoint — so they carry no route operation_id.
+        # download_stream / download_range have no standalone route — they are consumed internally
+        # by the streaming download endpoint — so they carry no route operation_id. head does get
+        # its own HTTP HEAD route.
         internal = {
-            StorageKernelOp.HEAD,
             StorageKernelOp.DOWNLOAD_STREAM,
             StorageKernelOp.DOWNLOAD_RANGE,
         }
@@ -778,7 +779,9 @@ class TestStreamingDownload:
         assert resp.content == b"0123456789"
         assert resp.headers["accept-ranges"] == "bytes"
         assert resp.headers["content-length"] == "10"
+        # Cache validators ride along on the single-op streamed result (no separate head).
         assert "etag" in resp.headers
+        assert "last-modified" in resp.headers
         assert "blob.bin" in resp.headers["content-disposition"]
 
     def test_range_returns_206_backend_partial(self) -> None:
@@ -839,3 +842,15 @@ class TestStreamingDownload:
 
         assert resp.status_code == 200
         assert resp.content == b"0123456789"
+
+    def test_head_returns_metadata_headers_no_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.head(f"/files/{key}")
+
+        assert resp.status_code == 200
+        assert resp.content == b""
+        assert resp.headers["content-length"] == "10"
+        assert resp.headers["accept-ranges"] == "bytes"
+        assert "etag" in resp.headers

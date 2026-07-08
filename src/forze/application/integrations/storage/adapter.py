@@ -706,6 +706,8 @@ class ObjectStorageAdapter(
             filename=filename,
             chunks=body,
             size=size,
+            etag=head.etag,
+            last_modified=head.last_modified,
         )
 
     # ....................... #

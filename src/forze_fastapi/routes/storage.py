@@ -455,6 +455,40 @@ def _not_modified_since(request: Request, last_modified: Any) -> bool:
 # ....................... #
 
 
+def _cache_validators(etag: str, last_modified: Any) -> dict[str, str]:
+    """The ``ETag`` / ``Last-Modified`` response headers (*etag* already quoted, may be empty)."""
+
+    validators: dict[str, str] = {}
+    if etag:
+        validators["ETag"] = etag
+    if last_modified is not None:
+        validators["Last-Modified"] = _http_date(last_modified)
+    return validators
+
+
+def _full_stream_response(streamed: StreamedDownload) -> StreamingResponse:
+    """A **200** streamed body with cache/validator/disposition headers from *streamed*."""
+
+    etag = f'"{streamed.etag}"' if streamed.etag else ""
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": _content_disposition(streamed.filename),
+        **_cache_validators(etag, streamed.last_modified),
+    }
+    # Plaintext size known → Content-Length; unknown (encrypted) → chunked transfer.
+    if streamed.size is not None:
+        headers["Content-Length"] = str(streamed.size)
+
+    return StreamingResponse(
+        streamed.chunks,
+        media_type=streamed.content_type,
+        headers=headers,
+    )
+
+
+# ....................... #
+
+
 def _streaming_download_endpoint(
     *,
     head_runner: OperationRunner,
@@ -462,42 +496,51 @@ def _streaming_download_endpoint(
     range_runner: OperationRunner,
     max_range_bytes: int,
 ) -> Callable[..., Awaitable[Any]]:
-    """Bounded-memory download endpoint: ``head`` for validators, then stream / range the body.
+    """Bounded-memory download endpoint — never buffers the whole object.
 
-    Governs each step through the operation pipeline (``head`` → ``download_stream`` /
-    ``download_range``) and never buffers the whole object: a plain ``GET`` streams the body via a
-    :class:`StreamingResponse`; a ``Range`` request does a real backend-ranged fetch (bounded by
-    :data:`DEFAULT_MAX_RANGE_BYTES`). ``ETag`` / ``Last-Modified`` come from ``head`` (backend
-    metadata — for a client-side-encrypted object the ``ETag`` is over the stored ciphertext, an
-    opaque-but-stable validator). ``Content-Length`` is set only when the plaintext size is known
-    (absent → chunked transfer, e.g. an encrypted object).
+    A plain, unconditional ``GET`` runs a **single** governed operation (``download_stream``),
+    whose result carries the cache validators (``ETag`` / ``Last-Modified``), so no separate
+    ``head`` round-trip is needed. A conditional request (``If-None-Match`` / ``If-Modified-Since``)
+    or a ``Range`` request first runs ``head`` — to answer **304** without a body, or to fetch a
+    backend range (**206**, bounded by :data:`DEFAULT_MAX_RANGE_BYTES`; **416** if unsatisfiable).
+    ``ETag`` is the backend etag (for a client-side-encrypted object, over the stored ciphertext —
+    an opaque-but-stable validator); ``Content-Length`` is set only when the plaintext size is
+    known (absent → chunked transfer, e.g. an encrypted object).
     """
 
     async def endpoint(key: str, request: Request) -> Response:
+        wants_range = request.headers.get("range") is not None
+        wants_conditional = (
+            request.headers.get("if-none-match") is not None
+            or request.headers.get("if-modified-since") is not None
+        )
+
+        # Fast path: a plain download needs only download_stream — one governed op, validators
+        # ride along on the result (no separate head).
+        if not wants_range and not wants_conditional:
+            return _full_stream_response(await stream_runner(key))
+
         head: ObjectHeadDTO = await head_runner(key)
-
         etag = f'"{head.etag}"' if head.etag else ""
-        validators: dict[str, str] = {}
-        if etag:
-            validators["ETag"] = etag
-        if head.last_modified is not None:
-            validators["Last-Modified"] = _http_date(head.last_modified)
-
-        base_headers: dict[str, str] = {"Accept-Ranges": "bytes", **validators}
 
         # Conditional revalidation: If-None-Match wins; If-Modified-Since is the time fallback.
         if (etag and _is_not_modified(request, etag)) or (
             request.headers.get("if-none-match") is None
             and _not_modified_since(request, head.last_modified)
         ):
-            return Response(status_code=304, headers=validators)
+            return Response(
+                status_code=304,
+                headers=_cache_validators(etag, head.last_modified),
+            )
 
-        range_header = request.headers.get("range")
-
-        if range_header is not None:
+        if wants_range:
+            base_headers = {
+                "Accept-Ranges": "bytes",
+                **_cache_validators(etag, head.last_modified),
+            }
             ranged_response = await _range_response(
                 key=key,
-                range_header=range_header,
+                range_header=request.headers["range"],
                 head=head,
                 base_headers=base_headers,
                 range_runner=range_runner,
@@ -508,19 +551,7 @@ def _streaming_download_endpoint(
             if ranged_response is not None:
                 return ranged_response
 
-        streamed: StreamedDownload = await stream_runner(key)
-        headers = {
-            **base_headers,
-            "Content-Disposition": _content_disposition(streamed.filename),
-        }
-        if streamed.size is not None:
-            headers["Content-Length"] = str(streamed.size)
-
-        return StreamingResponse(
-            streamed.chunks,
-            media_type=streamed.content_type,
-            headers=headers,
-        )
+        return _full_stream_response(await stream_runner(key))
 
     return endpoint
 
@@ -586,6 +617,43 @@ async def _range_response(
 # ....................... #
 
 
+def _head_endpoint(
+    runner: OperationRunner,
+    input_type: type[BaseModel] | None,
+    op: str,
+) -> Callable[..., Awaitable[Any]]:
+    """HTTP ``HEAD`` endpoint answering an object's metadata as headers, no body.
+
+    Mirrors the headers a ``GET`` would carry — ``Content-Type`` / ``Content-Length`` /
+    ``ETag`` / ``Last-Modified`` / ``Accept-Ranges`` — from the ``head`` operation. The
+    ``Content-Length`` is the **stored** object size (for a client-side-encrypted object that is
+    the ciphertext length; the streamed ``GET`` decrypts and uses chunked transfer instead).
+    """
+
+    _ = input_type, op  # head takes a raw storage key; no DTO to derive
+
+    async def endpoint(key: str) -> Response:
+        head: ObjectHeadDTO = await runner(key)
+
+        headers = {
+            "Accept-Ranges": "bytes",
+            # A HEAD body is empty, so set Content-Length explicitly to the object size (Starlette
+            # would otherwise report 0 for the empty body).
+            "Content-Length": str(head.size),
+        }
+        if head.etag:
+            headers["ETag"] = f'"{head.etag}"'
+        if head.last_modified is not None:
+            headers["Last-Modified"] = _http_date(head.last_modified)
+
+        return Response(status_code=200, media_type=head.content_type, headers=headers)
+
+    return endpoint
+
+
+# ....................... #
+
+
 def _delete_endpoint(
     runner: OperationRunner,
     input_type: type[BaseModel] | None,
@@ -618,6 +686,12 @@ _REST_BINDINGS: Mapping[str, RouteBinding] = {
         method="GET",
         path="/{key:path}",
         build=_download_endpoint,
+    ),
+    # HEAD mirrors the GET download resource (same path) — metadata headers, no body.
+    StorageKernelOp.HEAD: RouteBinding(
+        method="HEAD",
+        path="/{key:path}",
+        build=_head_endpoint,
     ),
     StorageKernelOp.DELETE: RouteBinding(
         method="DELETE",
@@ -671,6 +745,12 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
         method="GET",
         path=f"/{StorageKernelOp.DOWNLOAD.value}/{{key:path}}",
         build=_download_endpoint,
+    ),
+    # HEAD mirrors the GET download resource (same path) — metadata headers, no body.
+    StorageKernelOp.HEAD: RouteBinding(
+        method="HEAD",
+        path=f"/{StorageKernelOp.DOWNLOAD.value}/{{key:path}}",
+        build=_head_endpoint,
     ),
     StorageKernelOp.DELETE: RouteBinding(
         method="DELETE",

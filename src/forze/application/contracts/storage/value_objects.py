@@ -188,6 +188,15 @@ class StreamedDownload:
     """Full plaintext size when known up front (``None`` for a client-side-encrypted
     object, whose plaintext length is not recorded in the raw stored size)."""
 
+    etag: str = ""
+    """Backend entity tag of the stored object (empty when the backend surfaces none). Carried
+    here so a caller that already opened the stream — a plain, unconditional download — has the
+    cache validator without a second ``head`` round-trip."""
+
+    last_modified: datetime | None = None
+    """Backend last-modification timestamp, or ``None`` when unavailable — the time-based cache
+    validator, alongside :attr:`etag`."""
+
 
 # ....................... #
 

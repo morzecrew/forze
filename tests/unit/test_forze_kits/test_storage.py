@@ -135,6 +135,10 @@ class TestStreamingReadHandlers:
         body = b"".join([chunk async for chunk in streamed.chunks])
 
         assert body == payload
+        # Enriched with the cache validators so a plain download needs no separate head.
+        assert streamed.etag
+        assert streamed.last_modified is not None
+        assert streamed.size == len(payload)
 
     @pytest.mark.asyncio
     async def test_download_range_returns_the_inclusive_window(self) -> None:
