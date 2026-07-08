@@ -27,7 +27,11 @@ from fastapi import APIRouter, Form, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from forze.application.contracts.storage import RangedDownload, StreamedDownload
+from forze.application.contracts.storage import (
+    RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
+    RangedDownload,
+    StreamedDownload,
+)
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
 from forze.base.exceptions import CoreException, exc
@@ -59,10 +63,6 @@ A ranged read returns its window as bytes (bounded memory, but still buffered), 
 window wider than this is served **truncated** to the cap with a ``206`` whose ``Content-Range``
 reports the actually-returned bytes — an RFC-7233-compliant partial the client re-requests from. A
 plain (no-``Range``) download always streams, so this only bounds explicit range windows."""
-
-# The whole-payload-encrypted (``FZEv``) marker cannot be sliced; a ranged read over it raises this,
-# and the streaming route falls back to a full streamed download.
-_RANGE_WHOLE_PAYLOAD_CODE: Final[str] = "core.storage.range_whole_payload_unsupported"
 
 # ----------------------- #
 
@@ -455,6 +455,24 @@ def _not_modified_since(request: Request, last_modified: Any) -> bool:
 # ....................... #
 
 
+def _is_conditional_hit(request: Request, etag: str, last_modified: Any) -> bool:
+    """Whether a conditional request is satisfied and should answer **304**.
+
+    ``If-None-Match`` (entity tag) takes precedence per RFC 7232; ``If-Modified-Since`` is the
+    time fallback, consulted only when no ``If-None-Match`` is present.
+    """
+
+    if etag and _is_not_modified(request, etag):
+        return True
+
+    return request.headers.get("if-none-match") is None and _not_modified_since(
+        request, last_modified
+    )
+
+
+# ....................... #
+
+
 def _cache_validators(etag: str, last_modified: Any) -> dict[str, str]:
     """The ``ETag`` / ``Last-Modified`` response headers (*etag* already quoted, may be empty)."""
 
@@ -523,11 +541,7 @@ def _streaming_download_endpoint(
         head: ObjectHeadDTO = await head_runner(key)
         etag = f'"{head.etag}"' if head.etag else ""
 
-        # Conditional revalidation: If-None-Match wins; If-Modified-Since is the time fallback.
-        if (etag and _is_not_modified(request, etag)) or (
-            request.headers.get("if-none-match") is None
-            and _not_modified_since(request, head.last_modified)
-        ):
+        if _is_conditional_hit(request, etag, head.last_modified):
             return Response(
                 status_code=304,
                 headers=_cache_validators(etag, head.last_modified),
@@ -595,7 +609,7 @@ async def _range_response(
             DownloadRangeArgs(key=key, start=start, end=end)
         )
     except CoreException as e:
-        if e.code == _RANGE_WHOLE_PAYLOAD_CODE:
+        if e.code == RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE:
             return None  # can't slice a whole-payload envelope → stream the full body instead
         raise
 
@@ -607,8 +621,11 @@ async def _range_response(
             **base_headers,
             "Content-Range": ranged.content_range,
             "Content-Length": str(len(ranged.data)),
+            # Same filename source as the full streamed download (see _full_stream_response), so a
+            # Range and a full GET advertise the same Content-Disposition. Fall back to the key
+            # basename if the adapter resolved none.
             "Content-Disposition": _content_disposition(
-                key.rsplit("/", 1)[-1] or "download"
+                ranged.filename or key.rsplit("/", 1)[-1] or "download"
             ),
         },
     )

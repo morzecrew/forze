@@ -28,6 +28,7 @@ from forze.application.contracts.storage.ports import (
     StorageUploadSessionPort,
 )
 from forze.application.contracts.storage.value_objects import (
+    RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
     DownloadedObject,
     ObjectHead,
     ObjectMetadata,
@@ -945,6 +946,7 @@ class ObjectStorageAdapter(
             content_type=body.content_type,
             content_range=content_range,
             total_size=total,
+            filename=self._filename_from_metadata(key, body.metadata),
         )
 
     # ....................... #
@@ -976,6 +978,7 @@ class ObjectStorageAdapter(
                     end=end,
                     raw_total=raw_total,
                     content_type=head.content_type,
+                    filename=self._filename_from_metadata(key, head.metadata),
                     probe=probe.data,
                 )
 
@@ -984,7 +987,7 @@ class ObjectStorageAdapter(
                     "Ranged downloads are unavailable for a whole-payload encrypted "
                     "object (a single AEAD blob cannot be sliced); use download() or "
                     "download_stream().",
-                    code="core.storage.range_whole_payload_unsupported",
+                    code=RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
                 )
 
         # Plaintext (migration tolerance) — pass the ranged GET straight through.
@@ -1001,6 +1004,7 @@ class ObjectStorageAdapter(
         end: int | None,
         raw_total: int,
         content_type: str,
+        filename: str,
         probe: bytes,
     ) -> RangedDownload:
         """Decrypt only the chunks a byte range covers, then trim to the exact bytes."""
@@ -1062,6 +1066,7 @@ class ObjectStorageAdapter(
             content_type=content_type,
             content_range=f"bytes {start}-{end_byte}/{plaintext_total}",
             total_size=plaintext_total,
+            filename=filename,
         )
 
     # ....................... #

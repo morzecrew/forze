@@ -294,6 +294,7 @@ class MockStorageAdapter(
             content_type=obj.content_type,
             content_range=f"bytes {start}-{end_byte}/{total}",
             total_size=total,
+            filename=obj.filename,
         )
 
     # ....................... #

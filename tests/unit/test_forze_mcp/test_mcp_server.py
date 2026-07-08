@@ -827,6 +827,35 @@ class TestErrorMasking:
         assert "n must be positive" in message
         assert "calc.invalid" in message
 
+    async def test_server_error_is_logged_but_caller_error_is_not(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The agent gets a masked ToolError, but operators must still see the real server error in
+        # the logs (mirrors the HTTP edge). A caller-caused error is not a server error → not logged.
+        calls: list[tuple[str, str, dict]] = []
+
+        class _StubLogger:
+            def error(self, event: str, **kw: object) -> None:
+                calls.append(("error", event, dict(kw)))
+
+            def critical_exception(self, event: str, **kw: object) -> None:
+                calls.append(("critical", event, dict(kw)))
+
+        monkeypatch.setattr("forze_mcp.registration._error_logger", _StubLogger())
+
+        server = build_mcp_server(_error_registry(), _ctx_factory, name="e")
+        async with Client(server) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("boom", {"n": 1})  # server error → logged
+            with pytest.raises(ToolError):
+                await client.call_tool("bad_input", {"n": -1})  # caller error → not logged
+
+        assert len(calls) == 1
+        _, event, kw = calls[0]
+        assert event == "MCP server error"
+        assert kw["error_code"] == "core.internal"
+        assert kw["error_kind"] == "internal"
+
 
 class TestDefaultFactory:
     async def test_default_factory_runs_per_call_not_frozen_at_registration(self) -> None:

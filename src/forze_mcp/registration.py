@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable, Final
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
-from fastmcp.tools import Tool
+from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic.json_schema import PydanticJsonSchemaWarning
 
@@ -25,12 +25,18 @@ from forze.application.execution.operations import (
     OperationDescriptor,
 )
 from forze.base.exceptions import CoreException, error_envelope, exc
+from forze.base.logging import Logger
 from forze.base.primitives import StrKey
+
+from ._logging import ForzeMCPLogger
 
 # ----------------------- #
 
 _UNSET: Final[Any] = object()
 """Sentinel signalling a tool argument the client omitted (see :func:`_flat_tool_handler`)."""
+
+_error_logger = Logger(ForzeMCPLogger.ERRORS)
+"""Server-side error diagnostics (mirrors the HTTP edge's error logging)."""
 
 from .dispatch import invoke_operation
 from .identity import MCPIdentityResolver, StaticIdentityResolver
@@ -80,6 +86,26 @@ def _flat_tool_handler(
             # kind keeps its message, an internal/server error is masked to a generic detail — so
             # the agent gets an actionable error without any internal specifics.
             envelope = error_envelope(e)
+
+            if envelope.server_error:
+                # Mirror the HTTP edge: a server-side error is logged (with its cause's traceback)
+                # before the masked ToolError reaches the agent, so operators still see the real
+                # failure instead of only a generic client-facing message.
+                if e.__cause__ is not None:
+                    _error_logger.critical_exception(
+                        "MCP server error",
+                        exc=e.__cause__,
+                        error_code=e.code,
+                        error_kind=e.kind.value,
+                    )
+                else:
+                    _error_logger.error(
+                        "MCP server error",
+                        error_code=e.code,
+                        error_kind=e.kind.value,
+                        detail=e.summary,
+                    )
+
             raise ToolError(f"{envelope.code}: {envelope.detail}") from e
 
     params: list[inspect.Parameter] = []
@@ -264,7 +290,7 @@ def register_tools(
             # sentinel), so pydantic warns it can't serialize that default into the JSON schema —
             # which is correct and intended (the field stays optional, just without a frozen default).
             warnings.simplefilter("ignore", PydanticJsonSchemaWarning)
-            tool = Tool.from_function(
+            tool = FunctionTool.from_function(
                 _flat_tool_handler(
                     registry=registry,
                     ctx_factory=ctx_factory,

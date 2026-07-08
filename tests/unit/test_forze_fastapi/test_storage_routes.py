@@ -789,13 +789,21 @@ class TestStreamingDownload:
 
     def test_range_returns_206_backend_partial(self) -> None:
         client = TestClient(_build_app("rest"))
-        key = self._upload(client, b"0123456789")
+        # A filename distinct from the (UUID) key so the 206 Content-Disposition can't accidentally
+        # match by using the raw key basename.
+        key = self._upload(client, b"0123456789", filename="report final.pdf")
 
         resp = client.get(f"/files/{key}", headers={"Range": "bytes=2-5"})
 
         assert resp.status_code == 206
         assert resp.content == b"2345"  # end inclusive
         assert resp.headers["content-range"] == "bytes 2-5/10"
+        # Same filename source as the full download (not the key basename).
+        assert "report%20final.pdf" in resp.headers["content-disposition"]
+        assert (
+            resp.headers["content-disposition"]
+            == client.get(f"/files/{key}").headers["content-disposition"]
+        )
 
     def test_unsatisfiable_range_returns_416(self) -> None:
         client = TestClient(_build_app("rest"))
