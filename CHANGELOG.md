@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`SearchSpec(max_results=…)` / `SearchSpec(highlight_scan_limit=…)`** — cap an unbounded offset search (Postgres/Mongo/Meilisearch) and bound the PGroonga highlight text scan; both opt-in, `None` keeps prior behaviour.
 
+- **`PostgresHubSearchMemberConfig.from_search_config(config, *, hub_fk, …)`** — derive a hub leg from a standalone `PostgresSearchConfig`, carrying every field over and adding the hub wiring (`hub_fk` / `heap_pk` / `same_heap_as_hub`).
+
 **Execution & handlers**
 
 - **Two-phase prepare/apply handlers** — `TwoPhaseHandler` (plus a kit base): `prepare(args)` runs outside the transaction (read-only) and `apply(args, payload)` inside it. A tx route is required.

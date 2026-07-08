@@ -40,6 +40,37 @@ class PostgresHubSearchMemberConfig(PostgresSearchConfig):
     same_heap_as_hub: bool = False
     """When True, evaluate the leg on the hub relation (see integration docs)."""
 
+    # ....................... #
+
+    @classmethod
+    def from_search_config(
+        cls,
+        config: PostgresSearchConfig,
+        *,
+        hub_fk: str | Sequence[str],
+        heap_pk: str = ID_FIELD,
+        same_heap_as_hub: bool = False,
+    ) -> "PostgresHubSearchMemberConfig":
+        """Build a hub member leg from a standalone :class:`PostgresSearchConfig`.
+
+        Carries every field of *config* (index/read/engine/heap/tenancy/…) verbatim and adds the
+        hub-specific wiring — the leg's foreign key(s) to the hub (*hub_fk*), its heap primary key
+        (*heap_pk*), and *same_heap_as_hub*. Keying by the attrs *alias* (not the field name)
+        preserves the ``engine_spec``→``engine=`` init alias, which ``attrs.asdict`` would drop.
+        """
+
+        base = {
+            (f.alias or f.name): getattr(config, f.name)
+            for f in attrs.fields(PostgresSearchConfig)
+        }
+
+        return cls(
+            **base,
+            hub_fk=hub_fk,
+            heap_pk=heap_pk,
+            same_heap_as_hub=same_heap_as_hub,
+        )
+
 
 # ....................... #
 
