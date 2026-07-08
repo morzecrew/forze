@@ -497,6 +497,7 @@ def attach_operation_routes(
     bindings: Mapping[str, RouteBinding],
     include: AbstractSet[Any] | None,
     path_overrides: Mapping[Any, str] | None = None,
+    exclude_none: bool = True,
 ) -> APIRouter:
     """Attach the registered operations under *ns* to *router* per *bindings*.
 
@@ -530,6 +531,11 @@ def attach_operation_routes(
             ``None`` attaches every registered binding.
         path_overrides (Mapping[Any, str] | None): Per-operation replacement paths,
             keyed like *include*; each must bind exactly the default path's parameters.
+        exclude_none (bool): When ``True`` (default) generated JSON responses omit fields
+            whose value is ``None`` (``response_model_exclude_none``) — a smaller wire
+            payload, and the OpenAPI schema is unchanged (the fields stay optional). Set
+            ``False`` to always emit explicit ``null``\\ s. Only affects routes with a
+            response model; raw-``Response`` routes (download/head bytes) are untouched.
 
     Returns:
         APIRouter: The same *router*, with the routes attached.
@@ -622,6 +628,7 @@ def attach_operation_routes(
             endpoint,
             methods=[binding.method],
             response_model=output_type,
+            response_model_exclude_none=exclude_none,
             status_code=binding.status_code,
             operation_id=op,
             name=op,

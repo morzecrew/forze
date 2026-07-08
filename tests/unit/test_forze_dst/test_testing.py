@@ -324,6 +324,101 @@ class TestBundles:
     def test_empty_dir_is_a_no_op(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         assert_no_regressions(_fixed_sim(), bundles=tmp_path)  # nothing to replay → passes
 
+    @staticmethod
+    def _op_case_bundle():  # type: ignore[no-untyped-def]
+        # A bundle whose workload is the caller's cases= — a bundle never stores it, so replay
+        # cannot reproduce it from seed + config alone.
+        from forze_dst.artifacts import FailureBundle
+        from forze_dst.artifacts.serialize import config_to_dict
+        from forze_dst.config import Strategy
+
+        return FailureBundle(
+            seed=0,
+            schedule_seed=None,
+            target="tests:unused",
+            config=config_to_dict(SimulationConfig(strategy=Strategy.OP_CASE, seeds=[0])),
+            registry_fingerprint=None,
+        )
+
+    def test_op_case_bundle_is_reported_not_crashed(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Previously an OP_CASE bundle raised a raw ValueError out of dispatch, aborting the whole
+        # regression check. Now it is a clear per-bundle failure — never a crash, never a silent pass.
+        self._op_case_bundle().save(tmp_path / "opcase.json")
+
+        with pytest.raises(AssertionError, match="not a self-contained"):
+            assert_no_regressions(_fixed_sim(), bundles=tmp_path)
+
+    def test_op_case_bundle_does_not_abort_other_bundles(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # An OP_CASE bundle (sorted first) must not short-circuit a real reproducing bundle behind it.
+        set_active(DstOptions(save_bundle=str(tmp_path)))
+        try:
+            with pytest.raises(AssertionError):
+                assert_no_violation(
+                    _racy_sim(),
+                    SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
+                    scenario=_DEPOSIT_SCENARIO,
+                )
+        finally:
+            set_active(None)
+
+        self._op_case_bundle().save(tmp_path / "aaa_opcase.json")  # sorts before the real bundle
+
+        with pytest.raises(AssertionError) as excinfo:
+            assert_no_regressions(_racy_sim(), bundles=tmp_path)
+
+        message = str(excinfo.value)
+        assert "not a self-contained" in message  # the OP_CASE bundle reported, not crashed
+        assert "still violates" in message  # the real bundle behind it was still replayed
+
+    def test_replay_bundle_rejects_op_case_with_clear_error(self) -> None:
+        from forze_dst.artifacts import replay_bundle
+
+        with pytest.raises(ValueError, match="not self-contained"):
+            replay_bundle(self._op_case_bundle(), load=lambda _t: _fixed_sim())
+
+    def test_bundle_whose_replay_raises_is_reported_not_crashed(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # A self-contained bundle whose replay raises is reported per-bundle (never aborts the
+        # batch); a single bundle *file* (not a directory) is also a valid input.
+        from forze_dst.artifacts import FailureBundle
+        from forze_dst.artifacts.serialize import config_to_dict
+
+        bundle_file = tmp_path / "b.json"
+        FailureBundle(
+            seed=0,
+            schedule_seed=None,
+            target="tests:unused",
+            config=config_to_dict(SimulationConfig(seeds=[0])),  # SCENARIO → self-replayable
+            registry_fingerprint="fp",
+        ).save(bundle_file)
+
+        class _RaisingSim:
+            def fingerprint(self) -> str:
+                return "fp"
+
+            def run(self, _config: object) -> object:
+                raise RuntimeError("replay blew up")
+
+        with pytest.raises(AssertionError, match="could not be replayed"):
+            assert_no_regressions(_RaisingSim(), bundles=bundle_file)  # type: ignore[arg-type]
+
+    def test_non_reproducing_bundle_with_fingerprint_drift_is_not_a_pass(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # A bundle that no longer reproduces but whose registry fingerprint drifted is not a
+        # trustworthy pass — reported as a failure.
+        from forze_dst.artifacts import FailureBundle
+        from forze_dst.artifacts.serialize import config_to_dict
+
+        bundle_file = tmp_path / "b.json"
+        FailureBundle(
+            seed=0,
+            schedule_seed=None,
+            target="tests:unused",
+            config=config_to_dict(SimulationConfig(seeds=[0])),
+            registry_fingerprint="stale-fingerprint",  # != the fixed sim's
+        ).save(bundle_file)
+
+        with pytest.raises(AssertionError, match="fingerprint drifted"):
+            assert_no_regressions(_fixed_sim(), bundles=bundle_file)
+
     def test_plugin_registers_save_bundle_option(self) -> None:
         class _Config:
             def addinivalue_line(self, _kind: str, _line: str) -> None:

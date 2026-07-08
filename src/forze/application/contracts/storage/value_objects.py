@@ -1,9 +1,18 @@
 from datetime import datetime
-from typing import AsyncIterator, Literal, Mapping, final
+from typing import AsyncIterator, Final, Literal, Mapping, final
 
 import attrs
 
 # ----------------------- #
+
+RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE: Final[str] = (
+    "core.storage.range_whole_payload_unsupported"
+)
+"""Error code raised when a ranged read is attempted on a whole-payload-encrypted object (a single
+AEAD blob that cannot be sliced). Shared so the raising adapter and any transport handling the
+fallback (e.g. the FastAPI streaming route) reference one symbol and cannot drift apart."""
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -160,6 +169,11 @@ class RangedDownload:
     total_size: int
     """Full object size in bytes (the ``total`` in :attr:`content_range`)."""
 
+    filename: str = ""
+    """Best-known filename (decoded metadata-envelope filename when present, else the key's
+    basename) — resolved the same way as :attr:`StreamedDownload.filename` so a ``Range`` and a full
+    download advertise the same ``Content-Disposition``. Empty when the adapter does not resolve one."""
+
 
 # ....................... #
 
@@ -187,6 +201,15 @@ class StreamedDownload:
     size: int | None = None
     """Full plaintext size when known up front (``None`` for a client-side-encrypted
     object, whose plaintext length is not recorded in the raw stored size)."""
+
+    etag: str = ""
+    """Backend entity tag of the stored object (empty when the backend surfaces none). Carried
+    here so a caller that already opened the stream — a plain, unconditional download — has the
+    cache validator without a second ``head`` round-trip."""
+
+    last_modified: datetime | None = None
+    """Backend last-modification timestamp, or ``None`` when unavailable — the time-based cache
+    validator, alongside :attr:`etag`."""
 
 
 # ....................... #

@@ -94,6 +94,14 @@ def assert_no_regressions(sim: Simulation, *, bundles: str | Path) -> None:
 
     A bundle whose registry fingerprint no longer matches *sim* is reported as a drift warning
     (the catalog moved, so the seed may not exercise the original path) rather than a pass.
+
+    **Self-containment.** A bundle reproduces via seed + config → the *auto-derived* scenario, so
+    only strategies that regenerate their workload from the seed are faithfully replayable
+    (``SCENARIO`` / ``HYPOTHESIS`` / ``DPOR`` / crash). An ``OP_CASE`` bundle needs the ``cases=``
+    a bundle cannot carry — it is reported as a **failure** (not self-replayable), never crashing
+    the batch or silently passing. A bug originally found under a *custom* ``scenario=`` is likewise
+    not captured: replay re-derives a different scenario, so its non-reproduction here is not a
+    trustworthy pass — replay such a bundle manually against its original scenario instead.
     """
 
     paths = _bundle_paths(bundles)
@@ -110,7 +118,24 @@ def assert_no_regressions(sim: Simulation, *, bundles: str | Path) -> None:
             and bundle.registry_fingerprint != sim.fingerprint()
         )
         replay = attrs.evolve(config_from_dict(bundle.config), seeds=[bundle.seed])
-        report = sim.run(replay)
+
+        if not _is_self_replayable(replay):
+            # An OP_CASE bundle reproduces only from a caller-supplied ``cases=`` that the bundle
+            # never stored; a bare replay raises ``ValueError`` in dispatch. Report it (rather than
+            # letting the exception abort every remaining bundle) so it can't masquerade as a pass.
+            failures.append(
+                f"seed {bundle.seed} ({path.name}) is not a self-contained regression bundle: "
+                f"its {replay.strategy.value!r} strategy reproduces only from an externally-supplied "
+                "workload (cases/scenario) a bundle cannot carry. Replay it manually with the "
+                "original cases=/scenario=, or regenerate it under a seed-reproducible strategy."
+            )
+            continue
+
+        try:
+            report = sim.run(replay)
+        except Exception as e:  # a malformed/unreplayable bundle must not abort the whole batch
+            failures.append(f"seed {bundle.seed} ({path.name}) could not be replayed: {e}")
+            continue
 
         if report is not None:
             failures.append(f"seed {bundle.seed} ({path.name}) still violates:\n{report.format()}")
@@ -125,6 +150,22 @@ def assert_no_regressions(sim: Simulation, *, bundles: str | Path) -> None:
             f"{len(failures)} of {len(paths)} regression bundle(s) failed:\n\n"
             + "\n\n".join(failures)
         )
+
+
+# ....................... #
+
+
+def _is_self_replayable(config: SimulationConfig) -> bool:
+    """Whether a bundle under *config* can reproduce from seed + config alone.
+
+    True for every strategy that regenerates its workload from the seed (``SCENARIO`` /
+    ``HYPOTHESIS`` / ``DPOR``, and crash runs). False for ``OP_CASE``, whose workload is the
+    caller's ``cases=`` — never stored in a bundle, so dispatch would raise on replay.
+    """
+
+    from forze_dst.config import Strategy
+
+    return config.strategy is not Strategy.OP_CASE
 
 
 # ....................... #

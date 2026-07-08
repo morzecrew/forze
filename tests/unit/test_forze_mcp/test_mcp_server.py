@@ -6,10 +6,14 @@ import pytest
 
 pytest.importorskip("fastmcp")
 
+from uuid import uuid4
+
 import attrs
 from fastmcp import Client, FastMCP
-from pydantic import BaseModel
+from fastmcp.exceptions import ToolError
+from pydantic import BaseModel, Field
 
+from forze.base.exceptions import exc
 from forze.application.contracts.execution import Handler
 from forze.application.execution import OperationDescriptor
 from forze.application.execution.operations.registry import (
@@ -574,9 +578,9 @@ class TestCatalogDerivedDescriptions:
 
         assert tool.description is not None
         assert tool.description.startswith("write n")
-        assert "Supports idempotent retries via an invocation-bound idempotency key" in (
-            tool.description
-        )
+        # Idempotency is NOT advertised over MCP: the boundary binds no key, so the wrap is a
+        # no-op — promising safe retries would invite duplicate writes.
+        assert "idempotent" not in tool.description.lower()
         # The authz hook implies a bound principal — the authn line is advertised too.
         assert "Requires authentication: a verified principal must be bound" in (
             tool.description
@@ -753,3 +757,165 @@ class TestRuntimeLifespan:
             result = await client.call_tool("calc.double", {"n": 21})
 
         assert result.data.doubled == 42
+
+
+# ....................... #
+
+
+class _Boom(Handler[_In, _Out]):
+    async def __call__(self, args: _In) -> _Out:
+        raise exc.internal("SECRET dsn=postgres://leak")
+
+
+class _BoomChained(Handler[_In, _Out]):
+    async def __call__(self, args: _In) -> _Out:
+        try:
+            raise ValueError("root cause")
+        except ValueError as cause:
+            raise exc.internal("wrapper") from cause
+
+
+class _Invalid(Handler[_In, _Out]):
+    async def __call__(self, args: _In) -> _Out:
+        raise exc.validation("n must be positive", code="calc.invalid")
+
+
+class _StampIn(BaseModel):
+    n: int = 0
+    stamp: str = Field(default_factory=lambda: uuid4().hex)
+
+
+class _StampOut(BaseModel):
+    stamp: str
+
+
+class _Stamp(Handler[_StampIn, _StampOut]):
+    async def __call__(self, args: _StampIn) -> _StampOut:
+        return _StampOut(stamp=args.stamp)
+
+
+def _error_registry() -> FrozenOperationRegistry:
+    reg = OperationRegistry(
+        handlers={
+            "boom": lambda _c: _Boom(),
+            "boom_chained": lambda _c: _BoomChained(),
+            "bad_input": lambda _c: _Invalid(),
+        }
+    )
+    reg = reg.set_descriptor(
+        "boom", OperationDescriptor(input_type=_In, output_type=_Out, description="b")
+    )
+    reg = reg.set_descriptor(
+        "boom_chained",
+        OperationDescriptor(input_type=_In, output_type=_Out, description="bc"),
+    )
+    reg = reg.set_descriptor(
+        "bad_input",
+        OperationDescriptor(input_type=_In, output_type=_Out, description="v"),
+    )
+    reg = reg.bind("boom").as_query().finish()
+    reg = reg.bind("boom_chained").as_query().finish()
+    reg = reg.bind("bad_input").as_query().finish()
+    return reg.freeze()
+
+
+class TestErrorMasking:
+    async def test_internal_error_details_never_reach_the_agent(self) -> None:
+        server = build_mcp_server(_error_registry(), _ctx_factory, name="e")
+
+        async with Client(server) as client:
+            with pytest.raises(ToolError) as excinfo:
+                await client.call_tool("boom", {"n": 1})
+
+        message = str(excinfo.value)
+        # The internal exception's message (a leaked secret) must be masked.
+        assert "SECRET" not in message and "postgres" not in message
+        assert "core.internal" in message  # a generic, code-tagged detail is fine
+
+    async def test_caller_caused_error_message_is_preserved(self) -> None:
+        server = build_mcp_server(_error_registry(), _ctx_factory, name="e")
+
+        async with Client(server) as client:
+            with pytest.raises(ToolError) as excinfo:
+                await client.call_tool("bad_input", {"n": -1})
+
+        message = str(excinfo.value)
+        # A validation (caller-caused) error keeps its actionable message + code for the agent.
+        assert "n must be positive" in message
+        assert "calc.invalid" in message
+
+    async def test_server_error_is_logged_but_caller_error_is_not(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The agent gets a masked ToolError, but operators must still see the real server error in
+        # the logs (mirrors the HTTP edge). A caller-caused error is not a server error → not logged.
+        calls: list[tuple[str, str, dict]] = []
+
+        class _StubLogger:
+            def error(self, event: str, **kw: object) -> None:
+                calls.append(("error", event, dict(kw)))
+
+            def critical_exception(self, event: str, **kw: object) -> None:
+                calls.append(("critical", event, dict(kw)))
+
+        monkeypatch.setattr("forze_mcp.registration._error_logger", _StubLogger())
+
+        server = build_mcp_server(_error_registry(), _ctx_factory, name="e")
+        async with Client(server) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("boom", {"n": 1})  # server error → logged
+            with pytest.raises(ToolError):
+                await client.call_tool("bad_input", {"n": -1})  # caller error → not logged
+
+        assert len(calls) == 1
+        _, event, kw = calls[0]
+        assert event == "MCP server error"
+        assert kw["error_code"] == "core.internal"
+        assert kw["error_kind"] == "internal"
+
+    async def test_chained_server_error_logs_the_cause_traceback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A CoreException with a __cause__ logs via critical_exception (with the cause).
+        calls: list[tuple[str, str, dict]] = []
+
+        class _StubLogger:
+            def error(self, event: str, **kw: object) -> None:
+                calls.append(("error", event, dict(kw)))
+
+            def critical_exception(self, event: str, **kw: object) -> None:
+                calls.append(("critical", event, dict(kw)))
+
+        monkeypatch.setattr("forze_mcp.registration._error_logger", _StubLogger())
+
+        server = build_mcp_server(_error_registry(), _ctx_factory, name="e")
+        async with Client(server) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("boom_chained", {"n": 1})
+
+        assert len(calls) == 1
+        kind, event, kw = calls[0]
+        assert kind == "critical"
+        assert event == "MCP server error"
+        assert isinstance(kw["exc"], ValueError)  # the chained cause
+
+
+class TestDefaultFactory:
+    async def test_default_factory_runs_per_call_not_frozen_at_registration(self) -> None:
+        reg = OperationRegistry(handlers={"stamp": lambda _c: _Stamp()})
+        reg = reg.set_descriptor(
+            "stamp",
+            OperationDescriptor(
+                input_type=_StampIn, output_type=_StampOut, description="s"
+            ),
+        )
+        reg = reg.bind("stamp").as_query().finish()
+        server = build_mcp_server(reg.freeze(), _ctx_factory, name="s")
+
+        async with Client(server) as client:
+            # Omit the default_factory field on both calls.
+            first = (await client.call_tool("stamp", {})).data.stamp
+            second = (await client.call_tool("stamp", {})).data.stamp
+
+        # A value frozen at registration would be identical; a per-call factory differs.
+        assert first != second

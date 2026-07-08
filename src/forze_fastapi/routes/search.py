@@ -53,6 +53,7 @@ def attach_search_routes(
     include: AbstractSet[SearchKernelOp | str] | None = None,
     resource: str | None = None,
     path_overrides: Mapping[SearchKernelOp | str, str] | None = None,
+    exclude_none: bool = True,
 ) -> APIRouter:
     """Attach the registered search operations under *ns* to *router*.
 
@@ -96,4 +97,5 @@ def attach_search_routes(
         bindings=_SEARCH_BINDINGS,
         include=include,
         path_overrides=path_overrides,
+        exclude_none=exclude_none,
     )

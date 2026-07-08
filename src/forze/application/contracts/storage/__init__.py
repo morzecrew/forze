@@ -14,6 +14,7 @@ from .ports import (
 )
 from .specs import StorageSpec
 from .value_objects import (
+    RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
     DownloadedObject,
     ObjectHead,
     ObjectMetadata,
@@ -38,6 +39,7 @@ __all__ = [
     "StoredObject",
     "DownloadedObject",
     "ObjectHead",
+    "RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE",
     "RangedDownload",
     "StreamedDownload",
     "ObjectMetadata",

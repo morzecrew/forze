@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`SearchSpec(max_results=…)` / `SearchSpec(highlight_scan_limit=…)`** — cap an unbounded offset search (Postgres/Mongo/Meilisearch) and bound the PGroonga highlight text scan; both opt-in, `None` keeps prior behaviour.
 
+- **`PostgresHubSearchMemberConfig.from_search_config(config, *, hub_fk, …)`** — derive a hub leg from a standalone `PostgresSearchConfig`, carrying every field over and adding the hub wiring (`hub_fk` / `heap_pk` / `same_heap_as_hub`).
+
 **Execution & handlers**
 
 - **Two-phase prepare/apply handlers** — `TwoPhaseHandler` (plus a kit base): `prepare(args)` runs outside the transaction (read-only) and `apply(args, payload)` inside it. A tx route is required.
@@ -106,6 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze_kafka` offset-log backend** — the first real offset-log transport (`kafka` extra, over `aiokafka`): `KafkaDepsModule(streams=…, commit_groups=…)` wires produce (`StreamCommandPort`) + consume (`CommitStreamGroupQueryPort`) + admin (`CommitStreamGroupAdminPort`); `key`→partition, native record headers, `commit` translates to Kafka's next-offset, replay/lag over the admin client, `end_to_end` encryption sealed through the broker, `namespace` / dedicated (routed) tenancy. `kafka_lifecycle_step(...)` / `routed_kafka_lifecycle_step(...)`. Verified against a live broker (testcontainers) as the offset-log conformance differential.
 
 - **Redis stream & pub-sub transports** — `RedisDepsModule` wires `StreamSpec` / `PubSubSpec` via `RedisStreamConfig` / `RedisStreamGroupConfig` / `RedisPubSubConfig`; `encryption="end_to_end"` seals through the broker, `tenant_aware` adds a key prefix. The stream consumer-group adapter splits into a data-plane query adapter and a control-plane `*StreamGroupAdminAdapter` (`ensure_group`), for Redis and the mock.
+
+- **Bounded-memory streaming download route** — the generated FastAPI `GET` download route now **streams** the object (`StreamingResponse`) instead of buffering it whole, so one large object can no longer OOM the process. A plain download runs a single governed op (`download_stream`, whose result carries the `ETag` / `Last-Modified` cache validators); a `Range` request does a real backend-ranged fetch (`206`, capped at `max_range_bytes` = 16 MiB, wider windows served as an RFC-7233 truncated partial), `416` for an unsatisfiable range, and `304` via backend `ETag` (`If-None-Match`) / `Last-Modified` (`If-Modified-Since`). An `HTTP HEAD /{key}` route answers object metadata (size / etag / content-type / last-modified) as headers with no body. Backed by three new read-only storage kit ops — `head` / `download_stream` / `download_range` (`StorageKernelOp`, `build_storage_registry`); `StreamedDownload` now carries `etag` / `last_modified`, and `RangedDownload` carries `filename` so a `Range` and a full download advertise the same `Content-Disposition`. *Behavior change:* the download route streams by default (`attach_storage_routes(stream=False)` keeps the legacy fully-buffered route); the `ETag` is now the backend etag (not a body MD5); an encrypted object streams with no `Content-Length` (chunked transfer, plaintext size unknown). Reuses the existing adapter streaming/ranged machinery (S3/GCS/mock; plaintext + chunked-AEAD), verified against MinIO and fake-gcs.
 
 - **Top-level front door** — the most-used names re-export lazily (PEP 562) from `forze` / `forze_kits` (`from forze import DocumentSpec, build_runtime`; `from forze_kits import DocumentFacade, build_document_registry`); deep paths keep working, the core never imports kits.
 
@@ -184,6 +188,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Integration logger namespaces unified to `forze_<pkg>.*`** — `forze_redis` / `forze_postgres` / `forze_http` / `forze_firestore` / `forze_temporal` no longer log under bare prefixes; update log filters keyed on the old ones.
 
 - **Hot-path micro-optimizations** (byte-identical output) — faster `normalize_string`, keyset sort-value canonicalization, once-per-struct msgspec exclude-flag resolution, allocation-free trusted bulk decode, compile-once in-memory scans, `forze.base.crypto.ENVELOPE_B64_PREFIX`, and per-wrapped-method (not per-call) construction of the OpenTelemetry port-span name/attributes and the port-interceptor terminal.
+
+- **Generated FastAPI routes omit null response fields by default** — every `attach_*_routes` helper now sets `response_model_exclude_none=True`, so a JSON response drops fields whose value is `None` (smaller payload); the OpenAPI schema is unchanged (fields stay optional). Pass `exclude_none=False` to any `attach_*_routes` (or `attach_operation_routes`) to restore explicit `null`s. Raw-`Response` routes (download/head bytes) are unaffected.
 
 ### Removed
 
@@ -280,6 +286,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **DST systematic search is complete again** — the DPOR frontier now zero-pads the choice prefix instead of truncating it, so schedules that hold a branch point FIFO before deviating (e.g. `(0, 1)`) are reachable; previously the search covered only an exponentially small contiguous-deviation corner and the completeness guarantee was false. Violation reports now carry the actual config / DPOR choices / Hypothesis plan and print a faithful `reproduce(...)` line (the old one reset to library defaults and usually would not reproduce under `thorough()`).
 
+- **Regression bundles handle non-self-contained strategies honestly** — a bundle reproduces from seed + config via the *auto-derived* scenario, so an `OP_CASE` bundle (whose workload is the caller's `cases=`, never stored) can't self-replay. `assert_no_regressions` now reports such a bundle as a clear failure and wraps each replay so one bad bundle can't crash the batch (was an uncaught `ValueError` aborting the whole regression check); `replay_bundle` raises an actionable error instead of the raw dispatch one. The catalogued limitation (a bug found under a custom `scenario=` re-derives a different scenario on replay) is now documented on both entry points.
+
+- **Mock outbox/inbox write-through is a catalogued DST divergence** — added the `outbox-inbox-write-through` entry to `MECHANISM_DIVERGENCES`: only the document store gets MVCC isolation, while the journalled outbox/inbox are write-through (atomic on rollback — no double-publish-from-abort — but a concurrent in-flight transaction can dirty-read their not-yet-committed rows). A premature-visibility / phantom-event finding on the outbox→relay→inbox path should be confirmed against a real broker/store.
+
 - **Kafka commit-stream consumer is loss-free under poison and rebalance** — a malformed payload is surfaced as an `UndecodableStreamPayload` marker (paused, not raised out of `read()`); every pause/abort path calls the new `seek_to_committed` so an aborted batch is re-fetched, not skipped; a `KafkaCommitRebalanceListener` drops stale partition routing on revoke and seeks on assign; and the new supervised `commit_stream_consumer_background_lifecycle_step` restarts crash-loss-free. Adds `seek_to_committed` to `CommitStreamGroupQueryPort` and `UndecodableStreamPayload` to the stream contracts.
 
 - **Firestore write path is OCC- and tenant-safe** — `_patch` wraps read-check-write in a Firestore transaction for real rev-CAS (works with or without a caller transaction; a concurrent write aborts → `@occ_retry` re-applies), replacing an unconditional full-document `set()` that lost even non-overlapping concurrent field changes. `kill`/`kill_many` do a tenant-verified delete and raise `not_found` on miss/cross-tenant. `$neq`/`$nin`/`$null` are removed from advertised capabilities (Firestore cannot match absent/null the way the agnostic oracle does, so they now fail closed with `query_feature_unsupported` instead of returning silently-wrong rows); `get_many` chunks ids at Firestore's 30-value cap. `create`/`create_many` now fail closed (`conflict`) on an existing id via Firestore's create-only write instead of silently overwriting, matching Postgres/Mongo; `ensure`/`upsert` catch that conflict and re-read so a lost create-race returns/updates the existing row rather than erroring. Firestore joins the cross-backend DSL parity harness.
@@ -319,6 +329,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Authz grant resolution cross-checks the tenant** — `AuthzGrantResolver` now takes the invocation tenant and refuses a caller-supplied `AuthzScope` naming a different tenant (`authz.scope_tenant_mismatch`) instead of silently resolving grants against the ambient tenant's bindings — defense-in-depth beside the storage layer's auto-scoping. No-op when no tenant is bound.
 
 - **OIDC assertion records the validated audience** — for a multi-audience `id_token`, the mapper recorded `aud[0]`, which may be a different party than the one the verifier validated against its configured audience; it now records the matched (validated) audience.
+
+- **`trust_tenant_header` no longer binds an arbitrary tenant for anonymous requests on a resolver-gated app** — the raw `X-Tenant-Id` fallback is honored when there is *no* tenancy resolver, or when the request is *authenticated* and the resolver returned no binding (a gateway authenticated it and set the header; a genuine tenant mismatch still raises). An *anonymous* request on a resolver-gated app gets no tenant rather than an attacker-settable one. Verified-credential issuer hints and the authenticated resolver path (when it does bind a tenant) are unchanged; `trust_tenant_header` still defaults `False`.
+
+**Transport & agent surfaces**
+
+- **MCP no longer leaks internal error details to agents** — `build_mcp_server` sets FastMCP `mask_error_details=True`, and a boundary `CoreException` is translated to a client-safe `ToolError` using the same egress-masked `error_envelope` the HTTP edge renders. A caller-caused error (validation/precondition/…) keeps its actionable message + code; an internal/infrastructure error is masked to a generic detail; any other exception is masked by FastMCP. Previously a tool call surfaced the raw exception message verbatim.
+
+- **MCP stops advertising idempotency it can't honor** — the tool description no longer claims write operations support idempotent-retry replay: the MCP boundary binds no idempotency key (there is no per-call key channel like the HTTP `Idempotency-Key` header), so the wrap is a no-op and a retry would re-execute the write. Telling an agent retries are safe actively invited duplicate writes.
+
+- **MCP tool defaults run their `default_factory` per call** — a flat tool argument backed by a `default_factory` (e.g. a `uuid`/timestamp) was materialized once at registration and reused for every call that omitted it; it is now left unset (a sentinel the handler strips) so the DTO regenerates it per call.
+
+- **Generated FastAPI routes render one 422 shape** — a `RequestValidationError` (FastAPI's own body/query/path parse failure) is now rendered in the shared Forze error envelope + `X-Error-Code` (`request_validation_error`), matching operation-raised validation errors instead of FastAPI's default `{"detail": [...]}`; per-error `loc`/`msg`/`type` are kept, raw `ctx`/`input` dropped.
+
+- **`forze dst replay` survives a bad corpus target** — one unloadable `module:attr` (renamed/moved app) is reported and counted as a failure while the rest of the corpus still replays, instead of aborting the whole run with a raw traceback.
+
+- **Storage download route documents its buffering bound** — the generated `download` route fully buffers the object in memory (a `Range` slices the buffer, not a ranged backend fetch); its docstring now says so and points to `PRESIGN_DOWNLOAD` for large/untrusted-size objects. (A streaming, backend-ranged download route remains a follow-up.)
 
 **PostgreSQL hardening**
 

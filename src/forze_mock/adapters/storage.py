@@ -193,6 +193,8 @@ class MockStorageAdapter(
             filename=obj.filename,
             chunks=_body(),
             size=len(payload),
+            etag=self._etag(payload),
+            last_modified=obj.created_at,
         )
 
     # ....................... #
@@ -292,6 +294,7 @@ class MockStorageAdapter(
             content_type=obj.content_type,
             content_range=f"bytes {start}-{end_byte}/{total}",
             total_size=total,
+            filename=obj.filename,
         )
 
     # ....................... #

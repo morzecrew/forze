@@ -59,12 +59,21 @@ def _build_app(
     include=None,
     registry_ops=None,
     max_upload_size: int | None = _UNSET,
+    stream: bool = _UNSET,
+    max_range_bytes: int = _UNSET,
+    exclude_none: bool = _UNSET,
     ctx_dep=None,
 ) -> FastAPI:
     spec = StorageSpec(name="files")
     state = state or MockState()
 
     kwargs = {} if max_upload_size is _UNSET else {"max_upload_size": max_upload_size}
+    if stream is not _UNSET:
+        kwargs["stream"] = stream
+    if max_range_bytes is not _UNSET:
+        kwargs["max_range_bytes"] = max_range_bytes
+    if exclude_none is not _UNSET:
+        kwargs["exclude_none"] = exclude_none
 
     if registry_ops is None:
         registry = build_storage_registry(spec).freeze()
@@ -201,14 +210,24 @@ class TestStorageRoutes:
             "/files/abort_upload",
         }
         assert set(paths["/files/upload"]) == {"post"}
-        assert set(paths["/files/download/{key}"]) == {"get"}
+        # HEAD mirrors the GET download resource on the same path.
+        assert set(paths["/files/download/{key}"]) == {"get", "head"}
         assert set(paths["/files/delete/{key}"]) == {"delete"}
         assert set(paths["/files/begin_upload"]) == {"post"}
         assert set(paths["/files/presign_upload"]) == {"post"}
 
     @pytest.mark.parametrize("style", ["rest", "rpc"])
     def test_operation_ids_are_registry_keys_verbatim(self, style: str) -> None:
-        expected = {f"files.{op.value}" for op in StorageKernelOp}
+        # download_stream / download_range have no standalone route — they are consumed internally
+        # by the streaming download endpoint — so they carry no route operation_id. head does get
+        # its own HTTP HEAD route.
+        internal = {
+            StorageKernelOp.DOWNLOAD_STREAM,
+            StorageKernelOp.DOWNLOAD_RANGE,
+        }
+        expected = {
+            f"files.{op.value}" for op in StorageKernelOp if op not in internal
+        }
 
         assert _operation_ids(_build_app(style)) == expected
 
@@ -245,6 +264,45 @@ class TestStorageRoutes:
 
 
 # ....................... #
+
+
+class TestBufferedDownloadOptOut:
+    """The stream=False (fully-buffered) download route still honors Range / conditional / 416."""
+
+    @staticmethod
+    def _upload(client: TestClient) -> str:
+        return client.post(
+            "/files", files={"file": ("b.bin", b"0123456789", "application/octet-stream")}
+        ).json()["key"]
+
+    def test_buffered_range_206(self) -> None:
+        client = TestClient(_build_app("rest", stream=False))
+        key = self._upload(client)
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=2-5"})
+        assert resp.status_code == 206
+        assert resp.content == b"2345"
+        assert resp.headers["content-range"] == "bytes 2-5/10"
+
+    def test_buffered_unsatisfiable_range_416(self) -> None:
+        client = TestClient(_build_app("rest", stream=False))
+        key = self._upload(client)
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=100-"})
+        assert resp.status_code == 416
+        assert resp.headers["content-range"] == "bytes */10"
+
+    def test_buffered_conditional_304(self) -> None:
+        client = TestClient(_build_app("rest", stream=False))
+        key = self._upload(client)
+        etag = client.get(f"/files/{key}").headers["etag"]
+        resp = client.get(f"/files/{key}", headers={"If-None-Match": etag})
+        assert resp.status_code == 304
+
+    def test_buffered_malformed_range_serves_full_body(self) -> None:
+        client = TestClient(_build_app("rest", stream=False))
+        key = self._upload(client)
+        resp = client.get(f"/files/{key}", headers={"Range": "items=0-4"})
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
 
 
 class TestStorageDownloadRangeAndConditional:
@@ -741,3 +799,291 @@ class TestStorageEncryptingRouteRefusal:
         # leaked stack, standard JSON body.
         assert resp.status_code == 500
         assert resp.json() == {"detail": "Internal server error"}
+
+
+class TestStreamingDownload:
+    """The default (stream=True) download route: bounded-memory body, backend Range, conditional."""
+
+    @staticmethod
+    def _upload(client: TestClient, data: bytes, filename: str = "blob.bin") -> str:
+        return client.post(
+            "/files",
+            files={"file": (filename, data, "application/octet-stream")},
+        ).json()["key"]
+
+    def test_full_download_streams_the_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}")
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+        assert resp.headers["accept-ranges"] == "bytes"
+        assert resp.headers["content-length"] == "10"
+        # Cache validators ride along on the single-op streamed result (no separate head).
+        assert "etag" in resp.headers
+        assert "last-modified" in resp.headers
+        assert "blob.bin" in resp.headers["content-disposition"]
+
+    def test_range_returns_206_backend_partial(self) -> None:
+        client = TestClient(_build_app("rest"))
+        # A filename distinct from the (UUID) key so the 206 Content-Disposition can't accidentally
+        # match by using the raw key basename.
+        key = self._upload(client, b"0123456789", filename="report final.pdf")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=2-5"})
+
+        assert resp.status_code == 206
+        assert resp.content == b"2345"  # end inclusive
+        assert resp.headers["content-range"] == "bytes 2-5/10"
+        # Same filename source as the full download (not the key basename).
+        assert "report%20final.pdf" in resp.headers["content-disposition"]
+        assert (
+            resp.headers["content-disposition"]
+            == client.get(f"/files/{key}").headers["content-disposition"]
+        )
+
+    def test_unsatisfiable_range_returns_416(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=100-"})
+
+        assert resp.status_code == 416
+        assert resp.headers["content-range"] == "bytes */10"
+
+    def test_conditional_if_none_match_returns_304(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        etag = client.get(f"/files/{key}").headers["etag"]
+        resp = client.get(f"/files/{key}", headers={"If-None-Match": etag})
+
+        assert resp.status_code == 304
+        assert resp.content == b""
+
+    def test_range_window_is_capped(self) -> None:
+        # A window wider than the cap is served truncated (a valid partial the client re-requests).
+        client = TestClient(_build_app("rest", max_range_bytes=4))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=0-9"})
+
+        assert resp.status_code == 206
+        assert resp.content == b"0123"  # capped to 4 bytes
+        assert resp.headers["content-range"] == "bytes 0-3/10"
+
+    def test_min_cap_does_not_reverse_a_single_byte_range(self) -> None:
+        # A cap of 1 must still serve a valid 1-byte partial (no start>end reversal).
+        client = TestClient(_build_app("rest", max_range_bytes=1))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=5-5"})
+
+        assert resp.status_code == 206
+        assert resp.content == b"5"
+        assert resp.headers["content-range"] == "bytes 5-5/10"
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_non_positive_range_cap_rejected_at_wiring(self, bad: int) -> None:
+        # A cap < 1 would reverse the window; reject it at attach time, not per request.
+        with pytest.raises(CoreException, match="max_range_bytes"):
+            _build_app("rest", max_range_bytes=bad)
+
+    def test_malformed_range_serves_full_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "items=0-4"})
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+
+    def test_buffered_opt_out_still_serves_the_body(self) -> None:
+        # stream=False keeps the fully-buffered download route.
+        client = TestClient(_build_app("rest", stream=False))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}")
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+
+    def test_head_returns_metadata_headers_no_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.head(f"/files/{key}")
+
+        assert resp.status_code == 200
+        assert resp.content == b""
+        assert resp.headers["content-length"] == "10"
+        assert resp.headers["accept-ranges"] == "bytes"
+        assert "etag" in resp.headers
+
+
+class TestExcludeNoneResponses:
+    """Generated JSON responses drop null fields by default (smaller wire), opt-out keeps them."""
+
+    def test_null_fields_dropped_by_default(self) -> None:
+        client = TestClient(_build_app("rest"))
+
+        # Upload with no description → StoredObjectDTO.description / tags are None.
+        body = client.post(
+            "/files", files={"file": ("a.txt", b"x", "text/plain")}
+        ).json()
+
+        assert "description" not in body
+        assert "tags" not in body
+        assert body["filename"] == "a.txt"  # non-null fields still present
+
+    def test_exclude_none_false_keeps_explicit_nulls(self) -> None:
+        client = TestClient(_build_app("rest", exclude_none=False))
+
+        body = client.post(
+            "/files", files={"file": ("a.txt", b"x", "text/plain")}
+        ).json()
+
+        assert body["description"] is None
+        assert "tags" in body
+
+
+class TestConditionalAndHelpers:
+    """Cover the conditional (If-Modified-Since) path and the streaming header helpers directly."""
+
+    @staticmethod
+    def _upload(client: TestClient, data: bytes = b"0123456789") -> str:
+        return client.post(
+            "/files", files={"file": ("blob.bin", data, "application/octet-stream")}
+        ).json()["key"]
+
+    def test_if_modified_since_304_when_not_modified(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client)
+        last_modified = client.get(f"/files/{key}").headers["last-modified"]
+
+        resp = client.get(f"/files/{key}", headers={"If-Modified-Since": last_modified})
+
+        assert resp.status_code == 304
+
+    def test_if_modified_since_serves_body_when_modified(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client)
+
+        resp = client.get(
+            f"/files/{key}",
+            headers={"If-Modified-Since": "Mon, 01 Jan 1990 00:00:00 GMT"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+
+    def test_malformed_if_modified_since_serves_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client)
+
+        resp = client.get(f"/files/{key}", headers={"If-Modified-Since": "not a date"})
+
+        assert resp.status_code == 200
+
+    def test_streaming_falls_back_to_buffered_when_ops_absent(self) -> None:
+        # An older registry without head/download_stream/download_range keeps the buffered route.
+        app = _build_app("rest", registry_ops=[StorageKernelOp.UPLOAD, StorageKernelOp.DOWNLOAD])
+        client = TestClient(app)
+        key = self._upload(client)
+
+        resp = client.get(f"/files/{key}")
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+
+
+class TestStreamingHeaderHelpers:
+    """Direct coverage of the header helpers for the branches the mock can't produce."""
+
+    @staticmethod
+    async def _chunks():
+        yield b"payload"
+
+    def test_full_stream_response_encrypted_omits_length_and_validators(self) -> None:
+        from forze.application.contracts.storage import StreamedDownload
+        from forze_fastapi.routes import storage as mod
+
+        streamed = StreamedDownload(
+            content_type="application/octet-stream",
+            filename="f.bin",
+            chunks=self._chunks(),
+            size=None,  # encrypted → unknown plaintext size
+            etag="",  # backend surfaced none
+            last_modified=None,
+        )
+
+        resp = mod._full_stream_response(streamed)  # pyright: ignore[reportPrivateUsage]
+
+        lower = {k.lower() for k in resp.headers}
+        assert "content-length" not in lower
+        assert "etag" not in lower
+        assert "last-modified" not in lower
+        assert resp.headers["content-disposition"]
+
+    async def test_head_endpoint_omits_absent_validators(self) -> None:
+        from forze_fastapi.routes import storage as mod
+        from forze_kits.aggregates.storage import ObjectHeadDTO
+
+        async def runner(_key: str) -> ObjectHeadDTO:
+            return ObjectHeadDTO(
+                content_type="text/plain", size=5, etag="", last_modified=None
+            )
+
+        endpoint = mod._head_endpoint(runner, None, "op")  # pyright: ignore[reportPrivateUsage]
+        resp = await endpoint("k")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-length"] == "5"
+        lower = {k.lower() for k in resp.headers}
+        assert "etag" not in lower and "last-modified" not in lower
+
+    async def test_range_response_falls_back_on_whole_payload_encrypted(self) -> None:
+        from forze.application.contracts.storage import (
+            RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
+        )
+        from forze.base.exceptions import exc
+        from forze_fastapi.routes import storage as mod
+        from forze_kits.aggregates.storage import ObjectHeadDTO
+
+        async def runner(_args: object) -> object:
+            raise exc.precondition(
+                "cannot slice", code=RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE
+            )
+
+        head = ObjectHeadDTO(content_type="x", size=100, etag="e", last_modified=None)
+        out = await mod._range_response(  # pyright: ignore[reportPrivateUsage]
+            key="k",
+            range_header="bytes=0-10",
+            head=head,
+            base_headers={},
+            range_runner=runner,
+            max_range_bytes=16 * 1024 * 1024,
+        )
+
+        assert out is None  # → caller streams the full body instead
+
+    async def test_range_response_reraises_other_core_exception(self) -> None:
+        from forze.base.exceptions import CoreException, exc
+        from forze_fastapi.routes import storage as mod
+        from forze_kits.aggregates.storage import ObjectHeadDTO
+
+        async def runner(_args: object) -> object:
+            raise exc.internal("boom")
+
+        head = ObjectHeadDTO(content_type="x", size=100, etag="e", last_modified=None)
+        with pytest.raises(CoreException):
+            await mod._range_response(  # pyright: ignore[reportPrivateUsage]
+                key="k",
+                range_header="bytes=0-10",
+                head=head,
+                base_headers={},
+                range_runner=runner,
+                max_range_bytes=16 * 1024 * 1024,
+            )

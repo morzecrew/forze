@@ -189,22 +189,34 @@ async def resolve_tenant_identity(
     ten = ctx.tenancy.resolver()
 
     if ten is not None and authn is not None:
-        return await ten.resolve_from_principal(
+        resolved = await ten.resolve_from_principal(
             authn.identity.principal_id,
             requested_tenant_id=requested,
         )
 
+        if resolved is not None:
+            return resolved
+
+        # The resolver has NO tenant binding for this principal (a genuine tenant *mismatch*
+        # against the requested tenant raises instead of returning None), so fall through: a
+        # trusted gateway header can still supply the tenant for an authenticated request.
+
     if requested is None:
         return None
 
-    # No tenancy resolver validated the request. A tenant derived from a verified
-    # credential (issuer hint) is trustworthy, but a tenant taken from the raw
-    # ``X-Tenant-Id`` header is unauthenticated client input: an attacker could set
-    # it to any tenant. Honor the header-only path only when the deployment has
-    # explicitly opted in (e.g. it sits behind a gateway that sets the header).
+    # No resolver produced a tenant for this request. A tenant derived from a verified credential
+    # (issuer hint) is trustworthy, but a tenant taken from the raw ``X-Tenant-Id`` header is
+    # unauthenticated client input: an attacker could set it to any tenant.
     from_verified_credential = parse_tenant_hint(issuer_hint) is not None
 
-    if from_verified_credential or trust_tenant_header:
+    # Header-only trust is the gateway fallback (the deployment opted in via ``trust_tenant_header``,
+    # e.g. behind a gateway that sets ``X-Tenant-Id``). Honor it when there is no resolver, OR when
+    # the request is authenticated — a trusted gateway authenticated it and set the header, and the
+    # resolver merely had no binding (a mismatch would have raised). An ANONYMOUS request on a
+    # resolver-gated app still gets no tenant, so an attacker cannot bind an arbitrary one.
+    trust_header = trust_tenant_header and (ten is None or authn is not None)
+
+    if from_verified_credential or trust_header:
         return TenantIdentity(tenant_id=requested)
 
     return None

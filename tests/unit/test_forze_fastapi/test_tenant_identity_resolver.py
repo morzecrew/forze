@@ -208,6 +208,78 @@ async def test_resolve_tenant_identity_header_trusted_when_opted_in() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trust_tenant_header_ignored_for_anonymous_when_resolver_configured() -> None:
+    # A resolver is the tenancy authority. An anonymous request it can't validate must NOT get an
+    # attacker-settable header tenant, even with trust_tenant_header=True — that flag is only the
+    # no-resolver (gateway) fallback.
+    tid = uuid4()
+
+    class _TenantResolver:
+        async def resolve_from_principal(self, principal_id, *, requested_tenant_id=None):
+            return TenantIdentity(tenant_id=tid)
+
+    ctx = context_from_deps(
+        Deps.plain({TenantResolverDepKey: lambda c: _TenantResolver()}),
+    )
+    req = _request(headers=[_tenant_header(tid)])
+
+    out = await resolve_tenant_identity(
+        None,  # anonymous
+        request=req,
+        ctx=ctx,
+        trust_tenant_header=True,
+    )
+
+    assert out is None
+
+
+@pytest.mark.asyncio
+async def test_trust_tenant_header_falls_back_for_authenticated_when_resolver_has_no_binding() -> None:
+    # A gateway-backed app (trust_tenant_header=True) whose resolver returns None for an
+    # authenticated principal must still bind the gateway header tenant — the resolver had no
+    # binding (a mismatch would raise), not a denial.
+    tid = uuid4()
+    pid = uuid4()
+
+    class _TenantResolver:
+        async def resolve_from_principal(self, principal_id, *, requested_tenant_id=None):
+            return None  # no binding for this principal (not a mismatch)
+
+    ctx = context_from_deps(
+        Deps.plain({TenantResolverDepKey: lambda c: _TenantResolver()}),
+    )
+    req = _request(headers=[_tenant_header(tid)])
+
+    out = await resolve_tenant_identity(
+        _authn(pid),
+        request=req,
+        ctx=ctx,
+        trust_tenant_header=True,
+    )
+
+    assert out == TenantIdentity(tenant_id=tid)
+
+
+@pytest.mark.asyncio
+async def test_authenticated_resolver_none_denies_header_without_trust() -> None:
+    # Same as above but without trust_tenant_header: the untrusted header is not bound.
+    pid = uuid4()
+
+    class _TenantResolver:
+        async def resolve_from_principal(self, principal_id, *, requested_tenant_id=None):
+            return None
+
+    ctx = context_from_deps(
+        Deps.plain({TenantResolverDepKey: lambda c: _TenantResolver()}),
+    )
+    req = _request(headers=[_tenant_header(uuid4())])
+
+    out = await resolve_tenant_identity(_authn(pid), request=req, ctx=ctx)
+
+    assert out is None
+
+
+@pytest.mark.asyncio
 async def test_resolve_tenant_identity_returns_none_without_authn() -> None:
     ctx = context_from_deps(Deps.plain({}))
     req = _request()

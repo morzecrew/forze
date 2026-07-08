@@ -163,5 +163,21 @@ MECHANISM_DIVERGENCES: tuple[MechanismDivergence, ...] = (
         ),
         source="Cahill/Fekete, Serializable Snapshot Isolation (read-only safe-retry optimization)",
     ),
+    MechanismDivergence(
+        name="outbox-inbox-write-through",
+        reason=(
+            "Only the DOCUMENT store gets MVCC isolation (writes buffered to a commit-time overlay); "
+            "the outbox (`list`) and inbox (`set`) adapters journal write-through — a row is appended "
+            "to live state immediately and reverted by a per-element undo thunk on rollback. Whole-store "
+            "snapshot isolation for them would serialize concurrent transactions and blind DST to the "
+            "interleavings it exists to explore, so this is deliberate. ATOMICITY still holds — a "
+            "rolled-back transaction leaves no outbox/inbox rows, so it cannot produce a "
+            "double-publish-from-abort finding — but a concurrent still-in-flight transaction CAN read "
+            "another's not-yet-committed outbox/inbox rows (a dirty read Postgres READ COMMITTED would "
+            "not permit). Treat a premature-visibility / phantom-event finding on the outbox→relay→inbox "
+            "path as possible mock over-visibility and confirm it against a real broker/store."
+        ),
+        source="forze_mock journal design (_journal.py, adapters/tx.py MockJournalTxManagerAdapter)",
+    ),
 )
 """Mock-vs-real surface differences the differential leg must normalize, not flag (forward-looking)."""

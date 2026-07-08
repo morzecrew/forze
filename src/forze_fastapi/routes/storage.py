@@ -16,30 +16,53 @@ require_fastapi()
 # ....................... #
 
 import re
+from datetime import datetime, timezone
+from email.utils import format_datetime, parsedate_to_datetime
 from functools import partial
 from typing import AbstractSet, Annotated, Any, Awaitable, Callable, Final, Mapping
 from urllib.parse import quote
 
 import attrs
 from fastapi import APIRouter, Form, Request, Response, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from forze.application.contracts.storage import (
+    RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
+    RangedDownload,
+    StreamedDownload,
+)
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKeyNamespace
-from forze_kits.aggregates.storage import StorageKernelOp
+from forze_kits.aggregates.storage import (
+    DownloadRangeArgs,
+    ObjectHeadDTO,
+    StorageKernelOp,
+)
 
 from ._attach import (
     OperationRunner,
     RouteBinding,
     RouteStyle,
+    _operation_runner,  # pyright: ignore[reportPrivateUsage]
     attach_operation_routes,
     body_endpoint,
     require_input_type,
     resolve_namespace,
     validate_payload,
 )
+
+# ----------------------- #
+
+DEFAULT_MAX_RANGE_BYTES: Final[int] = 16 * 1024 * 1024
+"""Cap (16 MiB) on the bytes a single ``Range`` request buffers.
+
+A ranged read returns its window as bytes (bounded memory, but still buffered), so a request for a
+window wider than this is served **truncated** to the cap with a ``206`` whose ``Content-Range``
+reports the actually-returned bytes — an RFC-7233-compliant partial the client re-requests from. A
+plain (no-``Range``) download always streams, so this only bounds explicit range windows."""
 
 # ----------------------- #
 
@@ -144,9 +167,11 @@ def _download_endpoint(
     input_type: type[BaseModel] | None,
     op: str,
 ) -> Callable[..., Awaitable[Any]]:
-    """Endpoint passing the ``{key}`` path verbatim and answering raw bytes.
+    """The **fully-buffered** download endpoint — ``attach_storage_routes(stream=False)``.
 
-    HTTP conditional and range requests are honored at the edge:
+    This is the opt-out path: the default download route streams (see
+    :func:`_streaming_download_endpoint`). Passes the ``{key}`` path verbatim and answers raw
+    bytes. HTTP conditional and range requests are honored at the edge:
 
     - ``If-None-Match`` / ``If-Modified-Since`` matching the object answer
       **304 Not Modified** with an empty body (and the validators echoed back).
@@ -158,6 +183,14 @@ def _download_endpoint(
     download. The validators (ETag, Last-Modified) are derived from the
     downloaded bytes, so the route stays decoupled from the storage backend's
     own head call while remaining a faithful HTTP cache/range citizen.
+
+    .. warning::
+       The ``download`` operation returns the whole object in memory, so this route
+       **fully buffers** it (a ``Range`` request slices the buffered bytes — it does not
+       do a ranged backend fetch), and one large object can OOM the process. Prefer the
+       default streaming route (``stream=True``); for the direct-fetch path expose
+       :attr:`~forze_kits.aggregates.storage.StorageKernelOp.PRESIGN_DOWNLOAD` so the client
+       fetches from the backend and the object never transits (or buffers in) the app process.
     """
 
     _ = input_type, op  # download takes a raw storage key; no DTO to derive
@@ -382,6 +415,262 @@ def _content_disposition(filename: str) -> str:
 # ....................... #
 
 
+def _http_date(dt: datetime) -> str:
+    """An RFC 1123 ``Last-Modified`` string for *dt*, normalized to UTC.
+
+    ``format_datetime(usegmt=True)`` requires ``tzinfo is timezone.utc`` exactly — but a backend
+    (e.g. S3 via botocore) hands back a UTC-equivalent tzinfo that isn't that singleton, and a mock
+    may hand back a naive datetime. Normalize both to ``timezone.utc`` first.
+    """
+
+    aware = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    return format_datetime(aware.astimezone(timezone.utc), usegmt=True)
+
+
+# ....................... #
+
+
+def _not_modified_since(request: Request, last_modified: Any) -> bool:
+    """Whether an ``If-Modified-Since`` request is satisfied by *last_modified*.
+
+    ``If-None-Match`` (an entity tag) takes precedence and is handled separately; this covers the
+    time-based fallback now that the route has an authoritative ``Last-Modified`` from ``head``.
+    A malformed date, or a naive/aware mismatch, is treated as *not* matching (serve the body).
+    """
+
+    ims = request.headers.get("if-modified-since")
+
+    if ims is None or last_modified is None:
+        return False
+
+    try:
+        since = parsedate_to_datetime(ims)
+        # Truncate to whole seconds: HTTP-date has no sub-second precision, so a fresher
+        # last_modified within the same second must not spuriously 200.
+        return int(last_modified.timestamp()) <= int(since.timestamp())
+    except (TypeError, ValueError):
+        return False
+
+
+# ....................... #
+
+
+def _is_conditional_hit(request: Request, etag: str, last_modified: Any) -> bool:
+    """Whether a conditional request is satisfied and should answer **304**.
+
+    ``If-None-Match`` (entity tag) takes precedence per RFC 7232; ``If-Modified-Since`` is the
+    time fallback, consulted only when no ``If-None-Match`` is present.
+    """
+
+    if etag and _is_not_modified(request, etag):
+        return True
+
+    return request.headers.get("if-none-match") is None and _not_modified_since(
+        request, last_modified
+    )
+
+
+# ....................... #
+
+
+def _cache_validators(etag: str, last_modified: Any) -> dict[str, str]:
+    """The ``ETag`` / ``Last-Modified`` response headers (*etag* already quoted, may be empty)."""
+
+    validators: dict[str, str] = {}
+    if etag:
+        validators["ETag"] = etag
+    if last_modified is not None:
+        validators["Last-Modified"] = _http_date(last_modified)
+    return validators
+
+
+def _full_stream_response(streamed: StreamedDownload) -> StreamingResponse:
+    """A **200** streamed body with cache/validator/disposition headers from *streamed*."""
+
+    etag = f'"{streamed.etag}"' if streamed.etag else ""
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": _content_disposition(streamed.filename),
+        **_cache_validators(etag, streamed.last_modified),
+    }
+    # Plaintext size known → Content-Length; unknown (encrypted) → chunked transfer.
+    if streamed.size is not None:
+        headers["Content-Length"] = str(streamed.size)
+
+    return StreamingResponse(
+        streamed.chunks,
+        media_type=streamed.content_type,
+        headers=headers,
+    )
+
+
+# ....................... #
+
+
+def _streaming_download_endpoint(
+    *,
+    head_runner: OperationRunner,
+    stream_runner: OperationRunner,
+    range_runner: OperationRunner,
+    max_range_bytes: int,
+) -> Callable[..., Awaitable[Any]]:
+    """Bounded-memory download endpoint — never buffers the whole object.
+
+    A plain, unconditional ``GET`` runs a **single** governed operation (``download_stream``),
+    whose result carries the cache validators (``ETag`` / ``Last-Modified``), so no separate
+    ``head`` round-trip is needed. A conditional request (``If-None-Match`` / ``If-Modified-Since``)
+    or a ``Range`` request first runs ``head`` — to answer **304** without a body, or to fetch a
+    backend range (**206**, bounded by :data:`DEFAULT_MAX_RANGE_BYTES`; **416** if unsatisfiable).
+    ``ETag`` is the backend etag (for a client-side-encrypted object, over the stored ciphertext —
+    an opaque-but-stable validator); ``Content-Length`` is set only when the plaintext size is
+    known (absent → chunked transfer, e.g. an encrypted object).
+    """
+
+    async def endpoint(key: str, request: Request) -> Response:
+        wants_range = request.headers.get("range") is not None
+        wants_conditional = (
+            request.headers.get("if-none-match") is not None
+            or request.headers.get("if-modified-since") is not None
+        )
+
+        # Fast path: a plain download needs only download_stream — one governed op, validators
+        # ride along on the result (no separate head).
+        if not wants_range and not wants_conditional:
+            return _full_stream_response(await stream_runner(key))
+
+        head: ObjectHeadDTO = await head_runner(key)
+        etag = f'"{head.etag}"' if head.etag else ""
+
+        if _is_conditional_hit(request, etag, head.last_modified):
+            return Response(
+                status_code=304,
+                headers=_cache_validators(etag, head.last_modified),
+            )
+
+        if wants_range:
+            base_headers = {
+                "Accept-Ranges": "bytes",
+                **_cache_validators(etag, head.last_modified),
+            }
+            ranged_response = await _range_response(
+                key=key,
+                range_header=request.headers["range"],
+                head=head,
+                base_headers=base_headers,
+                range_runner=range_runner,
+                max_range_bytes=max_range_bytes,
+            )
+            # ``None`` => malformed/unknown-unit range (ignored per RFC 7233) or a whole-payload
+            # encrypted object that can't be sliced → fall through to the full streamed body.
+            if ranged_response is not None:
+                return ranged_response
+
+        return _full_stream_response(await stream_runner(key))
+
+    return endpoint
+
+
+# ....................... #
+
+
+async def _range_response(
+    *,
+    key: str,
+    range_header: str,
+    head: ObjectHeadDTO,
+    base_headers: Mapping[str, str],
+    range_runner: OperationRunner,
+    max_range_bytes: int,
+) -> Response | None:
+    """Build a 206/416 response for a ``Range`` header, or ``None`` to serve the full body.
+
+    Returns ``None`` when the range is malformed / an unknown unit (ignore per RFC 7233) or when the
+    object is whole-payload encrypted (can't be sliced) — the caller then streams the full body.
+    """
+
+    parsed = _parse_byte_range(range_header, head.size)
+
+    if parsed is None:
+        return None
+
+    if isinstance(parsed, _Unsatisfiable):
+        return Response(
+            status_code=416,
+            headers={**base_headers, "Content-Range": f"bytes */{head.size}"},
+        )
+
+    start, end = parsed
+    # Cap the buffered window; a wider request is served truncated (a valid partial the client
+    # re-requests from) rather than buffering an unbounded slice.
+    end = min(end, start + max_range_bytes - 1)
+
+    try:
+        ranged: RangedDownload = await range_runner(
+            DownloadRangeArgs(key=key, start=start, end=end)
+        )
+    except CoreException as e:
+        if e.code == RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE:
+            return None  # can't slice a whole-payload envelope → stream the full body instead
+        raise
+
+    return Response(
+        content=ranged.data,
+        status_code=206,
+        media_type=ranged.content_type,
+        headers={
+            **base_headers,
+            "Content-Range": ranged.content_range,
+            "Content-Length": str(len(ranged.data)),
+            # Same filename source as the full streamed download (see _full_stream_response), so a
+            # Range and a full GET advertise the same Content-Disposition. Fall back to the key
+            # basename if the adapter resolved none.
+            "Content-Disposition": _content_disposition(
+                ranged.filename or key.rsplit("/", 1)[-1] or "download"
+            ),
+        },
+    )
+
+
+# ....................... #
+
+
+def _head_endpoint(
+    runner: OperationRunner,
+    input_type: type[BaseModel] | None,
+    op: str,
+) -> Callable[..., Awaitable[Any]]:
+    """HTTP ``HEAD`` endpoint answering an object's metadata as headers, no body.
+
+    Mirrors the headers a ``GET`` would carry — ``Content-Type`` / ``Content-Length`` /
+    ``ETag`` / ``Last-Modified`` / ``Accept-Ranges`` — from the ``head`` operation. The
+    ``Content-Length`` is the **stored** object size (for a client-side-encrypted object that is
+    the ciphertext length; the streamed ``GET`` decrypts and uses chunked transfer instead).
+    """
+
+    _ = input_type, op  # head takes a raw storage key; no DTO to derive
+
+    async def endpoint(key: str) -> Response:
+        head: ObjectHeadDTO = await runner(key)
+
+        headers = {
+            "Accept-Ranges": "bytes",
+            # A HEAD body is empty, so set Content-Length explicitly to the object size (Starlette
+            # would otherwise report 0 for the empty body).
+            "Content-Length": str(head.size),
+        }
+        if head.etag:
+            headers["ETag"] = f'"{head.etag}"'
+        if head.last_modified is not None:
+            headers["Last-Modified"] = _http_date(head.last_modified)
+
+        return Response(status_code=200, media_type=head.content_type, headers=headers)
+
+    return endpoint
+
+
+# ....................... #
+
+
 def _delete_endpoint(
     runner: OperationRunner,
     input_type: type[BaseModel] | None,
@@ -414,6 +703,12 @@ _REST_BINDINGS: Mapping[str, RouteBinding] = {
         method="GET",
         path="/{key:path}",
         build=_download_endpoint,
+    ),
+    # HEAD mirrors the GET download resource (same path) — metadata headers, no body.
+    StorageKernelOp.HEAD: RouteBinding(
+        method="HEAD",
+        path="/{key:path}",
+        build=_head_endpoint,
     ),
     StorageKernelOp.DELETE: RouteBinding(
         method="DELETE",
@@ -467,6 +762,12 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
         method="GET",
         path=f"/{StorageKernelOp.DOWNLOAD.value}/{{key:path}}",
         build=_download_endpoint,
+    ),
+    # HEAD mirrors the GET download resource (same path) — metadata headers, no body.
+    StorageKernelOp.HEAD: RouteBinding(
+        method="HEAD",
+        path=f"/{StorageKernelOp.DOWNLOAD.value}/{{key:path}}",
+        build=_head_endpoint,
     ),
     StorageKernelOp.DELETE: RouteBinding(
         method="DELETE",
@@ -542,6 +843,61 @@ def _bindings(
 # ....................... #
 
 
+def _with_streaming_download(
+    bindings: Mapping[str, RouteBinding],
+    *,
+    registry: FrozenOperationRegistry,
+    ns: StrKeyNamespace,
+    ctx_dep: ExecutionContextFactory,
+    max_range_bytes: int,
+) -> Mapping[str, RouteBinding]:
+    """Swap the buffered DOWNLOAD binding for the bounded-memory streaming endpoint.
+
+    Needs the ``head`` / ``download_stream`` / ``download_range`` ops in the registry (built by
+    ``build_storage_registry``). If any is absent — an older registry that predates them — the
+    buffered download is kept, so enabling ``stream`` stays safe on any registry.
+    """
+
+    catalog = registry.catalog()
+    stream_ops = (
+        StorageKernelOp.HEAD,
+        StorageKernelOp.DOWNLOAD_STREAM,
+        StorageKernelOp.DOWNLOAD_RANGE,
+    )
+
+    if StorageKernelOp.DOWNLOAD not in bindings or any(
+        ns.key(op) not in catalog for op in stream_ops
+    ):
+        return bindings
+
+    def build(
+        runner: OperationRunner, input_type: type[BaseModel] | None, op: str
+    ) -> Callable[..., Awaitable[Any]]:
+        _ = runner, input_type, op  # the key rides the path; head/stream/range run the body
+        return _streaming_download_endpoint(
+            head_runner=_operation_runner(
+                registry, ns.key(StorageKernelOp.HEAD), ctx_dep
+            ),
+            stream_runner=_operation_runner(
+                registry, ns.key(StorageKernelOp.DOWNLOAD_STREAM), ctx_dep
+            ),
+            range_runner=_operation_runner(
+                registry, ns.key(StorageKernelOp.DOWNLOAD_RANGE), ctx_dep
+            ),
+            max_range_bytes=max_range_bytes,
+        )
+
+    return {
+        **bindings,
+        StorageKernelOp.DOWNLOAD: attrs.evolve(
+            bindings[StorageKernelOp.DOWNLOAD], build=build
+        ),
+    }
+
+
+# ....................... #
+
+
 def attach_storage_routes(
     router: APIRouter,
     *,
@@ -553,6 +909,9 @@ def attach_storage_routes(
     max_upload_size: int | None = DEFAULT_MAX_UPLOAD_SIZE,
     resource: str | None = None,
     path_overrides: Mapping[StorageKernelOp | str, str] | None = None,
+    stream: bool = True,
+    max_range_bytes: int = DEFAULT_MAX_RANGE_BYTES,
+    exclude_none: bool = True,
 ) -> APIRouter:
     """Attach the registered storage operations under *ns* to *router*.
 
@@ -625,6 +984,20 @@ def attach_storage_routes(
             (keyed like *include*); only the path changes, the ``operation_id`` stays
             verbatim. An override must bind exactly the default path's ``{key:path}``
             placeholder where present.
+        stream (bool): When ``True`` (default) the ``GET`` download route streams the object
+            in bounded memory (``StreamingResponse``) and serves ``Range`` via a real
+            backend-ranged fetch, using the ``head`` / ``download_stream`` / ``download_range``
+            ops (built by ``build_storage_registry``). It never buffers the whole object, so a
+            large object can't OOM the process. ``ETag`` / ``Last-Modified`` come from the
+            backend ``head`` (for a client-side-encrypted object the ``ETag`` is over the stored
+            ciphertext); ``Content-Length`` is omitted (chunked transfer) when the plaintext size
+            is unknown (encrypted). ``False`` keeps the legacy fully-buffered download. Falls back
+            to buffered automatically if the registry lacks the streaming ops.
+        max_range_bytes (int): Cap on the bytes a single ``Range`` request buffers (default
+            :data:`DEFAULT_MAX_RANGE_BYTES`, 16 MiB). A wider window is served truncated with a
+            ``206`` whose ``Content-Range`` reports the actual bytes (an RFC-7233 partial the
+            client re-requests). Only meaningful when *stream* is ``True``; a value ``< 1`` is a
+            configuration error (it would reverse the range window) rejected at wiring.
 
     Returns:
         APIRouter: The same *router*, for chaining.
@@ -635,12 +1008,33 @@ def attach_storage_routes(
             drops or adds a placeholder.
     """
 
+    if stream and max_range_bytes < 1:
+        # The range cap is used as ``start + max_range_bytes - 1``; a value < 1 would reverse the
+        # window (``end < start``) and reject an otherwise-valid range. Reject the misconfiguration
+        # at wiring rather than at request time.
+        raise exc.configuration(
+            f"max_range_bytes must be at least 1, got {max_range_bytes}",
+        )
+
+    resolved_ns = resolve_namespace(ns, resource)
+    bindings = _bindings(style, max_upload_size)
+
+    if stream:
+        bindings = _with_streaming_download(
+            bindings,
+            registry=registry,
+            ns=resolved_ns,
+            ctx_dep=ctx_dep,
+            max_range_bytes=max_range_bytes,
+        )
+
     return attach_operation_routes(
         router,
         registry=registry,
-        ns=resolve_namespace(ns, resource),
+        ns=resolved_ns,
         ctx_dep=ctx_dep,
-        bindings=_bindings(style, max_upload_size),
+        bindings=bindings,
         include=include,
         path_overrides=path_overrides,
+        exclude_none=exclude_none,
     )

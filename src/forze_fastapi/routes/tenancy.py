@@ -86,6 +86,7 @@ def attach_tenancy_routes(
     include: AbstractSet[TenancyKernelOp | str] | None = None,
     resource: str | None = None,
     path_overrides: Mapping[TenancyKernelOp | str, str] | None = None,
+    exclude_none: bool = True,
 ) -> APIRouter:
     """Attach the tenant-selector operations under *ns* to *router*.
 
@@ -134,4 +135,5 @@ def attach_tenancy_routes(
         bindings=_TENANCY_BINDINGS,
         include=include,
         path_overrides=path_overrides,
+        exclude_none=exclude_none,
     )

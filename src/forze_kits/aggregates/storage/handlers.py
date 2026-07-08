@@ -5,10 +5,12 @@ from forze.application.contracts.storage import (
     DownloadedObject,
     ObjectHead,
     PresignedUrl,
+    RangedDownload,
     StorageCommandPort,
     StorageQueryPort,
     StorageUploadSessionPort,
     StoredObject,
+    StreamedDownload,
     UploadedObject,
     UploadPart,
     UploadSession,
@@ -160,6 +162,88 @@ class DownloadObject(Handler[str, DownloadedObject]):
         """Download an object by storage key."""
 
         return await self.storage.download(args)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class HeadObject(Handler[str, ObjectHeadDTO]):
+    """Handler that fetches an object's metadata (size / etag / … ) without its body."""
+
+    storage: StorageQueryPort
+    """Storage port for object operations."""
+
+    # ....................... #
+
+    async def __call__(self, args: str) -> ObjectHeadDTO:
+        """Head an object by storage key."""
+
+        return _head_to_dto(await self.storage.head(args))
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DownloadObjectStream(Handler[str, StreamedDownload]):
+    """Handler that opens a bounded-memory download stream for an object.
+
+    Returns a :class:`StreamedDownload` whose ``chunks`` async iterator is consumed by the
+    transport (e.g. a FastAPI ``StreamingResponse``) *after* this operation returns — the
+    storage client backing it is app-lifetime, so the stream outlives the invocation.
+    """
+
+    storage: StorageQueryPort
+    """Storage port for object operations."""
+
+    # ....................... #
+
+    async def __call__(self, args: str) -> StreamedDownload:
+        """Open a streaming download for an object by storage key."""
+
+        return await self.storage.download_stream(args)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DownloadRangeArgs:
+    """Args for a ranged download — an HTTP ``Range``-derived byte window, not a client DTO.
+
+    ``start``/``end`` are inclusive byte offsets (``end=None`` reads to EOF), matching
+    :meth:`StorageQueryPort.download_range` and HTTP ``bytes=start-end`` semantics.
+    """
+
+    key: str
+    """The storage key of the object."""
+
+    start: int
+    """Inclusive start byte offset."""
+
+    end: int | None = None
+    """Inclusive end byte offset, or ``None`` to read to EOF."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DownloadObjectRange(Handler[DownloadRangeArgs, RangedDownload]):
+    """Handler that fetches a byte range of an object via a backend-ranged read."""
+
+    storage: StorageQueryPort
+    """Storage port for object operations."""
+
+    # ....................... #
+
+    async def __call__(self, args: DownloadRangeArgs) -> RangedDownload:
+        """Fetch the requested byte range of an object."""
+
+        return await self.storage.download_range(
+            args.key, start=args.start, end=args.end
+        )
 
 
 # ....................... #

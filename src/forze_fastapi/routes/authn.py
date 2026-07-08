@@ -158,6 +158,7 @@ def attach_authn_routes(
     include: AbstractSet[AuthnKernelOp | str] | None = None,
     resource: str | None = None,
     path_overrides: Mapping[AuthnKernelOp | str, str] | None = None,
+    exclude_none: bool = True,
 ) -> APIRouter:
     """Attach the registered authn operations under *ns* to *router*.
 
@@ -234,4 +235,5 @@ def attach_authn_routes(
         bindings=_AUTHN_BINDINGS,
         include=include,
         path_overrides=path_overrides,
+        exclude_none=exclude_none,
     )

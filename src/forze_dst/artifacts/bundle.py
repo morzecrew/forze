@@ -153,8 +153,14 @@ def replay_bundle(
     full config, pins it to the bundle's single seed, and explores — the auto-derived scenario, so
     no externally-supplied workload is needed (the seed + config reproduce it). A faithful bundle
     returns a violation again; *load* is injectable so a test can hand back a Simulation directly.
+
+    Only strategies that regenerate their workload from the seed are self-contained; an
+    ``OP_CASE`` bundle needs the ``cases=`` a bundle never stores, so it raises a clear error here
+    rather than the raw dispatch ``ValueError``. (A bug found under a *custom* ``scenario=`` is
+    likewise not captured — replay re-derives a different scenario.)
     """
 
+    from forze_dst.config import Strategy
     from forze_dst.harness import Simulation
 
     if bundle.target is None:
@@ -166,5 +172,12 @@ def replay_bundle(
         raise TypeError(f"{bundle.target!r} did not load a forze_dst.Simulation")
 
     config = attrs.evolve(config_from_dict(bundle.config), seeds=[bundle.seed])
+
+    if config.strategy is Strategy.OP_CASE:
+        raise ValueError(
+            "OP_CASE bundle is not self-contained: its workload is the caller's cases=, which a "
+            "bundle does not store. Replay it manually with the original cases=, or regenerate the "
+            "bundle under a seed-reproducible strategy (SCENARIO / HYPOTHESIS / DPOR)."
+        )
 
     return sim.run(config)

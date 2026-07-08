@@ -404,10 +404,23 @@ def replay(
         grouped.setdefault(chosen, []).append(entry)
 
     failures = 0
+    errors = 0
     checked = 0
 
     for app, group in grouped.items():
-        sim = load_simulation(app)
+        try:
+            sim = load_simulation(app)
+        except Exception as e:  # noqa: BLE001 — a bad target must not abort the rest of the corpus
+            # One unloadable target (renamed/moved app, typo) previously raised a raw traceback and
+            # aborted every remaining seed. Report it, count its seeds as ERRORS (unverified, not
+            # confirmed violations — non-zero exit either way), and keep replaying the other targets.
+            errors += len(group)
+            checked += len(group)
+            typer.echo(
+                f"✗ target {app!r} could not be loaded ({e}); {len(group)} seed(s) skipped"
+            )
+            continue
+
         fingerprint = sim.fingerprint()
         scenario = sim.derive_scenario()
 
@@ -442,14 +455,26 @@ def replay(
                     latency=latency,
                 )
             )
-            report = sim.run(cfg, scenario=scenario)
+            try:
+                report = sim.run(cfg, scenario=scenario)
+            except Exception as e:  # noqa: BLE001 — one seed's replay error must not abort the rest
+                errors += 1  # unverified (replay raised), not a confirmed violation
+                typer.echo(f"✗ seed {entry.seed}: replay raised ({e})")
+                continue
 
             if report is not None:
                 failures += 1
                 typer.echo(report.format())
 
-    if failures:
-        typer.echo(f"\n✗ {failures}/{checked} regression seed(s) still violate")
+    if failures or errors:
+        # Keep violations (confirmed reproductions) distinct from errors (seeds that could not be
+        # replayed): both fail the run, but only the former "still violate".
+        parts: list[str] = []
+        if failures:
+            parts.append(f"{failures} still violate")
+        if errors:
+            parts.append(f"{errors} could not be replayed")
+        typer.echo(f"\n✗ {' · '.join(parts)} (of {checked} regression seed(s))")
         raise typer.Exit(code=1)
 
     typer.echo(f"✓ {checked} regression seed(s) clean")
