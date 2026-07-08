@@ -23,6 +23,9 @@ from .handlers import (
     CompleteUpload,
     DeleteObject,
     DownloadObject,
+    DownloadObjectRange,
+    DownloadObjectStream,
+    HeadObject,
     ListObjects,
     ListParts,
     PresignDownload,
@@ -55,6 +58,15 @@ def build_storage_registry(
                 storage=ctx.storage.query(spec),
             ),
             ns.key(StorageKernelOp.DOWNLOAD): lambda ctx: DownloadObject(
+                storage=ctx.storage.query(spec),
+            ),
+            ns.key(StorageKernelOp.HEAD): lambda ctx: HeadObject(
+                storage=ctx.storage.query(spec),
+            ),
+            ns.key(StorageKernelOp.DOWNLOAD_STREAM): lambda ctx: DownloadObjectStream(
+                storage=ctx.storage.query(spec),
+            ),
+            ns.key(StorageKernelOp.DOWNLOAD_RANGE): lambda ctx: DownloadObjectRange(
                 storage=ctx.storage.query(spec),
             ),
             ns.key(StorageKernelOp.DELETE): lambda ctx: DeleteObject(
@@ -98,6 +110,9 @@ def build_storage_registry(
         reg.bind(
             StorageKernelOp.LIST,
             StorageKernelOp.DOWNLOAD,
+            StorageKernelOp.HEAD,
+            StorageKernelOp.DOWNLOAD_STREAM,
+            StorageKernelOp.DOWNLOAD_RANGE,
             StorageKernelOp.PRESIGN_DOWNLOAD,
             namespace=ns,
         )
@@ -121,6 +136,23 @@ def build_storage_registry(
             ),
             StorageKernelOp.DOWNLOAD: OperationDescriptor(
                 description="Download an object's bytes by storage key.",
+            ),
+            StorageKernelOp.HEAD: OperationDescriptor(
+                output_type=ObjectHeadDTO,
+                description=(
+                    "Fetch an object's metadata (size / etag / content-type / "
+                    "last-modified) by storage key, without its body."
+                ),
+            ),
+            # download_stream / download_range return raw byte transports (an async chunk
+            # iterator / a byte-range window), not JSON — description-only, like DOWNLOAD.
+            StorageKernelOp.DOWNLOAD_STREAM: OperationDescriptor(
+                description=(
+                    "Open a bounded-memory download stream for an object by storage key."
+                ),
+            ),
+            StorageKernelOp.DOWNLOAD_RANGE: OperationDescriptor(
+                description="Download an inclusive byte range of an object by storage key.",
             ),
             StorageKernelOp.DELETE: OperationDescriptor(
                 description="Delete an object from the bucket by storage key.",

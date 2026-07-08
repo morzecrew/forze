@@ -59,12 +59,18 @@ def _build_app(
     include=None,
     registry_ops=None,
     max_upload_size: int | None = _UNSET,
+    stream: bool = _UNSET,
+    max_range_bytes: int = _UNSET,
     ctx_dep=None,
 ) -> FastAPI:
     spec = StorageSpec(name="files")
     state = state or MockState()
 
     kwargs = {} if max_upload_size is _UNSET else {"max_upload_size": max_upload_size}
+    if stream is not _UNSET:
+        kwargs["stream"] = stream
+    if max_range_bytes is not _UNSET:
+        kwargs["max_range_bytes"] = max_range_bytes
 
     if registry_ops is None:
         registry = build_storage_registry(spec).freeze()
@@ -208,7 +214,16 @@ class TestStorageRoutes:
 
     @pytest.mark.parametrize("style", ["rest", "rpc"])
     def test_operation_ids_are_registry_keys_verbatim(self, style: str) -> None:
-        expected = {f"files.{op.value}" for op in StorageKernelOp}
+        # head / download_stream / download_range have no standalone route — they are consumed
+        # internally by the streaming download endpoint — so they carry no route operation_id.
+        internal = {
+            StorageKernelOp.HEAD,
+            StorageKernelOp.DOWNLOAD_STREAM,
+            StorageKernelOp.DOWNLOAD_RANGE,
+        }
+        expected = {
+            f"files.{op.value}" for op in StorageKernelOp if op not in internal
+        }
 
         assert _operation_ids(_build_app(style)) == expected
 
@@ -741,3 +756,86 @@ class TestStorageEncryptingRouteRefusal:
         # leaked stack, standard JSON body.
         assert resp.status_code == 500
         assert resp.json() == {"detail": "Internal server error"}
+
+
+class TestStreamingDownload:
+    """The default (stream=True) download route: bounded-memory body, backend Range, conditional."""
+
+    @staticmethod
+    def _upload(client: TestClient, data: bytes, filename: str = "blob.bin") -> str:
+        return client.post(
+            "/files",
+            files={"file": (filename, data, "application/octet-stream")},
+        ).json()["key"]
+
+    def test_full_download_streams_the_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}")
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+        assert resp.headers["accept-ranges"] == "bytes"
+        assert resp.headers["content-length"] == "10"
+        assert "etag" in resp.headers
+        assert "blob.bin" in resp.headers["content-disposition"]
+
+    def test_range_returns_206_backend_partial(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=2-5"})
+
+        assert resp.status_code == 206
+        assert resp.content == b"2345"  # end inclusive
+        assert resp.headers["content-range"] == "bytes 2-5/10"
+
+    def test_unsatisfiable_range_returns_416(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=100-"})
+
+        assert resp.status_code == 416
+        assert resp.headers["content-range"] == "bytes */10"
+
+    def test_conditional_if_none_match_returns_304(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        etag = client.get(f"/files/{key}").headers["etag"]
+        resp = client.get(f"/files/{key}", headers={"If-None-Match": etag})
+
+        assert resp.status_code == 304
+        assert resp.content == b""
+
+    def test_range_window_is_capped(self) -> None:
+        # A window wider than the cap is served truncated (a valid partial the client re-requests).
+        client = TestClient(_build_app("rest", max_range_bytes=4))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=0-9"})
+
+        assert resp.status_code == 206
+        assert resp.content == b"0123"  # capped to 4 bytes
+        assert resp.headers["content-range"] == "bytes 0-3/10"
+
+    def test_malformed_range_serves_full_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "items=0-4"})
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+
+    def test_buffered_opt_out_still_serves_the_body(self) -> None:
+        # stream=False keeps the fully-buffered download route.
+        client = TestClient(_build_app("rest", stream=False))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}")
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"

@@ -17,7 +17,16 @@ class StorageKernelOp(StrEnum):
     """List objects in a bucket."""
 
     DOWNLOAD = "download"
-    """Download an object from a bucket."""
+    """Download an object from a bucket (whole body, fully buffered)."""
+
+    HEAD = "head"
+    """Fetch an object's metadata (size / etag / content-type / last-modified) without its body."""
+
+    DOWNLOAD_STREAM = "download_stream"
+    """Open a bounded-memory download stream for an object (no whole-object buffering)."""
+
+    DOWNLOAD_RANGE = "download_range"
+    """Fetch a byte range of an object via a backend-ranged read (powers HTTP Range requests)."""
 
     DELETE = "delete"
     """Delete an object from a bucket."""
