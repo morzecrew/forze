@@ -979,7 +979,8 @@ def attach_storage_routes(
         max_range_bytes (int): Cap on the bytes a single ``Range`` request buffers (default
             :data:`DEFAULT_MAX_RANGE_BYTES`, 16 MiB). A wider window is served truncated with a
             ``206`` whose ``Content-Range`` reports the actual bytes (an RFC-7233 partial the
-            client re-requests). Only meaningful when *stream* is ``True``.
+            client re-requests). Only meaningful when *stream* is ``True``; a value ``< 1`` is a
+            configuration error (it would reverse the range window) rejected at wiring.
 
     Returns:
         APIRouter: The same *router*, for chaining.
@@ -989,6 +990,14 @@ def attach_storage_routes(
             operation, both or neither of *ns*/*resource*, or a path override that
             drops or adds a placeholder.
     """
+
+    if stream and max_range_bytes < 1:
+        # The range cap is used as ``start + max_range_bytes - 1``; a value < 1 would reverse the
+        # window (``end < start``) and reject an otherwise-valid range. Reject the misconfiguration
+        # at wiring rather than at request time.
+        raise exc.configuration(
+            f"max_range_bytes must be at least 1, got {max_range_bytes}",
+        )
 
     resolved_ns = resolve_namespace(ns, resource)
     bindings = _bindings(style, max_upload_size)

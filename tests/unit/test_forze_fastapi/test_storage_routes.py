@@ -827,6 +827,23 @@ class TestStreamingDownload:
         assert resp.content == b"0123"  # capped to 4 bytes
         assert resp.headers["content-range"] == "bytes 0-3/10"
 
+    def test_min_cap_does_not_reverse_a_single_byte_range(self) -> None:
+        # A cap of 1 must still serve a valid 1-byte partial (no start>end reversal).
+        client = TestClient(_build_app("rest", max_range_bytes=1))
+        key = self._upload(client, b"0123456789")
+
+        resp = client.get(f"/files/{key}", headers={"Range": "bytes=5-5"})
+
+        assert resp.status_code == 206
+        assert resp.content == b"5"
+        assert resp.headers["content-range"] == "bytes 5-5/10"
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_non_positive_range_cap_rejected_at_wiring(self, bad: int) -> None:
+        # A cap < 1 would reverse the window; reject it at attach time, not per request.
+        with pytest.raises(CoreException, match="max_range_bytes"):
+            _build_app("rest", max_range_bytes=bad)
+
     def test_malformed_range_serves_full_body(self) -> None:
         client = TestClient(_build_app("rest"))
         key = self._upload(client, b"0123456789")
