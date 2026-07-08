@@ -189,26 +189,32 @@ async def resolve_tenant_identity(
     ten = ctx.tenancy.resolver()
 
     if ten is not None and authn is not None:
-        return await ten.resolve_from_principal(
+        resolved = await ten.resolve_from_principal(
             authn.identity.principal_id,
             requested_tenant_id=requested,
         )
 
+        if resolved is not None:
+            return resolved
+
+        # The resolver has NO tenant binding for this principal (a genuine tenant *mismatch*
+        # against the requested tenant raises instead of returning None), so fall through: a
+        # trusted gateway header can still supply the tenant for an authenticated request.
+
     if requested is None:
         return None
 
-    # No resolver validated a tenant for this request (none configured, or the request is
-    # anonymous so the principal-keyed resolver could not run). A tenant derived from a verified
-    # credential (issuer hint) is trustworthy, but a tenant taken from the raw ``X-Tenant-Id``
-    # header is unauthenticated client input: an attacker could set it to any tenant.
+    # No resolver produced a tenant for this request. A tenant derived from a verified credential
+    # (issuer hint) is trustworthy, but a tenant taken from the raw ``X-Tenant-Id`` header is
+    # unauthenticated client input: an attacker could set it to any tenant.
     from_verified_credential = parse_tenant_hint(issuer_hint) is not None
 
-    # Header-only trust is the fallback for a deployment WITHOUT a tenancy resolver (e.g. behind a
-    # gateway that sets ``X-Tenant-Id``). When a resolver IS configured it is the tenancy
-    # authority, so an anonymous request — which it cannot validate — gets no tenant rather than an
-    # attacker-settable one; otherwise ``trust_tenant_header`` would bind an arbitrary tenant for
-    # unauthenticated callers even on a resolver-gated app.
-    trust_header = trust_tenant_header and ten is None
+    # Header-only trust is the gateway fallback (the deployment opted in via ``trust_tenant_header``,
+    # e.g. behind a gateway that sets ``X-Tenant-Id``). Honor it when there is no resolver, OR when
+    # the request is authenticated — a trusted gateway authenticated it and set the header, and the
+    # resolver merely had no binding (a mismatch would have raised). An ANONYMOUS request on a
+    # resolver-gated app still gets no tenant, so an attacker cannot bind an arbitrary one.
+    trust_header = trust_tenant_header and (ten is None or authn is not None)
 
     if from_verified_credential or trust_header:
         return TenantIdentity(tenant_id=requested)

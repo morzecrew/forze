@@ -316,6 +316,9 @@ class TestRegressionLoop:
         assert result.exit_code == 1  # the bad target counts as a failure
         assert "could not be loaded" in result.stdout
         assert "1 seed(s) skipped" in result.stdout  # the good CLEAN target still replayed
+        # An unloadable target is an unverified ERROR, not a confirmed violation.
+        assert "could not be replayed" in result.stdout
+        assert "still violate" not in result.stdout
 
 
 class TestCoverage:

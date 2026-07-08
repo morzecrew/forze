@@ -330,7 +330,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OIDC assertion records the validated audience** — for a multi-audience `id_token`, the mapper recorded `aud[0]`, which may be a different party than the one the verifier validated against its configured audience; it now records the matched (validated) audience.
 
-- **`trust_tenant_header` no longer binds an arbitrary tenant for anonymous requests on a resolver-gated app** — the raw `X-Tenant-Id` fallback is now honored only when *no* tenancy resolver is configured (its documented gateway use case). With a resolver present it is the tenancy authority, so an anonymous request it can't validate gets no tenant rather than an attacker-settable one. Verified-credential issuer hints and the authenticated resolver path are unchanged; `trust_tenant_header` still defaults `False`.
+- **`trust_tenant_header` no longer binds an arbitrary tenant for anonymous requests on a resolver-gated app** — the raw `X-Tenant-Id` fallback is honored when there is *no* tenancy resolver, or when the request is *authenticated* and the resolver returned no binding (a gateway authenticated it and set the header; a genuine tenant mismatch still raises). An *anonymous* request on a resolver-gated app gets no tenant rather than an attacker-settable one. Verified-credential issuer hints and the authenticated resolver path (when it does bind a tenant) are unchanged; `trust_tenant_header` still defaults `False`.
 
 **Transport & agent surfaces**
 
