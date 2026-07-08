@@ -180,7 +180,11 @@ MECHANISM_DIVERGENCES: tuple[MechanismDivergence, ...] = (
             "double-publish-from-abort finding — but a concurrent still-in-flight transaction CAN read "
             "another's not-yet-committed outbox/inbox rows (a dirty read Postgres READ COMMITTED would "
             "not permit). Treat a premature-visibility / phantom-event finding on the outbox→relay→inbox "
-            "path as possible mock over-visibility and confirm it against a real broker/store."
+            "path as possible mock over-visibility and confirm it against a real broker/store. This is a "
+            "CHECKED divergence: `observe_uncommitted_outbox_visibility` asserts the mock over-permits "
+            "and real Postgres prevents it, from both ends. The crash-recovery delivery path is instead "
+            "verdict-EQUIVALENT (atomicity holds — a rolled-back transaction leaves no rows), pinned by "
+            "`run_crash_recovery_delivery` as mock ≡ real Postgres."
         ),
         source="forze_mock journal design (_journal.py, adapters/tx.py MockJournalTxManagerAdapter)",
     ),
