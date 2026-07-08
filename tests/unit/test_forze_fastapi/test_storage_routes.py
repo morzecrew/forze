@@ -61,6 +61,7 @@ def _build_app(
     max_upload_size: int | None = _UNSET,
     stream: bool = _UNSET,
     max_range_bytes: int = _UNSET,
+    exclude_none: bool = _UNSET,
     ctx_dep=None,
 ) -> FastAPI:
     spec = StorageSpec(name="files")
@@ -71,6 +72,8 @@ def _build_app(
         kwargs["stream"] = stream
     if max_range_bytes is not _UNSET:
         kwargs["max_range_bytes"] = max_range_bytes
+    if exclude_none is not _UNSET:
+        kwargs["exclude_none"] = exclude_none
 
     if registry_ops is None:
         registry = build_storage_registry(spec).freeze()
@@ -854,3 +857,29 @@ class TestStreamingDownload:
         assert resp.headers["content-length"] == "10"
         assert resp.headers["accept-ranges"] == "bytes"
         assert "etag" in resp.headers
+
+
+class TestExcludeNoneResponses:
+    """Generated JSON responses drop null fields by default (smaller wire), opt-out keeps them."""
+
+    def test_null_fields_dropped_by_default(self) -> None:
+        client = TestClient(_build_app("rest"))
+
+        # Upload with no description → StoredObjectDTO.description / tags are None.
+        body = client.post(
+            "/files", files={"file": ("a.txt", b"x", "text/plain")}
+        ).json()
+
+        assert "description" not in body
+        assert "tags" not in body
+        assert body["filename"] == "a.txt"  # non-null fields still present
+
+    def test_exclude_none_false_keeps_explicit_nulls(self) -> None:
+        client = TestClient(_build_app("rest", exclude_none=False))
+
+        body = client.post(
+            "/files", files={"file": ("a.txt", b"x", "text/plain")}
+        ).json()
+
+        assert body["description"] is None
+        assert "tags" in body

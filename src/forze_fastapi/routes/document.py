@@ -157,6 +157,7 @@ def attach_document_routes(
     path_overrides: (
         Mapping[DocumentKernelOp | SoftDeletionKernelOp | str, str] | None
     ) = None,
+    exclude_none: bool = True,
 ) -> APIRouter:
     """Attach the registered document operations under *ns* to *router*.
 
@@ -218,4 +219,5 @@ def attach_document_routes(
         bindings=_REST_BINDINGS if style == "rest" else _RPC_BINDINGS,
         include=include,
         path_overrides=path_overrides,
+        exclude_none=exclude_none,
     )

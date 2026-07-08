@@ -894,6 +894,7 @@ def attach_storage_routes(
     path_overrides: Mapping[StorageKernelOp | str, str] | None = None,
     stream: bool = True,
     max_range_bytes: int = DEFAULT_MAX_RANGE_BYTES,
+    exclude_none: bool = True,
 ) -> APIRouter:
     """Attach the registered storage operations under *ns* to *router*.
 
@@ -1009,4 +1010,5 @@ def attach_storage_routes(
         bindings=bindings,
         include=include,
         path_overrides=path_overrides,
+        exclude_none=exclude_none,
     )

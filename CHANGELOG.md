@@ -187,6 +187,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Hot-path micro-optimizations** (byte-identical output) — faster `normalize_string`, keyset sort-value canonicalization, once-per-struct msgspec exclude-flag resolution, allocation-free trusted bulk decode, compile-once in-memory scans, `forze.base.crypto.ENVELOPE_B64_PREFIX`, and per-wrapped-method (not per-call) construction of the OpenTelemetry port-span name/attributes and the port-interceptor terminal.
 
+- **Generated FastAPI routes omit null response fields by default** — every `attach_*_routes` helper now sets `response_model_exclude_none=True`, so a JSON response drops fields whose value is `None` (smaller payload); the OpenAPI schema is unchanged (fields stay optional). Pass `exclude_none=False` to any `attach_*_routes` (or `attach_operation_routes`) to restore explicit `null`s. Raw-`Response` routes (download/head bytes) are unaffected.
+
 ### Removed
 
 - **`msgspec` dropped; the codec layer is Pydantic-only** *(breaking: serialization)* — `MsgspecModelCodec` and `forze.base.serialization.msgspec` are removed; record models (read models, create/update commands, idempotency results) must be `pydantic.BaseModel` subclasses. The storage value objects (`UploadedObject`, `DownloadedObject`, `ObjectMetadata`, `StoredObject`) are now frozen, keyword-only `attrs`. Migration: model record/payload shapes as Pydantic.

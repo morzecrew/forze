@@ -72,6 +72,7 @@ def attach_tenancy_admin_routes(
     include: AbstractSet[TenancyAdminKernelOp | str] | None = None,
     resource: str | None = None,
     path_overrides: Mapping[TenancyAdminKernelOp | str, str] | None = None,
+    exclude_none: bool = True,
 ) -> APIRouter:
     """Attach the tenancy-admin operations under *ns* to *router*.
 
@@ -120,4 +121,5 @@ def attach_tenancy_admin_routes(
         bindings=_TENANCY_ADMIN_BINDINGS,
         include=include,
         path_overrides=path_overrides,
+        exclude_none=exclude_none,
     )
