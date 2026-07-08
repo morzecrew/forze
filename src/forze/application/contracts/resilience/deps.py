@@ -8,12 +8,17 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ..deps import ConvenientDeps, DepKey
+from .admin import ResilienceAdminPort
 from .ports import ResilienceExecutorPort
 
 # ----------------------- #
 
 ResilienceExecutorDepKey = DepKey[ResilienceExecutorPort]("resilience_executor")
 """Key for the process-wide resilience executor singleton."""
+
+ResilienceAdminDepKey = DepKey[ResilienceAdminPort]("resilience_admin")
+"""Key for the resilience admin/control-plane port (the same in-process executor singleton
+exposed for inspect / force-open / hot-retune), registered by ``ResilienceDepsModule``."""
 
 
 # ....................... #
@@ -98,9 +103,20 @@ ResiliencePortPoliciesDepKey = DepKey[PortPolicyTable]("resilience_port_policies
 
 
 class ResilienceDeps(ConvenientDeps):
-    """Resolve the registered resilience executor."""
+    """Resolve the registered resilience executor (and its admin/control plane)."""
 
     def __call__(self) -> ResilienceExecutorPort:
         """Resolve the resilience executor (requires a registered module)."""
 
         return self._require_ctx().deps.provide(ResilienceExecutorDepKey)
+
+    # ....................... #
+
+    def admin(self) -> ResilienceAdminPort:
+        """Resolve the resilience admin/control-plane port (inspect / force-open / hot-retune).
+
+        The same process-wide executor singleton, exposed for operator surfaces; requires a
+        registered ``ResilienceDepsModule``.
+        """
+
+        return self._require_ctx().deps.provide(ResilienceAdminDepKey)

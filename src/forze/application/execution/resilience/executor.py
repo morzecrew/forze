@@ -18,6 +18,7 @@ from forze.application.contracts.resilience import (
     RateLimitStore,
     RateLimitStrategy,
     ResiliencePolicy,
+    ResilienceStateSnapshot,
     RetryStrategy,
     TimeoutStrategy,
     Transition,
@@ -249,6 +250,14 @@ class InProcessResilienceExecutor:
     )
     """Optional always-on metrics callback (see :data:`MetricsSink`)."""
 
+    _forced_open: set[_StateKey] = attrs.field(
+        factory=set,
+        init=False,
+        repr=False,
+    )
+    """``(policy, route)`` keys an operator has force-opened via the admin port — a manual
+    kill-switch that rejects every call under the key until cleared (see :meth:`force_open`)."""
+
     # ....................... #
 
     def set_metrics_sink(self, sink: MetricsSink | None) -> None:
@@ -329,6 +338,107 @@ class InProcessResilienceExecutor:
             )
 
     # ....................... #
+    # Admin / control plane — implements ResilienceAdminPort over this singleton.
+
+    async def inspect(
+        self,
+        *,
+        policy: StrKey | None = None,
+    ) -> list[ResilienceStateSnapshot]:
+        """Snapshot the live, executor-owned resilience state (optionally filtered to one policy)."""
+
+        def _match(key: _StateKey) -> bool:
+            return policy is None or key[0] == policy
+
+        # A policy uses at most one bulkhead kind, so a key appears in at most one bulkhead map.
+        bulkheads: dict[_StateKey, AdaptiveBulkheadState] = {}
+        for pool in (
+            self._bulkheads,
+            self._adaptive_bulkheads,
+            self._gradient_bulkheads,
+        ):
+            for key, state in pool.items():
+                bulkheads[key] = state
+
+        hedges = dict(self._hedge_delays.items())
+
+        keys: set[_StateKey] = set()
+        keys.update(k for k in bulkheads if _match(k))
+        keys.update(k for k in hedges if _match(k))
+        keys.update(k for k in self._forced_open if _match(k))
+
+        snapshots: list[ResilienceStateSnapshot] = []
+
+        for key in sorted(
+            keys, key=lambda k: (str(k[0]), str(k[1]) if k[1] is not None else "")
+        ):
+            name, route = key
+            bulkhead = bulkheads.get(key)
+            hedge = hedges.get(key)
+            snapshots.append(
+                ResilienceStateSnapshot(
+                    policy=str(name),
+                    route=str(route) if route is not None else None,
+                    forced_open=key in self._forced_open,
+                    concurrency_limit=bulkhead.limit if bulkhead is not None else None,
+                    in_use=bulkhead.in_use if bulkhead is not None else None,
+                    waiting=bulkhead.waiting if bulkhead is not None else None,
+                    hedge_delay=hedge.delay() if hedge is not None else None,
+                )
+            )
+
+        return snapshots
+
+    # ....................... #
+
+    async def force_open(
+        self,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> None:
+        """Trip the ``(policy, route)`` breaker open by hand — a manual kill-switch. Idempotent."""
+
+        self._forced_open.add((policy, route))
+
+    # ....................... #
+
+    async def clear_forced_open(
+        self,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> None:
+        """Release a :meth:`force_open` kill-switch for ``(policy, route)``. Idempotent."""
+
+        self._forced_open.discard((policy, route))
+
+    # ....................... #
+
+    async def retune(self, policy: ResiliencePolicy) -> None:
+        """Hot-swap a policy's parameters by name and rebuild its adaptive state on the next call."""
+
+        self.policies = {**self.policies, policy.name: policy}
+        self._evict_policy_state(policy.name)
+
+    # ....................... #
+
+    def _evict_policy_state(self, name: StrKey) -> None:
+        """Drop the executor's cached ``(name, *)`` adaptive state so it rebuilds with the new
+        parameters. Calls already in flight keep the state object they captured at start (it stays
+        alive through their coroutines), so they drain safely and are never stranded."""
+
+        for pool in (
+            self._bulkheads,
+            self._adaptive_bulkheads,
+            self._gradient_bulkheads,
+            self._budgets,
+            self._hedge_budgets,
+            self._throttles,
+            self._hedge_delays,
+        ):
+            for key in [k for k in pool if k[0] == name]:
+                del pool[key]
+
+    # ....................... #
 
     async def run[T](
         self,
@@ -380,6 +490,8 @@ class InProcessResilienceExecutor:
 
         if hedge is None:
             raise exc.configuration(f"Policy {policy!r} declares no HedgeStrategy")
+
+        self._reject_if_forced_open(pol, route)
 
         budget = self._hedge_budget_for(hedge, pol, route)
 
@@ -450,14 +562,18 @@ class InProcessResilienceExecutor:
 
                     if error is None:
                         # ``hedge_won`` counts only the calls a hedge actually
-                        # rescued; the primary winning emits its own event, so the
-                        # effectiveness ratio (hedge_won / all hedged completions)
-                        # stays meaningful instead of always reading 100%.
+                        # rescued; ``hedge_primary_won`` counts a primary that won a
+                        # race a hedge had ALSO entered. Both are emitted only when a
+                        # hedge was actually fired (``attempts > 1``), so their sum is
+                        # "hedged completions" and the effectiveness ratio
+                        # (hedge_won / (hedge_won + hedge_primary_won)) is meaningful.
+                        # A fast primary that beat the delay (no hedge fired) emits
+                        # neither — it never entered the hedge population.
                         if task is not primary:
                             hedge_won = True
                             self._emit("hedge_won", pol, route)
 
-                        else:
+                        elif attempts > 1:
                             self._emit("hedge_primary_won", pol, route)
 
                         return task.result()
@@ -492,6 +608,8 @@ class InProcessResilienceExecutor:
         fn: Callable[[], Awaitable[T]],
         route: StrKey | None,
     ) -> T:
+        self._reject_if_forced_open(pol, route)
+
         # Fixed composition order, innermost-out: timeout -> retry -> circuit
         # breaker -> bulkhead -> rate limit. The breaker deliberately wraps
         # *outside* retry: it admits once and records one outcome per logical
@@ -948,7 +1066,9 @@ class InProcessResilienceExecutor:
                 self._emit("latency_digest_store_error", pol, route)
                 return
 
-        if state.on_complete(elapsed, self.clock(), quantile_value):
+        if self._controller_on_complete(
+            state, pol, route, latency=elapsed, quantile_value=quantile_value
+        ):
             self._emit("bulkhead_backoff", pol, route)
 
             if strat.latency_quantile is not None:
@@ -992,10 +1112,8 @@ class InProcessResilienceExecutor:
 
         # A zero-duration completion (clock resolution / no advance) carries no
         # latency signal — don't feed the gradient controller a non-positive rtt.
-        if elapsed > 0.0 and state.on_complete(
-            elapsed,
-            self.clock(),
-            inflight=inflight,
+        if elapsed > 0.0 and self._controller_on_complete(
+            state, pol, route, latency=elapsed, inflight=inflight
         ):
             self._emit("bulkhead_backoff", pol, route)
 
@@ -1042,6 +1160,55 @@ class InProcessResilienceExecutor:
                 f"Resilience store unavailable for policy {pol.name!r}",
                 code="resilience_store_unavailable",
             ) from error
+
+    # ....................... #
+
+    def _reject_if_forced_open(
+        self,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> None:
+        """Reject the call if an operator force-opened this ``(policy, route)``.
+
+        The admin kill-switch: it short-circuits before any strategy runs (so it works even for a
+        policy with no circuit breaker) and raises the same retryable ``infrastructure`` error an
+        open breaker does, so callers already tolerant of a tripped breaker need no new handling.
+        """
+
+        if (pol.name, route) in self._forced_open:
+            self._emit("breaker_forced_open", pol, route)
+            raise exc.infrastructure(
+                f"Resilience policy {pol.name!r} force-opened by operator",
+                code="resilience_forced_open",
+            )
+
+    # ....................... #
+
+    def _controller_on_complete(
+        self,
+        state: AdaptiveBulkheadState,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+        *,
+        latency: float,
+        quantile_value: float | None = None,
+        inflight: int | None = None,
+    ) -> bool:
+        """Fold a completed call into the concurrency controller, swallowing a bookkeeping error.
+
+        The AIMD / Gradient2 limit update is post-completion bookkeeping, the same category as the
+        breaker's outcome recording and the digest store's ``observe``/``reset``: an exception here
+        (e.g. a controller that rejects a degenerate sample) must never turn a completed call into a
+        failure nor mask an in-flight domain error on the failure path. It is swallowed and surfaced
+        as a metric; the sample is dropped. Returns whether the controller backed off the limit.
+        """
+
+        try:
+            return state.on_complete(latency, self.clock(), quantile_value, inflight)
+
+        except Exception:  # noqa: BLE001 — controller bookkeeping must never fail a completed call
+            self._emit("bulkhead_controller_error", pol, route)
+            return False
 
     # ....................... #
 
