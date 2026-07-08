@@ -376,6 +376,49 @@ class TestBundles:
         with pytest.raises(ValueError, match="not self-contained"):
             replay_bundle(self._op_case_bundle(), load=lambda _t: _fixed_sim())
 
+    def test_bundle_whose_replay_raises_is_reported_not_crashed(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # A self-contained bundle whose replay raises is reported per-bundle (never aborts the
+        # batch); a single bundle *file* (not a directory) is also a valid input.
+        from forze_dst.artifacts import FailureBundle
+        from forze_dst.artifacts.serialize import config_to_dict
+
+        bundle_file = tmp_path / "b.json"
+        FailureBundle(
+            seed=0,
+            schedule_seed=None,
+            target="tests:unused",
+            config=config_to_dict(SimulationConfig(seeds=[0])),  # SCENARIO → self-replayable
+            registry_fingerprint="fp",
+        ).save(bundle_file)
+
+        class _RaisingSim:
+            def fingerprint(self) -> str:
+                return "fp"
+
+            def run(self, _config: object) -> object:
+                raise RuntimeError("replay blew up")
+
+        with pytest.raises(AssertionError, match="could not be replayed"):
+            assert_no_regressions(_RaisingSim(), bundles=bundle_file)  # type: ignore[arg-type]
+
+    def test_non_reproducing_bundle_with_fingerprint_drift_is_not_a_pass(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # A bundle that no longer reproduces but whose registry fingerprint drifted is not a
+        # trustworthy pass — reported as a failure.
+        from forze_dst.artifacts import FailureBundle
+        from forze_dst.artifacts.serialize import config_to_dict
+
+        bundle_file = tmp_path / "b.json"
+        FailureBundle(
+            seed=0,
+            schedule_seed=None,
+            target="tests:unused",
+            config=config_to_dict(SimulationConfig(seeds=[0])),
+            registry_fingerprint="stale-fingerprint",  # != the fixed sim's
+        ).save(bundle_file)
+
+        with pytest.raises(AssertionError, match="fingerprint drifted"):
+            assert_no_regressions(_fixed_sim(), bundles=bundle_file)
+
     def test_plugin_registers_save_bundle_option(self) -> None:
         class _Config:
             def addinivalue_line(self, _kind: str, _line: str) -> None:

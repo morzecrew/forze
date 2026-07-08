@@ -767,6 +767,14 @@ class _Boom(Handler[_In, _Out]):
         raise exc.internal("SECRET dsn=postgres://leak")
 
 
+class _BoomChained(Handler[_In, _Out]):
+    async def __call__(self, args: _In) -> _Out:
+        try:
+            raise ValueError("root cause")
+        except ValueError as cause:
+            raise exc.internal("wrapper") from cause
+
+
 class _Invalid(Handler[_In, _Out]):
     async def __call__(self, args: _In) -> _Out:
         raise exc.validation("n must be positive", code="calc.invalid")
@@ -788,16 +796,25 @@ class _Stamp(Handler[_StampIn, _StampOut]):
 
 def _error_registry() -> FrozenOperationRegistry:
     reg = OperationRegistry(
-        handlers={"boom": lambda _c: _Boom(), "bad_input": lambda _c: _Invalid()}
+        handlers={
+            "boom": lambda _c: _Boom(),
+            "boom_chained": lambda _c: _BoomChained(),
+            "bad_input": lambda _c: _Invalid(),
+        }
     )
     reg = reg.set_descriptor(
         "boom", OperationDescriptor(input_type=_In, output_type=_Out, description="b")
+    )
+    reg = reg.set_descriptor(
+        "boom_chained",
+        OperationDescriptor(input_type=_In, output_type=_Out, description="bc"),
     )
     reg = reg.set_descriptor(
         "bad_input",
         OperationDescriptor(input_type=_In, output_type=_Out, description="v"),
     )
     reg = reg.bind("boom").as_query().finish()
+    reg = reg.bind("boom_chained").as_query().finish()
     reg = reg.bind("bad_input").as_query().finish()
     return reg.freeze()
 
@@ -855,6 +872,32 @@ class TestErrorMasking:
         assert event == "MCP server error"
         assert kw["error_code"] == "core.internal"
         assert kw["error_kind"] == "internal"
+
+    async def test_chained_server_error_logs_the_cause_traceback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A CoreException with a __cause__ logs via critical_exception (with the cause).
+        calls: list[tuple[str, str, dict]] = []
+
+        class _StubLogger:
+            def error(self, event: str, **kw: object) -> None:
+                calls.append(("error", event, dict(kw)))
+
+            def critical_exception(self, event: str, **kw: object) -> None:
+                calls.append(("critical", event, dict(kw)))
+
+        monkeypatch.setattr("forze_mcp.registration._error_logger", _StubLogger())
+
+        server = build_mcp_server(_error_registry(), _ctx_factory, name="e")
+        async with Client(server) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("boom_chained", {"n": 1})
+
+        assert len(calls) == 1
+        kind, event, kw = calls[0]
+        assert kind == "critical"
+        assert event == "MCP server error"
+        assert isinstance(kw["exc"], ValueError)  # the chained cause
 
 
 class TestDefaultFactory:
