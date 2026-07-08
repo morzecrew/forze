@@ -143,7 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CLI** (`forze[cli]`) — `forze dst run module:sim` (exit 1 on a violation) plus `replay`, `coverage`, `topology`, `derive`.
 
-- **Adapter conformance** — `forze_dst.conformance`: a backend-agnostic isolation-anomaly battery over the `Conductor` (a known verdict per `IsolationLevel`; `CONTRACT_STRENGTHENINGS` / `MECHANISM_DIVERGENCES`), run against the mock and real Postgres (every level) and a real Mongo replica set (`SNAPSHOT`) over testcontainers, asserting `mock ≡ real`.
+- **Adapter conformance** — `forze_dst.conformance`: a backend-agnostic isolation-anomaly battery over the `Conductor` (a known verdict per `IsolationLevel`; `CONTRACT_STRENGTHENINGS` / `MECHANISM_DIVERGENCES`), run against the mock and real Postgres (every level) and a real Mongo replica set (`SNAPSHOT`) over testcontainers, asserting `mock ≡ real`. The two lock-race cases (`duplicate_key_insert`, `for_update_lost_update`), which BLOCK the contender on a real engine (unique index / row lock) rather than abort it and so ran against the abort-based mock only, now run against real Postgres too via a block-aware driver (`Gate.arrive_blocking` / `_drive_lock_race`) that converts a lock wait into the same explicit signal the mock produces by aborting — pinning block-vs-abort. The FOR UPDATE verdict is by final value (was an update lost?), so it holds where Postgres READ COMMITTED commits *both* writers and loses nothing (the locked re-read sees the committed value) as well as where SNAPSHOT/SERIALIZABLE serialization-abort.
 
 ### Changed
 

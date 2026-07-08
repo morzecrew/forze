@@ -122,10 +122,12 @@ async def conformance_tables(pg_client: PostgresClient):
 # ....................... #
 
 
-# Lock-based engines block (not abort) on a duplicate-key insert / FOR UPDATE contention, which would
-# wedge the lock-step Conductor — those cases run against the abort-based mock only (see the
-# `lock-block-vs-abort-conductor` MECHANISM_DIVERGENCE).
+# The lock-race cases (duplicate-key insert, FOR UPDATE contention) BLOCK the contender on a lock-based
+# engine rather than abort it, so the vanilla one-at-a-time Conductor can't drive them here — they run
+# via the block-aware `_drive_lock_race` driver in `TestPostgresLockRaceDifferential` below. Everything
+# else runs through the generic differential (see the `lock-block-vs-abort-conductor` divergence).
 _LOCK_SAFE_BATTERY = tuple(case for case in BATTERY if not case.abort_engine_only)
+_LOCK_RACE_BATTERY = tuple(case for case in BATTERY if case.abort_engine_only)
 
 
 @pytest.mark.integration
@@ -137,6 +139,28 @@ class TestPostgresIsolationDifferential:
     ) -> None:
         # The differential: real Postgres produces the SAME verdict the mock does (both are asserted
         # against expected_verdict), so "passed on the mock" now means "matches the real engine".
+        observed = await case.run(PostgresConformanceBackend(client=pg_client), level)
+        assert observed == expected_verdict(case, level)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("case", _LOCK_RACE_BATTERY, ids=lambda case: case.name)
+@pytest.mark.parametrize("level", _LEVELS, ids=lambda level: level.name)
+class TestPostgresLockRaceDifferential:
+    """The lock-race cases against real Postgres — pinning the mock's abort against real BLOCKING.
+
+    `duplicate_key_insert` and `for_update_lost_update` were previously asserted only against the
+    abort-based mock: on a real engine the contender blocks on the unique index / row lock, wedging
+    the vanilla lock-step Conductor. The block-aware `_drive_lock_race` driver converts that lock wait
+    into the same explicit signal the mock produces by aborting, so the SAME case + `expected_verdict`
+    oracle now pins Postgres's blocking behavior — the duplicate is rejected (23505) once the holder
+    commits, and the FOR UPDATE lock prevents the lost update by re-reading the committed value (READ
+    COMMITTED, both commit and nothing is lost) or serialization-aborting (SNAPSHOT / SERIALIZABLE).
+    """
+
+    async def test_real_postgres_matches_expected_verdict(
+        self, case, level: IsolationLevel, pg_client: PostgresClient, conformance_tables
+    ) -> None:
         observed = await case.run(PostgresConformanceBackend(client=pg_client), level)
         assert observed == expected_verdict(case, level)
 

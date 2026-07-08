@@ -30,6 +30,7 @@ would-block step so a lock wait is converted into an explicit signal normalized 
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 from contextlib import suppress
 from typing import Awaitable, Callable, Mapping
@@ -42,6 +43,7 @@ from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions.model import CoreException, ExceptionKind
 from forze.testing import Conductor, Gate
+from forze.testing.interleaving import Session
 
 from ._models import (
     CELL,
@@ -106,14 +108,16 @@ class AnomalyCase:
     """Run the interleaving against a backend at a level; return the observed verdict."""
 
     abort_engine_only: bool = False
-    """This case's forced interleaving only reaches its verdict on an **abort-based** engine.
+    """This case races for a resource one participant holds, so the **vanilla** one-at-a-time
+    :class:`~forze.testing.Conductor` can't drive it on a lock-based engine.
 
-    On a lock-based engine (real Postgres) the case's second participant BLOCKS mid-step — a
-    duplicate-key insert waits on the unique index, a ``FOR UPDATE`` lock waits on the row — which
-    would wedge the :class:`~forze.testing.Conductor` (it advances one participant at a time). The
-    mock is abort-based and surfaces the same outcome without blocking, so these cases run against
-    the mock (and any abort-based engine); the lock-based real-adapter differential legs skip them.
-    See the ``lock-block-vs-abort-conductor`` :data:`~forze_dst.conformance.MECHANISM_DIVERGENCES`."""
+    On a lock-based engine (real Postgres) the case's contender BLOCKS mid-step — a duplicate-key
+    insert waits on the unique index, a ``FOR UPDATE`` lock waits on the row — which would wedge the
+    vanilla Conductor (it advances one participant at a time, waiting for each to park). These cases
+    therefore run via the dedicated block-aware ``_drive_lock_race`` driver, and the generic
+    parametrized differential legs (which use the vanilla Conductor) skip them; a dedicated
+    lock-race differential runs them against real Postgres's blocking semantics. See the
+    ``lock-block-vs-abort-conductor`` :data:`~forze_dst.conformance.MECHANISM_DIVERGENCES`."""
 
 
 # ....................... #
@@ -655,17 +659,58 @@ async def _run_fresh_read_update(
 
 
 # ....................... #
-# Duplicate-key insert race (unique violation): two transactions each INSERT the SAME primary key,
-# both buffering before either commits. Postgres raises 23505 at EVERY level; the first commits, the
-# second must be REJECTED — never a silent merge. Abort-only: on Postgres the second INSERT blocks on
-# the unique index until the first commits, wedging the lock-step Conductor.
+# Lock-race driver: the two cases below race for a resource one participant holds (a duplicate key, a
+# FOR UPDATE row lock). On a lock-based engine (real Postgres) the contender BLOCKS on that resource;
+# the vanilla Conductor advances one participant at a time and would wedge waiting for a park the
+# blocked contender can't reach. This driver instead holds → lets the contender announce its blocking
+# step → commits the holder to release it, so the SAME script runs on the abort-based mock and on real
+# Postgres. See the ``lock-block-vs-abort-conductor`` MECHANISM_DIVERGENCE.
+
+
+async def _drive_lock_race(holder: Session, contender: Session) -> None:
+    """Drive a two-participant lock race deterministically on both abort- and lock-based engines.
+
+    The ``holder`` opens first, acquires the contested resource, and parks. The ``contender`` — let go
+    only once the holder holds the resource — announces its blocking step (:meth:`Gate.arrive_blocking`)
+    and runs into it: on Postgres it suspends on the holder's lock; on the mock it buffers. Either way
+    the holder is then released to commit, which unblocks the contender (lock-based) or leaves it to
+    conflict at its own commit (abort-based). The contested outcome is identical on both engines.
+    """
+
+    hg, cg = Gate(), Gate()
+
+    async def drive(session: Session, gate: Gate) -> None:
+        try:
+            await session(gate)
+        finally:
+            gate.mark_done()
+
+    tasks = [
+        asyncio.create_task(drive(holder, hg)),
+        asyncio.create_task(drive(contender, cg)),
+    ]
+
+    await hg.wait_parked()  # holder opened and holds the contested resource
+    await cg.wait_parked()  # contender parked at its start gate (before touching the resource)
+    cg.resume()  # let the contender enter its (blocking) step — do not await a re-park it can't reach
+    await cg.wait_blocking()  # contender announced it is in the blocking step (or finished/errored)
+    await hg.release()  # holder commits, releasing the resource / unblocking the contender
+
+    await asyncio.gather(*tasks)
+
+
+# ....................... #
+# Duplicate-key insert race (unique violation): two transactions each INSERT the SAME primary key. The
+# holder inserts and holds; the contender's insert of the same id BLOCKS on the unique index (real
+# Postgres) or buffers (mock). Postgres raises 23505 once the holder commits; the mock conflicts at
+# commit — at EVERY level the duplicate must be REJECTED, never a silent merge.
 
 
 async def _run_duplicate_key_insert(
     backend: ConformanceBackend, level: IsolationLevel
 ) -> Verdict:
     sessions = backend.contexts(2)
-    a, b = sessions[0], sessions[1]
+    holder_ctx, contender_ctx = sessions[0], sessions[1]
     scope = backend.scope_name
 
     contested = UUID(
@@ -673,16 +718,24 @@ async def _run_duplicate_key_insert(
     )  # one id both racers insert; fresh per run
     outcomes: dict[str, str] = {}
 
-    def insert_session(
-        ctx: ExecutionContext, name: str
-    ) -> Callable[[Gate], Awaitable[None]]:
+    def insert_session(ctx: ExecutionContext, name: str, *, is_holder: bool) -> Session:
         async def session(gate: Gate) -> None:
+            if not is_holder:
+                await gate.checkpoint()  # start gate: let the holder acquire the id first
             try:
                 async with ctx.tx_ctx.scope(scope, isolation=level):
-                    await ctx.document.command(CELL).create(
-                        CellCreate(value=1), id=contested
-                    )
-                    await gate.checkpoint()  # buffered, uncommitted; let the other insert the same id
+                    if is_holder:
+                        await ctx.document.command(CELL).create(
+                            CellCreate(value=1), id=contested
+                        )
+                        await gate.checkpoint()  # hold the id, uncommitted, until released to commit
+                    else:
+                        # The next insert of the same id blocks on the holder's unique index (Postgres)
+                        # or buffers (mock); announce it so the driver commits the holder to release it.
+                        await gate.arrive_blocking()
+                        await ctx.document.command(CELL).create(
+                            CellCreate(value=1), id=contested
+                        )
                 outcomes[name] = "committed"
             except CoreException as error:
                 # A unique violation (conflict) OR a serialization failure both mean "the duplicate
@@ -696,21 +749,27 @@ async def _run_duplicate_key_insert(
 
         return session
 
-    await Conductor(schedule=("a", "b")).run(
-        {"a": insert_session(a, "a"), "b": insert_session(b, "b")}
+    await _drive_lock_race(
+        insert_session(holder_ctx, "holder", is_holder=True),
+        insert_session(contender_ctx, "contender", is_holder=False),
     )
 
     # PERMITTED = both inserts committed (a silent merge — the dangerous under-strict bug); PREVENTED
-    # = the duplicate was rejected (Postgres raises 23505, the mock now raises exc.conflict at commit).
+    # = the duplicate was rejected (Postgres blocks then raises 23505; the mock conflicts at commit).
     return _PERMIT if all(v == "committed" for v in outcomes.values()) else _PREVENT
 
 
 # ....................... #
 # SELECT ... FOR UPDATE (pessimistic lock prevents lost update): two transactions each lock the SAME
 # row with a locked read, then blind-write it (no rev guard). The FOR UPDATE lock is what prevents the
-# lost update at READ_COMMITTED — without it, two blind writes both commit and one is lost. Abort-only:
-# on Postgres the second FOR UPDATE blocks on the row lock until the first commits, wedging the
-# Conductor; the mock converts the block into a conflict abort.
+# lost update at READ_COMMITTED — without it, two blind writes both commit and one is lost. On Postgres
+# the contender's locked read BLOCKS until the holder commits, then re-reads the fresh committed value
+# (READ COMMITTED) or serialization-aborts (SNAPSHOT/SERIALIZABLE); the mock conflicts on the double
+# claim. Verdict is by the final value (was an update lost?), not by whether a transaction aborted —
+# on Postgres READ COMMITTED both writers commit and no update is lost.
+
+_FOR_UPDATE_BASE = 0
+_FOR_UPDATE_DELTAS = {"holder": 1, "contender": 2}
 
 
 def _for_update_session(
@@ -722,12 +781,20 @@ def _for_update_session(
     scope: str,
     outcomes: dict[str, str],
     name: str,
-) -> Callable[[Gate], Awaitable[None]]:
+    is_holder: bool,
+) -> Session:
     async def session(gate: Gate) -> None:
+        if not is_holder:
+            await gate.checkpoint()  # start gate: let the holder take the row lock first
         async with record_outcome(outcomes, name):
             async with ctx.tx_ctx.scope(scope, isolation=level):
+                if not is_holder:
+                    # The locked read blocks on the holder's row lock (Postgres) or claims the same
+                    # row (mock); announce it so the driver commits the holder to release it.
+                    await gate.arrive_blocking()
                 row = await ctx.document.query(CELL).get(cid, for_update=True)
-                await gate.checkpoint()  # both hold the lock before either writes
+                if is_holder:
+                    await gate.checkpoint()  # hold the lock until released to commit
                 # Rev-less write via the contract's bulk fast path: ``update_matching`` takes no
                 # expected revision, so the revision guard cannot catch the lost update — only the
                 # FOR UPDATE lock can. That isolates the lock's effect (a plain rev-guarded
@@ -745,39 +812,52 @@ async def _run_for_update_lost_update(
     backend: ConformanceBackend, level: IsolationLevel
 ) -> Verdict:
     sessions = backend.contexts(2)
-    a, b = sessions[0], sessions[1]
+    holder_ctx, contender_ctx = sessions[0], sessions[1]
     scope = backend.scope_name
 
-    async with a.tx_ctx.scope(scope):
-        cid = (await a.document.command(CELL).create(CellCreate(value=0))).id
+    async with holder_ctx.tx_ctx.scope(scope):
+        cid = (
+            await holder_ctx.document.command(CELL).create(
+                CellCreate(value=_FOR_UPDATE_BASE)
+            )
+        ).id
 
     outcomes: dict[str, str] = {}
-    await Conductor(schedule=("a", "b")).run(
-        {
-            "a": _for_update_session(
-                a,
-                cid=cid,
-                delta=1,
-                level=level,
-                scope=scope,
-                outcomes=outcomes,
-                name="a",
-            ),
-            "b": _for_update_session(
-                b,
-                cid=cid,
-                delta=2,
-                level=level,
-                scope=scope,
-                outcomes=outcomes,
-                name="b",
-            ),
-        }
+    await _drive_lock_race(
+        _for_update_session(
+            holder_ctx,
+            cid=cid,
+            delta=_FOR_UPDATE_DELTAS["holder"],
+            level=level,
+            scope=scope,
+            outcomes=outcomes,
+            name="holder",
+            is_holder=True,
+        ),
+        _for_update_session(
+            contender_ctx,
+            cid=cid,
+            delta=_FOR_UPDATE_DELTAS["contender"],
+            level=level,
+            scope=scope,
+            outcomes=outcomes,
+            name="contender",
+            is_holder=False,
+        ),
     )
 
-    # PERMITTED = both blind writes committed (an update was lost); PREVENTED = the FOR UPDATE lock
-    # conflicted the second writer (the lock did its job — no lost update).
-    return _PERMIT if "aborted" not in outcomes.values() else _PREVENT
+    async with holder_ctx.tx_ctx.scope(scope):
+        final = (await holder_ctx.document.query(CELL).get(cid)).value
+
+    # The invariant: the row equals the base plus the deltas that actually committed. A lost update
+    # breaks it only when BOTH writers commit yet one write vanished (Postgres READ COMMITTED commits
+    # both and preserves both — the locked re-read sees the fresh value). If a writer aborted (the mock
+    # double-claim, or a Postgres serialization failure at SNAPSHOT/SERIALIZABLE) it will retry, so no
+    # update was lost. PERMITTED = an update was lost; PREVENTED = the lock did its job.
+    committed = {name for name, outcome in outcomes.items() if outcome == "committed"}
+    expected_if_all_committed = _FOR_UPDATE_BASE + sum(_FOR_UPDATE_DELTAS.values())
+    lost = len(committed) == 2 and final != expected_if_all_committed
+    return _PERMIT if lost else _PREVENT
 
 
 # ....................... #
