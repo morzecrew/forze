@@ -41,9 +41,11 @@ nor sent when it rolls back. The bridge is a handler that turns the event into a
 --8<-- "recipes/order_fulfillment/app.py:outbox-bridge"
 ```
 
-`outbox_event_handler` maps `OrderConfirmed` onto an `order.confirmed` integration
-event with a typed payload. From now on, whenever an `OrderConfirmed` is
-dispatched, it's staged to the outbox.
+`bind_outbox` binds the outbox wiring from one `OutboxEmit` declaration: each
+`EmitMapping` maps a domain event (`OrderConfirmed`) onto an integration event
+(`order.confirmed`) with a typed payload. From now on, whenever an `OrderConfirmed`
+is dispatched, the bridge stages it to the outbox. (The same declaration also carries
+the in-tx flush hook and — for a broker deployment — the background relay step.)
 
 ## The transactional outbox
 

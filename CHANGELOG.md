@@ -117,6 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Less CRUD boilerplate** — `build_document_registry(spec)` derives `DocumentDTOs` when `dtos` is omitted (`create=None` / `update=None` to disable an op); `document_facade(runtime, registry, spec)` returns a per-call typed factory.
 
+- **Outbox emit-and-relay bundle** — `bind_outbox(OutboxEmit(spec=…, emits=(EmitMapping(event, event_type, to_payload), …), relay=RelayBinding(…)))` folds the four-piece transactional-outbox dance into one declaration: the returned `OutboxWiring` carries the domain-event→outbox staging bridge (`register_events` / `domain_event_registry`), the in-tx flush hook (`flush_step`), and the background relay lifecycle step (`lifecycle_steps`, when `relay` is set). The backend `outboxes={name: cfg}` config stays the author's, so the app/backend layer split is preserved. Adopted in the `order_fulfillment` recipe.
+
 - **Shared error helpers** — `error_envelope()` and `guard_frame()` give one client-safe `CoreException` projection and a shared guarded boundary; `http_status_for_kind(kind)` maps an `ExceptionKind` to its HTTP status. FastAPI and Socket.IO render through them.
 
 - **Mock document adapter — tenant scoping on every write** — the in-memory mock injects the tenant column on ensure/upsert/update/touch (not only create), matching Postgres.
