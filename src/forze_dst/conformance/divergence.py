@@ -141,15 +141,20 @@ MECHANISM_DIVERGENCES: tuple[MechanismDivergence, ...] = (
     MechanismDivergence(
         name="lock-block-vs-abort-conductor",
         reason=(
-            "A duplicate-key insert race and a `FOR UPDATE` lock contention both BLOCK the second "
-            "participant on Postgres (it waits for the first to commit, then raises 23505 / re-reads) "
-            "— which would wedge the Conductor's one-participant-at-a-time forced interleaving. The "
-            "mock is abort-based, so it surfaces the same outcome (unique violation / prevented lost "
-            "update) without blocking. Battery cases marked `abort_engine_only` run against the mock "
-            "(and any abort-based engine); the lock-based real-adapter legs skip them, asserting the "
-            "outcome only where the interleaving does not deadlock."
+            "A duplicate-key insert race and a `FOR UPDATE` lock contention both BLOCK the contender "
+            "on Postgres (it waits for the holder to commit, then raises 23505 / re-reads the fresh "
+            "row) — which would wedge a one-participant-at-a-time forced interleaving. The mock is "
+            "abort-based, so it surfaces the same outcome (unique violation / no lost update) by "
+            "conflicting at commit instead of blocking. The block is converted into the same explicit "
+            "signal by the `_drive_lock_race` driver (arrive_blocking → commit the holder → release "
+            "the contender), so both `abort_engine_only` cases run against real Postgres too; the "
+            "generic parametrized legs (vanilla one-at-a-time Conductor) skip them, and a dedicated "
+            "lock-race differential asserts the outcome against the real engine. Note the FOR UPDATE "
+            "verdict is the final value (was an update lost?), not whether a transaction aborted: "
+            "Postgres READ COMMITTED commits BOTH writers and loses nothing (the locked re-read sees "
+            "the committed value), whereas the mock and Postgres SNAPSHOT/SERIALIZABLE abort the loser."
         ),
-        source="battery docstring (abort-based engine assumption); ept/hermitage",
+        source="battery docstring; _drive_lock_race; Postgres FOR UPDATE EvalPlanQual; ept/hermitage",
     ),
     MechanismDivergence(
         name="read-only-abort-vs-safe-snapshot",
@@ -175,7 +180,11 @@ MECHANISM_DIVERGENCES: tuple[MechanismDivergence, ...] = (
             "double-publish-from-abort finding — but a concurrent still-in-flight transaction CAN read "
             "another's not-yet-committed outbox/inbox rows (a dirty read Postgres READ COMMITTED would "
             "not permit). Treat a premature-visibility / phantom-event finding on the outbox→relay→inbox "
-            "path as possible mock over-visibility and confirm it against a real broker/store."
+            "path as possible mock over-visibility and confirm it against a real broker/store. This is a "
+            "CHECKED divergence: `observe_uncommitted_outbox_visibility` asserts the mock over-permits "
+            "and real Postgres prevents it, from both ends. The crash-recovery delivery path is instead "
+            "verdict-EQUIVALENT (atomicity holds — a rolled-back transaction leaves no rows), pinned by "
+            "`run_crash_recovery_delivery` as mock ≡ real Postgres."
         ),
         source="forze_mock journal design (_journal.py, adapters/tx.py MockJournalTxManagerAdapter)",
     ),

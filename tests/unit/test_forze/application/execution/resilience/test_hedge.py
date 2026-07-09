@@ -151,6 +151,58 @@ class TestHedge:
             await ex.run_hedged(_Fn([(0.0, "x")]), policy="nohedge")
 
 
+class _SinkSpy:
+    """Captures every resilience event op the executor emits to its metrics sink."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def __call__(self, op: str, policy: str, route: str | None) -> None:
+        self.events.append(op)
+
+
+class TestHedgeMetrics:
+    """The hedge win counters count only the *hedged* population, so the effectiveness ratio
+    ``hedge_won / (hedge_won + hedge_primary_won)`` is meaningful (regression for the fast-primary
+    over-count that pulled the ratio toward 0)."""
+
+    async def test_fast_primary_emits_no_win_or_attempt_event(self) -> None:
+        # The primary beats the delay, so no hedge is ever fired — this call is not part of the
+        # hedged population and must emit neither win nor attempt.
+        fn = _Fn([(0.0, "primary")])
+        ex = _exec(_policy(delay=0.1))
+        spy = _SinkSpy()
+        ex.set_metrics_sink(spy)
+
+        assert await ex.run_hedged(fn, policy="h", route="r") == "primary"
+        assert "hedge_attempt" not in spy.events
+        assert "hedge_primary_won" not in spy.events
+        assert "hedge_won" not in spy.events
+
+    async def test_hedge_fires_then_primary_wins_emits_one_primary_won(self) -> None:
+        # A hedge fires (primary slow past the delay), then the primary still wins the race: exactly
+        # one hedge_attempt and one hedge_primary_won — this call IS in the hedged population.
+        fn = _Fn([(0.08, "primary"), (0.5, "hedge")])
+        ex = _exec(_policy(delay=0.03, max_attempts=2))
+        spy = _SinkSpy()
+        ex.set_metrics_sink(spy)
+
+        assert await ex.run_hedged(fn, policy="h", route="r") == "primary"
+        assert spy.events.count("hedge_attempt") == 1
+        assert spy.events.count("hedge_primary_won") == 1
+        assert "hedge_won" not in spy.events
+
+    async def test_hedge_wins_emits_hedge_won_not_primary_won(self) -> None:
+        fn = _Fn([(0.5, "primary"), (0.01, "hedge")])
+        ex = _exec(_policy(delay=0.03))
+        spy = _SinkSpy()
+        ex.set_metrics_sink(spy)
+
+        assert await ex.run_hedged(fn, policy="h", route="r") == "hedge"
+        assert spy.events.count("hedge_won") == 1
+        assert "hedge_primary_won" not in spy.events
+
+
 class TestPassthrough:
     async def test_run_hedged_runs_once(self) -> None:
         from forze_mock.adapters.resilience import PassthroughResilienceExecutor

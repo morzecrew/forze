@@ -150,3 +150,27 @@ class TestStoreEntryBounding:
             await store.try_acquire(("p", f"route-{i}"), strat)
 
         assert len(store._states) == 4  # pyright: ignore[reportPrivateUsage]
+
+    async def test_evicting_a_hot_open_breaker_silently_resets_it_to_closed(self) -> None:
+        # The documented footgun (see DEFAULT_MAX_STATE_ENTRIES): plain LRU can drop a HOT open
+        # breaker, not only an idle one. Under partition/high-cardinality `route`, an evicted OPEN
+        # entry is recreated fresh (closed) on next access — a burst then passes until it re-trips.
+        # A distributed (Redis) store instead pays only an extra read on eviction, never a reset:
+        # this is the in-memory-store divergence a resilience differential must pin.
+        store = InMemoryCircuitBreakerStore(clock=_Clock(), max_entries=1)
+        strat = _strat()
+        hot = ("p", "hot")
+
+        await store.record(hot, strat, False)
+        assert await store.record(hot, strat, False) == "open"  # `hot` trips open
+        allowed, _ = await store.admit(hot, strat)
+        assert allowed is False  # open: calls are shed
+
+        # Touch a different route — with cap 1 this LRU-evicts the still-open `hot` breaker.
+        await store.admit(("p", "cold"), strat)
+
+        # `hot` is gone; the next access rebuilds it fresh (closed) — the open phase was lost, so a
+        # burst now passes until the breaker re-trips.
+        allowed, tr = await store.admit(hot, strat)
+        assert allowed is True
+        assert tr is None

@@ -14,13 +14,25 @@ anomaly OUTCOME at the declared level, never the mechanism, error code, or victi
 differences that are expected and must not be flagged — the firewall that keeps the differential from
 dying of false positives.
 
-Scope: the isolation family only. A general "mock ≡ real for every port" matrix is deliberately out —
-it has no shared equivalence relation and would drown in false positives.
+Scope: two families where the mock is a stand-in for a real engine and the equivalence relation is
+sharp — the **transactional-isolation** anomalies (verdict per level) and the **outbox→inbox delivery
+semantics under a crash** (:func:`run_crash_recovery_delivery`: at-least-once + exactly-once effect
+across the publish-then-crash window). A general "mock ≡ real for every port" matrix stays out — it has
+no shared equivalence relation and would drown in false positives.
 """
 
 from __future__ import annotations
 
 from .anomalies import BATTERY, AnomalyCase, expected_verdict
+from .delivery import (
+    DELIVERY_EVENTS,
+    DELIVERY_INBOX,
+    DELIVERY_OUTBOX,
+    DeliveryOutcome,
+    DeliveryPayload,
+    observe_uncommitted_outbox_visibility,
+    run_crash_recovery_delivery,
+)
 from .divergence import (
     CONTRACT_STRENGTHENINGS,
     MECHANISM_DIVERGENCES,
@@ -48,4 +60,11 @@ __all__ = [
     "MechanismDivergence",
     "CONTRACT_STRENGTHENINGS",
     "MECHANISM_DIVERGENCES",
+    "run_crash_recovery_delivery",
+    "observe_uncommitted_outbox_visibility",
+    "DeliveryOutcome",
+    "DeliveryPayload",
+    "DELIVERY_OUTBOX",
+    "DELIVERY_INBOX",
+    "DELIVERY_EVENTS",
 ]

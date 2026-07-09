@@ -1,8 +1,10 @@
 """Resilience policy pipeline contracts."""
 
+from .admin import ResilienceAdminPort, ResilienceStateSnapshot
 from .deps import (
     PortPolicy,
     PortPolicyTable,
+    ResilienceAdminDepKey,
     ResilienceDeps,
     ResilienceExecutorDepKey,
     ResiliencePortPoliciesDepKey,
@@ -60,12 +62,15 @@ __all__ = [
     "PortPolicy",
     "PortPolicyTable",
     "RateLimitStrategy",
+    "ResilienceAdminDepKey",
+    "ResilienceAdminPort",
     "ResilienceDeps",
     "ResilienceExecutorDepKey",
     "ResiliencePolicy",
     "ResiliencePortPoliciesDepKey",
     "ResilienceExecutorPort",
     "ResilienceSpec",
+    "ResilienceStateSnapshot",
     "RetryBudget",
     "RetryStrategy",
     "Strategy",

@@ -1,21 +1,21 @@
-"""Tests for the ambient entropy-source seam behind random ids/bytes/bits/floats."""
+"""Tests for the two entropy seams: replayable randomness and CSPRNG durable-secret entropy."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
-
-from forze.base.exceptions import CoreException
 from forze.base.primitives import (
     FrozenTimeSource,
+    SecretEntropy,
     SeededEntropySource,
     SystemEntropySource,
+    SystemSecretEntropy,
     bind_entropy_source,
+    bind_secret_entropy,
     bind_time_source,
     current_entropy_source,
+    current_secret_entropy,
     derive_seed,
-    permit_insecure_entropy,
     secure_random_bytes,
     secure_token_urlsafe,
     uuid4,
@@ -30,9 +30,6 @@ _T0 = datetime(2020, 1, 1, 12, 0, tzinfo=UTC)
 class TestDefaultBehavior:
     def test_default_source_is_system(self) -> None:
         assert isinstance(current_entropy_source(), SystemEntropySource)
-
-    def test_random_bytes_length(self) -> None:
-        assert len(SystemEntropySource().random_bytes(12)) == 12
 
     def test_randbits_in_range(self) -> None:
         for _ in range(50):
@@ -69,7 +66,6 @@ class TestDefaultBehavior:
 class TestSeededReproducibility:
     def test_same_seed_same_stream(self) -> None:
         a, b = SeededEntropySource(seed=42), SeededEntropySource(seed=42)
-        assert a.random_bytes(8) == b.random_bytes(8)
         assert a.randbits(32) == b.randbits(32)
         assert a.random() == b.random()
         assert a.uuid4() == b.uuid4()
@@ -170,52 +166,48 @@ class TestDeriveSeed:
 # ....................... #
 
 
-class TestSecureEntropyGuard:
-    """secure_* helpers fail closed on a non-CSPRNG source unless explicitly permitted."""
+class _FixedSecret:
+    """A test-only SecretEntropy that returns constant bytes (a known-answer fixture)."""
 
-    def test_system_source_is_secure(self) -> None:
-        assert SystemEntropySource().is_cryptographically_secure is True
+    def secret_bytes(self, n: int) -> bytes:
+        return b"\x00" * n
 
-    def test_seeded_source_is_insecure(self) -> None:
-        assert SeededEntropySource(seed=1).is_cryptographically_secure is False
 
-    def test_secure_helpers_work_under_default_source(self) -> None:
+class TestSecretEntropySeam:
+    """Durable secrets read a separate CSPRNG seam that a seeded/replayable source cannot satisfy —
+    enforced by the type, not a runtime flag."""
+
+    def test_default_secret_source_is_the_csprng(self) -> None:
+        assert isinstance(current_secret_entropy(), SystemSecretEntropy)
+
+    def test_secure_helpers_produce_bytes_and_tokens(self) -> None:
         assert len(secure_random_bytes(12)) == 12
         assert isinstance(secure_token_urlsafe(16), str)
 
-    def test_secure_random_bytes_refuses_seeded_source(self) -> None:
+    def test_secure_draw_stays_csprng_under_a_seeded_replayable_bind(self) -> None:
+        # THE guarantee: binding the seeded (simulation) *replayable* source does not make secrets
+        # predictable. secure_random_bytes reads the SecretEntropy seam, which stays CSPRNG, so two
+        # draws under the same seed differ — a seeded source cannot serve a nonce/token/key.
         with bind_entropy_source(SeededEntropySource(seed=1)):
-            with pytest.raises(CoreException) as excinfo:
-                secure_random_bytes(12)
-
-        assert excinfo.value.code == "core.crypto.insecure_entropy"
-
-    def test_secure_token_refuses_seeded_source(self) -> None:
+            first = secure_random_bytes(16)
         with bind_entropy_source(SeededEntropySource(seed=1)):
-            with pytest.raises(CoreException) as excinfo:
-                secure_token_urlsafe(16)
+            second = secure_random_bytes(16)
+        assert first != second
 
-        assert excinfo.value.code == "core.crypto.insecure_entropy"
+    def test_a_seeded_source_is_not_a_secret_entropy(self) -> None:
+        # Disjoint surfaces: the replayable seeded source has no secret_bytes, so it is not a
+        # SecretEntropy (and the type checker rejects binding it as one).
+        assert isinstance(SystemSecretEntropy(), SecretEntropy)
+        assert not isinstance(SeededEntropySource(seed=1), SecretEntropy)
+        assert not hasattr(SeededEntropySource(seed=1), "secret_bytes")
 
-    def test_permit_insecure_entropy_allows_seeded_draw(self) -> None:
-        with bind_entropy_source(SeededEntropySource(seed=1)):
-            with permit_insecure_entropy():
-                # Deterministic under the seed — the sim path, not a raise.
-                assert len(secure_random_bytes(12)) == 12
-                assert isinstance(secure_token_urlsafe(16), str)
+    def test_the_replayable_seam_has_no_byte_minting_method(self) -> None:
+        # There is no way to route a durable secret through the replayable seam: it mints no bytes.
+        assert not hasattr(current_entropy_source(), "random_bytes")
 
-    def test_permit_scope_does_not_leak_out(self) -> None:
-        with bind_entropy_source(SeededEntropySource(seed=1)):
-            with permit_insecure_entropy():
-                secure_random_bytes(4)
-
-            with pytest.raises(CoreException):
-                secure_random_bytes(4)
-
-    def test_non_secret_seam_still_deterministic_under_seed(self) -> None:
-        # The plain (non-secure) seam is unaffected — jitter/ids stay seedable.
-        with bind_entropy_source(SeededEntropySource(seed=7)):
-            a = current_entropy_source().random_bytes(8)
-        with bind_entropy_source(SeededEntropySource(seed=7)):
-            b = current_entropy_source().random_bytes(8)
-        assert a == b
+    def test_bind_secret_entropy_substitutes_the_secret_source(self) -> None:
+        # A test may bind its own SecretEntropy (a fixed known-answer source); the type — not a
+        # runtime flag — is what admits it, and the default is restored on exit.
+        with bind_secret_entropy(_FixedSecret()):
+            assert secure_random_bytes(4) == b"\x00\x00\x00\x00"
+        assert isinstance(current_secret_entropy(), SystemSecretEntropy)

@@ -10,6 +10,7 @@ from forze.application.contracts.resilience import (
     LatencyDigestStore,
     PortPolicy,
     RateLimitStore,
+    ResilienceAdminDepKey,
     ResilienceExecutorDepKey,
     ResiliencePortPoliciesDepKey,
     ResilienceSpec,
@@ -134,7 +135,11 @@ class ResilienceDepsModule:
             executor_kwargs["latency_digest_store"] = self.latency_digest_store
 
         executor = InProcessResilienceExecutor(**executor_kwargs)
-        deps: dict[DepKey[Any], Any] = {ResilienceExecutorDepKey: executor}
+        # The same singleton also backs the admin/control plane (inspect / force-open / retune).
+        deps: dict[DepKey[Any], Any] = {
+            ResilienceExecutorDepKey: executor,
+            ResilienceAdminDepKey: executor,
+        }
 
         if self.port_policies:
             deps[ResiliencePortPoliciesDepKey] = {

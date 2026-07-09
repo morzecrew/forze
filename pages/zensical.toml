@@ -75,6 +75,7 @@ nav = [
         { "Running in production" = [
             "running-in-prod/deadlines.md",
             "running-in-prod/resilience.md",
+            "running-in-prod/load-shedding.md",
             "running-in-prod/shutdown-and-fleets.md",
             "running-in-prod/observability.md",
         ] },

@@ -315,6 +315,56 @@ class TestExecutorIntegration:
             await executor.run(slow_boom, policy="p")
 
 
+class TestControllerBookkeepingFailsOpen:
+    """The AIMD/Gradient limit update is post-completion bookkeeping (parity with the digest-store
+    guard): a controller error must never fail a completed call nor mask an in-flight domain error."""
+
+    def _executor(self, clock: _Clock) -> InProcessResilienceExecutor:
+        return InProcessResilienceExecutor(
+            policies={
+                "p": ResiliencePolicy(
+                    name="p", strategies=(_strategy(max_concurrency=2),)
+                )
+            },
+            clock=clock,
+        )
+
+    async def test_controller_error_does_not_fail_a_successful_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = _Clock()
+        executor = self._executor(clock)
+
+        def _boom(self: object, *args: object, **kwargs: object) -> bool:
+            raise RuntimeError("controller down")
+
+        monkeypatch.setattr(AdaptiveBulkheadState, "on_complete", _boom)
+
+        async def slow_ok() -> str:
+            clock.now += 1.0  # elapsed > 0 -> the success path feeds the controller
+            return "ok"
+
+        assert await executor.run(slow_ok, policy="p") == "ok"
+
+    async def test_controller_error_does_not_mask_business_exception(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = _Clock()
+        executor = self._executor(clock)
+
+        def _boom(self: object, *args: object, **kwargs: object) -> bool:
+            raise RuntimeError("controller down")
+
+        monkeypatch.setattr(AdaptiveBulkheadState, "on_complete", _boom)
+
+        async def slow_boom() -> str:
+            clock.now += 1.0  # elapsed > threshold -> the failure path feeds the controller
+            raise exc.conflict("business failure")
+
+        with pytest.raises(CoreException, match="business failure"):
+            await executor.run(slow_boom, policy="p")
+
+
 class TestExpiredWaiterDrop:
     async def test_expired_waiter_failed_at_wake_instead_of_granted(self) -> None:
         from forze.application.execution.context.deadline import bind_deadline
