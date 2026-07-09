@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 from datetime import timedelta
 
 import pytest
@@ -15,8 +14,18 @@ from forze.application.contracts.resilience import (
 from forze.application.execution.resilience import InProcessResilienceExecutor
 from forze.application.execution.resilience.state import AdaptiveThrottleState
 from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.primitives import SeededEntropySource, bind_entropy_source
 
 # ----------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _seed_entropy() -> object:
+    # The executor's shed roll / backoff jitter draw from the ambient entropy seam; bind a seeded
+    # source so the probabilistic shedding is reproducible (seed 1 wraps Random(1), the sequence the
+    # tests were written against).
+    with bind_entropy_source(SeededEntropySource(seed=1)):
+        yield
 
 
 class _Clock:
@@ -44,7 +53,6 @@ def _executor(
     return InProcessResilienceExecutor(
         policies={"p": ResiliencePolicy(name="p", strategies=(strat,))},
         clock=clock if clock is not None else _Clock(),
-        rng=random.Random(1),
     )
 
 

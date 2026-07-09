@@ -18,6 +18,7 @@ from datetime import timedelta
 
 from forze.application.contracts.resilience import (
     AdaptiveBulkheadStrategy,
+    AdaptiveThrottleStrategy,
     ResiliencePolicy,
 )
 from forze.application.execution.context.criticality import (
@@ -25,7 +26,7 @@ from forze.application.execution.context.criticality import (
     bind_criticality,
 )
 from forze.application.execution.resilience import InProcessResilienceExecutor
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_dst.runtime import run_simulation
 
 # ----------------------- #
@@ -106,3 +107,53 @@ class TestPrioritizedSheddingUnderDst:
         assert run_simulation(_overload_round, seed=7) == run_simulation(
             _overload_round, seed=7
         )
+
+
+# ....................... #
+
+
+def _throttle_policy() -> ResiliencePolicy:
+    return ResiliencePolicy(
+        name="svc",
+        strategies=(
+            AdaptiveThrottleStrategy(
+                k=2.0, window=timedelta(minutes=2), min_throughput=5
+            ),
+        ),
+    )
+
+
+async def _throttle_round() -> tuple[str, ...]:
+    """Hammer a failing downstream through an adaptive throttle; return the per-call shed/pass trace."""
+
+    executor = InProcessResilienceExecutor(policies={"svc": _throttle_policy()})
+
+    async def boom() -> str:
+        raise exc.infrastructure("downstream down")
+
+    trace: list[str] = []
+    for _ in range(40):
+        try:
+            await executor.run(boom, policy="svc", route="r")
+            trace.append("sent")
+        except CoreException as error:
+            # Either shed locally (``adaptive_throttle``) or passed through to the failing
+            # downstream (``core.infrastructure``) — both are recorded, so the trace captures the
+            # exact shed/probe pattern the seeded roll produces.
+            trace.append(error.code)
+
+    return tuple(trace)
+
+
+class TestAdaptiveThrottleReproducibleUnderDst:
+    """The throttle's probabilistic shed roll draws from the entropy seam, so it is seeded (and
+    reproducible) under simulation — where it previously used an unseeded RNG that bypassed the seam."""
+
+    def test_shed_pattern_is_byte_identical_for_a_seed(self) -> None:
+        first = run_simulation(_throttle_round, seed=5)
+        second = run_simulation(_throttle_round, seed=5)
+        assert first == second  # the seeded shed roll makes the whole trace reproducible
+        # ...and the shedding is genuinely proportional: some calls shed locally, a probe stream
+        # still reaches the (failing) downstream — not an all-or-nothing trip.
+        assert "adaptive_throttle" in first
+        assert "core.infrastructure" in first

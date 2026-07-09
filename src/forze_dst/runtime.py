@@ -21,7 +21,6 @@ from forze.base.primitives import (
     bind_cpu_executor,
     bind_entropy_source,
     bind_time_source,
-    permit_insecure_entropy,
 )
 
 from .cpu import CpuCostModel, SimulationCpuExecutor
@@ -92,11 +91,11 @@ def run_simulation[T](
         # since run_simulation does not own the deps registry. No app code required.
         with (
             bind_time_source(time_source),
+            # Only the *replayable* seam is seeded: jitter, sampling, and random ids reproduce from
+            # the seed. Durable secrets (nonces/tokens/keys) read the separate SecretEntropy seam,
+            # which stays CSPRNG here — a seeded source is a different type that cannot serve them,
+            # so a predictable secret is unrepresentable rather than gated by an opt-in flag.
             bind_entropy_source(entropy),
-            # The seeded source is not a CSPRNG, so the secure_* entropy helpers refuse it
-            # by default; a sanctioned simulation opts in so nonces/tokens/keys still draw
-            # deterministically from the seed instead of raising.
-            permit_insecure_entropy(),
             bind_cpu_executor(SimulationCpuExecutor(cost=cpu_cost)),
             bind_interceptors(CooperativeInterceptor(latency=latency)),
         ):

@@ -1,19 +1,24 @@
-"""Ambient, context-scoped source of randomness (bytes, bits, floats, random ids).
+"""Two ambient, context-scoped sources of randomness — split by security posture at the type level.
 
-The entropy primitives used across the framework — AEAD nonces, backoff jitter,
-opaque tokens, random ``uuid4`` ids — read the active :class:`EntropySource` rather
-than ``secrets``/``random``/``os.urandom`` directly, so a scope can make every random
-read deterministic and seed-replayable (simulation, deterministic tests) **without
-changing call sites**.
+Randomness in the framework serves two irreconcilable purposes, so it is two distinct seams:
 
-This is the entropy twin of :mod:`forze.base.primitives.time_source`: same ContextVar
-idiom, default = the real system CSPRNG so nothing changes unless a source is bound.
+- :class:`EntropySource` — **replayable** randomness: backoff jitter, load-shed sampling, random
+  (v4/v7) ids. A scope can bind a seeded source (:class:`SeededEntropySource`) to make every such
+  read a deterministic function of a seed (simulation, deterministic tests) *without changing call
+  sites*. Replayable means predictable, so this seam draws **no durable secrets** — its surface has no
+  byte-minting method at all.
+- :class:`SecretEntropy` — **durable-secret** randomness: AEAD/GCM nonces, opaque tokens, API keys,
+  data-encryption keys. Served only by :func:`secure_random_bytes` / :func:`secure_token_urlsafe`,
+  which read this seam, never the replayable one. The only implementation is the CSPRNG
+  :class:`SystemSecretEntropy`; there is **no seeded ``SecretEntropy``**, so a seeded/replayable
+  source *physically cannot* mint a nonce, token, or key — it is a different type that lacks
+  ``secret_bytes``. This is a type-level guarantee, not a runtime flag: a simulation binds the seeded
+  *replayable* seam for reproducibility while durable secrets keep drawing full CSPRNG entropy, and no
+  ``permit`` escape hatch exists to weaken that. (Secrets are outside the byte-identical-replay
+  envelope by design — value traces redact them — so this costs no reproducibility that mattered.)
 
-Note on security: the default :class:`SystemEntropySource` delegates to ``secrets`` and
-``os.urandom`` and is byte-for-byte equivalent to the direct stdlib calls it replaces —
-production keeps full cryptographic entropy. :class:`SeededEntropySource` is for
-simulation only; it is **not** cryptographically secure and must never be bound in a
-context that produces durable secrets.
+Both seams mirror :mod:`forze.base.primitives.time_source`: the same ``ContextVar`` idiom, default =
+the real system CSPRNG so nothing changes unless a source is bound.
 """
 
 import base64
@@ -29,32 +34,20 @@ from uuid import uuid4 as uuid4_func
 
 import attrs
 
-from ..exceptions import exc
-
 # ----------------------- #
 
 
 @runtime_checkable
 class EntropySource(Protocol):
-    """A source of random bytes, bits, floats, and random (v4) ids."""
+    """A source of **replayable** randomness — bits, floats, and random (v4) ids.
 
-    @property
-    def is_cryptographically_secure(self) -> bool:
-        """Whether draws from this source are safe to mint durable secrets.
-
-        ``True`` for a CSPRNG-backed source (the production default); ``False`` for a
-        seeded/replayable simulation source. The :func:`secure_random_bytes` /
-        :func:`secure_token_urlsafe` helpers fail closed on a non-secure source unless
-        insecure entropy is explicitly permitted (:func:`permit_insecure_entropy`).
-        """
-        ...  # pragma: no cover
-
-    def random_bytes(self, n: int) -> bytes:
-        """Return *n* fresh random bytes (e.g. an AEAD nonce or opaque token)."""
-        ...  # pragma: no cover
+    Deliberately has no ``bytes``-minting method: raw random bytes feed durable secrets, which must
+    never come from a seedable (predictable) source. Draw those from :class:`SecretEntropy` via
+    :func:`secure_random_bytes` instead.
+    """
 
     def randbits(self, k: int) -> int:
-        """Return a non-negative integer with *k* random bits."""
+        """Return a non-negative integer with *k* random bits (e.g. a uuid7's random component)."""
         ...  # pragma: no cover
 
     def random(self) -> float:
@@ -86,14 +79,7 @@ process-global Mersenne Twister."""
 @final
 @attrs.define(slots=True, frozen=True)
 class SystemEntropySource:
-    """The real system CSPRNG — the default source (identical to direct stdlib reads)."""
-
-    @property
-    def is_cryptographically_secure(self) -> bool:  # noqa: PYL-R0201
-        return True
-
-    def random_bytes(self, n: int) -> bytes:  # noqa: PYL-R0201
-        return secrets.token_bytes(n)
+    """The real system CSPRNG — the default replayable source (identical to direct stdlib reads)."""
 
     def randbits(self, k: int) -> int:  # noqa: PYL-R0201
         return secrets.randbits(k)
@@ -120,9 +106,10 @@ class SystemEntropySource:
 class SeededEntropySource:
     """A seeded PRNG for simulation: same seed → identical, replayable random stream.
 
-    Not cryptographically secure; intended only for deterministic simulation and tests.
-    All four reads are driven by a single :class:`Random`, so the full sequence
-    of bytes/bits/floats/ids is a deterministic function of ``seed``.
+    Not cryptographically secure, and — by construction — not a :class:`SecretEntropy`: it has no
+    ``secret_bytes``, so it can drive jitter/sampling/ids reproducibly but can never mint a durable
+    secret. All reads are driven by a single :class:`Random`, so the full sequence of bits/floats/ids
+    is a deterministic function of ``seed``.
     """
 
     seed: int
@@ -137,15 +124,6 @@ class SeededEntropySource:
     )
 
     # ....................... #
-
-    @property
-    def is_cryptographically_secure(self) -> bool:  # noqa: PYL-R0201
-        # A seeded Mersenne Twister — replayable, therefore predictable. Never safe to
-        # mint a durable secret; the secure_* helpers refuse it outside a sanctioned sim.
-        return False
-
-    def random_bytes(self, n: int) -> bytes:
-        return self._rng.randbytes(n)
 
     def randbits(self, k: int) -> int:
         return self._rng.getrandbits(k)
@@ -175,7 +153,7 @@ _ENTROPY_SOURCE: ContextVar[EntropySource] = ContextVar(
 
 
 def current_entropy_source() -> EntropySource:
-    """Return the entropy source active in the current context."""
+    """Return the replayable entropy source active in the current context."""
 
     return _ENTROPY_SOURCE.get()
 
@@ -185,7 +163,7 @@ def current_entropy_source() -> EntropySource:
 
 @contextmanager
 def bind_entropy_source(source: EntropySource) -> Iterator[None]:
-    """Bind *source* as the active entropy source for the duration of the block."""
+    """Bind *source* as the active replayable entropy source for the duration of the block."""
 
     token = _ENTROPY_SOURCE.set(source)
 
@@ -196,102 +174,100 @@ def bind_entropy_source(source: EntropySource) -> Iterator[None]:
         _ENTROPY_SOURCE.reset(token)
 
 
+# ----------------------- #
+# Durable-secret entropy — a separate seam a seeded source cannot satisfy.
+
+
+@runtime_checkable
+class SecretEntropy(Protocol):
+    """A source of random bytes for **durable secrets** (AEAD nonces, tokens, keys).
+
+    A distinct type from :class:`EntropySource` with a disjoint surface: a replayable/seeded source
+    is not a ``SecretEntropy`` (it has no ``secret_bytes``), so it cannot be bound here or passed to
+    :func:`secure_random_bytes`. The only shipped implementation is the CSPRNG
+    :class:`SystemSecretEntropy`; there is no seeded one, so a durable secret is never predictable.
+    """
+
+    def secret_bytes(self, n: int) -> bytes:
+        """Return *n* cryptographically-secure random bytes for a durable secret."""
+        ...  # pragma: no cover
+
+
 # ....................... #
 
-_ALLOW_INSECURE_ENTROPY: ContextVar[bool] = ContextVar(
-    "allow_insecure_entropy",
-    default=False,
-)
-"""Whether a non-CSPRNG entropy source is permitted to feed a secure draw.
 
-Off by default: :func:`secure_random_bytes` / :func:`secure_token_urlsafe` fail closed
-on a seeded source, so a simulation binding that leaks into a context minting a *real*
-secret cannot silently produce a predictable nonce/token. A sanctioned deterministic
-run (``run_simulation``) opts in via :func:`permit_insecure_entropy` so those paths
-still exercise deterministically."""
+@final
+@attrs.define(slots=True, frozen=True)
+class SystemSecretEntropy:
+    """The system CSPRNG (``secrets``/``os.urandom``) — the only source of durable-secret bytes."""
+
+    def secret_bytes(self, n: int) -> bytes:  # noqa: PYL-R0201
+        return secrets.token_bytes(n)
+
+
+# ....................... #
+
+_SECRET_ENTROPY: ContextVar[SecretEntropy] = ContextVar(
+    "secret_entropy",
+    default=SystemSecretEntropy(),
+)
+"""The active durable-secret source. Defaults to the CSPRNG and is **not** bound by the simulation
+runtime — so nonces/tokens/keys keep full entropy even under a seeded, replayable simulation."""
+
+
+# ....................... #
+
+
+def current_secret_entropy() -> SecretEntropy:
+    """Return the durable-secret entropy source active in the current context (the CSPRNG default)."""
+
+    return _SECRET_ENTROPY.get()
+
+
+# ....................... #
 
 
 @contextmanager
-def permit_insecure_entropy() -> Iterator[None]:
-    """Allow secure draws to accept a non-CSPRNG source for the duration of the block.
+def bind_secret_entropy(source: SecretEntropy) -> Iterator[None]:
+    """Bind *source* as the active durable-secret source for the block.
 
-    Bound only by the deterministic-simulation runtime, so its seeded source can drive
-    the security-sensitive paths (AEAD nonces, tokens, keys) reproducibly. Never bind
-    this in production: it disables the fail-closed guard that keeps a predictable
-    source from minting a real secret.
+    Accepts only a :class:`SecretEntropy` — a seeded/replayable :class:`EntropySource` is a different
+    type and is rejected at type-check, so this cannot be used to make secrets predictable. Intended
+    for a test that substitutes its own ``SecretEntropy`` (a known-answer fixture, a fault injector);
+    the simulation runtime never calls it.
     """
 
-    token = _ALLOW_INSECURE_ENTROPY.set(True)
+    token = _SECRET_ENTROPY.set(source)
 
     try:
         yield
 
     finally:
-        _ALLOW_INSECURE_ENTROPY.reset(token)
-
-
-# ....................... #
-
-
-def _require_secure_source() -> EntropySource:
-    """Return the active source, refusing a non-CSPRNG one unless explicitly permitted."""
-
-    source = current_entropy_source()
-
-    # Lenient default (True) for a third-party source that predates this attribute —
-    # only a source that *declares itself* insecure (the seeded sim source) is refused.
-    if getattr(source, "is_cryptographically_secure", True):
-        return source
-
-    if _ALLOW_INSECURE_ENTROPY.get():
-        return source
-
-    raise exc.internal(
-        "A non-cryptographic entropy source is active while minting a secret "
-        "(nonce/token/key). This is only permitted inside a deterministic simulation "
-        "(permit_insecure_entropy). Refusing to produce a predictable secret.",
-        code="core.crypto.insecure_entropy",
-    )
+        _SECRET_ENTROPY.reset(token)
 
 
 # ....................... #
 
 
 def secure_random_bytes(n: int) -> bytes:
-    """Return *n* random bytes for a durable secret, failing closed on an insecure source.
+    """Return *n* CSPRNG bytes for a durable secret (AEAD nonce, token, API key, data key).
 
-    The security-sensitive twin of ``current_entropy_source().random_bytes`` — use it
-    for AEAD nonces, opaque tokens, API keys and OAuth state, where a predictable draw
-    is catastrophic. Byte-identical to a direct read under the production CSPRNG.
+    Reads the :class:`SecretEntropy` seam — never the replayable :class:`EntropySource` — so the draw
+    is cryptographically secure by construction, even inside a seeded simulation. There is no seeded
+    ``SecretEntropy`` and no runtime opt-out: a predictable secret is unrepresentable, not merely
+    discouraged.
     """
 
-    return _require_secure_source().random_bytes(n)
-
-
-# ....................... #
-
-
-def token_urlsafe(nbytes: int) -> str:
-    """Seam-routed equivalent of :func:`secrets.token_urlsafe`.
-
-    Returns a URL-safe base64 text token (padding stripped) drawn from the active
-    entropy source — so opaque tokens become deterministic under a bound source.
-
-    Not fail-closed — for a security-sensitive token use :func:`secure_token_urlsafe`.
-    """
-
-    raw = current_entropy_source().random_bytes(nbytes)
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    return current_secret_entropy().secret_bytes(n)
 
 
 # ....................... #
 
 
 def secure_token_urlsafe(nbytes: int) -> str:
-    """Fail-closed :func:`token_urlsafe` for security-sensitive tokens (OAuth state, PKCE).
+    """A URL-safe base64 text token (padding stripped) drawn from :func:`secure_random_bytes`.
 
-    Refuses a non-CSPRNG source unless insecure entropy is explicitly permitted, so a
-    leaked seeded source cannot mint a predictable token.
+    For security-sensitive tokens (OAuth state, PKCE verifier) — CSPRNG by construction.
     """
 
     raw = secure_random_bytes(nbytes)
@@ -304,11 +280,11 @@ def secure_token_urlsafe(nbytes: int) -> str:
 def derive_seed(seed: int, label: str) -> int:
     """Derive a stable, independent sub-seed from a master *seed*, keyed by *label*.
 
-    Cross-machine / cross-process stable — a fixed hash, **not** Python's ``hash()`` (which
-    is PYTHONHASHSEED-salted) — and **order-insensitive**: keyed by *label*, so adding a new
-    derived stream never shifts existing sub-seeds, and a saved (regression) seed keeps its
-    meaning. Lets one master seed drive several independent nondeterminism streams
-    (schedule, faults, entropy, inputs) that vary independently yet reproduce exactly.
+    Cross-machine / cross-process stable — a fixed hash, **not** Python's ``hash()`` (which is
+    PYTHONHASHSEED-salted) — and **order-insensitive**: keyed by *label*, so adding a new derived
+    stream never shifts existing sub-seeds, and a saved (regression) seed keeps its meaning. Lets one
+    master seed drive several independent nondeterminism streams (schedule, faults, entropy, inputs)
+    that vary independently yet reproduce exactly.
     """
 
     digest = hashlib.blake2b(f"{seed}:{label}".encode(), digest_size=8).digest()

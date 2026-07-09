@@ -1,7 +1,6 @@
 """In-process resilience executor composing strategies into a call pipeline."""
 
 import asyncio
-import random
 from collections.abc import Awaitable, Callable, Iterator
 
 import attrs
@@ -34,6 +33,7 @@ from forze.base.primitives import (
     MappingConverter,
     StrKey,
     StrKeyMapping,
+    current_entropy_source,
     monotonic,
 )
 
@@ -132,9 +132,6 @@ class InProcessResilienceExecutor:
 
     clock: Callable[[], float] = monotonic
     """Time source for the executor."""
-
-    rng: random.Random = attrs.field(factory=random.Random)
-    """Random number generator for the executor."""
 
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     """Sleep function for the executor."""
@@ -793,7 +790,12 @@ class InProcessResilienceExecutor:
                     self._emit("retry_budget_exhausted", pol, route)
                     raise
 
-                delay = compute_delay(strat.backoff, attempt, prev_delay, self.rng)
+                delay = compute_delay(
+                    strat.backoff,
+                    attempt,
+                    prev_delay,
+                    current_entropy_source().as_random(),
+                )
 
                 # Deadline-aware retry: when the backoff sleep would outlive
                 # the invocation deadline, surface the real error now instead
@@ -875,8 +877,10 @@ class InProcessResilienceExecutor:
 
         # Shed calls count as requests but not accepts — the algorithm's
         # self-limiting property (the client converges on ~k× the downstream's
-        # current capacity instead of hammering it with full traffic).
-        if probability > 0.0 and self.rng.random() < probability:
+        # current capacity instead of hammering it with full traffic). The shed
+        # roll (and the backoff jitter above) draw from the replayable entropy
+        # seam, so a simulation's seeded source makes them reproducible.
+        if probability > 0.0 and current_entropy_source().random() < probability:
             state.record_request(now)
             self._emit("throttle_reject", pol, route)
 
