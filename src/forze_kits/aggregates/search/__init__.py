@@ -17,6 +17,7 @@ from .factories import (
 )
 from .handlers import CursorSearch, ProjectedCursorSearch, ProjectedSearch, Search
 from .operations import SearchKernelOp
+from .sync import SearchSyncSteps, bind_search_sync
 from .value_objects import SearchDTOs, SearchMappers
 
 # ----------------------- #
@@ -29,6 +30,8 @@ __all__ = [
     "SearchMappers",
     "build_hub_search_registry",
     "build_federated_search_registry",
+    "SearchSyncSteps",
+    "bind_search_sync",
     "SearchRequestDTO",
     "ProjectedSearchRequestDTO",
     "CursorSearchRequestDTO",
