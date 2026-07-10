@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.storage import StorageSpec
 from forze.domain.models import CreateDocumentCmd, ReadDocument
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_fastapi.routes import attach_aggregate_routes
@@ -105,6 +106,26 @@ class TestAttachAggregateRoutes:
 
         assert "notes.create" in ids
         assert not any(op.startswith("notes_index.") for op in ids)
+
+    def test_storage_routes_are_projected_when_declared(self) -> None:
+        state = MockState()
+        router = APIRouter(prefix="/notes")
+        kit = AggregateKit(
+            spec=_NOTE_SPEC, soft_delete=True, storage=StorageSpec(name="notes_blobs")
+        )
+        attach_aggregate_routes(
+            router,
+            kit,
+            ctx_dep=lambda: context_from_modules(MockDepsModule(state=state)),
+            style="rest",
+            tx_route=_TX,
+        )
+        app = FastAPI()
+        app.include_router(router)
+
+        ids = _operation_ids(app)
+        assert "notes.create" in ids  # document surface
+        assert "notes_blobs.upload" in ids and "notes_blobs.download" in ids  # blob surface
 
     def test_create_then_get_round_trips_through_the_routes(self) -> None:
         client = TestClient(_app()[0])

@@ -23,6 +23,7 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.storage import StorageSpec
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -33,6 +34,7 @@ from forze_kits.aggregates.document import DocumentIdDTO
 from forze_kits.aggregates.document.dto import DocumentIdRevDTO, ListRequestDTO
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
+from forze_kits.aggregates.storage import StorageFacade, StorageKernelOp
 from forze_kits.integrations.outbox import EmitMapping, OutboxEmit, RelayBinding
 from forze_kits.domain.soft_deletion import (
     DocWithSoftDeletion,
@@ -272,3 +274,42 @@ class TestBackendRequirements:
             WIDGET_SPEC, encryption=FieldEncryption(encrypted=frozenset({"group"}))
         )
         assert AggregateKit(spec=encrypted).backend_requirements().crypto_required is True
+
+
+# ....................... #
+
+_BLOBS = StorageSpec(name="widgets_blobs")
+
+
+class TestStorageSlice:
+    def test_blob_ops_compose_alongside_document_ops(self) -> None:
+        keys = AggregateKit(spec=WIDGET_SPEC, storage=_BLOBS).registry(tx_route=_TX).handlers
+
+        # the blob surface, under the storage spec's own namespace...
+        assert _BLOBS.default_namespace.key(StorageKernelOp.UPLOAD) in keys
+        assert _BLOBS.default_namespace.key(StorageKernelOp.DOWNLOAD) in keys
+        # ...and the document surface is intact.
+        assert _key(DocumentKernelOp.CREATE) in keys
+
+    def test_name_collision_with_the_document_is_rejected(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            AggregateKit(spec=WIDGET_SPEC, storage=StorageSpec(name="widgets"))
+        assert ei.value.kind is ExceptionKind.CONFIGURATION  # list/delete would collide
+
+    def test_backend_requirements_reports_the_storage_route(self) -> None:
+        req = AggregateKit(spec=WIDGET_SPEC, storage=_BLOBS).backend_requirements()
+        assert req.storage_route == "widgets_blobs"
+
+    def test_storage_facade_needs_a_storage_spec(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        with pytest.raises(CoreException):
+            AggregateKit(spec=WIDGET_SPEC).storage_facade(runtime)
+
+    async def test_storage_facade_yields_a_storage_facade(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        factory = AggregateKit(spec=WIDGET_SPEC, storage=_BLOBS).storage_facade(
+            runtime, tx_route=_TX
+        )
+
+        async with runtime.scope():
+            assert isinstance(factory(), StorageFacade)

@@ -117,8 +117,33 @@ See [Deterministic Simulation Testing](../dst/overview.md) for the full model.
 - **It does not invent a lifecycle.** `soft_delete=True` gives the governed-CRUD floor;
   a status machine (like `StoredFileKit`'s pending → ready → failed) comes through the
   escape hatch.
+- **A wholly lifecycle-driven aggregate is its own shape, not a kit with many overrides.**
+  The escape hatch is for overriding a *few* generated ops. When the *entire* operation
+  surface is bespoke — `StoredFileKit`'s `upload`/`download`/`delete` are a create-then-upload
+  lifecycle, a cross-port join, and a status-based delete, with no plain `create`/`update` at
+  all — hand-wire it (as `StoredFileKit` does); the kit's generated CRUD would only get in the way.
 - **It does not couple to a backend.** `registry()` / `facade()` are backend-agnostic;
   you wire the store yourself. No `AggregateKit(...).build_everything(client)`.
+- **`storage=` gives the blob ops, not the join.** Declaring an object-storage bucket
+  exposes upload/download/head/delete alongside the document ops (its `name` must differ from
+  the document's), but correlating a row to its blob — a `storage_key` field, an
+  upload-then-create lifecycle — is yours, through the escape hatch.
+
+## Projecting it
+
+`registry()` is the backend-agnostic surface; wire the store into a deps module and the routes
+onto a FastAPI router. `forze_fastapi.attach_aggregate_routes` projects the whole slice — document,
+soft-delete, search, and (under a `/blobs` sub-path) storage — in one call:
+
+```python
+from forze_fastapi.routes import attach_aggregate_routes
+
+attach_aggregate_routes(router, TASKS, ctx_dep=ctx_dep, style="rest", tx_route="pg")
+```
+
+The routes *execute* through the composed registry, so `tx_route` must match the deps module.
+`kit.backend_requirements(tx_route="pg")` reports the routes / keyring / tx that module must provide
+— a checklist you can assert in a startup test (and `check_wiring` fails closed on anything missing).
 
 ## Notes
 

@@ -30,12 +30,14 @@ from forze.application.contracts.execution import (
 )
 from forze.application.contracts.invariants import SystemInvariant
 from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.storage import StorageSpec
 from forze.application.execution.domain import DomainEventRegistry
 from forze.application.execution.operations.facade import OperationFacadeFactory
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO, Document
 from forze_kits.aggregates.document import (
@@ -48,6 +50,7 @@ from forze_kits.aggregates.document import (
 from forze_kits.aggregates.document.dto import DocumentUpdateRes
 from forze_kits.aggregates.search import bind_search_sync, build_search_registry
 from forze_kits.aggregates.soft_deletion import PurgeHook, soft_delete_wiring
+from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
 
@@ -92,6 +95,9 @@ class BackendRequirements:
     search_route: StrKey | None
     """External search index route (``searches={route: …}``), or ``None`` when no ``search``."""
 
+    storage_route: StrKey | None
+    """Object-storage route (``storages={route: …}``), or ``None`` when no ``storage``."""
+
     outbox_route: StrKey | None
     """Outbox route (``outboxes={route: …}``) plus the domain-event bridges, or ``None``."""
 
@@ -121,6 +127,13 @@ class AggregateKit(Generic[R, D, C, U]):
     search: SearchSpec[R] | None = None
     """Wire an external search index: its query ops plus after-commit index-on-write sync."""
 
+    storage: StorageSpec | None = None
+    """Wire an object-storage bucket: the blob ops (upload/download/head/delete/…) alongside the
+    document ops. A *separate* resource — the kit exposes both surfaces; correlating a row to its
+    blob (a ``storage_key`` field, an upload-then-create lifecycle) is the author's, via the escape
+    hatch. Its ``name`` must differ from the document ``spec.name`` (its ``list``/``delete`` ops
+    would otherwise collide)."""
+
     invariants: tuple[SystemInvariant, ...] = attrs.field(factory=tuple)
     """Cross-aggregate laws enforced preventively on the write ops (scope params read off the result)."""
 
@@ -134,6 +147,16 @@ class AggregateKit(Generic[R, D, C, U]):
 
     extra_ops: OperationRegistry | None = None
     """Escape hatch — merge bespoke operations into the composed registry."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.storage is not None and self.storage.name == self.spec.name:
+            raise exc.configuration(
+                f"AggregateKit storage spec name {self.storage.name!r} must differ from the "
+                f"document spec name — their 'list'/'delete' operations would collide. Give the "
+                f"storage bucket its own name (e.g. {self.spec.name!r}_blobs).",
+            )
 
     # ....................... #
 
@@ -160,6 +183,25 @@ class AggregateKit(Generic[R, D, C, U]):
         """A per-call, precisely-typed :class:`DocumentFacade` factory over the composed registry."""
 
         return document_facade(runtime, self.registry(tx_route=tx_route), self.spec)
+
+    # ....................... #
+
+    def storage_facade(
+        self, runtime: ExecutionRuntime, *, tx_route: StrKey = "default"
+    ) -> OperationFacadeFactory[StorageFacade]:
+        """A per-call :class:`StorageFacade` factory over the composed registry (requires ``storage``)."""
+
+        if self.storage is None:
+            raise exc.precondition(
+                "AggregateKit.storage_facade requires a storage spec (storage=…) on the kit"
+            )
+
+        return OperationFacadeFactory(
+            type=StorageFacade,
+            registry=self.registry(tx_route=tx_route),
+            ctx_factory=runtime.get_context,
+            ns=self.storage.default_namespace,
+        )
 
     # ....................... #
 
@@ -198,6 +240,7 @@ class AggregateKit(Generic[R, D, C, U]):
             document_route=self.spec.name,
             tx_route=tx_route,
             search_route=self.search.name if self.search is not None else None,
+            storage_route=self.storage.name if self.storage is not None else None,
             outbox_route=self.outbox.spec.name if self.outbox is not None else None,
             crypto_required=self.spec.encryption is not None,
         )
@@ -219,6 +262,9 @@ class AggregateKit(Generic[R, D, C, U]):
             reg = bind_search_sync(
                 reg, document=spec, search=self.search, tx_route=tx_route
             )
+
+        if self.storage is not None:
+            reg = type(reg).merge(reg, build_storage_registry(self.storage))
 
         if soft is not None:
             reg = soft.bind(reg, tx_route=tx_route, ns=ns)

@@ -28,6 +28,7 @@ from forze_kits.aggregates import AggregateKit
 from ._attach import RouteStyle
 from .document import attach_document_routes
 from .search import attach_search_routes
+from .storage import attach_storage_routes
 
 # ----------------------- #
 
@@ -39,6 +40,7 @@ def attach_aggregate_routes(
     ctx_dep: ExecutionContextFactory,
     style: RouteStyle = "rest",
     tx_route: StrKey = "default",
+    storage_prefix: str = "/blobs",
     exclude_none: bool = True,
 ) -> APIRouter:
     """Attach *kit*'s document, soft-delete, and search routes to *router*.
@@ -46,7 +48,8 @@ def attach_aggregate_routes(
     The routes **execute** through the composed registry (``run_operation``), so *tx_route* is
     load-bearing — pass the same route the deps module registers its transaction manager under (and
     the same one the kit's :meth:`~forze_kits.aggregates.AggregateKit.facade` uses). The document +
-    soft-delete routes take *style* (``"rest"``/``"rpc"``); the search routes are ``POST``-only.
+    soft-delete (and, when declared, object-storage) routes take *style* (``"rest"``/``"rpc"``); the
+    search routes are ``POST``-only.
 
     Args:
         router (APIRouter): A plain FastAPI router the caller owns.
@@ -54,6 +57,9 @@ def attach_aggregate_routes(
         ctx_dep (ExecutionContextFactory): Factory yielding the current execution context per request.
         style (RouteStyle): Resource-path (``"rest"``) or operation-named (``"rpc"``) document routes.
         tx_route (StrKey): Transaction route the write ops run on — must match the deps module.
+        storage_prefix (str): Sub-path the blob routes mount under (default ``"/blobs"``) — object
+            storage is a separate resource, and REST ``upload`` would otherwise collide with the
+            document ``create`` at ``POST /``. Only used when the kit declares ``storage``.
         exclude_none (bool): Drop ``None`` fields from response bodies (default ``True``).
 
     Returns:
@@ -79,5 +85,19 @@ def attach_aggregate_routes(
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
         )
+
+    if kit.storage is not None:
+        # Blobs are a separate resource under their own sub-path — REST ``upload`` (POST /) would
+        # otherwise collide with the document ``create`` on the router root.
+        blob_router = APIRouter(prefix=storage_prefix)
+        attach_storage_routes(
+            blob_router,
+            registry=registry,
+            ns=kit.storage.default_namespace,
+            ctx_dep=ctx_dep,
+            style=style,
+            exclude_none=exclude_none,
+        )
+        router.include_router(blob_router)
 
     return router
