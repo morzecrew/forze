@@ -14,10 +14,15 @@ only a filter against.
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Awaitable, Callable, Mapping, Sequence, final
+from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, final
 
 import attrs
 
+from forze.application.contracts.execution import (
+    OnSuccess,
+    OnSuccessFactory,
+    OnSuccessStep,
+)
 from forze.application.contracts.invariants import (
     AGGREGATE_FIELD,
     CountAll,
@@ -27,6 +32,7 @@ from forze.application.contracts.invariants import (
 )
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 
@@ -162,6 +168,91 @@ async def enforce_preventive(
             f"aggregate observed {result.observed}",
             code="system_invariant_violated",
         )
+
+
+# ....................... #
+# bind_invariants — thread enforcement into a write op's plan instead of hand-calling it.
+
+
+InvariantParams = Callable[[Any, Any], Mapping[str, Any]]
+"""Extract a law's scope-key params from a write op's ``(args, result)`` — e.g.
+``lambda args, result: {"ledger_id": result.ledger_id}``."""
+
+InvariantMode = Literal["preventive", "detective"]
+"""``preventive`` (raise inside the tx, roll the write back) or ``detective`` (defer to post-commit,
+surface a committed breach). See :func:`enforce_preventive` / :func:`enforce`."""
+
+
+@final
+@attrs.define(frozen=True, kw_only=True, slots=True)
+class InvariantEnforcement:
+    """A :class:`SystemInvariant` bound to a write op: which law, how to scope it, and how to enforce."""
+
+    law: SystemInvariant
+    """The declared law to enforce."""
+
+    params: InvariantParams
+    """Maps the op's ``(args, result)`` to the law's scope-key params (see :func:`scope_filter`)."""
+
+    mode: InvariantMode = "preventive"
+    """Preventive (in-tx, rollback) or detective (post-commit, surface)."""
+
+
+def _enforcement_factory(enforcement: InvariantEnforcement) -> OnSuccessFactory:
+    law = enforcement.law
+    extract = enforcement.params
+    preventive = enforcement.mode == "preventive"
+
+    def _factory(ctx: ExecutionContext) -> OnSuccess[Any, Any]:
+        async def _hook(args: Any, result: Any) -> None:
+            params = extract(args, result)
+
+            if preventive:
+                await enforce_preventive(law, ctx, params)
+            else:
+                await enforce(law, ctx, params)
+
+        return _hook
+
+    return _factory
+
+
+def bind_invariants(
+    reg: OperationRegistry,
+    op_key: StrKey,
+    *enforcements: InvariantEnforcement,
+    tx_route: StrKey = "default",
+) -> OperationRegistry:
+    """Thread invariant enforcement into a write op's plan, so the caller stops hand-writing it.
+
+    Each enforcement runs as an on-success step *inside* op *op_key*'s writing transaction, after the
+    write, in declaration order: a **preventive** law raises before commit (rolling the write back), a
+    **detective** law defers its check to post-commit (surfacing a committed breach). The transaction is
+    opened at the strongest preventive law's
+    :attr:`~forze.application.contracts.invariants.SystemInvariant.required_isolation`, so the preventive
+    floor is met — an op with no preventive law keeps the manager's default isolation. The op becomes
+    transactional on *tx_route*, which must resolve a transaction manager. No-op when *enforcements* is
+    empty.
+    """
+
+    if not enforcements:
+        return reg
+
+    plan = reg.bind(op_key).bind_tx().set_route(tx_route)
+
+    preventive = [e.law.required_isolation for e in enforcements if e.mode == "preventive"]
+    if preventive:
+        plan = plan.set_isolation(max(preventive))
+
+    for index, enforcement in enumerate(enforcements):
+        plan = plan.on_success(
+            OnSuccessStep(
+                id=f"invariant_{enforcement.mode}_{enforcement.law.name}_{index}",
+                factory=_enforcement_factory(enforcement),
+            )
+        )
+
+    return plan.finish(deep=True)
 
 
 # ....................... #

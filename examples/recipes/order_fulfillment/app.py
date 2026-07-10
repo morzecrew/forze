@@ -34,12 +34,10 @@ from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.saga import SagaDefinition, SagaStep, SagaStepKind
 from forze.application.execution import (
-    DomainEventRegistry,
     ExecutionContext,
     run_saga,
 )
 from forze.application.execution.deps import DepsRegistry
-from forze.application.execution.domain import outbox_event_handler
 from forze.base.exceptions import CoreException, exc
 from forze.base.logging import configure_logging
 from forze.base.logging.constants import LogLevel
@@ -56,6 +54,7 @@ from forze.domain.models import (
 )
 from forze_kits.aggregates import aggregate_repository
 from forze_kits.integrations.inbox import process_with_inbox
+from forze_kits.integrations.outbox import EmitMapping, OutboxEmit, bind_outbox
 from forze_mock import MockDepsModule
 
 _LOGGER_NAME = "order_fulfillment"
@@ -399,16 +398,22 @@ async def deliver(ctx: ExecutionContext, message: RelayMessage) -> bool:
 
 # --8<-- [start:outbox-bridge]
 def build_context() -> ExecutionContext:
-    registry = DomainEventRegistry()
-    registry.register(
-        OrderConfirmed,
-        outbox_event_handler(
-            OUTBOX_SPEC,
-            "order.confirmed",
-            lambda e: OrderConfirmedPayload(order_id=str(e.aggregate_id)),
-        ),
+    # One declaration binds the outbox wiring: the domain-event -> outbox bridge (staging), plus —
+    # for a broker deployment — the in-tx flush hook and the background relay step. Here we merge
+    # just the staging bridge into the event registry; this example flushes and relays in-process.
+    wiring = bind_outbox(
+        OutboxEmit(
+            spec=OUTBOX_SPEC,
+            emits=(
+                EmitMapping(
+                    event=OrderConfirmed,
+                    event_type="order.confirmed",
+                    to_payload=lambda e: OrderConfirmedPayload(order_id=str(e.aggregate_id)),
+                ),
+            ),
+        )
     )
-    module = MockDepsModule(domain_events=registry)
+    module = MockDepsModule(domain_events=wiring.domain_event_registry())
     return ExecutionContext(deps=DepsRegistry.from_modules(module).freeze().resolve())
 
 
