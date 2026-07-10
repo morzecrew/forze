@@ -1,0 +1,243 @@
+"""`AggregateKit` composes the four primitives (P1-P4) behind one typed declaration (mock).
+
+The composition proof is that a kit declaring soft-delete + search + invariants + outbox freezes a
+registry whose write ops carry *all four* concerns without a transaction-scope/merge conflict. The
+rest exercises each concern through the kit (so the wiring is really attached) plus the escape hatch.
+"""
+
+from __future__ import annotations
+
+from uuid import UUID, uuid4
+
+import attrs
+import pytest
+from pydantic import BaseModel
+
+from forze import build_runtime
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.execution import Handler
+from forze.application.contracts.invariants import ReadSet, SumOf, SystemInvariant
+from forze.application.contracts.outbox import (
+    OutboxDestination,
+    OutboxSpec,
+)
+from forze.application.contracts.queue import QueueSpec
+from forze.application.contracts.search import SearchSpec
+from forze.application.execution.operations import run_operation
+from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.serialization import PydanticModelCodec
+from forze.domain.models import CreateDocumentCmd, DomainEvent, ReadDocument
+from forze_kits.aggregates import AggregateKit
+from forze_kits.aggregates.document import DocumentIdDTO
+from forze_kits.aggregates.document.dto import DocumentIdRevDTO, ListRequestDTO
+from forze_kits.aggregates.document.operations import DocumentKernelOp
+from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
+from forze_kits.integrations.outbox import EmitMapping, OutboxEmit, RelayBinding
+from forze_kits.domain.soft_deletion import (
+    DocWithSoftDeletion,
+    UpdateCmdWithSoftDeletion,
+)
+from forze_mock import MockDepsModule, MockStateDepKey
+
+# ----------------------- #
+
+_TX = "mock"
+
+
+class WidgetCreated(DomainEvent):
+    aggregate_id: UUID
+
+
+class WidgetPayload(BaseModel):
+    widget_id: str
+
+
+class Widget(DocWithSoftDeletion):
+    group: str
+    qty: int = 0
+
+
+class WidgetCreate(CreateDocumentCmd):
+    group: str
+    qty: int = 0
+
+
+class WidgetUpdate(UpdateCmdWithSoftDeletion):
+    qty: int | None = None
+
+
+class WidgetRead(ReadDocument):
+    group: str
+    qty: int = 0
+    is_deleted: bool = False
+
+
+WIDGET_SPEC = DocumentSpec(
+    name="widgets",
+    read=WidgetRead,
+    write=DocumentWriteTypes(
+        domain=Widget, create_cmd=WidgetCreate, update_cmd=WidgetUpdate
+    ),
+)
+WIDGET_INDEX = SearchSpec(name="widgets_index", model_type=WidgetRead, fields=["group"])
+QUEUE = QueueSpec(name="widget-events", codec=PydanticModelCodec(WidgetPayload))
+OUTBOX = OutboxSpec(
+    name="widget-events",
+    codec=PydanticModelCodec(WidgetPayload),
+    destination=OutboxDestination.queue(route="widget-events", channel="widget-events"),
+)
+
+# A group's total qty must stay within a cap (a cross-record law).
+GROUP_CAP = SystemInvariant(
+    name="widget_group_cap",
+    read_set=ReadSet(spec=WIDGET_SPEC, scope_keys=("group",)),
+    aggregate=SumOf("qty"),
+    holds=lambda total: total <= 10,
+)
+
+
+def _outbox() -> OutboxEmit:
+    return OutboxEmit(
+        spec=OUTBOX,
+        emits=(
+            EmitMapping(
+                event=WidgetCreated,
+                event_type="widget.created",
+                to_payload=lambda e: WidgetPayload(widget_id=str(e.aggregate_id)),
+            ),
+        ),
+        relay=RelayBinding(queue_spec=QUEUE),
+    )
+
+
+def _full_kit() -> AggregateKit[WidgetRead, Widget, WidgetCreate, WidgetUpdate]:
+    return AggregateKit(
+        spec=WIDGET_SPEC,
+        soft_delete=True,
+        search=WIDGET_INDEX,
+        invariants=(GROUP_CAP,),
+        outbox=_outbox(),
+    )
+
+
+def _key(op) -> str:
+    return WIDGET_SPEC.default_namespace.key(op)
+
+
+async def _create(reg, ctx, group: str, qty: int):
+    return await run_operation(
+        reg, _key(DocumentKernelOp.CREATE), WidgetCreate(group=group, qty=qty), ctx
+    )
+
+
+# ....................... #
+
+
+class TestComposition:
+    def test_all_four_concerns_freeze_without_conflict(self) -> None:
+        reg = _full_kit().registry(tx_route=_TX)
+        keys = reg.handlers  # freezing all four concerns onto the write ops raised no conflict
+
+        # document write + read ops, soft-delete ops, and the external search query ops all present.
+        assert _key(DocumentKernelOp.CREATE) in keys
+        assert _key(SoftDeletionKernelOp.DELETE) in keys
+        assert _key(SoftDeletionKernelOp.RESTORE) in keys
+        assert WIDGET_INDEX.default_namespace.key("typed") in keys
+
+    def test_outbox_bridge_and_relay_are_emitted_separately(self) -> None:
+        kit = _full_kit()
+
+        # The staging bridge lands on the domain-event registry (a deps concern)...
+        events = kit.domain_events()
+        assert events.factories_for(WidgetCreated(aggregate_id=uuid4()))
+
+        # ...and the relay lands on the lifecycle steps (a runtime concern) — never fused.
+        assert len(kit.lifecycle_steps()) == 1
+
+    def test_no_outbox_emits_no_bridge_or_relay(self) -> None:
+        kit = AggregateKit(spec=WIDGET_SPEC)
+        assert not kit.domain_events().factories_for(WidgetCreated(aggregate_id=uuid4()))
+        assert kit.lifecycle_steps() == ()
+
+
+# ....................... #
+
+
+class TestConcernsWiredThroughKit:
+    async def test_invariant_rolls_back_an_over_cap_write(self) -> None:
+        runtime = build_runtime(MockDepsModule(domain_events=_full_kit().domain_events()))
+        reg = _full_kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await _create(reg, ctx, "A", 5)  # within cap
+
+            with pytest.raises(CoreException) as ei:
+                await _create(reg, ctx, "A", 20)  # would push group A to 25 > 10
+            assert ei.value.kind is ExceptionKind.DOMAIN
+
+    async def test_soft_delete_excludes_from_list_and_syncs_search(self) -> None:
+        runtime = build_runtime(MockDepsModule(domain_events=_full_kit().domain_events()))
+        reg = _full_kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            widget = await _create(ctx=ctx, reg=reg, group="A", qty=1)
+
+            # search sync (P2): the external index bucket tracked the create.
+            index = ctx.deps.provide(MockStateDepKey).documents.get("widgets_index", {})
+            assert widget.id in index
+
+            # soft-delete (P3): delete then LIST excludes it.
+            await run_operation(
+                reg,
+                _key(SoftDeletionKernelOp.DELETE),
+                DocumentIdRevDTO(id=widget.id, rev=widget.rev),
+                ctx,
+            )
+            listed = await run_operation(
+                reg, _key(DocumentKernelOp.LIST), ListRequestDTO(), ctx
+            )
+            assert listed.count == 0
+
+    async def test_facade_runs_create_end_to_end(self) -> None:
+        kit = _full_kit()
+        runtime = build_runtime(MockDepsModule(domain_events=kit.domain_events()))
+        widgets = kit.facade(runtime, tx_route=_TX)
+
+        async with runtime.scope():
+            created = await widgets().create(WidgetCreate(group="A", qty=1))
+            assert created.group == "A"
+
+
+# ....................... #
+
+
+@attrs.define(frozen=True, kw_only=True, slots=True)
+class _StubGet(Handler[DocumentIdDTO, str]):
+    async def __call__(self, args: DocumentIdDTO) -> str:  # noqa: ARG002
+        return "stubbed"
+
+
+class TestEscapeHatch:
+    async def test_handlers_override_a_generated_op(self) -> None:
+        kit = AggregateKit(
+            spec=WIDGET_SPEC,
+            handlers={DocumentKernelOp.GET: lambda ctx: _StubGet()},  # noqa: ARG005
+        )
+        runtime = build_runtime(MockDepsModule())
+        reg = kit.registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            result = await run_operation(
+                reg, _key(DocumentKernelOp.GET), DocumentIdDTO(id=uuid4()), ctx
+            )
+            assert result == "stubbed"  # the override replaced the generated GET
+
+    def test_extra_ops_merge_into_the_registry(self) -> None:
+        extra = OperationRegistry(handlers={"widgets.report": lambda ctx: _StubGet()})  # noqa: ARG005
+        kit = AggregateKit(spec=WIDGET_SPEC, extra_ops=extra)
+
+        assert "widgets.report" in kit.registry(tx_route=_TX).handlers
