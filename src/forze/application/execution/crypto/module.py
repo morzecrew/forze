@@ -49,6 +49,19 @@ class CryptoDepsModule:
     max_dek_messages: int = 1 << 20
     """Data-key reuse bound passed to the keyring."""
 
+    dek_ttl_seconds: float | None = None
+    """Optional lifetime (seconds) for a cached plaintext data key on both the encrypt
+    and decrypt paths, forwarded to the keyring. ``None`` (default) keeps a data key
+    until LRU eviction or restart — so a KEK rotation/revocation only takes effect after
+    a restart. Set a TTL to bound that window (see :class:`Keyring.dek_ttl_seconds`)."""
+
+    decrypt_cache_max: int = 1024
+    """Maximum unwrapped data keys the keyring keeps on the decrypt path (LRU)."""
+
+    enc_cache_max: int = 1024
+    """Maximum active data keys / tenant→key entries the keyring keeps (LRU). Bounds
+    memory in deployments with many distinct tenants/keys; eviction just re-fetches."""
+
     deterministic_root: bytes | None = attrs.field(default=None, repr=False)
     """Stable root secret (>= 32 bytes) enabling searchable (deterministic) fields.
 
@@ -81,6 +94,9 @@ class CryptoDepsModule:
             aead=self.aead,
             directory=self.directory,
             max_dek_messages=self.max_dek_messages,
+            decrypt_cache_max=self.decrypt_cache_max,
+            enc_cache_max=self.enc_cache_max,
+            dek_ttl_seconds=self.dek_ttl_seconds,
         )
 
         deps: dict[DepKey[Any], Any] = {

@@ -48,3 +48,32 @@ async def test_resolved_keyring_round_trips() -> None:
     blob = await keyring.encrypt(b"secret", tenant=None)
 
     assert await keyring.decrypt(blob) == b"secret"
+
+
+# ....................... #
+
+
+def test_keyring_cache_and_ttl_knobs_are_forwarded() -> None:
+    module = CryptoDepsModule(
+        kms=MockKeyManagement(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        max_dek_messages=7,
+        dek_ttl_seconds=30.0,
+        decrypt_cache_max=16,
+        enc_cache_max=8,
+    )
+    keyring = context_from_modules(module).deps.provide(KeyringDepKey)
+
+    assert keyring.max_dek_messages == 7
+    assert keyring.dek_ttl_seconds == 30.0
+    assert keyring.decrypt_cache_max == 16
+    assert keyring.enc_cache_max == 8
+
+
+def test_keyring_defaults_match_when_knobs_unset() -> None:
+    keyring = context_from_modules(_module()).deps.provide(KeyringDepKey)
+
+    # Unset knobs keep the keyring's own defaults — behavior is unchanged.
+    assert keyring.dek_ttl_seconds is None
+    assert keyring.decrypt_cache_max == 1024
+    assert keyring.enc_cache_max == 1024
