@@ -87,6 +87,28 @@ kit = AggregateKit(
 (routes/facade/relay) intact; `extra_ops=` merges custom operations (a lifecycle
 transition, a report) into the composed registry.
 
+## Verifiable by construction
+
+Because the kit *owns* the composition, the invariant you declared isn't only enforced — it is
+**verifiable**. The same `SystemInvariant` compiles into a DST conformance oracle, so a
+deterministic simulation can prove the enforcement holds under concurrent interleaving, not just
+single-threaded. The only bridge is `compile_oracle`; the kit and its models are unchanged:
+
+```python
+--8<-- "recipes/aggregate_kit_dst/app.py:simulation"
+```
+
+Run it — every operation raced another and the declared invariant still held:
+
+```text
+forze dst run examples.recipes.aggregate_kit_dst.app:simulation   # ✓ no violation found
+```
+
+A *bare* registry with no enforcement double-books the capacity under the same schedule; the
+kit-composed slice holds. "Declare an aggregate, get a slice that is *also* DST-verifiable" is the
+payoff of a framework-owned composition — scattered generated code could not be uniformly verified.
+See [Deterministic Simulation Testing](../dst/overview.md) for the full model.
+
 ## Honest limits
 
 - **It does not reduce the models.** You still write Domain / Create / Update / Read +
