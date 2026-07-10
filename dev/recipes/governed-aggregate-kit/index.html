@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/writing-operation/capability-execution/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/recipes/governed-aggregate-kit/">
       
       
-        <link rel="prev" href="../wiring/">
+        <link rel="prev" href="../crud-fastapi-postgres/">
       
       
-        <link rel="next" href="../transactions/">
+        <link rel="next" href="../read-only-document-api/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Capability execution - Forze</title>
+        <title>Declare a governed aggregate - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#an-operation-is-a-pipeline" class="md-skip">
+        <a href="#the-four-models" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Capability execution
+              Declare a governed aggregate
             
           </span>
         </div>
@@ -268,8 +268,6 @@
   
   
   
-    
-  
   
     
       
@@ -280,15 +278,13 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
+      <li class="md-tabs__item">
         <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
@@ -329,15 +325,7 @@
   
   
   
-  
     
-      
-    
-    
-    
-      
-  
-  
   
   
     
@@ -345,8 +333,20 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../recipes/crud-fastapi-postgres/" class="md-tabs__link">
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../crud-fastapi-postgres/" class="md-tabs__link">
           
   
   Recipes
@@ -658,31 +658,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
             
   
   
@@ -699,7 +694,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -722,20 +717,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
             
   
   
@@ -977,31 +969,26 @@
                 
   
   
-    
   
   
-  
     
     
     
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
             
   
   
@@ -1018,7 +1005,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1035,7 +1022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../wiring/" class="md-nav__link">
+      <a href="../../writing-operation/wiring/" class="md-nav__link">
         
   
   
@@ -1061,36 +1048,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-list-ordered" viewBox="0 0 24 24"><path d="M11 5h10M11 12h10M11 19h10M4 4h1v5M4 9h2M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Capability execution
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../writing-operation/capability-execution/" class="md-nav__link">
         
   
   
@@ -1107,80 +1068,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#an-operation-is-a-pipeline" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        An operation is a pipeline
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-handler-owns-the-result" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The handler owns the result
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ordering-within-a-stage" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Ordering within a stage
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cross-cutting-patches" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Cross-cutting patches
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#validated-at-freeze-not-at-request" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Validated at freeze, not at request
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1193,7 +1080,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../transactions/" class="md-nav__link">
+      <a href="../../writing-operation/transactions/" class="md-nav__link">
         
   
   
@@ -1222,7 +1109,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../errors/" class="md-nav__link">
+      <a href="../../writing-operation/errors/" class="md-nav__link">
         
   
   
@@ -1251,7 +1138,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../concurrency-conflicts/" class="md-nav__link">
+      <a href="../../writing-operation/concurrency-conflicts/" class="md-nav__link">
         
   
   
@@ -1280,7 +1167,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../idempotency/" class="md-nav__link">
+      <a href="../../writing-operation/idempotency/" class="md-nav__link">
         
   
   
@@ -1309,7 +1196,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../aggregate-decisions/" class="md-nav__link">
+      <a href="../../writing-operation/aggregate-decisions/" class="md-nav__link">
         
   
   
@@ -1338,7 +1225,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../system-invariants/" class="md-nav__link">
+      <a href="../../writing-operation/system-invariants/" class="md-nav__link">
         
   
   
@@ -1381,20 +1268,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
             
   
   
@@ -1703,20 +1587,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
             
   
   
@@ -1851,20 +1732,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
             
   
   
@@ -2057,20 +1935,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
             
   
   
@@ -2176,20 +2051,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
             
   
   
@@ -3539,26 +3411,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
             
   
   
@@ -3575,7 +3452,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3589,26 +3466,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" >
         
           
-          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="">
             
   
   
@@ -3625,7 +3507,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5_1">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3642,7 +3524,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/crud-fastapi-postgres/" class="md-nav__link">
+      <a href="../crud-fastapi-postgres/" class="md-nav__link">
         
   
   
@@ -3668,10 +3550,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../recipes/governed-aggregate-kit/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-blocks" viewBox="0 0 24 24"><path d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"/><rect width="8" height="8" x="14" y="2" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Declare a governed aggregate
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -3688,6 +3596,113 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-four-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The four models
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-declaration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        One declaration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-emits-separately" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What it emits — separately
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-escape-hatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The escape hatch
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verifiable-by-construction" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verifiable by construction
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#honest-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Honest limits
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#projecting-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Projecting it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3700,7 +3715,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/read-only-document-api/" class="md-nav__link">
+      <a href="../read-only-document-api/" class="md-nav__link">
         
   
   
@@ -3729,7 +3744,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/cache-reads-with-redis/" class="md-nav__link">
+      <a href="../cache-reads-with-redis/" class="md-nav__link">
         
   
   
@@ -3758,7 +3773,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/analytics-over-a-data-lake/" class="md-nav__link">
+      <a href="../analytics-over-a-data-lake/" class="md-nav__link">
         
   
   
@@ -3787,7 +3802,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/expose-an-aggregate-over-mcp/" class="md-nav__link">
+      <a href="../expose-an-aggregate-over-mcp/" class="md-nav__link">
         
   
   
@@ -3830,17 +3845,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
         
           
-          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="">
             
   
   
@@ -3874,7 +3892,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/add-idempotency/" class="md-nav__link">
+      <a href="../add-idempotency/" class="md-nav__link">
         
   
   
@@ -3903,7 +3921,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/two-phase-handler/" class="md-nav__link">
+      <a href="../two-phase-handler/" class="md-nav__link">
         
   
   
@@ -3932,7 +3950,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/offload-cpu-work/" class="md-nav__link">
+      <a href="../offload-cpu-work/" class="md-nav__link">
         
   
   
@@ -3975,17 +3993,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
         
           
-          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="">
             
   
   
@@ -4019,7 +4040,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/authn-authz-tenancy-fastapi/" class="md-nav__link">
+      <a href="../authn-authz-tenancy-fastapi/" class="md-nav__link">
         
   
   
@@ -4048,7 +4069,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/password-reset/" class="md-nav__link">
+      <a href="../password-reset/" class="md-nav__link">
         
   
   
@@ -4077,7 +4098,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/tenant-selector-and-admin/" class="md-nav__link">
+      <a href="../tenant-selector-and-admin/" class="md-nav__link">
         
   
   
@@ -4106,7 +4127,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/local-identity/" class="md-nav__link">
+      <a href="../local-identity/" class="md-nav__link">
         
   
   
@@ -4135,7 +4156,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/external-bootstrap-forze-jwt/" class="md-nav__link">
+      <a href="../external-bootstrap-forze-jwt/" class="md-nav__link">
         
   
   
@@ -4164,7 +4185,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/external-idp-oidc/" class="md-nav__link">
+      <a href="../external-idp-oidc/" class="md-nav__link">
         
   
   
@@ -4193,7 +4214,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/social-sign-in/" class="md-nav__link">
+      <a href="../social-sign-in/" class="md-nav__link">
         
   
   
@@ -4236,17 +4257,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
         
           
-          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="">
             
   
   
@@ -4280,7 +4304,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/end-to-end-saga-outbox-inbox/" class="md-nav__link">
+      <a href="../end-to-end-saga-outbox-inbox/" class="md-nav__link">
         
   
   
@@ -4309,7 +4333,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/transactional-outbox/" class="md-nav__link">
+      <a href="../transactional-outbox/" class="md-nav__link">
         
   
   
@@ -4338,7 +4362,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/transactional-notifications/" class="md-nav__link">
+      <a href="../transactional-notifications/" class="md-nav__link">
         
   
   
@@ -4367,7 +4391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/realtime-offline-delivery/" class="md-nav__link">
+      <a href="../realtime-offline-delivery/" class="md-nav__link">
         
   
   
@@ -4396,7 +4420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/tenant-sharded-realtime/" class="md-nav__link">
+      <a href="../tenant-sharded-realtime/" class="md-nav__link">
         
   
   
@@ -4425,7 +4449,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/background-workflow/" class="md-nav__link">
+      <a href="../background-workflow/" class="md-nav__link">
         
   
   
@@ -4454,7 +4478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/scheduled-queue-jobs/" class="md-nav__link">
+      <a href="../scheduled-queue-jobs/" class="md-nav__link">
         
   
   
@@ -5426,10 +5450,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#an-operation-is-a-pipeline" class="md-nav__link">
+  <a href="#the-four-models" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        An operation is a pipeline
+        The four models
       </span>
     </span>
   </a>
@@ -5437,10 +5461,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-handler-owns-the-result" class="md-nav__link">
+  <a href="#one-declaration" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The handler owns the result
+        One declaration
       </span>
     </span>
   </a>
@@ -5448,10 +5472,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ordering-within-a-stage" class="md-nav__link">
+  <a href="#what-it-emits-separately" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Ordering within a stage
+        What it emits — separately
       </span>
     </span>
   </a>
@@ -5459,10 +5483,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cross-cutting-patches" class="md-nav__link">
+  <a href="#the-escape-hatch" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Cross-cutting patches
+        The escape hatch
       </span>
     </span>
   </a>
@@ -5470,10 +5494,43 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validated-at-freeze-not-at-request" class="md-nav__link">
+  <a href="#verifiable-by-construction" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Validated at freeze, not at request
+        Verifiable by construction
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#honest-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Honest limits
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#projecting-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Projecting it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes
       </span>
     </span>
   </a>
@@ -5535,11 +5592,11 @@
     
     
       <li class="md-path__item">
-        <a href="../../core-concepts/overview/" class="md-path__link">
+        <a href="../crud-fastapi-postgres/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Learn
+    Recipes
   </span>
 
         </a>
@@ -5560,11 +5617,11 @@
     
     
       <li class="md-path__item">
-        <a href="../wiring/" class="md-path__link">
+        <a href="../crud-fastapi-postgres/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Writing an operation
+    Data
   </span>
 
         </a>
@@ -5584,140 +5641,203 @@
   
 
 
-  <h1 id="__skip">Capability execution</h1>
+  <h1 id="__skip">Declare a governed aggregate</h1>
 
-<p><a href="../../core-concepts/application-layer/">Core Concepts</a> introduced an operation as
-"a handler plus its plan." This chapter <em>is</em> that plan: the stages that wrap a
-handler, what each one may touch, and how Forze orders them — the mechanism every
-transaction, event, and authorization check rides on.</p>
-<h2 id="an-operation-is-a-pipeline">An operation is a pipeline<a class="headerlink" href="#an-operation-is-a-pipeline" title="Permanent link">&para;</a></h2>
-<p>The handler computes the result; everything around it is a <strong>stage</strong>. Stages run
-in a fixed order — some outside any transaction, some inside it, some only after
-it commits.</p>
-<p><a class="glightbox" data-gallery="light" data-title="Stages wrap the handler: before and wrap on the outside, the handler and on-success inside the transaction, after-commit at the end" data-type="image" href="../../_diagrams/light/operation-composition.svg#only-light"><img alt="Stages wrap the handler: before and wrap on the outside, the handler and on-success inside the transaction, after-commit at the end" src="../../_diagrams/light/operation-composition.svg#only-light" /></a>
-<a class="glightbox" data-gallery="dark" data-title="Stages wrap the handler: before and wrap on the outside, the handler and on-success inside the transaction, after-commit at the end" data-type="image" href="../../_diagrams/dark/operation-composition.svg#only-dark"><img alt="Stages wrap the handler: before and wrap on the outside, the handler and on-success inside the transaction, after-commit at the end" src="../../_diagrams/dark/operation-composition.svg#only-dark" /></a></p>
-<table>
-<thead>
-<tr>
-<th>Stage</th>
-<th>When it runs</th>
-<th>Typical use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>before</code></td>
-<td>before the handler</td>
-<td>auth, input checks, rate limiting</td>
-</tr>
-<tr>
-<td><code>wrap</code></td>
-<td>around the whole chain</td>
-<td>metrics, retries, logging</td>
-</tr>
-<tr>
-<td><code>prepare</code> <em>(two-phase)</em></td>
-<td>outside the transaction, before it opens</td>
-<td>external calls / compute that feed the write</td>
-</tr>
-<tr>
-<td><code>tx_before</code></td>
-<td>inside the transaction, before the handler</td>
-<td>locks, preconditions</td>
-</tr>
-<tr>
-<td><code>on_success</code> <em>(tx)</em></td>
-<td>inside the transaction, after the handler</td>
-<td>writes that must commit together</td>
-</tr>
-<tr>
-<td><code>after_commit</code></td>
-<td>after the root transaction commits</td>
-<td>best-effort follow-up</td>
-</tr>
-<tr>
-<td><code>on_success</code> <em>(outer)</em></td>
-<td>after everything succeeded</td>
-<td>out-of-transaction follow-up</td>
-</tr>
-<tr>
-<td><code>on_failure</code> / <code>finally_</code></td>
-<td>on the outcome</td>
-<td>cleanup, error hooks</td>
-</tr>
-</tbody>
-</table>
-<p>You author these on the registry's scope binders — <code>bind_outer()</code> for the outer
-scope, <code>bind_tx().set_route(...)</code> for the transactional one — then <code>freeze()</code>.</p>
-<h2 id="the-handler-owns-the-result">The handler owns the result<a class="headerlink" href="#the-handler-owns-the-result" title="Permanent link">&para;</a></h2>
-<p>One principle keeps the pipeline honest: <strong>the handler defines the result;
-stages never replace it.</strong> They observe, guard, and react — they don't substitute
-their own return value.</p>
+<p>Standing up a <em>governed</em> aggregate by hand means assembling the same wiring every
+time: the document registry, the typed facade, the search index-on-write sync, the
+soft-delete read filter, the invariant checks inside the transaction, and the
+four-piece outbox dance. Each verb is one call; the composition between them is not.</p>
+<p><code>AggregateKit</code> collapses that composition into <strong>one typed declaration</strong>. It composes
+<em>wiring, not models</em> — you still write the four models — and emits the slice as
+<strong>separate</strong> artifacts, so the app and backend layers stay decoupled.</p>
+<p>The runnable version lives at <code>examples/recipes/aggregate_kit/</code> and runs on the
+in-memory mock — no infrastructure needed.</p>
+<h2 id="the-four-models">The four models<a class="headerlink" href="#the-four-models" title="Permanent link">&para;</a></h2>
+<p>The models are yours — the only thing the kit cannot invent. Here <code>Task</code> extends the
+soft-delete mixin (the precondition for <code>soft_delete=True</code>) and emits an event when it
+is completed:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># The four models — the author&#39;s, and the only thing the kit cannot invent. `Task` extends the</span>
+<span class="c1"># soft-delete mixin (the type-level precondition for `soft_delete=True`) and emits an event when it</span>
+<span class="c1"># is completed; the emitter fires as the governed update persists.</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">TaskCompleted</span><span class="p">(</span><span class="n">DomainEvent</span><span class="p">):</span>
+    <span class="n">aggregate_id</span><span class="p">:</span> <span class="n">UUID</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Task</span><span class="p">(</span><span class="n">DocWithSoftDeletion</span><span class="p">,</span> <span class="n">AggregateRoot</span><span class="p">):</span>
+    <span class="n">project_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">points</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">done</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="nd">@event_emitter</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;done&quot;</span><span class="p">})</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_on_complete</span><span class="p">(</span><span class="n">before</span><span class="p">,</span> <span class="n">after</span><span class="p">:</span> <span class="n">Self</span><span class="p">,</span> <span class="n">diff</span><span class="p">:</span> <span class="n">JsonDict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DomainEvent</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># type: ignore[no-untyped-def]</span>
+        <span class="k">if</span> <span class="n">after</span><span class="o">.</span><span class="n">done</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">before</span><span class="o">.</span><span class="n">done</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">TaskCompleted</span><span class="p">(</span><span class="n">aggregate_id</span><span class="o">=</span><span class="n">after</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TaskCreate</span><span class="p">(</span><span class="n">CreateDocumentCmd</span><span class="p">):</span>
+    <span class="n">project_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">points</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TaskUpdate</span><span class="p">(</span><span class="n">UpdateCmdWithSoftDeletion</span><span class="p">):</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">points</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">done</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TaskRead</span><span class="p">(</span><span class="n">ReadDocument</span><span class="p">):</span>
+    <span class="n">project_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">points</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">done</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="n">is_deleted</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+</code></pre></div>
+<h2 id="one-declaration">One declaration<a class="headerlink" href="#one-declaration" title="Permanent link">&para;</a></h2>
+<p><code>AggregateKit</code> bundles the spec with its optional concerns. This one is persisted,
+soft-deletable, kept in an external search index on every write, guarded by a
+cross-record invariant, and event-relaying:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># One declaration → the governed slice: persisted + soft-deletable + searchable-and-synced +</span>
+<span class="c1"># invariant-guarded + event-relaying. The kit composes the wiring; the models stay yours.</span>
+<span class="n">TASKS</span> <span class="o">=</span> <span class="n">AggregateKit</span><span class="p">(</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">TASK_SPEC</span><span class="p">,</span>
+    <span class="n">soft_delete</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">search</span><span class="o">=</span><span class="n">TASK_INDEX</span><span class="p">,</span>
+    <span class="n">invariants</span><span class="o">=</span><span class="p">(</span><span class="n">PROJECT_BUDGET</span><span class="p">,),</span>
+    <span class="n">outbox</span><span class="o">=</span><span class="n">OutboxEmit</span><span class="p">(</span>
+        <span class="n">spec</span><span class="o">=</span><span class="n">TASK_EVENTS</span><span class="p">,</span>
+        <span class="n">emits</span><span class="o">=</span><span class="p">(</span>
+            <span class="n">EmitMapping</span><span class="p">(</span>
+                <span class="n">event</span><span class="o">=</span><span class="n">TaskCompleted</span><span class="p">,</span>
+                <span class="n">event_type</span><span class="o">=</span><span class="s2">&quot;task.completed&quot;</span><span class="p">,</span>
+                <span class="n">to_payload</span><span class="o">=</span><span class="k">lambda</span> <span class="n">e</span><span class="p">:</span> <span class="n">TaskEventPayload</span><span class="p">(</span><span class="n">task_id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">aggregate_id</span><span class="p">)),</span>
+            <span class="p">),</span>
+        <span class="p">),</span>
+        <span class="n">relay</span><span class="o">=</span><span class="n">RelayBinding</span><span class="p">(</span><span class="n">queue_spec</span><span class="o">=</span><span class="n">TASKS_QUEUE</span><span class="p">),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Each concern is opt-in and independently useful on its own:</p>
 <ul>
-<li><code>before</code> sees only the <code>args</code>.</li>
-<li><code>on_success</code> and <code>after_commit</code> see the <code>args</code> and the <code>result</code>.</li>
-<li><code>on_failure</code> sees the exception; <code>finally_</code> sees the outcome.</li>
+<li><strong><code>soft_delete</code></strong> — the generated <code>LIST</code> excludes soft-deleted rows and <code>GET</code> 404s
+  one; you get <code>delete</code>/<code>restore</code> ops and an optional after-commit <code>purge</code>.</li>
+<li><strong><code>search</code></strong> — the external index is kept in sync on every committed write
+  (<a href="../../data-events/events-sagas/">search stays consistent</a>); a searchable aggregate
+  that silently drifts is worse than no search.</li>
+<li><strong><code>invariants</code></strong> — each <a href="../../writing-operation/system-invariants/"><code>SystemInvariant</code></a> is enforced
+  <em>preventively</em> inside the write transaction, at the isolation floor it needs, so a
+  write that would break the law is rolled back.</li>
+<li><strong><code>outbox</code></strong> — the <a href="../transactional-outbox/">transactional outbox</a> wiring: the in-tx
+  flush, the domain-event → outbox bridge, and the relay step, from one <code>OutboxEmit</code>.</li>
 </ul>
-<p>A stage may <em>raise</em> to abort the operation, but it can't quietly swap the answer.
-That's exactly why you can bolt on an audit log or a permission check without
-risk of corrupting what the handler returns.</p>
-<h2 id="ordering-within-a-stage">Ordering within a stage<a class="headerlink" href="#ordering-within-a-stage" title="Permanent link">&para;</a></h2>
-<p>When several hooks share a stage and one depends on another — authentication
-before authorization, a lock before a write — you don't hand-sort them. Each step
-declares <strong>capabilities</strong>: what it <code>provides</code> and what it <code>requires</code>.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">BeforeStep</span>
-
-<span class="n">registry</span> <span class="o">=</span> <span class="p">(</span>
-    <span class="n">registry</span>
-    <span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="s2">&quot;orders.create&quot;</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">bind_outer</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">before</span><span class="p">(</span>
-        <span class="n">BeforeStep</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">&quot;authn&quot;</span><span class="p">,</span> <span class="n">factory</span><span class="o">=</span><span class="n">authn_factory</span><span class="p">,</span> <span class="n">provides</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;authn.principal&quot;</span><span class="p">,)),</span>
-        <span class="n">BeforeStep</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">&quot;authz&quot;</span><span class="p">,</span> <span class="n">factory</span><span class="o">=</span><span class="n">authz_factory</span><span class="p">,</span> <span class="n">requires</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;authn.principal&quot;</span><span class="p">,)),</span>
-    <span class="p">)</span>
-    <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
+<h2 id="what-it-emits-separately">What it emits — separately<a class="headerlink" href="#what-it-emits-separately" title="Permanent link">&para;</a></h2>
+<p>The kit never returns a coupled god-object. It emits the app-layer registry, the typed
+facade, and the domain-event bridges as distinct artifacts; which store backs it stays
+your call, wired into the deps module:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># The kit emits its pieces separately: the staging bridges go on the deps module, the typed facade</span>
+<span class="c1"># and the frozen registry stay in the app layer. Which store backs it (backend config) stays yours.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">build_stack</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span>
+    <span class="n">ExecutionRuntime</span><span class="p">,</span>
+    <span class="n">OperationFacadeFactory</span><span class="p">[</span><span class="n">DocumentFacade</span><span class="p">[</span><span class="n">TaskRead</span><span class="p">,</span> <span class="n">TaskCreate</span><span class="p">,</span> <span class="n">TaskUpdate</span><span class="p">]],</span>
+<span class="p">]:</span>
+    <span class="n">module</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">domain_events</span><span class="o">=</span><span class="n">TASKS</span><span class="o">.</span><span class="n">domain_events</span><span class="p">())</span>
+    <span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">module</span><span class="p">)</span>
+    <span class="n">tasks</span> <span class="o">=</span> <span class="n">TASKS</span><span class="o">.</span><span class="n">facade</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">tx_route</span><span class="o">=</span><span class="n">_TX</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">runtime</span><span class="p">,</span> <span class="n">tasks</span>
+</code></pre></div>
+<ul>
+<li><code>registry(tx_route=…)</code> — the composed, frozen operation registry.</li>
+<li><code>facade(runtime, tx_route=…)</code> — a per-call, precisely-typed <code>DocumentFacade</code> over it
+  (<code>create</code>/<code>get</code>/<code>list</code>/<code>update</code> keep your <code>C</code>/<code>U</code>/<code>R</code> types — no erosion). Pass the <strong>same</strong>
+  <code>tx_route</code> you gave <code>registry()</code> and the routes emitter, so every surface executes the write ops
+  on the one transaction route the deps module registers a manager under.</li>
+<li><code>domain_events()</code> — the outbox staging bridges, for the deps module.</li>
+<li><code>lifecycle_steps()</code> — the outbox relay, for the runtime.</li>
+</ul>
+<p>Field encryption declared on the spec flows through untouched. Backend config
+(<code>rw_documents=</code> / <code>searches=</code> / <code>outboxes=</code>) and HTTP routes stay yours — wire them
+over <code>registry()</code> with your deps module and the
+<a href="../../integrations/fastapi/">route generators</a> — so the hexagonal layer split holds.</p>
+<h2 id="the-escape-hatch">The escape hatch<a class="headerlink" href="#the-escape-hatch" title="Permanent link">&para;</a></h2>
+<p>The kit gives the governed-CRUD floor; a bespoke lifecycle comes through a first-class
+escape hatch, not a fall-off-the-cliff:</p>
+<div class="highlight"><pre><span></span><code><span class="n">kit</span> <span class="o">=</span> <span class="n">AggregateKit</span><span class="p">(</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">TASK_SPEC</span><span class="p">,</span>
+    <span class="n">handlers</span><span class="o">=</span><span class="p">{</span><span class="n">DocumentKernelOp</span><span class="o">.</span><span class="n">UPDATE</span><span class="p">:</span> <span class="n">MyCustomUpdate</span><span class="p">},</span>  <span class="c1"># override a generated op&#39;s handler</span>
+    <span class="n">extra_ops</span><span class="o">=</span><span class="n">my_report_registry</span><span class="p">,</span>                        <span class="c1"># merge bespoke operations</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>Forze orders the stage from those edges (topologically, then by <code>priority</code>, then
-declaration order). Use <code>depends_on=(...)</code> to order by explicit step id when
-there's no capability to name. For a single linear guard, a higher <code>priority</code> is
-enough — reach for capabilities only when hooks genuinely share prerequisites.</p>
-<h2 id="cross-cutting-patches">Cross-cutting patches<a class="headerlink" href="#cross-cutting-patches" title="Permanent link">&para;</a></h2>
-<p><code>bind(...)</code> plans named operations. To apply a default across <em>many</em> — a tx
-route, a deadline, an audit hook — use <code>patch(selector)</code>, which carries the same
-binder chain but targets every operation a selector matches:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+<p><code>handlers=</code> replaces a generated op's handler while keeping the rest of the slice
+(routes/facade/relay) intact; <code>extra_ops=</code> merges custom operations (a lifecycle
+transition, a report) into the composed registry.</p>
+<h2 id="verifiable-by-construction">Verifiable by construction<a class="headerlink" href="#verifiable-by-construction" title="Permanent link">&para;</a></h2>
+<p>Because the kit <em>owns</em> the composition, the invariant you declared isn't only enforced — it is
+<strong>verifiable</strong>. The same <code>SystemInvariant</code> compiles into a <abbr title="Deterministic Simulation Testing">DST</abbr> conformance oracle, so a
+deterministic simulation can prove the enforcement holds under concurrent interleaving, not just
+single-threaded. The only bridge is <code>compile_oracle</code>; the kit and its models are unchanged:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># The moat: the same law compiles into a DST oracle. A deterministic simulation drives the kit&#39;s</span>
+<span class="c1"># operations under concurrent interleavings and proves the enforcement holds — no double-book of</span>
+<span class="c1"># the sprint&#39;s capacity. `compile_oracle` is the only bridge; the kit and its models are unchanged.</span>
+<span class="n">_ORACLE</span> <span class="o">=</span> <span class="n">compile_oracle</span><span class="p">(</span><span class="n">SPRINT_CAPACITY</span><span class="p">)</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.primitives</span><span class="w"> </span><span class="kn">import</span> <span class="n">str_key_selector</span>
-
-<span class="n">registry</span> <span class="o">=</span> <span class="p">(</span>
-    <span class="n">registry</span>
-    <span class="o">.</span><span class="n">patch</span><span class="p">(</span><span class="n">str_key_selector</span><span class="o">.</span><span class="n">all_keys</span><span class="p">())</span>
-    <span class="o">.</span><span class="n">with_deadline</span><span class="p">(</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">10</span><span class="p">))</span>
-    <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">simulation</span> <span class="o">=</span> <span class="n">Simulation</span><span class="p">(</span>
+    <span class="n">operations</span><span class="o">=</span><span class="n">TICKETS</span><span class="o">.</span><span class="n">registry</span><span class="p">(</span><span class="n">tx_route</span><span class="o">=</span><span class="s2">&quot;mock&quot;</span><span class="p">),</span>
+    <span class="n">deps</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">MockDepsModule</span><span class="p">(),</span>
+    <span class="n">observe</span><span class="o">=</span><span class="n">_ORACLE</span><span class="o">.</span><span class="n">observe</span><span class="p">,</span>
+    <span class="n">invariants</span><span class="o">=</span><span class="p">[</span><span class="o">*</span><span class="n">_ORACLE</span><span class="o">.</span><span class="n">invariants</span><span class="p">],</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>Patches are <strong>late-bound</strong> — selectors resolve at <code>freeze()</code> against the full set of
-operations — so a top-level <code>patch(all_keys())</code> applied <em>after</em> assembling the registry
-covers everything in it. That reach is <strong>fail-closed</strong> across
-<code>OperationRegistry.merge(...)</code>: a broad patch authored inside one sub-registry that
-would reach a sibling's operations makes <code>merge</code> raise, naming the offending selectors
-(a patch matching only its own part, or one added after the merge, is never flagged).
-Resolve a flagged reach by scoping the patch to a namespace
-(<code>patch(selector, namespace=ns)</code> — "everything <em>I</em> contribute"), settling it into
-concrete per-operation plans (<code>materialize_patches()</code>), or allowing it explicitly
-(<code>merge(..., cross_registry=True)</code>) when the patch is <em>meant</em> to govern
-downstream-contributed operations.</p>
-<h2 id="validated-at-freeze-not-at-request">Validated at freeze, not at request<a class="headerlink" href="#validated-at-freeze-not-at-request" title="Permanent link">&para;</a></h2>
-<p><code>freeze()</code> is where the plan is checked and locked. Capability graphs must
-resolve — no missing or duplicate providers, no cycles — dispatch targets must
-exist, and any transactional stage must declare a route. A misconfigured pipeline
-fails when you <strong>build</strong> the registry, at startup, rather than on a user's first
-request.</p>
-<p>That freeze-time check covers the transactional stages too — when those stages
-open a transaction, and what happens when one rolls back, is the subject of
-<a href="../transactions/">Transactions</a>.</p>
+<p>Run it — every operation raced another and the declared invariant still held:</p>
+<div class="highlight"><pre><span></span><code>forze dst run examples.recipes.aggregate_kit_dst.app:simulation   # ✓ no violation found
+</code></pre></div>
+<p>A <em>bare</em> registry with no enforcement double-books the capacity under the same schedule; the
+kit-composed slice holds. "Declare an aggregate, get a slice that is <em>also</em> <abbr title="Deterministic Simulation Testing">DST</abbr>-verifiable" is the
+payoff of a framework-owned composition — scattered generated code could not be uniformly verified.
+See <a href="../../dst/overview/">Deterministic Simulation Testing</a> for the full model.</p>
+<h2 id="honest-limits">Honest limits<a class="headerlink" href="#honest-limits" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>It does not reduce the models.</strong> You still write Domain / Create / Update / Read +
+  the <code>DocumentSpec</code> — Python has no <code>Partial&lt;T&gt;</code>/<code>Pick&lt;T&gt;</code>, and the four contracts
+  genuinely diverge. The kit collapses <em>wiring</em>, never the models.</li>
+<li><strong>It does not invent a lifecycle.</strong> <code>soft_delete=True</code> gives the governed-CRUD floor;
+  a status machine (like <code>StoredFileKit</code>'s pending → ready → failed) comes through the
+  escape hatch.</li>
+<li><strong>A wholly lifecycle-driven aggregate is its own shape, not a kit with many overrides.</strong>
+  The escape hatch is for overriding a <em>few</em> generated ops. When the <em>entire</em> operation
+  surface is bespoke — <code>StoredFileKit</code>'s <code>upload</code>/<code>download</code>/<code>delete</code> are a create-then-upload
+  lifecycle, a cross-port join, and a status-based delete, with no plain <code>create</code>/<code>update</code> at
+  all — hand-wire it (as <code>StoredFileKit</code> does); the kit's generated CRUD would only get in the way.</li>
+<li><strong>It does not couple to a backend.</strong> <code>registry()</code> / <code>facade()</code> are backend-agnostic;
+  you wire the store yourself. No <code>AggregateKit(...).build_everything(client)</code>.</li>
+<li><strong><code>storage=</code> gives the blob ops, not the join.</strong> Declaring an object-storage bucket
+  exposes upload/download/head/delete alongside the document ops (its <code>name</code> must differ from
+  the document's), but correlating a row to its blob — a <code>storage_key</code> field, an
+  upload-then-create lifecycle — is yours, through the escape hatch.</li>
+</ul>
+<h2 id="projecting-it">Projecting it<a class="headerlink" href="#projecting-it" title="Permanent link">&para;</a></h2>
+<p><code>registry()</code> is the backend-agnostic surface; wire the store into a deps module and the routes
+onto a FastAPI router. <code>forze_fastapi.attach_aggregate_routes</code> projects the whole slice — document,
+soft-delete, search, and (under a <code>/blobs</code> sub-path) storage — in one call:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_aggregate_routes</span>
+
+<span class="n">attach_aggregate_routes</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">TASKS</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;rest&quot;</span><span class="p">,</span> <span class="n">tx_route</span><span class="o">=</span><span class="s2">&quot;pg&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The routes <em>execute</em> through the composed registry, so <code>tx_route</code> must match the deps module.
+<code>kit.backend_requirements(tx_route="pg")</code> reports the document / search / storage / outbox routes,
+the transaction route, and the crypto requirement (<code>crypto_required</code> — whether a keyring is needed)
+that module must provide — a checklist you can assert in a startup test (and <code>check_wiring</code> fails
+closed on anything missing).</p>
+<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The outbox flush is attached to <code>update</code> (the op that emits): <code>@event_emitter</code> fires
+  as an update persists, so a generated <code>create</code> never stages. Emit on create/delete
+  through the escape hatch.</li>
+<li>Preventive invariants default to <code>SERIALIZABLE</code> — the isolation most predicate-over-a-
+  read-set laws need to survive write skew. The kit opens the write transaction there.</li>
+</ul>
 
 
 
@@ -5758,7 +5878,7 @@ open a transaction, and what happens when one rolls back, is the subject of
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../wiring/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Wiring">
+          <a href="../crud-fastapi-postgres/" class="md-footer__link md-footer__link--prev" aria-label="Previous: CRUD over Postgres">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -5768,20 +5888,20 @@ open a transaction, and what happens when one rolls back, is the subject of
                 Previous
               </span>
               <div class="md-ellipsis">
-                Wiring
+                CRUD over Postgres
               </div>
             </div>
           </a>
         
         
           
-          <a href="../transactions/" class="md-footer__link md-footer__link--next" aria-label="Next: Transactions">
+          <a href="../read-only-document-api/" class="md-footer__link md-footer__link--next" aria-label="Next: Read-only document API">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Transactions
+                Read-only document API
               </div>
             </div>
             <div class="md-footer__button md-icon">

@@ -3551,6 +3551,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../governed-aggregate-kit/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-blocks" viewBox="0 0 24 24"><path d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"/><rect width="8" height="8" x="14" y="2" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Declare a governed aggregate
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../read-only-document-api/" class="md-nav__link">
         
   
@@ -5654,16 +5683,22 @@ integration event. State change and event are one atomic write:</p>
 </code></pre></div>
 <p>The bridge that turns the domain event into a staged outbox row is wired once:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">build_context</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">ExecutionContext</span><span class="p">:</span>
-    <span class="n">registry</span> <span class="o">=</span> <span class="n">DomainEventRegistry</span><span class="p">()</span>
-    <span class="n">registry</span><span class="o">.</span><span class="n">register</span><span class="p">(</span>
-        <span class="n">OrderConfirmed</span><span class="p">,</span>
-        <span class="n">outbox_event_handler</span><span class="p">(</span>
-            <span class="n">OUTBOX_SPEC</span><span class="p">,</span>
-            <span class="s2">&quot;order.confirmed&quot;</span><span class="p">,</span>
-            <span class="k">lambda</span> <span class="n">e</span><span class="p">:</span> <span class="n">OrderConfirmedPayload</span><span class="p">(</span><span class="n">order_id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">aggregate_id</span><span class="p">)),</span>
-        <span class="p">),</span>
+    <span class="c1"># One declaration binds the outbox wiring: the domain-event -&gt; outbox bridge (staging), plus —</span>
+    <span class="c1"># for a broker deployment — the in-tx flush hook and the background relay step. Here we merge</span>
+    <span class="c1"># just the staging bridge into the event registry; this example flushes and relays in-process.</span>
+    <span class="n">wiring</span> <span class="o">=</span> <span class="n">bind_outbox</span><span class="p">(</span>
+        <span class="n">OutboxEmit</span><span class="p">(</span>
+            <span class="n">spec</span><span class="o">=</span><span class="n">OUTBOX_SPEC</span><span class="p">,</span>
+            <span class="n">emits</span><span class="o">=</span><span class="p">(</span>
+                <span class="n">EmitMapping</span><span class="p">(</span>
+                    <span class="n">event</span><span class="o">=</span><span class="n">OrderConfirmed</span><span class="p">,</span>
+                    <span class="n">event_type</span><span class="o">=</span><span class="s2">&quot;order.confirmed&quot;</span><span class="p">,</span>
+                    <span class="n">to_payload</span><span class="o">=</span><span class="k">lambda</span> <span class="n">e</span><span class="p">:</span> <span class="n">OrderConfirmedPayload</span><span class="p">(</span><span class="n">order_id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">aggregate_id</span><span class="p">)),</span>
+                <span class="p">),</span>
+            <span class="p">),</span>
+        <span class="p">)</span>
     <span class="p">)</span>
-    <span class="n">module</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">domain_events</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span>
+    <span class="n">module</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">domain_events</span><span class="o">=</span><span class="n">wiring</span><span class="o">.</span><span class="n">domain_event_registry</span><span class="p">())</span>
     <span class="k">return</span> <span class="n">ExecutionContext</span><span class="p">(</span><span class="n">deps</span><span class="o">=</span><span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">module</span><span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">()</span><span class="o">.</span><span class="n">resolve</span><span class="p">())</span>
 </code></pre></div>
 <h2 id="relay-carries-it-to-the-consumer">Relay carries it to the consumer<a class="headerlink" href="#relay-carries-it-to-the-consumer" title="Permanent link">&para;</a></h2>

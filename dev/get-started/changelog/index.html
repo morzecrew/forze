@@ -4545,6 +4545,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/governed-aggregate-kit/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-blocks" viewBox="0 0 24 24"><path d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"/><rect width="8" height="8" x="14" y="2" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Declare a governed aggregate
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/read-only-document-api/" class="md-nav__link">
         
   
@@ -7462,6 +7491,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Less CRUD boilerplate</strong> — <code>build_document_registry(spec)</code> derives <code>DocumentDTOs</code> when <code>dtos</code> is omitted (<code>create=None</code> / <code>update=None</code> to disable an op); <code>document_facade(runtime, registry, spec)</code> returns a per-call typed factory.</p>
+</li>
+<li>
+<p><strong>Outbox emit-and-relay bundle</strong> — <code>bind_outbox(OutboxEmit(spec=…, emits=(EmitMapping(event, event_type, to_payload), …), relay=RelayBinding(…)))</code> folds the four-piece transactional-outbox dance into one declaration: the returned <code>OutboxWiring</code> carries the domain-event→outbox staging bridge (<code>register_events</code> / <code>domain_event_registry</code>), the in-tx flush hook (<code>flush_step</code>), and the background relay lifecycle step (<code>lifecycle_steps</code>, when <code>relay</code> is set). The backend <code>outboxes={name: cfg}</code> config stays the author's, so the app/backend layer split is preserved. Adopted in the <code>order_fulfillment</code> recipe.</p>
+</li>
+<li>
+<p><strong>External search index-on-write sync</strong> — <code>bind_search_sync(registry, document=…, search=…, tx_route=…)</code> patches a document registry's write ops so a committed create/update upserts the row into an <strong>external</strong> search index (Meilisearch) and a hard delete removes it — closing the silent-drift gap where a searchable aggregate's separate index fell out of step with its writes (previously only <code>stored_file</code> reindexed). After-commit and best-effort (a transient index failure is logged, the committed write still returns); <code>SearchSyncSteps</code> exposes the upsert/delete steps for bespoke wiring. Document-backed search (Postgres FTS/PGroonga, Mongo text) indexes the same rows the write touched and exposes no <code>SearchCommandPort</code>, so binding sync there fails closed at resolve — sync is only for a separate-store index.</p>
+</li>
+<li>
+<p><strong>Reusable soft-delete wiring</strong> — <code>soft_delete_wiring(spec, purge=…)</code> packages the reusable core of stored_file's soft-delete for any aggregate on the <code>is_deleted</code> mixins: <code>.read_mappers()</code> (pass to <code>build_document_registry</code>) makes the generated LIST family exclude soft-deleted rows, and <code>.bind(registry, tx_route=…)</code> merges the DELETE/RESTORE ops, overrides GET to 404 a soft-deleted row, and attaches an optional after-commit purge hook (run when a row is deleted — e.g. drop its blob). Read exclusion rides the document factory's mapper seam (LIST) plus a <code>SoftDeleteAwareGet</code> guard (fetch-by-id).</p>
+</li>
+<li>
+<p><strong>Declarative invariant enforcement on write ops</strong> — <code>bind_invariants(registry, op_key, *InvariantEnforcement(law=…, params=…, mode=…), tx_route=…)</code> threads <code>SystemInvariant</code> enforcement into a write op's plan instead of hand-calling it: each law runs as an in-tx on-success step after the write, in declaration order, with its scope-key params extracted from the op's <code>(args, result)</code>. Preventive laws raise before commit (rolling the write back), detective laws defer the check to post-commit (surfacing a committed breach); the op's transaction is opened at the strongest preventive law's <code>required_isolation</code> so the preventive floor is met. No new invariant API — it removes the boilerplate around the existing <code>enforce_preventive</code> / <code>enforce</code>.</p>
+</li>
+<li>
+<p><strong><code>AggregateKit</code> — one typed declaration for a governed aggregate's wiring</strong> — <code>AggregateKit(spec=…, soft_delete=…, search=…, invariants=…, outbox=…)</code> composes the four primitives above behind one config generic over the spec's four models, emitting the slice as <strong>separate</strong> artifacts: <code>registry(tx_route=…)</code> (the composed, frozen op registry — document CRUD + external search query ops + soft-delete + index-on-write sync + preventive invariant enforcement + the in-tx outbox flush on <code>update</code>), <code>facade(runtime)</code> (a precisely-typed <code>DocumentFacade</code> factory), <code>domain_events()</code> (the outbox staging bridges for the deps module), and <code>lifecycle_steps()</code> (the outbox relay). It composes <strong>wiring, not models</strong> — the four models + <code>DocumentSpec</code> stay the author's, the facade keeps their types, and field encryption declared on the spec flows through untouched. First-class escape hatch: <code>handlers=</code> overrides a generated op's handler, <code>extra_ops=</code> merges bespoke operations. Backend config (<code>rw_documents=</code>/<code>searches=</code>/<code>outboxes=</code>) and HTTP routes stay the author's — wired over <code>registry()</code> with the existing deps module / route generators — so the app/backend layer split holds. Worked example + recipe: <code>examples/recipes/aggregate_kit</code> and the "Declare a governed aggregate" docs page. <strong><abbr title="Deterministic Simulation Testing">DST</abbr>-verifiable by construction:</strong> because the kit owns the composition, a declared <code>SystemInvariant</code> compiles into a <abbr title="Deterministic Simulation Testing">DST</abbr> oracle (<code>compile_oracle</code>) so a deterministic simulation proves the enforcement holds under concurrent interleaving — a bare registry double-books the cap under the same schedule where the kit-composed slice holds (<code>examples/recipes/aggregate_kit_dst</code>, <code>forze dst run …:simulation</code>). Route projection: <code>forze_fastapi.attach_aggregate_routes(router, kit, ctx_dep=…, style=…, tx_route=…)</code> emits the kit's document + soft-delete + search (+ storage, under a <code>/blobs</code> sub-path) routes in one call (over the composed registry; the emitter lives in <code>forze_fastapi</code> so the kit stays transport-agnostic). Optional object-storage slice: <code>AggregateKit(spec, storage=StorageSpec(name=…))</code> composes the blob ops (upload/download/head/delete/…) alongside the document ops and exposes <code>kit.storage_facade(runtime)</code> — a <em>separate</em> resource (its name must differ from the document's), with the row↔blob correlation left to the author via the escape hatch. Deps checklist: <code>kit.backend_requirements(tx_route=…)</code> reports the document / search / storage / outbox routes, whether a keyring is required, and the tx route — a wiring checklist derived from the declaration (the backend-specific config values stay the author's; pairs with <code>check_wiring</code>).</p>
 </li>
 <li>
 <p><strong>Shared error helpers</strong> — <code>error_envelope()</code> and <code>guard_frame()</code> give one client-safe <code>CoreException</code> projection and a shared guarded boundary; <code>http_status_for_kind(kind)</code> maps an <code>ExceptionKind</code> to its HTTP status. FastAPI and Socket.IO render through them.</p>
