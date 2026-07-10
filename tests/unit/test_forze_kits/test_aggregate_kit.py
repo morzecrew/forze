@@ -241,3 +241,34 @@ class TestEscapeHatch:
         kit = AggregateKit(spec=WIDGET_SPEC, extra_ops=extra)
 
         assert "widgets.report" in kit.registry(tx_route=_TX).handlers
+
+
+# ....................... #
+
+
+class TestBackendRequirements:
+    def test_full_kit_lists_every_wired_route(self) -> None:
+        req = _full_kit().backend_requirements(tx_route=_TX)
+
+        assert req.document_route == "widgets"
+        assert req.search_route == "widgets_index"
+        assert req.outbox_route == "widget-events"
+        assert req.tx_route == _TX
+        assert req.crypto_required is False
+
+    def test_minimal_kit_has_no_optional_routes(self) -> None:
+        req = AggregateKit(spec=WIDGET_SPEC).backend_requirements()
+
+        assert req.document_route == "widgets"
+        assert req.search_route is None
+        assert req.outbox_route is None
+        assert req.crypto_required is False
+        assert req.tx_route == "default"
+
+    def test_encrypted_spec_requires_a_keyring(self) -> None:
+        from forze.application.contracts.crypto import FieldEncryption
+
+        encrypted = attrs.evolve(
+            WIDGET_SPEC, encryption=FieldEncryption(encrypted=frozenset({"group"}))
+        )
+        assert AggregateKit(spec=encrypted).backend_requirements().crypto_required is True

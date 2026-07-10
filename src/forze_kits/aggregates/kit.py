@@ -72,6 +72,34 @@ _EMIT_OPS = (DocumentKernelOp.UPDATE,)
 
 
 @final
+@attrs.frozen(kw_only=True)
+class BackendRequirements:
+    """What a kit's declaration requires from the deps module — a wiring checklist, as data.
+
+    The kit composes backend-agnostic *wiring*; the store, encryption keyring, and tenant floor
+    stay the author's. This describes what to wire (derived from the declaration) without
+    fabricating the backend-specific config objects (``PostgresDocumentConfig(relation=…)`` and the
+    like), whose values only the author knows. Assert a deps module satisfies it, or read it as a
+    startup checklist; ``check_wiring`` fails closed at resolve for anything still missing.
+    """
+
+    document_route: StrKey
+    """Route the document store must be wired under (``rw_documents={route: …}``)."""
+
+    tx_route: StrKey
+    """Transaction route the write ops run on (the deps module must register a tx manager here)."""
+
+    search_route: StrKey | None
+    """External search index route (``searches={route: …}``), or ``None`` when no ``search``."""
+
+    outbox_route: StrKey | None
+    """Outbox route (``outboxes={route: …}``) plus the domain-event bridges, or ``None``."""
+
+    crypto_required: bool
+    """Whether a keyring (``CryptoDepsModule``) is required — the spec declares field encryption."""
+
+
+@final
 @attrs.define(frozen=True, kw_only=True, slots=True)
 class AggregateKit(Generic[R, D, C, U]):
     """The composed wiring for one governed document aggregate, from a single typed declaration.
@@ -154,6 +182,25 @@ class AggregateKit(Generic[R, D, C, U]):
         """The runtime lifecycle steps for the aggregate — the outbox relay (empty without one)."""
 
         return () if self.outbox is None else bind_outbox(self.outbox).lifecycle_steps
+
+    # ....................... #
+
+    def backend_requirements(
+        self, *, tx_route: StrKey = "default"
+    ) -> BackendRequirements:
+        """What the deps module must wire for this declaration — a checklist derived from the spec.
+
+        Describes the routes / keyring / tx the author wires (the backend-specific config values
+        stay theirs); pairs with ``check_wiring`` for the resolve-time enforcement.
+        """
+
+        return BackendRequirements(
+            document_route=self.spec.name,
+            tx_route=tx_route,
+            search_route=self.search.name if self.search is not None else None,
+            outbox_route=self.outbox.spec.name if self.outbox is not None else None,
+            crypto_required=self.spec.encryption is not None,
+        )
 
     # ....................... #
 
