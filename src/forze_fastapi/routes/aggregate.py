@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from forze.application.execution.context import ExecutionContextFactory
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze_kits.aggregates import AggregateKit
 
@@ -88,7 +89,15 @@ def attach_aggregate_routes(
 
     if kit.storage is not None:
         # Blobs are a separate resource under their own sub-path — REST ``upload`` (POST /) would
-        # otherwise collide with the document ``create`` on the router root.
+        # otherwise collide with the document ``create`` on the router root, so a root-like prefix
+        # is rejected rather than silently letting one operation shadow the other.
+        if not storage_prefix.startswith("/") or storage_prefix == "/":
+            raise exc.configuration(
+                f"storage_prefix must be a non-root sub-path like '/blobs' (got "
+                f"{storage_prefix!r}) — otherwise the blob routes collide with the document "
+                f"routes on the router root",
+            )
+
         blob_router = APIRouter(prefix=storage_prefix)
         attach_storage_routes(
             blob_router,

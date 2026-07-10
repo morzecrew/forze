@@ -192,7 +192,7 @@ class TestConcernsWiredThroughKit:
             assert widget.id in index
 
             # soft-delete (P3): delete then LIST excludes it.
-            await run_operation(
+            deleted = await run_operation(
                 reg,
                 _key(SoftDeletionKernelOp.DELETE),
                 DocumentIdRevDTO(id=widget.id, rev=widget.rev),
@@ -202,6 +202,18 @@ class TestConcernsWiredThroughKit:
                 reg, _key(DocumentKernelOp.LIST), ListRequestDTO(), ctx
             )
             assert listed.count == 0
+
+            # ...and the external index drops it too — no ghost that would 404 on read.
+            assert widget.id not in index
+
+            # restore re-adds it to the index.
+            await run_operation(
+                reg,
+                _key(SoftDeletionKernelOp.RESTORE),
+                DocumentIdRevDTO(id=widget.id, rev=deleted.rev),
+                ctx,
+            )
+            assert widget.id in index
 
     async def test_facade_runs_create_end_to_end(self) -> None:
         kit = _full_kit()

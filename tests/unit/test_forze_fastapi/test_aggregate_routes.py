@@ -127,6 +127,22 @@ class TestAttachAggregateRoutes:
         assert "notes.create" in ids  # document surface
         assert "notes_blobs.upload" in ids and "notes_blobs.download" in ids  # blob surface
 
+    @pytest.mark.parametrize("prefix", ["", "/", "blobs"])
+    def test_root_like_storage_prefix_is_rejected(self, prefix: str) -> None:
+        from forze.base.exceptions import CoreException, ExceptionKind
+
+        kit = AggregateKit(spec=_NOTE_SPEC, storage=StorageSpec(name="notes_blobs"))
+        with pytest.raises(CoreException) as ei:
+            attach_aggregate_routes(
+                APIRouter(prefix="/notes"),
+                kit,
+                ctx_dep=lambda: context_from_modules(MockDepsModule()),
+                style="rest",
+                tx_route=_TX,
+                storage_prefix=prefix,
+            )
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
     def test_create_then_get_round_trips_through_the_routes(self) -> None:
         client = TestClient(_app()[0])
 

@@ -48,8 +48,16 @@ from forze_kits.aggregates.document import (
     document_facade,
 )
 from forze_kits.aggregates.document.dto import DocumentUpdateRes
-from forze_kits.aggregates.search import bind_search_sync, build_search_registry
-from forze_kits.aggregates.soft_deletion import PurgeHook, soft_delete_wiring
+from forze_kits.aggregates.search import (
+    SearchSyncSteps,
+    bind_search_sync,
+    build_search_registry,
+)
+from forze_kits.aggregates.soft_deletion import (
+    PurgeHook,
+    SoftDeletionKernelOp,
+    soft_delete_wiring,
+)
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
@@ -268,6 +276,8 @@ class AggregateKit(Generic[R, D, C, U]):
 
         if soft is not None:
             reg = soft.bind(reg, tx_route=tx_route, ns=ns)
+            if self.search is not None:
+                reg = self._sync_soft_delete_to_search(reg, ns=ns, tx_route=tx_route)
 
         reg = self._attach_invariants(reg, ns=ns, tx_route=tx_route)
         reg = self._attach_outbox_flush(reg, ns=ns, tx_route=tx_route)
@@ -277,6 +287,49 @@ class AggregateKit(Generic[R, D, C, U]):
 
         if self.extra_ops is not None:
             reg = type(reg).merge(reg, self.extra_ops)
+
+        return reg
+
+    # ....................... #
+
+    def _sync_soft_delete_to_search(
+        self,
+        reg: OperationRegistry,
+        *,
+        ns: Any,
+        tx_route: StrKey,
+    ) -> OperationRegistry:
+        """Extend external-index sync to the soft-delete ops (only ``bind_search_sync`` sees CREATE/
+        UPDATE/KILL, added before these ops exist). A soft delete **removes** the row from the index
+        like a hard delete, and a restore re-**upserts** it — so search never returns a soft-deleted
+        ghost that then 404s on read."""
+
+        search = self.search
+        if search is None:  # pragma: no cover - guarded by the caller
+            return reg
+
+        steps = SearchSyncSteps(search=search)
+        present = reg.operation_keys()
+
+        delete_key = ns.key(SoftDeletionKernelOp.DELETE)
+        if delete_key in present:
+            reg = (
+                reg.bind(delete_key)
+                .bind_tx()
+                .set_route(tx_route)
+                .after_commit(steps.delete_on_kill(step_id="search_sync_soft_delete"))
+                .finish(deep=True)
+            )
+
+        restore_key = ns.key(SoftDeletionKernelOp.RESTORE)
+        if restore_key in present:
+            reg = (
+                reg.bind(restore_key)
+                .bind_tx()
+                .set_route(tx_route)
+                .after_commit(steps.upsert_on_write(step_id="search_sync_restore"))
+                .finish(deep=True)
+            )
 
         return reg
 
