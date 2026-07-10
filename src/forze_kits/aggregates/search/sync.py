@@ -26,7 +26,7 @@ from forze.application.contracts.execution import (
 from forze.application.contracts.search import SearchSpec
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKey, StrKeyNamespace
-from forze_kits.aggregates.document.dto import DocumentUpdateRes
+from forze_kits.aggregates.document.dto import written_read_model
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 
 if TYPE_CHECKING:
@@ -37,23 +37,6 @@ if TYPE_CHECKING:
 
 _UPSERT_STEP_ID = "search_sync_upsert"
 _DELETE_STEP_ID = "search_sync_delete"
-
-# ....................... #
-
-
-def _written_model(result: Any) -> Any:
-    """Return the read model a write op produced.
-
-    ``CREATE`` returns the read model directly; ``UPDATE`` wraps it as
-    :attr:`DocumentUpdateRes.data` (alongside the diff).
-    """
-
-    return (  # pyright: ignore[reportUnknownVariableType]
-        result.data  # pyright: ignore[reportUnknownMemberType]
-        if isinstance(result, DocumentUpdateRes)
-        else result
-    )
-
 
 # ....................... #
 
@@ -82,7 +65,7 @@ class SearchSyncSteps:
             command = ctx.search.command(search)
 
             async def _hook(args: Any, result: Any) -> None:  # noqa: ARG001
-                await command.upsert([_written_model(result)])
+                await command.upsert([written_read_model(result)])
 
             return _hook
 

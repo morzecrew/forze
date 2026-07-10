@@ -37,6 +37,10 @@ class OrderConfirmed(DomainEvent):
     aggregate_id: UUID
 
 
+class OrderShipped(DomainEvent):
+    aggregate_id: UUID
+
+
 class OrderConfirmedPayload(BaseModel):
     order_id: str
 
@@ -75,9 +79,26 @@ def _ctx() -> ExecutionContext:
 
 class TestBindOutboxShape:
     def test_emits_one_bridge_per_mapping(self) -> None:
-        wiring = bind_outbox(_emit())
+        emit = OutboxEmit(
+            spec=OUTBOX,
+            emits=(
+                EmitMapping(
+                    event=OrderConfirmed,
+                    event_type="order.confirmed",
+                    to_payload=lambda e: OrderConfirmedPayload(order_id=str(e.aggregate_id)),
+                ),
+                EmitMapping(
+                    event=OrderShipped,
+                    event_type="order.shipped",
+                    to_payload=lambda e: OrderConfirmedPayload(order_id=str(e.aggregate_id)),
+                ),
+            ),
+        )
 
-        assert [event for event, _ in wiring.event_handlers] == [OrderConfirmed]
+        wiring = bind_outbox(emit)
+
+        # one bridge per mapping, in declaration order
+        assert [event for event, _ in wiring.event_handlers] == [OrderConfirmed, OrderShipped]
 
     def test_flush_step_carries_the_given_id(self) -> None:
         step = bind_outbox(_emit()).flush_step(step_id="confirm_flush")

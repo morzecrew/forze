@@ -127,6 +127,13 @@ class TestAttachAggregateRoutes:
         assert "notes.create" in ids  # document surface
         assert "notes_blobs.upload" in ids and "notes_blobs.download" in ids  # blob surface
 
+        # ...and the blob routes actually mount under the /blobs sub-prefix (not the router root),
+        # so a regression in the sub-router prefix wiring is caught, not just the operation ids.
+        paths = {op["operationId"]: path for path, m in app.openapi()["paths"].items() for op in m.values()}
+        assert paths["notes_blobs.upload"].startswith("/notes/blobs")
+        assert paths["notes_blobs.download"].startswith("/notes/blobs")
+        assert not paths["notes.create"].startswith("/notes/blobs")  # document stays on the root
+
     @pytest.mark.parametrize("prefix", ["", "/", "blobs"])
     def test_root_like_storage_prefix_is_rejected(self, prefix: str) -> None:
         from forze.base.exceptions import CoreException, ExceptionKind

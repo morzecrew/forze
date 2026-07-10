@@ -60,8 +60,10 @@ your call, wired into the deps module:
 ```
 
 - `registry(tx_route=…)` — the composed, frozen operation registry.
-- `facade(runtime)` — a per-call, precisely-typed `DocumentFacade` over it
-  (`create`/`get`/`list`/`update` keep your `C`/`U`/`R` types — no erosion).
+- `facade(runtime, tx_route=…)` — a per-call, precisely-typed `DocumentFacade` over it
+  (`create`/`get`/`list`/`update` keep your `C`/`U`/`R` types — no erosion). Pass the **same**
+  `tx_route` you gave `registry()` and the routes emitter, so every surface executes the write ops
+  on the one transaction route the deps module registers a manager under.
 - `domain_events()` — the outbox staging bridges, for the deps module.
 - `lifecycle_steps()` — the outbox relay, for the runtime.
 
@@ -142,8 +144,10 @@ attach_aggregate_routes(router, TASKS, ctx_dep=ctx_dep, style="rest", tx_route="
 ```
 
 The routes *execute* through the composed registry, so `tx_route` must match the deps module.
-`kit.backend_requirements(tx_route="pg")` reports the routes / keyring / tx that module must provide
-— a checklist you can assert in a startup test (and `check_wiring` fails closed on anything missing).
+`kit.backend_requirements(tx_route="pg")` reports the document / search / storage / outbox routes,
+the transaction route, and the crypto requirement (`crypto_required` — whether a keyring is needed)
+that module must provide — a checklist you can assert in a startup test (and `check_wiring` fails
+closed on anything missing).
 
 ## Notes
 

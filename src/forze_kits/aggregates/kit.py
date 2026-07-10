@@ -47,7 +47,7 @@ from forze_kits.aggregates.document import (
     build_document_registry,
     document_facade,
 )
-from forze_kits.aggregates.document.dto import DocumentUpdateRes
+from forze_kits.aggregates.document.dto import written_read_model
 from forze_kits.aggregates.search import (
     SearchSyncSteps,
     bind_search_sync,
@@ -396,11 +396,7 @@ class AggregateKit(Generic[R, D, C, U]):
         keys = law.read_set.scope_keys
 
         def _params(args: Any, result: Any) -> Mapping[str, Any]:  # noqa: ARG001
-            row = (  # pyright: ignore[reportUnknownVariableType]
-                result.data  # pyright: ignore[reportUnknownMemberType]
-                if isinstance(result, DocumentUpdateRes)
-                else result
-            )
+            row = written_read_model(result)
             return {
                 key: getattr(row, key)  # pyright: ignore[reportUnknownArgumentType]
                 for key in keys

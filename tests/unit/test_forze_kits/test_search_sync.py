@@ -21,8 +21,8 @@ from forze_kits.aggregates.document import (
     DocumentUpdateDTO,
     build_document_registry,
 )
+from forze_kits.aggregates.document.dto import DocumentUpdateRes, written_read_model
 from forze_kits.aggregates.search import bind_search_sync
-from forze_kits.aggregates.search.sync import DocumentUpdateRes, _written_model
 from forze_mock import MockDepsModule, MockStateDepKey
 
 # ----------------------- #
@@ -79,8 +79,8 @@ class TestWrittenModelExtraction:
             id: str = "x"
 
         row = _Tiny()
-        assert _written_model(row) is row  # CREATE returns the read model directly
-        assert _written_model(DocumentUpdateRes(data=row, diff={})) is row  # UPDATE unwraps
+        assert written_read_model(row) is row  # CREATE returns the read model directly
+        assert written_read_model(DocumentUpdateRes(data=row, diff={})) is row  # UPDATE unwraps
 
 
 # ....................... #

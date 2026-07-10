@@ -114,8 +114,8 @@ class TestReadSideExclusion:
             await _delete(reg, ctx, gone)
 
             listed = await run_operation(reg, _key(DocumentKernelOp.LIST), ListRequestDTO(), ctx)
-            assert listed.count == 1  # only the live note; the soft-deleted one is filtered out
-            assert kept.id != gone.id
+            # only the live note survives the exclusion filter — and it is `kept`, not `gone`.
+            assert [hit.id for hit in listed.hits] == [kept.id]
 
     async def test_get_rejects_soft_deleted_but_serves_live(self) -> None:
         runtime = build_runtime(MockDepsModule())
