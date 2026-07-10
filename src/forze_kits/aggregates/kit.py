@@ -62,8 +62,13 @@ D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
 U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 
-# The write ops an aggregate's laws / outbox flush hang off (the result carries the read model).
+# Write ops an aggregate's laws hang off — the result carries the read model to scope them by.
 _WRITE_OPS = (DocumentKernelOp.CREATE, DocumentKernelOp.UPDATE)
+
+# Ops that stage domain events (so the outbox flush belongs there). ``@event_emitter`` fires only on
+# ``Document.update``, so a generated CREATE never stages — flushing it would just mark the route
+# flushed and poison a later stage in the same task.
+_EMIT_OPS = (DocumentKernelOp.UPDATE,)
 
 
 @final
@@ -218,7 +223,7 @@ class AggregateKit(Generic[R, D, C, U]):
 
         flush = bind_outbox(self.outbox).flush_step()
 
-        for op in _WRITE_OPS:
+        for op in _EMIT_OPS:
             key = ns.key(op)
 
             if key in reg.operation_keys():

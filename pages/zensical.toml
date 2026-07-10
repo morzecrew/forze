@@ -134,6 +134,7 @@ nav = [
     { "Recipes" = [
         { "Data" = [
             "recipes/crud-fastapi-postgres.md",
+            "recipes/governed-aggregate-kit.md",
             "recipes/read-only-document-api.md",
             "recipes/cache-reads-with-redis.md",
             "recipes/analytics-over-a-data-lake.md",
