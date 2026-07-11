@@ -118,6 +118,13 @@ sqs = [
     "types-aioboto3[sqs]>=15.5.0",
     "types-aiobotocore>=3.1.3",
 ]
+awskms = [
+    "aioboto3>=15.5.0",
+    "aiobotocore>=2.25.1",
+    "botocore>=1.40.61",
+    "types-aioboto3[kms]>=15.5.0",
+    "types-aiobotocore>=3.1.3",
+]
 mongo = ["pymongo>=4.16.0"]
 firestore = ["google-cloud-firestore>=2.21.0"]
 gcs = ["aiohttp>=3.11.0", "gcloud-aio-storage>=9.6.0", "python-magic>=0.4.27"]
@@ -202,6 +209,7 @@ packages = [
     "src/forze_identity",
     "src/forze_socketio",
     "src/forze_sqs",
+    "src/forze_awskms",
     "src/forze_temporal",
     "src/forze_inngest",
     "src/forze_vault",
@@ -331,6 +339,7 @@ root_packages = [
     "forze_rabbitmq",
     "forze_kafka",
     "forze_sqs",
+    "forze_awskms",
     "forze_identity",
     "forze_vault",
     "forze_meilisearch",
@@ -445,6 +454,7 @@ protected_modules = [
     "forze_rabbitmq",
     "forze_kafka",
     "forze_sqs",
+    "forze_awskms",
     "forze_vault",
     "forze_meilisearch",
     "forze_http",
@@ -480,6 +490,7 @@ paths = [
     "src/forze_rabbitmq",
     "src/forze_kafka",
     "src/forze_sqs",
+    "src/forze_awskms",
     "src/forze_identity",
     "src/forze_vault",
     "src/forze_meilisearch",
@@ -524,6 +535,7 @@ known_first_party = [
     "forze_rabbitmq",
     "forze_kafka",
     "forze_sqs",
+    "forze_awskms",
     "forze_identity",
     "forze_vault",
     "forze_meilisearch",
@@ -550,6 +562,7 @@ DEP002 = [
 DEP003 = [
     "types_aiobotocore_s3",
     "types_aiobotocore_sqs",
+    "types_aiobotocore_kms",
     "typing_extensions",
     "pydantic_core",
 ]

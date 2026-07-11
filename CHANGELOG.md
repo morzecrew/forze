@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Observability & encryption**
 
+- **AWS KMS key-management backend (`forze_awskms`)** — a cloud KMS envelope-key backend (`awskms` extra, over `aioboto3`): `AwsKmsKeyManagement` implements `KeyManagementPort` (`GenerateDataKey` → wrap, `Decrypt` → unwrap, passing `KeyId` for a server-side confused-deputy guard), with `AwsKmsClient` / `AwsKmsConfig`, `AwsKmsDepsModule` (registers `KeyManagementDepKey`), and `awskms_lifecycle_step(...)`. Compose a keyring over it with `CryptoDepsModule(kms=AwsKmsKeyManagement(client=…), directory=…)`. CMK rotation is transparent (the wrapped blob is self-describing, so pre-rotation data keys still decrypt; `DataKey.key_version` is `None`); `KeyRef.key_id` is a CMK id / ARN / `alias/<name>`.
+
 - **One-call logging setup** — `bootstrap_logging(...)` wires framework/integration/third-party loggers + the uncaught-exception hook in one call; `Logger`, `get_logger`, `configure_logging` re-exported from `forze`. `configure_logging(enable_sampling=…)` adds `_sample=N` / `_dedup_key=` volume controls (stripped before render).
 
 - **Integration logger naming** — shared adapter/port machinery logs under `forze.integrations.<domain>` (overridable via `resolve_logger` / `LoggerAware`); `forze_kits` logs under `forze_kits.*`; `forze_sqs` / `forze_rabbitmq` / `forze_identity` gained typed `Forze*Logger` name enums.

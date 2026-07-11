@@ -1210,6 +1210,13 @@ authn = [
     { name = "email-validator" },
     { name = "pyjwt", extra = ["crypto"] },
 ]
+awskms = [
+    { name = "aioboto3" },
+    { name = "aiobotocore" },
+    { name = "botocore" },
+    { name = "types-aioboto3", extra = ["kms"] },
+    { name = "types-aiobotocore" },
+]
 bigquery = [
     { name = "aiohttp" },
     { name = "gcloud-aio-bigquery" },
@@ -1349,8 +1356,10 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "aio-pika", marker = "extra == 'rabbitmq'", specifier = ">=9.6.1" },
+    { name = "aioboto3", marker = "extra == 'awskms'", specifier = ">=15.5.0" },
     { name = "aioboto3", marker = "extra == 's3'", specifier = ">=15.5.0" },
     { name = "aioboto3", marker = "extra == 'sqs'", specifier = ">=15.5.0" },
+    { name = "aiobotocore", marker = "extra == 'awskms'", specifier = ">=2.25.1" },
     { name = "aiobotocore", marker = "extra == 's3'", specifier = ">=2.25.1" },
     { name = "aiobotocore", marker = "extra == 'sqs'", specifier = ">=2.25.1" },
     { name = "aiohttp", marker = "extra == 'bigquery'", specifier = ">=3.11.0" },
@@ -1358,6 +1367,7 @@ requires-dist = [
     { name = "aiokafka", marker = "extra == 'kafka'", specifier = ">=0.14.0" },
     { name = "argon2-cffi", marker = "extra == 'authn'", specifier = ">=25.1.0" },
     { name = "attrs", specifier = ">=25.4.0" },
+    { name = "botocore", marker = "extra == 'awskms'", specifier = ">=1.40.61" },
     { name = "botocore", marker = "extra == 's3'", specifier = ">=1.40.61" },
     { name = "botocore", marker = "extra == 'sqs'", specifier = ">=1.40.61" },
     { name = "clickhouse-connect", extras = ["async"], marker = "extra == 'clickhouse'", specifier = ">=1.0.0" },
@@ -1405,15 +1415,17 @@ requires-dist = [
     { name = "structlog", specifier = ">=25.0.0" },
     { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.23.0" },
     { name = "typer", marker = "extra == 'cli'", specifier = ">=0.12.0" },
+    { name = "types-aioboto3", extras = ["kms"], marker = "extra == 'awskms'", specifier = ">=15.5.0" },
     { name = "types-aioboto3", extras = ["s3"], marker = "extra == 's3'", specifier = ">=15.5.0" },
     { name = "types-aioboto3", extras = ["sqs"], marker = "extra == 'sqs'", specifier = ">=15.5.0" },
+    { name = "types-aiobotocore", marker = "extra == 'awskms'", specifier = ">=3.1.3" },
     { name = "types-aiobotocore", marker = "extra == 's3'", specifier = ">=3.1.3" },
     { name = "types-aiobotocore", marker = "extra == 'sqs'", specifier = ">=3.1.3" },
     { name = "types-hvac", marker = "extra == 'vault'", specifier = ">=2.4.0.20260518" },
     { name = "urllib3", marker = "extra == 'vault'", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'fastapi'", specifier = ">=0.42.0" },
 ]
-provides-extras = ["authn", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inngest", "kafka", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
+provides-extras = ["authn", "awskms", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inngest", "kafka", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4219,6 +4231,9 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+kms = [
+    { name = "types-aiobotocore-kms" },
+]
 s3 = [
     { name = "types-aiobotocore-s3" },
 ]
@@ -4236,6 +4251,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/76/e8/ef1fcb876937dbdddc0f01b5df4ed53f33b166a6367d80a9014d5e5f091d/types_aiobotocore-3.7.0.tar.gz", hash = "sha256:fe35de52c12e5fdb89ca60b3989766e7fe827e3d2e95fcf4583e91581945205c", size = 87992, upload-time = "2026-05-10T03:19:32.353Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/68/0cdfd7df415ee3e769c8e8f9bd8013c64c88cdd7306f72453a02123c58f9/types_aiobotocore-3.7.0-py3-none-any.whl", hash = "sha256:ff4139b3eae22d242b6b39ba56048344b2b86f67daeeca4680da1a6e191681fd", size = 54804, upload-time = "2026-05-10T03:19:29.487Z" },
+]
+
+[[package]]
+name = "types-aiobotocore-kms"
+version = "2.25.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/1f/221ffca4f5ed6d620d57dbe3a3f01094ccc5a3ac8be62b843e99da2c6b69/types_aiobotocore_kms-2.25.2.tar.gz", hash = "sha256:e3e65153eac318b81ed8e2c9aa90fae51e27478969e11a8342c309d76bd7d002", size = 30537, upload-time = "2025-11-12T01:48:06.031Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/31/c85a07afd218261c9976b5004eb900c147075a8ace4c3b83b67bade2cdcf/types_aiobotocore_kms-2.25.2-py3-none-any.whl", hash = "sha256:b3bdb7b0b6dad066002f45544d26ad1c43acd5c46c550774ae758d19e33dac41", size = 38639, upload-time = "2025-11-12T01:48:04.799Z" },
 ]
 
 [[package]]
