@@ -183,7 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **PEL stream ports renamed for the two-sub-model split** — `StreamGroupQueryPort` / `StreamGroupAdminPort` → `AckStreamGroupQueryPort` / `AckStreamGroupAdminPort` (and dep keys `StreamGroup*DepKey` → `AckStreamGroup*DepKey`), pairing with the new `CommitStreamGroup*` offset-log ports; behavior unchanged (find-and-replace). `StreamMessage` gains optional `partition` / `offset` fields (`None` for the ack sub-model).
 
-- **Package restructures** — `forze_dst` splits into a thin `Simulation` facade over `engines/` / `oracle/` / `artifacts/` (`SchedulerKind` removed); `forze_mock` root modules → `adapters/`, factories → `execution.factories` (top-level imports unchanged); notify kit's `NotificationRouter` is now a mutable builder (`register()` → `freeze()`) with resolution on `FrozenNotificationRouter`, reorganized into `routing` / `events` / `consumer` / `lifecycle`.
+- **Package restructures** — `forze_dst` splits into a thin `Simulation` facade over `engines/` / `oracle/` / `artifacts/` (`SchedulerKind` removed); `forze_mock` root modules → `adapters/`, factories → `execution.factories` (top-level imports unchanged); `forze_postgres.provisioning` → `forze_postgres.adapters.tenant_provisioner` (it is a port adapter like every sibling; `from forze_postgres import PostgresSchemaTenantProvisioner` unchanged); notify kit's `NotificationRouter` is now a mutable builder (`register()` → `freeze()`) with resolution on `FrozenNotificationRouter`, reorganized into `routing` / `events` / `consumer` / `lifecycle`.
 
 **Behavior**
 
