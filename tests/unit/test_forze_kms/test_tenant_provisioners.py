@@ -94,6 +94,27 @@ async def test_aws_deprovision_drops_alias_then_schedules_deletion() -> None:
     )
 
 
+async def test_aws_deprovision_of_an_already_gone_tenant_is_a_no_op() -> None:
+    """Teardown is retried after a partial offboarding, so it must tolerate absence."""
+
+    client, provisioner = _aws(allow_deletion=True)
+    client.find_key_id_by_alias = AsyncMock(return_value=None)
+
+    await provisioner.deprovision(_TENANT)
+
+    client.delete_alias.assert_not_awaited()
+    client.schedule_key_deletion.assert_not_awaited()
+
+
+async def test_yc_deprovision_of_an_already_gone_tenant_is_a_no_op() -> None:
+    client, _, provisioner = _yc(allow_deletion=True)
+    client.find_key_id_by_name = AsyncMock(return_value=None)
+
+    await provisioner.deprovision(_TENANT)
+
+    client.delete_key.assert_not_awaited()
+
+
 async def test_aws_rejects_a_directory_that_is_not_an_alias() -> None:
     """A CMK id is minted by KMS, so a directory must resolve to an alias."""
 

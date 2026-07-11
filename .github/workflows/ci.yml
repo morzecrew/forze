@@ -139,6 +139,7 @@ jobs:
           - { name: gcs, path: tests/integration/test_forze_gcs }
           - { name: inngest, path: tests/integration/test_forze_inngest_integration }
           - { name: kafka, path: tests/integration/test_forze_kafka }
+          - { name: kms, path: tests/integration/test_forze_kms }
           - { name: meilisearch, path: tests/integration/test_forze_meilisearch }
           - { name: mock, path: tests/integration/test_forze_mock }
           - { name: mongo, path: tests/integration/test_forze_mongo }
