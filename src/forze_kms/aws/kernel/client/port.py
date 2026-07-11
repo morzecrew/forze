@@ -87,7 +87,7 @@ class AwsKmsClientPort(Protocol):
         *,
         pending_window_days: int = 30,
     ) -> Awaitable[None]:
-        """Schedule the CMK for deletion after a waiting period (7–30 days).
+        """Schedule the CMK for deletion after a waiting period (7-30 days).
 
         KMS never deletes a key immediately — the window is a last chance to cancel,
         since destroying a KEK makes every value wrapped under it unrecoverable.

@@ -23,9 +23,11 @@ class KeyManagementPort(Protocol):
     ``rewrap`` here, and adding one would be a mistake:
 
     - *Rotating a key version* is the backend's own concern and is already
-      transparent: every envelope names the version that sealed it, so data written
-      before a rotation still decrypts afterwards and new writes pick up the new
-      version by themselves. Nothing to sweep, nothing to call.
+      transparent: a wrapped data key is decryptable by the backend without being told
+      which version sealed it, so data written before a rotation still decrypts
+      afterwards and new writes pick up the new version by themselves. Nothing to sweep,
+      nothing to call. (:attr:`DataKey.key_version` records the version only where the
+      provider reports one — it never *drives* the unwrap.)
     - *Retiring* old key material is a re-encryption, not a rewrap:
       ``reencrypt_documents`` / ``reencrypt_objects`` already re-seal under the
       current key as a side effect of their read→write round-trip. A rewrap that

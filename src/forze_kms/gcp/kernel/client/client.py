@@ -99,9 +99,23 @@ class GcpKmsClient(GcpKmsClientPort):
                 channel = grpc.aio.insecure_channel(
                     endpoint, options=_EMULATOR_CHANNEL_OPTS
                 )
-                transport = KeyManagementServiceGrpcAsyncIOTransport(channel=channel)
+
+                try:
+                    transport = KeyManagementServiceGrpcAsyncIOTransport(
+                        channel=channel
+                    )
+                    client = KeyManagementServiceAsyncClient(transport=transport)
+
+                # Nothing is published until every piece is built. Otherwise a failure
+                # here would leave the channel behind: `close()` sees no client to tear
+                # down, and the next `initialize()` overwrites the field — orphaning it.
+                except BaseException:
+                    await channel.close()
+                    self.__request_timeout = None
+                    raise
+
                 self.__channel = channel
-                self.__client = KeyManagementServiceAsyncClient(transport=transport)
+                self.__client = client
 
             else:
                 self.__client = KeyManagementServiceAsyncClient(credentials=credentials)

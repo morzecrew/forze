@@ -14,9 +14,9 @@ from .kernel.client import YcKmsClient, YcKmsClientPort, YcKmsConfig
 
 __all__ = [
     "YcKmsClient",
+    "YcKmsClientDepKey",
     "YcKmsClientPort",
     "YcKmsConfig",
-    "YcKmsClientDepKey",
     "YcKmsDepsModule",
     "YcKmsKeyDirectory",
     "YcKmsKeyManagement",

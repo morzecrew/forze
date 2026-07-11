@@ -19,11 +19,13 @@ class YcKmsDepsModule(DepsModule):
     """Register the Yandex Cloud KMS client (and, optionally, an envelope key manager).
 
     Give it a :class:`~forze_kms.yc.kernel.client.YcKmsClient` (initialized via
-    :func:`~forze_kms.yc.execution.yckms_lifecycle_step`); the key-management adapter
-    defaults to :class:`~forze_kms.yc.adapters.YcKmsKeyManagement` over that client and
-    is registered under ``KeyManagementDepKey`` so a
-    :class:`~forze.application.execution.CryptoDepsModule` can compose the keyring on
-    top of it.
+    :func:`~forze_kms.yc.execution.yckms_lifecycle_step`), and it registers the client
+    under ``YcKmsClientDepKey`` so the lifecycle step can initialize it.
+
+    Compose the keyring with :class:`~forze.application.execution.CryptoDepsModule`,
+    passing :class:`~forze_kms.yc.adapters.YcKmsKeyManagement` as its ``kms`` — that
+    module registers ``KeyManagementDepKey`` itself, so leave :attr:`key_management`
+    unset unless you are wiring the port without a keyring.
     """
 
     client: YcKmsClientPort

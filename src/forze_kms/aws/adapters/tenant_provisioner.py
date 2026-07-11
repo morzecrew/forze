@@ -59,7 +59,7 @@ class AwsKmsTenantProvisioner(TenantProvisionerPort):
     deletion (destructive). Default off."""
 
     pending_window_days: int = _MAX_PENDING_WINDOW_DAYS
-    """Waiting period before a scheduled CMK deletion takes effect (KMS allows 7–30 days).
+    """Waiting period before a scheduled CMK deletion takes effect (KMS allows 7-30 days).
     KMS never deletes a key immediately; the window is the last chance to cancel."""
 
     # ....................... #

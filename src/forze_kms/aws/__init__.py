@@ -14,9 +14,9 @@ from .kernel.client import AwsKmsClient, AwsKmsClientPort, AwsKmsConfig
 
 __all__ = [
     "AwsKmsClient",
+    "AwsKmsClientDepKey",
     "AwsKmsClientPort",
     "AwsKmsConfig",
-    "AwsKmsClientDepKey",
     "AwsKmsDepsModule",
     "AwsKmsKeyManagement",
     "AwsKmsTenantProvisioner",

@@ -7,9 +7,10 @@ the backend mints the data key: ``generate_data_key`` maps to
 ``SymmetricCrypto.Decrypt``. The key-encryption key never leaves KMS.
 
 :class:`~forze.application.contracts.crypto.KeyRef.key_id` is a Yandex Cloud
-symmetric key id. Key rotation is transparent — the wrapped blob names its own key
-version, so a data key wrapped before a rotation still decrypts afterwards and
-``DataKey.key_version`` is ``None``. Wire it with a keyring, e.g.::
+symmetric key id. Key rotation is transparent — ``Decrypt`` reads the version from the
+ciphertext, so a data key wrapped before a rotation still decrypts afterwards. Yandex
+Cloud *does* report the wrapping version, so ``DataKey.key_version`` carries it for
+observability; nothing depends on it. Wire it with a keyring, e.g.::
 
     Keyring(
         kms=YcKmsKeyManagement(client=kms_client),

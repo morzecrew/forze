@@ -15,6 +15,7 @@ import pytest
 import attrs
 
 from forze.application.integrations.crypto import reencrypt_objects
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockState
 from forze_mock.adapters import MockStorageAdapter
 
@@ -170,5 +171,7 @@ class TestOverwriteStream:
     async def test_rejects_an_unknown_key(self) -> None:
         adapter = _adapter()
 
-        with pytest.raises(Exception):
+        with pytest.raises(CoreException) as ei:
             await adapter.overwrite_stream("nope", _chunks(b"x"))
+
+        assert ei.value.kind is ExceptionKind.NOT_FOUND

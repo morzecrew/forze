@@ -19,7 +19,10 @@ _PROJECT = "forze-test"
 _LOCATION = "global"
 _EMULATOR_PORT = 9010
 # winor30/fake-cloud-kms: an unofficial gRPC Google Cloud KMS emulator for CI.
-_EMULATOR_IMAGE = "winor30/fake-cloud-kms:latest"
+_EMULATOR_IMAGE = (
+    "winor30/fake-cloud-kms@sha256:"
+    "593b9e805af5fb8c8e302b3eded004aa84ffb2c1b24cc5888fb89dc45b1b5908"
+)
 
 
 def _ensure_docker_available() -> None:

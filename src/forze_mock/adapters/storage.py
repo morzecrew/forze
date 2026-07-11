@@ -207,6 +207,9 @@ class MockStorageAdapter(
                 existing,
                 content_type=content_type or existing.content_type,
                 size=len(data),
+                # The object was rewritten, so head() and conditional downloads must
+                # see a fresh modification time rather than the original upload's.
+                created_at=utcnow(),
                 tags=dict(tags) if tags else existing.tags,
             )
 

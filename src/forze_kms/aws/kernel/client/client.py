@@ -7,7 +7,7 @@ require_kms_aws()
 # ....................... #
 
 import asyncio
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -34,6 +34,9 @@ from .port import AwsKmsClientPort
 from .value_objects import AwsKmsConfig, AwsKmsConnectionOpts
 
 # ----------------------- #
+
+_MIN_PENDING_WINDOW_DAYS = 7
+"""Shortest deletion window KMS accepts — used to retire a CMK whose alias never landed."""
 
 
 @final
@@ -301,7 +304,13 @@ class AwsKmsClient(AwsKmsClientPort):
         *,
         description: str | None = None,
     ) -> str:
-        """Create a symmetric CMK via ``CreateKey`` and point *alias* at it."""
+        """Create a symmetric CMK via ``CreateKey`` and point *alias* at it.
+
+        A CMK is only reachable through its alias here, so if aliasing fails the key it
+        just minted would be an orphan — billable, unaddressable, and re-created on every
+        retry. The key is therefore scheduled for deletion on that path, best-effort: a
+        failure to clean up must not mask the aliasing error that caused it.
+        """
 
         async with self.client() as c:
             resp = await c.create_key(Description=description or "")
@@ -310,7 +319,17 @@ class AwsKmsClient(AwsKmsClientPort):
             if not key_id:
                 raise exc.internal("AWS KMS CreateKey returned no KeyId")
 
-            await c.create_alias(AliasName=alias, TargetKeyId=key_id)
+            try:
+                await c.create_alias(AliasName=alias, TargetKeyId=key_id)
+
+            except BaseException:
+                with suppress(Exception):
+                    await c.schedule_key_deletion(
+                        KeyId=key_id,
+                        PendingWindowInDays=_MIN_PENDING_WINDOW_DAYS,
+                    )
+
+                raise
 
         return key_id
 
@@ -341,7 +360,7 @@ class AwsKmsClient(AwsKmsClientPort):
         *,
         pending_window_days: int = 30,
     ) -> None:
-        """Schedule the CMK for deletion after *pending_window_days* (KMS allows 7–30)."""
+        """Schedule the CMK for deletion after *pending_window_days* (KMS allows 7-30)."""
 
         async with self.client() as c:
             await c.schedule_key_deletion(

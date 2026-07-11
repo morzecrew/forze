@@ -14,9 +14,9 @@ from .kernel.client import GcpKmsClient, GcpKmsClientPort, GcpKmsConfig
 
 __all__ = [
     "GcpKmsClient",
+    "GcpKmsClientDepKey",
     "GcpKmsClientPort",
     "GcpKmsConfig",
-    "GcpKmsClientDepKey",
     "GcpKmsDepsModule",
     "GcpKmsKeyManagement",
     "GcpKmsTenantProvisioner",

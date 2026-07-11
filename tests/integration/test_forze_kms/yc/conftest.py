@@ -55,13 +55,16 @@ async def yc_kms_client(yc_key_id: str) -> AsyncGenerator[YcKmsClient]:
     if not iam_token and not raw_key:
         pytest.skip(f"Set {_IAM_ENV} or {_SA_ENV} to authenticate against Yandex Cloud")
 
-    service_account_key = json.loads(raw_key) if raw_key else None
+    # Exactly one credential form: the SDK takes them as alternatives, so supplying
+    # both leaves which one wins up to it. A short-lived IAM token wins when present.
+    credential: dict[str, object] = (
+        {"iam_token": iam_token}
+        if iam_token
+        else {"service_account_key": json.loads(raw_key or "{}")}
+    )
 
     client = YcKmsClient()
-    await client.initialize(
-        iam_token=iam_token,
-        service_account_key=service_account_key,
-    )
+    await client.initialize(**credential)  # type: ignore[arg-type]
 
     yield client
 

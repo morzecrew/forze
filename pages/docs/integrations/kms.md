@@ -186,10 +186,10 @@ What a `KeyRef.key_id` names, per provider:
   `access_key_id` / `secret_access_key` on `awskms_lifecycle_step`, `credentials`
   on `gcpkms_lifecycle_step`, and `iam_token` / `oauth_token` /
   `service_account_key` on `yckms_lifecycle_step`.
-- **Rotation is transparent.** Every wrapped data key names the key version that
-  seals it, so rotating the KEK never orphans data: new writes wrap under the new
-  version while old ciphertext still decrypts. Nothing to migrate, no re-encrypt
-  sweep — see [Searchable fields and rotation](../identity-tenancy-enc/encryption.md#searchable-fields-and-rotation)
+- **Rotation is transparent.** A wrapped data key is decryptable by the KMS without
+  being told which version sealed it, so rotating the KEK never orphans data: new
+  writes wrap under the new version while old ciphertext still decrypts. Nothing to
+  migrate, no re-encrypt sweep — see [Searchable fields and rotation](../identity-tenancy-enc/encryption.md#searchable-fields-and-rotation)
   for the one case that *does* need a re-index.
 - **Data-key length** is `dek_bytes` on the adapter — 32 bytes (AES-256) by
   default, matching the keyring's AEAD; 16 selects AES-128.

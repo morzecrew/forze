@@ -279,6 +279,7 @@ class YcKmsClient(YcKmsClientPort):
         """Create a symmetric key and await the operation, returning the minted id."""
 
         sdk, key_stub = self.__require_key_admin()
+        timeout = self.__timeout_kwargs()
 
         def _create() -> str:
             request = CreateSymmetricKeyRequest(
@@ -287,11 +288,14 @@ class YcKmsClient(YcKmsClientPort):
                 description=description or "",
                 default_algorithm=SymmetricAlgorithm.Value(algorithm),
             )
-            operation = key_stub.Create(request)
+            # The configured deadline covers the whole long-running call: the RPC that
+            # starts it *and* the wait that polls it to completion.
+            operation = key_stub.Create(request, **timeout)
             result = sdk.wait_operation_and_get_result(
                 operation,
                 response_type=SymmetricKey,
                 meta_type=CreateSymmetricKeyMetadata,
+                **timeout,
             )
             key_id: str = result.response.id
 
@@ -311,9 +315,12 @@ class YcKmsClient(YcKmsClientPort):
         """Delete a symmetric key and await the operation."""
 
         sdk, key_stub = self.__require_key_admin()
+        timeout = self.__timeout_kwargs()
 
         def _delete() -> None:
-            operation = key_stub.Delete(DeleteSymmetricKeyRequest(key_id=key_id))
-            sdk.wait_operation_and_get_result(operation)
+            operation = key_stub.Delete(
+                DeleteSymmetricKeyRequest(key_id=key_id), **timeout
+            )
+            sdk.wait_operation_and_get_result(operation, **timeout)
 
         await asyncio.to_thread(_delete)

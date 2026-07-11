@@ -77,8 +77,9 @@ at the same policy, so the planes can't drift.
   `TenantTemplateKeyDirectory(previous_template=…)` / `StaticKeyDirectory(previous_key_ref=…)`,
   or a custom `KeyDirectoryWithPrevious` — then a sweep, then drop the previous key. Without
   the overlap the confused-deputy guard refuses the old envelopes and the data is stranded.
-- **KMS backends:** every one holds the KEK outside the app and self-describes the key
-  version in the envelope, so rotation never orphans data.
+- **KMS backends:** every one holds the KEK outside the app, and its wrapped data key is
+  decryptable without being told which key version sealed it — so rotation never orphans
+  data. (`DataKey.key_version` records the version only where the provider reports one.)
 
     | Backend | Package | `KeyManagementPort` |
     |---------|---------|---------------------|

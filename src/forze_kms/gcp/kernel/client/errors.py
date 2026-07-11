@@ -17,6 +17,10 @@ from forze.base.exceptions import (
 
 # ----------------------- #
 
+_CRYPTO_SITES = frozenset({"gcpkms.encrypt", "gcpkms.decrypt"})
+"""Sites where an ``InvalidArgument`` means the *ciphertext* was rejected, as opposed to a
+malformed key ring / key id on a key-administration call."""
+
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
 def _gcpkms_eh(
@@ -27,16 +31,23 @@ def _gcpkms_eh(
 ) -> CoreException | None:
     """Normalize low-level GCP KMS (google-api-core) errors into the exc hierarchy."""
 
-    _ = site
-
     match exc:
-        # A corrupt / foreign wrapped data key surfaces as InvalidArgument — that
-        # is caller/data-caused, so classify it as validation (the keyring's
-        # confused-deputy guard normally rejects a foreign key_id before KMS).
         case gcp_errors.InvalidArgument():
+            # Both the crypto ops and key administration raise InvalidArgument, so the
+            # call site decides what it means: on encrypt/decrypt it is a corrupt or
+            # foreign wrapped data key (caller/data-caused — the keyring's
+            # confused-deputy guard normally rejects a foreign key_id first), while on
+            # a provisioning call it is a malformed key ring or key id, which must not
+            # be dressed up as a ciphertext failure.
+            if site in _CRYPTO_SITES:
+                return CoreException.validation(
+                    "GCP KMS rejected the ciphertext as invalid.",
+                    code="core.crypto.wrapped_key_invalid",
+                    details=details,
+                )
+
             return CoreException.validation(
-                "GCP KMS rejected the ciphertext as invalid.",
-                code="core.crypto.wrapped_key_invalid",
+                "GCP KMS rejected the request as invalid.",
                 details=details,
             )
 
