@@ -74,6 +74,44 @@ async def test_full_keyring_round_trip_against_kms(
 
 
 @pytest.mark.integration
+async def test_kek_rotation_is_transparent_through_the_keyring(
+    gcp_kms_client: GcpKmsClient, cmk_name: str
+) -> None:
+    """A new CryptoKey version becomes primary while envelopes written under the old
+    version still decrypt — rotation never orphans data."""
+
+    from google.cloud.kms_v1.types import CryptoKeyVersion
+
+    kms = GcpKmsKeyManagement(client=gcp_kms_client)
+    directory = StaticKeyDirectory(KeyRef(key_id=cmk_name))
+    # max_dek_messages=1 forces a fresh (re-wrapped) data key on the post-rotation
+    # write, so its envelope is wrapped under the new primary version.
+    writer = Keyring(kms=kms, aead=AesGcmAead(), directory=directory, max_dek_messages=1)
+
+    env_before = await writer.encrypt(b"before-rotation", tenant=None)
+
+    # Rotate: add a version and make it the primary the next Encrypt uses.
+    async with gcp_kms_client.client() as c:
+        version = await c.create_crypto_key_version(
+            parent=cmk_name, crypto_key_version=CryptoKeyVersion()
+        )
+        await c.update_crypto_key_primary_version(
+            name=cmk_name, crypto_key_version_id=version.name.split("/")[-1]
+        )
+
+    env_after = await writer.encrypt(b"after-rotation", tenant=None)
+
+    # A cold keyring (no warmed caches) must unwrap both envelopes through KMS —
+    # the pre-rotation one under the old version, the post-rotation one under the new.
+    reader = Keyring(kms=kms, aead=AesGcmAead(), directory=directory)
+    assert await reader.decrypt(env_before) == b"before-rotation"
+    assert await reader.decrypt(env_after) == b"after-rotation"
+
+
+# ....................... #
+
+
+@pytest.mark.integration
 async def test_per_tenant_keys_isolate_and_confused_deputy_is_rejected(
     gcp_kms_client: GcpKmsClient,
 ) -> None:

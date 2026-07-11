@@ -1,4 +1,11 @@
-"""Integration tests for AWS KMS envelope key management (LocalStack)."""
+"""Integration tests for AWS KMS envelope key management (LocalStack).
+
+KEK-rotation transparency is not exercised here: AWS KMS rotation keeps the same
+CMK id and rotates the backing material transparently (no version in the wrapped
+blob), and LocalStack 3.8.1 does not implement ``RotateKeyOnDemand``. Observable
+rotation transparency is covered against Vault (``v1``→``v2``) and the GCP KMS
+emulator (primary CryptoKey version) instead.
+"""
 
 from uuid import uuid4
 
