@@ -8,8 +8,8 @@ pytest.importorskip("aioboto3")
 
 from forze.application.contracts.crypto import KeyManagementDepKey, KeyRef
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_awskms import AwsKmsClient, AwsKmsClientPort, AwsKmsKeyManagement
-from forze_awskms.execution import AwsKmsDepsModule
+from forze_kms.aws import AwsKmsClient, AwsKmsClientPort, AwsKmsKeyManagement
+from forze_kms.aws.execution import AwsKmsDepsModule
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #

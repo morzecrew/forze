@@ -19,9 +19,9 @@ from .keys import AwsKmsClientDepKey
 class AwsKmsDepsModule(DepsModule):
     """Register the AWS KMS client and an envelope key-management adapter.
 
-    Give it an :class:`~forze_awskms.kernel.client.AwsKmsClient` (initialized via
-    :func:`~forze_awskms.execution.awskms_lifecycle_step`); the key-management
-    adapter defaults to :class:`~forze_awskms.adapters.AwsKmsKeyManagement` over
+    Give it an :class:`~forze_kms.aws.kernel.client.AwsKmsClient` (initialized via
+    :func:`~forze_kms.aws.execution.awskms_lifecycle_step`); the key-management
+    adapter defaults to :class:`~forze_kms.aws.adapters.AwsKmsKeyManagement` over
     that client and is registered under ``KeyManagementDepKey`` so a
     :class:`~forze.application.execution.CryptoDepsModule` can compose the keyring
     on top of it.
@@ -32,7 +32,7 @@ class AwsKmsDepsModule(DepsModule):
 
     key_management: KeyManagementPort | None = attrs.field(default=None)
     """Optional envelope key manager; defaults to
-    :class:`~forze_awskms.adapters.AwsKmsKeyManagement` over :attr:`client`."""
+    :class:`~forze_kms.aws.adapters.AwsKmsKeyManagement` over :attr:`client`."""
 
     # ....................... #
 

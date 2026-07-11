@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from forze_awskms._compat import require_awskms
+from forze_kms.aws._compat import require_kms_aws
 
-require_awskms()
+require_kms_aws()
 
 # ....................... #
 

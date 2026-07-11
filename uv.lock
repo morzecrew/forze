@@ -1210,13 +1210,6 @@ authn = [
     { name = "email-validator" },
     { name = "pyjwt", extra = ["crypto"] },
 ]
-awskms = [
-    { name = "aioboto3" },
-    { name = "aiobotocore" },
-    { name = "botocore" },
-    { name = "types-aioboto3", extra = ["kms"] },
-    { name = "types-aiobotocore" },
-]
 bigquery = [
     { name = "aiohttp" },
     { name = "gcloud-aio-bigquery" },
@@ -1259,6 +1252,16 @@ inngest = [
 ]
 kafka = [
     { name = "aiokafka" },
+]
+kms-aws = [
+    { name = "aioboto3" },
+    { name = "aiobotocore" },
+    { name = "botocore" },
+    { name = "types-aioboto3", extra = ["kms"] },
+    { name = "types-aiobotocore" },
+]
+kms-gcp = [
+    { name = "google-cloud-kms" },
 ]
 mcp = [
     { name = "fastmcp" },
@@ -1356,10 +1359,10 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "aio-pika", marker = "extra == 'rabbitmq'", specifier = ">=9.6.1" },
-    { name = "aioboto3", marker = "extra == 'awskms'", specifier = ">=15.5.0" },
+    { name = "aioboto3", marker = "extra == 'kms-aws'", specifier = ">=15.5.0" },
     { name = "aioboto3", marker = "extra == 's3'", specifier = ">=15.5.0" },
     { name = "aioboto3", marker = "extra == 'sqs'", specifier = ">=15.5.0" },
-    { name = "aiobotocore", marker = "extra == 'awskms'", specifier = ">=2.25.1" },
+    { name = "aiobotocore", marker = "extra == 'kms-aws'", specifier = ">=2.25.1" },
     { name = "aiobotocore", marker = "extra == 's3'", specifier = ">=2.25.1" },
     { name = "aiobotocore", marker = "extra == 'sqs'", specifier = ">=2.25.1" },
     { name = "aiohttp", marker = "extra == 'bigquery'", specifier = ">=3.11.0" },
@@ -1367,7 +1370,7 @@ requires-dist = [
     { name = "aiokafka", marker = "extra == 'kafka'", specifier = ">=0.14.0" },
     { name = "argon2-cffi", marker = "extra == 'authn'", specifier = ">=25.1.0" },
     { name = "attrs", specifier = ">=25.4.0" },
-    { name = "botocore", marker = "extra == 'awskms'", specifier = ">=1.40.61" },
+    { name = "botocore", marker = "extra == 'kms-aws'", specifier = ">=1.40.61" },
     { name = "botocore", marker = "extra == 's3'", specifier = ">=1.40.61" },
     { name = "botocore", marker = "extra == 'sqs'", specifier = ">=1.40.61" },
     { name = "clickhouse-connect", extras = ["async"], marker = "extra == 'clickhouse'", specifier = ">=1.0.0" },
@@ -1380,6 +1383,7 @@ requires-dist = [
     { name = "gcloud-aio-bigquery", marker = "extra == 'bigquery'", specifier = ">=7.1.0" },
     { name = "gcloud-aio-storage", marker = "extra == 'gcs'", specifier = ">=9.6.0" },
     { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.21.0" },
+    { name = "google-cloud-kms", marker = "extra == 'kms-gcp'", specifier = ">=2.24.0" },
     { name = "httpx", marker = "extra == 'fastapi'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'oidc'", specifier = ">=0.28.0" },
@@ -1415,17 +1419,17 @@ requires-dist = [
     { name = "structlog", specifier = ">=25.0.0" },
     { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.23.0" },
     { name = "typer", marker = "extra == 'cli'", specifier = ">=0.12.0" },
-    { name = "types-aioboto3", extras = ["kms"], marker = "extra == 'awskms'", specifier = ">=15.5.0" },
+    { name = "types-aioboto3", extras = ["kms"], marker = "extra == 'kms-aws'", specifier = ">=15.5.0" },
     { name = "types-aioboto3", extras = ["s3"], marker = "extra == 's3'", specifier = ">=15.5.0" },
     { name = "types-aioboto3", extras = ["sqs"], marker = "extra == 'sqs'", specifier = ">=15.5.0" },
-    { name = "types-aiobotocore", marker = "extra == 'awskms'", specifier = ">=3.1.3" },
+    { name = "types-aiobotocore", marker = "extra == 'kms-aws'", specifier = ">=3.1.3" },
     { name = "types-aiobotocore", marker = "extra == 's3'", specifier = ">=3.1.3" },
     { name = "types-aiobotocore", marker = "extra == 'sqs'", specifier = ">=3.1.3" },
     { name = "types-hvac", marker = "extra == 'vault'", specifier = ">=2.4.0.20260518" },
     { name = "urllib3", marker = "extra == 'vault'", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'fastapi'", specifier = ">=0.42.0" },
 ]
-provides-extras = ["authn", "awskms", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inngest", "kafka", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
+provides-extras = ["authn", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inngest", "kafka", "kms-aws", "kms-gcp", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1669,6 +1673,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4c/83/bdfd4387fadc5f44de1d0f97b456c648b6f87ec0b1818a9f7f477e6e6eab/google_cloud_firestore-2.27.0.tar.gz", hash = "sha256:5633cb164ef56ca6c73a807822191a56a98f6f10e76978c4f2eb197ae03383d2", size = 649244, upload-time = "2026-04-13T22:55:43.931Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6d/db/fc72c4279887cc95011f16e70200d021030f0261e6391fa52e3adfaaea25/google_cloud_firestore-2.27.0-py3-none-any.whl", hash = "sha256:cc2ea78bc2d4dcc928016d56802deacfda3c9bbda0a7d691ee73b41a2f1a80d7", size = 429806, upload-time = "2026-04-13T22:55:41.726Z" },
+]
+
+[[package]]
+name = "google-cloud-kms"
+version = "3.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpc-google-iam-v1" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/74/f1/98966f4c29d156685f1ffe7a385efa29cc32b6d6359892ee4d5b375f5ea4/google_cloud_kms-3.15.0.tar.gz", hash = "sha256:5ca22f243c271d15351a3e9a36f8ace31c49b614c704d9b59b8f2b92ac6bb263", size = 439925, upload-time = "2026-07-08T17:03:50.796Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/bb/dc8af343b2c352e1ac778a4bb88e2e8bdbc137d4203d6a4795179e53146b/google_cloud_kms-3.15.0-py3-none-any.whl", hash = "sha256:e31197570e8909e3741e857d9f414eb4120e59be6e9fa727177b0abe30ef3eac", size = 354499, upload-time = "2026-07-08T17:03:21.397Z" },
 ]
 
 [[package]]

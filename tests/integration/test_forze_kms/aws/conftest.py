@@ -1,4 +1,4 @@
-"""Pytest configuration for forze_awskms integration tests (LocalStack KMS)."""
+"""Pytest configuration for forze_kms.aws integration tests (LocalStack KMS)."""
 
 from typing import AsyncGenerator
 
@@ -11,7 +11,7 @@ from testcontainers.localstack import LocalStackContainer
 pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers.localstack")
 
-from forze_awskms import AwsKmsClient
+from forze_kms.aws import AwsKmsClient
 
 _REGION = "us-east-1"
 
