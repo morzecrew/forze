@@ -3,6 +3,7 @@
 from typing import Any, cast, final
 
 import attrs
+from google.auth.credentials import Credentials
 
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
@@ -23,7 +24,7 @@ class GcpKmsStartupHook(LifecycleHook):
     endpoint: str | None = None
     """Plaintext emulator endpoint (``host:port``); ``None`` targets real GCP."""
 
-    credentials: Any | None = attrs.field(default=None, repr=False)
+    credentials: Credentials | None = attrs.field(default=None, repr=False)
     """Optional ``google.auth`` credentials; ``None`` = application-default."""
 
     config: GcpKmsConfig | None = attrs.field(default=None, repr=False)
@@ -59,7 +60,7 @@ def gcpkms_lifecycle_step(
     name: str = "gcpkms_lifecycle",
     *,
     endpoint: str | None = None,
-    credentials: Any | None = None,
+    credentials: Credentials | None = None,
     config: GcpKmsConfig | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step for GCP KMS client init and shutdown.

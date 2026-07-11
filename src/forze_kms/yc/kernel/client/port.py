@@ -2,6 +2,8 @@
 
 from typing import Awaitable, Protocol
 
+from .value_objects import YcGeneratedDataKey
+
 # ----------------------- #
 
 
@@ -32,11 +34,11 @@ class YcKmsClientPort(Protocol):
         key_id: str,
         *,
         algorithm: str = "AES_256",
-    ) -> Awaitable[tuple[bytes, bytes]]:
+    ) -> Awaitable[YcGeneratedDataKey]:
         """Generate a data key under the symmetric key *key_id*.
 
-        Returns ``(plaintext, ciphertext)`` — the raw data key and the wrapped
-        blob only that key can decrypt. *algorithm* is a Yandex Cloud
+        Returns the raw data key, the wrapped blob only that key can decrypt, and the
+        key version that wrapped it. *algorithm* is a Yandex Cloud
         ``SymmetricAlgorithm`` name (``AES_256`` → a 32-byte key, ``AES_128`` → 16).
         """
 

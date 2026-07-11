@@ -61,16 +61,20 @@ class YcKmsKeyManagement:
     # ....................... #
 
     async def generate_data_key(self, key_ref: KeyRef) -> DataKey:
-        plaintext, ciphertext = await self.client.generate_data_key(
+        generated = await self.client.generate_data_key(
             key_ref.key_id,
             algorithm=_ALGORITHMS[self.dek_bytes],
         )
 
         return DataKey(
-            plaintext=plaintext,
-            wrapped=ciphertext,
+            plaintext=generated.plaintext,
+            wrapped=generated.ciphertext,
             key_id=key_ref.key_id,
-            key_version=None,  # rotation is transparent; the blob self-describes
+            # Yandex Cloud reports the wrapping version, so it rides along for
+            # observability (like a Vault ``vault:vN:`` token). Nothing depends on it:
+            # ``Decrypt`` reads the version from the ciphertext, so rotation stays
+            # transparent and ``unwrap_data_key`` ignores it.
+            key_version=generated.version_id,
         )
 
     # ....................... #

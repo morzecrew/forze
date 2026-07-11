@@ -33,7 +33,10 @@ async def test_generate_then_unwrap_round_trip(
 
     assert len(data_key.plaintext) == 32  # AES-256 data key
     assert data_key.wrapped  # wrapped blob only the KMS key can decrypt
-    assert data_key.key_version is None  # rotation is transparent
+    # Yandex Cloud reports the wrapping version, so it is carried in the envelope.
+    # Decrypt never needs it (it reads the version from the ciphertext), so rotation
+    # stays transparent — the round-trip below proves the unwrap ignores it.
+    assert data_key.key_version
 
     recovered = await kms.unwrap_data_key(
         wrapped=data_key.wrapped,

@@ -32,7 +32,7 @@ from forze.base.exceptions import exc
 from .._logger import logger
 from .errors import exc_interceptor
 from .port import YcKmsClientPort
-from .value_objects import YcKmsConfig
+from .value_objects import YcGeneratedDataKey, YcKmsConfig
 
 # ----------------------- #
 
@@ -181,11 +181,12 @@ class YcKmsClient(YcKmsClientPort):
         key_id: str,
         *,
         algorithm: str = "AES_256",
-    ) -> tuple[bytes, bytes]:
+    ) -> YcGeneratedDataKey:
         """Generate a data key under *key_id* via ``SymmetricCrypto.GenerateDataKey``.
 
-        :returns: ``(plaintext, ciphertext)`` — the raw data key and the wrapped blob
-            (self-describing: it names its own key version).
+        The wrapped blob is self-describing (``Decrypt`` selects the version from it), and
+        the response also reports which version wrapped the key — carried through for
+        observability.
         """
 
         stub = self.__require_stub()
@@ -204,7 +205,13 @@ class YcKmsClient(YcKmsClientPort):
         if not plaintext or not ciphertext:
             raise exc.internal("YC KMS GenerateDataKey returned no key material")
 
-        return plaintext, ciphertext
+        version_id: str = response.version_id
+
+        return YcGeneratedDataKey(
+            plaintext=plaintext,
+            ciphertext=ciphertext,
+            version_id=version_id or None,
+        )
 
     # ....................... #
 

@@ -20,6 +20,7 @@ from yandex.cloud.kms.v1.symmetric_key_pb2 import SymmetricAlgorithm
 from forze.application.contracts.crypto import KeyManagementDepKey, KeyRef
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_kms.yc import YcKmsClient, YcKmsClientPort, YcKmsKeyManagement
+from forze_kms.yc.kernel.client import YcGeneratedDataKey
 from forze_kms.yc.execution import YcKmsDepsModule
 from tests.support.execution_context import context_from_modules
 
@@ -31,9 +32,12 @@ _WRAPPED = b"\x01\x02wrapped-data-key"
 
 
 class _GenerateResponse:
-    def __init__(self, plaintext: bytes, ciphertext: bytes) -> None:
+    def __init__(
+        self, plaintext: bytes, ciphertext: bytes, version_id: str = "1"
+    ) -> None:
         self.data_key_plaintext = plaintext
         self.data_key_ciphertext = ciphertext
+        self.version_id = version_id
 
 
 class _DecryptResponse:
@@ -70,10 +74,12 @@ async def test_generate_data_key_builds_request_and_unpacks_response() -> None:
     stub.GenerateDataKey.return_value = _GenerateResponse(_DEK, _WRAPPED)
 
     client = _client_with_stub(stub)
-    plaintext, ciphertext = await client.generate_data_key(_KEY)
+    generated = await client.generate_data_key(_KEY)
 
-    assert plaintext == _DEK
-    assert ciphertext == _WRAPPED
+    assert generated.plaintext == _DEK
+    assert generated.ciphertext == _WRAPPED
+    # Yandex Cloud reports the wrapping version (AWS's blob does not) — surfaced.
+    assert generated.version_id == "1"
 
     request = stub.GenerateDataKey.call_args[0][0]
     assert request.key_id == _KEY
@@ -142,7 +148,11 @@ async def test_uninitialized_client_fails_closed() -> None:
 
 async def test_generate_data_key_builds_datakey() -> None:
     client = MagicMock(spec=YcKmsClient)
-    client.generate_data_key = AsyncMock(return_value=(_DEK, _WRAPPED))
+    client.generate_data_key = AsyncMock(
+        return_value=YcGeneratedDataKey(
+            plaintext=_DEK, ciphertext=_WRAPPED, version_id="3"
+        )
+    )
 
     kms = YcKmsKeyManagement(client=client)
     data_key = await kms.generate_data_key(KeyRef(key_id=_KEY))
@@ -150,13 +160,17 @@ async def test_generate_data_key_builds_datakey() -> None:
     assert data_key.plaintext == _DEK
     assert data_key.wrapped == _WRAPPED
     assert data_key.key_id == _KEY
-    assert data_key.key_version is None  # rotation is transparent
+    # The wrapping version rides along for observability; decrypt never needs it, so
+    # rotation stays transparent.
+    assert data_key.key_version == "3"
     client.generate_data_key.assert_awaited_once_with(_KEY, algorithm="AES_256")
 
 
 async def test_generate_data_key_honors_dek_length() -> None:
     client = MagicMock(spec=YcKmsClient)
-    client.generate_data_key = AsyncMock(return_value=(_DEK[:16], _WRAPPED))
+    client.generate_data_key = AsyncMock(
+        return_value=YcGeneratedDataKey(plaintext=_DEK[:16], ciphertext=_WRAPPED)
+    )
 
     kms = YcKmsKeyManagement(client=client, dek_bytes=16)
     await kms.generate_data_key(KeyRef(key_id=_KEY))
@@ -172,6 +186,21 @@ async def test_unwrap_round_trips_through_client() -> None:
 
     assert await kms.unwrap_data_key(wrapped=_WRAPPED, key_ref=KeyRef(key_id=_KEY)) == _DEK
     client.decrypt.assert_awaited_once_with(_KEY, _WRAPPED)
+
+
+async def test_unwrap_ignores_the_envelope_key_version() -> None:
+    """The version rides along for observability only — Decrypt reads it from the
+    ciphertext, so an envelope's recorded version must not steer the unwrap."""
+
+    client = MagicMock(spec=YcKmsClient)
+    client.decrypt = AsyncMock(return_value=_DEK)
+
+    kms = YcKmsKeyManagement(client=client)
+    await kms.unwrap_data_key(
+        wrapped=_WRAPPED, key_ref=KeyRef(key_id=_KEY, version="7")
+    )
+
+    client.decrypt.assert_awaited_once_with(_KEY, _WRAPPED)  # version not passed
 
 
 def test_unsupported_dek_length_fails_closed() -> None:

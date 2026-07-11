@@ -13,6 +13,7 @@ from typing import Any, AsyncGenerator, final
 import attrs
 import grpc
 from google.api_core.exceptions import AlreadyExists
+from google.auth.credentials import Credentials
 from google.cloud.kms_v1.services.key_management_service import (
     KeyManagementServiceAsyncClient,
 )
@@ -75,7 +76,7 @@ class GcpKmsClient(GcpKmsClientPort):
         self,
         *,
         endpoint: str | None = None,
-        credentials: Any | None = None,
+        credentials: Credentials | None = None,
         config: GcpKmsConfig | None = None,
     ) -> None:
         """Open the long-lived async KMS client.
