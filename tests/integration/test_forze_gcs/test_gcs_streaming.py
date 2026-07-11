@@ -158,3 +158,49 @@ async def test_gcs_streamed_encrypted_multipart(
 
     ranged = await query.download_range(stored.key, start=7 * MIB, end=7 * MIB + 99)
     assert ranged.data == data[7 * MIB : 7 * MIB + 100]
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_gcs_reencrypt_objects_reseals_in_place_preserving_metadata(
+    gcs_client: GCSClient, gcs_bucket: str
+) -> None:
+    """The blob break-glass sweep on GCS: same key, same plaintext, FRESH envelope.
+
+    GCS has no native multipart session — the object is composed and its user metadata
+    stamped on the destination — so this pins that path independently of S3's.
+    """
+
+    from forze.application.contracts.storage.value_objects import UploadedObject
+    from forze.application.integrations.crypto import reencrypt_objects
+
+    ctx = _encrypted_ctx(gcs_client, gcs_bucket)
+    spec = StorageSpec(name=gcs_bucket)
+    storage_q = ctx.storage.query(spec)
+    storage_c = ctx.storage.command(spec)
+
+    # `upload()` persists the metadata envelope (filename/description).
+    stored = await storage_c.upload(
+        UploadedObject(filename="secret.txt", data=b"top-secret-payload"),
+    )
+
+    async with gcs_client.client():
+        before = (
+            await gcs_client.download_bytes(bucket=gcs_bucket, key=stored.key)
+        ).data
+
+    assert await reencrypt_objects(storage_q, storage_c) == 1
+
+    async with gcs_client.client():
+        after = (
+            await gcs_client.download_bytes(bucket=gcs_bucket, key=stored.key)
+        ).data
+
+    assert after != before  # re-sealed under a fresh data key
+    assert (await storage_q.download(stored.key)).data == b"top-secret-payload"
+
+    # The metadata envelope survived the compose round-trip.
+    assert (await storage_q.download_stream(stored.key)).filename == "secret.txt"

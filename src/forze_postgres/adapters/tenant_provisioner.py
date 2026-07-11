@@ -7,6 +7,12 @@ other ``namespace``-tier backends — a BigQuery dataset or a ClickHouse databas
 ``FunctionTenantProvisioner`` wrapping the backend client is usually enough.
 """
 
+from forze_postgres._compat import require_psycopg
+
+require_psycopg()
+
+# ....................... #
+
 from typing import cast
 
 import attrs
@@ -16,7 +22,7 @@ from psycopg.abc import QueryNoTemplate
 from forze.application.contracts.resolution import NamedResourceSpec, resolve_value
 from forze.application.contracts.tenancy import TenantIdentity, TenantProvisionerPort
 
-from forze_postgres.kernel.client import PostgresClientPort
+from ..kernel.client import PostgresClientPort
 
 # ----------------------- #
 

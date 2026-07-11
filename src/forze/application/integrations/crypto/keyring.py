@@ -28,6 +28,7 @@ import attrs
 from forze.application.contracts.crypto import (
     CryptoKeyringStats,
     KeyDirectoryPort,
+    KeyDirectoryWithPrevious,
     KeyManagementPort,
     KeyRef,
 )
@@ -912,6 +913,37 @@ class Keyring:
 
     # ....................... #
 
+    async def _previous_key_id(self, tenant: TenantIdentity | None) -> str | None:
+        """*tenant*'s previous key id during a KEK-migration overlap, else ``None``.
+
+        A directory that does not implement :class:`KeyDirectoryWithPrevious` has no
+        overlap, so this is a no-op for the ordinary case.
+
+        The answer is deliberately **not** cached here. It is the one input that decides
+        how wide the key-id guard is open, and a stale copy is wrong in both directions:
+        a remembered absence would keep rejecting the outgoing key's envelopes after an
+        overlap is opened (stranding the migration), and a remembered presence would keep
+        *accepting* them after it is dropped (leaving the guard widened past the point the
+        operator closed it). Only the directory knows whether its answer can change, so it
+        is the directory's business to memoize — see
+        :class:`~forze_kms.yc.adapters.YcKmsKeyDirectory`, whose lookup is an API call and
+        whose configuration is frozen, making the memo safe there.
+
+        The lookup is confined to the path that does not match the tenant's current key,
+        which in steady state is only the rejection path (already about to raise).
+        """
+
+        directory = self.directory
+
+        if not isinstance(directory, KeyDirectoryWithPrevious):
+            return None
+
+        previous = await directory.resolve_previous(tenant)
+
+        return None if previous is None else previous.key_id
+
+    # ....................... #
+
     async def _authorize_key_id_value(
         self,
         key_id: str,
@@ -929,9 +961,16 @@ class Keyring:
         if expected is None:
             expected = (await self._resolve_key_ref(tenant)).key_id
 
-        if key_id != expected:
-            raise exc.validation(
-                "Envelope key id does not belong to the active tenant; refusing to "
-                "unwrap under a key the caller does not own.",
-                code="core.crypto.key_id_unauthorized",
-            )
+        if key_id == expected:
+            return
+
+        # A KEK migration opens a read overlap: the tenant's *previous* key stays
+        # readable so a sweep can re-encrypt onto the current one. Writes never use it.
+        if key_id == await self._previous_key_id(tenant):
+            return
+
+        raise exc.validation(
+            "Envelope key id does not belong to the active tenant; refusing to "
+            "unwrap under a key the caller does not own.",
+            code="core.crypto.key_id_unauthorized",
+        )

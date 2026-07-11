@@ -405,6 +405,59 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
+    def _description_from_metadata(
+        self,
+        metadata: Mapping[str, str],
+    ) -> str | None:
+        """Decode the description from the object's metadata envelope, if it carries one.
+
+        Absent for objects with no envelope (a presigned ``PUT``, a streamed upload), so
+        this answers ``None`` rather than raising.
+        """
+
+        if not metadata:
+            return None
+
+        try:
+            meta = object_metadata_from_user_metadata(dict(metadata))
+
+        except CoreException:
+            raise
+
+        except Exception as e:
+            raise exc.internal("Invalid object metadata") from e
+
+        return default_b64_codec.loads(meta.description) if meta.description else None
+
+    # ....................... #
+
+    def _created_at_from_metadata(
+        self,
+        metadata: Mapping[str, str],
+    ) -> datetime | None:
+        """Decode the *creation* time from the object's metadata envelope, if present.
+
+        A rewrite does not create the object, and it leaves this envelope untouched — so
+        reporting the current time would move every object's creation time to the sweep
+        and disagree with what the next read decodes. ``None`` when there is no envelope.
+        """
+
+        if not metadata:
+            return None
+
+        try:
+            meta = object_metadata_from_user_metadata(dict(metadata))
+
+        except CoreException:
+            raise
+
+        except Exception as e:
+            raise exc.internal("Invalid object metadata") from e
+
+        return meta.created_at
+
+    # ....................... #
+
     def _stored_from_head(
         self,
         key: str,
@@ -545,6 +598,98 @@ class ObjectStorageAdapter(
             )
 
         return self.cipher
+
+    # ....................... #
+
+    async def overwrite_stream(
+        self,
+        key: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        tags: Mapping[str, str] | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> StoredObject:
+        """Replace the object at *key* from a stream of chunks, in bounded memory.
+
+        The write-side counterpart of :meth:`download_stream`, and the only write that
+        takes a **caller-supplied key** rather than minting one — so it is guarded like
+        the other key-taking paths (:meth:`_validate_key`: a key outside the active
+        tenant's prefix is refused). Re-writing *the same key* keeps the encryption AAD
+        (which binds ``(bucket, key)``) valid, which is what makes an in-place
+        re-encryption possible; see ``reencrypt_objects``.
+
+        On an encrypting route the plaintext is re-sealed chunk-by-chunk under a **fresh
+        data key** — that is the point: it is how a compromised key is retired. Carry the
+        object's *metadata*, *content_type*, and *tags* over from a
+        :meth:`head` so the round-trip preserves them.
+        """
+
+        self._validate_key(key)
+
+        bucket = await self._resolved_bucket()
+        resolved_type = content_type or "application/octet-stream"
+        meta_map = dict(metadata) if metadata else None
+
+        size_box = [0]
+        counted = _count_bytes(chunks, size_box)
+
+        if self.cipher is not None:
+            byte_source: AsyncIterator[bytes] = self._streaming_cipher().encrypt_stream(
+                counted,
+                tenant=self._cipher_tenant(),
+                aad=self._encryption_aad(bucket, key),
+                chunk_size=chunk_size,
+            )
+        else:
+            byte_source = counted
+
+        async with self.client.client():
+            upload_id = await self.client.create_multipart_upload(
+                bucket=bucket,
+                key=key,
+                content_type=resolved_type,
+                metadata=meta_map,
+                sse=self.sse,
+            )
+
+            try:
+                parts = await self._upload_stream_parts(
+                    bucket, key, upload_id, byte_source
+                )
+                await self.client.complete_multipart_upload(
+                    bucket=bucket,
+                    key=key,
+                    upload_id=upload_id,
+                    parts=parts,
+                    content_type=resolved_type,
+                    metadata=meta_map,
+                    sse=self.sse,
+                )
+
+            except BaseException:
+                with suppress(Exception):
+                    await self.client.abort_multipart_upload(
+                        bucket=bucket, key=key, upload_id=upload_id
+                    )
+                raise
+
+            if tags:
+                await self.client.put_object_tags(bucket, key, tags)
+
+        return StoredObject(
+            key=key,
+            filename=self._filename_from_metadata(key, meta_map or {}),
+            # The carried-over envelope still holds the description and the creation time,
+            # so report them rather than answering None / "now" and having a caller wipe
+            # the description and re-date the object from an index, cache, or response.
+            description=self._description_from_metadata(meta_map or {}),
+            content_type=resolved_type,
+            size=size_box[0],
+            created_at=self._created_at_from_metadata(meta_map or {}) or utcnow(),
+            tags=dict(tags) if tags else None,
+        )
 
     # ....................... #
 

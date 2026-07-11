@@ -24,7 +24,7 @@ extras in `pyproject.toml`; each `forze[<name>]` maps to the `<name>` extra.
 | **Workflows** | `temporal` · `inngest` |
 | **Inbound** | `fastapi` · `socketio` · `mcp` |
 | **Identity** | `authn` · `oidc` |
-| **Secrets** | `vault` |
+| **Secrets & keys** | `vault` · `kms-aws` · `kms-gcp` · `kms-yc` |
 | **Outbound** | `http` |
 
 Each row maps to a `forze[<extra>]` package; their precise contract coverage is

@@ -18,6 +18,26 @@ class KeyManagementPort(Protocol):
     plaintext data keys. This is the BYOK seam: a customer-managed backend
     resolves the customer's own key, while a framework-managed backend resolves a
     key the deployment provisions.
+
+    **Two methods, deliberately** — there is no ``rotate``, ``list_versions``, or
+    ``rewrap`` here, and adding one would be a mistake:
+
+    - *Rotating a key version* is the backend's own concern and is already
+      transparent: a wrapped data key is decryptable by the backend without being told
+      which version sealed it, so data written before a rotation still decrypts
+      afterwards and new writes pick up the new version by themselves. Nothing to sweep,
+      nothing to call. (:attr:`DataKey.key_version` records the version only where the
+      provider reports one — it never *drives* the unwrap.)
+    - *Retiring* old key material is a re-encryption, not a rewrap:
+      ``reencrypt_documents`` / ``reencrypt_objects`` already re-seal under the
+      current key as a side effect of their read→write round-trip. A rewrap that
+      swapped only the wrapped data key would save no I/O (the row or object is
+      rewritten either way), and no backend agrees on how to express it.
+    - *Replacing a key* is a directory concern, not a backend one — see
+      :class:`~forze.application.contracts.crypto.KeyDirectoryWithPrevious`.
+
+    Keeping the surface at two methods is what lets any KMS — including one this
+    project has never seen — be a few lines of adapter.
     """
 
     def generate_data_key(self, key_ref: KeyRef) -> Awaitable[DataKey]:

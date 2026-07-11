@@ -68,10 +68,28 @@ at the same policy, so the planes can't drift.
 - **Per-tenant keys (BYOK):** swap `StaticKeyDirectory` for `TenantTemplateKeyDirectory`
   (`template="tenant/{tenant_id}/kek"`) so each tenant's data is unreadable with
   another's key. The KEK is provisioned through the same `TenantProvisionerPort` as
-  schemas and buckets — `forze_vault` ships `VaultTransitTenantProvisioner`.
-- **KMS backends:** Vault Transit (`VaultTransitKeyManagement`) is the shipped backend;
-  `MockKeyManagement` is **dev/test only** (it protects nothing). Cloud KMS (AWS/GCP/
-  Azure) is a custom `KeyManagementPort` — not shipped.
+  schemas and buckets — every backend ships one (`VaultTransitTenantProvisioner`,
+  `AwsKmsTenantProvisioner`, `GcpKmsTenantProvisioner`, `YcKmsTenantProvisioner`), and
+  teardown is opt-in (`allow_deletion`). Yandex Cloud mints its key ids, so it pairs with
+  `YcKmsKeyDirectory` (name lookup) rather than a template directory.
+- **Replacing a KEK:** rotating a key *version* needs no action (the key id is unchanged, so
+  old envelopes still decrypt). Replacing the *key* needs a read overlap —
+  `TenantTemplateKeyDirectory(previous_template=…)` / `StaticKeyDirectory(previous_key_ref=…)`,
+  or a custom `KeyDirectoryWithPrevious` — then a sweep, then drop the previous key. Without
+  the overlap the confused-deputy guard refuses the old envelopes and the data is stranded.
+- **KMS backends:** every one holds the KEK outside the app, and its wrapped data key is
+  decryptable without being told which key version sealed it — so rotation never orphans
+  data. (`DataKey.key_version` records the version only where the provider reports one.)
+
+    | Backend | Package | `KeyManagementPort` |
+    |---------|---------|---------------------|
+    | Vault Transit | `forze[vault]` | `VaultTransitKeyManagement` |
+    | AWS KMS | `forze[kms-aws]` | `AwsKmsKeyManagement` |
+    | Google Cloud KMS | `forze[kms-gcp]` | `GcpKmsKeyManagement` |
+    | Yandex Cloud KMS | `forze[kms-yc]` | `YcKmsKeyManagement` |
+
+    `MockKeyManagement` is **dev/test only** (it protects nothing). Any other KMS — Azure,
+    an HSM — is a custom `KeyManagementPort`. See [Cloud KMS](../integrations/kms.md).
 - **`required_encryption` floor:** set it on a deps module and wiring refuses to assemble
   any surface whose derived coverage is weaker — a fail-closed floor checked once at
   startup. See [Encryption → Declaring a minimum](../identity-tenancy-enc/encryption.md#declaring-a-minimum).

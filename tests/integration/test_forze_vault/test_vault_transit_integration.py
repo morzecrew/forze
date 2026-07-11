@@ -77,3 +77,33 @@ async def test_full_keyring_round_trip_against_vault(
     blob = await keyring.encrypt(b"sensitive payload", tenant=None, aad=b"ctx")
 
     assert await keyring.decrypt(blob, aad=b"ctx") == b"sensitive payload"
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+async def test_kek_rotation_bumps_version_and_stays_transparent(
+    transit_kms: VaultTransitKeyManagement,
+    vault_container,
+) -> None:
+    """Rotating the Transit key wraps new data keys under a new version while old
+    wrapped keys still unwrap — rotation never orphans data."""
+
+    _, hvac_client = vault_container
+
+    dk_v1 = await transit_kms.generate_data_key(KeyRef(key_id=_KEY))
+    assert dk_v1.key_version == "v1"
+
+    # Rotate the KEK (Transit key) to a new version.
+    hvac_client.secrets.transit.rotate_key(name=_KEY, mount_point="transit")
+
+    # New data keys are wrapped under the new version...
+    dk_v2 = await transit_kms.generate_data_key(KeyRef(key_id=_KEY))
+    assert dk_v2.key_version == "v2"
+
+    # ...and the pre-rotation wrapped key still unwraps (self-describing envelope).
+    recovered = await transit_kms.unwrap_data_key(
+        wrapped=dk_v1.wrapped, key_ref=KeyRef(key_id=_KEY)
+    )
+    assert recovered == dk_v1.plaintext

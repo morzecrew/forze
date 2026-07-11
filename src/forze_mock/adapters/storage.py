@@ -172,6 +172,55 @@ class MockStorageAdapter(
 
     # ....................... #
 
+    async def overwrite_stream(
+        self,
+        key: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        tags: Mapping[str, str] | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> StoredObject:
+        """Replace the object at *key* from a stream (the mock holds no cipher).
+
+        The mock stores plaintext, so an "re-encryption" round-trip is a faithful
+        rewrite of the same bytes at the same key; it exists so a sweep can be exercised
+        without a real backend.
+        """
+
+        _ = (chunk_size, metadata)
+
+        buffer = bytearray()
+        async for piece in chunks:
+            buffer.extend(piece)
+
+        data = bytes(buffer)
+
+        with self.state.lock:
+            existing = self._objects().get(key)
+
+            if existing is None:
+                raise exc.not_found(f"Object not found: {key}")
+
+            stored = attrs.evolve(
+                existing,
+                content_type=content_type or existing.content_type,
+                size=len(data),
+                # The object was rewritten, so head() and conditional downloads must
+                # see a fresh modification time rather than the original upload's.
+                created_at=utcnow(),
+                tags=dict(tags) if tags else existing.tags,
+            )
+
+            self._objects()[key] = stored
+            self._payloads()[key] = data
+            self._record_sse(key)
+
+        return stored
+
+    # ....................... #
+
     async def download_stream(self, key: str) -> StreamedDownload:
         """Return the stored bytes as a chunked async body (bounded-memory shape)."""
 

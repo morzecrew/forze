@@ -44,7 +44,7 @@ from .kernel.relation import (
     coerce_relation_spec,
     require_static_relation,
 )
-from .provisioning import PostgresSchemaTenantProvisioner
+from .adapters import PostgresSchemaTenantProvisioner
 
 # ----------------------- #
 

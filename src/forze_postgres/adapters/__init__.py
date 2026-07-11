@@ -13,12 +13,14 @@ from .search import (
     VectorHubLegEngine,
     hub_leg_engine_for,
 )
+from .tenant_provisioner import PostgresSchemaTenantProvisioner
 from .txmanager import PostgresTxManagerAdapter, PostgresTxScopeKey
 
 # ----------------------- #
 
 __all__ = [
     "PostgresDocumentAdapter",
+    "PostgresSchemaTenantProvisioner",
     "FtsHubLegEngine",
     "HubLegRuntime",
     "HubSearchLegEngine",

@@ -210,6 +210,31 @@ class StorageCommandPort(Protocol):
         """
         ...  # pragma: no cover
 
+    def overwrite_stream(
+        self,
+        key: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        tags: Mapping[str, str] | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> Awaitable[StoredObject]:
+        """Replace the object at *key* from a stream of chunks, in bounded memory.
+
+        The only write that takes a **caller-supplied key** instead of minting one, so
+        it is subject to the same key guard as the other key-taking paths (a key outside
+        the active tenant's namespace is refused). Re-writing the same key keeps the
+        encryption AAD — which binds the object to its key — valid, which is what makes
+        an in-place re-encryption possible.
+
+        On an encrypting route the plaintext is re-sealed under a **fresh data key**.
+        Pass the object's existing *content_type*, *metadata*, and *tags* (from a
+        ``head``) so the round-trip preserves them.
+        """
+
+        ...  # pragma: no cover
+
     def upload_stream(
         self,
         chunks: AsyncIterator[bytes],

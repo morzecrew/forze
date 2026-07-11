@@ -52,9 +52,10 @@ CryptoDepsModule(
 
 That registers the key manager, the AEAD, the directory, and the composed
 `Keyring` under their dep keys. Integrations that opt into encryption resolve the
-keyring from here — they never construct one. The shipped KMS backend is
-[Vault Transit](../integrations/vault.md). For per-tenant keys, swap the directory
-(see [Per-tenant keys](#per-tenant-keys-byok) below).
+keyring from here — they never construct one. Swap `kms` for any backend that
+holds your KEK: [Vault Transit](../integrations/vault.md), or AWS, Google Cloud,
+and Yandex Cloud [KMS](../integrations/kms.md). For per-tenant keys, swap the
+directory (see [Per-tenant keys](#per-tenant-keys-byok) below).
 
 !!! warning "`MockKeyManagement` is dev/test only"
 
@@ -197,6 +198,31 @@ searchable value under the new root, then drop the previous one.
     identical ciphertexts. Mark a field `searchable` only when you must query it
     by exact value; otherwise leave it randomized in `FieldEncryption.encrypted`.
 
+## Re-encrypting stored data
+
+Routine KEK rotation needs no sweep: envelopes are self-describing, so a value
+sealed under an older key version still decrypts. You re-encrypt for a different
+reason — to retire key material after a suspected compromise, or as the re-index
+step of a searchable-key rotation.
+
+There is one sweep per **persistent** surface:
+
+```python
+from forze.application.integrations.crypto import reencrypt_documents, reencrypt_objects
+
+await reencrypt_documents(docs_q, docs_c, to_update=lambda d: CustomerUpdate(email=d.email))
+await reencrypt_objects(blobs_q, blobs_c)
+```
+
+Each streams the data through and writes it back; the read→write round-trip re-seals
+it under a fresh data key. `reencrypt_objects` rewrites every object **in place** — an
+object's associated data binds it to its key, so it is never copied to a new one — and
+holds only one chunk in memory, however large the object. Both are resumable: re-run an
+interrupted sweep.
+
+Nothing else needs a sweep. Outbox rows drain as they relay, and idempotency results and
+search snapshots expire on their TTL.
+
 ## Declaring a minimum
 
 As with tenant isolation, coverage can be **prescriptive**. Set
@@ -253,6 +279,41 @@ TenancyDepsModule(
 Compose it with other provisioners (a schema, a bucket, a key) via
 `CompositeTenantProvisioner` so onboarding a tenant readies every backend at
 once.
+
+The [cloud KMS backends](../integrations/kms.md) ship the same seam —
+`AwsKmsTenantProvisioner`, `GcpKmsTenantProvisioner`, and
+`YcKmsTenantProvisioner` — so a tenant's KEK is created on onboarding there too.
+Yandex Cloud mints its key ids, so it pairs with `YcKmsKeyDirectory` (which looks
+a tenant's key up by name) instead of a template directory.
+
+### Replacing a key
+
+Rotating a key *version* needs nothing: the key id does not change, so envelopes written
+before the rotation keep decrypting. Replacing the **key itself** is different — the
+keyring refuses an envelope whose key id is not the one the directory resolves for that
+tenant (the same guard that stops one tenant's key unwrapping another's), so swapping a
+live tenant's `key_id` outright would strand everything under the old key: it could not
+even be read back in order to migrate it.
+
+Name the outgoing key as the **previous** one instead. Reads then accept both while writes
+go only to the new key, so a sweep can move the data across:
+
+```python
+directory = TenantTemplateKeyDirectory(
+    template="tenant/{tenant_id}/kek-v2",           # new writes land here
+    previous_template="tenant/{tenant_id}/kek-v1",  # ...and old reads still work
+    default_key_id="shared-kek",
+)
+```
+
+Run the [sweeps](#re-encrypting-stored-data), drop `previous_template`, and the old key is
+free to destroy. The overlap widens the accepted set to exactly that tenant's current and
+previous key — a third key is still refused, each tenant's overlap resolves separately, and
+dropping it restores the guard.
+
+`StaticKeyDirectory(previous_key_ref=…)` does the same for a single-key deployment. A
+store-backed directory — one BYOK customer replacing their own key — implements
+`KeyDirectoryWithPrevious` directly.
 
 ## Observability
 
