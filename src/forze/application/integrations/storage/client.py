@@ -512,9 +512,15 @@ class ObjectStorageClientPort(Protocol):
         key: str,
         *,
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> Awaitable[str]:
         """Open a multipart upload and return its backend upload id.
+
+        *metadata* is the object's user metadata. Like *content_type*, it is bound
+        where the backend allows: **S3** binds it here (``CreateMultipartUpload``);
+        **GCS** has no native session, so it applies metadata to the composed
+        destination in :meth:`complete_multipart_upload` instead.
 
         S3 ``CreateMultipartUpload`` returns an ``UploadId``. GCS has no
         native session, so the client returns a generated temp part-key
@@ -594,9 +600,15 @@ class ObjectStorageClientPort(Protocol):
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> Awaitable[None]:
         """Assemble the uploaded parts into the final object.
+
+        *metadata* is consumed by **GCS** only (the composed destination carries no
+        metadata from the temp parts); **S3** binds it at
+        :meth:`create_multipart_upload` and ignores it here — the same split
+        *content_type* already follows.
 
         S3 ``CompleteMultipartUpload`` (requires ``{PartNumber, ETag}`` per
         part, ascending). GCS chained ``compose`` of the temp parts in

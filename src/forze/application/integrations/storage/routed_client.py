@@ -246,6 +246,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         key: str,
         *,
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> str:
         inner = await self._get_client()
@@ -255,6 +256,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 bucket,
                 key,
                 content_type=content_type,
+                metadata=metadata,
                 sse=sse,
             )
 
@@ -324,6 +326,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> None:
         inner = await self._get_client()
@@ -335,6 +338,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 upload_id=upload_id,
                 parts=parts,
                 content_type=content_type,
+                metadata=metadata,
                 sse=sse,
             )
 

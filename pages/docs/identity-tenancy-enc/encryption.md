@@ -198,6 +198,31 @@ searchable value under the new root, then drop the previous one.
     identical ciphertexts. Mark a field `searchable` only when you must query it
     by exact value; otherwise leave it randomized in `FieldEncryption.encrypted`.
 
+## Re-encrypting stored data
+
+Routine KEK rotation needs no sweep: envelopes are self-describing, so a value
+sealed under an older key version still decrypts. You re-encrypt for a different
+reason — to retire key material after a suspected compromise, or as the re-index
+step of a searchable-key rotation.
+
+There is one sweep per **persistent** surface:
+
+```python
+from forze.application.integrations.crypto import reencrypt_documents, reencrypt_objects
+
+await reencrypt_documents(docs_q, docs_c, to_update=lambda d: CustomerUpdate(email=d.email))
+await reencrypt_objects(blobs_q, blobs_c)
+```
+
+Each streams the data through and writes it back; the read→write round-trip re-seals
+it under a fresh data key. `reencrypt_objects` rewrites every object **in place** — an
+object's associated data binds it to its key, so it is never copied to a new one — and
+holds only one chunk in memory, however large the object. Both are resumable: re-run an
+interrupted sweep.
+
+Nothing else needs a sweep. Outbox rows drain as they relay, and idempotency results and
+search snapshots expire on their TTL.
+
 ## Declaring a minimum
 
 As with tenant isolation, coverage can be **prescriptive**. Set
@@ -260,6 +285,18 @@ The [cloud KMS backends](../integrations/kms.md) ship the same seam —
 `YcKmsTenantProvisioner` — so a tenant's KEK is created on onboarding there too.
 Yandex Cloud mints its key ids, so it pairs with `YcKmsKeyDirectory` (which looks
 a tenant's key up by name) instead of a template directory.
+
+!!! warning "Changing a tenant's key **id** strands its existing data"
+
+    The keyring refuses an envelope whose key id is not the one the directory
+    currently resolves for that tenant (`core.crypto.key_id_unauthorized`) — the same
+    guard that stops one tenant's key from unwrapping another's data. So repointing a
+    tenant at a *different* KEK makes everything already written under the old one
+    unreadable: it cannot even be read back in order to migrate it.
+
+    Rotating a key **version** is safe and needs no action — the id does not change,
+    and old envelopes keep decrypting. Replacing the **key itself** is what is not yet
+    supported; don't edit a live tenant's `key_id` or the directory template.
 
 ## Observability
 

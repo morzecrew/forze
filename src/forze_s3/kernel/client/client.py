@@ -995,6 +995,7 @@ class S3Client(S3ClientPort):
         key: str,
         *,
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> str:
         """Open a native S3 multipart upload via ``CreateMultipartUpload``.
@@ -1014,6 +1015,9 @@ class S3Client(S3ClientPort):
 
         if content_type is not None:
             kwargs["ContentType"] = content_type
+
+        if metadata:
+            kwargs["Metadata"] = dict(metadata)
 
         kwargs.update(_s3_sse_extra_args(sse))
 
@@ -1154,6 +1158,7 @@ class S3Client(S3ClientPort):
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Assemble the parts via ``CompleteMultipartUpload``.
@@ -1169,9 +1174,9 @@ class S3Client(S3ClientPort):
         ``compose``, having no native session).
         """
 
-        # S3 inherits content type and SSE from CreateMultipartUpload; neither
-        # is settable on complete.
-        _ = (content_type, sse)
+        # S3 inherits content type, metadata, and SSE from CreateMultipartUpload;
+        # none is settable on complete.
+        _ = (content_type, metadata, sse)
 
         c = self.__require_client()
 

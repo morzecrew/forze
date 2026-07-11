@@ -48,3 +48,62 @@ async def test_s3_encrypted_upload_is_ciphertext_at_rest(
     # The adapter transparently decrypts on download.
     downloaded = await storage_q.download(stored.key)
     assert downloaded.data == b"top-secret-payload"
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_reencrypt_objects_reseals_in_place_preserving_metadata(
+    s3_client, s3_bucket: str
+) -> None:
+    """The blob break-glass sweep: same key, same plaintext, FRESH envelope."""
+
+    from forze.application.integrations.crypto import reencrypt_objects
+
+    ctx = context_from_modules(
+        CryptoDepsModule(
+            kms=MockKeyManagement(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        ),
+        S3DepsModule(
+            client=s3_client,
+            storages={s3_bucket: S3StorageConfig(bucket=s3_bucket, encrypt=True)},
+        ),
+    )
+    spec = StorageSpec(name=s3_bucket)
+    storage_q = ctx.storage.query(spec)
+    storage_c = ctx.storage.command(spec)
+
+    # Uploaded via `upload()`, which persists a metadata envelope (filename/description).
+    stored = await storage_c.upload(
+        UploadedObject(
+            filename="secret.txt",
+            data=b"top-secret-payload",
+            description="a note",
+        ),
+    )
+
+    async with s3_client.client():
+        before = (await s3_client.download_bytes(bucket=s3_bucket, key=stored.key)).data
+
+    count = await reencrypt_objects(storage_q, storage_c)
+    assert count == 1
+
+    async with s3_client.client():
+        after = (await s3_client.download_bytes(bucket=s3_bucket, key=stored.key)).data
+
+    # Still sealed, but under a FRESH data key — the whole point of the sweep.
+    assert is_envelope(after) or after.startswith(b"FZEc")
+    assert after != before
+
+    # Same key, same plaintext.
+    assert (await storage_q.download(stored.key)).data == b"top-secret-payload"
+
+    # ...and the metadata envelope survived the multipart round-trip: a streamed write
+    # could not carry metadata before this, which would have silently dropped the
+    # filename off every object the sweep touched.
+    head = await storage_q.head(stored.key)
+    assert head.metadata  # the filename/description envelope is still there
+    assert (await storage_q.download_stream(stored.key)).filename == "secret.txt"

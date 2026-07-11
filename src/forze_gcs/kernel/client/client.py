@@ -881,6 +881,7 @@ class GCSClient(GCSClientPort):
         key: str,
         *,
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> str:
         """Allocate a temp part-key namespace and return its session token.
@@ -893,7 +894,9 @@ class GCSClient(GCSClientPort):
         compatibility and ignored on this no-op token mint.
         """
 
-        _ = (bucket, key, content_type, sse)
+        # GCS has no native multipart session: content type, metadata, and SSE are all
+        # applied to the composed destination in ``complete_multipart_upload``.
+        _ = (bucket, key, content_type, metadata, sse)
 
         return str(uuid7())
 
@@ -992,6 +995,7 @@ class GCSClient(GCSClientPort):
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Compose the temp parts in order into *key*, then delete the temps.
@@ -1097,6 +1101,16 @@ class GCSClient(GCSClientPort):
                     params=cmek_params,
                     timeout=timeout,
                 )
+
+        if metadata:
+            # Neither compose nor copy carries user metadata over from the temp parts,
+            # so stamp it on the finished destination (S3 binds it at create instead).
+            await storage.patch_metadata(
+                bucket,
+                key,
+                {"metadata": dict(metadata)},
+                timeout=timeout,
+            )
 
         await self.__delete_mpu_keys(bucket, cleanup)
 
