@@ -124,6 +124,13 @@ class TestLifecycle:
                 "forze_kms.gcp.kernel.client.client.grpc.aio.insecure_channel",
                 lambda *_a, **_kw: channel,
             )
+            # Stub the transport too: whether google's real one accepts a mock channel is
+            # its business, not what this test is about — and letting it decide makes the
+            # failure that reaches `initialize` depend on the installed grpc.
+            mp.setattr(
+                "forze_kms.gcp.kernel.client.client.KeyManagementServiceGrpcAsyncIOTransport",
+                MagicMock(),
+            )
             mp.setattr(
                 "forze_kms.gcp.kernel.client.client.KeyManagementServiceAsyncClient",
                 MagicMock(side_effect=RuntimeError("boom")),

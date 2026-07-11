@@ -431,6 +431,33 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
+    def _created_at_from_metadata(
+        self,
+        metadata: Mapping[str, str],
+    ) -> datetime | None:
+        """Decode the *creation* time from the object's metadata envelope, if present.
+
+        A rewrite does not create the object, and it leaves this envelope untouched — so
+        reporting the current time would move every object's creation time to the sweep
+        and disagree with what the next read decodes. ``None`` when there is no envelope.
+        """
+
+        if not metadata:
+            return None
+
+        try:
+            meta = object_metadata_from_user_metadata(dict(metadata))
+
+        except CoreException:
+            raise
+
+        except Exception as e:
+            raise exc.internal("Invalid object metadata") from e
+
+        return meta.created_at
+
+    # ....................... #
+
     def _stored_from_head(
         self,
         key: str,
@@ -654,12 +681,13 @@ class ObjectStorageAdapter(
         return StoredObject(
             key=key,
             filename=self._filename_from_metadata(key, meta_map or {}),
-            # The carried-over envelope still holds the description, so report it rather
-            # than answering None and having a caller wipe it from an index or cache.
+            # The carried-over envelope still holds the description and the creation time,
+            # so report them rather than answering None / "now" and having a caller wipe
+            # the description and re-date the object from an index, cache, or response.
             description=self._description_from_metadata(meta_map or {}),
             content_type=resolved_type,
             size=size_box[0],
-            created_at=utcnow(),
+            created_at=self._created_at_from_metadata(meta_map or {}) or utcnow(),
             tags=dict(tags) if tags else None,
         )
 
