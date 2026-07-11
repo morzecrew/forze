@@ -189,16 +189,19 @@ class TestNoOverlapByDefault:
 
         assert ei.value.code == "core.crypto.key_id_unauthorized"
 
-    async def test_an_overlap_opened_later_is_honored_at_once(self) -> None:
-        """A store-backed directory can start an overlap at any time.
+    async def test_a_live_overlap_opens_and_closes_at_once(self) -> None:
+        """A store-backed directory can change its overlap under a long-lived keyring.
 
-        A cached *absence* would keep rejecting the outgoing key's envelopes until the
-        entry aged out — stranding the migration the overlap exists to enable.
+        The previous key decides how wide the key-id guard is open, so a stale copy is
+        wrong in *both* directions: a remembered absence would strand a migration that
+        was just opened, and a remembered presence would keep accepting the outgoing
+        key's envelopes after the operator dropped the overlap — leaving the guard
+        widened past the point it was closed.
         """
 
         @attrs.define(slots=True)
         class _Mutable:
-            """A directory whose previous key is turned on mid-flight."""
+            """A directory whose overlap is toggled mid-flight."""
 
             previous: KeyRef | None = None
 
@@ -218,16 +221,24 @@ class TestNoOverlapByDefault:
         )
 
         directory = _Mutable()
-        keyring = _keyring(directory)
+        keyring = _keyring(directory)  # one long-lived keyring throughout
 
-        # No overlap yet — refused, and the absence must NOT be memoized.
+        # No overlap yet — refused, and that absence must not be remembered.
         with pytest.raises(CoreException):
             await keyring.decrypt(written, tenant=tenant)
 
-        # The operator opens the overlap; the very next read must see it.
+        # The operator opens the overlap: the very next read must see it.
         directory.previous = KeyRef(key_id=_OLD)
-
         assert await keyring.decrypt(written, tenant=tenant) == b"secret"
+
+        # ...and once the sweep is done and the overlap is dropped, the guard must close
+        # again immediately — not at the next cache eviction or restart.
+        directory.previous = None
+
+        with pytest.raises(CoreException) as ei:
+            await keyring.decrypt(written, tenant=tenant)
+
+        assert ei.value.code == "core.crypto.key_id_unauthorized"
 
     async def test_no_previous_key_set_is_not_an_overlap(self) -> None:
         tenant = _tenant()

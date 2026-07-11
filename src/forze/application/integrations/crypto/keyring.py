@@ -344,14 +344,6 @@ class Keyring:
     _tenant_key: OrderedDict[str, str] = attrs.field(factory=OrderedDict, init=False)
     """tenant cache key → resolved key_id (lets the sync path skip the directory, LRU)."""
 
-    _tenant_prev_key: OrderedDict[str, str] = attrs.field(
-        factory=OrderedDict,
-        init=False,
-    )
-    """tenant cache key → the tenant's *previous* key_id during a KEK-migration overlap
-    (LRU). Only a *present* previous key is cached — an absence is never memoized, so a
-    directory that opens an overlap later is honored at once (see :meth:`_previous_key_id`)."""
-
     _locks: tuple[asyncio.Lock, ...] = attrs.field(
         factory=lambda: tuple(asyncio.Lock() for _ in range(_LOCK_STRIPES)),
         init=False,
@@ -927,14 +919,18 @@ class Keyring:
         A directory that does not implement :class:`KeyDirectoryWithPrevious` has no
         overlap, so this is a no-op for the ordinary case.
 
-        Only a *present* previous key is cached. An absent one is deliberately **not**
-        memoized: a store-backed directory can open an overlap at any moment, and a
-        cached absence would keep rejecting the outgoing key's envelopes until the entry
-        aged out — stranding the very migration the overlap exists to enable. The cost is
-        confined to the path that does not match the tenant's current key, which in
-        steady state is the rejection path (about to raise); during a migration the
-        previous key resolves once and is then served from the cache, which is what keeps
-        a lookup-based directory (one List call per resolve) cheap across a sweep.
+        The answer is deliberately **not** cached here. It is the one input that decides
+        how wide the key-id guard is open, and a stale copy is wrong in both directions:
+        a remembered absence would keep rejecting the outgoing key's envelopes after an
+        overlap is opened (stranding the migration), and a remembered presence would keep
+        *accepting* them after it is dropped (leaving the guard widened past the point the
+        operator closed it). Only the directory knows whether its answer can change, so it
+        is the directory's business to memoize — see
+        :class:`~forze_kms.yc.adapters.YcKmsKeyDirectory`, whose lookup is an API call and
+        whose configuration is frozen, making the memo safe there.
+
+        The lookup is confined to the path that does not match the tenant's current key,
+        which in steady state is only the rejection path (already about to raise).
         """
 
         directory = self.directory
@@ -942,25 +938,9 @@ class Keyring:
         if not isinstance(directory, KeyDirectoryWithPrevious):
             return None
 
-        cache_key = _tenant_cache_key(tenant)
-        cached = _lru_get(self._tenant_prev_key, cache_key)
-
-        if cached is not None:
-            return cached
-
         previous = await directory.resolve_previous(tenant)
 
-        if previous is None:
-            return None
-
-        _lru_put(
-            self._tenant_prev_key,
-            cache_key,
-            previous.key_id,
-            cap=self.enc_cache_max,
-        )
-
-        return previous.key_id
+        return None if previous is None else previous.key_id
 
     # ....................... #
 

@@ -72,6 +72,30 @@ class _StubStorage:
             created_at=datetime.now(),
         )
 
+    async def overwrite_stream(
+        self,
+        key: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        content_type: Optional[str] = None,
+        metadata: Optional[Mapping[str, str]] = None,
+        tags: Optional[Mapping[str, str]] = None,
+        chunk_size: int = 1 << 20,
+    ) -> StoredObject:
+        total = 0
+        async for piece in chunks:
+            total += len(piece)
+
+        return StoredObject(
+            key=key,
+            filename=key.rsplit("/", 1)[-1],
+            description=None,
+            content_type=content_type or "application/octet-stream",
+            size=total,
+            created_at=datetime.now(),
+            tags=dict(tags) if tags else None,
+        )
+
     async def presign_download(
         self,
         key: str,

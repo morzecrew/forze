@@ -47,6 +47,10 @@ class YcKmsKeyDirectory(KeyDirectoryPort):
     overlap. While set, reads also accept envelopes wrapped under the key it names, so a
     re-encryption sweep can move the data onto :attr:`template`; drop it once done."""
 
+    _previous_ids: dict[str, str] = attrs.field(factory=dict, init=False, repr=False)
+    """tenant id → the previous key's minted id, memoized so a migration sweep does not
+    re-List per envelope (see :meth:`resolve_previous`)."""
+
     # ....................... #
 
     def key_name_for(self, tenant: TenantIdentity) -> str:
@@ -57,15 +61,34 @@ class YcKmsKeyDirectory(KeyDirectoryPort):
     # ....................... #
 
     async def resolve_previous(self, tenant: TenantIdentity | None) -> KeyRef | None:
-        """Look up the tenant's *previous* key, or ``None`` when not migrating."""
+        """Look up the tenant's *previous* key, or ``None`` when not migrating.
+
+        The keyring asks this once per envelope it cannot match to the tenant's current
+        key — that is, for every value a migration sweep reads — and the lookup is an API
+        call, so a *found* id is memoized here. This is the safe place for that memo:
+        :attr:`previous_template` is frozen, so dropping the overlap means building a new
+        directory, which starts with an empty one. An *absent* previous key is never
+        memoized, so opening an overlap later is picked up at once.
+        """
 
         if tenant is None or self.previous_template is None:
             return None
 
+        cache_key = str(tenant.tenant_id)
+        cached = self._previous_ids.get(cache_key)
+
+        if cached is not None:
+            return KeyRef(key_id=cached)
+
         name = self.previous_template.format(tenant_id=tenant.tenant_id)
         key_id = await self.client.find_key_id_by_name(self.folder_id, name)
 
-        return None if key_id is None else KeyRef(key_id=key_id)
+        if key_id is None:
+            return None
+
+        self._previous_ids[cache_key] = key_id
+
+        return KeyRef(key_id=key_id)
 
     # ....................... #
 
