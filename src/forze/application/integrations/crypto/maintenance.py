@@ -78,29 +78,43 @@ async def reencrypt_objects(
     encrypting route. Best-effort and resumable: objects are re-written one at a time and
     each is atomic, so an interrupted sweep can simply be re-run (an already-re-encrypted
     object is just re-encrypted again). Returns the number of objects re-written.
+
+    The route's keys are enumerated up front — one string each, not the payloads — so a
+    rewrite can never perturb the pagination that is still walking over it.
     """
 
-    count = 0
+    # Enumerate first, rewrite second. Paging and mutation must not interleave: the
+    # storage contract makes no promise about *how* ``list`` orders its results, so a
+    # backend that orders by anything a rewrite touches (last-modified, say) would
+    # reshuffle each object as the sweep passed over it and an advancing offset would
+    # then skip keys — silently leaving blobs behind under the old key. Listing is
+    # read-only, so paging it to exhaustion is stable; only the keys are held (the
+    # payloads are still streamed one chunk at a time below).
+    keys: list[str] = []
     offset = 0
 
     while True:
-        items, _ = await query.list(page_size, offset, prefix=prefix, include_tags=True)
+        page, _ = await query.list(page_size, offset, prefix=prefix)
 
-        if not items:
-            return count
+        if not page:
+            break
 
-        for item in items:
-            head = await query.head(item.key, include_tags=True)
-            streamed = await query.download_stream(item.key)
+        keys.extend(item.key for item in page)
+        offset += len(page)
 
-            await command.overwrite_stream(
-                item.key,
-                streamed.chunks,
-                content_type=head.content_type,
-                metadata=head.metadata,
-                tags=head.tags or item.tags,
-            )
-            count += 1
+    count = 0
 
-        # Keys are unchanged by an in-place rewrite, so offset paging stays stable.
-        offset += len(items)
+    for key in keys:
+        head = await query.head(key, include_tags=True)
+        streamed = await query.download_stream(key)
+
+        await command.overwrite_stream(
+            key,
+            streamed.chunks,
+            content_type=head.content_type,
+            metadata=head.metadata,
+            tags=head.tags,
+        )
+        count += 1
+
+    return count

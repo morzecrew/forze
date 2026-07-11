@@ -405,6 +405,32 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
+    def _description_from_metadata(
+        self,
+        metadata: Mapping[str, str],
+    ) -> str | None:
+        """Decode the description from the object's metadata envelope, if it carries one.
+
+        Absent for objects with no envelope (a presigned ``PUT``, a streamed upload), so
+        this answers ``None`` rather than raising.
+        """
+
+        if not metadata:
+            return None
+
+        try:
+            meta = object_metadata_from_user_metadata(dict(metadata))
+
+        except CoreException:
+            raise
+
+        except Exception as e:
+            raise exc.internal("Invalid object metadata") from e
+
+        return default_b64_codec.loads(meta.description) if meta.description else None
+
+    # ....................... #
+
     def _stored_from_head(
         self,
         key: str,
@@ -628,7 +654,9 @@ class ObjectStorageAdapter(
         return StoredObject(
             key=key,
             filename=self._filename_from_metadata(key, meta_map or {}),
-            description=None,
+            # The carried-over envelope still holds the description, so report it rather
+            # than answering None and having a caller wipe it from an index or cache.
+            description=self._description_from_metadata(meta_map or {}),
             content_type=resolved_type,
             size=size_box[0],
             created_at=utcnow(),

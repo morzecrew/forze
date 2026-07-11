@@ -107,3 +107,14 @@ async def test_reencrypt_objects_reseals_in_place_preserving_metadata(
     head = await storage_q.head(stored.key)
     assert head.metadata  # the filename/description envelope is still there
     assert (await storage_q.download_stream(stored.key)).filename == "secret.txt"
+
+    # The write result must report the description the object still carries — a caller
+    # refreshing an index or cache from it would otherwise wipe the description.
+    rewritten = await storage_c.overwrite_stream(
+        stored.key,
+        (await storage_q.download_stream(stored.key)).chunks,
+        content_type=head.content_type,
+        metadata=head.metadata,
+    )
+    assert rewritten.filename == "secret.txt"
+    assert rewritten.description == "a note"

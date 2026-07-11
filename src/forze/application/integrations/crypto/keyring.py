@@ -349,8 +349,8 @@ class Keyring:
         init=False,
     )
     """tenant cache key → the tenant's *previous* key_id during a KEK-migration overlap
-    (LRU). An empty string caches "this tenant has no previous key", so a directory with
-    no overlap is not re-asked on every envelope."""
+    (LRU). Only a *present* previous key is cached — an absence is never memoized, so a
+    directory that opens an overlap later is honored at once (see :meth:`_previous_key_id`)."""
 
     _locks: tuple[asyncio.Lock, ...] = attrs.field(
         factory=lambda: tuple(asyncio.Lock() for _ in range(_LOCK_STRIPES)),
@@ -926,6 +926,15 @@ class Keyring:
 
         A directory that does not implement :class:`KeyDirectoryWithPrevious` has no
         overlap, so this is a no-op for the ordinary case.
+
+        Only a *present* previous key is cached. An absent one is deliberately **not**
+        memoized: a store-backed directory can open an overlap at any moment, and a
+        cached absence would keep rejecting the outgoing key's envelopes until the entry
+        aged out — stranding the very migration the overlap exists to enable. The cost is
+        confined to the path that does not match the tenant's current key, which in
+        steady state is the rejection path (about to raise); during a migration the
+        previous key resolves once and is then served from the cache, which is what keeps
+        a lookup-based directory (one List call per resolve) cheap across a sweep.
         """
 
         directory = self.directory
@@ -936,18 +945,22 @@ class Keyring:
         cache_key = _tenant_cache_key(tenant)
         cached = _lru_get(self._tenant_prev_key, cache_key)
 
-        if cached is None:
-            previous = await directory.resolve_previous(tenant)
-            # "" caches a *resolved* absence, so a no-overlap directory is asked once.
-            cached = previous.key_id if previous is not None else ""
-            _lru_put(
-                self._tenant_prev_key,
-                cache_key,
-                cached,
-                cap=self.enc_cache_max,
-            )
+        if cached is not None:
+            return cached
 
-        return cached or None
+        previous = await directory.resolve_previous(tenant)
+
+        if previous is None:
+            return None
+
+        _lru_put(
+            self._tenant_prev_key,
+            cache_key,
+            previous.key_id,
+            cap=self.enc_cache_max,
+        )
+
+        return previous.key_id
 
     # ....................... #
 

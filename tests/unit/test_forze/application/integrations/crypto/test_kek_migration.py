@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import attrs
 import pytest
 
 from forze.application.contracts.crypto import (
@@ -187,6 +188,46 @@ class TestNoOverlapByDefault:
             await _keyring(_Plain()).decrypt(written, tenant=tenant)
 
         assert ei.value.code == "core.crypto.key_id_unauthorized"
+
+    async def test_an_overlap_opened_later_is_honored_at_once(self) -> None:
+        """A store-backed directory can start an overlap at any time.
+
+        A cached *absence* would keep rejecting the outgoing key's envelopes until the
+        entry aged out — stranding the migration the overlap exists to enable.
+        """
+
+        @attrs.define(slots=True)
+        class _Mutable:
+            """A directory whose previous key is turned on mid-flight."""
+
+            previous: KeyRef | None = None
+
+            async def resolve(self, tenant: TenantIdentity | None) -> KeyRef:
+                _ = tenant
+                return KeyRef(key_id=_NEW)
+
+            async def resolve_previous(
+                self, tenant: TenantIdentity | None
+            ) -> KeyRef | None:
+                _ = tenant
+                return self.previous
+
+        tenant = _tenant()
+        written = await _keyring(StaticKeyDirectory(KeyRef(key_id=_OLD))).encrypt(
+            b"secret", tenant=tenant
+        )
+
+        directory = _Mutable()
+        keyring = _keyring(directory)
+
+        # No overlap yet — refused, and the absence must NOT be memoized.
+        with pytest.raises(CoreException):
+            await keyring.decrypt(written, tenant=tenant)
+
+        # The operator opens the overlap; the very next read must see it.
+        directory.previous = KeyRef(key_id=_OLD)
+
+        assert await keyring.decrypt(written, tenant=tenant) == b"secret"
 
     async def test_no_previous_key_set_is_not_an_overlap(self) -> None:
         tenant = _tenant()
