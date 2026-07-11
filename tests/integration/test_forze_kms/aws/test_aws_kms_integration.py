@@ -189,3 +189,70 @@ async def test_deprovision_is_opt_in_and_retires_the_alias(
 
     # The alias is gone; the CMK itself serves out its deletion window.
     assert await kms_client.find_key_id_by_alias(alias) is None
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+async def test_migrating_a_tenant_to_a_new_kek(kms_client: AwsKmsClient) -> None:
+    """Replace a tenant's KEK end to end against real KMS: overlap → re-encrypt → drop.
+
+    Without the overlap this is impossible — repointing the tenant at a new CMK strands
+    everything under the old one, because the keyring refuses an envelope whose key id is
+    not the tenant's current key (it cannot even be read back to migrate it).
+    """
+
+    from forze.base.crypto import unpack_envelope
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    old_template = "alias/v1-{tenant_id}"
+    new_template = "alias/v2-{tenant_id}"
+
+    def _keyring(directory: TenantTemplateKeyDirectory) -> Keyring:
+        return Keyring(
+            kms=AwsKmsKeyManagement(client=kms_client),
+            aead=AesGcmAead(),
+            directory=directory,
+        )
+
+    # 1. The tenant is provisioned on its v1 CMK and writes data.
+    old_dir = TenantTemplateKeyDirectory(
+        template=old_template, default_key_id="alias/shared"
+    )
+    await AwsKmsTenantProvisioner(client=kms_client, directory=old_dir).provision(tenant)
+
+    written = await _keyring(old_dir).encrypt(b"tenant payload", tenant=tenant)
+
+    # 2. A new CMK is provisioned and the directory opens a read overlap.
+    overlap_dir = TenantTemplateKeyDirectory(
+        template=new_template,
+        default_key_id="alias/shared",
+        previous_template=old_template,
+    )
+    await AwsKmsTenantProvisioner(
+        client=kms_client, directory=overlap_dir
+    ).provision(tenant)
+
+    migrating = _keyring(overlap_dir)
+
+    # Data written under the old CMK is still readable — this is what makes the
+    # migration possible at all.
+    assert await migrating.decrypt(written, tenant=tenant) == b"tenant payload"
+
+    # 3. The sweep's read→write round-trip re-seals it under the new CMK.
+    rewritten = await migrating.encrypt(
+        await migrating.decrypt(written, tenant=tenant), tenant=tenant
+    )
+    assert unpack_envelope(rewritten).key_id == f"alias/v2-{tenant.tenant_id}"
+
+    # 4. Overlap dropped. The migrated value reads; the old CMK is now free to retire.
+    migrated = _keyring(
+        TenantTemplateKeyDirectory(template=new_template, default_key_id="alias/shared")
+    )
+    assert await migrated.decrypt(rewritten, tenant=tenant) == b"tenant payload"
+
+    with pytest.raises(CoreException) as ei:
+        await migrated.decrypt(written, tenant=tenant)
+
+    assert ei.value.code == "core.crypto.key_id_unauthorized"

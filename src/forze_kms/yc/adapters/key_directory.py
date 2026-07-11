@@ -42,12 +42,30 @@ class YcKmsKeyDirectory(KeyDirectoryPort):
     default_key_id: str | None = None
     """Key id used when no tenant is bound. ``None`` rejects an unbound-tenant encrypt."""
 
+    previous_template: str | None = None
+    """The key-name template being migrated away from, set only during a migration
+    overlap. While set, reads also accept envelopes wrapped under the key it names, so a
+    re-encryption sweep can move the data onto :attr:`template`; drop it once done."""
+
     # ....................... #
 
     def key_name_for(self, tenant: TenantIdentity) -> str:
         """The key name *tenant* is provisioned under."""
 
         return self.template.format(tenant_id=tenant.tenant_id)
+
+    # ....................... #
+
+    async def resolve_previous(self, tenant: TenantIdentity | None) -> KeyRef | None:
+        """Look up the tenant's *previous* key, or ``None`` when not migrating."""
+
+        if tenant is None or self.previous_template is None:
+            return None
+
+        name = self.previous_template.format(tenant_id=tenant.tenant_id)
+        key_id = await self.client.find_key_id_by_name(self.folder_id, name)
+
+        return None if key_id is None else KeyRef(key_id=key_id)
 
     # ....................... #
 

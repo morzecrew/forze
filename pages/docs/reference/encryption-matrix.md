@@ -72,6 +72,11 @@ at the same policy, so the planes can't drift.
   `AwsKmsTenantProvisioner`, `GcpKmsTenantProvisioner`, `YcKmsTenantProvisioner`), and
   teardown is opt-in (`allow_deletion`). Yandex Cloud mints its key ids, so it pairs with
   `YcKmsKeyDirectory` (name lookup) rather than a template directory.
+- **Replacing a KEK:** rotating a key *version* needs no action (the key id is unchanged, so
+  old envelopes still decrypt). Replacing the *key* needs a read overlap —
+  `TenantTemplateKeyDirectory(previous_template=…)` / `StaticKeyDirectory(previous_key_ref=…)`,
+  or a custom `KeyDirectoryWithPrevious` — then a sweep, then drop the previous key. Without
+  the overlap the confused-deputy guard refuses the old envelopes and the data is stranded.
 - **KMS backends:** every one holds the KEK outside the app and self-describes the key
   version in the envelope, so rotation never orphans data.
 

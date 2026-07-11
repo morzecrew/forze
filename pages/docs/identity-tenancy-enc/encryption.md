@@ -286,17 +286,34 @@ The [cloud KMS backends](../integrations/kms.md) ship the same seam —
 Yandex Cloud mints its key ids, so it pairs with `YcKmsKeyDirectory` (which looks
 a tenant's key up by name) instead of a template directory.
 
-!!! warning "Changing a tenant's key **id** strands its existing data"
+### Replacing a key
 
-    The keyring refuses an envelope whose key id is not the one the directory
-    currently resolves for that tenant (`core.crypto.key_id_unauthorized`) — the same
-    guard that stops one tenant's key from unwrapping another's data. So repointing a
-    tenant at a *different* KEK makes everything already written under the old one
-    unreadable: it cannot even be read back in order to migrate it.
+Rotating a key *version* needs nothing: the key id does not change, so envelopes written
+before the rotation keep decrypting. Replacing the **key itself** is different — the
+keyring refuses an envelope whose key id is not the one the directory resolves for that
+tenant (the same guard that stops one tenant's key unwrapping another's), so swapping a
+live tenant's `key_id` outright would strand everything under the old key: it could not
+even be read back in order to migrate it.
 
-    Rotating a key **version** is safe and needs no action — the id does not change,
-    and old envelopes keep decrypting. Replacing the **key itself** is what is not yet
-    supported; don't edit a live tenant's `key_id` or the directory template.
+Name the outgoing key as the **previous** one instead. Reads then accept both while writes
+go only to the new key, so a sweep can move the data across:
+
+```python
+directory = TenantTemplateKeyDirectory(
+    template="tenant/{tenant_id}/kek-v2",           # new writes land here
+    previous_template="tenant/{tenant_id}/kek-v1",  # ...and old reads still work
+    default_key_id="shared-kek",
+)
+```
+
+Run the [sweeps](#re-encrypting-stored-data), drop `previous_template`, and the old key is
+free to destroy. The overlap widens the accepted set to exactly that tenant's current and
+previous key — a third key is still refused, each tenant's overlap resolves separately, and
+dropping it restores the guard.
+
+`StaticKeyDirectory(previous_key_ref=…)` does the same for a single-key deployment. A
+store-backed directory — one BYOK customer replacing their own key — implements
+`KeyDirectoryWithPrevious` directly.
 
 ## Observability
 

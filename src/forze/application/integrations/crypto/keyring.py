@@ -28,6 +28,7 @@ import attrs
 from forze.application.contracts.crypto import (
     CryptoKeyringStats,
     KeyDirectoryPort,
+    KeyDirectoryWithPrevious,
     KeyManagementPort,
     KeyRef,
 )
@@ -342,6 +343,14 @@ class Keyring:
 
     _tenant_key: OrderedDict[str, str] = attrs.field(factory=OrderedDict, init=False)
     """tenant cache key → resolved key_id (lets the sync path skip the directory, LRU)."""
+
+    _tenant_prev_key: OrderedDict[str, str] = attrs.field(
+        factory=OrderedDict,
+        init=False,
+    )
+    """tenant cache key → the tenant's *previous* key_id during a KEK-migration overlap
+    (LRU). An empty string caches "this tenant has no previous key", so a directory with
+    no overlap is not re-asked on every envelope."""
 
     _locks: tuple[asyncio.Lock, ...] = attrs.field(
         factory=lambda: tuple(asyncio.Lock() for _ in range(_LOCK_STRIPES)),
@@ -912,6 +921,36 @@ class Keyring:
 
     # ....................... #
 
+    async def _previous_key_id(self, tenant: TenantIdentity | None) -> str | None:
+        """*tenant*'s previous key id during a KEK-migration overlap, else ``None``.
+
+        A directory that does not implement :class:`KeyDirectoryWithPrevious` has no
+        overlap, so this is a no-op for the ordinary case.
+        """
+
+        directory = self.directory
+
+        if not isinstance(directory, KeyDirectoryWithPrevious):
+            return None
+
+        cache_key = _tenant_cache_key(tenant)
+        cached = _lru_get(self._tenant_prev_key, cache_key)
+
+        if cached is None:
+            previous = await directory.resolve_previous(tenant)
+            # "" caches a *resolved* absence, so a no-overlap directory is asked once.
+            cached = previous.key_id if previous is not None else ""
+            _lru_put(
+                self._tenant_prev_key,
+                cache_key,
+                cached,
+                cap=self.enc_cache_max,
+            )
+
+        return cached or None
+
+    # ....................... #
+
     async def _authorize_key_id_value(
         self,
         key_id: str,
@@ -929,9 +968,16 @@ class Keyring:
         if expected is None:
             expected = (await self._resolve_key_ref(tenant)).key_id
 
-        if key_id != expected:
-            raise exc.validation(
-                "Envelope key id does not belong to the active tenant; refusing to "
-                "unwrap under a key the caller does not own.",
-                code="core.crypto.key_id_unauthorized",
-            )
+        if key_id == expected:
+            return
+
+        # A KEK migration opens a read overlap: the tenant's *previous* key stays
+        # readable so a sweep can re-encrypt onto the current one. Writes never use it.
+        if key_id == await self._previous_key_id(tenant):
+            return
+
+        raise exc.validation(
+            "Envelope key id does not belong to the active tenant; refusing to "
+            "unwrap under a key the caller does not own.",
+            code="core.crypto.key_id_unauthorized",
+        )

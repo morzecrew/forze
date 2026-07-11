@@ -26,6 +26,7 @@ from .deps import (
 )
 from .directory import (
     KeyDirectoryPort,
+    KeyDirectoryWithPrevious,
     StaticKeyDirectory,
     TenantTemplateKeyDirectory,
 )
@@ -79,6 +80,7 @@ __all__ = [
     "DeterministicFieldCipherPort",
     # key directory (tenant → key)
     "KeyDirectoryPort",
+    "KeyDirectoryWithPrevious",
     "StaticKeyDirectory",
     "TenantTemplateKeyDirectory",
     # field-encryption policy
