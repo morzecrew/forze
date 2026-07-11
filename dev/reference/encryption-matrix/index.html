@@ -3254,7 +3254,7 @@
   <span class="md-ellipsis">
     
   
-  Secrets
+  Secrets & keys
 
     
   </span>
@@ -3269,7 +3269,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-  Secrets
+  Secrets & keys
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
@@ -3291,6 +3291,35 @@
     
   
   Vault
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/kms/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-key-round" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Cloud KMS
 
     
   </span>
@@ -5682,15 +5711,58 @@ at the same policy, so the planes can't drift.</p>
 <li><strong>Per-tenant keys (<abbr title="Bring Your Own Key">BYOK</abbr>):</strong> swap <code>StaticKeyDirectory</code> for <code>TenantTemplateKeyDirectory</code>
   (<code>template="tenant/{tenant_id}/kek"</code>) so each tenant's data is unreadable with
   another's key. The KEK is provisioned through the same <code>TenantProvisionerPort</code> as
-  schemas and buckets — <code>forze_vault</code> ships <code>VaultTransitTenantProvisioner</code>.</li>
-<li><strong><abbr title="Key Management Service">KMS</abbr> backends:</strong> Vault Transit (<code>VaultTransitKeyManagement</code>) is the shipped backend;
-  <code>MockKeyManagement</code> is <strong>dev/test only</strong> (it protects nothing). Cloud <abbr title="Key Management Service">KMS</abbr> (AWS/GCP/
-  Azure) is a custom <code>KeyManagementPort</code> — not shipped.</li>
-<li><strong><code>required_encryption</code> floor:</strong> set it on a deps module and wiring refuses to assemble
+  schemas and buckets — every backend ships one (<code>VaultTransitTenantProvisioner</code>,
+  <code>AwsKmsTenantProvisioner</code>, <code>GcpKmsTenantProvisioner</code>, <code>YcKmsTenantProvisioner</code>), and
+  teardown is opt-in (<code>allow_deletion</code>). Yandex Cloud mints its key ids, so it pairs with
+  <code>YcKmsKeyDirectory</code> (name lookup) rather than a template directory.</li>
+<li><strong>Replacing a KEK:</strong> rotating a key <em>version</em> needs no action (the key id is unchanged, so
+  old envelopes still decrypt). Replacing the <em>key</em> needs a read overlap —
+  <code>TenantTemplateKeyDirectory(previous_template=…)</code> / <code>StaticKeyDirectory(previous_key_ref=…)</code>,
+  or a custom <code>KeyDirectoryWithPrevious</code> — then a sweep, then drop the previous key. Without
+  the overlap the confused-deputy guard refuses the old envelopes and the data is stranded.</li>
+<li>
+<p><strong><abbr title="Key Management Service">KMS</abbr> backends:</strong> every one holds the KEK outside the app, and its wrapped data key is
+  decryptable without being told which key version sealed it — so rotation never orphans
+  data. (<code>DataKey.key_version</code> records the version only where the provider reports one.)</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Package</th>
+<th><code>KeyManagementPort</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Vault Transit</td>
+<td><code>forze[vault]</code></td>
+<td><code>VaultTransitKeyManagement</code></td>
+</tr>
+<tr>
+<td>AWS <abbr title="Key Management Service">KMS</abbr></td>
+<td><code>forze[kms-aws]</code></td>
+<td><code>AwsKmsKeyManagement</code></td>
+</tr>
+<tr>
+<td>Google Cloud <abbr title="Key Management Service">KMS</abbr></td>
+<td><code>forze[kms-gcp]</code></td>
+<td><code>GcpKmsKeyManagement</code></td>
+</tr>
+<tr>
+<td>Yandex Cloud <abbr title="Key Management Service">KMS</abbr></td>
+<td><code>forze[kms-yc]</code></td>
+<td><code>YcKmsKeyManagement</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>MockKeyManagement</code> is <strong>dev/test only</strong> (it protects nothing). Any other <abbr title="Key Management Service">KMS</abbr> — Azure,
+an HSM — is a custom <code>KeyManagementPort</code>. See <a href="../../integrations/kms/">Cloud <abbr title="Key Management Service">KMS</abbr></a>.
+- <strong><code>required_encryption</code> floor:</strong> set it on a deps module and wiring refuses to assemble
   any surface whose derived coverage is weaker — a fail-closed floor checked once at
-  startup. See <a href="../../identity-tenancy-enc/encryption/#declaring-a-minimum">Encryption → Declaring a minimum</a>.</li>
-<li><strong>Observability:</strong> <code>instrument_crypto({"default": keyring}, meter=…)</code> exports DEK
-  generation, unwraps, and cache hit/miss.</li>
+  startup. See <a href="../../identity-tenancy-enc/encryption/#declaring-a-minimum">Encryption → Declaring a minimum</a>.
+- <strong>Observability:</strong> <code>instrument_crypto({"default": keyring}, meter=…)</code> exports DEK
+  generation, unwraps, and cache hit/miss.</p>
+</li>
 </ul>
 
 
