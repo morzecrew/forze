@@ -6,6 +6,7 @@ Import the provider you use directly, e.g.::
 
     from forze_kms.aws import AwsKmsKeyManagement   # forze[kms-aws]
     from forze_kms.gcp import GcpKmsKeyManagement   # forze[kms-gcp]
+    from forze_kms.yc import YcKmsKeyManagement     # forze[kms-yc]
 
 Each backend implements the shared
 :class:`~forze.application.contracts.crypto.KeyManagementPort`, so it plugs into
