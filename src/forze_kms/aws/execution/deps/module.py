@@ -7,7 +7,6 @@ import attrs
 from forze.application.contracts.crypto import KeyManagementDepKey, KeyManagementPort
 from forze.application.contracts.deps import Deps, DepKey, DepsModule
 
-from ...adapters import AwsKmsKeyManagement
 from ...kernel.client import AwsKmsClientPort
 from .keys import AwsKmsClientDepKey
 
@@ -17,35 +16,32 @@ from .keys import AwsKmsClientDepKey
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class AwsKmsDepsModule(DepsModule):
-    """Register the AWS KMS client and an envelope key-management adapter.
+    """Register the AWS KMS client (and, optionally, an envelope key manager).
 
     Give it an :class:`~forze_kms.aws.kernel.client.AwsKmsClient` (initialized via
-    :func:`~forze_kms.aws.execution.awskms_lifecycle_step`); the key-management
-    adapter defaults to :class:`~forze_kms.aws.adapters.AwsKmsKeyManagement` over
-    that client and is registered under ``KeyManagementDepKey`` so a
-    :class:`~forze.application.execution.CryptoDepsModule` can compose the keyring
-    on top of it.
+    :func:`~forze_kms.aws.execution.awskms_lifecycle_step`), and it registers the client under
+    ``AwsKmsClientDepKey`` so the lifecycle step can initialize it.
+
+    Compose the keyring with :class:`~forze.application.execution.CryptoDepsModule`,
+    passing :class:`~forze_kms.aws.adapters.AwsKmsKeyManagement` as its ``kms`` — that
+    module registers ``KeyManagementDepKey`` itself, so leave :attr:`key_management`
+    unset unless you are wiring the port without a keyring.
     """
 
     client: AwsKmsClientPort
     """Pre-constructed AWS KMS client."""
 
     key_management: KeyManagementPort | None = attrs.field(default=None)
-    """Optional envelope key manager; defaults to
-    :class:`~forze_kms.aws.adapters.AwsKmsKeyManagement` over :attr:`client`."""
+    """Optional envelope key manager, registered under ``KeyManagementDepKey`` only when
+    set. Leave it unset when a ``CryptoDepsModule`` supplies the port (the usual wiring) —
+    registering it in both places is a conflicting dependency."""
 
     # ....................... #
 
     def __call__(self) -> Deps:
-        adapter = (
-            self.key_management
-            if self.key_management is not None
-            else AwsKmsKeyManagement(client=self.client)
-        )
+        deps: dict[DepKey[Any], Any] = {AwsKmsClientDepKey: self.client}
 
-        deps: dict[DepKey[Any], Any] = {
-            AwsKmsClientDepKey: self.client,
-            KeyManagementDepKey: adapter,
-        }
+        if self.key_management is not None:
+            deps[KeyManagementDepKey] = self.key_management
 
         return Deps.plain(deps)

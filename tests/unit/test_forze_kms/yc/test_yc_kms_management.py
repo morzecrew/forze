@@ -188,13 +188,15 @@ def test_unsupported_dek_length_fails_closed() -> None:
 # Deps module wiring
 
 
-def test_deps_module_registers_key_management() -> None:
+def test_deps_module_registers_only_the_client_by_default() -> None:
+    """``CryptoDepsModule`` supplies the port; registering it here too would conflict."""
+
     client = MagicMock(spec=YcKmsClientPort)
 
-    assert YcKmsDepsModule(client=client)().exists(KeyManagementDepKey)
+    assert not YcKmsDepsModule(client=client)().exists(KeyManagementDepKey)
 
 
-def test_deps_module_uses_supplied_key_management() -> None:
+def test_deps_module_registers_a_supplied_key_management() -> None:
     client = MagicMock(spec=YcKmsClientPort)
     custom = YcKmsKeyManagement(client=client, dek_bytes=16)
 

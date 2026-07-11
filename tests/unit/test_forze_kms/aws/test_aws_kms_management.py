@@ -73,18 +73,46 @@ def test_unsupported_dek_length_fails_closed() -> None:
 # Deps module wiring
 
 
-def test_deps_module_registers_key_management() -> None:
+def test_deps_module_registers_only_the_client_by_default() -> None:
+    """``CryptoDepsModule`` supplies the port; registering it here too would conflict."""
+
     client = MagicMock(spec=AwsKmsClientPort)
 
     deps = AwsKmsDepsModule(client=client)()
 
-    assert deps.exists(KeyManagementDepKey)
+    assert not deps.exists(KeyManagementDepKey)
 
 
-def test_deps_module_uses_supplied_key_management() -> None:
+def test_deps_module_registers_a_supplied_key_management() -> None:
     client = MagicMock(spec=AwsKmsClientPort)
     custom = AwsKmsKeyManagement(client=client, dek_bytes=16)
 
     ctx = context_from_modules(AwsKmsDepsModule(client=client, key_management=custom))
 
     assert ctx.deps.provide(KeyManagementDepKey) is custom
+
+
+def test_composes_with_crypto_deps_module() -> None:
+    """The canonical wiring: this module registers the client, CryptoDepsModule the keyring."""
+
+    from forze.application.contracts.crypto import (
+        KeyRef,
+        KeyringDepKey,
+        StaticKeyDirectory,
+    )
+    from forze.application.execution import CryptoDepsModule
+    from forze_kms.aws import AwsKmsClientDepKey
+
+    client = MagicMock(spec=AwsKmsClientPort)
+
+    ctx = context_from_modules(
+        AwsKmsDepsModule(client=client),
+        CryptoDepsModule(
+            kms=AwsKmsKeyManagement(client=client),
+            directory=StaticKeyDirectory(KeyRef(key_id="alias/app-cmk")),
+        ),
+    )
+
+    assert ctx.deps.provide(AwsKmsClientDepKey) is client
+    assert ctx.deps.provide(KeyringDepKey) is not None
+    assert isinstance(ctx.deps.provide(KeyManagementDepKey), AwsKmsKeyManagement)

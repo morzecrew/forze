@@ -68,10 +68,20 @@ at the same policy, so the planes can't drift.
 - **Per-tenant keys (BYOK):** swap `StaticKeyDirectory` for `TenantTemplateKeyDirectory`
   (`template="tenant/{tenant_id}/kek"`) so each tenant's data is unreadable with
   another's key. The KEK is provisioned through the same `TenantProvisionerPort` as
-  schemas and buckets — `forze_vault` ships `VaultTransitTenantProvisioner`.
-- **KMS backends:** Vault Transit (`VaultTransitKeyManagement`) is the shipped backend;
-  `MockKeyManagement` is **dev/test only** (it protects nothing). Cloud KMS (AWS/GCP/
-  Azure) is a custom `KeyManagementPort` — not shipped.
+  schemas and buckets — `forze_vault` ships `VaultTransitTenantProvisioner`; the cloud
+  backends ship none, so provision their per-tenant keys yourself or out of band.
+- **KMS backends:** every one holds the KEK outside the app and self-describes the key
+  version in the envelope, so rotation never orphans data.
+
+    | Backend | Package | `KeyManagementPort` |
+    |---------|---------|---------------------|
+    | Vault Transit | `forze[vault]` | `VaultTransitKeyManagement` |
+    | AWS KMS | `forze[kms-aws]` | `AwsKmsKeyManagement` |
+    | Google Cloud KMS | `forze[kms-gcp]` | `GcpKmsKeyManagement` |
+    | Yandex Cloud KMS | `forze[kms-yc]` | `YcKmsKeyManagement` |
+
+    `MockKeyManagement` is **dev/test only** (it protects nothing). Any other KMS — Azure,
+    an HSM — is a custom `KeyManagementPort`. See [Cloud KMS](../integrations/kms.md).
 - **`required_encryption` floor:** set it on a deps module and wiring refuses to assemble
   any surface whose derived coverage is weaker — a fail-closed floor checked once at
   startup. See [Encryption → Declaring a minimum](../identity-tenancy-enc/encryption.md#declaring-a-minimum).

@@ -52,9 +52,10 @@ CryptoDepsModule(
 
 That registers the key manager, the AEAD, the directory, and the composed
 `Keyring` under their dep keys. Integrations that opt into encryption resolve the
-keyring from here — they never construct one. The shipped KMS backend is
-[Vault Transit](../integrations/vault.md). For per-tenant keys, swap the directory
-(see [Per-tenant keys](#per-tenant-keys-byok) below).
+keyring from here — they never construct one. Swap `kms` for any backend that
+holds your KEK: [Vault Transit](../integrations/vault.md), or AWS, Google Cloud,
+and Yandex Cloud [KMS](../integrations/kms.md). For per-tenant keys, swap the
+directory (see [Per-tenant keys](#per-tenant-keys-byok) below).
 
 !!! warning "`MockKeyManagement` is dev/test only"
 
@@ -253,6 +254,10 @@ TenancyDepsModule(
 Compose it with other provisioners (a schema, a bucket, a key) via
 `CompositeTenantProvisioner` so onboarding a tenant readies every backend at
 once.
+
+The [cloud KMS backends](../integrations/kms.md) resolve per-tenant keys through
+the same directory, but none of them ships a provisioner — create and destroy a
+tenant's key with your own `TenantProvisionerPort` or out of band.
 
 ## Observability
 

@@ -124,8 +124,9 @@ nav = [
             "integrations/authn.md",
             "integrations/oidc.md",
         ] },
-        { "Secrets" = [
+        { "Secrets & keys" = [
             "integrations/vault.md",
+            "integrations/kms.md",
         ] },
         { "Outbound" = [
             "integrations/http.md",
