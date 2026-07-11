@@ -49,3 +49,32 @@ class YcKmsClientPort(Protocol):
         """
 
         ...  # pragma: no cover
+
+    # ....................... #
+    # Key administration (per-tenant provisioning)
+
+    def find_key_id_by_name(self, folder_id: str, name: str) -> Awaitable[str | None]:
+        """Return the id of the symmetric key called *name* in *folder_id*, or ``None``.
+
+        Yandex Cloud mints a key id itself and the crypto API addresses keys by id, so a
+        caller-chosen *name* has to be resolved to an id before a key can be used.
+        """
+
+        ...  # pragma: no cover
+
+    def create_key(
+        self,
+        folder_id: str,
+        name: str,
+        *,
+        algorithm: str = "AES_256",
+        description: str | None = None,
+    ) -> Awaitable[str]:
+        """Create a symmetric key called *name* in *folder_id*, returning its new id."""
+
+        ...  # pragma: no cover
+
+    def delete_key(self, key_id: str) -> Awaitable[None]:
+        """Delete the symmetric key *key_id* (destructive and irreversible)."""
+
+        ...  # pragma: no cover

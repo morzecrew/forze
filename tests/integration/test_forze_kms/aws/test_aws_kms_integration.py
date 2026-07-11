@@ -22,7 +22,7 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException
-from forze_kms.aws import AwsKmsClient, AwsKmsKeyManagement
+from forze_kms.aws import AwsKmsClient, AwsKmsKeyManagement, AwsKmsTenantProvisioner
 
 # ----------------------- #
 
@@ -119,3 +119,73 @@ async def test_per_tenant_keys_isolate_and_confused_deputy_is_rejected(
         await keyring.decrypt(blob_a, tenant=tenant_b)
 
     assert ei.value.code == "core.crypto.key_id_unauthorized"
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+async def test_provisioning_a_tenant_makes_its_key_usable(
+    kms_client: AwsKmsClient,
+) -> None:
+    """Onboarding a tenant creates the CMK behind its alias, so the keyring can encrypt."""
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    directory = TenantTemplateKeyDirectory(
+        template="alias/tenant-{tenant_id}",
+        default_key_id="alias/shared",
+    )
+    keyring = Keyring(
+        kms=AwsKmsKeyManagement(client=kms_client),
+        aead=AesGcmAead(),
+        directory=directory,
+    )
+    provisioner = AwsKmsTenantProvisioner(client=kms_client, directory=directory)
+
+    # Before onboarding, the tenant has no key at all.
+    with pytest.raises(CoreException):
+        await keyring.encrypt(b"secret", tenant=tenant)
+
+    await provisioner.provision(tenant)
+
+    blob = await keyring.encrypt(b"secret", tenant=tenant)
+    assert await keyring.decrypt(blob, tenant=tenant) == b"secret"
+
+    # Re-provisioning is a no-op: the alias already resolves to the same CMK.
+    alias = f"alias/tenant-{tenant.tenant_id}"
+    cmk = await kms_client.find_key_id_by_alias(alias)
+    await provisioner.provision(tenant)
+    assert await kms_client.find_key_id_by_alias(alias) == cmk
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+async def test_deprovision_is_opt_in_and_retires_the_alias(
+    kms_client: AwsKmsClient,
+) -> None:
+    tenant = TenantIdentity(tenant_id=uuid4())
+    alias = f"alias/tenant-{tenant.tenant_id}"
+    directory = TenantTemplateKeyDirectory(
+        template="alias/tenant-{tenant_id}",
+        default_key_id="alias/shared",
+    )
+
+    guarded = AwsKmsTenantProvisioner(client=kms_client, directory=directory)
+    await guarded.provision(tenant)
+
+    # Teardown is off by default — a tenant's KEK is never destroyed implicitly.
+    await guarded.deprovision(tenant)
+    assert await kms_client.find_key_id_by_alias(alias) is not None
+
+    destructive = AwsKmsTenantProvisioner(
+        client=kms_client,
+        directory=directory,
+        allow_deletion=True,
+        pending_window_days=7,
+    )
+    await destructive.deprovision(tenant)
+
+    # The alias is gone; the CMK itself serves out its deletion window.
+    assert await kms_client.find_key_id_by_alias(alias) is None

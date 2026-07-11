@@ -12,12 +12,14 @@ from typing import Any, AsyncGenerator, final
 
 import attrs
 import grpc
+from google.api_core.exceptions import AlreadyExists
 from google.cloud.kms_v1.services.key_management_service import (
     KeyManagementServiceAsyncClient,
 )
 from google.cloud.kms_v1.services.key_management_service.transports import (
     KeyManagementServiceGrpcAsyncIOTransport,
 )
+from google.cloud.kms_v1.types import CryptoKey, CryptoKeyVersion
 
 from forze.base.exceptions import exc
 
@@ -32,6 +34,14 @@ from .value_objects import GcpKmsConfig
 # emulator connection bypass an ambient ``http_proxy`` instead of being routed
 # through it (which fails against a local emulator).
 _EMULATOR_CHANNEL_OPTS = [("grpc.enable_http_proxy", 0)]
+
+_DESTROYABLE_STATES = frozenset(
+    {
+        CryptoKeyVersion.CryptoKeyVersionState.ENABLED,
+        CryptoKeyVersion.CryptoKeyVersionState.DISABLED,
+    }
+)
+"""Versions that still hold key material — the ones a teardown must destroy."""
 
 # ....................... #
 
@@ -186,3 +196,51 @@ class GcpKmsClient(GcpKmsClientPort):
         )
 
         return resp.plaintext
+
+    # ....................... #
+    # Key administration (per-tenant provisioning)
+
+    @exc_interceptor.coroutine("gcpkms.ensure_crypto_key")
+    async def ensure_crypto_key(self, parent: str, crypto_key_id: str) -> str:
+        """Create a symmetric CryptoKey under *parent*, tolerating an existing one."""
+
+        c = self.__require_client()
+
+        try:
+            created = await c.create_crypto_key(  # pyright: ignore[reportUnknownMemberType]
+                parent=parent,
+                crypto_key_id=crypto_key_id,
+                crypto_key=CryptoKey(
+                    purpose=CryptoKey.CryptoKeyPurpose.ENCRYPT_DECRYPT
+                ),
+                **self.__timeout_kwargs(),
+            )
+
+        except AlreadyExists:
+            return f"{parent}/cryptoKeys/{crypto_key_id}"
+
+        return created.name
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcpkms.destroy_crypto_key_versions")
+    async def destroy_crypto_key_versions(self, key_name: str) -> int:
+        """Schedule every non-destroyed version of *key_name* for destruction."""
+
+        c = self.__require_client()
+        destroyed = 0
+
+        versions = await c.list_crypto_key_versions(  # pyright: ignore[reportUnknownMemberType]
+            parent=key_name,
+            **self.__timeout_kwargs(),
+        )
+
+        async for version in versions:
+            if version.state in _DESTROYABLE_STATES:
+                await c.destroy_crypto_key_version(  # pyright: ignore[reportUnknownMemberType]
+                    name=version.name,
+                    **self.__timeout_kwargs(),
+                )
+                destroyed += 1
+
+        return destroyed

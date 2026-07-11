@@ -270,3 +270,81 @@ class AwsKmsClient(AwsKmsClientPort):
             raise exc.internal("AWS KMS Decrypt returned no plaintext")
 
         return bytes(plaintext)
+
+    # ....................... #
+    # Key administration (per-tenant provisioning)
+
+    @exc_interceptor.coroutine("awskms.find_key_id_by_alias")
+    async def find_key_id_by_alias(self, alias: str) -> str | None:
+        """Resolve *alias* to its CMK id via ``DescribeKey``, or ``None`` if absent."""
+
+        async with self.client() as c:
+            try:
+                resp = await c.describe_key(KeyId=alias)
+
+            except c.exceptions.ClientError as e:  # type: ignore[attr-defined]
+                code = (e.response or {}).get("Error", {}).get("Code")
+
+                if code in {"NotFoundException", "NotFound"}:
+                    return None
+
+                raise
+
+        return resp.get("KeyMetadata", {}).get("KeyId")
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("awskms.create_key_with_alias")
+    async def create_key_with_alias(
+        self,
+        alias: str,
+        *,
+        description: str | None = None,
+    ) -> str:
+        """Create a symmetric CMK via ``CreateKey`` and point *alias* at it."""
+
+        async with self.client() as c:
+            resp = await c.create_key(Description=description or "")
+            key_id = resp.get("KeyMetadata", {}).get("KeyId")
+
+            if not key_id:
+                raise exc.internal("AWS KMS CreateKey returned no KeyId")
+
+            await c.create_alias(AliasName=alias, TargetKeyId=key_id)
+
+        return key_id
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("awskms.delete_alias")
+    async def delete_alias(self, alias: str) -> None:
+        """Delete *alias*, tolerating an already-absent one (idempotent teardown)."""
+
+        async with self.client() as c:
+            try:
+                await c.delete_alias(AliasName=alias)
+
+            except c.exceptions.ClientError as e:  # type: ignore[attr-defined]
+                code = (e.response or {}).get("Error", {}).get("Code")
+
+                if code in {"NotFoundException", "NotFound"}:
+                    return
+
+                raise
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("awskms.schedule_key_deletion")
+    async def schedule_key_deletion(
+        self,
+        key_id: str,
+        *,
+        pending_window_days: int = 30,
+    ) -> None:
+        """Schedule the CMK for deletion after *pending_window_days* (KMS allows 7–30)."""
+
+        async with self.client() as c:
+            await c.schedule_key_deletion(
+                KeyId=key_id,
+                PendingWindowInDays=pending_window_days,
+            )

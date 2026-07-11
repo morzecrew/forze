@@ -53,3 +53,44 @@ class AwsKmsClientPort(Protocol):
         """
 
         ...  # pragma: no cover
+
+    # ....................... #
+    # Key administration (per-tenant provisioning)
+
+    def find_key_id_by_alias(self, alias: str) -> Awaitable[str | None]:
+        """Return the CMK id the *alias* points at, or ``None`` when it does not exist."""
+
+        ...  # pragma: no cover
+
+    def create_key_with_alias(
+        self,
+        alias: str,
+        *,
+        description: str | None = None,
+    ) -> Awaitable[str]:
+        """Create a symmetric CMK and point *alias* at it, returning the new CMK id.
+
+        A CMK id is minted by KMS, so an alias is the only caller-chosen name a key
+        directory can address a tenant's key by.
+        """
+
+        ...  # pragma: no cover
+
+    def delete_alias(self, alias: str) -> Awaitable[None]:
+        """Delete *alias* (a no-op when it does not exist). The CMK itself survives."""
+
+        ...  # pragma: no cover
+
+    def schedule_key_deletion(
+        self,
+        key_id: str,
+        *,
+        pending_window_days: int = 30,
+    ) -> Awaitable[None]:
+        """Schedule the CMK for deletion after a waiting period (7–30 days).
+
+        KMS never deletes a key immediately — the window is a last chance to cancel,
+        since destroying a KEK makes every value wrapped under it unrecoverable.
+        """
+
+        ...  # pragma: no cover

@@ -255,9 +255,11 @@ Compose it with other provisioners (a schema, a bucket, a key) via
 `CompositeTenantProvisioner` so onboarding a tenant readies every backend at
 once.
 
-The [cloud KMS backends](../integrations/kms.md) resolve per-tenant keys through
-the same directory, but none of them ships a provisioner — create and destroy a
-tenant's key with your own `TenantProvisionerPort` or out of band.
+The [cloud KMS backends](../integrations/kms.md) ship the same seam —
+`AwsKmsTenantProvisioner`, `GcpKmsTenantProvisioner`, and
+`YcKmsTenantProvisioner` — so a tenant's KEK is created on onboarding there too.
+Yandex Cloud mints its key ids, so it pairs with `YcKmsKeyDirectory` (which looks
+a tenant's key up by name) instead of a template directory.
 
 ## Observability
 

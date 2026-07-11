@@ -68,8 +68,10 @@ at the same policy, so the planes can't drift.
 - **Per-tenant keys (BYOK):** swap `StaticKeyDirectory` for `TenantTemplateKeyDirectory`
   (`template="tenant/{tenant_id}/kek"`) so each tenant's data is unreadable with
   another's key. The KEK is provisioned through the same `TenantProvisionerPort` as
-  schemas and buckets — `forze_vault` ships `VaultTransitTenantProvisioner`; the cloud
-  backends ship none, so provision their per-tenant keys yourself or out of band.
+  schemas and buckets — every backend ships one (`VaultTransitTenantProvisioner`,
+  `AwsKmsTenantProvisioner`, `GcpKmsTenantProvisioner`, `YcKmsTenantProvisioner`), and
+  teardown is opt-in (`allow_deletion`). Yandex Cloud mints its key ids, so it pairs with
+  `YcKmsKeyDirectory` (name lookup) rather than a template directory.
 - **KMS backends:** every one holds the KEK outside the app and self-describes the key
   version in the envelope, so rotation never orphans data.
 

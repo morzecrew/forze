@@ -6,7 +6,7 @@ require_kms_gcp()
 
 # ....................... #
 
-from .adapters import GcpKmsKeyManagement
+from .adapters import GcpKmsKeyManagement, GcpKmsTenantProvisioner
 from .execution import GcpKmsClientDepKey, GcpKmsDepsModule, gcpkms_lifecycle_step
 from .kernel.client import GcpKmsClient, GcpKmsClientPort, GcpKmsConfig
 
@@ -19,5 +19,6 @@ __all__ = [
     "GcpKmsClientDepKey",
     "GcpKmsDepsModule",
     "GcpKmsKeyManagement",
+    "GcpKmsTenantProvisioner",
     "gcpkms_lifecycle_step",
 ]

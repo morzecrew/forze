@@ -15,7 +15,7 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException
-from forze_kms.gcp import GcpKmsClient, GcpKmsKeyManagement
+from forze_kms.gcp import GcpKmsClient, GcpKmsKeyManagement, GcpKmsTenantProvisioner
 
 # ----------------------- #
 
@@ -159,3 +159,46 @@ async def test_per_tenant_keys_isolate_and_confused_deputy_is_rejected(
         await keyring.decrypt(blob_a, tenant=tenant_b)
 
     assert ei.value.code == "core.crypto.key_id_unauthorized"
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+async def test_provisioning_a_tenant_makes_its_key_usable(
+    gcp_kms_client: GcpKmsClient,
+) -> None:
+    """Onboarding a tenant creates its CryptoKey, so the keyring can encrypt for it."""
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    location = f"projects/{_PROJECT}/locations/{_LOCATION}"
+    ring_id = f"ring-{uuid4().hex[:8]}"
+    ring = f"{location}/keyRings/{ring_id}"
+
+    # The key ring is a shared, long-lived resource — not per-tenant.
+    async with gcp_kms_client.client() as c:
+        await c.create_key_ring(parent=location, key_ring_id=ring_id, key_ring={})
+
+    directory = TenantTemplateKeyDirectory(
+        template=f"{ring}/cryptoKeys/tenant-{{tenant_id}}",
+        default_key_id=f"{ring}/cryptoKeys/shared",
+    )
+    keyring = Keyring(
+        kms=GcpKmsKeyManagement(client=gcp_kms_client),
+        aead=AesGcmAead(),
+        directory=directory,
+    )
+    provisioner = GcpKmsTenantProvisioner(client=gcp_kms_client, directory=directory)
+
+    # Before onboarding, the tenant has no key at all.
+    with pytest.raises(CoreException):
+        await keyring.encrypt(b"secret", tenant=tenant)
+
+    await provisioner.provision(tenant)
+
+    blob = await keyring.encrypt(b"secret", tenant=tenant)
+    assert await keyring.decrypt(blob, tenant=tenant) == b"secret"
+
+    # Re-provisioning an existing key is a no-op (AlreadyExists is tolerated).
+    await provisioner.provision(tenant)
+    assert await keyring.decrypt(blob, tenant=tenant) == b"secret"

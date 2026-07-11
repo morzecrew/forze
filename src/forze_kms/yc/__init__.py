@@ -6,7 +6,7 @@ require_kms_yc()
 
 # ....................... #
 
-from .adapters import YcKmsKeyManagement
+from .adapters import YcKmsKeyDirectory, YcKmsKeyManagement, YcKmsTenantProvisioner
 from .execution import YcKmsClientDepKey, YcKmsDepsModule, yckms_lifecycle_step
 from .kernel.client import YcKmsClient, YcKmsClientPort, YcKmsConfig
 
@@ -18,6 +18,8 @@ __all__ = [
     "YcKmsConfig",
     "YcKmsClientDepKey",
     "YcKmsDepsModule",
+    "YcKmsKeyDirectory",
     "YcKmsKeyManagement",
+    "YcKmsTenantProvisioner",
     "yckms_lifecycle_step",
 ]

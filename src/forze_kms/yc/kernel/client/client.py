@@ -18,7 +18,14 @@ from yandex.cloud.kms.v1.symmetric_crypto_service_pb2 import (
 from yandex.cloud.kms.v1.symmetric_crypto_service_pb2_grpc import (
     SymmetricCryptoServiceStub,
 )
-from yandex.cloud.kms.v1.symmetric_key_pb2 import SymmetricAlgorithm
+from yandex.cloud.kms.v1.symmetric_key_pb2 import SymmetricAlgorithm, SymmetricKey
+from yandex.cloud.kms.v1.symmetric_key_service_pb2 import (
+    CreateSymmetricKeyMetadata,
+    CreateSymmetricKeyRequest,
+    DeleteSymmetricKeyRequest,
+    ListSymmetricKeysRequest,
+)
+from yandex.cloud.kms.v1.symmetric_key_service_pb2_grpc import SymmetricKeyServiceStub
 
 from forze.base.exceptions import exc
 
@@ -41,7 +48,15 @@ class YcKmsClient(YcKmsClientPort):
     gRPC's sync channel is thread-safe for concurrent calls.
     """
 
+    __sdk: Any | None = attrs.field(default=None, init=False)
+    """The SDK itself, kept to await the long-running operations key admin returns."""
+
     __stub: Any | None = attrs.field(default=None, init=False)
+    """``SymmetricCryptoService`` — the data-plane (encrypt / decrypt / data keys)."""
+
+    __key_stub: Any | None = attrs.field(default=None, init=False)
+    """``SymmetricKeyService`` — the control-plane (create / list / delete keys)."""
+
     __request_timeout: float | None = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
@@ -72,7 +87,7 @@ class YcKmsClient(YcKmsClientPort):
             cfg = config if config is not None else YcKmsConfig()
             self.__request_timeout = cfg.request_timeout
 
-            def _build() -> Any:
+            def _build() -> tuple[Any, Any, Any]:
                 kwargs: dict[str, Any] = {}
 
                 if iam_token is not None:
@@ -92,9 +107,13 @@ class YcKmsClient(YcKmsClientPort):
                     **kwargs
                 )
 
-                return sdk.client(SymmetricCryptoServiceStub)
+                return (
+                    sdk,
+                    sdk.client(SymmetricCryptoServiceStub),
+                    sdk.client(SymmetricKeyServiceStub),
+                )
 
-            self.__stub = await asyncio.to_thread(_build)
+            self.__sdk, self.__stub, self.__key_stub = await asyncio.to_thread(_build)
 
             logger.trace("YC KMS client connected", endpoint=cfg.endpoint)
 
@@ -108,7 +127,9 @@ class YcKmsClient(YcKmsClientPort):
         """
 
         async with self.__init_lock:
+            self.__sdk = None
             self.__stub = None
+            self.__key_stub = None
             self.__request_timeout = None
 
             logger.trace("YC KMS client closed")
@@ -120,6 +141,16 @@ class YcKmsClient(YcKmsClientPort):
             raise exc.internal("YC KMS client is not initialized")
 
         return self.__stub
+
+    # ....................... #
+
+    def __require_key_admin(self) -> tuple[Any, Any]:
+        """The SDK (to await operations) and the key-admin stub."""
+
+        if self.__sdk is None or self.__key_stub is None:
+            raise exc.internal("YC KMS client is not initialized")
+
+        return self.__sdk, self.__key_stub
 
     # ....................... #
 
@@ -194,3 +225,88 @@ class YcKmsClient(YcKmsClientPort):
             raise exc.internal("YC KMS Decrypt returned no plaintext")
 
         return plaintext
+
+    # ....................... #
+    # Key administration (per-tenant provisioning)
+
+    @exc_interceptor.coroutine("yckms.find_key_id_by_name")
+    async def find_key_id_by_name(self, folder_id: str, name: str) -> str | None:
+        """Page through the folder's symmetric keys and return the id of the one
+        called *name* (Yandex Cloud has no get-by-name)."""
+
+        _, key_stub = self.__require_key_admin()
+        timeout = self.__timeout_kwargs()
+
+        def _find() -> str | None:
+            cursor = ""
+
+            while True:
+                request = ListSymmetricKeysRequest(
+                    folder_id=folder_id, page_token=cursor
+                )
+                response = key_stub.List(request, **timeout)
+
+                for key in response.keys:
+                    if key.name == name:
+                        key_id: str = key.id
+                        return key_id
+
+                cursor = response.next_page_token
+
+                if not cursor:
+                    return None
+
+        return await asyncio.to_thread(_find)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("yckms.create_key")
+    async def create_key(
+        self,
+        folder_id: str,
+        name: str,
+        *,
+        algorithm: str = "AES_256",
+        description: str | None = None,
+    ) -> str:
+        """Create a symmetric key and await the operation, returning the minted id."""
+
+        sdk, key_stub = self.__require_key_admin()
+
+        def _create() -> str:
+            request = CreateSymmetricKeyRequest(
+                folder_id=folder_id,
+                name=name,
+                description=description or "",
+                default_algorithm=SymmetricAlgorithm.Value(algorithm),
+            )
+            operation = key_stub.Create(request)
+            result = sdk.wait_operation_and_get_result(
+                operation,
+                response_type=SymmetricKey,
+                meta_type=CreateSymmetricKeyMetadata,
+            )
+            key_id: str = result.response.id
+
+            return key_id
+
+        key_id = await asyncio.to_thread(_create)
+
+        if not key_id:
+            raise exc.internal("YC KMS CreateSymmetricKey returned no key id")
+
+        return key_id
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("yckms.delete_key")
+    async def delete_key(self, key_id: str) -> None:
+        """Delete a symmetric key and await the operation."""
+
+        sdk, key_stub = self.__require_key_admin()
+
+        def _delete() -> None:
+            operation = key_stub.Delete(DeleteSymmetricKeyRequest(key_id=key_id))
+            sdk.wait_operation_and_get_result(operation)
+
+        await asyncio.to_thread(_delete)

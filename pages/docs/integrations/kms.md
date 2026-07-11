@@ -111,11 +111,64 @@ adapter and registers `KeyManagementDepKey` itself:
 Leave `key_management` unset on the KMS deps module: `CryptoDepsModule` already
 registers the port, and registering it twice is a conflicting dependency.
 
+## Per-tenant keys
+
+Give each tenant its own KEK, and create it when the tenant is onboarded. A
+provisioner resolves through the **same** directory the keyring encrypts through,
+so the provisioned key and the encrypt-path key can never drift:
+
+=== "AWS"
+
+    ```python
+    from forze.application.contracts.crypto import TenantTemplateKeyDirectory
+    from forze_kms.aws import AwsKmsTenantProvisioner
+
+    # KMS mints the CMK id, so a tenant's key is addressed by a caller-chosen alias.
+    directory = TenantTemplateKeyDirectory(
+        template="alias/tenant-{tenant_id}",
+        default_key_id="alias/shared-kek",
+    )
+    provisioner = AwsKmsTenantProvisioner(client=kms, directory=directory)
+    ```
+
+=== "Google Cloud"
+
+    ```python
+    from forze.application.contracts.crypto import TenantTemplateKeyDirectory
+    from forze_kms.gcp import GcpKmsTenantProvisioner
+
+    ring = "projects/acme/locations/europe-west1/keyRings/app"
+    directory = TenantTemplateKeyDirectory(
+        template=f"{ring}/cryptoKeys/tenant-{{tenant_id}}",
+        default_key_id=f"{ring}/cryptoKeys/shared-kek",
+    )
+    # The key ring is shared and long-lived; only the CryptoKey is per-tenant.
+    provisioner = GcpKmsTenantProvisioner(client=kms, directory=directory)
+    ```
+
+=== "Yandex Cloud"
+
+    ```python
+    from forze_kms.yc import YcKmsKeyDirectory, YcKmsTenantProvisioner
+
+    # Yandex Cloud mints the key id, so a template cannot address a tenant's key —
+    # this directory looks it up by the name the provisioner creates.
+    directory = YcKmsKeyDirectory(client=kms, folder_id="b1g…", template="tenant-{tenant_id}")
+    provisioner = YcKmsTenantProvisioner(client=kms, directory=directory)
+    ```
+
+Pass the provisioner to `TenancyDepsModule(tenant_provisioner=…)` — alongside a
+schema or bucket provisioner via `CompositeTenantProvisioner` — so onboarding a
+tenant readies every backend at once. Provisioning is idempotent, so a retried
+onboarding is safe.
+
 ## What it provides
 
 | Contract | Implementation | Dep key |
 |----------|---------------|---------|
 | Key management (envelope encryption) | `AwsKmsKeyManagement` · `GcpKmsKeyManagement` · `YcKmsKeyManagement` | `KeyManagementDepKey` (registered by `CryptoDepsModule`) |
+| Per-tenant KEK provisioning | `AwsKmsTenantProvisioner` · `GcpKmsTenantProvisioner` · `YcKmsTenantProvisioner` | via `TenantProvisionerPort` |
+| Key directory (Yandex Cloud only) | `YcKmsKeyDirectory` | passed to `CryptoDepsModule(directory=…)` |
 | Raw client | `AwsKmsClient` · `GcpKmsClient` · `YcKmsClient` | `AwsKmsClientDepKey` · `GcpKmsClientDepKey` · `YcKmsClientDepKey` |
 
 What a `KeyRef.key_id` names, per provider:
@@ -140,11 +193,13 @@ What a `KeyRef.key_id` names, per provider:
   for the one case that *does* need a re-index.
 - **Data-key length** is `dek_bytes` on the adapter — 32 bytes (AES-256) by
   default, matching the keyring's AEAD; 16 selects AES-128.
-- **Per-tenant KEKs are not provisioned for you.** Point
-  `TenantTemplateKeyDirectory` at per-tenant keys as usual, but unlike
-  [Vault](vault.md) — which ships `VaultTransitTenantProvisioner` — no cloud
-  backend ships a `TenantProvisionerPort`, so create and destroy a tenant's key
-  through your own provisioner or out of band.
+- **Teardown is opt-in and never immediate.** `deprovision` does nothing unless you
+  set `allow_deletion=True` — destroying a KEK makes every value wrapped under it
+  unrecoverable. Even then the platform protects you: AWS drops the alias and
+  *schedules* the CMK for deletion after `pending_window_days` (7–30, so you can
+  cancel); Google Cloud cannot delete a CryptoKey at all, so the provisioner
+  destroys its versions and the empty key resource remains; Yandex Cloud deletes
+  the key outright.
 - **Google Cloud KMS has no data-key API.** The adapter mints the data key itself
   from the framework's CSPRNG entropy seam and wraps it with `Encrypt`; AWS and
   Yandex Cloud use their native `GenerateDataKey`. The envelope is identical

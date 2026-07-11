@@ -45,3 +45,23 @@ class GcpKmsClientPort(Protocol):
         """
 
         ...  # pragma: no cover
+
+    # ....................... #
+    # Key administration (per-tenant provisioning)
+
+    def ensure_crypto_key(self, parent: str, crypto_key_id: str) -> Awaitable[str]:
+        """Create a symmetric CryptoKey under the key ring *parent* (idempotent).
+
+        Returns the CryptoKey resource name; an already-existing key is a no-op.
+        """
+
+        ...  # pragma: no cover
+
+    def destroy_crypto_key_versions(self, key_name: str) -> Awaitable[int]:
+        """Schedule every live version of *key_name* for destruction; returns the count.
+
+        Google Cloud KMS cannot delete a CryptoKey — destroying its versions is the
+        strongest teardown available, and the (empty) key resource remains.
+        """
+
+        ...  # pragma: no cover
