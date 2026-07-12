@@ -16,7 +16,11 @@ from forze.application.contracts.crypto import (
 )
 from forze.base.serialization import default_model_codec
 from forze.application.contracts.search import SearchSpec
-from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
+from forze.application.integrations.crypto import (
+    DeterministicFieldCipher,
+    EncryptingModelCodec,
+    Keyring,
+)
 from forze.application.integrations.search import (
     decrypt_search_rows,
     resolve_search_read_codec_spec,
@@ -146,6 +150,50 @@ def test_resolver_wraps_hub_spec_too() -> None:
 
     assert isinstance(wrapped, HubSearchSpec)  # same concrete type back
     assert hasattr(wrapped.resolved_read_codec, "prepare_encrypt")  # now encrypting
+
+
+def test_spec_reject_plaintext_reaches_search_codec() -> None:
+    """The policy's strict mode flows into the wrapped search read codec, so a
+    tampered / unauthentic value in a searchable slot raises instead of being
+    silently passed through as legacy plaintext."""
+
+    spec = resolve_search_read_codec_spec(
+        _spec(
+            encryption=FieldEncryption(
+                searchable=frozenset({"secret"}), reject_plaintext=True
+            )
+        ),
+        keyring=_keyring(),
+        deterministic=DeterministicFieldCipher(
+            root=b"a-stable-root-secret-32-bytes!!!"
+        ),
+        tenant_provider=lambda: None,
+    )
+    codec = spec.resolved_read_codec
+
+    assert isinstance(codec, EncryptingModelCodec)
+    assert codec.reject_plaintext is True
+
+    # Valid base64 but not our ciphertext: post-migration this is a tamper signal
+    # and must surface, not decode as a legacy plaintext row.
+    forged = base64.b64encode(b"not-our-ciphertext-at-all").decode()
+    with pytest.raises(CoreException) as ei:
+        codec.decode_mapping({"id": "1", "title": "t", "secret": forged})
+
+    assert ei.value.code == "core.crypto.plaintext_rejected"
+
+
+def test_spec_default_keeps_search_codec_lenient() -> None:
+    spec = resolve_search_read_codec_spec(
+        _spec(encryption=FieldEncryption(encrypted=frozenset({"secret"}))),
+        keyring=_keyring(),
+        deterministic=None,
+        tenant_provider=lambda: None,
+    )
+    codec = spec.resolved_read_codec
+
+    assert isinstance(codec, EncryptingModelCodec)
+    assert codec.reject_plaintext is False
 
 
 @pytest.mark.asyncio

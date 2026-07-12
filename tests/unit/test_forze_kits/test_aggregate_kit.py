@@ -30,7 +30,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import CreateDocumentCmd, DomainEvent, ReadDocument
 from forze_kits.aggregates import AggregateKit
-from forze_kits.aggregates.document import DocumentIdDTO
+from forze_kits.aggregates.document import DocumentIdDTO, DocumentUpdateDTO
 from forze_kits.aggregates.document.dto import DocumentIdRevDTO, ListRequestDTO
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
@@ -139,7 +139,9 @@ async def _create(reg, ctx, group: str, qty: int):
 class TestComposition:
     def test_all_four_concerns_freeze_without_conflict(self) -> None:
         reg = _full_kit().registry(tx_route=_TX)
-        keys = reg.handlers  # freezing all four concerns onto the write ops raised no conflict
+        keys = (
+            reg.handlers
+        )  # freezing all four concerns onto the write ops raised no conflict
 
         # document write + read ops, soft-delete ops, and the external search query ops all present.
         assert _key(DocumentKernelOp.CREATE) in keys
@@ -159,7 +161,9 @@ class TestComposition:
 
     def test_no_outbox_emits_no_bridge_or_relay(self) -> None:
         kit = AggregateKit(spec=WIDGET_SPEC)
-        assert not kit.domain_events().factories_for(WidgetCreated(aggregate_id=uuid4()))
+        assert not kit.domain_events().factories_for(
+            WidgetCreated(aggregate_id=uuid4())
+        )
         assert kit.lifecycle_steps() == ()
 
 
@@ -168,7 +172,9 @@ class TestComposition:
 
 class TestConcernsWiredThroughKit:
     async def test_invariant_rolls_back_an_over_cap_write(self) -> None:
-        runtime = build_runtime(MockDepsModule(domain_events=_full_kit().domain_events()))
+        runtime = build_runtime(
+            MockDepsModule(domain_events=_full_kit().domain_events())
+        )
         reg = _full_kit().registry(tx_route=_TX)
 
         async with runtime.scope():
@@ -180,7 +186,9 @@ class TestConcernsWiredThroughKit:
             assert ei.value.kind is ExceptionKind.DOMAIN
 
     async def test_soft_delete_excludes_from_list_and_syncs_search(self) -> None:
-        runtime = build_runtime(MockDepsModule(domain_events=_full_kit().domain_events()))
+        runtime = build_runtime(
+            MockDepsModule(domain_events=_full_kit().domain_events())
+        )
         reg = _full_kit().registry(tx_route=_TX)
 
         async with runtime.scope():
@@ -214,6 +222,31 @@ class TestConcernsWiredThroughKit:
                 ctx,
             )
             assert widget.id in index
+
+    async def test_generic_update_that_soft_deletes_drops_the_index_entry(self) -> None:
+        runtime = build_runtime(
+            MockDepsModule(domain_events=_full_kit().domain_events())
+        )
+        reg = _full_kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            widget = await _create(ctx=ctx, reg=reg, group="A", qty=1)
+
+            index = ctx.deps.provide(MockStateDepKey).documents.get("widgets_index", {})
+            assert widget.id in index
+
+            # Soft-deleting through the *generic* UPDATE op (not the DELETE op) must also
+            # remove the row from the index — no ghost that search returns and GET 404s.
+            await run_operation(
+                reg,
+                _key(DocumentKernelOp.UPDATE),
+                DocumentUpdateDTO(
+                    id=widget.id, rev=widget.rev, dto=WidgetUpdate(is_deleted=True)
+                ),
+                ctx,
+            )
+            assert widget.id not in index
 
     async def test_facade_runs_create_end_to_end(self) -> None:
         kit = _full_kit()
@@ -285,7 +318,9 @@ class TestBackendRequirements:
         encrypted = attrs.evolve(
             WIDGET_SPEC, encryption=FieldEncryption(encrypted=frozenset({"group"}))
         )
-        assert AggregateKit(spec=encrypted).backend_requirements().crypto_required is True
+        assert (
+            AggregateKit(spec=encrypted).backend_requirements().crypto_required is True
+        )
 
 
 # ....................... #
@@ -295,7 +330,11 @@ _BLOBS = StorageSpec(name="widgets_blobs")
 
 class TestStorageSlice:
     def test_blob_ops_compose_alongside_document_ops(self) -> None:
-        keys = AggregateKit(spec=WIDGET_SPEC, storage=_BLOBS).registry(tx_route=_TX).handlers
+        keys = (
+            AggregateKit(spec=WIDGET_SPEC, storage=_BLOBS)
+            .registry(tx_route=_TX)
+            .handlers
+        )
 
         # the blob surface, under the storage spec's own namespace...
         assert _BLOBS.default_namespace.key(StorageKernelOp.UPLOAD) in keys

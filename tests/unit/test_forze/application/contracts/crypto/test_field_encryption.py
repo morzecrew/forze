@@ -16,6 +16,7 @@ def test_defaults_are_empty() -> None:
     assert enc.encrypted == frozenset()
     assert enc.searchable == frozenset()
     assert enc.binds_record_id is False
+    assert enc.reject_plaintext is False
     assert enc.is_empty
 
 

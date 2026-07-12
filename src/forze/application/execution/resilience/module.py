@@ -15,21 +15,14 @@ from forze.application.contracts.resilience import (
     ResiliencePortPoliciesDepKey,
     ResilienceSpec,
 )
-from forze.base.exceptions import ExceptionKind, exc
+from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
 from forze.application.contracts.deps import Deps
-from .executor import InProcessResilienceExecutor
+from .executor import InProcessResilienceExecutor, reject_blanket_ambiguous_retry
 from .policies import builtin_default_policies
 
 # ----------------------- #
-
-_AMBIGUOUS_RETRY_KINDS = frozenset(
-    {ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT}
-)
-"""Retry-triggering kinds whose outcome is *ambiguous* — an infrastructure error or a
-per-attempt timeout can leave a write applied-but-unacknowledged, so retrying may duplicate
-it. Concurrency conflicts and throttles are unambiguous (the call did not take effect), so
-they are safe to retry on any method."""
 
 
 @final
@@ -99,31 +92,27 @@ class ResilienceDepsModule:
         # timeout) can duplicate a non-idempotent write, so require the author to opt in per
         # method — list the operations they have confirmed are safe to retry. Concurrency /
         # throttle-only retries (e.g. the ``occ`` policy) are unambiguous and stay unrestricted.
+        # The whole-port bindings are also handed to the executor so a hot retune re-runs the
+        # same gate and cannot swap the hazard back in.
+        blanket_bindings: dict[StrKey, tuple[str, ...]] = {}
+
         for pp in self.port_policies:
             if pp.methods is not None:
                 continue
 
-            retry = policies[pp.policy].retry
-
-            if retry is None:
-                continue
-
-            if ambiguous := sorted(
-                kind.value for kind in retry.retry_on & _AMBIGUOUS_RETRY_KINDS
-            ):
-                raise exc.configuration(
-                    f"Port policy for {pp.key.name!r} applies retrying policy "
-                    f"{str(pp.policy)!r} (retries {ambiguous}) to every method: this would "
-                    "retry a non-idempotent write on an ambiguous failure and risk "
-                    "duplicating it. Declare an explicit `methods` list of the operations "
-                    "that are safe to retry.",
-                    code="resilience.blanket_write_retry",
-                )
+            reject_blanket_ambiguous_retry(policies[pp.policy], pp.key.name)
+            blanket_bindings[pp.policy] = (
+                *blanket_bindings.get(pp.policy, ()),
+                pp.key.name,
+            )
 
         # Stores fall back to the executor's process-local defaults when not
         # provided; only pass what was configured so the default Factory wiring
         # (clock injection) stays in one place.
-        executor_kwargs: dict[str, Any] = {"policies": policies}
+        executor_kwargs: dict[str, Any] = {
+            "policies": policies,
+            "blanket_policy_bindings": blanket_bindings,
+        }
 
         if self.breaker_store is not None:
             executor_kwargs["breaker_store"] = self.breaker_store

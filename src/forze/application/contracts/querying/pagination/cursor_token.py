@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal, InvalidOperation
@@ -669,6 +670,11 @@ def _parse_value(v: Any) -> Any:
     if v is None:
         return None
 
+    # A non-finite float can't be a legitimate sort-key boundary and would poison the
+    # Python-side seek comparisons, so it is rejected here like any tampered value.
+    if isinstance(v, float) and not math.isfinite(v):
+        raise exc.validation("Invalid cursor token")
+
     if isinstance(v, (int, float, str, bool)):
         return v
 
@@ -681,12 +687,20 @@ def _parse_value(v: Any) -> Any:
         and isinstance(v[_DECIMAL_TAG], str)
     ):
         try:
-            return Decimal(
+            dec = Decimal(
                 v[_DECIMAL_TAG]  # pyright: ignore[reportUnknownArgumentType]
             )
 
         except InvalidOperation as e:
             raise exc.validation("Invalid cursor token") from e
+
+        # ``Decimal("NaN")`` / ``Decimal("Infinity")`` parse without error but a NaN
+        # comparison raises ``InvalidOperation`` in the seek paths (a 500); a non-finite
+        # boundary is a tampered cursor and must fail closed at decode time.
+        if not dec.is_finite():
+            raise exc.validation("Invalid cursor token")
+
+        return dec
 
     # Token values are client-controlled: any other container (or non-scalar) is rejected
     # as a tampered cursor.
@@ -820,7 +834,19 @@ def decode_keyset_v1(
     except ValueError as e:
         raise exc.validation("Invalid cursor token") from e
 
-    if not isinstance(data, dict) or int(data.get("v", 0)) != _KEYSET_V1:  # type: ignore[arg-type]
+    if not isinstance(data, dict):
+        raise exc.validation("Invalid cursor token")
+
+    # The version field is client-controlled: a non-coercible ``v`` (``"abc"``, a list,
+    # ``null``, an over-large float) is a tampered cursor, never a raw ValueError /
+    # TypeError / OverflowError (500).
+    try:
+        version = int(data.get("v", 0))  # type: ignore[arg-type]
+
+    except (TypeError, ValueError, OverflowError) as e:
+        raise exc.validation("Invalid cursor token") from e
+
+    if version != _KEYSET_V1:
         raise exc.validation("Invalid cursor token")
 
     if binding is not None and (signer is not None or cipher is not None):

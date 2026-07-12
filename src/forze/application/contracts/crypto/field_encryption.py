@@ -66,6 +66,22 @@ class FieldEncryption:
     per-record id), and ciphertext written before enabling this still decrypts only without
     the binding."""
 
+    reject_plaintext: bool = False
+    """Once a field-encryption migration is complete, refuse plaintext on read.
+
+    Defaults to ``False``: the read path tolerates a non-ciphertext value in a sealed
+    slot so a zero-downtime rollout can encrypt in place while legacy rows are still
+    plaintext. That tolerance is also a fail-open hole once the backfill is done — an
+    attacker with write access could replace a ciphertext with chosen plaintext and have
+    it accepted. Set ``True`` after backfill to flip the switch on every plane that
+    shares this policy (document, search, analytics, graph):
+
+    - a value in an :attr:`encrypted` or :attr:`searchable` slot that is not a valid
+      Forze ciphertext raises ``core.crypto.plaintext_rejected`` instead of passing
+      through (including a searchable value that fails authentication), and
+    - record-id binding (:attr:`binds_record_id`) stops falling back to the legacy
+      id-less AAD, so a pre-binding ciphertext is no longer accepted."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

@@ -2092,9 +2092,12 @@ async def test_hub_parallel_cursor_ranked_forward_and_back(
         sorts={"name": "asc"},
         cursor={"limit": 3, "before": p1.next_cursor},
     )
-    assert len(p_back.hits) >= 1
-    assert {h.id for h in p_back.hits}.issubset(set(row_ids))
-    assert {h.id for h in p_back.hits} & {h.id for h in p0.hits}
+    # The cursor sits at the sixth row; five rows precede it, so the before page is the
+    # three rows NEAREST the cursor, in forward order — never the three farthest.
+    assert [h.id for h in p_back.hits] == forward_ids[2:5]
+    assert p_back.has_more is True
+    assert p_back.prev_cursor is not None
+    assert p_back.next_cursor is not None
 
 
 @pytest.mark.asyncio

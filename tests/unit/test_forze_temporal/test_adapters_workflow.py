@@ -230,6 +230,193 @@ class TestTemporalWorkflowQueryAdapter:
             await adapter.describe(DurableWorkflowHandle(workflow_id="w2", run_id="r2"))
 
 
+class TestTemporalWorkflowTenantScoping:
+    """Handle ops must address only the active tenant's workflow id-space."""
+
+    from uuid import UUID as _UUID
+
+    _tid = _UUID("00000000-0000-7000-8000-0000000000aa")
+    _other = _UUID("00000000-0000-7000-8000-0000000000bb")
+
+    def _command_adapter(
+        self, client: TemporalClient
+    ) -> TemporalWorkflowCommandAdapter[_In, _Out]:
+        return TemporalWorkflowCommandAdapter(
+            client=client,
+            queue="tq",
+            spec=_spec(),
+            tenant_aware=True,
+            tenant_provider=lambda: TenantIdentity(tenant_id=self._tid),
+        )
+
+    def _query_adapter(
+        self, client: TemporalClient
+    ) -> TemporalWorkflowQueryAdapter[_In, _Out]:
+        return TemporalWorkflowQueryAdapter(
+            client=client,
+            queue="tq",
+            spec=_spec(),
+            tenant_aware=True,
+            tenant_provider=lambda: TenantIdentity(tenant_id=self._tid),
+        )
+
+    @pytest.mark.asyncio
+    async def test_command_ops_prefix_raw_handle_ids(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.signal_workflow = AsyncMock()
+        client.update_workflow = AsyncMock(return_value=_UpOut(v=1))
+        client.cancel_workflow = AsyncMock()
+        client.terminate_workflow = AsyncMock()
+
+        spec = _spec()
+        adapter = self._command_adapter(client)
+        h = DurableWorkflowHandle(workflow_id="w1", run_id="r1")
+
+        await adapter.signal(h, signal=spec.signals["sig"], args=_Sig(s=2))
+        await adapter.update(h, update=spec.updates["up"], args=_UpIn(u=3))
+        await adapter.cancel(h)
+        await adapter.terminate(h, reason="bye")
+
+        wid = f"tenant:{self._tid}:w1"
+        client.signal_workflow.assert_awaited_once_with(
+            workflow_id=wid,
+            signal="sig",
+            arg=_Sig(s=2),
+            run_id="r1",
+        )
+        client.update_workflow.assert_awaited_once_with(
+            workflow_id=wid,
+            update="up",
+            arg=_UpIn(u=3),
+            run_id="r1",
+            result_type=_UpOut,
+        )
+        client.cancel_workflow.assert_awaited_once_with(workflow_id=wid, run_id="r1")
+        client.terminate_workflow.assert_awaited_once_with(
+            workflow_id=wid,
+            reason="bye",
+            run_id="r1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_command_ops_pass_through_own_prefixed_ids(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.cancel_workflow = AsyncMock()
+
+        adapter = self._command_adapter(client)
+        wid = f"tenant:{self._tid}:w1"
+
+        await adapter.cancel(DurableWorkflowHandle(workflow_id=wid, run_id="r1"))
+
+        client.cancel_workflow.assert_awaited_once_with(workflow_id=wid, run_id="r1")
+
+    @pytest.mark.asyncio
+    async def test_command_ops_reject_foreign_tenant_ids(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.signal_workflow = AsyncMock()
+        client.cancel_workflow = AsyncMock()
+
+        spec = _spec()
+        adapter = self._command_adapter(client)
+        h = DurableWorkflowHandle(workflow_id=f"tenant:{self._other}:w1", run_id="r1")
+
+        with pytest.raises(CoreException, match="outside the active tenant"):
+            await adapter.signal(h, signal=spec.signals["sig"], args=_Sig(s=2))
+
+        with pytest.raises(CoreException, match="outside the active tenant"):
+            await adapter.cancel(h)
+
+        client.signal_workflow.assert_not_awaited()
+        client.cancel_workflow.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_query_ops_prefix_raw_handle_ids(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.query_workflow = AsyncMock(return_value=_QOut(r="x"))
+        client.get_workflow_result = AsyncMock(return_value=_Out(y="done"))
+
+        wid = f"tenant:{self._tid}:w2"
+        run_desc = DurableWorkflowRunDescription(
+            workflow_id=wid,
+            run_id="r2",
+            workflow_name="Wf",
+            status=DurableWorkflowRunStatus.COMPLETED,
+        )
+        client.describe_workflow = AsyncMock(return_value=run_desc)
+
+        spec = _spec()
+        adapter = self._query_adapter(client)
+        h = DurableWorkflowHandle(workflow_id="w2", run_id="r2")
+
+        await adapter.query(h, query=spec.queries["q"], args=_QIn(q=1))
+        await adapter.result(h)
+        await adapter.describe(h)
+
+        client.query_workflow.assert_awaited_once_with(
+            workflow_id=wid,
+            query="q",
+            arg=_QIn(q=1),
+            run_id="r2",
+            result_type=_QOut,
+        )
+        client.get_workflow_result.assert_awaited_once_with(
+            workflow_id=wid,
+            run_id="r2",
+            result_type=_Out,
+        )
+        client.describe_workflow.assert_awaited_once_with(
+            workflow_id=wid,
+            run_id="r2",
+        )
+
+    @pytest.mark.asyncio
+    async def test_query_ops_reject_foreign_tenant_ids(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.query_workflow = AsyncMock()
+        client.get_workflow_result = AsyncMock()
+        client.describe_workflow = AsyncMock()
+
+        spec = _spec()
+        adapter = self._query_adapter(client)
+        h = DurableWorkflowHandle(workflow_id=f"tenant:{self._other}:w2", run_id="r2")
+
+        with pytest.raises(CoreException, match="outside the active tenant"):
+            await adapter.query(h, query=spec.queries["q"], args=_QIn(q=1))
+
+        with pytest.raises(CoreException, match="outside the active tenant"):
+            await adapter.result(h)
+
+        with pytest.raises(CoreException, match="outside the active tenant"):
+            await adapter.describe(h)
+
+        client.query_workflow.assert_not_awaited()
+        client.get_workflow_result.assert_not_awaited()
+        client.describe_workflow.assert_not_awaited()
+
+    def test_resolve_workflow_id_semantics(self) -> None:
+        adapter = self._command_adapter(_client())
+
+        assert adapter.resolve_workflow_id("w") == f"tenant:{self._tid}:w"
+        assert (
+            adapter.resolve_workflow_id(f"tenant:{self._tid}:w")
+            == f"tenant:{self._tid}:w"
+        )
+
+        with pytest.raises(CoreException, match="outside the active tenant"):
+            adapter.resolve_workflow_id(f"tenant:{self._other}:w")
+
+    def test_resolve_workflow_id_verbatim_without_tenancy(self) -> None:
+        adapter = TemporalWorkflowCommandAdapter(
+            client=_client(),
+            queue="tq",
+            spec=_spec(),
+            tenant_aware=False,
+        )
+
+        assert adapter.resolve_workflow_id("w") == "w"
+        assert adapter.resolve_workflow_id("tenant:foo:w") == "tenant:foo:w"
+
+
 class TestTemporalBaseAdapterWorkflowId:
     def test_construct_workflow_id_plain(self) -> None:
         spec = _spec()

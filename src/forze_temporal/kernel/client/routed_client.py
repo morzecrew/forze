@@ -330,10 +330,12 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
         workflow_name: str | None = None,
         limit: int | None = None,
         next_page_token: str | None = None,
+        schedule_id_prefix: str | None = None,
     ) -> TemporalScheduleListPage:
         inner = await self._get_client()
         return await inner.list_schedules(
             workflow_name=workflow_name,
             limit=limit,
             next_page_token=next_page_token,
+            schedule_id_prefix=schedule_id_prefix,
         )

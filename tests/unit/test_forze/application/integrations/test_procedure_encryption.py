@@ -14,7 +14,7 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
 )
 from forze.application.contracts.procedure import ProcedureSpec
-from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
 from forze.application.integrations.procedure import resolve_procedure_codecs_spec
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -116,3 +116,18 @@ async def test_resolved_codec_seals_encrypted_param() -> None:
 
     assert is_envelope(base64.b64decode(bound["secret"]))  # sealed
     assert bound["window"] == "2026-01-01"  # plaintext param untouched
+
+
+def test_spec_reject_plaintext_reaches_params_codec() -> None:
+    """The policy's strict mode flows into the wrapped params codec."""
+
+    resolved = resolve_procedure_codecs_spec(
+        _spec(encrypted=frozenset({"secret"}), reject_plaintext=True),
+        keyring=_keyring(),
+        deterministic=None,
+        tenant_provider=lambda: None,
+    )
+
+    codec = resolved.resolved_params_codec
+    assert isinstance(codec, EncryptingModelCodec)
+    assert codec.reject_plaintext is True

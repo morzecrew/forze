@@ -14,9 +14,10 @@ plaintext.
 ## Field-level surfaces (one shared policy)
 
 A single `FieldEncryption` policy — `encrypted` (randomized AEAD) and `searchable`
-(deterministic, equality-only) field sets, plus `binds_record_id` — is declared once on
-the document spec and **carried to search, analytics, and graph** by pointing their spec
-at the same policy, so the planes can't drift.
+(deterministic, equality-only) field sets, plus `binds_record_id` and
+`reject_plaintext` — is declared once on the document spec and **carried to search,
+analytics, and graph** by pointing their spec at the same policy, so the planes
+can't drift.
 
 | Surface | Backends | `searchable` | `binds_record_id` | Fail-closed code |
 |---------|----------|--------------|-------------------|------------------|
@@ -36,6 +37,10 @@ at the same policy, so the planes can't drift.
   it by exact value.
 - **`searchable` needs a stable root** (`deterministic_root` on the crypto module);
   rotate with `deterministic_previous_root` overlap + `reencrypt_documents`.
+- **Migration tolerance:** legacy plaintext in a sealed field passes through on read by
+  default (zero-downtime backfill). Set `reject_plaintext=True` on the policy once the
+  backfill is done — an unencrypted or unauthentic value then raises
+  `core.crypto.plaintext_rejected` on every plane sharing the policy.
 
 ## Whole-payload & object surfaces
 

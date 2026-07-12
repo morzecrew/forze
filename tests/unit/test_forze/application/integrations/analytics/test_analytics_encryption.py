@@ -20,7 +20,7 @@ from forze.application.integrations.analytics import (
     encode_ingest_payloads,
     resolve_analytics_codecs_spec,
 )
-from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockKeyManagement
@@ -166,3 +166,18 @@ async def test_decrypt_and_shape_is_noop_for_plain_spec() -> None:
     )
 
     assert out[0] == _Row(id="1", region="eu", email="a@b.co")
+
+
+def test_spec_reject_plaintext_reaches_analytics_codecs() -> None:
+    """The policy's strict mode flows into the wrapped read & ingest codecs."""
+
+    spec = _resolved(encrypted=frozenset({"email"}), reject_plaintext=True)
+
+    read = spec.resolved_read_codec
+    assert isinstance(read, EncryptingModelCodec)
+    assert read.reject_plaintext is True
+
+    with pytest.raises(CoreException) as ei:
+        read.decode_mapping({"id": "1", "region": "eu", "email": "a@b.co"})
+
+    assert ei.value.code == "core.crypto.plaintext_rejected"

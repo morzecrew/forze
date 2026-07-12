@@ -74,6 +74,7 @@ def resolve_analytics_codecs_spec(
             searchable_fields=encryption.searchable,
             deterministic=deterministic,
             tenant_provider=tenant_provider,
+            reject_plaintext=encryption.reject_plaintext,
         )
 
     read_codec = _wrap(spec.resolved_read_codec)

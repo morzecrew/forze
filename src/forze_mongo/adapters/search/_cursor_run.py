@@ -14,11 +14,10 @@ from forze.application.contracts.querying import (
     build_cursor_binding,
     cursor_protection_active,
     decode_keyset_v1,
-    encode_keyset_v1,
+    keyset_page_bounds,
     normalize_sorts_for_keyset,
     resolve_effective_sorts,
     resolved_cursor_limit,
-    row_value_for_sort_key,
 )
 from forze.application.contracts.search import ranked_search_cursor_key_spec
 from forze.application.integrations.search import decrypt_search_rows
@@ -26,7 +25,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze_mongo.kernel.client.port import MongoClientPort
 
-from ._cursor_seek import build_keyset_seek_match
+from ._cursor_seek import build_keyset_seek_match, build_keyset_sort_spec
 from ._materialize import materialize_search_page
 from ._pipeline import append_pagination_stages
 from .base import MongoSearchGateway
@@ -122,6 +121,14 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         )
         pipeline = [*pipeline, {"$match": seek}]
 
+    if use_before:
+        # A ``before`` page must fetch the ``limit + 1`` rows NEAREST the cursor, so the
+        # fetch order is flipped (the aggregation counterpart of the SQL paths' flipped
+        # ``ORDER BY``); a forward-order ``$limit`` would anchor the window at the start
+        # of the result set. ``keyset_page_bounds`` reverses the window back into the
+        # final order and derives the tokens from the right boundary rows.
+        pipeline = [*pipeline, {"$sort": build_keyset_sort_spec(key_spec, flip=True)}]
+
     fetch_limit = lim + 1
     data_pipeline = append_pagination_stages(
         pipeline,
@@ -136,38 +143,19 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         gw._from_storage_doc(r) for r in rows  # pyright: ignore[reportPrivateUsage]
     ]
 
-    if use_before:
-        normalized = list(reversed(normalized))
-
-    has_more = len(normalized) > lim
-    page_rows_with_rank = normalized[:lim]
-
-    def _encode_at(index: int) -> str | None:
-        if index < 0 or index >= len(page_rows_with_rank):
-            return None
-
-        doc = page_rows_with_rank[index]
-        vals = [row_value_for_sort_key(doc, k) for k in sort_keys]
-        return encode_keyset_v1(
-            sort_keys=sort_keys,
-            directions=directions,
-            # Carry the active null placement so a non-default order (e.g. asc NULLS LAST)
-            # round-trips; without it the token defaults to canonical nulls and the next
-            # page is rejected as "Cursor does not match current search sort".
-            nulls=nulls,
-            values=vals,
-            binding=binding,
-        )
-
-    next_c = (
-        _encode_at(len(page_rows_with_rank) - 1)
-        if has_more and page_rows_with_rank
-        else None
+    # Carry the active null placement into the minted tokens so a non-default order
+    # (e.g. asc NULLS LAST) round-trips; without it a token defaults to canonical nulls
+    # and the next page is rejected as "Cursor does not match current search sort".
+    page_rows_with_rank, has_more, next_c, prev_c = keyset_page_bounds(
+        normalized,
+        lim,
+        sort_keys=sort_keys,
+        directions=directions,
+        nulls=nulls,
+        use_after=use_after,
+        use_before=use_before,
+        binding=binding,
     )
-    prev_c = _encode_at(0) if page_rows_with_rank else None
-
-    if use_before:
-        next_c, prev_c = prev_c, next_c
 
     # Per-hit engine score for the page window (ranked queries only); read before the
     # rank column is popped ahead of decode.

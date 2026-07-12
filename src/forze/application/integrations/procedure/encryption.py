@@ -66,6 +66,7 @@ def resolve_procedure_codecs_spec(
         searchable_fields=encryption.searchable,
         deterministic=deterministic,
         tenant_provider=tenant_provider,
+        reject_plaintext=encryption.reject_plaintext,
     )
 
     return attrs.evolve(spec, params_codec=params_codec)

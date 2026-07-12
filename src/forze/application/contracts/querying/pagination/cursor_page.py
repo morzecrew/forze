@@ -101,10 +101,13 @@ def assemble_keyset_cursor_page(
     """Slice ``fetched`` to the requested window and derive opaque cursors.
 
     Gateways commonly return ``limit + 1`` rows so callers can infer
-    ``has_more`` without a separate count query. *nulls* (the per-key placement) is
-    carried into the emitted tokens so a follow-up page validates; omit it for the
-    canonical default. *binding* is embedded in the emitted tokens when signing is active
-    so a follow-up page can prove it belongs to this query.
+    ``has_more`` without a separate count query. A ``before`` page is fetched in flipped
+    (descending-from-cursor) order and re-reversed by the gateway before it reaches here,
+    so its over-fetch sentinel — the row *farthest* from the cursor — sits at the **front**
+    of ``fetched``; the ``limit`` rows nearest the cursor are the tail. *nulls* (the
+    per-key placement) is carried into the emitted tokens so a follow-up page validates;
+    omit it for the canonical default. *binding* is embedded in the emitted tokens when
+    signing is active so a follow-up page can prove it belongs to this query.
     """
 
     c = dict(cursor or {})
@@ -114,7 +117,15 @@ def assemble_keyset_cursor_page(
     use_before = c.get("before") is not None
 
     has_more = len(fetched) > lim
-    page_raw = list(fetched)[:lim]
+
+    if use_before:
+        # Keep the ``limit`` rows nearest the cursor (the tail — the gateway already
+        # re-reversed the flipped fetch into ascending order, putting the sentinel first).
+        # Slicing the head instead would keep the sentinel and drop the row adjacent to
+        # the cursor (``before=5&limit=2`` over ``[1..5]`` -> ``[2,3]`` instead of ``[3,4]``).
+        page_raw = list(fetched)[-lim:]
+    else:
+        page_raw = list(fetched)[:lim]
 
     if has_more and page_raw:
         last = dump_row(page_raw[-1])

@@ -142,6 +142,7 @@ def _kind_cipher(
         deterministic=deterministic,
         tenant_provider=tenant_provider,
         record_id_field=key_field if encryption.binds_record_id else None,
+        reject_plaintext=encryption.reject_plaintext,
     )
 
     return GraphKindCipher(read_codec=read_codec, cipher=cipher)

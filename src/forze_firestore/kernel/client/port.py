@@ -76,7 +76,6 @@ class FirestoreClientPort(Protocol):
         order_by: Sequence[tuple[str, str]] | None = None,
         limit: int | None = None,
         start_after_id: str | None = None,
-        start_before_id: str | None = None,
     ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
 
     def query_stream_batched(

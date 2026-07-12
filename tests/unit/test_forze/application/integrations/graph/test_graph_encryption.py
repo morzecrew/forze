@@ -156,3 +156,23 @@ async def test_plaintext_kind_open_is_plain_decode() -> None:
     cipher = _resolve(None, keyring=_keyring()).node("Person")
     model = await cipher.open({"id": "1", "name": "Ann", "ssn": "x"})
     assert model == _Person(id="1", name="Ann", ssn="x")
+
+
+@pytest.mark.asyncio
+async def test_spec_reject_plaintext_reaches_kind_cipher() -> None:
+    """The policy's strict mode flows into the per-kind cipher, so a plaintext value
+    in a sealed property is refused on read."""
+
+    codecs = _resolve(
+        FieldEncryption(encrypted=frozenset({"ssn"}), reject_plaintext=True),
+        keyring=_keyring(),
+    )
+    cipher = codecs.node("Person")
+
+    assert cipher.cipher is not None
+    assert cipher.cipher.reject_plaintext is True
+
+    with pytest.raises(CoreException) as ei:
+        await cipher.open({"id": "1", "name": "Ann", "ssn": "123-45-6789"})
+
+    assert ei.value.code == "core.crypto.plaintext_rejected"

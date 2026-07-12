@@ -74,7 +74,7 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         args: S,
     ) -> None:
         await self.client.signal_workflow(
-            workflow_id=handle.workflow_id,
+            workflow_id=self.resolve_workflow_id(handle.workflow_id),
             signal=signal.name,
             arg=args,
             run_id=handle.run_id,
@@ -90,7 +90,7 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         args: U,
     ) -> Res:
         res = await self.client.update_workflow(
-            workflow_id=handle.workflow_id,
+            workflow_id=self.resolve_workflow_id(handle.workflow_id),
             update=update.name,
             arg=args,
             run_id=handle.run_id,
@@ -103,7 +103,7 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
 
     async def cancel(self, handle: DurableWorkflowHandle) -> None:
         await self.client.cancel_workflow(
-            workflow_id=handle.workflow_id,
+            workflow_id=self.resolve_workflow_id(handle.workflow_id),
             run_id=handle.run_id,
         )
 
@@ -116,7 +116,7 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         reason: str | None = None,
     ) -> None:
         await self.client.terminate_workflow(
-            workflow_id=handle.workflow_id,
+            workflow_id=self.resolve_workflow_id(handle.workflow_id),
             reason=reason,
             run_id=handle.run_id,
         )
@@ -146,7 +146,7 @@ class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
         args: Q,
     ) -> Res:
         res = await self.client.query_workflow(
-            workflow_id=handle.workflow_id,
+            workflow_id=self.resolve_workflow_id(handle.workflow_id),
             query=query.name,
             arg=args,
             run_id=handle.run_id,
@@ -159,7 +159,7 @@ class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
 
     async def result(self, handle: DurableWorkflowHandle) -> Out:
         return await self.client.get_workflow_result(
-            workflow_id=handle.workflow_id,
+            workflow_id=self.resolve_workflow_id(handle.workflow_id),
             run_id=handle.run_id,
             result_type=self.spec.run.return_type,
         )
@@ -171,7 +171,7 @@ class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
         handle: DurableWorkflowHandle,
     ) -> DurableWorkflowRunDescription:
         desc = await self.client.describe_workflow(
-            workflow_id=handle.workflow_id,
+            workflow_id=self.resolve_workflow_id(handle.workflow_id),
             run_id=handle.run_id,
         )
 

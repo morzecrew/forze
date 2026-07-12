@@ -247,11 +247,14 @@ class MongoGateway[M: BaseModel](
             if self.tenant_provider is None:
                 raise exc.configuration("Tenant provider is required for the gateway")
 
-            # Canonical extractor: returns the tenant UUID (not the TenantIdentity),
-            # so TENANT_ID_FIELD carries the same shape writes stamp and Mongo matches.
+            # Canonical extractor: returns the tenant UUID (not the TenantIdentity).
+            # Stored as its canonical string — PyMongo cannot encode a native UUID
+            # without an explicit uuidRepresentation, and every other UUID in a
+            # document (``_id``, filter values) is persisted as ``str`` too, so
+            # filters and stamped values stay byte-identical.
             tenant_id = self.require_tenant_if_aware()
 
-            cp[TENANT_ID_FIELD] = tenant_id
+            cp[TENANT_ID_FIELD] = str(tenant_id)
 
         return cp
 
@@ -265,9 +268,11 @@ class MongoGateway[M: BaseModel](
                 raise exc.configuration("Tenant provider is required for the gateway")
 
             # Canonical extractor: the tenant UUID, not the TenantIdentity object.
+            # Stamped as its canonical string so the driver can encode it and
+            # tenant filters (also ``str``) match what writes persist.
             tenant_id = self.require_tenant_if_aware()
 
-            out[TENANT_ID_FIELD] = tenant_id
+            out[TENANT_ID_FIELD] = str(tenant_id)
 
         return out
 

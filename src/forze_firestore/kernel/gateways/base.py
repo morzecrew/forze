@@ -211,7 +211,12 @@ class FirestoreGateway[M: BaseModel](
         if tenant_id is None:
             raise exc.authentication("Tenant ID is required", code="tenant_required")
 
-        tenant_filter = FieldFilter(TENANT_ID_FIELD, "==", tenant_id)
+        # Filter with the canonical string form — the same coercion writes use to
+        # stamp the field — so stamped and filtered values compare equal and the
+        # driver never sees a raw UUID (which it cannot encode).
+        tenant_filter = FieldFilter(
+            TENANT_ID_FIELD, "==", self._coerce_query_value(tenant_id)
+        )
 
         if base is None:
             return tenant_filter
@@ -261,7 +266,9 @@ class FirestoreGateway[M: BaseModel](
             if tenant_id is None:
                 raise exc.authentication("Tenant ID is required", code="tenant_required")
 
-            out[TENANT_ID_FIELD] = tenant_id
+            # Stored in the canonical string form so the stamp is byte-identical
+            # to what ``_add_tenant_filter`` compares against.
+            out[TENANT_ID_FIELD] = self._coerce_query_value(tenant_id)
 
         return out
 
@@ -319,16 +326,15 @@ class FirestoreGateway[M: BaseModel](
 
     # ....................... #
 
-    def adapt_payload_for_write(
-        self,
-        payload: JsonDict,
-        *,
-        create: bool = False,
-    ) -> JsonDict:
+    def adapt_payload_for_write(self, payload: JsonDict) -> JsonDict:
         out = {k: v for k, v in payload.items() if k not in self.write_omit_fields}
 
-        if create:
-            out = self._add_tenant_id(out)
+        # Every write is stamped, not only creates: gateway writes are
+        # full-document ``set`` operations built from the domain image, which
+        # cannot carry infrastructure-plane fields — an unstamped update or
+        # history snapshot would silently strip ``tenant_id`` and hide the row
+        # from every tenant-filtered read.
+        out = self._add_tenant_id(out)
 
         if ID_FIELD in out:
             out[ID_FIELD] = str(out[ID_FIELD])
@@ -340,7 +346,5 @@ class FirestoreGateway[M: BaseModel](
     def adapt_many_payload_for_write(
         self,
         payloads: Sequence[JsonDict],
-        *,
-        create: bool = False,
     ) -> Sequence[JsonDict]:
-        return [self.adapt_payload_for_write(p, create=create) for p in payloads]
+        return [self.adapt_payload_for_write(p) for p in payloads]

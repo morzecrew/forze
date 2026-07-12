@@ -20,6 +20,7 @@ from forze.application.contracts.stream import (
     StreamMessage,
     StreamSpec,
 )
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.serialization import PydanticModelCodec
 from forze.testing import context_from_modules
 from forze_kits.integrations.consumer import CommitStreamGroupConsumer
@@ -142,6 +143,53 @@ async def test_decrypt_poison_pauses_even_with_dlq() -> None:
 
     assert (result.failed, result.dead_lettered) == (1, 0)
     assert "events.dlq" not in state.streams.get(_TOPIC, {})
+
+
+@pytest.mark.asyncio
+async def test_transient_decrypt_failure_raises_for_restart_not_pause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A KMS blip on a cold data key surfaces from decrypt as a retryable-kind
+    # error. That is crash-shaped, not poison: the run must raise (so the
+    # supervised lifecycle restarts it with backoff), leaving the offset
+    # uncommitted — the message is redelivered once the blip clears, never
+    # skipped and never parked behind an operator pause.
+    ctx, admin, _state = _harness()
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+    command = ctx.deps.resolve_configurable(
+        ctx, StreamCommandDepKey, _ENC_SPEC, route=_ENC_SPEC.name
+    )
+    await command.append(_TOPIC, _Payload(value="secret"))
+
+    from forze_kits.integrations.consumer import commit_stream_runner as _runner
+
+    async def _kms_blip(*_args: Any, **_kwargs: Any) -> Any:
+        raise exc.infrastructure("KMS unavailable")
+
+    monkeypatch.setattr(_runner, "decrypt_consumed_payload", _kms_blip)
+
+    async def blocked_handler(_msg: StreamMessage[_Payload]) -> None:  # pragma: no cover
+        raise AssertionError("handler must not run on an undecrypted message")
+
+    with pytest.raises(CoreException) as excinfo:
+        await _consumer(blocked_handler).run(ctx, timeout=_IDLE)
+
+    assert excinfo.value.kind is ExceptionKind.INFRASTRUCTURE
+
+    # Blip over: the offset was never committed past the message, so a restarted
+    # consumer (the lifecycle rewinds to committed first) processes it.
+    monkeypatch.undo()
+
+    seen: list[str] = []
+
+    async def handler(msg: StreamMessage[_Payload]) -> None:
+        seen.append(msg.payload.value)
+
+    restarted = _consumer(handler)
+    await restarted.reset_to_committed(ctx)
+    result = await restarted.run(ctx, timeout=_IDLE)
+
+    assert (result.processed, seen) == (1, ["secret"])
 
 
 @pytest.mark.asyncio

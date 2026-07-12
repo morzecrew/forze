@@ -25,7 +25,7 @@ from forze.application.contracts.stream import (
 from forze.application.execution.context import ExecutionContext
 from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.application.integrations.outbox import decrypt_consumed_payload
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, exc, exception_egress_policy
 from forze.base.primitives import StrKey
 
 from .._logger import logger
@@ -141,8 +141,13 @@ class CommitStreamGroupConsumer[M]:
        which the loop treats as decode poison: **pause and alert**, rewind to
        committed, and leave the offset uncommitted for redelivery.
     2. **Decrypt** — an end-to-end ciphertext envelope is decrypted to the typed
-       model; a missing-keyring config error aborts the loop (deployment fault),
-       and a tamper/decode failure **pauses and alerts** (an undecryptable
+       model. Decrypt failures are classified by exception kind: a **retryable**
+       kind (the keyring's KMS dependency unavailable or throttled while
+       unwrapping a cold data key) commits the successes so far and **raises**
+       so the supervised lifecycle restarts the run with backoff (the offset
+       stays uncommitted for redelivery); a missing-keyring config error aborts
+       the loop (deployment fault); any other non-retryable failure (tampering,
+       unknown key, malformed envelope) **pauses and alerts** (an undecryptable
        payload has no typed model to re-produce, so it cannot be dead-lettered
        through the typed producer — an operator must inspect it).
     3. **Process** — :func:`process_with_inbox` runs the dedup mark + handler in
@@ -356,6 +361,26 @@ class CommitStreamGroupConsumer[M]:
             except CoreException as e:
                 if e.code == _CIPHER_MISSING_CODE:
                     raise  # deployment fault — abort, don't dead-letter every message
+
+                # Decrypt runs through the KMS-backed keyring, so a transient
+                # dependency fault (KMS unavailable/throttled on a cold data key)
+                # surfaces here too and is indistinguishable from tampering by
+                # failure alone — classify by kind. A retryable kind is
+                # crash-shaped, not poison: commit the successes so far and
+                # re-raise so the supervised lifecycle restarts the run with
+                # backoff (rewinding to committed), instead of pausing for an
+                # operator; the message is redelivered once the blip clears.
+                if exception_egress_policy(e.kind).retryable:
+                    logger.warning(
+                        "Commit-stream consumer could not decrypt %s on %s "
+                        "(transient %s failure); raising for supervised restart",
+                        message.id,
+                        message.stream,
+                        e.kind.value,
+                        exc_info=True,
+                    )
+                    await _flush()
+                    raise
 
                 # Decrypt-poison: no typed model in hand, so it cannot be
                 # re-produced through the typed DLQ port — pause and alert.

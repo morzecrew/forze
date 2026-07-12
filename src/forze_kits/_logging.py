@@ -15,6 +15,7 @@ class ForzeKitsLogger(StrEnum):
     distinguishable from the framework core in the logs.
     """
 
+    AGGREGATES = "forze_kits.aggregates"
     INTEGRATIONS = "forze_kits.integrations"
     SCOPES = "forze_kits.scopes"
     LIFECYCLE = "forze_kits.lifecycle"

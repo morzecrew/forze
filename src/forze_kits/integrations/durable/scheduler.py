@@ -18,6 +18,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.durable import next_cron_fire, validate_cron
 from forze.base.primitives import current_time_source
 
+from .._logger import logger
 from ._resolve import resolve_durable_run_store, resolve_durable_schedule_store
 from .telemetry import DurableTelemetry
 
@@ -141,28 +142,43 @@ class DurableScheduler:
                 else nullcontext()
             )
 
-            with binding:
-                # Enqueue first (idempotent on the fired instant), then advance (CAS): a crash
-                # between the two re-fires the same instant on the next tick without a
-                # duplicate run, and concurrent schedulers converge on one run + one advance.
-                fire_epoch = int(schedule.next_fire_at.timestamp())
-                await runs.enqueue(
-                    schedule.name,
-                    input_json=schedule.input_json,
-                    idempotency_key=f"{schedule.schedule_id}:{fire_epoch}",
-                    tenant_id=schedule.tenant_id,
-                )
+            try:
+                with binding:
+                    # Enqueue first (idempotent on the fired instant), then advance (CAS): a
+                    # crash between the two re-fires the same instant on the next tick without
+                    # a duplicate run, and concurrent schedulers converge on one run + one
+                    # advance.
+                    fire_epoch = int(schedule.next_fire_at.timestamp())
+                    await runs.enqueue(
+                        schedule.name,
+                        input_json=schedule.input_json,
+                        idempotency_key=f"{schedule.schedule_id}:{fire_epoch}",
+                        tenant_id=schedule.tenant_id,
+                    )
 
-                await schedules.advance(
+                    await schedules.advance(
+                        schedule.schedule_id,
+                        from_fire_at=schedule.next_fire_at,
+                        to_fire_at=next_cron_fire(
+                            schedule.cron, after=moment, tz=schedule.tz
+                        ),
+                    )
+
+                    if self.telemetry is not None:
+                        self.telemetry.record_fire(schedule.name)
+
+            except Exception:  # noqa: BLE001 — one bad schedule must not strand the batch
+                # A schedule whose stored cron/tz no longer parses (deploy skew, a hand-edited
+                # row) or whose enqueue hit a store error stays due — it never advances, so
+                # ``claim_due`` returns it first every tick. Letting it escape would strand
+                # every co-due schedule behind it forever; log it and keep firing the rest
+                # (this one is retried on the next tick).
+                logger.exception(
+                    "Durable schedule %s (%s) failed to fire; "
+                    "continuing with the rest of the due batch",
                     schedule.schedule_id,
-                    from_fire_at=schedule.next_fire_at,
-                    to_fire_at=next_cron_fire(
-                        schedule.cron, after=moment, tz=schedule.tz
-                    ),
+                    schedule.name,
                 )
-
-                if self.telemetry is not None:
-                    self.telemetry.record_fire(schedule.name)
 
         return len(due)
 

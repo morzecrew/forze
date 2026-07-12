@@ -410,6 +410,7 @@ class TemporalClient(TemporalClientPort):
         workflow_name: str | None = None,
         limit: int | None = None,
         next_page_token: str | None = None,
+        schedule_id_prefix: str | None = None,
     ) -> TemporalScheduleListPage:
         c = self.__require_client()
         page_size = limit if limit is not None else 100
@@ -431,6 +432,17 @@ class TemporalClient(TemporalClientPort):
             mapped = description_from_list_entry(entry)
 
             if mapped is None:
+                continue
+
+            # Prefix filtering is applied client-side: visibility-query support
+            # for ``ScheduleId STARTS_WITH`` varies by server version and
+            # visibility store, so relying on it could silently return
+            # unfiltered pages. Filtering here (like ``workflow_name`` below)
+            # keeps the guarantee independent of the backing server, and
+            # skipped entries do not consume the requested ``limit``.
+            if schedule_id_prefix is not None and not mapped.schedule_id.startswith(
+                schedule_id_prefix
+            ):
                 continue
 
             if workflow_name is not None and mapped.workflow_name != workflow_name:

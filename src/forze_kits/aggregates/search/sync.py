@@ -14,6 +14,7 @@ intended guard: sync belongs only where the index is a separate store.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, final
 
 import attrs
@@ -25,9 +26,12 @@ from forze.application.contracts.execution import (
 )
 from forze.application.contracts.search import SearchSpec
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.application.execution.resilience import retry_read
 from forze.base.primitives import StrKey, StrKeyNamespace
+from forze_kits.aggregates._logger import logger
 from forze_kits.aggregates.document.dto import written_read_model
 from forze_kits.aggregates.document.operations import DocumentKernelOp
+from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 
 if TYPE_CHECKING:
     from forze.application.contracts.document import DocumentSpec
@@ -48,24 +52,57 @@ class SearchSyncSteps:
 
     One upsert step (attach to CREATE and UPDATE) and one delete step (attach to the hard
     delete). Each resolves the ``SearchCommandPort`` once per scope from the context, exactly
-    as stored_file's reindex does, and runs **after commit** — best-effort, so a transient
-    index failure is logged out-of-band (not raised) and the committed write still returns.
+    as stored_file's reindex does, and runs **after commit**.
+
+    The upsert step is soft-delete aware: a written row whose ``is_deleted`` flag is set is
+    **removed** from the index instead of upserted, so soft-deleting through the generic
+    UPDATE path never re-adds a ghost that search returns and GET then 404s. Rows whose read
+    model does not expose the flag are upserted unconditionally (the same inertness as the
+    soft-delete wiring's GET guard).
+
+    Delivery is **at-most-once**: each index call is retried in-place with exponential
+    backoff (:attr:`retry_attempts` / :attr:`retry_base_delay`), and on exhaustion a WARNING
+    carrying the index name, action, and document id is logged and the failure is reported
+    out-of-band — the committed write still returns, and the index stays stale for that row
+    until its next successful write. Route index maintenance through the transactional
+    outbox where stronger delivery is required.
     """
 
     search: SearchSpec[Any]
     """The external index kept in step with the document's writes."""
 
+    retry_attempts: int = 2
+    """Bounded in-place retries after a failed index call (``0`` disables retrying)."""
+
+    retry_base_delay: float = 0.05
+    """Initial backoff delay in seconds, doubled per retry."""
+
     # ....................... #
 
     @property
     def _upsert_factory(self) -> OnSuccessFactory:
-        search = self.search
+        steps = self
 
         def _factory(ctx: ExecutionContext) -> OnSuccess[Any, Any]:
-            command = ctx.search.command(search)
+            command = ctx.search.command(steps.search)
 
             async def _hook(args: Any, result: Any) -> None:  # noqa: ARG001
-                await command.upsert([written_read_model(result)])
+                row = written_read_model(result)
+
+                if getattr(row, SOFT_DELETE_FIELD, False):
+                    doc_id = str(row.id)
+                    await steps._apply(
+                        lambda: command.delete([doc_id]),
+                        action="delete",
+                        document_id=doc_id,
+                    )
+                    return
+
+                await steps._apply(
+                    lambda: command.upsert([row]),
+                    action="upsert",
+                    document_id=str(getattr(row, "id", "<unknown>")),
+                )
 
             return _hook
 
@@ -75,17 +112,58 @@ class SearchSyncSteps:
 
     @property
     def _delete_factory(self) -> OnSuccessFactory:
-        search = self.search
+        steps = self
 
         def _factory(ctx: ExecutionContext) -> OnSuccess[Any, Any]:
-            command = ctx.search.command(search)
+            command = ctx.search.command(steps.search)
 
             async def _hook(args: Any, result: Any) -> None:  # noqa: ARG001
-                await command.delete([str(args.id)])
+                doc_id = str(args.id)
+                await steps._apply(
+                    lambda: command.delete([doc_id]),
+                    action="delete",
+                    document_id=doc_id,
+                )
 
             return _hook
 
         return _factory
+
+    # ....................... #
+
+    async def _apply(
+        self,
+        call: Callable[[], Awaitable[Any]],
+        *,
+        action: str,
+        document_id: str,
+    ) -> None:
+        """Run one index *call* with bounded backoff; warn with reconcilable identity on exhaustion.
+
+        The re-raised failure surfaces through the after-commit machinery's out-of-band error
+        reporting (the committed write is never failed by it).
+        """
+
+        index = str(self.search.name)
+
+        try:
+            await retry_read(
+                call,
+                attempts=self.retry_attempts,
+                base_delay=self.retry_base_delay,
+                retry_on=(Exception,),
+            )
+
+        except Exception as error:
+            logger.warning(
+                "Search index sync failed after retries; the index is stale for "
+                "this row until its next successful write",
+                index=index,
+                action=action,
+                document_id=document_id,
+                error=str(error),
+            )
+            raise
 
     # ....................... #
 
@@ -115,11 +193,13 @@ def bind_search_sync(
 ) -> OperationRegistry:
     """Patch a document registry's write ops with after-commit external-index sync.
 
-    ``CREATE`` / ``UPDATE`` upsert the written read model into *search*; ``KILL`` removes the
-    row. Only ops already present in *reg* are patched (a registry built with ``create`` /
+    ``CREATE`` / ``UPDATE`` upsert the written read model into *search* (a write that
+    soft-deletes the row removes it instead — see :class:`SearchSyncSteps`); ``KILL`` removes
+    the row. Only ops already present in *reg* are patched (a registry built with ``create`` /
     ``update`` disabled is left untouched). The patched write ops become transactional on
     *tx_route* — the commit boundary the after-commit sync fires past — so *tx_route* must
-    resolve a transaction manager.
+    resolve a transaction manager. Delivery is at-most-once (bounded in-place retry, then a
+    reconcilable WARNING); see :class:`SearchSyncSteps` for the contract.
     """
 
     ns = ns or document.default_namespace
