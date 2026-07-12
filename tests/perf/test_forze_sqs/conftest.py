@@ -14,6 +14,7 @@ from docker.errors import DockerException
 from pydantic import BaseModel
 
 pytest.importorskip("aioboto3")
+pytest.importorskip("testcontainers")
 
 from forze_sqs.adapters import SQSQueueAdapter, SQSQueueCodec
 from forze_sqs.kernel.client import SQSClient

@@ -15,6 +15,7 @@ from docker import from_env
 from docker.errors import DockerException
 
 pytest.importorskip("aioboto3")
+pytest.importorskip("testcontainers")
 
 from forze_kms.aws import AwsKmsClient
 from tests.support.floci import FlociContainer

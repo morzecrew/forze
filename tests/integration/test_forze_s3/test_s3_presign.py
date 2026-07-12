@@ -126,12 +126,25 @@ async def test_presigned_download_url_expires(
             expires_in=timedelta(seconds=1),
         )
 
-    await asyncio.sleep(2.5)
+    # SigV4 expiry has one-second timestamp granularity and the server checks
+    # it against its own clock, so the exact moment the URL dies can drift by
+    # a few seconds on a loaded runner: poll until it does instead of pinning
+    # a single instant.
+    await asyncio.sleep(1.5)
+    deadline = asyncio.get_running_loop().time() + 15
 
     async with httpx.AsyncClient() as http:
-        resp = await http.get(vo.url)
+        while True:
+            resp = await http.get(vo.url)
 
-    assert resp.status_code == 403
+            if resp.status_code == 403:
+                break
+
+            assert resp.status_code == 200  # a still-valid read stays well-formed
+            if asyncio.get_running_loop().time() > deadline:
+                pytest.fail("presigned URL did not expire within 15s")
+
+            await asyncio.sleep(0.5)
 
 
 @pytest.mark.asyncio
