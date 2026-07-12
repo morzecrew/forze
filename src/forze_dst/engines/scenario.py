@@ -4,8 +4,9 @@ The model-based strategy: arrange valid state serially (capturing real ids), the
 act calls and run them concurrently under perturbation. Three search frontends share one runner
 (:func:`run_scenario`): :func:`explore` (per-seed sweep + greedy act minimization), :func:`explore_hypothesis`
 (Hypothesis generates + shrinks the ``(seed, act-plan)`` space), and :func:`explore_dpor` (systematic
-interleaving search over one fixed workload, pruned by observable-effect equivalence). Logic only —
-the run substrate lives in :mod:`forze_dst.engines.context`.
+interleaving search over one fixed workload, optionally pruned by observed-effect equivalence — a
+heuristic reduction; ``prune=False`` walks the full choice tree). Logic only — the run substrate
+lives in :mod:`forze_dst.engines.context`.
 """
 
 from __future__ import annotations
@@ -323,9 +324,7 @@ def explore_hypothesis(
             act_plan=plan,
             concurrency=concurrency,
             seed=seed,
-            schedule_seed=schedule_seed_of(
-                seed
-            ),  # pyright: ignore[reportUnknownArgumentType]
+            schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
             epoch=epoch,
             scheduler=make_scheduler(seed),
         )
@@ -349,18 +348,14 @@ def explore_hypothesis(
         act_plan=plan,
         concurrency=concurrency,
         seed=seed,
-        schedule_seed=schedule_seed_of(
-            seed
-        ),  # pyright: ignore[reportUnknownArgumentType]
+        schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
         epoch=epoch,
         scheduler=make_scheduler(seed),
     )
 
     return ViolationReport(
         seed=seed,
-        schedule_seed=schedule_seed_of(
-            seed
-        ),  # pyright: ignore[reportUnknownArgumentType]
+        schedule_seed=schedule_seed_of(seed),  # pyright: ignore[reportUnknownArgumentType]
         violations=tuple(check(history, sim.invariants)),
         workload=tuple(generated),
         history=history,
@@ -414,22 +409,32 @@ def explore_dpor(
     concurrency: int = 4,
     seed: int = 0,
     max_runs: int = 500,
+    prune: bool = True,
     epoch: datetime = DEFAULT_EPOCH,
 ) -> ViolationReport | None:
     """Systematically explore interleavings of a fixed workload (DPOR-family reduction).
 
-    The complete, deterministic complement to :func:`explore_hypothesis` and PCT: it fixes one act
-    workload (generated from *seed*), then walks the tree of per-tick scheduling choices depth-first
-    via :class:`~forze_dst.scheduler.SystematicReorderer` — guaranteed to find a violation reachable
-    by *reordering* that workload, within *max_runs*. A partial-order reduction prunes the search:
-    an interleaving whose observable effect order matches one already seen is not expanded
-    (equivalent continuations), so only orderings that change effects are explored.
+    The deterministic complement to :func:`explore_hypothesis` and PCT: it fixes one act workload
+    (generated from *seed*), then walks the tree of per-tick scheduling choices depth-first via
+    :class:`~forze_dst.scheduler.SystematicReorderer`. The frontier expansion enumerates every
+    alternative first-choice at every branch point of every explored interleaving, so with
+    ``prune=False`` the walk is exhaustive over the schedule tree: a violation reachable by
+    *reordering* the workload is found, provided the tree fits within *max_runs*.
 
-    This operates at the loop's tick granularity (not per-memory-access), so the reduction is by
-    observed effect-equivalence rather than a computed independence relation — sound (never expands
-    a distinct outcome twice) and robust, though not the optimal per-access DPOR. Returns the first
-    violating interleaving's report (the ``schedule`` reproduces it), or ``None`` if none within
-    *max_runs*.
+    *prune* (the default) layers a heuristic reduction on top: an interleaving whose observable
+    effect order (:func:`~forze_dst.engines.projection.outcome_signature`) matches one already seen
+    is not expanded. That trades completeness for speed — equal signatures on explored prefixes do
+    not imply equivalent continuations (state the run never recorded, e.g. which of two silent
+    writes landed last, is invisible to the signature yet can decide what a *further* reordering
+    reaches), so a violation reachable only through a pruned subtree is missed. With pruning the
+    search is complete only up to that observed-effect equivalence; reach for ``prune=False``
+    (``SimulationConfig.dpor_prune=False``) when the schedule space is small enough to afford the
+    full walk.
+
+    This operates at the loop's tick granularity (not per-memory-access), so the pruning key is
+    observed effects rather than a computed independence relation. Returns the first violating
+    interleaving's report (its ``choices`` vector reproduces it), or ``None`` if none is found
+    within *max_runs*.
     """
 
     # Fix the workload once; vary only the interleaving across runs.
@@ -482,12 +487,13 @@ def explore_dpor(
                 choices=choices,  # the systematic interleaving that reproduces this run
             )
 
-        signature = projection.outcome_signature(history)
+        if prune:
+            signature = projection.outcome_signature(history)
 
-        if signature in seen_signatures:
-            continue  # observationally equivalent → its subtree is redundant
+            if signature in seen_signatures:
+                continue  # same observed effects → skip the subtree (heuristic, may miss)
 
-        seen_signatures.add(signature)
+            seen_signatures.add(signature)
 
         # Expand: at each tick that branched, try every alternative first-choice, replaying the
         # parent's (zero-padded) prefix so a deviation can land at a *later* branch point.

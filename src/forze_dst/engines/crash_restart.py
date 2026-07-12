@@ -55,7 +55,12 @@ def run_crash_restart(
     """
 
     config = sim.active_config
-    assert config is not None and config.crash is not None  # nosec B101 - run() guard
+
+    if config is None or config.crash is None:  # pragma: no cover - guarded by run()
+        raise RuntimeError(
+            "run_crash_restart requires an active SimulationConfig with a crash policy"
+        )
+
     crash_policy = config.crash
 
     recorder = Recorder(seed=seed)

@@ -178,8 +178,10 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
     # BaseEventLoop concrete-subclass requirements
 
     def _process_events(self, event_list: list[Any]) -> None:
-        # The null selector never yields I/O events; this should always be empty.
-        assert not event_list  # nosec B101 - simulation invariant, not a runtime guard
+        # The null selector never yields I/O events; a nonempty list means real I/O
+        # reached the simulated loop.
+        if event_list:  # pragma: no cover - unreachable with the null selector
+            raise _forbidden("processing selector I/O events")
 
     def _write_to_self(self) -> None:
         # Single-threaded: there is no other thread to wake.

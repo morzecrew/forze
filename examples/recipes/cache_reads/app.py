@@ -176,7 +176,8 @@ async def cache_scenario(ctx: ExecutionContext) -> ProductRead:
     product = await facade.create(ProductCreate(name="Widget", price=10))
 
     await facade.get(DocumentIdDTO(id=product.id))  # miss → fills the cache
-    assert await cache.get(str(product.id)) is not None  # cached now
+    if await cache.get(str(product.id)) is None:  # cached now
+        raise RuntimeError("expected the read to fill the cache")
 
     await facade.update(
         DocumentUpdateDTO(
@@ -186,7 +187,8 @@ async def cache_scenario(ctx: ExecutionContext) -> ProductRead:
         )
     )
     fresh = await facade.get(DocumentIdDTO(id=product.id))  # repopulates, new value
-    assert fresh.price == 12
+    if fresh.price != 12:
+        raise RuntimeError("expected the cached read to see the new price")
 
     return fresh
 

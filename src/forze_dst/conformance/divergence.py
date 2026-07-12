@@ -50,6 +50,15 @@ class ContractStrengthening:
     source: str
     """The reference that defines the textbook contract being strengthened."""
 
+    engine: str | None = None
+    """The backend scope name this strengthening is specific to (``None`` = every backend).
+
+    A ``None`` entry records a *Forze* strengthening (e.g. rev-OCC) that every backend — mock and
+    real — exhibits identically. An engine-scoped entry records a strengthening one engine provides
+    by construction (e.g. Mongo transactions are snapshot-isolated even at ``READ_COMMITTED``); it
+    must not leak into another backend's oracle, where the textbook verdict still stands.
+    """
+
 
 # ....................... #
 
@@ -81,6 +90,33 @@ CONTRACT_STRENGTHENINGS: tuple[ContractStrengthening, ...] = (
             "zero rows raises the same revision conflict."
         ),
         source="Berenson et al., A Critique of ANSI SQL Isolation Levels (P4, lost update)",
+    ),
+    *(
+        ContractStrengthening(
+            anomaly=anomaly,
+            level=IsolationLevel.READ_COMMITTED,
+            engine="mongo",
+            contract=Verdict.PERMITTED,
+            observed=Verdict.PREVENTED,
+            reason=(
+                "MongoDB multi-document transactions execute every read against a single "
+                "WiredTiger snapshot taken at the first operation, regardless of the "
+                "transaction's read concern — the read concern level changes which writes the "
+                "snapshot may contain (local vs majority-committed), never per-statement "
+                "freshness. READ_COMMITTED inside a transaction is therefore not a distinct "
+                "weaker level on Mongo: the read-path anomalies textbook read committed permits "
+                "(a re-read, a cross-item read, a re-scan observing a concurrent commit) and the "
+                "stale-snapshot write (fresh_read_update: the re-read returns the as-of-begin row, "
+                "so the write conflicts instead of committing on the fresh value) are all governed "
+                "by the snapshot, exactly as at SNAPSHOT. Asserted, not assumed: the Mongo "
+                "differential runs the battery at READ_COMMITTED against a real replica set."
+            ),
+            source=(
+                "MongoDB manual, Read Concern & Transactions (WiredTiger snapshot semantics); "
+                "asserted by the Mongo differential leg"
+            ),
+        )
+        for anomaly in ("non_repeatable_read", "read_skew", "phantom", "fresh_read_update")
     ),
 )
 """Anomalies a correct Forze adapter prevents that the textbook contract permits (checked)."""
@@ -152,7 +188,14 @@ MECHANISM_DIVERGENCES: tuple[MechanismDivergence, ...] = (
             "lock-race differential asserts the outcome against the real engine. Note the FOR UPDATE "
             "verdict is the final value (was an update lost?), not whether a transaction aborted: "
             "Postgres READ COMMITTED commits BOTH writers and loses nothing (the locked re-read sees "
-            "the committed value), whereas the mock and Postgres SNAPSHOT/SERIALIZABLE abort the loser."
+            "the committed value), whereas the mock and Postgres SNAPSHOT/SERIALIZABLE abort the loser. "
+            "MongoDB is abort-based like the mock but with no lock to wait on: the contender's "
+            "conflicting write raises WriteConflict (code 112, mapped to a concurrency conflict) "
+            "immediately — the duplicate-key insert conflicts on the peer's uncommitted index entry, "
+            "and FOR UPDATE (degraded to a plain transactional read on Mongo, the declared RowLockMode "
+            "fallback) prevents the lost update via the document-level write conflict instead of a row "
+            "lock — so the same _drive_lock_race script runs against a real replica set and both cases "
+            "land on the same PREVENTED verdict at every level Mongo advertises."
         ),
         source="battery docstring; _drive_lock_race; Postgres FOR UPDATE EvalPlanQual; ept/hermitage",
     ),

@@ -130,5 +130,6 @@ def dispatch(
         concurrency=config.concurrency,
         seed=config.dpor_seed,
         max_runs=config.max_runs,
+        prune=config.dpor_prune,
         epoch=config.epoch,
     )

@@ -64,7 +64,13 @@ class TestIsolationBattery:
         observed = await case.run(MockConformanceBackend(), level)
 
         if observed != case.contract[level]:
-            registered = {(s.anomaly, s.level) for s in CONTRACT_STRENGTHENINGS}
+            # Only backend-agnostic entries can justify a MOCK deviation — an engine-scoped
+            # strengthening (e.g. Mongo's read-committed-is-snapshot) must not mask one here.
+            registered = {
+                (s.anomaly, s.level)
+                for s in CONTRACT_STRENGTHENINGS
+                if s.engine is None
+            }
             assert (case.name, level) in registered, (
                 f"unregistered divergence: {case.name}@{level.name} "
                 f"observed={observed.value} contract={case.contract[level].value}"

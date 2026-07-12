@@ -121,6 +121,7 @@ def _fault_rule_to_dict(rule: FaultRule) -> dict[str, Any]:
         "duplicate": rule.duplicate,
         "delay": rule.delay,
         "max_delay": rule.max_delay.total_seconds(),
+        "stream_faults": rule.stream_faults,
     }
 
 
@@ -139,6 +140,7 @@ def _fault_rule_from_dict(data: dict[str, Any]) -> FaultRule:
         duplicate=data.get("duplicate", 0.0),
         delay=data.get("delay", 0.0),
         max_delay=timedelta(seconds=data.get("max_delay", 5.0)),
+        stream_faults=data.get("stream_faults", False),
     )
 
 
@@ -232,6 +234,7 @@ def config_to_dict(config: SimulationConfig) -> dict[str, Any]:
         "max_examples": config.max_examples,
         "max_runs": config.max_runs,
         "dpor_seed": config.dpor_seed,
+        "dpor_prune": config.dpor_prune,
         "coverage_plateau": config.coverage_plateau,
         "guided_budget": config.guided_budget,
         "reachability_targets": sorted(config.reachability_targets),
@@ -319,6 +322,7 @@ def config_from_dict(data: dict[str, Any]) -> SimulationConfig:
         max_examples=data["max_examples"],
         max_runs=data["max_runs"],
         dpor_seed=data["dpor_seed"],
+        dpor_prune=data.get("dpor_prune", True),
         coverage_plateau=data["coverage_plateau"],
         guided_budget=data.get("guided_budget", 256),
         reachability_targets=frozenset(data.get("reachability_targets", ())),

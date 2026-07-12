@@ -21,7 +21,10 @@ class MockSecretsPort(SecretsPort):
     def _store(self) -> dict[str, str]:
         identity = self.state.identity
         secrets = identity.setdefault("secrets", {})
-        assert isinstance(secrets, dict)  # nosec: B101
+
+        if not isinstance(secrets, dict):
+            raise exc.internal("Mock identity 'secrets' substore must be a dict.")
+
         return secrets  # pyright: ignore[reportUnknownVariableType]
 
     async def resolve_str(self, ref: SecretRef) -> str:

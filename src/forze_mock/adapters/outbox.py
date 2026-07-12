@@ -35,6 +35,40 @@ def _remove_row(store: list[Any], row: Any) -> Callable[[], None]:
 
     return _undo
 
+
+# ....................... #
+
+_TRANSITION_FIELDS = (
+    "status",
+    "processing_at",
+    "published_at",
+    "last_error",
+    "attempts",
+    "available_at",
+)
+"""Row fields mutated by status transitions (claim / mark / retry / requeue / reclaim)."""
+
+
+def _restore_row(row: "MockOutboxRow") -> Callable[[], None]:
+    """Build an undo thunk restoring *row*'s transition fields to their current values.
+
+    A status transition is a row UPDATE in production — Postgres rolls it back with the
+    transaction — so one performed inside a mock transaction must revert on rollback too,
+    exactly like the row append in :meth:`MockOutboxStore.persist_rows`. Per-row field
+    restore (not a whole-store snapshot) keeps concurrent transactions' rows intact.
+    Relay-side transitions on their own connection run outside any journal, where
+    :func:`record_undo` is a no-op — those commit immediately, as before.
+    """
+
+    prior = {name: getattr(row, name) for name in _TRANSITION_FIELDS}
+
+    def _undo() -> None:
+        for name, value in prior.items():
+            setattr(row, name, value)
+
+    return _undo
+
+
 # ----------------------- #
 
 
@@ -149,6 +183,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
             batch = pending[:max_n]
 
             for row in batch:
+                record_undo(_restore_row(row))
                 row.status = OutboxStatus.PROCESSING
                 row.processing_at = now
 
@@ -204,6 +239,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 if row.status != OutboxStatus.PROCESSING:
                     continue
 
+                record_undo(_restore_row(row))
                 row.status = OutboxStatus.PENDING
                 row.processing_at = None
                 row.attempts = attempts
@@ -229,6 +265,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 if row.processing_at is None or row.processing_at >= older_than:
                     continue
 
+                record_undo(_restore_row(row))
                 row.status = OutboxStatus.PENDING
                 row.processing_at = None
                 reclaimed += 1
@@ -251,6 +288,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 if row.status != OutboxStatus.FAILED:
                     continue
 
+                record_undo(_restore_row(row))
                 row.status = OutboxStatus.PENDING
                 row.processing_at = None
                 row.published_at = None
@@ -284,6 +322,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 if row.status != OutboxStatus.PROCESSING:
                     continue
 
+                record_undo(_restore_row(row))
                 row.status = status
 
                 if status == OutboxStatus.PUBLISHED:
