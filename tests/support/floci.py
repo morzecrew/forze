@@ -16,7 +16,7 @@ Known, accepted infidelities (spiked/observed 2026-07 against 1.5.32):
 
 * KMS: the ``KeyId`` parameter on ``Decrypt`` is not enforced — real AWS
   raises ``IncorrectKeyException`` for a blob wrapped under a different CMK,
-  floci decrypts it. No test relies on that server-side guard: the keyring's
+  floci decrypts it (reported: https://github.com/floci-io/floci/issues/1844). No test relies on that server-side guard: the keyring's
   own confused-deputy check rejects a foreign ``key_id`` before KMS is
   reached. Everything else the adapters use was verified faithful:
   ``EncryptionContext`` mismatch rejection, ``RotateKeyOnDemand``
@@ -25,7 +25,7 @@ Known, accepted infidelities (spiked/observed 2026-07 against 1.5.32):
 * S3: SigV4 signed-header binding is not verified on presigned PUTs (a
   mismatched ``Content-Type`` upload is accepted; real S3 and MinIO return
   403). The negative presign test skips on floci and asserts the property
-  against MinIO.
+  against MinIO (tracked: https://github.com/floci-io/floci/issues/1841).
 """
 
 from __future__ import annotations
