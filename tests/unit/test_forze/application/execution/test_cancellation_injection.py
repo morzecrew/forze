@@ -7,8 +7,9 @@ asserts the engine's cancellation invariants:
 - cancellation before/inside the transaction rolls back: after-commit hooks
   never run, the handler is not re-entered, and the engine stays healthy;
 - cancellation during the post-commit drain cannot tear it: every after-commit
-  hook still runs (the transaction is committed) and the cancellation is
-  re-raised afterwards;
+  hook still runs (the transaction is committed) and the cancellation then
+  surfaces as a non-retryable ``commit_ambiguous`` error (the commit landed —
+  the caller must not see a plain cancel it could retry into a duplicate);
 - in every case the drain gate releases its slot and a fresh operation runs
   normally afterwards.
 """
@@ -22,6 +23,7 @@ import pytest
 
 from forze.application.contracts.execution import BeforeStep, Handler, OnSuccessStep
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
@@ -135,8 +137,13 @@ async def _run_and_cancel(
     probe: _Probe,
     *,
     release_after_cancel: bool = False,
+    expect_commit_ambiguous: bool = False,
 ) -> None:
-    """Invoke ``op`` as a task, cancel it once the stage is reached, await the cancel."""
+    """Invoke ``op`` as a task, cancel it once the stage is reached, await the outcome.
+
+    Before the commit point the cancellation re-raises raw; at or after it the
+    engine converts it to a non-retryable ``commit_ambiguous`` error instead.
+    """
 
     task = asyncio.create_task(reg.resolve("op", ctx)("x"))
 
@@ -146,6 +153,14 @@ async def _run_and_cancel(
     if release_after_cancel:
         await asyncio.sleep(0)
         probe.release.set()
+
+    if expect_commit_ambiguous:
+        with pytest.raises(CoreException) as ei:
+            await task
+
+        assert ei.value.kind is ExceptionKind.INTERNAL
+        assert ei.value.code == "commit_ambiguous"
+        return
 
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -199,11 +214,14 @@ class TestCancellationInjection:
         probe = _Probe()
         reg = _build(probe, STAGE_AFTER_COMMIT_DRAIN)
 
-        await _run_and_cancel(reg, ctx, probe, release_after_cancel=True)
+        await _run_and_cancel(
+            reg, ctx, probe, release_after_cancel=True, expect_commit_ambiguous=True
+        )
 
         # The transaction committed before the cancellation landed, so the
         # drain is a critical section: every after-commit hook ran, and the
-        # cancellation surfaced only afterwards.
+        # cancellation surfaced only afterwards — as ``commit_ambiguous``, not
+        # as a plain cancel the caller could retry into a duplicate.
         assert probe.events[:3] == ["before:start", "before:done", "handler:start"]
         assert "handler:done" in probe.events
         assert "ac1" in probe.events

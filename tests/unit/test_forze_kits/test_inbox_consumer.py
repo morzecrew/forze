@@ -35,7 +35,7 @@ async def test_first_message_processed_then_duplicate_skipped() -> None:
     async def handler(msg: _Msg) -> None:
         calls.append(msg.key or "")
 
-    msg = _Msg(key="evt-1")
+    msg = _Msg(key="evt-1", id="evt-1")
 
     first = await process_with_inbox(
         ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
@@ -57,7 +57,7 @@ async def test_duplicate_does_not_advance_the_hlc_clock() -> None:
     async def handler(_msg: _Msg) -> None: ...
 
     ahead = HlcTimestamp(ctx.outbox_clock.now().physical_ms + 1, 0)
-    msg = _Msg(key="evt-hlc", headers={HEADER_HLC: ahead.encode()})
+    msg = _Msg(id="evt-hlc", headers={HEADER_HLC: ahead.encode()})
 
     await process_with_inbox(
         ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
@@ -69,34 +69,6 @@ async def test_duplicate_does_not_advance_the_hlc_clock() -> None:
     )
 
     assert ctx.outbox_clock.last == after_first  # duplicate did not advance it
-
-
-async def test_prefers_key_over_id() -> None:
-    ctx = context_from_modules(MockDepsModule())
-
-    async def handler(_msg: _Msg) -> None: ...
-
-    # Same key, different id -> still a duplicate (dedup on key).
-    assert (
-        await process_with_inbox(
-            ctx,
-            _Msg(key="k", id="a"),
-            inbox_spec=_SPEC,
-            handler=handler,
-            tx_route="mock",
-        )
-        is True
-    )
-    assert (
-        await process_with_inbox(
-            ctx,
-            _Msg(key="k", id="b"),
-            inbox_spec=_SPEC,
-            handler=handler,
-            tx_route="mock",
-        )
-        is False
-    )
 
 
 async def test_falls_back_to_id_when_no_key() -> None:
@@ -113,7 +85,71 @@ async def test_falls_back_to_id_when_no_key() -> None:
 
 
 # ....................... #
-# Dedup-id priority: explicit extractor > forze_event_id header > key > id.
+# Dedup-id priority: explicit extractor > forze_event_id header > id.
+# key is never a dedup identity — it is the relay's ordering (grouping) key.
+
+
+async def test_distinct_headerless_events_sharing_ordering_key_both_process() -> None:
+    """Two DIFFERENT header-less events sharing an ordering key must both process.
+
+    ``key`` is a grouping key — every event of one aggregate shares it — so
+    dedup must fall back to the broker message id, never to ``key`` (deduping
+    on the key silently drops the second event).
+    """
+
+    ctx = context_from_modules(MockDepsModule())
+    calls: list[str] = []
+
+    async def handler(msg: _Msg) -> None:
+        calls.append(msg.id or "")
+
+    assert (
+        await process_with_inbox(
+            ctx,
+            _Msg(key="order-1", id="d1"),
+            inbox_spec=_SPEC,
+            handler=handler,
+            tx_route="mock",
+        )
+        is True
+    )
+    assert (
+        await process_with_inbox(
+            ctx,
+            _Msg(key="order-1", id="d2"),
+            inbox_spec=_SPEC,
+            handler=handler,
+            tx_route="mock",
+        )
+        is True
+    )
+    assert calls == ["d1", "d2"]
+
+
+async def test_headerless_redelivery_with_same_id_is_skipped() -> None:
+    """Same broker message id redelivered without headers -> still a duplicate."""
+
+    ctx = context_from_modules(MockDepsModule())
+    calls: list[str] = []
+
+    async def handler(msg: _Msg) -> None:
+        calls.append(msg.id or "")
+
+    msg = _Msg(key="order-1", id="d1")
+
+    assert (
+        await process_with_inbox(
+            ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
+        )
+        is True
+    )
+    assert (
+        await process_with_inbox(
+            ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
+        )
+        is False
+    )
+    assert calls == ["d1"]
 
 
 async def test_event_id_header_beats_key() -> None:
@@ -218,7 +254,7 @@ async def test_explicit_extractor_beats_event_id_header() -> None:
     )
 
 
-async def test_empty_event_id_header_falls_back_to_key() -> None:
+async def test_empty_event_id_header_falls_back_to_id() -> None:
     ctx = context_from_modules(MockDepsModule())
 
     async def handler(_msg: _Msg) -> None: ...
@@ -226,18 +262,18 @@ async def test_empty_event_id_header_falls_back_to_key() -> None:
     assert (
         await process_with_inbox(
             ctx,
-            _Msg(key="k-empty", headers={HEADER_EVENT_ID: ""}),
+            _Msg(id="d-empty", headers={HEADER_EVENT_ID: ""}),
             inbox_spec=_SPEC,
             handler=handler,
             tx_route="mock",
         )
         is True
     )
-    # Dedup happened on the key, not on the empty header value.
+    # Dedup happened on the message id, not on the empty header value.
     assert (
         await process_with_inbox(
             ctx,
-            _Msg(key="k-empty", headers={HEADER_EVENT_ID: ""}),
+            _Msg(id="d-empty", headers={HEADER_EVENT_ID: ""}),
             inbox_spec=_SPEC,
             handler=handler,
             tx_route="mock",
@@ -271,4 +307,22 @@ async def test_missing_dedup_id_raises() -> None:
     with pytest.raises(CoreException, match="deduplicate"):
         await process_with_inbox(
             ctx, _Msg(), inbox_spec=_SPEC, handler=handler, tx_route="mock"
+        )
+
+
+async def test_key_alone_is_not_a_dedup_identity() -> None:
+    # A message carrying only a grouping key has no delivery identity: fail
+    # loudly (the caller must pass a message_id extractor) instead of silently
+    # collapsing distinct events that share the key.
+    ctx = context_from_modules(MockDepsModule())
+
+    async def handler(_msg: _Msg) -> None: ...
+
+    with pytest.raises(CoreException, match="deduplicate"):
+        await process_with_inbox(
+            ctx,
+            _Msg(key="order-1"),
+            inbox_spec=_SPEC,
+            handler=handler,
+            tx_route="mock",
         )

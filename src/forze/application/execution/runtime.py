@@ -24,6 +24,7 @@ from forze.base.primitives import (
 )
 
 from .context import ExecutionContext
+from .context.transaction import AfterCommitErrorHandler
 from .deps import FrozenDepsRegistry
 from .lifecycle import FrozenLifecyclePlan
 
@@ -181,6 +182,17 @@ class ExecutionRuntime:
     leaves confidentiality off. See
     :func:`~forze.application.contracts.querying.configure_cursor_cipher`."""
 
+    after_commit_error_handler: AfterCommitErrorHandler | None = None
+    """Optional out-of-band handler notified when a non-fatal post-commit callback fails
+    on an already-committed transaction (an idempotency-record write, an eager dispatch).
+
+    Passed to the scope's :class:`ExecutionContext` (see
+    :attr:`ExecutionContext.after_commit_error_handler`), so every operation in the scope
+    reports through it. The operation still returns its committed result; the handler only
+    surfaces the failed effect (an
+    :class:`~forze.application.execution.context.transaction.AfterCommitError`) for
+    alerting/reconciliation. Must not raise. ``None`` (default) = log only."""
+
     # ....................... #
 
     __ctx: RuntimeVar[ExecutionContext] = attrs.field(
@@ -281,6 +293,7 @@ class ExecutionRuntime:
             deps=resolved_deps,
             cache_operations=self.cache_resolved_operations,
             cache_ports=self.cache_resolved_ports,
+            after_commit_error_handler=self.after_commit_error_handler,
         )
         self.__ctx.set_once(ctx)
 

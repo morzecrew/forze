@@ -9,12 +9,23 @@ from typing import Any
 import attrs
 import pytest
 
-from forze.application.contracts.execution import Handler
+from forze.application.contracts.execution import (
+    Handler,
+    OnSuccessStep,
+    TwoPhaseHandler,
+)
+from forze.application.contracts.resilience import (
+    HedgeStrategy,
+    ResiliencePolicy,
+    TimeoutStrategy,
+)
 from forze.application.execution import ExecutionContext, build_runtime
 from forze.application.execution.context import OperationDrainGate
 from forze.application.contracts.execution import LifecycleStep
+from forze.application.execution.graph_run import run_wave_forward
 from forze.application.execution.lifecycle import LifecyclePlan
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.application.execution.resilience import InProcessResilienceExecutor
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockDepsModule
@@ -258,6 +269,256 @@ class TestEngineGateIntegration:
         assert cancelled == 1
         assert spawned[0].cancelled()  # the escaped op was reachable and cancelled
         assert ctx.drain_gate.in_flight == 0  # its release ran on unwind
+
+
+class TestEngineContinuationsRideAdmittedSlot:
+    """Engine-internal task hops stay inside the admitted operation's slot.
+
+    The engine's own machinery routinely re-enters dispatch from a task other
+    than the one the operation was admitted on — a two-phase ``prepare`` task, a
+    hedged attempt, the post-commit callback runner, a concurrent graph wave.
+    Each of those is a *continuation* of the already-admitted operation: it must
+    not be re-admitted (and so must not be rejected with THROTTLED ``draining``
+    mid-shutdown), and drain must keep waiting for the whole chain because the
+    admitted slot is held until the chain is awaited.
+
+    Contrast with ``test_spawned_operation_is_counted_and_cancellable`` /
+    ``test_handler_spawned_sibling_is_throttled_while_draining``: a task *user
+    code* spawns is a detached top-level driver and stays fully gated.
+    """
+
+    @pytest.mark.asyncio
+    async def test_after_commit_dispatch_completes_while_draining(
+        self, ctx: ExecutionContext
+    ) -> None:
+        """A plan's after-commit dispatch runs on the post-commit runner task;
+        while draining it must still complete as part of the admitted op (its
+        failure would otherwise be swallowed as a non-fatal after-commit error,
+        silently dropping the dispatch)."""
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        after_commit: list[tuple[str, bool, int]] = []
+        inner = _echo_registry().resolve("op", ctx)
+
+        def _dispatch_factory(_ctx: Any) -> Any:
+            async def _hook(_args: str, _result: str) -> None:
+                dispatched = await inner("ac")
+                after_commit.append(
+                    (dispatched, ctx.drain_gate.draining, ctx.drain_gate.in_flight)
+                )
+
+            return _hook
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class WaitHandler(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                started.set()
+                await release.wait()
+                return args
+
+        reg = (
+            OperationRegistry(handlers={"outer": lambda _c: WaitHandler()})
+            .bind("outer")
+            .bind_tx()
+            .set_route("mock")
+            .after_commit(OnSuccessStep(id="ac", factory=_dispatch_factory))
+            .finish(deep=True)
+            .freeze()
+        )
+
+        outer_task = asyncio.create_task(reg.resolve("outer", ctx)("x"))
+        await started.wait()
+
+        drain_task = asyncio.create_task(ctx.drain_gate.drain(5.0))
+        await asyncio.sleep(0)
+        assert not drain_task.done()  # the admitted op holds its slot
+
+        release.set()
+
+        assert await outer_task == "x"
+        # The dispatch ran while draining, rode the admitted slot (in-flight
+        # stayed at the outer op's single admission), and was not throttled.
+        assert after_commit == [("handler:ac", True, 1)]
+        assert await drain_task is True
+
+    @pytest.mark.asyncio
+    async def test_two_phase_prepare_dispatch_completes_while_draining(
+        self, ctx: ExecutionContext
+    ) -> None:
+        """``prepare`` runs on its own engine task; a dispatch it makes while
+        draining is a continuation of the admitted op, not a fresh admission."""
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        seen_in_flight: list[int] = []
+        inner = _echo_registry().resolve("op", ctx)
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class DispatchingTwoPhase(TwoPhaseHandler[str, str, str]):
+            async def prepare(self, args: str) -> str:
+                started.set()
+                await release.wait()
+                seen_in_flight.append(ctx.drain_gate.in_flight)
+                return await inner(args)  # must not be THROTTLED "draining"
+
+            async def apply(self, args: str, payload: str) -> str:
+                return f"applied:{payload}"
+
+        reg = (
+            OperationRegistry(handlers={"outer": lambda _c: DispatchingTwoPhase()})
+            .bind("outer")
+            .two_phase()
+            .bind_tx()
+            .set_route("mock")
+            .finish(deep=True)
+            .freeze()
+        )
+
+        outer_task = asyncio.create_task(reg.resolve("outer", ctx)("x"))
+        await started.wait()
+
+        drain_task = asyncio.create_task(ctx.drain_gate.drain(5.0))
+        await asyncio.sleep(0)
+        assert not drain_task.done()
+
+        release.set()
+
+        assert await outer_task == "applied:handler:x"
+        assert seen_in_flight == [1]  # prepare rode the outer admission
+        assert await drain_task is True
+
+    @pytest.mark.asyncio
+    async def test_hedged_attempt_dispatch_completes_while_draining(
+        self, ctx: ExecutionContext
+    ) -> None:
+        """A hedged attempt runs on its own engine task; a dispatch inside the
+        attempt is a continuation of the admitted op."""
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        inner = _echo_registry().resolve("op", ctx)
+        executor = InProcessResilienceExecutor(
+            policies={
+                "h": ResiliencePolicy(
+                    name="h",
+                    strategies=(TimeoutStrategy(timeout=timedelta(seconds=10)),),
+                    hedge=HedgeStrategy(
+                        delay=timedelta(seconds=10), max_attempts=2
+                    ),
+                )
+            }
+        )
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class HedgingHandler(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                started.set()
+                await release.wait()
+                return await executor.run_hedged(
+                    lambda: inner(args), policy="h", route="r"
+                )
+
+        reg = OperationRegistry(
+            handlers={"outer": lambda _c: HedgingHandler()}
+        ).freeze()
+        outer_task = asyncio.create_task(reg.resolve("outer", ctx)("x"))
+        await started.wait()
+
+        drain_task = asyncio.create_task(ctx.drain_gate.drain(5.0))
+        await asyncio.sleep(0)
+        assert not drain_task.done()
+
+        release.set()
+
+        assert await outer_task == "handler:x"
+        assert await drain_task is True
+
+    @pytest.mark.asyncio
+    async def test_concurrent_wave_dispatch_completes_while_draining(
+        self, ctx: ExecutionContext
+    ) -> None:
+        """The engine's concurrent graph-wave fan-out runs each step on a
+        gather-spawned task; a dispatch inside a step is a continuation of the
+        admitted op."""
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        results: list[str] = []
+        inner = _echo_registry().resolve("op", ctx)
+
+        async def _dispatch_step(suffix: str) -> None:
+            results.append(await inner(suffix))
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class FanOutHandler(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                started.set()
+                await release.wait()
+                await run_wave_forward(
+                    ("a", "b"),
+                    {"a": "a", "b": "b"},
+                    _dispatch_step,
+                    concurrent=True,
+                )
+                return args
+
+        reg = OperationRegistry(
+            handlers={"outer": lambda _c: FanOutHandler()}
+        ).freeze()
+        outer_task = asyncio.create_task(reg.resolve("outer", ctx)("x"))
+        await started.wait()
+
+        drain_task = asyncio.create_task(ctx.drain_gate.drain(5.0))
+        await asyncio.sleep(0)
+        assert not drain_task.done()
+
+        release.set()
+
+        assert await outer_task == "x"
+        assert sorted(results) == ["handler:a", "handler:b"]
+        assert await drain_task is True
+
+    @pytest.mark.asyncio
+    async def test_handler_spawned_sibling_is_throttled_while_draining(
+        self, ctx: ExecutionContext
+    ) -> None:
+        """Regression: a task *user code* spawns is not an engine continuation —
+        it stays a fresh top-level driver and is rejected while draining."""
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        outcomes: list[tuple[ExceptionKind, str | None]] = []
+        inner = _echo_registry().resolve("op", ctx)
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class SpawningHandler(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                started.set()
+                await release.wait()
+                sibling = asyncio.create_task(inner(args))
+
+                try:
+                    await sibling
+
+                except CoreException as error:
+                    outcomes.append((error.kind, error.code))
+
+                return args
+
+        reg = OperationRegistry(
+            handlers={"outer": lambda _c: SpawningHandler()}
+        ).freeze()
+        outer_task = asyncio.create_task(reg.resolve("outer", ctx)("x"))
+        await started.wait()
+
+        drain_task = asyncio.create_task(ctx.drain_gate.drain(5.0))
+        await asyncio.sleep(0)
+        release.set()
+
+        assert await outer_task == "x"
+        assert outcomes == [(ExceptionKind.THROTTLED, "draining")]
+        assert await drain_task is True
 
 
 class TestRuntimeDrain:

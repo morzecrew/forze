@@ -43,9 +43,9 @@ _POLL_INTERVAL = timedelta(milliseconds=50)
 def _default_dedup_id(message: StreamMessage[Any]) -> str:
     """Dedup id for a log message: the outbox event id, else the partition-offset.
 
-    Unlike the generic ``process_with_inbox`` fallback (header → ``key`` → id),
-    an offset-log must **not** dedup on ``key``: ``key`` is the partition/ordering
-    key, so many distinct events share it. The message ``id`` is the canonical
+    Same chain as the generic ``process_with_inbox`` fallback (header → id),
+    with typed access. Never ``key``: ``key`` is the partition/ordering key, so
+    many distinct events share it. The message ``id`` is the canonical
     ``stream:partition:offset`` — globally unique, stable, and monotonic — so it
     is the correct raw-produce dedup key.
     """

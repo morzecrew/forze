@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import AsyncContextManager, AsyncGenerator, Awaitable, Callable, cast
@@ -17,6 +18,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ..tracing import NOOP_TX_TRACER, TxTracer, next_tx_id
+from .active_operation import active_operation_var, continue_operation_on_task
 from .commit_state import mark_commit_started
 
 # ----------------------- #
@@ -309,17 +311,24 @@ class TransactionContext:
         rollback path as usual (safely retryable — nothing committed). Once the
         body completes, the scope marks the commit imminent (see
         :func:`commit_started`); the deferred post-commit callbacks are a
-        critical section — they run to completion even if the task is cancelled,
-        and the cancellation is re-raised afterwards. A *non-fatal* post-commit
-        callback that fails is logged and reported to a wired
-        :class:`AfterCommitErrorHandler` but never raised — the transaction
-        committed, so the operation returns its result unchanged; a *fatal* one (a
-        deliberate domain check) re-raises (see :meth:`_run_deferred`). Cancellation landing inside
-        the driver commit itself is still outside the engine's control (the
-        adapter rolls back best-effort; the server-side outcome can be
-        ambiguous), but because the commit was marked, the invocation boundary
-        surfaces it as a non-retryable ``commit_ambiguous`` error rather than a
-        retryable deadline, so an at-least-once caller does not double-execute.
+        critical section — they run to completion even if the task is cancelled.
+        A *non-fatal* post-commit callback that fails is logged and reported to
+        a wired :class:`AfterCommitErrorHandler` but never raised — the
+        transaction committed, so the operation returns its result unchanged; a
+        *fatal* one (a deliberate domain check) re-raises (see
+        :meth:`_run_deferred`). Cancellation landing inside the driver commit
+        itself is still outside the engine's control (the adapter rolls back
+        best-effort; the server-side outcome can be ambiguous), so inside an
+        operation the scope surfaces it — like a cancellation re-raised after
+        the post-commit drain — as a non-retryable ``commit_ambiguous`` error
+        rather than a retryable deadline or a raw cancellation, so an
+        at-least-once caller does not double-execute; a deadline landing after
+        the scope exits gets the same classification at the invocation boundary
+        via the commit mark. Outside an operation (an inbox consumer's
+        per-message transaction, a saga step runner) the cancellation is
+        re-raised untouched: a shutdown cancel must reach the owning loop as a
+        cancel, never be reclassified into an error a poison-handling loop
+        would swallow.
         """
 
         if self.resolver is None:
@@ -408,57 +417,110 @@ class TransactionContext:
 
         deferred: list[_DeferredCallback] | None = None
         committed = False
+        commit_reached = False
 
         try:
-            async with self._open_root(tx, read_only=root_read_only, isolation=isolation):
-                yield
+            try:
+                async with self._open_root(
+                    tx, read_only=root_read_only, isolation=isolation
+                ):
+                    yield
 
-                # Body completed cleanly; leaving this block runs the driver commit.
-                # No await sits between the yield returning and here, so this always
-                # runs *before* the commit. Marking now means a cancellation
-                # (deadline / disconnect) landing inside that commit — or the shielded
-                # post-commit drain below — surfaces as a non-retryable
-                # ``commit_ambiguous`` at the boundary rather than a retryable
-                # deadline, so an at-least-once caller cannot double-execute an
-                # operation that may have (or has) committed. A body failure/cancel
-                # throws into the yield, skips this, and follows the rollback path
-                # (safely retryable). Not reset here: it must survive to the boundary.
-                mark_commit_started()
+                    # Body completed cleanly; leaving this block runs the driver commit.
+                    # No await sits between the yield returning and here, so this always
+                    # runs *before* the commit. Marking now means a cancellation
+                    # (deadline / disconnect) landing inside that commit — or the shielded
+                    # post-commit drain below — surfaces as a non-retryable
+                    # ``commit_ambiguous`` (below, or at the boundary via the mark) rather
+                    # than a retryable deadline, so an at-least-once caller cannot
+                    # double-execute an operation that may have (or has) committed. A
+                    # body failure/cancel throws into the yield, skips this, and follows
+                    # the rollback path (safely retryable). Not reset here: it must
+                    # survive to the boundary.
+                    mark_commit_started()
+                    commit_reached = True
 
-            # Reached only on a clean exit (no exception thrown into the scope) — capture the
-            # after-commit callbacks to drain below, and mark the transaction committed. An escaping
-            # exception skips this, leaving ``deferred`` as ``None`` (nothing runs after a rollback)
-            # and ``committed`` False, so the exit event records a rollback, not a commit.
-            deferred = self.__cb_stack.get()
-            committed = True
+                # Reached only on a clean exit (no exception thrown into the scope) — capture the
+                # after-commit callbacks to drain below, and mark the transaction committed. An escaping
+                # exception skips this, leaving ``deferred`` as ``None`` (nothing runs after a rollback)
+                # and ``committed`` False, so the exit event records a rollback, not a commit.
+                deferred = self.__cb_stack.get()
+                committed = True
 
-        finally:
-            self._tx_tracer.on_scope_exit(
-                route=route_name,
-                depth=self.__tx_depth.get(),
-                tx_id=tx_id,
-                committed=committed,
-            )
-            self.__cb_stack.reset(token_cb)
-            self.__tx_handle.reset(token_h)
-            self.__tx_depth.reset(token_d)
-            self.__tx_id.reset(token_id)
+            finally:
+                self._tx_tracer.on_scope_exit(
+                    route=route_name,
+                    depth=self.__tx_depth.get(),
+                    tx_id=tx_id,
+                    committed=committed,
+                )
+                self.__cb_stack.reset(token_cb)
+                self.__tx_handle.reset(token_h)
+                self.__tx_depth.reset(token_d)
+                self.__tx_id.reset(token_id)
 
-        if deferred:
-            # The transaction is committed: the drain is a critical section.
-            # Run it to completion even if the surrounding task is cancelled
-            # (client disconnect, deadline) — otherwise idempotency commits and
-            # after-commit dispatch would be silently skipped after a commit.
-            # The cancellation is re-raised once the drain finishes. A
-            # cancellation landing during the driver commit itself is adapter
-            # territory and follows the rollback path above.
+            if deferred:
+                # The transaction is committed: the drain is a critical section.
+                # Run it to completion even if the surrounding task is cancelled
+                # (client disconnect, deadline) — otherwise idempotency commits and
+                # after-commit dispatch would be silently skipped after a commit.
+                # The cancellation is re-raised once the drain finishes.
+                #
+                # ``route_name``/``tx_id`` are passed explicitly: the tx ContextVars
+                # were already reset in the ``finally`` above, so reading them here
+                # would report the *outer* transaction, not this one.
+                #
+                # ``run_to_completion`` runs the drain on its own task; that task is
+                # an engine-internal continuation of the admitted operation (awaited
+                # right here), so adopt the operation onto it — a dispatch a
+                # post-commit callback makes rides the admitted drain slot instead of
+                # being re-admitted (and, mid-shutdown, rejected as ``draining``).
+                await run_to_completion(
+                    continue_operation_on_task(
+                        self._run_deferred(deferred, route=route_name, tx_id=tx_id)
+                    )
+                )
+
+        except asyncio.CancelledError as error:
+            # Before the commit point, a cancellation followed the rollback path
+            # above — nothing committed, safely retryable — so it propagates
+            # untouched. At or after it (a torn driver commit, or a cancellation
+            # re-raised once the shielded post-commit drain finished) the commit
+            # may have (or has) landed: whatever requested the cancel — deadline,
+            # client disconnect, drain — the caller must not see a plain
+            # cancellation it could retry into a duplicate, so surface the same
+            # non-retryable ``commit_ambiguous`` the deadline path reports.
             #
-            # ``route_name``/``tx_id`` are passed explicitly: the tx ContextVars
-            # were already reset in the ``finally`` above, so reading them here
-            # would report the *outer* transaction, not this one.
-            await run_to_completion(
-                self._run_deferred(deferred, route=route_name, tx_id=tx_id)
-            )
+            # Converted only inside an operation owned by the current task (the
+            # marker the invoke boundary stamps): a transaction the engine runs
+            # outside one — an inbox consumer's per-message scope, a saga step
+            # runner — keeps raw cancellation semantics, so a shutdown cancel
+            # still exits the owning loop instead of being reclassified into an
+            # error a poison-handling loop would swallow.
+            task = asyncio.current_task()
+
+            if (
+                not commit_reached
+                or task is None
+                or active_operation_var.get() is not task
+            ):
+                raise
+
+            # The conversion absorbs exactly the cancellation it caught, so
+            # balance the task's cancel count the way ``asyncio.timeout`` does
+            # when it converts one: an enclosing expiring timeout then treats its
+            # own cancel as handled and lets this error propagate. The task still
+            # terminates with this error, so a drain-initiated cancel cannot
+            # wedge shutdown.
+            task.uncancel()
+
+            raise exc.internal(
+                f"Cancelled at or after the transaction commit on route "
+                f"{route_name!r}; the commit outcome is ambiguous (it may have "
+                "committed). Surfaced as non-retryable so a retry cannot "
+                "double-execute — reconcile before re-running.",
+                code="commit_ambiguous",
+            ) from error
 
     # ....................... #
 

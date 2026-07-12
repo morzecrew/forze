@@ -336,7 +336,7 @@ async def run_checkout(
 
 @attrs.define(frozen=True, kw_only=True)
 class RelayMessage:
-    key: str  # the integration event id — process_with_inbox dedups on it
+    id: str  # the integration event id — process_with_inbox dedups on it
     order_id: UUID
 
 
@@ -346,7 +346,7 @@ async def relay_once(ctx: ExecutionContext) -> list[RelayMessage]:
     claims = await query.claim_pending()
 
     messages = [
-        RelayMessage(key=str(c.event_id), order_id=UUID(c.payload["order_id"]))
+        RelayMessage(id=str(c.event_id), order_id=UUID(c.payload["order_id"]))
         for c in claims
     ]
 
@@ -384,7 +384,7 @@ async def deliver(ctx: ExecutionContext, message: RelayMessage) -> bool:
     )
 
     if not processed:
-        log.debug("duplicate message skipped by inbox", key=message.key)
+        log.debug("duplicate message skipped by inbox", id=message.id)
 
     return processed
 

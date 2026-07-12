@@ -62,7 +62,7 @@ async def _run(seed: int) -> bytes:
                 "inventory_id": str(inventory_id),
                 "delivered": delivered,
                 "messages": [
-                    {"key": m.key, "order_id": str(m.order_id)} for m in messages
+                    {"id": m.id, "order_id": str(m.order_id)} for m in messages
                 ],
                 "order": order.model_dump(mode="json"),
                 "inventory": inventory.model_dump(mode="json"),

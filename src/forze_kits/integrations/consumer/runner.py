@@ -209,7 +209,7 @@ class QueueConsumer[M]:
 
     message_id: Callable[[QueueMessage[M]], str] | None = None
     """Dedup-id extractor override (default: ``forze_event_id`` header, then
-    ``message.key``, then ``message.id``)."""
+    ``message.id`` — never ``message.key``, which is a grouping key)."""
 
     bind_tenant_from_headers: bool = False
     """Forwarded to ``process_with_inbox``; **opt-in** because headers are untrusted."""

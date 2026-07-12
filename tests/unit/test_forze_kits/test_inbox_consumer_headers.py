@@ -81,14 +81,16 @@ async def test_envelope_headers_rebind_correlation_and_causation() -> None:
     assert observed.metadata.causation_id == event_id
 
 
-async def test_causation_falls_back_to_message_key_without_event_id_header() -> None:
+async def test_causation_absent_without_event_id_header() -> None:
+    # The ordering key is a grouping token, not an event identity — without
+    # the event-id header there is no causing event id to bind.
     ctx = context_from_modules(MockDepsModule())
     observed = _Observed()
 
     correlation_id = uuid7()
-    event_id = uuid7()
     msg = _Msg(
-        key=str(event_id),
+        key=str(uuid7()),  # UUID-shaped ordering key must not masquerade
+        id="d-1",
         headers={HEADER_CORRELATION_ID: str(correlation_id)},
     )
 
@@ -101,7 +103,8 @@ async def test_causation_falls_back_to_message_key_without_event_id_header() -> 
     )
 
     assert observed.metadata is not None
-    assert observed.metadata.causation_id == event_id
+    assert observed.metadata.correlation_id == correlation_id
+    assert observed.metadata.causation_id is None
 
 
 async def test_existing_consumer_execution_id_is_kept() -> None:
@@ -113,7 +116,7 @@ async def test_existing_consumer_execution_id_is_kept() -> None:
         correlation_id=uuid7(),
     )
     correlation_id = uuid7()
-    msg = _Msg(key="evt-key", headers={HEADER_CORRELATION_ID: str(correlation_id)})
+    msg = _Msg(id="evt-key", headers={HEADER_CORRELATION_ID: str(correlation_id)})
 
     with ctx.inv_ctx.bind_metadata(metadata=consumer_metadata):
         await process_with_inbox(
@@ -138,7 +141,7 @@ async def test_without_headers_no_rebind_current_behavior() -> None:
 
     processed = await process_with_inbox(
         ctx,
-        _Msg(key="evt-1"),
+        _Msg(id="evt-1"),
         inbox_spec=_SPEC,
         handler=_observing_handler(ctx, observed),
         tx_route="mock",
@@ -153,7 +156,7 @@ async def test_malformed_correlation_header_is_ignored() -> None:
     ctx = context_from_modules(MockDepsModule())
     observed = _Observed()
 
-    msg = _Msg(key="evt-1", headers={HEADER_CORRELATION_ID: "not-a-uuid"})
+    msg = _Msg(id="evt-1", headers={HEADER_CORRELATION_ID: "not-a-uuid"})
 
     processed = await process_with_inbox(
         ctx,
@@ -172,10 +175,10 @@ async def test_duplicate_is_still_skipped_with_headers() -> None:
     calls: list[str] = []
 
     async def handler(msg: _Msg) -> None:
-        calls.append(msg.key or "")
+        calls.append(msg.id or "")
 
     msg = _Msg(
-        key="evt-dup",
+        id="evt-dup",
         headers={HEADER_CORRELATION_ID: str(uuid7())},
     )
 
@@ -203,7 +206,7 @@ async def test_tenant_header_ignored_by_default() -> None:
     observed = _Observed()
 
     msg = _Msg(
-        key="evt-t1",
+        id="evt-t1",
         headers={
             HEADER_CORRELATION_ID: str(uuid7()),
             HEADER_TENANT_ID: str(uuid4()),
@@ -227,7 +230,7 @@ async def test_tenant_header_bound_when_opted_in() -> None:
 
     tenant_id = uuid4()
     msg = _Msg(
-        key="evt-t2",
+        id="evt-t2",
         headers={
             HEADER_CORRELATION_ID: str(uuid7()),
             HEADER_TENANT_ID: str(tenant_id),
@@ -252,7 +255,7 @@ async def test_tenant_opt_in_without_tenant_header_binds_nothing() -> None:
     ctx = context_from_modules(MockDepsModule())
     observed = _Observed()
 
-    msg = _Msg(key="evt-t3", headers={HEADER_CORRELATION_ID: str(uuid7())})
+    msg = _Msg(id="evt-t3", headers={HEADER_CORRELATION_ID: str(uuid7())})
 
     await process_with_inbox(
         ctx,
@@ -271,7 +274,7 @@ async def test_tenant_opt_in_works_without_correlation_header() -> None:
     observed = _Observed()
 
     tenant_id = uuid4()
-    msg = _Msg(key="evt-t4", headers={HEADER_TENANT_ID: str(tenant_id)})
+    msg = _Msg(id="evt-t4", headers={HEADER_TENANT_ID: str(tenant_id)})
 
     await process_with_inbox(
         ctx,
@@ -292,14 +295,14 @@ async def test_message_without_headers_attribute_is_fine() -> None:
 
     @attrs.define(slots=True, kw_only=True)
     class _Bare:
-        key: str
+        id: str
 
     async def handler(_msg: _Bare) -> None: ...
 
     assert (
         await process_with_inbox(
             ctx,
-            _Bare(key="bare-1"),
+            _Bare(id="bare-1"),
             inbox_spec=_SPEC,
             handler=handler,
             tx_route="mock",
@@ -316,7 +319,7 @@ async def test_uuid_typed_assertion_helper() -> None:
 
     await process_with_inbox(
         ctx,
-        _Msg(key=str(uuid7()), headers={HEADER_CORRELATION_ID: str(correlation_id)}),
+        _Msg(id=str(uuid7()), headers={HEADER_CORRELATION_ID: str(correlation_id)}),
         inbox_spec=_SPEC,
         handler=_observing_handler(ctx, observed),
         tx_route="mock",

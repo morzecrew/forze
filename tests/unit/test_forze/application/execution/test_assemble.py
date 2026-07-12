@@ -6,7 +6,13 @@ import pytest
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.execution import Handler, LifecycleStep
-from forze.application.execution import Deps, ExecutionRuntime, build_runtime
+from forze.application.execution import (
+    Deps,
+    ExecutionContext,
+    ExecutionRuntime,
+    build_runtime,
+)
+from forze.application.execution.context.transaction import AfterCommitError
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
@@ -205,3 +211,64 @@ class TestBuildRuntimeEndToEnd:
             created = await ctx.document.command(_DOC_SPEC).create(CreateDocumentCmd())
             fetched = await ctx.document.query(_DOC_SPEC).get(created.id)
             assert fetched.id == created.id
+
+
+# ----------------------- #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _CommitThenFailEffectHandler(Handler[str, str]):
+    """Commits a transaction whose non-fatal after-commit callback raises."""
+
+    ctx: ExecutionContext
+
+    async def __call__(self, args: str) -> str:
+        async def _failing_effect() -> None:
+            raise RuntimeError("effect failed")
+
+        async with self.ctx.tx_ctx.scope("mock"):
+            await self.ctx.tx_ctx.run_or_defer(_failing_effect)
+
+        return f"committed:{args}"
+
+
+class TestBuildRuntimeAfterCommitErrorHandler:
+    def test_default_is_none(self) -> None:
+        rt = build_runtime()
+
+        assert rt.after_commit_error_handler is None
+
+        rt.create_context()
+        assert rt.get_context().after_commit_error_handler is None
+
+    def test_handler_reaches_the_context(self) -> None:
+        captured: list[AfterCommitError] = []
+
+        rt = build_runtime(after_commit_error_handler=captured.append)
+        rt.create_context()
+
+        assert rt.get_context().after_commit_error_handler is not None
+
+    @pytest.mark.asyncio
+    async def test_handler_receives_failed_after_commit_effects(self) -> None:
+        captured: list[AfterCommitError] = []
+
+        registry = OperationRegistry(
+            handlers={"commit": lambda ctx: _CommitThenFailEffectHandler(ctx=ctx)},
+        ).freeze()
+        rt = build_runtime(
+            MockDepsModule(),
+            after_commit_error_handler=captured.append,
+        )
+
+        async with rt.scope():
+            resolved = registry.resolve("commit", rt.get_context())
+
+            # The failed effect never discards the committed result...
+            assert await resolved("foo") == "committed:foo"
+
+        # ...and the handler is notified out-of-band with the failure.
+        assert len(captured) == 1
+        report = captured[0]
+        assert report.route == "mock"
+        assert [f.error for f in report.failures] == ["effect failed"]

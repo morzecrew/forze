@@ -37,6 +37,7 @@ from forze.base.primitives import (
     monotonic,
 )
 
+from ..context.active_operation import continue_operation_on_task
 from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
@@ -582,7 +583,11 @@ class InProcessResilienceExecutor:
         def spawn() -> asyncio.Future[T]:
             nonlocal attempts
             attempts += 1
-            task = asyncio.ensure_future(fn())
+            # Each attempt task is an engine-internal continuation of the
+            # operation awaiting run_hedged (awaited or cancelled in the finally
+            # below): adopt the operation onto it so a dispatch the attempt makes
+            # rides the admitted drain slot instead of being re-admitted.
+            task = asyncio.ensure_future(continue_operation_on_task(fn()))
             tasks.add(task)
 
             if attempts > 1:

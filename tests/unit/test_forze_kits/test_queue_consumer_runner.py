@@ -321,17 +321,20 @@ async def test_happy_path_processes_and_acks() -> None:
 
 
 async def test_duplicate_redelivery_acked_without_handler_rerun() -> None:
-    # At-least-once relay: the same event key published as two broker messages.
+    # At-least-once relay: the same event (same forze_event_id header, as the
+    # relay stamps it) published as two broker messages.
     ctx, q, state = _mock_harness()
     calls: list[str] = []
 
     async def handler(msg: QueueMessage[_Payload]) -> None:
         calls.append(msg.id)
 
-    await q.enqueue("jobs", _Payload(value="x"), key="evt-1")
+    event_headers = {HEADER_EVENT_ID: str(uuid4())}
+
+    await q.enqueue("jobs", _Payload(value="x"), key="order-1", headers=event_headers)
     first = await _run(ctx, handler)
 
-    await q.enqueue("jobs", _Payload(value="x"), key="evt-1")
+    await q.enqueue("jobs", _Payload(value="x"), key="order-1", headers=event_headers)
     second = await _run(ctx, handler)
 
     assert first == ConsumerRunResult(processed=1)
@@ -697,8 +700,12 @@ async def test_stats_across_mixed_outcomes_in_one_run() -> None:
             failed_once = True
             raise RuntimeError("transient")
 
-    await q.enqueue("jobs", _Payload(value="ok"), key="evt-ok")
-    await q.enqueue("jobs", _Payload(value="ok"), key="evt-ok")  # duplicate publish
+    ok_headers = {HEADER_EVENT_ID: str(uuid4())}
+
+    await q.enqueue("jobs", _Payload(value="ok"), key="evt-ok", headers=ok_headers)
+    await q.enqueue(  # duplicate publish: same event id, new broker message
+        "jobs", _Payload(value="ok"), key="evt-ok", headers=ok_headers
+    )
     await q.enqueue("jobs", _Payload(value="flaky"), key="evt-flaky")
 
     result = await _run(ctx, handler)

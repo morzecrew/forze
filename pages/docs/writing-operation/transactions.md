@@ -163,6 +163,13 @@ Deferred work is also **cancellation-protected**: a client disconnect or a
 callbacks can't skip them — they run to completion, then the cancellation
 re-raises. A committed transaction is never left half-announced.
 
+A deferred callback that **fails** never takes the committed result down with
+it: the failure is logged and the operation still returns normally. To surface
+those failures for alerting instead of relying on logs, install a handler when
+building the runtime — `build_runtime(..., after_commit_error_handler=...)` —
+and it is notified out-of-band with an `AfterCommitError` describing each failed
+callback. The handler must not raise.
+
 ## Transactions under the mock
 
 The mock transaction manager is **faithful by default** (`transactions="journal"`):

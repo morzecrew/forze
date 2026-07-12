@@ -17,6 +17,8 @@ from forze.application.contracts.transaction import AfterCommitPort, IsolationLe
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
+from ...context.active_operation import continue_operation_on_task
+
 if TYPE_CHECKING:
     from ...context.invocation import InvocationContext
 
@@ -316,8 +318,13 @@ async def _prepare_apply_handler[Args, R](
         raise exc.internal("Two-phase prepare invoked without a once-box")
 
     if once.future is None:
+        # The prepare task is an engine-internal continuation of the admitted
+        # operation (awaited below; cancelled on unwind by
+        # run_resolved_operation_plan): adopt the operation onto it so a dispatch
+        # prepare makes rides the admitted drain slot instead of being re-admitted.
         once.future = asyncio.create_task(
-            _run_prepare(handler, args, inv_ctx), name="two-phase-prepare"
+            continue_operation_on_task(_run_prepare(handler, args, inv_ctx)),
+            name="two-phase-prepare",
         )
 
     payload = await once.future
