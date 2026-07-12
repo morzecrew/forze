@@ -5,7 +5,7 @@ from typing import Any, Callable, Mapping, Sequence
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from .cursor_token import CursorBinding, encode_keyset_v1, row_value_for_sort_key
+from .cursor_token import CursorBinding, keyset_page_bounds, row_value_for_sort_key
 
 # ----------------------- #
 
@@ -116,41 +116,26 @@ def assemble_keyset_cursor_page(
     use_after = c.get("after") is not None
     use_before = c.get("before") is not None
 
-    has_more = len(fetched) > lim
+    raw = list(fetched)
 
     if use_before:
-        # Keep the ``limit`` rows nearest the cursor (the tail — the gateway already
-        # re-reversed the flipped fetch into ascending order, putting the sentinel first).
-        # Slicing the head instead would keep the sentinel and drop the row adjacent to
-        # the cursor (``before=5&limit=2`` over ``[1..5]`` -> ``[2,3]`` instead of ``[3,4]``).
-        page_raw = list(fetched)[-lim:]
-    else:
-        page_raw = list(fetched)[:lim]
+        # The gateway re-reversed its flipped ``before`` fetch into ascending order
+        # (sentinel first); flip it back so the shared bounds helper sees the single
+        # orientation it defines (sentinel last) — the trim itself lives only there.
+        raw.reverse()
 
-    if has_more and page_raw:
-        last = dump_row(page_raw[-1])
-        next_tok = encode_keyset_v1(
-            sort_keys=sort_keys,
-            directions=directions,
-            nulls=nulls,
-            values=[row_value_for_sort_key(last, k) for k in sort_keys],
-            binding=binding,
-        )
+    def _token_values(row: Any) -> list[Any]:
+        dumped = dump_row(row)
+        return [row_value_for_sort_key(dumped, k) for k in sort_keys]
 
-    else:
-        next_tok = None
-
-    if page_raw and (use_after or (use_before and has_more)):
-        first = dump_row(page_raw[0])
-        prev_tok = encode_keyset_v1(
-            sort_keys=sort_keys,
-            directions=directions,
-            nulls=nulls,
-            values=[row_value_for_sort_key(first, k) for k in sort_keys],
-            binding=binding,
-        )
-
-    else:
-        prev_tok = None
-
-    return page_raw, has_more, next_tok, prev_tok
+    return keyset_page_bounds(
+        raw,
+        lim,
+        sort_keys=sort_keys,
+        directions=directions,
+        use_after=use_after,
+        use_before=use_before,
+        nulls=nulls,
+        binding=binding,
+        row_values=_token_values,
+    )

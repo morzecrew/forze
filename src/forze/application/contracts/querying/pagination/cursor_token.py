@@ -8,7 +8,7 @@ import math
 from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal, InvalidOperation
-from typing import Any, Iterator, Sequence, cast
+from typing import Any, Callable, Iterator, Sequence, cast
 
 import attrs
 
@@ -939,8 +939,8 @@ def validate_cursor_token(
 # ....................... #
 
 
-def keyset_page_bounds(
-    raw_rows: list[dict[str, Any]],
+def keyset_page_bounds[R](
+    raw_rows: Sequence[R],
     limit: int,
     *,
     sort_keys: Sequence[str],
@@ -949,15 +949,19 @@ def keyset_page_bounds(
     use_before: bool,
     nulls: Sequence[str] | None = None,
     binding: CursorBinding | None = None,
-) -> tuple[list[dict[str, Any]], bool, str | None, str | None]:
+    row_values: Callable[[R], list[Any]] | None = None,
+) -> tuple[list[R], bool, str | None, str | None]:
     """Trim an over-fetched keyset result to one page and compute next/prev cursors.
 
     *raw_rows* holds up to ``limit + 1`` rows — the extra row signals more pages. A ``before``
     page arrives in flipped (descending-from-cursor) order, so its over-fetch sentinel is the
     row *farthest* from the cursor (the last one); the ``limit`` rows nearest the cursor are
     kept and only then reversed back into ascending order. Returns
-    ``(rows, has_more, next_cursor, prev_cursor)``. Shared by the keyset-cursor search
-    paths so the page-boundary and token-emission logic is single-sourced.
+    ``(rows, has_more, next_cursor, prev_cursor)``. The single home of the sentinel-trim and
+    token-boundary logic: the keyset-cursor search paths call it on plain dict rows, and
+    :func:`~forze.application.contracts.querying.pagination.cursor_page.assemble_keyset_cursor_page`
+    delegates to it for the document adapters. *row_values* extracts a row's token values;
+    the default reads the sort keys off a dict row, so pass it for any other row shape.
     """
 
     has_more = len(raw_rows) > limit
@@ -969,10 +973,12 @@ def keyset_page_bounds(
         # window (e.g. ``before=5&limit=2`` over ``[1..5]`` -> ``[2,3]`` instead of ``[3,4]``).
         rows = list(reversed(raw_rows[:limit]))
     else:
-        rows = raw_rows[:limit]
+        rows = list(raw_rows[:limit])
 
-    def _row_token_vals(row: dict[str, Any]) -> list[Any]:
-        return [row_value_for_sort_key(row, k) for k in sort_keys]
+    def _dict_token_vals(row: R) -> list[Any]:
+        return [row_value_for_sort_key(cast("dict[str, Any]", row), k) for k in sort_keys]
+
+    _row_token_vals = row_values if row_values is not None else _dict_token_vals
 
     nxt = (
         encode_keyset_v1(
