@@ -22,10 +22,13 @@ Known, accepted infidelities (spiked/observed 2026-07 against 1.5.32):
   ``EncryptionContext`` mismatch rejection, ``RotateKeyOnDemand``
   transparency, alias lifecycle and alias-form key ids, ``NotFoundException``
   shapes, and key-deletion scheduling.
-* S3: SigV4 signed-header binding is not verified on presigned PUTs (a
-  mismatched ``Content-Type`` upload is accepted; real S3 and MinIO return
-  403). The negative presign test skips on floci and asserts the property
-  against MinIO (tracked: https://github.com/floci-io/floci/issues/1841).
+* S3: presigned-URL verification is immature (tracked:
+  https://github.com/floci-io/floci/issues/1841). SigV4 signed-header binding
+  is not verified on presigned PUTs (a mismatched ``Content-Type`` upload is
+  accepted; real S3 and MinIO return 403), and expiry enforcement is
+  environment-dependent (a 1s-expiry URL dies locally but never expires on CI
+  runners). Both negative presign tests skip on floci and assert the
+  properties against MinIO.
 """
 
 from __future__ import annotations

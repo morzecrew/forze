@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 
 pytest.importorskip("aioboto3")
+pytest.importorskip("testcontainers")
 
 from forze.application.contracts.secrets import SecretRef
 from forze_sqs.kernel.client import RoutedSQSClient, SQSClient

@@ -115,8 +115,18 @@ async def test_presigned_upload_rejects_unbound_content_type(
 
 @pytest.mark.asyncio
 async def test_presigned_download_url_expires(
-    s3_client: S3Client, s3_bucket: str
+    s3_client: S3Client,
+    s3_bucket: str,
+    s3_backend,  # noqa: ANN001 - session backend fixture
 ) -> None:
+    if s3_backend.name == "floci":
+        # Emulator infidelity, not an adapter concern: floci's presigned-URL
+        # verification is immature (floci-io/floci#1841) and its expiry
+        # enforcement proved environment-dependent — a 1s-expiry URL dies
+        # locally but never expires on CI runners. MinIO asserts the property
+        # on every run.
+        pytest.skip("floci presigned-URL expiry enforcement is unreliable")
+
     async with s3_client.client():
         await s3_client.upload_bytes(s3_bucket, "fleeting.txt", b"gone-soon")
 
