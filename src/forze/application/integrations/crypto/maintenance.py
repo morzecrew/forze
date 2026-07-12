@@ -177,6 +177,17 @@ async def reencrypt_objects(
             if not _is_missing(error):
                 raise
 
+            # A miss only counts as a deleted-object race while the container
+            # itself is still healthy: on some backends a bucket that vanished
+            # mid-sweep 404s object reads exactly like a deleted object, and a
+            # pass that "skipped" every key would read as complete. The listing
+            # succeeded at enumeration, so re-probing it separates the two.
+            try:
+                await query.list(1, 0, prefix=prefix)
+
+            except CoreException:
+                raise error
+
             skipped += 1
             continue
 

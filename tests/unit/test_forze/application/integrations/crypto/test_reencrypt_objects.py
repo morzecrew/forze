@@ -251,6 +251,50 @@ class TestReencryptObjects:
 
         assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
 
+    async def test_a_vanished_bucket_aborts_instead_of_skipping_everything(
+        self,
+    ) -> None:
+        """A container-level failure must not masquerade as deleted-object races.
+
+        On some backends a bucket that disappears mid-sweep 404s every object
+        read exactly like a deleted object; a pass that "skipped" every key
+        would then report as complete. A miss counts as a skip only while the
+        listing that enumerated it still answers.
+        """
+
+        adapter = _adapter()
+        await _upload(adapter, "a.txt", b"alpha")
+        await _upload(adapter, "b.txt", b"beta")
+
+        class _VanishingBucketQuery:
+            def __init__(self) -> None:
+                self.enumerated = False
+
+            async def list(self, limit: int, offset: int, **kwargs: object):
+                if self.enumerated:
+                    raise CoreException.not_found("bucket gone")
+
+                page, total = await adapter.list(limit, offset)
+
+                if not page:
+                    self.enumerated = True
+
+                return page, total
+
+            async def head(self, key: str, **kwargs: object):
+                raise CoreException.not_found("bucket gone")
+
+            async def download_stream(self, key: str):
+                return await adapter.download_stream(key)
+
+        with pytest.raises(CoreException) as ei:
+            await reencrypt_objects(
+                _VanishingBucketQuery(),  # type: ignore[arg-type]
+                adapter,
+            )
+
+        assert ei.value.kind is ExceptionKind.NOT_FOUND
+
 
 # ....................... #
 

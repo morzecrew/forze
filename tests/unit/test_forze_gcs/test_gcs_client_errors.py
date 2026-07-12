@@ -13,12 +13,15 @@ from forze_gcs.kernel.client.errors import _gcs_eh, exc_interceptor
 # ----------------------- #
 
 
-def _client_error(status: int) -> ClientResponseError:
+def _client_error(
+    status: int,
+    url: str = "http://example.com/storage/v1/b/bkt/o/key",
+) -> ClientResponseError:
     request_info = RequestInfo(
-        url=URL("http://example.com"),
+        url=URL(url),
         method="GET",
         headers={},
-        real_url=URL("http://example.com"),
+        real_url=URL(url),
     )
     return ClientResponseError(
         request_info=request_info,
@@ -34,12 +37,28 @@ class TestGCSErrorHandler:
         original = exc.internal("x")
         assert exc_interceptor.mapper(original, site="op") is original
 
-    def test_not_found(self) -> None:
+    def test_object_404_is_a_caller_miss(self) -> None:
         # A caller miss, not downstream ill health: no retries, no breaker
         # failure, a 404 at the edge — and the mock/real kinds agree.
         r = _gcs_eh(_client_error(404), site="get")
         assert r is not None
         assert r.kind == ExceptionKind.NOT_FOUND
+        assert "not found" in r.summary.lower()
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # Bucket-level and upload URLs 404 on a missing/unavailable
+            # *bucket* — a deployment fault, never a deleted-object race.
+            "http://example.com/storage/v1/b/bkt",
+            "http://example.com/upload/storage/v1/b/bkt/o?uploadType=media",
+            "http://example.com",
+        ],
+    )
+    def test_bucket_level_404_stays_infrastructure(self, url: str) -> None:
+        r = _gcs_eh(_client_error(404, url=url), site="ensure")
+        assert r is not None
+        assert r.kind == ExceptionKind.INFRASTRUCTURE
         assert "not found" in r.summary.lower()
 
     def test_forbidden(self) -> None:

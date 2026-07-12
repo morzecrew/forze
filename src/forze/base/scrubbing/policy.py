@@ -89,7 +89,9 @@ _LOG_ASSIGNMENT_TERM_FRAGMENTS: tuple[str, ...] = (
     "password",
     "passwd",
     r"mysql[._ -]?pwd",
-    "pwd",
+    # Left-bounded like its key-heuristic twin: ``pwd=`` / ``db_pwd=`` match,
+    # a mid-token run (``backupwd=``) stays ordinary text.
+    r"(?:\b|_)pwd",
     "passphrase",
     "secret",
     "token",

@@ -180,6 +180,7 @@ class TestCredentialFragmentCoverage:
             ("loading private_key=abc for signing", "abc"),
             ("login with pwd=zzz failed", "zzz"),
             ("db_pwd=hunter2 in env", "hunter2"),
+            ("stored pwd_hash=deadbeef for audit", "deadbeef"),
             ("wallet passphrase=correcthorse rejected", "correcthorse"),
             ("wallet passphrase: correcthorse rejected", "correcthorse"),
             ("kms private-key=abc rotated", "abc"),
@@ -230,6 +231,7 @@ class TestCredentialFragmentCoverage:
             "security=high for this tenant",  # 'uri' inside 'security' must not trigger
             "user authorized the request",
             "the author: Jane Doe",  # 'auth' lookahead excludes author/authors
+            "backupwd=main is the branch",  # 'pwd' mid-token: left-bounded like the key path
         ],
     )
     def test_assignment_form_has_no_false_positives(self, text: str) -> None:
