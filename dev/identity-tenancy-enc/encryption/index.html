@@ -6042,7 +6042,10 @@ step of a searchable-key rotation.</p>
 it under a fresh data key. <code>reencrypt_objects</code> rewrites every object <strong>in place</strong> — an
 object's associated data binds it to its key, so it is never copied to a new one — and
 holds only one chunk in memory, however large the object. Both are resumable: re-run an
-interrupted sweep.</p>
+interrupted sweep. Both also tolerate churn: an object or row deleted by normal traffic
+before the sweep reaches it has nothing left to re-encrypt, so it is skipped rather than
+aborting the pass — each sweep returns a <code>ReencryptReport</code> whose <code>rewritten</code> and
+<code>skipped_missing</code> counts keep the two outcomes apart. Any other failure still aborts.</p>
 <p>Nothing else needs a sweep. Outbox rows drain as they relay, and idempotency results and
 search snapshots expire on their TTL.</p>
 <h2 id="declaring-a-minimum">Declaring a minimum<a class="headerlink" href="#declaring-a-minimum" title="Permanent link">&para;</a></h2>
