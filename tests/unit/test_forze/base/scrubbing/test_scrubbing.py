@@ -17,6 +17,7 @@ from forze.base.scrubbing import (
     sanitize,
     sanitize_pydantic_errors,
 )
+from forze.base.scrubbing import policy as _scrub_policy
 from forze.base.scrubbing.policy import scrub_log_string
 
 # ----------------------- #
@@ -121,7 +122,14 @@ class TestScrubAssignmentSuffixLeak:
         result = scrub_log_string(text)
         assert SECRET_PLACEHOLDER in result
         # The value after the separator must be gone.
-        for leaked in ("abc123", "AKIAWEAKKEY123", "xyz789", "shhh", "leakme", "deadbeef"):
+        for leaked in (
+            "abc123",
+            "AKIAWEAKKEY123",
+            "xyz789",
+            "shhh",
+            "leakme",
+            "deadbeef",
+        ):
             if leaked in text:
                 assert leaked not in result
 
@@ -161,6 +169,175 @@ class TestScrubAssignmentSuffixLeak:
     )
     def test_leaves_non_secret_strings_untouched(self, text: str) -> None:
         assert scrub_log_string(text) == text
+
+
+class TestCredentialFragmentCoverage:
+    """Credential terms must be caught on every scrub path (keys, messages, exceptions)."""
+
+    @pytest.mark.parametrize(
+        ("text", "secret"),
+        [
+            ("loading private_key=abc for signing", "abc"),
+            ("login with pwd=zzz failed", "zzz"),
+            ("db_pwd=hunter2 in env", "hunter2"),
+            ("wallet passphrase=correcthorse rejected", "correcthorse"),
+            ("wallet passphrase: correcthorse rejected", "correcthorse"),
+            ("kms private-key=abc rotated", "abc"),
+            ("card credit_card=4111111111111111 declined", "4111111111111111"),
+            ("payload social_security=078-05-1120 stripped", "078-05-1120"),
+            ("auth=abc123 attached to request", "abc123"),
+            ("connect dsn=Server=db;Uid=sa;Pwd=x1 failed", "Pwd=x1"),
+        ],
+    )
+    def test_masks_assignment_form_in_message(self, text: str, secret: str) -> None:
+        result = scrub_log_string(text)
+        assert secret not in result
+        assert SECRET_PLACEHOLDER in result
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "pwd",
+            "db_pwd",
+            "pwd_hash",
+            "mysql pwd",
+            "passphrase",
+            "wallet_passphrase",
+            "private_key",
+        ],
+    )
+    def test_masks_structured_key(self, key: str) -> None:
+        assert sanitize({key: "leak"}, context="log") == {key: SECRET_PLACEHOLDER}
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "pwdx",  # 'pwd' not underscore/word-boundary delimited on the right
+            "backupwd",  # 'pwd' mid-token, not delimited on the left
+            "crowd",
+        ],
+    )
+    def test_short_fragment_key_anchoring_has_no_false_positives(
+        self, key: str
+    ) -> None:
+        assert sanitize({key: "v"}, context="log") == {key: "v"}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "the pwd command prints the working directory",  # no ``=``/``:`` + value shape
+            "passphrases are long by design",
+            "security=high for this tenant",  # 'uri' inside 'security' must not trigger
+            "user authorized the request",
+            "the author: Jane Doe",  # 'auth' lookahead excludes author/authors
+        ],
+    )
+    def test_assignment_form_has_no_false_positives(self, text: str) -> None:
+        assert scrub_log_string(text) == text
+
+    def test_masks_exception_message_and_stack_path(self) -> None:
+        from forze.base.logging.constants import ERR_MESSAGE_KEY, ERR_STACK_KEY
+        from forze.base.logging.processors import ExceptionFieldsSanitizer
+
+        event_dict = {
+            ERR_MESSAGE_KEY: "connect failed: private_key=abc pwd=zzz",
+            ERR_STACK_KEY: "  File x, line 1\n    conn(db_pwd=hunter2)",
+        }
+        result = ExceptionFieldsSanitizer()(None, "", event_dict)
+
+        for leaked in ("abc", "zzz", "hunter2"):
+            assert leaked not in result[ERR_MESSAGE_KEY] + result[ERR_STACK_KEY]
+
+    def test_masks_rendered_event_message_path(self) -> None:
+        from forze.base.logging.processors import EventDictSanitizer
+
+        event_dict = {
+            "event": "retry with pwd=zzz and private_key=abc",
+            "passphrase": "correcthorse",
+            "level": "info",
+        }
+        result = EventDictSanitizer()(None, "", event_dict)
+
+        assert "zzz" not in result["event"]
+        assert "abc" not in result["event"]
+        assert result["passphrase"] == SECRET_PLACEHOLDER
+
+
+class TestFragmentListParity:
+    """Drift guard: the key-heuristic and value-form term lists must stay reconciled.
+
+    The sensitive-key heuristic (``is_sensitive_key``) and the value-form
+    assignment rule (``foo=secret`` in message strings) are two projections of
+    one credential vocabulary. A term added to only one of them silently leaks
+    on the other path, so this test fails when the lists diverge beyond the
+    explicit exception sets below.
+    """
+
+    # Key-heuristic terms with no value-form assignment counterpart, with the
+    # reason the value form is handled elsewhere (or inapplicable).
+    _KEY_ONLY_TERMS = {
+        # The value form is owned by the dedicated full-line
+        # ``authorization\s*:\s*[^\r\n]+`` extras pattern: an assignment-term
+        # match would stop at the first token (the scheme word, e.g. ``Basic``)
+        # and leak the credential that follows it.
+        "authorization",
+    }
+
+    # Value-form terms with no key-heuristic counterpart.
+    _VALUE_ONLY_TERMS: set[str] = set()
+
+    @staticmethod
+    def _canonical_term(fragment: str) -> str:
+        """Collapse a regex fragment to a comparable bare term."""
+
+        term = fragment.lower()
+
+        for regex_noise in (r"(?:\b|_)", r"(?!ors?\b)", r"[._ -]?"):
+            term = term.replace(regex_noise, "")
+
+        term = term.replace("_", "")
+
+        assert term.isalnum(), (
+            f"fragment {fragment!r} uses a regex construct _canonical_term does not"
+            f" normalize; teach it the construct so parity stays checkable"
+        )
+        return term
+
+    def test_key_and_value_term_lists_are_reconciled(self) -> None:
+        from forze.base.scrubbing import policy
+
+        key_terms = {
+            self._canonical_term(fragment)
+            for fragment in (
+                *policy._LOGFIRE_SENSITIVE_FRAGMENTS,
+                *policy._FORZE_KEY_EXTRAS,
+            )
+        }
+        value_terms = {
+            self._canonical_term(fragment)
+            for fragment in policy._LOG_ASSIGNMENT_TERM_FRAGMENTS
+        }
+
+        missing_from_value = key_terms - value_terms
+        missing_from_key = value_terms - key_terms
+
+        assert missing_from_value == self._KEY_ONLY_TERMS, (
+            "key-heuristic terms missing a value-form assignment counterpart;"
+            " add them to _LOG_ASSIGNMENT_TERM_FRAGMENTS or document the"
+            f" exception here: {sorted(missing_from_value - self._KEY_ONLY_TERMS)}"
+        )
+        assert missing_from_key == self._VALUE_ONLY_TERMS, (
+            "value-form terms missing a key-heuristic counterpart; add them to"
+            " _FORZE_KEY_EXTRAS or document the exception here:"
+            f" {sorted(missing_from_key - self._VALUE_ONLY_TERMS)}"
+        )
+
+    def test_key_only_exception_still_masks_its_value_form(self) -> None:
+        # The documented exception is only valid while the full-line pattern
+        # actually owns the authorization value form.
+        result = scrub_log_string("Authorization: Basic dXNlcjpwYXNz")
+        assert "dXNlcjpwYXNz" not in result
+        assert "Basic" not in result
 
 
 class TestSanitizeNonStrKey:
@@ -223,7 +400,9 @@ class TestDumpBoundArgsForErrors:
 
 @integration_hypothesis_settings
 @given(
-    key=st.text(min_size=1, max_size=12, alphabet=st.characters(blacklist_categories=("Cs",))),
+    key=st.text(
+        min_size=1, max_size=12, alphabet=st.characters(blacklist_categories=("Cs",))
+    ),
     value=st.text(min_size=0, max_size=24),
 )
 def test_sanitize_log_masks_nested_sensitive_keys(key: str, value: str) -> None:
@@ -327,10 +506,10 @@ class TestRegisterSensitivePatterns:
 # One matching sample per built-in log-string fragment. The exhaustiveness test
 # below fails when a fragment is added without a sample here.
 _FRAGMENT_SAMPLES: dict[str, str] = {
-    (
-        r"(?:password|passwd|mysql[._ -]?pwd|secret|token|api[._ -]?key"
-        r"|credential|session|cookie|csrf|xsrf|jwt|ssn)(?:[._-]\w+){0,6}\s*[=:]\s*\S+"
-    ): "retry with api key=abc123",
+    # The assignment fragment is assembled from _LOG_ASSIGNMENT_TERM_FRAGMENTS;
+    # per-term coverage lives in TestCredentialFragmentCoverage and the parity
+    # guard, so one representative sample suffices here.
+    _scrub_policy._LOG_ASSIGNMENT_FRAGMENTS[0]: "retry with api key=abc123",
     r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}": "mail sent to alice@example.com today",
     r"Bearer\s+\S+": "header was Bearer eyJhbGci.x.y",
     r"authorization\s*:\s*[^\r\n]+": "Authorization: Basic dXNlcjpwYXNz",

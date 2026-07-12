@@ -401,6 +401,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Log scrubbing closes three leaks** — exceptions render scrubbed under sanitize_logs; assignment scrubbing covers credential-suffix keys, whole Authorization headers and user:pass DSNs; a non-string dict key no longer raises into the log site.
 
+- **Scrubbing fragment lists reconciled** — pwd, passphrase, private_key and six more fragments that existed only as key heuristics now also mask in assignment form (`pwd=…`, `db_pwd=…`, `private_key=…`); a parity test keeps the value-form and key lists from drifting apart again.
+
+- **Ranged reads over encrypted objects detect tail truncation** — the range path now verifies the terminal frame's authenticated final flag (riding an already-required fetch, no extra I/O), raising the same chunked-truncated error as streaming instead of serving truncated bytes as authentic; a spliced early final frame is refused too.
+
 - **`configure_logging()` configures the root logger by default** — with no logger names it previously attached nothing and INFO logs vanished; an explicit list is still an allowlist.
 
 - **Misc** — BigQuery empty-array params typed from annotations; timezone offsets validated; S3 multipart-ETag normalization; If-None-Match parsed per RFC 7232; outbound HTTP suppresses its default bearer when an Authorization header is set; GCS rejects reserved metadata keys.
