@@ -11,419 +11,395 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Reliability & durability**
 
-- **Self-hosted durable execution (Postgres)** — crash-resumable durable functions and sagas without Temporal/Inngest. `DurableFunctionStepPort` (`durable_step`) memo journal for exactly-once step replay; `DurableRunStorePort` (`durable_run`) with lease-based recovery (`FOR UPDATE SKIP LOCKED`); `forze_kits` adds `DurableFunctionRunner` (enqueue/run-now/recover), `DurableFunctionRegistry`, recovery + scheduler lifecycle steps, and `DurableSagaExecutor` (`SagaExecutorPort`, journals steps + compensations). Runner/scheduler resolve via `DurableKitsDepsModule` / `durable_kits_deps` (`DurableRunnerDepKey` / `DurableSchedulerDepKey`; `resolve_durable_runner` / `resolve_durable_scheduler`); `cron_schedule_id(spec, index)`. Multi-worker-safe (fenced terminal write), `max_concurrency`, delayed runs (`enqueue(run_at=…)`), cron (`durable_schedule` + `DurableScheduler` + `DurableFunctionCronTrigger`), per-tenant recovery, opt-in read-only `DurableRunAdminPort` (`PostgresDurableRunConfig(admin=True)`, `resolve_durable_run_admin`) and `DurableTelemetry`. `PostgresDepsModule(durable_step=…, durable_run=…, durable_schedule=…)` + mock stores; saga context must be a `pydantic.BaseModel`; app-provided tables. Adds `croniter` core dependency.
+- **Self-hosted durable execution (Postgres)** — crash-resumable durable functions and sagas: exactly-once step replay, lease-based recovery with heartbeat renewal, delayed and cron runs, multi-worker fencing, and an opt-in read-only admin port. Wired via `forze_kits`; adds a croniter dependency.
 
-- **HLC durable high-water mark** — `HybridLogicalClock.resume(mark)` + `HlcCheckpointPort` so a restart doesn't reset the clock and re-issue a stamp; the outbox flush advances the mark in-transaction. `PostgresDepsModule(hlc_checkpoint=PostgresHlcCheckpointConfig(...))` + `hlc_checkpoint_recovery_lifecycle_step()`; mock `MockDepsModule(hlc_checkpoint=True)`. Opt-in, node-global.
+- **HLC durable high-water mark** — the hybrid logical clock resumes from a checkpoint so a restart cannot re-issue a stamp; the outbox flush advances the mark in-transaction. Opt-in, node-global.
 
-- **Postgres co-located idempotency store** — `PostgresDepsModule(idempotencies={route: PostgresIdempotencyConfig(...)})` commits the dedup record inside the business transaction (exactly-once across a crash) via an auto-injected `on_success` hook when a store reports `commits_in_transaction`. Mock `MockIdempotencyAdapter(transactional=True)`.
+- **Postgres co-located idempotency store** — the dedup record commits inside the business transaction (exactly-once across a crash) when the store reports transactional commit; mock counterpart included.
 
-- **CPU-offload seam** — `run_cpu` / `run_cpu_map` run blocking/CPU-bound work off the event loop via a context-bound `CpuExecutor` (bounded pool in prod; inline/deterministic under simulation), honoring the invocation deadline via `checkpoint()`.
+- **CPU-offload seam** — `run_cpu` / `run_cpu_map` run blocking work off the event loop via a context-bound executor (bounded pool in production, inline and deterministic under simulation), honoring the invocation deadline.
 
-- **Fencing-token capability for distributed locks** — `DistributedLockSpec(requires_fencing_token=True)` fails closed at resolve against a backend not reporting `FencingAware` / `fencing_tokens` (Redis and mock support it; default `False`).
+- **Fencing-token capability for distributed locks** — a lock spec requiring fencing tokens fails closed at resolve against a backend that cannot mint them (Redis and the mock can).
 
-- **Wiring check (`check_wiring`)** — opt-in dry-run resolving every registered operation against a throwaway context so a missing/misrouted dependency surfaces at startup (covers handler, hooks, tx-scope stages, saga targets, QUERY read-only bind). `WiringReport.raise_if_failed()`; `check_facade_factory_wiring`. Diagnostic only.
+- **Wiring check** — opt-in `check_wiring` dry-runs every registered operation against a throwaway context so a missing or misrouted dependency surfaces at startup. Diagnostic only.
 
-- **Neo4j transaction manager** — `Neo4jTxManagerAdapter` (`IsolationAware`, `READ_COMMITTED`) enlists graph writes into the framework transaction scope; bind via `Neo4jDepsModule(tx={…})`. Not co-transactional with the outbox/other backends (no cross-database 2PC).
+- **Neo4j transaction manager** — enlists graph writes into the framework transaction scope (READ COMMITTED); not co-transactional with other backends.
 
 **Querying & read models**
 
-- **Nested-field projection & sorting** — projection `fields` and sort keys may be dotted paths into nested Pydantic sub-models and str-keyed mappings (`project(filters, ["contract.reg_number"])`, `sorts={"addr.city": "asc"}`); a path crossing a list maps over each element. All backends (mock/Postgres/Mongo/Firestore). *Behavior change:* the mock now nests a dotted projection key instead of emitting it flat. Sorting on a nested path whose root column is field-encrypted is rejected.
+- **Nested-field projection & sorting** — dotted paths into nested models and string-keyed mappings work in projections and sort keys on all document backends. The mock now nests a dotted projection key instead of emitting it flat.
 
-- **Materialized derived fields** — `DocumentSpec(materialized=…)` persists selected `@computed_field`s as filterable/sortable columns (create/update collisions rejected, startup column check); `SearchSpec` / `HubSearchSpec` accept it for in-place search (Postgres, Mongo).
+- **Materialized derived fields** — `DocumentSpec(materialized=…)` persists selected computed fields as filterable/sortable columns; in-place search accepts them too (Postgres, Mongo).
 
-- **Lenient read & write-omit fields** — `DocumentSpec(lenient_read_fields=…)` (or `read_conformity="lenient"`) lets a read-model field have no backing column; `write_omit_fields=…` is the write-side counterpart. Postgres, Mongo, Firestore documents (+ Postgres/Mongo search). For expand/contract migrations.
+- **Lenient read & write-omit fields** — a read-model field may have no backing column and a write may omit columns, for expand/contract migrations; documents on all backends plus Postgres/Mongo search.
 
-- **Streaming reads on Mongo & Firestore** — bounded-memory batches of ≤`fetch_batch_size` via `find_many_streamed` (Mongo, supports `offset`) and `query_stream_batched` (Firestore, cursor-only); all three document backends at parity.
+- **Streaming reads on Mongo & Firestore** — bounded-memory batched reads bring all three document backends to parity.
 
-- **Procedures port** — `ctx.procedure.command(spec).run(params)` runs a spec-named parametrized statement (function / `CALL`, set-based recompute, `REFRESH MATERIALIZED VIEW`); one `ProcedureSpec[In, Out]`, command-only, Postgres + programmable mock. Tenant-aware routes fail closed at wiring unless the SQL binds `%(tenant)s`.
+- **Procedures port** — `ctx.procedure.command(spec).run(params)` runs a spec-named parametrized statement (Postgres + programmable mock); a tenant-aware route fails closed at wiring unless the SQL binds the tenant.
 
-- **Query parameters** — `ctx.document.query(spec).with_parameters(P(...))` binds a typed `query_params` contract as query-scoped session settings (Postgres + programmable mock); capability-gated, fail-closed.
+- **Query parameters** — a typed contract binds query-scoped session settings (Postgres + mock); capability-gated, fail-closed.
 
-- **`QueryCapabilities.supports_aggregates`** — a backend that can't compile aggregates (Firestore MVP) rejects `find_many(aggregates=…)` / `find_many_aggregates` / `count_aggregates` with `precondition` (`query_feature_unsupported`).
+- **Aggregate capability gate** — a backend that cannot compile aggregates (Firestore) rejects aggregate queries with a precondition error instead of failing at the driver.
 
-- **Graph schema provisioning + k-shortest paths (Neo4j)** — `GraphManagementPort` (`ctx.graph.management(spec)`) with idempotent `ensure_schema()` / `drop_schema()` provisions node/keyed-edge key-uniqueness constraints and tenant-property indexes (Community-edition uniqueness; NODE KEY stays Enterprise). `k_shortest_paths` on Neo4j via native `SHORTEST k` (unweighted/hop-bounded, no plugin); **weighted** paths opt-in via `ShortestPathParams.weight_property` over GDS (`gds.shortestPath.yens`), gated by `Neo4jGraphConfig(graph_algorithms=True)`, fail-closed (`graph_algorithm_unavailable`). Analytics beyond paths stay behind the raw-query hatch.
-
-- **Graph read/write parity on Neo4j and the mock** — `forze_neo4j` now covers the entire `GraphQueryPort` / `GraphCommandPort` (no `graph_not_implemented` left) and the mock matches it: read introspection (`get_vertices`/`get_edges`, `edge_exists`, `count_*`, `vertex_degree`/`count_neighbors`/`incident_edges`, `find_vertices`/`find_edges`), the write set (`update_edge`/`delete_edge` keyed + endpoints, `ensure_vertex`, bulk `create/delete_vertices/edges`), multi-endpoint edge kinds (`from_kind`/`to_kind` transient routing fields), and multi-hop traversal (`expand`, `shortest_path` BFS/Dijkstra, `scoped_walk`). `count_*` accept an equality `property_filter` that fails closed on an encrypted property. Differential conformance tests assert mock ≡ Neo4j (reads, write effects, tenant isolation); traversal compares invariants (step multisets, path lengths/costs, reachable sets) not byte-identical output. Only `k_shortest_paths` (+ raw hatch) remain Neo4j-only.
+- **Graph parity, schema provisioning & k-shortest paths** — `forze_neo4j` covers the full graph query/command ports with the mock verified equivalent by differential conformance tests; idempotent schema provisioning; native k-shortest paths, weighted opt-in via GDS and fail-closed without it.
 
 **Search**
 
-- **Bounded-memory result streaming** — `search_stream` / `project_search_stream` / `select_search_stream` iterate the ranked set in keyset chunks (`chunk_size=500`, no total). Capability-gated by `SearchCapabilities.supports_stream` (`validate_stream_supported`): Postgres FTS/PGroonga and Mongo text/Atlas stream; Meilisearch/vector/hub fail closed. Filter-only exports use `find_stream`.
+- **Bounded-memory result streaming** — search streams iterate the ranked set in keyset chunks, capability-gated per backend; unsupported backends fail closed.
 
-- **Vector & hybrid search as a declared concept** — `SearchCapabilities` (`supports_vector` / `hybrid_fusion` / `filtered_ann` / `auto_embed`) on `SearchQueryPort.search_capabilities`: an unsupported retrieval feature fails closed (`validate_vector_supported` / `validate_fusion_supported`). Pages gain an optional index-aligned `scores` sidecar. `MultiSourceSearchOptions.fusion` (`rrf`/`weighted`) capability-gated (Postgres/Meilisearch reject `weighted`); `filtered_ann` declares recall (`postfilter` pgvector, `prefilter` Atlas); `max_candidates` the portable recall dial.
+- **Vector & hybrid search as a declared capability** — unsupported retrieval features fail closed via `SearchCapabilities`; pages gain an optional scores sidecar; fusion choice and filtered-ANN recall are declared per backend.
 
-- **Facets & highlights** — term facet distributions and per-hit highlights via search options, declared on the spec, returned as optional page sidecars; mock, Meilisearch, Postgres single-index (PGroonga/FTS) and hub, federated highlights; generated routes carry them. Unsupported fields/topologies fail closed; flat-field engines fail closed on a dotted field.
+- **Facets & highlights** — declared on the spec, returned as optional page sidecars across mock, Meilisearch, Postgres and federated search; unsupported fields or topologies fail closed.
 
-- **`FederatedSearchSpec(thin_merge=True)`** — late-materialized RRF merge (fetch `id` per leg, fuse on `(member, id)`, hydrate one page); Postgres and Meilisearch, opt-in, identical results. A member-shared secondary `sort` stays thin; an absent-root sort falls back to full-fetch.
+- **Thin federated merge** — `FederatedSearchSpec(thin_merge=True)` late-materializes the RRF merge (Postgres, Meilisearch); opt-in, identical results.
 
-- **`SearchSpec(max_results=…)` / `SearchSpec(highlight_scan_limit=…)`** — cap an unbounded offset search (Postgres/Mongo/Meilisearch) and bound the PGroonga highlight scan; opt-in, `None` keeps prior behaviour.
+- **Search result caps** — `max_results` bounds an unbounded offset search and `highlight_scan_limit` bounds the PGroonga highlight scan; both opt-in.
 
-- **`PostgresHubSearchMemberConfig.from_search_config(config, *, hub_fk, …)`** — derive a hub leg from a standalone `PostgresSearchConfig`, adding the hub wiring (`hub_fk` / `heap_pk` / `same_heap_as_hub`).
+- **Hub member from a standalone config** — `PostgresHubSearchMemberConfig.from_search_config` derives a hub leg from a standalone search config.
 
 **Execution & handlers**
 
-- **Two-phase prepare/apply handlers** — `TwoPhaseHandler` (+ kit base): `prepare(args)` runs outside the transaction (read-only), `apply(args, payload)` inside it. A tx route is required.
+- **Two-phase prepare/apply handlers** — `prepare` runs read-only outside the transaction, `apply` inside it; a transaction route is required.
 
-- **Transaction isolation as a fail-closed contract** — operations declare an isolation level, verified against the route's manager (`exc.configuration`, never silently weaker); isolation without a tx route is rejected at freeze. `TransactionContext.current_isolation()`; the `tx` `exit` trace event carries `outcome`.
+- **Transaction isolation as a fail-closed contract** — an operation declares an isolation level verified against the route's manager, never silently weaker; the current level is introspectable.
 
-- **Cross-aggregate (system) invariants** — `SystemInvariant` (`ReadSet`, `SumOf`, `CountAll`) in `forze.application.contracts`; `forze_kits.invariants` adds `evaluate` / `enforce` (detective) / `enforce_preventive` (in-tx rollback) / `propose`; `forze_dst.compile_oracle(*laws[, per_commit=True])`.
+- **Cross-aggregate (system) invariants** — declarative `SystemInvariant` laws with detective and preventive (in-transaction rollback) enforcement in kits, compilable into a DST oracle.
 
-- **Resilience control plane (`ResilienceAdminPort`)** — `ctx.resilience.admin()`: `inspect()` snapshots per-`(policy, route)` adaptive-concurrency/in-flight/queued/hedge/force-open state (`ResilienceStateSnapshot`); `force_open()` / `clear_forced_open()` a manual kill-switch (`resilience_forced_open`) — `route=None` is a policy-wide wildcard that sheds every route under the policy (and `clear_forced_open(policy)` releases the wildcard plus every route-scoped switch), with `inspect()` reporting exactly what is enforced; a clear also resets the released scope's stored breaker state (optional `BreakerStateResettable` store capability, implemented by the in-memory default), so recovery is not blocked by a breaker that tripped just before the switch was armed; `retune(policy)` hot-swaps policy parameters, re-validated against the same blanket-ambiguous-retry gate as initial wiring (a rejected retune leaves the current policy and its adaptive state untouched). Registered by `ResilienceDepsModule`.
+- **Resilience control plane (`ResilienceAdminPort`)** — `inspect()` snapshots live per-policy/route state; `force_open` is a manual kill-switch where omitting the route covers the whole policy, and a clear also resets breaker state so recovery is immediate; `retune` hot-swaps a policy, re-validated by the wiring gate.
 
 **Observability & encryption**
 
-- **Replacing a key-encryption key (migration overlap)** — a tenant's KEK can now be *replaced*, not just rotated. The confused-deputy guard refuses an envelope whose `key_id` is not the tenant's currently-resolved key, so repointing a tenant at a new KEK previously stranded everything written under the old one — it could not even be read back to migrate it. A directory may now name the outgoing key as the **previous** one (`TenantTemplateKeyDirectory(previous_template=…)`, `StaticKeyDirectory(previous_key_ref=…)`, `YcKmsKeyDirectory(previous_template=…)`, or a custom `KeyDirectoryWithPrevious`), opening a read overlap: reads accept the tenant's current *and* previous key while writes go only to the current one, so `reencrypt_documents` / `reencrypt_objects` can move the data across; drop the previous key and the old KEK is free to destroy. The overlap widens the accepted set to exactly `{current, previous}` **per tenant** — a third key is still refused, and dropping it restores the guard. `KeyDirectoryWithPrevious` is an optional capability, so an existing `KeyDirectoryPort` is unaffected. Rotating a key *version* is unchanged and still needs no action (the `key_id` does not change).
+- **KEK replacement with a migration overlap** — a key directory may name a previous key: reads accept current and previous while writes use current, re-encryption sweeps move the data, and dropping the previous key restores the strict guard. Key-version rotation still needs no action.
 
-- **Blob re-encryption sweep (`reencrypt_objects`)** — the object-storage counterpart of `reencrypt_documents`, and the break-glass primitive that encrypted blobs previously had *no* path for at all: it streams every object of a route down and back to the **same key**, re-sealing the payload under a fresh data key in bounded memory (an object's AAD binds it to its key, so it is rewritten in place, never copied). Backed by a new `StorageCommandPort.overwrite_stream(key, chunks, …)` — the only write that takes a caller-supplied key, and so guarded by the same tenant-namespace check as the other key-taking paths. Object metadata now survives a streamed write: `metadata` is threaded through the client's `create_multipart_upload` / `complete_multipart_upload` (S3 binds it at create, GCS stamps it on the composed destination — the split `content_type` already followed), so a sweep no longer drops an object's filename/description. The other encrypted surfaces need no sweep: outbox rows drain as they relay, idempotency results and search snapshots expire on their TTL.
+- **Blob re-encryption sweep (`reencrypt_objects`)** — streams every object of a route down and back under a fresh data key in bounded memory, in place; object metadata survives streamed writes. Backed by the only key-taking write, `overwrite_stream`, under the tenant-namespace guard.
 
-- **Cloud KMS key-management backends (`forze_kms`)** — cloud KMS envelope-key backends grouped under one namespace (each implements the shared `KeyManagementPort`, so they plug into `CryptoDepsModule(kms=…, directory=…)` identically). **AWS** (`kms-aws` extra, over `aioboto3`): `forze_kms.aws.AwsKmsKeyManagement` (`GenerateDataKey` → wrap, `Decrypt` → unwrap, `KeyId` passed for a server-side confused-deputy guard) plus `AwsKmsClient` / `AwsKmsConfig` / `AwsKmsDepsModule` / `awskms_lifecycle_step`; `KeyRef.key_id` is a CMK id / ARN / `alias/<name>`. **GCP** (`kms-gcp` extra, over `google-cloud-kms`): `forze_kms.gcp.GcpKmsKeyManagement` mints the data key client-side from the CSPRNG secret-entropy seam (GCP KMS has no `GenerateDataKey`) then wraps it via `Encrypt` / `Decrypt`, plus `GcpKmsClient` / `GcpKmsConfig` / `GcpKmsDepsModule` / `gcpkms_lifecycle_step`; `KeyRef.key_id` is a CryptoKey resource name. **Yandex Cloud** (`kms-yc` extra, over `yandexcloud`): `forze_kms.yc.YcKmsKeyManagement` (native `SymmetricCrypto.GenerateDataKey` → wrap, `Decrypt` → unwrap — Yandex Cloud KMS is *not* AWS-API-compatible, but has its own data-key API), plus `YcKmsClient` / `YcKmsConfig` / `YcKmsDepsModule` / `yckms_lifecycle_step`; `KeyRef.key_id` is a symmetric key id, and the blocking Yandex SDK is driven off the event loop. Key rotation is transparent for all three — the wrapped blob self-describes, so pre-rotation data keys still decrypt and nothing depends on the recorded version; `DataKey.key_version` carries the wrapping version where the backend reports one (Yandex Cloud does, like Vault's `vault:vN:`) and is `None` where it does not (AWS hides it; GCP's is not surfaced). **Per-tenant KEKs are provisioned on onboarding** through the same `TenantProvisionerPort` as schemas and buckets — `AwsKmsTenantProvisioner` (creates a CMK behind a caller-chosen `alias/…`), `GcpKmsTenantProvisioner` (creates a CryptoKey in an existing key ring), and `YcKmsTenantProvisioner` — each resolving through the same key directory the keyring encrypts through, idempotent, with teardown opt-in via `allow_deletion` (AWS schedules the CMK for deletion after `pending_window_days`; GCP destroys the key's versions, since a CryptoKey cannot be deleted). Yandex Cloud mints its own key ids, so it pairs with a new `YcKmsKeyDirectory` (which resolves a tenant's key by name) instead of `TenantTemplateKeyDirectory`.
+- **Cloud KMS backends (`forze_kms`)** — AWS, GCP and Yandex Cloud envelope-key backends behind the shared `KeyManagementPort` (extras kms-aws / kms-gcp / kms-yc), with transparent key-version rotation and per-tenant KEK provisioning through the same provisioner port as schemas and buckets.
 
-- **One-call logging setup** — `bootstrap_logging(...)` wires framework/integration/third-party loggers + the uncaught-exception hook in one call; `Logger`, `get_logger`, `configure_logging` re-exported from `forze`. `configure_logging(enable_sampling=…)` adds `_sample=N` / `_dedup_key=` volume controls (stripped before render).
+- **One-call logging setup** — `bootstrap_logging` wires framework, integration and third-party loggers plus the uncaught-exception hook; opt-in sampling and dedup volume controls.
 
-- **Integration logger naming** — shared adapter/port machinery logs under `forze.integrations.<domain>` (overridable via `resolve_logger` / `LoggerAware`); `forze_kits` logs under `forze_kits.*`; `forze_sqs` / `forze_rabbitmq` / `forze_identity` gained typed `Forze*Logger` name enums.
+- **Unified integration logging** — previously-silent integrations now log under `forze_<pkg>` namespaces with typed logger-name enums; client connect/close logs at trace, off by default.
 
-- **Native logging for previously-silent integrations** — `forze_s3`, `forze_gcs`, `forze_neo4j`, `forze_temporal`, `forze_clickhouse`, `forze_bigquery`, `forze_duckdb`, `forze_inngest` now emit their own logs; ClickHouse/BigQuery/DuckDB/Inngest gained `Forze*Logger` name enums, `forze_gcs` gained `FORZE_GCS_LOGGER_NAMES`.
+- **Sampled access logs** — FastAPI and MCP request logging is quiet by default: successes sampled one-in-N, errors always logged, health paths excluded. Successful requests are no longer all logged at INFO; a full mode restores that.
 
-- **Coherent connect/close logging** — every client-based integration logs client connect/close at `trace`, matching Redis; off by default.
+- **Per-port OTel spans & logging** — opt-in per-call CLIENT spans and per-call logging for every resolved port.
 
-- **Sampled access logs** — the FastAPI and MCP request-logging middlewares are quiet by default via `AccessLogSampler` (success sampled 1-in-N, errors always logged); FastAPI excludes health/readiness paths (`DEFAULT_HEALTH_PATHS`). *Behavior change:* successful requests are no longer all logged at INFO; pass `access_log=AccessLogSampler(mode="full")` to restore or `mode="off"` to silence.
+- **Signed / encrypted / context-bound cursor tokens** — an opt-in signer HMAC-signs every keyset cursor (or a cipher AEAD-encrypts it) and binds it to spec, tenant and filter fingerprint, rejecting tampered or replayed tokens. Off by default; enabling is a hard cutover — pre-existing cursors 400 once.
 
-- **Per-port OpenTelemetry client spans** — `DepsRegistry.with_otel_port_spans()` opts every resolved port into a per-call `CLIENT` span inside the resilience policy; opt-in.
+- **Per-item stream interception** — an around-stream interceptor capability wraps async-generator port calls: cooperative yield points, whole-stream logging, opt-in mid-stream fault injection.
 
-- **Per-port logging** — `DepsRegistry.with_port_logging()` registers a `LoggingInterceptor` logging every resolved port call `(surface, route, op, duration_ms)` under `forze.integrations.<domain>`. Opt-in.
+- **W3C trace-context propagation** — a published event carries its span outbox→broker→inbox (opt-in; relational backends need a traceparent column); outbound HTTP injects it.
 
-- **Opt-in signed / encrypted / context-bound cursor tokens** — `ExecutionRuntime(cursor_token_signer=CursorTokenSigner(secret=…))` (or `configure_cursor_signer` / `bind_cursor_signer`) HMAC-SHA256-signs every keyset cursor and rejects unsigned/tampered tokens; `ExecutionRuntime(cursor_token_cipher=CursorTokenCipher(secret=…))` (or `configure_cursor_cipher` / `bind_cursor_cipher`) AEAD-encrypts the whole token instead (supersedes the signer). Each token embeds a context binding (spec name, tenant, deterministic filter fingerprint) and verification rejects replay against a different spec/tenant/filter. All off by default (tokens byte-unchanged); enabling either is a hard cutover — pre-existing cursors 400 once and pagination restarts. Signer/cipher are context-scoped; one binding covers document + search on all backends. Cipher is AES-256-GCM via `forze.base.crypto`.
+- **`EncryptionReach` ladder** — names the messaging encryption reach (none < at_rest < end_to_end); a required reach refuses a weaker route at resolve.
 
-- **Per-item interception for streaming port methods** — a `StreamPortInterceptor` capability (`around_stream`) wraps the iteration of an async-generator port call (`find_cursor`, `search_stream`, `consume`, `run_chunked`, …). `CooperativeInterceptor` yields per item (a DST interleaving point); `LoggingInterceptor` times the whole stream and logs a mid-stream failure; `FaultRule(stream_faults=True)` injects a mid-stream fault (off by default).
-
-- **W3C trace-context propagation** — a published event carries its span outbox→broker→inbox; opt in with `OutboxIntegrationConfig.propagate_trace` (add a nullable `traceparent` column on relational backends first), `forze_http` injects outbound. Trace-parenting only.
-
-- **`EncryptionReach` ladder (`none < at_rest < end_to_end`)** — names the outbox/messaging reach; `OutboxEncryptionTier` is now a back-compat alias, `MessageEncryptionTier` its transport subset. `CryptoDepsModule(required_reach="end_to_end"|"at_rest")` refuses a weaker route at resolve (opt-in).
-
-- **Bounded-memory streaming for object storage (incl. client-side-encrypted blobs)** — `StorageQueryPort.download_stream(key)` and `StorageCommandPort.upload_stream(chunks, …)` transfer large objects through fixed memory (multipart upload via a new client `upload_multipart_part` on S3/GCS; ranged-GET download). On a client-side-encrypting route the stream is sealed/opened chunk-by-chunk via a chunked-AEAD wire format (`forze.base.crypto`: magic `FZEc` vs whole-payload `FZEv`; `ChunkedHeader` / `ChunkedStreamReader` / `seal_chunk` / `open_chunk` / `is_chunked_envelope`), one KMS-wrapped key per stream. Exposed on the keyring as `StreamingBytesCipherPort` (`encrypt_stream` / `decrypt_stream`); ports are general (plaintext passes through). `download_stream` still reads legacy `FZEv` and plaintext objects; `ObjectStorageAdapter(stream_part_size=…)` tunes the part size. `download_range` now works on chunked (`FZEc`) encrypted objects (fetches/decrypts only the covering chunks via `StreamingBytesCipherPort.open_chunked_stream`); a legacy whole-payload object stays refused. Presigned uploads remain incompatible with client-side encryption.
+- **Bounded-memory object-storage streaming** — `download_stream` / `upload_stream` move large objects through fixed memory, including client-side-encrypted blobs via a chunked-AEAD format with ranged reads; legacy whole-payload envelopes still read.
 
 **Realtime**
 
-- **Server push (egress) + offline store-and-forward** — a handler publishes a `RealtimeSignal` to a principal/topic through messaging ports; the Socket.IO gateway bridges to a tenant-scoped room (ephemeral at-most-once or durable exactly-once), and a durable principal-addressed signal is mailboxed for an offline recipient and replayed per-device on reconnect. Read-only operations cannot publish.
+- **Server push + offline store-and-forward** — handlers publish realtime signals through messaging ports; the Socket.IO gateway bridges to tenant-scoped rooms, and durable signals are mailboxed and replayed per device on reconnect.
 
-- **Tenant-aware & multi-node hardening** — `TenantShardedSignalSource` / `RealtimeShard` run one consume loop per tenant scoped by a trusted tenant from the stream; `tenants=` on the relay step gives a tenant-sharded outbox relay. TTL-backed presence with heartbeat, credential-expiry eviction, per-emit timeout.
+- **Tenant-aware & multi-node hardening** — per-tenant consume loops, a tenant-sharded outbox relay, TTL-backed presence with heartbeat, credential-expiry eviction, per-emit timeout.
 
-- **BREAKING — realtime delivery envelope** — every Socket.IO frame is now the uniform `{id, data}` envelope (durable carries the event id, ephemeral null); no dual-emit. Clients read `data` and dedup by `id`.
+- **BREAKING — realtime delivery envelope** — every Socket.IO frame is the uniform `{id, data}` envelope; clients read data and dedup by id.
 
 **Transports & DX**
 
-- **Offset-log stream consumption** — a fourth delivery model for Kafka-class partitioned offset-committed logs under `contracts/stream/`: `CommitStreamGroupQueryPort` (`read`/`tail`/`commit`) + `CommitStreamGroupAdminPort` (`ensure_topic`/`ensure_group`/`reset_offsets`/`lag`), `StreamPosition` / `OffsetReset` / `ConsumerLag`, and `CommitStreamGroupCapabilities` (`supports_replay` / `supports_transactions`) fail-closed at the admin/resolve boundary (`ctx.stream` / `StreamSpec.requires_transactions`). A `CommitStreamGroupConsumer` kits runner commits after `process_with_inbox` (at-least-once + inbox dedup = exactly-once effect). Mock adapters + conformance battery.
+- **Offset-log stream consumption** — a fourth delivery model for partitioned offset-committed logs: commit-stream query/admin ports with capability gates, and a kits consumer that commits after inbox dedup (exactly-once effect). Mock adapters and a conformance battery included.
 
-- **`forze_kafka` offset-log backend** — the first real offset-log transport (`kafka` extra, over `aiokafka`): `KafkaDepsModule(streams=…, commit_groups=…)` wires produce (`StreamCommandPort`) + consume (`CommitStreamGroupQueryPort`) + admin (`CommitStreamGroupAdminPort`); `key`→partition, native headers, next-offset commit, replay/lag over the admin client, `end_to_end` encryption, `namespace`/dedicated tenancy. `kafka_lifecycle_step(...)` / `routed_kafka_lifecycle_step(...)`.
+- **`forze_kafka`** — the first offset-log backend (kafka extra): produce, consume and admin (replay, lag), end-to-end encryption, tenancy.
 
-- **Redis stream & pub-sub transports** — `RedisDepsModule` wires `StreamSpec` / `PubSubSpec` via `RedisStreamConfig` / `RedisStreamGroupConfig` / `RedisPubSubConfig`; `encryption="end_to_end"` seals through the broker, `tenant_aware` adds a key prefix. The stream consumer-group adapter splits into a data-plane query adapter and a control-plane `*StreamGroupAdminAdapter` (`ensure_group`), Redis and mock.
+- **Redis stream & pub-sub transports** — production Redis backends for stream and pub-sub specs with optional end-to-end encryption and tenant prefixes; the consumer-group adapter splits data and admin planes.
 
-- **Bounded-memory streaming download route** — the generated FastAPI `GET` download route now streams the object (`StreamingResponse`); a plain download runs `download_stream` (carrying `ETag`/`Last-Modified`), a `Range` request does a real ranged fetch (`206`, capped at `max_range_bytes`=16 MiB, `416` unsatisfiable, `304` via `ETag`/`Last-Modified`). New `HTTP HEAD /{key}` route. Backed by three read-only storage kit ops — `head` / `download_stream` / `download_range` (`StorageKernelOp`, `build_storage_registry`); `StreamedDownload` carries `etag`/`last_modified`, `RangedDownload` carries `filename`. *Behavior change:* the download route streams by default (`attach_storage_routes(stream=False)` keeps the buffered route); the `ETag` is now the backend etag; an encrypted object streams with no `Content-Length`.
+- **Streaming download route** — the generated download route streams by default with real ranged requests, conditional 304s and a new HEAD route, backed by three read-only storage kit ops. The ETag is now the backend etag; a buffered mode stays opt-in.
 
-- **Top-level front door** — the most-used names re-export lazily (PEP 562) from `forze` / `forze_kits` (`from forze import DocumentSpec, build_runtime`; `from forze_kits import DocumentFacade, build_document_registry`); the core never imports kits.
+- **Top-level front door** — the most-used names re-export lazily from forze and forze_kits; the core never imports kits.
 
-- **Less CRUD boilerplate** — `build_document_registry(spec)` derives `DocumentDTOs` when `dtos` is omitted (`create=None` / `update=None` to disable an op); `document_facade(runtime, registry, spec)` returns a per-call typed factory.
+- **Less CRUD boilerplate** — `build_document_registry` derives DTOs when omitted; `document_facade` returns a typed per-call factory.
 
-- **AggregateKit — one declaration for a governed aggregate's wiring** — `AggregateKit(spec=…, soft_delete=…, search=…, invariants=…, outbox=…, storage=…)` composes four reusable primitives into one typed config generic over the spec's four models, emitting separate artifacts: `registry(tx_route=…)` (composed frozen op registry — document CRUD + external search query + soft-delete + index-on-write sync + preventive invariant enforcement + in-tx outbox flush on `update`; the index sync deletes a soft-deleted row from the index instead of re-upserting the ghost, retries a transient index error with backoff, and reports an exhausted failure out-of-band with reconcilable identity — at-most-once, the outbox being the at-least-once path), `facade(runtime, tx_route=…)` (typed `DocumentFacade` factory), `storage_facade(runtime)` (optional blob resource — name must differ from the document's), `domain_events()`, `lifecycle_steps()`, and `backend_requirements(tx_route=…)` (a wiring checklist). Composes wiring, not models — the four models + `DocumentSpec` and any field encryption stay the author's. Escape hatches: `handlers=` overrides a generated handler, `extra_ops=` merges bespoke ops; backend config and HTTP routes stay the author's. Route projection: `forze_fastapi.attach_aggregate_routes(router, kit, ctx_dep=…, style=…, tx_route=…)` emits document + soft-delete + search (+ storage under `/blobs`) routes in one call. DST-verifiable by construction: a declared `SystemInvariant` compiles into a DST oracle so a deterministic simulation proves enforcement holds under concurrent interleaving. Worked examples + recipe: `examples/recipes/aggregate_kit`, `examples/recipes/aggregate_kit_dst`, and the "Declare a governed aggregate" docs page.
+- **AggregateKit** — one declaration composes a governed aggregate's wiring: document CRUD, soft delete, search-index sync, invariant enforcement, in-transaction outbox flush, route projection, and DST-verifiable invariants. Its four primitives (outbox emit, search sync, soft delete, invariants) are usable standalone.
 
-  The four primitives are usable standalone: `bind_outbox(OutboxEmit(spec=…, emits=(EmitMapping(event, event_type, to_payload), …), relay=RelayBinding(…)))` folds the transactional-outbox dance into an `OutboxWiring` (staging bridge, in-tx `flush_step`, relay `lifecycle_steps`); `bind_search_sync(registry, document=…, search=…, tx_route=…)` keeps an external search index (Meilisearch) in step with committed writes (after-commit, best-effort; fails closed on a document-backed index exposing no `SearchCommandPort`); `soft_delete_wiring(spec, purge=…)` packages read-side exclusion + DELETE/RESTORE + an optional after-commit purge over the `is_deleted` mixins; `bind_invariants(registry, op_key, *InvariantEnforcement(law=…, params=…, mode=…), tx_route=…)` threads `SystemInvariant` enforcement into a write op's plan (preventive rolls back pre-commit, detective defers post-commit).
+- **Shared error helpers** — one client-safe error envelope and kind-to-HTTP-status mapping shared by the FastAPI and Socket.IO edges.
 
-- **Shared error helpers** — `error_envelope()` and `guard_frame()` give one client-safe `CoreException` projection and a shared guarded boundary; `http_status_for_kind(kind)` maps an `ExceptionKind` to its HTTP status. FastAPI and Socket.IO render through them.
+- **Mock document adapter tenant scoping on every write** — the in-memory mock injects the tenant column on ensure/upsert/update/touch, matching Postgres.
 
-- **Mock document adapter — tenant scoping on every write** — the in-memory mock injects the tenant column on ensure/upsert/update/touch (not only create), matching Postgres.
-
-- **Telegram Login Widget verifier** — `TelegramWidgetVerifier` (Telegram builtin preset) verifies Login Widget callback data via Telegram's HMAC-SHA256 scheme with an `auth_date` freshness bound and emits the canonical `VerifiedAssertion`. `verify(data)` or the `TokenVerifierPort` `verify_token`; pure-stdlib crypto. Complements the Telegram Login OIDC flow.
+- **Telegram Login Widget verifier** — verifies Login Widget callback data via Telegram's HMAC scheme with a freshness bound, emitting the canonical assertion.
 
 **Deterministic Simulation Testing (`forze_dst`)** — new package
 
-- **Point-at-a-real-app simulation** — `Simulation` / `SimulationConfig`, `Simulation.run(config, ...)`: one master seed reproduces a whole run (schedule, faults, latency, inputs, crashes, partitions) over real registries and runtimes, single-process or N-node, with no app changes; a violation minimizes to a reproducible counterexample.
+- **Point-at-a-real-app simulation** — one master seed reproduces a whole run (schedule, faults, latency, inputs, crashes, partitions) over real registries and runtimes, single-process or N-node, with no app changes; a violation minimizes to a reproducible counterexample.
 
-- **Deterministic runtime + ambient seams** — `SimulationEventLoop` / `SimulationTimeSource` / `run_simulation(...)` (wall-ms, byte-identical replay; `RealIOForbidden`, `SimulationDeadlock`); new seams `EntropySource` / `bind_entropy_source`, `TimeSource.monotonic()` / free `monotonic()`, and `DepsRegistry.with_interceptors(...)`. A determinism gate bans raw time/entropy outside the seams.
+- **Deterministic runtime & seams** — a simulation event loop and time source give byte-identical replay; time and entropy flow through bindable seams, and a determinism gate bans raw time/entropy outside them.
 
-- **Faults, latency, crash & partitions** — `FaultPolicy` / `FaultRule` and `LatencyProfile` (`Constant` / `Uniform` / `Exponential` / `LogNormal` / `Pareto`) on `SimulationConfig`; `SimulationConfig.crash` (crash-restart-recovery over persisted `MockState`), `SimulationConfig.runtime=True` (real `ExecutionRuntime`), `Cluster` / `Partition` / `PartitionSchedule` (lossy/asymmetric links).
+- **Faults, latency, crash & partitions** — declarative fault rules, latency profiles, crash-restart recovery over persisted mock state, and lossy or asymmetric network partitions.
 
-- **Workload generation** — `Scenario` / `Rule` / `ModelState` / `derive_scenario`; a fuzzer (`OpSpec`, `generate_workload`, `simulate_workload`); `PCTScheduler` / `SystematicScheduler`; coverage-guided exploration (`behavioral_coverage`, `Simulation.coverage`, `Simulation.coverage_guided`).
+- **Workloads, schedulers & coverage** — scenario rules and a fuzzer generate workloads; PCT and systematic schedulers explore interleavings; coverage-guided exploration and parallel seed sweeps scale the search.
 
-- **Oracle & invariants** — `Recorder` / `record_event` / `History`; built-ins `no_duplicate_effect` / `mutual_exclusion` / `linearizable` / `RegisterSpec`; `explore` + `minimize` → `ViolationReport`; reachability (`reached`, `sometimes`, `reachability_targets`); value-level behind `capture_values=True` (`read_your_writes`, `expect_value`).
+- **Oracles** — built-in invariants (duplicate effects, mutual exclusion, linearizability, consistency models), transactional-isolation oracles up to serializability cycles, commutativity checks, reachability targets, and opt-in value-level checks.
 
-- **Transactional-isolation oracles** — `snapshot_isolation()` / `serializable(complete=True)` (and kernel `find_snapshot_isolation_violations` / `find_serializable_violations` / `find_serializability_cycle` over `TxRecord` / `VersionedTxRecord`) detect lost update, write skew, and ≥3-transaction anti-dependency cycles; `had_isolation_conflict`, `isolation_oracle_for(level)`. Shared `evaluate_filter` / `compile_filter` in `forze.application.contracts.querying`.
+- **Reporting & regression corpus** — causal-graph violation reports and timelines, failure bundles with honest replay semantics, a regression corpus, and a CLI (`forze dst run` / replay / coverage / topology / derive).
 
-- **Commutativity** — `OperationDescriptor.commutative` + `commutative_convergence(build, *, final_state, schedule_seeds)`.
+- **Mock substrate** *(behavior change)* — journalled transactions with MVCC isolation are now the mock default; in-memory outbound HTTP added.
 
-- **Trace, reporting & sweeps** — `RuntimeTracer`, `operation_fingerprint` / `FrozenOperationRegistry.fingerprint()`; `forze_dst.report` (`CausalGraph`, `format_report`, `ViolationReport.format()`), `timeline()` / `build_timeline` / `render_timeline`; regression corpus (`RegressionEntry`, `append_regression`, `load_regressions`, `behavioral_fingerprint` / `strict_behavior`); `FailureBundle` / `replay_bundle`; `parallel_sweep(run, seeds, workers=…)` / `SimulationSeedRunner` → `SweepResult` (`SeedOutcome.reached`, `SweepResult.reachability`).
-
-- **Mock substrate** *(behavior change)* — `MockDepsModule(transactions="journal")` is now the default (undo journal + MVCC isolation; `exc.concurrency` / `serialization_failure`; `none` / `strict` opt-in); in-memory outbound HTTP (`MockHttpServicePort` / `MockHttpServiceAdapter` / `MockHttpRegistry`, `MockDepsModule(http=…)`).
-
-- **CLI** (`forze[cli]`) — `forze dst run module:sim` (exit 1 on a violation) plus `replay`, `coverage`, `topology`, `derive`.
-
-- **Adapter conformance** — `forze_dst.conformance`: a backend-agnostic isolation-anomaly battery over the `Conductor` (a known verdict per `IsolationLevel`; `CONTRACT_STRENGTHENINGS` / `MECHANISM_DIVERGENCES`), run against the mock, real Postgres (every level) and a real Mongo replica set (`SNAPSHOT`), asserting `mock ≡ real`. Block-based lock races (`duplicate_key_insert`, `for_update_lost_update`) run against real Postgres via a block-aware driver (`Gate.arrive_blocking` / `_drive_lock_race`). Adds an outbox→inbox delivery-under-crash family (`run_crash_recovery_delivery`: at-least-once + exactly-once effect via inbox dedup, with a paired `dedup=False` control) and a checked write-through divergence (`observe_uncommitted_outbox_visibility`).
-
-- **Resilience stores under partition** — the divergences a distributed (Redis) resilience store adds over the in-memory reference are pinned against real Redis: fleet-rate collapse to per-replica on partition (fail-open to a local bucket), breaker fast-path cache staleness (`RedisCircuitBreakerStore.local_cache_ttl`), and LRU eviction of a hot open breaker (`InMemoryCircuitBreakerStore`). Partition simulated by a client wrapper whose `run_script` raises.
-
-- **Identity key-rotation & session-revocation under fault** — pins the fault dimension: OIDC fails closed under a JWKS partition (`invalid_oidc_signing_key`), revocation under replica lag admits a revoked token until replication catches up, and a replica on the old key set rejects a new-key token (fail closed). No false accept; bounded convergence windows.
+- **Adapter conformance** — a backend-agnostic isolation-anomaly battery asserts the mock matches real Postgres and Mongo, including lock races, outbox→inbox delivery under crash, resilience stores under partition, and identity rotation/revocation under fault.
 
 ### Changed
 
 **Breaking — search**
 
-- **Search pages split from the base pagination contract** — `SearchPage` / `SearchCountlessPage` / `SearchCursorPage` now carry facets, highlights, and the snapshot handle (off `Page` / `CountlessPage` / `CursorPage`); `FacetBucket`, `FacetResults`, `HitHighlights`, `SearchSnapshotHandle` move to the search contract.
+- **Search pages split from the base pagination contract** — search page types now carry facets, highlights and the snapshot handle; the facet, highlight and snapshot value types move to the search contract.
 
 - **`SearchFuzzySpec` is a frozen value object** — was a dict; edit-distance ratio defaults to 0.34 (validated 0.0–1.0), prefix-length removed. No shim.
 
-- **Search options de-leaked** — raw-Groonga override removed, the PGroonga plan is adapter-config only, candidate caps renamed `max_candidates` / `merge_candidates`; hub/federated member keys move to a multi-source options type single-index search rejects at type-check.
+- **Search options de-leaked** — the raw-Groonga override is removed, the PGroonga plan is adapter config only, candidate caps renamed, and hub/federated member keys move to a multi-source options type.
 
-- **Search index provisioning → `SearchManagementPort`** (`forze_meilisearch`) — `ensure_index` / `delete_all` move off `SearchCommandPort` onto `ctx.search.management(spec)` (`SearchManagementDepKey`).
+- **Search index provisioning moves to `SearchManagementPort`** — ensure-index and delete-all move off the command port onto the management port (Meilisearch).
 
-- **Typed value-object configs** — search `engine` is a tagged union (`forze_postgres`, `forze_mongo`; bare strings still shorthand); federated merge takes a shared `Rrf`; warehouse analytics take a shared `IngestSpec` (Postgres drops legacy `schema`) — `forze_postgres` / `forze_bigquery` / `forze_clickhouse`.
+- **Typed value-object configs** — search engine is a tagged union, federated merge takes a shared Rrf, warehouse analytics take a shared IngestSpec (Postgres drops the legacy schema field).
 
 **Breaking — imports & DSL**
 
-- **Application contracts surface consolidation** *(no runtime change)* — removed `contracts.codecs` (→ `forze.base.serialization`); `contracts.lenient_read` / `contracts.materialized` → `contracts.conformity`; `RowLockMode` / `row_lock_requires_transaction` → `contracts.document.value_objects`; `Sum` / `Count` → `SumOf` / `CountAll`; new `TenantSecretResolver` (`contracts.secrets`) replaces `resolve_dsn_for_tenant` / `resolve_structured_for_tenant`, `ensure_dsn_fingerprint(resolver=)`.
+- **Application contracts surface consolidation** *(no runtime change)* — codecs move to base serialization, conformity and lock types move to their contracts homes, aggregate laws rename to `SumOf` / `CountAll`, and a `TenantSecretResolver` replaces the per-kind resolver callables.
 
-- **Contract value types import from their contracts home, not the execution layer** — `BreakerKey` / `CircuitBreakerStore` / `RateLimitStore` / `RateLimitKey` / `LatencyDigestStore` / `LatencyDigestKey` / `Transition` from `contracts.resilience`; `LifecycleModule` / `LifecycleStep` from `contracts.execution`; `RoutedDeps` / `PlainDepsMap` from `contracts.deps`; `OutboxStagingContext` from `contracts.outbox`.
+- **Contract value types import from their contracts home** — resilience store types, lifecycle types, deps maps and outbox staging types import from `contracts.*`, not the execution layer.
 
-- **`update_many` takes `Sequence[KeyedUpdate[U]]`** (document command port) — not `Sequence[tuple[UUID, int, U]]`; `KeyedUpdate` (`id`, `rev`, `dto`) from `contracts.document`. Single-item `update` unchanged.
+- **`update_many` takes `Sequence[KeyedUpdate]`** — not id/rev/dto tuples; single-item update unchanged.
 
-- **`GroupRef` (query grouping) → `GroupField`** — resolves the clash with the authz `GroupRef` (unchanged).
+- **`GroupRef` (query grouping) → `GroupField`** — resolves the clash with the authz GroupRef.
 
-- **PEL stream ports renamed for the two-sub-model split** — `StreamGroupQueryPort` / `StreamGroupAdminPort` → `AckStreamGroupQueryPort` / `AckStreamGroupAdminPort` (and dep keys `StreamGroup*DepKey` → `AckStreamGroup*DepKey`), pairing with the new `CommitStreamGroup*` offset-log ports; behavior unchanged (find-and-replace). `StreamMessage` gains optional `partition` / `offset` fields (`None` for the ack sub-model).
+- **PEL stream ports renamed** — `StreamGroup*` becomes `AckStreamGroup*` (ports and dep keys), pairing with the new commit-stream ports; behavior unchanged. Stream messages gain optional partition/offset fields.
 
-- **Package restructures** — `forze_dst` splits into a thin `Simulation` facade over `engines/` / `oracle/` / `artifacts/` (`SchedulerKind` removed); `forze_mock` root modules → `adapters/`, factories → `execution.factories` (top-level imports unchanged); `forze_postgres.provisioning` → `forze_postgres.adapters.tenant_provisioner` (it is a port adapter like every sibling; `from forze_postgres import PostgresSchemaTenantProvisioner` unchanged); notify kit's `NotificationRouter` is now a mutable builder (`register()` → `freeze()`) with resolution on `FrozenNotificationRouter`, reorganized into `routing` / `events` / `consumer` / `lifecycle`.
+- **Package restructures** — forze_dst splits into a facade over engines/oracle/artifacts; forze_mock moves adapters and factories (top-level imports unchanged); the notify router becomes a register-then-freeze builder.
 
 **Behavior**
 
-- **Lazy transaction acquisition, default for Postgres/Mongo/Firestore** — a tx scope defers connection checkout to the first operation (no idle-in-transaction); a connect failure surfaces there. Opt out `lazy_transaction=False`.
+- **Lazy transaction acquisition** — default for Postgres/Mongo/Firestore: a scope defers connection checkout to the first operation; opt out per route.
 
-- **Runtime owns its CPU-offload pool** — an `ExecutionRuntime` scope binds/closes a scope-lifetime `ThreadPoolCpuExecutor` (sized via `cpu_workers`) instead of a process-global; an injected `cpu_executor` stays caller-owned, and with nothing bound `run_cpu` runs inline (`InlineCpuExecutor`).
+- **Runtime owns its CPU-offload pool** — a runtime scope binds and closes a scope-lifetime thread pool; with nothing bound, `run_cpu` runs inline.
 
-- **Search snapshots stream their pool** (peak = one chunk) and expose `expires_at`; Postgres hub (and similar single-index) search defers its heavy projection to per-page hydration.
+- **Search snapshots stream their pool** and expose an expiry; hub search defers heavy projection to per-page hydration.
 
 - **Empty filter/sort maps are no-ops** on list/search requests; a structured-but-empty envelope is still rejected.
 
-- **Sizing bounds clamp/reject instead of silently resetting** — an out-of-range document-adapter `batch_size` (outside `[10, 20000]`) is rejected with `exc.configuration` at wiring; a per-call stream `chunk_size` is clamped to the nearest bound; a BigQuery `max_poll_attempts < 1` is rejected. Shared `clamp` primitive.
+- **Sizing bounds clamp or reject instead of silently resetting** — an out-of-range batch size is rejected at wiring; a per-call chunk size clamps to the nearest bound.
 
-- **Integration logger namespaces unified to `forze_<pkg>.*`** — `forze_redis` / `forze_postgres` / `forze_http` / `forze_firestore` / `forze_temporal` no longer log under bare prefixes; update log filters keyed on the old ones.
+- **Integration logger namespaces unified** — integrations log under `forze_<pkg>`; update log filters keyed on the old bare prefixes.
 
-- **Hot-path micro-optimizations** (byte-identical output) — faster `normalize_string`, keyset sort-value canonicalization, msgspec exclude-flag resolution, trusted bulk decode, in-memory scans, `forze.base.crypto.ENVELOPE_B64_PREFIX`, and per-wrapped-method OTel span/interceptor construction.
+- **Hot-path micro-optimizations** — byte-identical output: faster normalization, cursor canonicalization, bulk decode and span construction.
 
-- **Generated FastAPI routes omit null response fields by default** — every `attach_*_routes` sets `response_model_exclude_none=True` (OpenAPI schema unchanged); pass `exclude_none=False` to restore explicit `null`s. Raw-`Response` routes unaffected.
-
-- **Test infrastructure: LocalStack → floci; engine matrices** — the SQS and AWS-KMS fixtures moved to the MIT-licensed floci emulator (LocalStack's community image was sunset upstream), enabling the AWS KEK-rotation-transparency test via `RotateKeyOnDemand`; the Kafka integration suite now runs against Apache Kafka **and** Redpanda, and the S3 suite against MinIO **and** floci-S3 (emulator-fidelity policy in `CONTRIBUTING.md`).
+- **Generated FastAPI routes omit null response fields by default** — opt out per attach call to restore explicit nulls; raw-Response routes unaffected.
 
 ### Removed
 
-- **`msgspec` dropped; the codec layer is Pydantic-only** *(breaking: serialization)* — `MsgspecModelCodec` and `forze.base.serialization.msgspec` removed; record models (read models, create/update commands, idempotency results) must be `pydantic.BaseModel` subclasses. Storage value objects (`UploadedObject`, `DownloadedObject`, `ObjectMetadata`, `StoredObject`) are now frozen, keyword-only `attrs`. Migration: model record/payload shapes as Pydantic.
+- **`msgspec` dropped; the codec layer is Pydantic-only** *(breaking)* — the msgspec codec and serialization module are removed; record models must be Pydantic. Storage value objects become frozen keyword-only attrs classes.
 
 ### Fixed
 
-**Durable-execution & broker failure paths**
+**Durable execution & broker failure paths**
 
-- **Inngest — event-supplied identity not trusted by default (impersonation fix)** — the `_forze` envelope's `principal_id` / `tenant_id` are attacker-controllable, so a durable-function invocation no longer binds them as identity unless `register_functions(..., bind_identity_from_event=True)` (or `serve(...)`). Tracing metadata still restored; end-to-end payload decryption still uses the envelope tenant for AAD (self-authenticating). *Migration:* set `bind_identity_from_event=True` if you relied on producer-carried identity.
-- **Temporal — saga failures fail the workflow; deterministic clock survives a plain import** — `TemporalSaga` converts a saga `CoreException` into a non-retryable `temporalio.ApplicationError` so an uncaught saga failure reaches `FAILED`; `forze.base.primitives` is passed through the workflow sandbox so `utcnow()` / `uuid7()` read the interceptor-bound source.
-- **Inngest — deterministic failures stop retrying** — a malformed event, a failed end-to-end decrypt, or a non-retryable `CoreException` raises `inngest.NonRetriableError`; retryable kinds still propagate.
-- **SQS — one poison message no longer poisons the receive batch** — `receive()` isolates a per-message base64-decode failure (skip + log, left for redrive → DLQ) instead of aborting the batch; `consume()` logs a receive failure before backing off; a FIFO per-message delay (`sqs.fifo_per_message_delay`) and an over-length queue name (`sqs.queue_name_too_long`) fail closed. On FIFO an undecodable message is deleted (size + error logged, never the body) so it can't deadlock its message group; a resolved queue URL is cached before the length check.
-- **RabbitMQ — opt-in dead-letter sink + working redelivery counting** — `RabbitMQConfig(dead_letter_exchange="…")` declares a fanout DLX + bound durable `<dlx>.dlq` and stamps `x-dead-letter-exchange`, so a `nack(requeue=False)` dead-letters instead of dropping. `RabbitMQConfig(redelivery_counting=True)` republishes a `nack(requeue=True)` with an incremented `x-forze-delivery` header (message id + full AMQP property set preserved) and acks the original, so `max_deliveries >= 2` poison-parking fires past the broker's `redelivered` ceiling; requires `publisher_confirms` (rejected otherwise), per-message republish failures isolated. Both opt-in, default off. *Migration:* enabling the DLX on a pre-existing queue requires recreating it.
-- **Kafka — admin reads no longer auto-create topics** — `lag` / `reset_offsets` on a missing topic checked existence with a topic-named metadata request, which a broker with topic auto-creation enabled (Redpanda's default, and a default-configured Kafka/MSK) materializes as a side effect; existence is now checked against the all-topics listing first, so querying lag for a mistyped topic returns `[]` instead of minting the topic.
-- **Inngest — function-level config** — `InngestFunctionBinding(config=InngestFunctionConfig(retries=…, concurrency=…, rate_limit=…, throttle=…, idempotency=…, priority=…, debounce=…, batch_events=…, timeouts=…, singleton=…, cancel=…))` forwards Inngest's native `create_function` controls; also on `.for_registry_operation(..., config=…)`.
-- **An unregistered durable run name can't livelock recovery** — handler resolution now happens inside the per-record failure region, so a run whose name is no longer registered (deploy skew, rename, stale cron) is marked FAILED with the reason recorded instead of escaping the sweep and stranding every co-claimed run under a fresh lease; anything else escaping a single record's recovery is logged and skipped, never aborting the batch. The scheduler tick likewise isolates a per-schedule cron-parse failure so one corrupt schedule can't strand the co-due batch.
-- **A transient KMS failure during consume is retried, not treated as poison** — both consumer runners classify a decrypt failure through the egress policy: a retryable kind (KMS timeout/unavailable/throttled on a cold data key) requeues (queue consumer) or crashes for a supervised rewind-and-restart (commit-stream consumer) instead of parking/pausing — previously any decrypt error but a missing cipher was `nack(requeue=False)`ed, permanently dropping messages on a DLX-less topology during a KMS blip. Tampering and malformed envelopes still park.
+- **Inngest event-supplied identity is not trusted by default** — the envelope's principal and tenant are attacker-controllable, so they no longer bind as identity unless opted in via bind_identity_from_event; payload decryption still uses the envelope tenant (self-authenticating).
 
-**Reliability hardening — durability, shutdown, resilience**
+- **Temporal saga failures fail the workflow** — a saga CoreException becomes a non-retryable ApplicationError; the deterministic clock survives a plain import through the workflow sandbox.
 
-- **Deadlines enforced at the database driver** — a bound deadline sets Postgres `SET LOCAL statement_timeout` (in-tx) and wraps each Mongo op in `pymongo.timeout` (CSOT), remaining-budget + grace, tighten-only, with an `asyncio.timeout` backstop. `push_invocation_deadline` kill switch. (PG autocommit stays asyncio-only.)
+- **Inngest deterministic failures stop retrying** — malformed events, failed decrypts and non-retryable errors raise NonRetriableError; retryable kinds still propagate.
 
-- **A deadline that tears a transaction commit is non-retryable** — surfaces `internal` (`commit_ambiguous`) rather than retryable `deadline_exceeded`; a deadline during the body still rolls back and stays retryable. A plain cancellation (a client disconnect) landing at/after the commit point gets the same `commit_ambiguous` classification — scoped to operation-owned tasks only, so a shutdown cancel still reaches a consumer loop's own transaction as a cancel; cancellation during the body still rolls back and propagates.
+- **SQS: one poison message no longer poisons the receive batch** — per-message decode failures are isolated (left for redrive; deleted on FIFO so a message group cannot deadlock); FIFO per-message delay and over-length queue names fail closed.
 
-- **Shutdown reliability** — the drain-timeout cancels still-running ops and awaits their unwind before teardown closes their clients; detached document-cache early-refresh tasks are cancelled via a per-runtime background-owner registry; each shutdown hook gets `ExecutionRuntime.shutdown_step_timeout` (default 10s).
+- **RabbitMQ: opt-in dead-letter sink and redelivery counting** — a configured DLX makes a poison nack dead-letter instead of drop, and opt-in redelivery counting lets poison-parking fire past the broker's redelivered ceiling (requires publisher confirms; enabling the DLX on an existing queue requires recreating it).
 
-- **Spawned operations no longer escape drain** — nesting is decided by `asyncio.Task` identity, not the active-operation ContextVar marker, so an op a handler spawns is admitted, counted in flight, and drained/cancelled at shutdown. The engine's own task hops stay inside the admitted operation: the two-phase `prepare` task, hedged attempts, the post-commit callback runner, and concurrent wave fan-out adopt the enclosing operation explicitly (`continue_operation_on_task`), so a drain starting mid-handler can't reject an admitted op's own dispatch chains with `THROTTLED` (`draining`) — only a handler-spawned sibling operation can be throttled during a drain.
+- **Kafka admin reads no longer auto-create topics** — existence is checked against the all-topics listing, so querying lag for a mistyped topic returns empty instead of minting the topic.
 
-- **A failed after-commit effect no longer discards a committed result** — a best-effort post-commit callback that fails is logged and reported to `ExecutionContext.after_commit_error_handler` (an `AfterCommitError`) out-of-band instead of surfacing as an `internal` 500; `run_or_defer(..., fatal=True)` (detective invariant `enforce`) still re-raises. Default post-commit callbacks are `fatal=False`. The handler is installable from the supported path: `build_runtime(..., after_commit_error_handler=…)` threads it onto every operation's context (it previously existed only on a hand-built `ExecutionContext`).
+- **Inngest function-level config** — `InngestFunctionConfig` forwards Inngest's native controls (retries, concurrency, rate limits, batching and more).
 
-- **Inbox dedup no longer treats the ordering key as an event identity** — the dedup fallback was header → *ordering key* → message id, so when the `forze_event_id` header was absent, two distinct events sharing an ordering key (all events for one aggregate) deduped against each other — the second was silently dropped. The chain is now explicit extractor → header → message id (the same holds for `causation_id` binding and the notify kit's event-id derivation, which had the same UUID-shaped-key fallback). *Compat:* messages from a pre-0.4 relay (no header, event id in the key) fall back to the broker message id — a crash-republish is no longer deduped, degrading to at-least-once processing instead of silently dropping distinct events; relays from 0.4.0 on always stamp the header.
+- **An unregistered durable run name cannot livelock recovery** — the run lands FAILED with the reason recorded instead of stranding every co-claimed run each sweep; the scheduler likewise isolates a corrupt cron expression.
 
-- **Inbox exactly-once fails closed on a cross-client misconfiguration** — `process_with_inbox` asserts (via `tx_ctx.assert_enlisted`) the inbox store commits in the transaction on `tx_route`, raising `configuration` (`core.tx.not_enlisted`) instead of silently non-atomic dedup. Adds the `TransactionallyEnlistable` contract; the Postgres inbox reports enlistment from `client.is_in_transaction()`.
+- **A transient KMS failure during consume is retried, not poison** — decrypt failures classify through the egress policy: retryable kinds requeue (queue consumer) or crash for a supervised rewind-and-restart (commit-stream) instead of being dropped; tampering still parks.
 
-- **Durable runs renew their lease under a long body** — `DurableRunStorePort.renew(run_id, *, lease_for, fence)` (fenced `UPDATE`; Postgres + mock) + a `DurableFunctionRunner` heartbeat keep a still-executing run's lease alive so recovery can't reclaim it mid-flight; a lost fence cancels the body. Covers durable functions and sagas.
+**Reliability — durability, shutdown, resilience**
 
-- **Resilience hardening** — the breaker classifies by downstream health (a `429` / OCC conflict no longer trips it; a timeout counts as a failure); per-`(policy, route)` state maps are LRU-bounded (`max_state_entries` / `max_entries`, default 4096); a blanket policy retrying an ambiguous failure is refused at build (`resilience.blanket_write_retry`); a distributed resilience-store outage fails open (`ResiliencePolicy.fail_open_on_store_error`).
+- **Deadlines enforced at the database driver** — a bound deadline sets Postgres statement_timeout in-transaction and wraps Mongo ops in client-side timeouts, tighten-only, with an asyncio backstop.
 
-- **Streams under a port policy now feed the circuit breaker** — stream methods were skipped by the resilience wrap entirely, so a downstream that only fails mid-stream never tripped the breaker for its unary siblings, and an open breaker didn't stop new streams against a known-dead backend. `ResilienceExecutorPort.run_stream` breaker-gates stream acquisition (including forced-open and its wildcard) and records outcomes with unary-parity classification (mid-stream infrastructure/timeout = failure; caller-caused, clean exhaustion, or consumer-initiated close = success). Streams deliberately get no retry/hedge (items already delivered), no per-call timeout (long-lived streams are legitimate), and no bulkhead slot (an open-ended consume loop would pin the adaptive limit) — stated in the port-policy contract.
+- **Cancellation or a deadline tearing a commit is non-retryable** — both surface `commit_ambiguous` instead of a retryable error or a raw CancelledError, scoped to operation-owned tasks so a shutdown cancel still reaches consumer loops; during the body both still roll back and stay retryable.
 
-- **Resilience bookkeeping never fails a completed call** — the hedge `hedge_primary_won` metric now counts only completions where a hedge actually raced (restoring `hedge_won / (hedge_won + hedge_primary_won)`); the AIMD/Gradient2 limit update, breaker-outcome, and latency-digest bookkeeping are swallow-guarded (surfaced as `bulkhead_controller_error` / `latency_digest_store_error` metrics) so a bookkeeping error can't fail a completed call.
+- **Shutdown reliability** — the drain timeout cancels still-running ops and awaits their unwind before teardown; detached refresh tasks are cancelled; each shutdown hook gets its own timeout.
 
-- **Hedging now requires an explicit safety basis** *(breaking, freeze-time)* — a `HedgeWrap` no longer passes the safety gate just because it has an `IdempotencyWrap` (the key is claimed once outside the hedge, so concurrent duplicate attempts can both commit). Every `HedgeWrap` must declare `safety=` (read-only / OCC / naturally idempotent) or it fails closed at freeze with `configuration`.
+- **Spawned operations no longer escape drain; engine hops stay inside the admitted op** — nesting is decided by task identity, so a handler-spawned op is admitted, counted and drained, while the engine's own hops (prepare, hedges, post-commit, fan-out) adopt the operation and cannot be rejected mid-drain.
 
-- **Bulkhead no longer over-admits after a cancelled shed** — a shed-then-cancelled queued waiter no longer decrements `in_use` for a slot it never held (the prior underflow drove `in_use` negative and admitted past the limit).
+- **A failed after-commit effect no longer discards a committed result** — it is reported out-of-band to an after-commit error handler, now installable via build_runtime; fatal callbacks still re-raise.
 
-- **Operation OTel spans stop painting expected 4xx failures red** — a client-class domain `CoreException` (validation/not-found/conflict/precondition) is recorded as `forze.outcome="failed"` on a clean span, matching the port-span policy, so error-rate alerting on `forze.outcome="error"` tracks genuine faults.
+- **Inbox dedup no longer treats the ordering key as an event identity** — the fallback is now header then message id (also for causation binding and notify event ids), so distinct headerless events sharing an ordering key both process. Pre-0.4 headerless relay messages degrade to at-least-once instead of silent drops.
 
-- **Default resilience executor is per-event-loop** — the process-wide default (no `ResilienceDepsModule`) is keyed per running loop, so a bulkhead never `set_result`s a waiter parked on a foreign/closed loop.
+- **Inbox exactly-once fails closed on a cross-client misconfiguration** — inbox processing asserts the store commits in the transaction, raising a configuration error instead of silently non-atomic dedup.
 
-- **Idempotency** — dedup TTL default 30s → 24h to cover the redelivery horizon (raises a Redis store's footprint at scale); a store failure recording the result after the business commit no longer fails the succeeded op. At-least-once-with-dedup, not exactly-once.
+- **Resilience hardening** — the breaker classifies by downstream health (429/OCC do not trip it; timeouts count); state maps are LRU-bounded; a blanket policy retrying ambiguous failures is refused at build; a store outage fails open by default.
 
-- **Batch field decryption no longer stalls the event loop** — a ≥64-row encrypted result set offloads to `run_cpu_map` against a thread-safe snapshot (`EncryptingModelCodec.freeze_for_decrypt`); small batches stay inline, output byte-identical.
+- **Streams under a port policy now feed the circuit breaker** — acquisition is breaker-gated (including force-open) and mid-stream infrastructure failures record with unary parity, so a stream-only-failing downstream trips the breaker for its unary siblings. Streams get no retry, hedge, timeout or bulkhead slot.
 
-- **`require_tenant_id` raises `authentication`, not `internal`** — a missing bound tenant is caller-caused.
+- **Resilience bookkeeping never fails a completed call** — hedge metrics count correctly, and limit, breaker and digest bookkeeping errors surface as metrics only.
 
-- **Hard-delete cache-invalidation failures surface at error level** — a deleted document served from cache until TTL is a correctness hazard; stays best-effort so a cache outage can't block a delete.
+- **Hedging requires an explicit safety basis** *(breaking, freeze-time)* — an idempotency wrap alone no longer passes the gate; every hedge must declare a safety basis or fail closed at freeze.
 
-- **Opt-in guard against outbox dual-writes** — `OutboxSpec(require_transaction=True)` makes flush-inside-a-transaction a checked precondition (`exc.configuration`, `core.outbox.flush_outside_transaction`); default off.
+- **Bulkhead no longer over-admits after a cancelled shed** — a shed-then-cancelled waiter no longer releases a slot it never held.
 
-- **Outbox relay no longer dead-letters the backlog on a missing keyring** — a `core.crypto.payload_cipher_missing` (encrypted row + `None` keyring) aborts the pass (rows stay pending) instead of marking the backlog terminally `failed`. Genuine decode poison still parks the row.
+- **Operation OTel spans stop painting expected 4xx failures red** — client-class domain errors record as failed on a clean span, so error-rate alerts track genuine faults.
+
+- **Default resilience executor is per-event-loop** — a bulkhead never resolves a waiter parked on a foreign or closed loop.
+
+- **Idempotency** — the dedup TTL default rises from 30 seconds to 24 hours to cover the redelivery horizon; a store failure after the business commit no longer fails the succeeded op.
+
+- **Batch field decryption no longer stalls the event loop** — large encrypted result sets decrypt off-loop against a thread-safe snapshot, byte-identical output.
+
+- **`require_tenant_id` raises authentication, not internal** — a missing bound tenant is caller-caused.
+
+- **Hard-delete cache-invalidation failures surface at error level** — a deleted document served from cache is a correctness hazard; still best-effort so a cache outage cannot block a delete.
+
+- **Opt-in guard against outbox dual-writes** — an outbox spec can require flush-inside-a-transaction as a checked precondition.
+
+- **Outbox relay no longer dead-letters the backlog on a missing keyring** — the pass aborts with rows left pending; genuine decode poison still parks the row.
 
 **Bounded memory**
 
-- **Unbounded in-process caches gain bounded defaults** — Postgres introspector filtered-estimate lane (`max_filtered_estimate_entries=2048`), Redis breaker local cache (`max_cache_entries=4096`), document-cache refresh fan-out (`max_inflight_refresh=64`), L1 live-store registry weak-ref sweep. All with escape hatches.
+- **Unbounded in-process caches gain bounded defaults** — the Postgres estimate lane, Redis breaker local cache, document-cache refresh fan-out and L1 registry sweep; all with escape hatches.
 
-- **More read/list paths stream** — GCS `list_objects` page-by-page (exact total kept); realtime mailbox `trim` projects only `id`; Postgres hub `execution="parallel"` late-materializes (thin id/sort/key rows, page hydrated by id) and bounds per-leg concurrency with the pool semaphore; Postgres `update_matching` honours `batch_size` (keyset pages, not one unbounded UPDATE).
+- **More read/list paths stream** — GCS listing pages, mailbox trim projects only ids, Postgres hub parallel search late-materializes, and update_matching batches by keyset instead of one unbounded UPDATE.
 
-- **Streamed offline-mailbox replay** — `RealtimeMailbox.replay_since` (HLC keyset, `replay_page_size=100`) emits page-by-page instead of loading a device's whole backlog.
+- **Streamed offline-mailbox replay** — replay emits page-by-page instead of loading a device's whole backlog.
 
-- **Mongo ranked search late-materialization** — projects to thin `{_id, sort-key, rank}` before `$sort`/`$skip`/`$limit` and hydrates the page by `_id`.
+- **Mongo ranked search late-materialization** — thin rank rows are sorted and paged before hydrating the page by id.
 
-- **Analytics `run_chunked` truly streams** — `run_chunked` / `select_run_chunked` / `project_run_chunked` (DuckDB, ClickHouse, BigQuery) consume `run_query_streamed` through a shared `stream_shaped_chunks`, one window at a time.
+- **Analytics `run_chunked` truly streams** — DuckDB, ClickHouse and BigQuery consume the streamed query one window at a time.
 
-- **`HttpConfig(max_response_bytes=…)`** caps the in-memory response body (streams, refuses an over-`Content-Length` response, aborts an oversized chunked one); default `None`.
+- **`HttpConfig(max_response_bytes=…)`** — caps the in-memory response body; default off.
 
 **Error taxonomy**
 
-- **Client-caused errors no longer masquerade as 500s** — across query / cursor / aggregate / storage / search, an unsupported feature → `precondition` (400) and a malformed/out-of-range value → `validation` (422), uniform across mock ≡ Postgres ≡ Mongo ≡ Firestore; genuine server faults stay `internal`.
+- **Client-caused errors no longer masquerade as 500s** — unsupported features raise precondition and malformed values raise validation, uniform across mock, Postgres, Mongo and Firestore; genuine server faults stay internal.
 
-- **Bad query fields are a client error** — a sort/filter/direction naming an absent field → `precondition` (`field_not_on_read_model` / `invalid_sort_value`); a spec's own bad `default_sort` stays `configuration`.
+- **Bad query fields are a client error** — a sort or filter naming an absent field raises precondition; a spec's own bad default sort stays configuration.
 
-- **Malformed `$and`/`$or` is a clean 400** — a combinator whose operand is not a list of filter objects now raises `precondition` instead of an `AttributeError` (500), matching the existing `$not` object check.
+- **Malformed `$and`/`$or` is a clean 400** — a combinator whose operand is not a list raises precondition instead of an AttributeError.
 
-- **Cursor page size is coerced and clamped** — `resolved_cursor_limit` (mock + Postgres) rejects a non-integer `limit` with `validation` and clamps to `MAX_CURSOR_LIMIT` (10,000).
+- **Cursor limits and token fields are validated at decode** — a non-integer page size is rejected and clamped to the 10,000 cap; a crafted token version or non-finite decimal/float raises validation instead of an uncaught 500.
 
-- **A crafted cursor token is a clean 400** — a non-integer token `v` field and a non-finite `$dec`/float (`NaN`, `Infinity`) are rejected at decode with `validation` ("Invalid cursor token") instead of surfacing an uncaught `ValueError` / `decimal.InvalidOperation` (500) from the seek paths.
+- **Encryption fail-closed** — filtering a randomized-encrypted field raises precondition; encrypted-sort rejection covers every search backend.
 
-- **Encryption fail-closed** — filtering a randomized-encrypted field raises `precondition` (`core.crypto.encrypted_field_not_filterable`); encrypted-sort rejection now covers every search backend (`core.search.encrypted_sort_field`).
-
-- **Consistent adapter errors** — the mock rev-conflict raises `exc.precondition(..., code="revision_mismatch")` like the real adapters; a missing dependency reports a legible `configuration` error naming what *is* registered; database error classification keys on codes (Postgres SQLSTATE, ClickHouse numeric, Mongo op code, Redis RESP token), not message text.
+- **Consistent adapter errors** — the mock rev-conflict matches the real adapters; a missing dependency names what is registered; database errors classify on codes, not message text.
 
 **Correctness & consistency**
 
-- **Reverse (`before`) cursor pages return the window adjacent to the cursor on every backend** — `assemble_keyset_cursor_page` (the Postgres/Mongo/Firestore document adapters' assembler) kept the far over-fetch sentinel and dropped the row next to the cursor (`before=5&limit=2` over `[1..5]` returned `[2,3]`, not `[3,4]`, with prev/next tokens minted from the wrong rows); the Postgres hub parallel cursor and the Mongo search cursor carried the same divergent copy (the latter anchored its before-fetch at the start of the result set entirely) — all now delegate to the one fixed keyset windowing. Mongo search first-page `prev_cursor` is now `None` like every other backend.
+- **Reverse cursor pages return the window adjacent to the cursor** — the document assembler, Postgres hub parallel cursor and Mongo search cursor kept the wrong over-fetch sentinel; all now delegate to one shared keyset windowing. Mongo search first-page prev cursor is now null like every backend.
 
-- **Firestore cursor pagination works past page 1** — the anchor snapshot was passed to `start_after` wrapped in a list (read as cursor field-values), so any real after/before token raised `TypeError`; the `before` direction was doubly inverted (returned the after side); and a deleted anchor document silently restarted from page 1 — it now fails closed with `precondition` (`core.document.cursor_stale`). The dead `start_before_id` parameter is removed from `FirestoreClientPort.query_stream`.
+- **Firestore cursor pagination works past page 1** — the anchor snapshot was passed in a list (a TypeError on any real token) and the before direction was inverted; a deleted anchor now fails closed as a stale cursor. The dead start_before_id client-port parameter is removed.
 
-- **`$neq` / `$nin` / `$disjoint` include NULL / missing rows on Postgres** — the renderer now uses `IS DISTINCT FROM` / `… IS NULL OR NOT …` (was three-valued `<>` excluding NULL rows), so mock ≡ Postgres ≡ Mongo (`null_matches_missing`). New parity-corpus cases (`neq_nullable`, `nin_nullable`).
+- **`$neq` / `$nin` / `$disjoint` include NULL rows on Postgres** — the renderer uses IS DISTINCT FROM semantics, matching mock and Mongo.
 
-- **Decimal cursor keys order numerically** — keyset comparison coerces `int` / `float` / `Decimal` to `Decimal` (was string-comparing, ordering `'9' > '10'`), and a `Decimal` sort key round-trips through the cursor token exactly. mock ≡ Postgres restored for Decimal-keyed pagination.
+- **Decimal cursor keys order numerically** — keyset comparison coerces numeric types to Decimal (was string-comparing) and a Decimal sort key round-trips exactly.
 
-- **Intercepted streams close deterministically through the whole chain** — the interception proxy's stream wrap and both builtin `around_stream` interceptors iterated the inner generator without holding it in an `aclosing` frame, so abandoning or partially consuming an intercepted stream deferred the backend cursor/generator release to garbage collection (leaked driver cursors under load; GC-timed finalizers in deterministic simulation). Closing the outer stream now chains `aclose` down to the backend at that moment; abandonment logs nothing, and mid-stream errors keep their classification.
+- **Intercepted streams close deterministically** — the proxy wrap and both builtin stream interceptors now chain aclose to the backend cursor at close time instead of leaving release to garbage collection; abandonment logs nothing and mid-stream errors keep their classification.
 
-- **Concurrency primitives hardened** — `InflightLane` `shield`s the shared task so one caller's timeout can't cancel the in-flight computation for followers, and deregisters on task completion (preserving single-flight); `SimpleLruRegistry.get_or_create` disposes a lost-race value outside the lock; `GuardedLruRegistry.evict` no longer double-disposes an entry the idle-drain path is disposing (a `disposing` claim).
+- **Concurrency primitives hardened** — the in-flight lane shields the shared task from one caller's timeout, and the LRU registries no longer double-dispose or dispose under the lock.
 
-- **Mock isolation matches Postgres at the default level** — READ COMMITTED conflict detection anchors on the version each row was actually read/rev-checked at (not transaction begin), so a legal fresh-read-then-update no longer false-aborts; a concurrent duplicate-id `create` race raises `exc.conflict` (matching Postgres 23505); `FOR UPDATE` is honoured (conflict-on-read), `SKIP LOCKED` is a declared mechanism divergence. New conformance cases (`fresh_read_update`, `duplicate_key_insert`, `for_update_lost_update`), verified mock ≡ real Postgres.
+- **Mock isolation matches Postgres at the default level** — READ COMMITTED conflict detection anchors on the version actually read, a duplicate-id create race raises conflict, and FOR UPDATE is honoured; verified against real Postgres.
 
-- **DST systematic search is complete again** — the DPOR frontier zero-pads the choice prefix instead of truncating it, so schedules holding a branch point FIFO before deviating are reachable (the prior completeness guarantee was false). Violation reports carry the actual config / DPOR choices / Hypothesis plan and print a faithful `reproduce(...)` line.
+- **DST systematic search is complete again** — the DPOR frontier zero-pads the choice prefix, so previously-unreachable schedules are explored; violation reports print a faithful reproduce line.
 
-- **Regression bundles handle non-self-contained strategies honestly** — a bundle reproduces from seed + config via the auto-derived scenario, so an `OP_CASE` bundle (whose workload is never stored) can't self-replay; `assert_no_regressions` reports such a bundle as a clear failure and wraps each replay so one bad bundle can't crash the batch; `replay_bundle` raises an actionable error.
+- **Regression bundles handle non-self-contained strategies honestly** — a bundle that cannot self-replay reports as a clear failure, and one bad bundle cannot crash the batch.
 
-- **Mock outbox/inbox write-through is a catalogued DST divergence** — added `outbox-inbox-write-through` to `MECHANISM_DIVERGENCES`: only the document store gets MVCC isolation, while the journalled outbox/inbox are write-through (atomic on rollback, but a concurrent in-flight tx can dirty-read their not-yet-committed rows). Confirm a premature-visibility finding against a real broker/store.
+- **Mock outbox/inbox write-through is a catalogued DST divergence** — confirm a premature-visibility finding against a real broker or store.
 
-- **Kafka commit-stream consumer is loss-free under poison and rebalance** — a malformed payload surfaces as an `UndecodableStreamPayload` marker (paused, not raised); every pause/abort calls the new `seek_to_committed` so an aborted batch is re-fetched; a `KafkaCommitRebalanceListener` drops stale routing on revoke and seeks on assign; the supervised `commit_stream_consumer_background_lifecycle_step` restarts crash-loss-free. Adds `seek_to_committed` to `CommitStreamGroupQueryPort` and `UndecodableStreamPayload` to the stream contracts.
+- **Kafka commit-stream consumer is loss-free under poison and rebalance** — malformed payloads pause instead of raising, every pause or abort re-seeks to committed, a rebalance listener drops stale routing, and the supervised lifecycle restarts crash-loss-free.
 
-- **Firestore write path is OCC- and tenant-safe** — `_patch` wraps read-check-write in a Firestore transaction for real rev-CAS (replacing an unconditional full-document `set()`); `kill`/`kill_many` do a tenant-verified delete and raise `not_found` on miss/cross-tenant; `$neq`/`$nin`/`$null` removed from advertised capabilities (fail closed with `query_feature_unsupported`); `get_many` chunks ids at the 30-value cap; `create`/`create_many` fail closed (`conflict`) on an existing id, `ensure`/`upsert` re-read on a lost create-race. Firestore joins the cross-backend DSL parity harness.
+- **Firestore write path is OCC- and tenant-safe** — patch does real rev-CAS in a transaction, deletes are tenant-verified, unsupported operators fail closed, creates fail closed on an existing id, and Firestore joins the cross-backend DSL parity harness.
 
-- **CQRS read-only guard covers eager (factory-time) write-port acquisition** — an eager `ctx.document.command(spec)` in a QUERY factory now hits the same guard as a call-time one.
+- **CQRS read-only guard covers eager (factory-time) write-port acquisition** — an eager command acquisition in a QUERY factory hits the same guard as a call-time one.
 
-- **Notifications route through `QueueConsumer`** — `notification_consumer_lifecycle_step` / `notification_queue_consumer_handler` dedup redelivery on the event id and park poison messages; the consumer warns once per run when `max_deliveries` is set but the backend can't report a delivery count.
+- **Notifications route through the queue consumer** — redelivery dedups on the event id and poison messages park.
 
-- **Outbox relay tenancy** — binds each claim's tenant before publishing; a tenant-aware outbox on the plain relay fails closed (`outbox_relay_tenant_unbound`).
+- **Outbox relay tenancy** — each claim's tenant is bound before publishing; a tenant-aware outbox on the plain relay fails closed.
 
-- **Keyring fill-lock stripe uses a stable hash** — PYTHONHASHSEED-independent, for deterministic-simulation replay; a guard bans `hash(x) % n`.
+**Field encryption & KMS**
 
-**Field encryption & KMS hardening**
+- **Durable-secret entropy is a distinct type a seeded source cannot satisfy** — a replayable EntropySource splits from a CSPRNG-only SecretEntropy for nonces, tokens and keys, making a predictable secret unrepresentable; the permit_insecure_entropy flag is removed. A simulation seeds only the replayable seam.
 
-- **Durable-secret entropy is a distinct type a seeded source cannot satisfy** — randomness splits into two seams at the type level: the replayable `EntropySource` (backoff jitter, load-shed sampling, random v4/v7 ids; seedable via `SeededEntropySource`) and a separate `SecretEntropy` (`secret_bytes`) that mints AEAD nonces, tokens, API keys, and data keys. `secure_random_bytes` / `secure_token_urlsafe` read only the secret seam, whose sole implementation is the CSPRNG `SystemSecretEntropy` — there is no seeded `SecretEntropy`, so a replayable source physically cannot serve a nonce/token/key. Replaces the previous runtime check: a predictable secret is now unrepresentable (the `permit_insecure_entropy` flag is removed). A simulation seeds the replayable seam while durable secrets keep full CSPRNG entropy; `bind_secret_entropy` / `current_secret_entropy` let a test substitute its own. The resilience executor's backoff jitter and adaptive-throttle shed roll now draw from the replayable seam (were an unseeded RNG).
+- **`SystemEntropySource.random()` is CSPRNG-backed** — it drew from the global Mersenne Twister while advertising the system CSPRNG.
 
-- **`SystemEntropySource.random()` is now CSPRNG-backed** — it drew floats from the process-global Mersenne Twister while advertising the system CSPRNG; it now reads `os.urandom` (a shared `random.SystemRandom`).
+- **Strict mode for encrypted fields (`reject_plaintext`)** — opt-in rejection of non-ciphertext values in encrypted and searchable fields after backfill, reachable declaratively: the spec flag flows through every codec resolver (documents, search, graph, analytics, procedures), previously hardcoded off.
 
-- **Opt-in strict mode for encrypted fields (`reject_plaintext`)** — `EncryptingModelCodec(reject_plaintext=True)` / `encrypting_document_codecs(reject_plaintext=…)` flips the read-path plaintext tolerance after backfill — a non-ciphertext value in an encrypted/searchable field is rejected (`core.crypto.plaintext_rejected`) and record-id AAD binding stops falling back to the legacy id-less AAD. Default `False` keeps zero-downtime rollout. Declaratively reachable: `FieldEncryption(reject_plaintext=True)` on the spec flows through every codec resolver — documents (Postgres/Mongo/Firestore), search reads, graph, analytics, and procedures — which previously hardcoded it off.
+- **Plaintext data keys no longer reachable via repr** — the keyring's caches and frozen decryptor suppress raw DEK bytes.
 
-- **Plaintext data keys no longer reachable via `repr`** — the keyring's active-key entry, its encrypt/decrypt caches, and the frozen decryptor suppress `repr` of the raw DEK bytes (matching `DataKey.plaintext`).
+- **Cached data keys honor a TTL** — a KEK rotation or revocation takes effect within the configured window; the crypto module now forwards the TTL and cache bounds to the keyring it builds.
 
-- **Cached data keys honor a TTL** — `Keyring(dek_ttl_seconds=…)` bounds how long a plaintext DEK is served from cache (encrypt and decrypt paths), so a KEK rotation/revocation takes effect within the window; default `None` = unchanged. `CryptoDepsModule(dek_ttl_seconds=…, decrypt_cache_max=…, enc_cache_max=…)` now forwards the TTL and the DEK-cache size bounds to the keyring it builds — previously only a hand-built `Keyring` could set them.
+- **Confused-deputy guard on decrypt** — with a tenant supplied, the keyring authorizes an envelope's key id against the tenant's own key before any KMS unwrap.
 
-- **Confused-deputy guard on decrypt** — when a tenant is supplied, the keyring authorizes an envelope's `key_id` against the tenant's own key before any KMS unwrap and rejects a mismatch (`core.crypto.key_id_unauthorized`) with no backend call. `BytesCipherPort.decrypt` / `FieldCipherPort.ensure_unwrapped` gain an optional `tenant` (single-key `None` unchanged).
+- **Vault Transit signer picks up key rotation** — the cached public key re-fetches after a TTL, so a rotated key verifies without a restart.
 
-- **Vault Transit signer picks up key rotation** — `VaultTransitSigner(public_key_ttl_seconds=…, default 300s)` re-fetches the cached public key after the TTL, so a rotated Transit key is honored for verification and the published JWKS without a restart.
+**Identity & authorization**
 
-**Identity & authorization hardening**
+- **OIDC verifier no longer re-fetches JWKS per request** — the verifier and its key provider are built once and reused, so the JWKS cache actually spans requests.
 
-- **OIDC verifier no longer re-fetches JWKS per request** — `ConfigurableOidcIdpVerifier` (and the Google/Telegram builtin factories) built a fresh `JwksKeyProvider` on every call, so the JWKS cache never spanned requests (a DoS amplifier); the verifier and its key provider are now built once and reused.
+- **Nonce enforcement reachable through presets** — presets forward require_nonce to the token verifier; default off.
 
-- **Nonce enforcement reachable through presets** — `OidcIdpPreset(require_nonce=…)` (and the Google/Telegram configs) forward `require_nonce` to `OidcTokenVerifier` (presence check; value binding stays `verify_id_token_nonce`'s job). Default `False`.
+- **`ForzeJwtTokenVerifier` guards its session spec** — the same no-cache/no-history construction check as every sibling verifier, so a revoked session cannot be served from cache.
 
-- **`ForzeJwtTokenVerifier` guards its session spec** — it now applies the same `forbid_cache_and_history` construction-time check every sibling credential verifier uses, so a cached/history-enabled session query can't serve a revoked/rotated session row.
+- **Authz grant resolution cross-checks the tenant** — a caller-supplied scope naming a different tenant is refused.
 
-- **Authz grant resolution cross-checks the tenant** — `AuthzGrantResolver` takes the invocation tenant and refuses a caller-supplied `AuthzScope` naming a different tenant (`authz.scope_tenant_mismatch`). No-op when no tenant is bound.
+- **OIDC assertion records the validated audience** — the matched audience, not the first list entry.
 
-- **OIDC assertion records the validated audience** — for a multi-audience `id_token`, the mapper records the matched (validated) audience instead of `aud[0]`.
-
-- **`trust_tenant_header` no longer binds an arbitrary tenant for anonymous requests on a resolver-gated app** — the raw `X-Tenant-Id` fallback is honored only when there is no tenancy resolver, or when the request is authenticated and the resolver returned no binding; an anonymous request on a resolver-gated app gets no tenant. `trust_tenant_header` still defaults `False`.
+- **`trust_tenant_header` no longer binds a tenant for anonymous requests on a resolver-gated app** — the raw header fallback applies only without a resolver, or for authenticated requests the resolver did not bind.
 
 **Transport & agent surfaces**
 
-- **MCP no longer leaks internal error details to agents** — `build_mcp_server` sets FastMCP `mask_error_details=True`, and a boundary `CoreException` is translated to a client-safe `ToolError` via the same egress-masked `error_envelope` the HTTP edge renders (a caller-caused error keeps its message + code; internal/infrastructure is masked).
+- **MCP no longer leaks internal error details** — boundary errors render through the same egress-masked envelope as HTTP; caller-caused errors keep message and code.
 
-- **MCP stops advertising idempotency it can't honor** — the tool description no longer claims write operations support idempotent-retry replay: the MCP boundary binds no idempotency key, so the wrap is a no-op and a retry would re-execute the write.
+- **MCP stops advertising idempotency it cannot honor** — the boundary binds no idempotency key, so the retry-replay claim is gone from tool descriptions.
 
-- **MCP tool defaults run their `default_factory` per call** — a flat tool argument backed by a `default_factory` (uuid/timestamp) is now left unset (a sentinel the handler strips) so the DTO regenerates it per call, instead of being materialized once at registration.
+- **MCP tool defaults run their default_factory per call** — uuid and timestamp defaults regenerate per call instead of freezing at registration.
 
-- **Generated FastAPI routes render one 422 shape** — a `RequestValidationError` is rendered in the shared Forze error envelope + `X-Error-Code` (`request_validation_error`) instead of FastAPI's `{"detail": [...]}`; per-error `loc`/`msg`/`type` kept, raw `ctx`/`input` dropped.
+- **Generated FastAPI routes render one 422 shape** — request-validation errors use the shared error envelope; raw ctx/input dropped.
 
-- **`forze dst replay` survives a bad corpus target** — one unloadable `module:attr` is reported and counted as a failure while the rest of the corpus replays.
+- **`forze dst replay` survives a bad corpus target** — one unloadable target counts as a failure while the rest of the corpus replays.
 
-- **Storage download route documents its buffering bound** — the generated `download` route fully buffers the object in memory (a `Range` slices the buffer); its docstring now says so and points to `PRESIGN_DOWNLOAD` for large/untrusted-size objects.
+**PostgreSQL**
 
-**PostgreSQL hardening**
+- **Query parameters no longer leak across reads in a caller transaction** — each param-bound read resets its session settings after the fetch.
 
-- **Query parameters no longer leak across reads in a caller transaction** — a param-bound read run in a savepoint leaked its `SET LOCAL` GUCs into the outer transaction on release; each param-bound read now resets its GUCs after the fetch.
+- **`find_many` warns when its implicit 10,000-row cap truncates** — pass an explicit limit or paginate to read past it.
 
-- **`find_many` signals when its implicit row cap truncates** — an uncapped `find_many` (and `find_many_aggregates`) probes one row past the default 10 000 cap and logs a warning when it actually truncates; pass an explicit `limit` or paginate to read past it.
-
-- **`update_matching` bounds its primary-key snapshot** — the stable-set snapshot `SELECT` now caps at `PostgresWriteGateway(update_matching_max_rows=…)` (default 1 M) and fails closed (`core.document.update_matching_too_broad`) beyond it; `None` opts back into unbounded.
-
-- **Recovery/claim schemas document their indexes** — the durable-run, durable-schedule, and outbox stores' documented schemas include the recommended (partial) `CREATE INDEX` for their `FOR UPDATE SKIP LOCKED` claim scans. The outbox docstring spells out its delivery model: at-least-once (no fence; inbox dedup makes the effect exactly-once), per-`ordering_key` FIFO not guaranteed with concurrent relays.
+- **`update_matching` bounds its primary-key snapshot** — capped at one million rows by default and fail-closed beyond it; opt back into unbounded with None.
 
 **Adapters & security**
 
-- **Tenant-aware Mongo writes and Firestore queries no longer crash at the driver** — both gateways stamped/filtered the tenant field with a raw `uuid.UUID`, which PyMongo (no `uuidRepresentation` configured) and Firestore's value encoder both reject, so every tenant-aware Mongo write and Firestore query failed at the driver; the tenant is now stamped and filtered as the canonical string on every path (matching the outbox), so stamp and filter can never diverge. Covered by new tenant-isolation integration tests on both backends.
+- **Tenant-aware Mongo writes and Firestore queries no longer crash at the driver** — both gateways passed a raw UUID the drivers reject; the tenant is now stamped and filtered as the canonical string everywhere, with tenant-isolation integration tests on both backends.
 
-- **Firestore updates no longer strip the tenant tag** — `_patch` rebuilt the document from the domain image and full-set it, dropping `tenant_id` on the first update (the row then vanished from every tenant-filtered read and its own tenant's delete 404'd); every gateway write now re-stamps the tenant. Same sweep: history snapshots are now tenant-stamped (tenant-filtered OCC history reads could never find them), and a cross-tenant `get` reads as `not_found`, matching Mongo.
+- **Firestore updates no longer strip the tenant tag** — every gateway write re-stamps the tenant (patch previously full-set the domain image, hiding the row from all tenant-filtered reads); history snapshots are tenant-stamped and a cross-tenant get reads as not-found.
 
-- **Temporal tenant scoping covers listing and handle ops, not just start/create** — signal / update / cancel / terminate / query / result / describe and every schedule op (update/pause/unpause/trigger/delete/describe) resolve ids through the same tenant prefix as create and refuse a foreign tenant's id (`core.temporal.id_outside_tenant`) before any RPC; `list_schedules` filters to the tenant's prefix (client-side — server-side `STARTS_WITH` visibility silently no-ops on some server/store combinations); a schedule's `workflow_id_base` is prefixed too. Non-tenant-aware wiring is byte-identical to before.
+- **Temporal tenant scoping covers listing and handle ops** — signal, cancel, terminate, describe and every schedule op resolve ids through the create-time tenant prefix and refuse a foreign tenant's id; schedule listing filters to the tenant's prefix. Non-tenant-aware wiring is unchanged.
 
-- **Object storage tenant isolation now covers reads, not just writes** — `download` / `head` / `download_range` / `download_if_changed` / `delete` / `copy` / `move` / `presign_download` / `presign_upload` / `put_object_tags` took a caller-supplied key verbatim, so under the `tagged` tier a `tenant_<other>/…` key could reach another tenant's object; the key check now also requires the key to lie within the active tenant's prefix (`core.storage.key_outside_tenant`). No-op for non-tenant-aware adapters.
+- **Object storage tenant isolation covers reads, not just writes** — every key-taking read, delete, copy and presign path now requires the key to lie within the active tenant's prefix.
 
-- **Meilisearch write path — failed tasks, unbounded waits, tenant leaks** — a completed-but-failed task is raised (`infrastructure`) not reported as success; the task wait is bounded by `task_wait_timeout` (default 60s). Under tagged tenancy writes stamp the tenant discriminator, `delete_all` deletes only the current tenant's documents, and `delete(ids)` is tenant-scoped. Deep offset/snapshot windows crossing the index `maxTotalHits` (default 1000) fail closed (`core.search.max_total_hits_exceeded`); totals are estimated by default, opt-in exact via `MeilisearchSearchConfig(exact_total_count=True)`; `ensure_index` provisions `maxTotalHits` to match `max_total_hits`.
+- **Meilisearch write path** — a failed task raises instead of reporting success, task waits are bounded, tenant-tagged writes and deletes are scoped, and windows crossing maxTotalHits fail closed with the index provisioned to match.
 
-- **Neo4j — keyed-edge identity, hop-quantifier coercion** — a keyed-edge `ensure_edge` (`MERGE`) matches on the edge key so distinct keyed edges between the same pair stay separate; the `*..n` quantifier is `int()`-coerced before inlining. Graph writes enlist in the framework transaction scope via `Neo4jTxManagerAdapter` (`Neo4jDepsModule(tx={…})`); graph writes stay non-co-transactional with the outbox (no cross-database 2PC).
+- **Neo4j keyed-edge identity & quantifier coercion** — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; hop quantifiers are int-coerced before inlining.
 
-- **`forze_redis` imports on redis-py 7 again** — the stream client imported `XReadResponse` / `XReadGroupResponse` / `StreamEntry` / `StreamRangeResponse` / `XReadGroupStreamResponse` from `redis.typing`, which only exist in redis-py 8, so the package raised `ImportError` on redis-py 7.x; those aliases are now self-owned. Client-side caching invalidation needs redis-py 8's RESP3 push API, so it fails closed on redis-py < 8 with `configuration` (`redis.client_side_caching_unsupported`); everything else works on redis-py 7.3+. A guard test forbids re-importing `redis.typing`.
+- **`forze_redis` imports on redis-py 7 again** — version-specific typing aliases are self-owned; client-side caching fails closed below redis-py 8.
 
-- **Redis idempotency store can't be corrupted via the idempotency key** — the untrusted `Idempotency-Key` is hashed and the result body moved to a disjoint key scope, so a key ending in the codec separator can't alias another key's result; `commit`/`fail` became Lua compare-and-set/delete fenced on the caller's own PENDING claim; `RedisKeyCodec.join` no longer aliases distinct inputs. *Compat:* the idempotency key format changed, so the in-flight dedup window resets once on upgrade (old records expire by TTL).
+- **Redis idempotency store cannot be corrupted via the idempotency key** — the untrusted key is hashed, results live in a disjoint scope, and commit/fail are fenced compare-and-set. The key format change resets the in-flight dedup window once on upgrade.
 
-- **Temporal default workflow id is a real UUID** — the default `workflow_id_factory` called `str(uuid4)` (the function repr), so every unnamed `start()`/`schedule()` collided; now `str(uuid4())`.
+- **Temporal default workflow id is a real UUID** — the factory stringified the function instead of calling it, so every unnamed start collided.
 
-- **VK login** no longer copies the untrusted introspection envelope into claims (keeps only the masked `user`).
+- **VK login** — the untrusted introspection envelope is no longer copied into claims.
 
-- **Mongo** query renderer rejects `$`-prefixed field names (injection); index introspection keeps string index directions verbatim (text/2dsphere/2d/hashed/vector).
+- **Mongo** — the query renderer rejects dollar-prefixed field names; index introspection keeps string index directions verbatim.
 
-- **FastAPI `X-API-Key`** splits `prefix:secret` on the first colon (matching `forze_mcp`); bare keys still authenticate.
+- **FastAPI `X-API-Key`** — splits prefix:secret on the first colon; bare keys still authenticate.
 
-- **Per-tenant routed clients** fingerprint the full host list — multi-host DSNs (Mongo replica set, Redis Sentinel, AMQP cluster) no longer raise.
+- **Per-tenant routed clients** — fingerprint the full host list, so multi-host DSNs no longer raise.
 
-- **Postgres** schema validation accepts parameterized column types (`NUMERIC(10,2)`, `TIMESTAMP(3) WITH TIME ZONE`); search index-definition parsing hardened (balanced-delimiter, dollar-quote-aware).
+- **Postgres** — schema validation accepts parameterized column types; search index-definition parsing is delimiter-aware.
 
-- **Log scrubbing closes three leaks** — console render mode no longer hands the raw exception to Rich when `sanitize_logs=True` (credential in an exception message scrubbed in message + traceback); assignment scrubbing covers a bounded suffix (`secret_key=`, `aws_secret_access_key=`, `token_value=`), the whole `Authorization:` header, and a scheme-agnostic `scheme://user:pass@` DSN; a non-str dict key no longer raises `TypeError` into the caller's log site.
+- **Log scrubbing closes three leaks** — exceptions render scrubbed under sanitize_logs; assignment scrubbing covers credential-suffix keys, whole Authorization headers and user:pass DSNs; a non-string dict key no longer raises into the log site.
 
-- **`configure_logging()` no longer silently drops unlisted loggers** — with no `logger_names` it attached a handler to nothing (every INFO log hit Python's WARNING-level last-resort handler and vanished); it now configures the root logger by default (an explicit `logger_names` list is still honored as an allowlist).
+- **`configure_logging()` configures the root logger by default** — with no logger names it previously attached nothing and INFO logs vanished; an explicit list is still an allowlist.
 
-- **Misc** — BigQuery empty-array/null params typed from annotations; Meilisearch strips embedded quotes; numeric timezone offsets validated; `forze dst --seeds` parsing fails loud; S3 multipart-ETag normalization and unknown-total range downloads; `If-None-Match` parsed per RFC 7232; `forze_http` suppresses its default bearer when an `Authorization` header is set; GCS rejects reserved `forze-tag-` metadata keys.
+- **Misc** — BigQuery empty-array params typed from annotations; timezone offsets validated; S3 multipart-ETag normalization; If-None-Match parsed per RFC 7232; outbound HTTP suppresses its default bearer when an Authorization header is set; GCS rejects reserved metadata keys.
 
 ## [0.4.1] - 2026-06-17
 
