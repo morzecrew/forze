@@ -58,6 +58,20 @@ Run integration tests (require running external services or testcontainers):
 just test tests/integration
 ```
 
+### Emulators and engine matrices
+
+A test that stands in for a managed cloud service is admissible in exactly three forms:
+
+| Form | Why it's honest | Used here |
+|---|---|---|
+| **Independent-reimplementation emulator** | The emulator implements the wire protocol itself, so behavior differences are findings | floci (SQS, KMS, S3 — see `tests/support/floci.py`), fake-gcs-server, the Firestore/BigQuery emulators, fake-cloud-kms |
+| **Engine matrix** | One suite over two independent implementations of one protocol flushes out accidental engine-specific behavior | Kafka suite over Apache Kafka + Redpanda; S3 suite over MinIO + floci-S3 |
+| **Env-gated real cloud** | When no emulator exists, run the real service, skipped without credentials | Yandex KMS (`yc_kms` marker), VK ID live (`FORZE_LIVE_IDP_TESTS`) |
+
+An emulator that merely proxies the same OSS engine a suite already runs (e.g. a "Neptune" that is a Neo4j container behind a byte relay) proves nothing beyond plumbing and must not be added as a fidelity claim.
+
+A divergence an engine matrix finds is a finding: fix the adapter or declare it in capabilities if contract-relevant, normalize it in the test if incidental (with a comment naming the engine behavior) — never special-case per engine in `src/`. Known emulator infidelities and the reasoning behind the floci pin live in `tests/support/floci.py`.
+
 ### Code Quality
 
 Run all quality checks (types, imports, dead code, dependencies, security, secret scanning):

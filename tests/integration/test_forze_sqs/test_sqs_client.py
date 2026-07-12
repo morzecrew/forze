@@ -171,13 +171,14 @@ async def test_client_delayed_enqueue_not_visible_until_delay_elapses(
 
 @pytest.mark.asyncio
 async def test_sequential_operations_reuse_single_aiobotocore_client(
-    localstack_container,
+    floci_container,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``initialize`` opens one aiobotocore client; sequential ops reuse it.
 
-    LocalStack requires explicit static credentials, so the credential-chain
-    (``access_key_id=None``) path is exercised by unit tests only.
+    The emulator fixture passes explicit static credentials, so the
+    credential-chain (``access_key_id=None``) path is exercised by unit
+    tests only.
     """
     import aioboto3
 
@@ -193,7 +194,7 @@ async def test_sequential_operations_reuse_single_aiobotocore_client(
 
     client = SQSClient()
     await client.initialize(
-        endpoint=localstack_container.get_url(),
+        endpoint=floci_container.get_url(),
         region_name="us-east-1",
         access_key_id="test",
         secret_access_key="test",
@@ -222,7 +223,7 @@ async def test_sequential_operations_reuse_single_aiobotocore_client(
 
 @pytest.mark.asyncio
 async def test_client_resolves_region_from_environment(
-    localstack_container,
+    floci_container,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``region_name=None`` defers to the chain: env var alone is enough."""
@@ -232,7 +233,7 @@ async def test_client_resolves_region_from_environment(
 
     client = SQSClient()
     await client.initialize(
-        endpoint=localstack_container.get_url(),
+        endpoint=floci_container.get_url(),
         access_key_id="test",
         secret_access_key="test",
         # no region_name: botocore resolves it from AWS_DEFAULT_REGION

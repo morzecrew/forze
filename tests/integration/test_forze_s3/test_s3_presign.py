@@ -82,9 +82,18 @@ async def test_presigned_upload_put_with_bound_content_type(
 
 @pytest.mark.asyncio
 async def test_presigned_upload_rejects_unbound_content_type(
-    s3_client: S3Client, s3_bucket: str
+    s3_client: S3Client,
+    s3_bucket: str,
+    s3_backend,  # noqa: ANN001 - session backend fixture
 ) -> None:
     """SigV4 binds ContentType: a PUT with a different one must not verify."""
+
+    if s3_backend.name == "floci":
+        # Emulator infidelity, not an adapter concern: floci (1.5.32) does not
+        # verify signed headers on presigned PUTs, so the mismatched upload is
+        # accepted. Real S3 and MinIO reject it; the MinIO leg asserts the
+        # property on every run.
+        pytest.skip("floci does not enforce SigV4 signed-header binding")
 
     async with s3_client.client():
         vo = await s3_client.presign_upload_url(

@@ -23,17 +23,14 @@ from tests.support.secrets_fixtures import (
     tenant_secret_ref,
 )
 
-MINIO_ROOT_USER = "minioadmin"
-MINIO_ROOT_PASSWORD = "minioadmin"
-
 _S3_SUFFIX = "s3"
 
 
-def _payload(endpoint: str) -> dict[str, str]:
+def _payload(backend) -> dict[str, str]:  # noqa: ANN001 - session backend fixture
     return {
-        "endpoint": endpoint,
-        "access_key_id": MINIO_ROOT_USER,
-        "secret_access_key": MINIO_ROOT_PASSWORD,
+        "endpoint": backend.endpoint,
+        "access_key_id": backend.access_key,
+        "secret_access_key": backend.secret_key,
     }
 
 
@@ -56,10 +53,9 @@ def _tenant_json(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_health_and_object_crud(minio_container) -> None:
-    _container, endpoint = minio_container
+async def test_routed_s3_health_and_object_crud(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
     t1 = uuid4()
-    secrets = _tenant_json({t1: _payload(endpoint)})
+    secrets = _tenant_json({t1: _payload(s3_backend)})
     tenant_get, tenant_set = tenant_holder()
     cfg = S3Config(s3={"addressing_style": "path"})
 
@@ -121,11 +117,10 @@ async def test_routed_s3_health_and_object_crud(minio_container) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_mapping_secret_ref(minio_container) -> None:
-    _container, endpoint = minio_container
+async def test_routed_s3_mapping_secret_ref(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
     t1 = uuid4()
     custom = SecretRef(path=f"cfg/s3/{uuid4().hex[:12]}")
-    secrets = MemSecretsByPath({custom.path: json.dumps(_payload(endpoint))})
+    secrets = MemSecretsByPath({custom.path: json.dumps(_payload(s3_backend))})
     tenant_get, tenant_set = tenant_holder()
     cfg = S3Config(s3={"addressing_style": "path"})
 
@@ -145,10 +140,9 @@ async def test_routed_s3_mapping_secret_ref(minio_container) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_requires_startup_and_tenant(minio_container) -> None:
-    _container, endpoint = minio_container
+async def test_routed_s3_requires_startup_and_tenant(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
     t1 = uuid4()
-    secrets = _tenant_json({t1: _payload(endpoint)})
+    secrets = _tenant_json({t1: _payload(s3_backend)})
     tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedS3Client(
@@ -171,12 +165,11 @@ async def test_routed_s3_requires_startup_and_tenant(minio_container) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_secret_errors(minio_container) -> None:
-    _container, endpoint = minio_container
+async def test_routed_s3_secret_errors(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
     t_ok, t_miss, t_break = uuid4(), uuid4(), uuid4()
     tenant_get, tenant_set = tenant_holder()
 
-    miss = _tenant_json({t_ok: _payload(endpoint)}, missing_tenant=t_miss)
+    miss = _tenant_json({t_ok: _payload(s3_backend)}, missing_tenant=t_miss)
     r1 = RoutedS3Client(
         secrets=miss,
         secret_ref_for_tenant=_ref,
@@ -191,7 +184,7 @@ async def test_routed_s3_secret_errors(minio_container) -> None:
     finally:
         await r1.close()
 
-    br = _tenant_json({t_ok: _payload(endpoint)}, broken_tenant=t_break)
+    br = _tenant_json({t_ok: _payload(s3_backend)}, broken_tenant=t_break)
     r2 = RoutedS3Client(
         secrets=br,
         secret_ref_for_tenant=_ref,
@@ -208,8 +201,7 @@ async def test_routed_s3_secret_errors(minio_container) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_invalid_json_raises_core_error(minio_container) -> None:
-    _container, endpoint = minio_container
+async def test_routed_s3_invalid_json_raises_core_error(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
     t1 = uuid4()
     secrets = MemSecretsByPath({f"tenants/{t1}/{_S3_SUFFIX}": "{not-valid-json"})
     tenant_get, tenant_set = tenant_holder()
@@ -230,12 +222,11 @@ async def test_routed_s3_invalid_json_raises_core_error(minio_container) -> None
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_lru_and_evict(minio_container) -> None:
-    _container, endpoint = minio_container
+async def test_routed_s3_lru_and_evict(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
-    p = _payload(endpoint)
+    p = _payload(s3_backend)
     secrets = _tenant_json(
-        s3_payloads_for_lru_eviction(endpoint, t1, t2, t3, base_payload=p),
+        s3_payloads_for_lru_eviction(s3_backend.endpoint, t1, t2, t3, base_payload=p),
     )
     tenant_get, tenant_set = tenant_holder()
     cfg = S3Config(s3={"addressing_style": "path"})

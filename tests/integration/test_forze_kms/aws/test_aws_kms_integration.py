@@ -1,10 +1,10 @@
-"""Integration tests for AWS KMS envelope key management (LocalStack).
+"""Integration tests for AWS KMS envelope key management (floci emulator).
 
-KEK-rotation transparency is not exercised here: AWS KMS rotation keeps the same
-CMK id and rotates the backing material transparently (no version in the wrapped
-blob), and LocalStack 3.8.1 does not implement ``RotateKeyOnDemand``. Observable
-rotation transparency is covered against Vault (``v1``→``v2``) and the GCP KMS
-emulator (primary CryptoKey version) instead.
+AWS KMS rotation keeps the same CMK id and rotates the backing material
+transparently (no version in the wrapped blob), so rotation transparency is
+asserted through ``RotateKeyOnDemand``: envelopes wrapped before a rotation
+must still decrypt after it. Vault (``v1``→``v2``) and GCP (primary CryptoKey
+version) cover the *versioned* rotation shape.
 """
 
 from uuid import uuid4
@@ -72,6 +72,38 @@ async def test_full_keyring_round_trip_against_kms(
     # A mismatched AAD must not authenticate.
     with pytest.raises(CoreException):
         await keyring.decrypt(blob, aad=b"other")
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+async def test_kek_rotation_is_transparent_through_the_keyring(
+    kms_client: AwsKmsClient, cmk_id: str
+) -> None:
+    """On-demand rotation swaps the CMK's backing material while envelopes wrapped
+    before it still decrypt — rotation never orphans data, and the key id never
+    changes (AWS rotation is fully transparent; nothing versions the envelope)."""
+
+    kms = AwsKmsKeyManagement(client=kms_client)
+    directory = StaticKeyDirectory(KeyRef(key_id=cmk_id))
+    # max_dek_messages=1 forces a fresh (re-wrapped) data key on the post-rotation
+    # write, so its envelope is wrapped under the rotated material.
+    writer = Keyring(kms=kms, aead=AesGcmAead(), directory=directory, max_dek_messages=1)
+
+    env_before = await writer.encrypt(b"before-rotation", tenant=None)
+
+    async with kms_client.client() as c:
+        await c.rotate_key_on_demand(KeyId=cmk_id)
+
+    env_after = await writer.encrypt(b"after-rotation", tenant=None)
+
+    # A cold keyring (no warmed caches) must unwrap both envelopes through KMS —
+    # the pre-rotation one under the old material, the post-rotation one under
+    # the new, both addressed by the same CMK id.
+    reader = Keyring(kms=kms, aead=AesGcmAead(), directory=directory)
+    assert await reader.decrypt(env_before) == b"before-rotation"
+    assert await reader.decrypt(env_after) == b"after-rotation"
 
 
 # ....................... #

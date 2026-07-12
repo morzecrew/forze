@@ -1,4 +1,9 @@
-"""Pytest configuration for forze_sqs integration tests."""
+"""Pytest configuration for forze_sqs integration tests.
+
+The suite runs against floci's SQS — an independent reimplementation of the
+SQS wire protocol (see ``tests/support/floci.py`` for why it replaced
+LocalStack and what was verified about its fidelity).
+"""
 
 from typing import AsyncGenerator
 from uuid import uuid4
@@ -8,14 +13,13 @@ import pytest_asyncio
 from docker import from_env
 from docker.errors import DockerException
 from pydantic import BaseModel
-from testcontainers.localstack import LocalStackContainer
 
 pytest.importorskip("aioboto3")
-pytest.importorskip("testcontainers.localstack")
 
 from forze_sqs.adapters import SQSQueueAdapter, SQSQueueCodec
 from forze_sqs.kernel.client import SQSClient
 from forze.base.serialization import PydanticModelCodec
+from tests.support.floci import FlociContainer
 
 
 def _ensure_docker_available() -> None:
@@ -34,22 +38,20 @@ def _ensure_docker_available() -> None:
 
 
 @pytest.fixture(scope="session")
-def localstack_container() -> LocalStackContainer:
-    """Start a LocalStack container with SQS enabled."""
+def floci_container() -> FlociContainer:
+    """Start a floci container serving SQS."""
     _ensure_docker_available()
 
-    with LocalStackContainer(image="localstack/localstack:3.8.1").with_services(
-        "sqs"
-    ) as localstack:
-        yield localstack
+    with FlociContainer() as floci:
+        yield floci
 
 
 @pytest_asyncio.fixture(scope="function")
 async def sqs_client(
-    localstack_container: LocalStackContainer,
+    floci_container: FlociContainer,
 ) -> AsyncGenerator[SQSClient]:
-    """Provide an initialized SQS client connected to LocalStack."""
-    endpoint = localstack_container.get_url()
+    """Provide an initialized SQS client connected to the emulator."""
+    endpoint = floci_container.get_url()
 
     client = SQSClient()
     await client.initialize(

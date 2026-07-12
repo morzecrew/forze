@@ -12,14 +12,12 @@ from uuid import UUID, uuid4
 import pytest
 
 pytest.importorskip("aioboto3")
-pytest.importorskip("testcontainers.localstack")
-
-from testcontainers.localstack import LocalStackContainer
 
 from forze.application.contracts.secrets import SecretRef
 from forze_sqs.kernel.client import RoutedSQSClient, SQSClient
 
 from tests.integration._routed_lru_helpers import sqs_payloads_for_lru_eviction
+from tests.support.floci import FlociContainer
 
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/sqs")
@@ -105,9 +103,9 @@ async def _receive_until(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_sqs_enqueue_receive_consume_ack(
-    localstack_container: LocalStackContainer,
+    floci_container: FlociContainer,
 ) -> None:
-    endpoint = localstack_container.get_url()
+    endpoint = floci_container.get_url()
     t1 = uuid4()
     secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
     tenant_get, tenant_set = _tenant_holder()
@@ -169,9 +167,9 @@ async def test_routed_sqs_enqueue_receive_consume_ack(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_sqs_mapping_secret_ref(
-    localstack_container: LocalStackContainer,
+    floci_container: FlociContainer,
 ) -> None:
-    endpoint = localstack_container.get_url()
+    endpoint = floci_container.get_url()
     t1 = uuid4()
     custom = SecretRef(path=f"cfg/sqs/{uuid4().hex[:12]}")
     secrets = _MemSecretsJson({custom.path: json.dumps(_payload(endpoint))})
@@ -193,9 +191,9 @@ async def test_routed_sqs_mapping_secret_ref(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_sqs_requires_startup_and_tenant(
-    localstack_container: LocalStackContainer,
+    floci_container: FlociContainer,
 ) -> None:
-    endpoint = localstack_container.get_url()
+    endpoint = floci_container.get_url()
     t1 = uuid4()
     secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
     tenant_get, tenant_set = _tenant_holder()
@@ -221,9 +219,9 @@ async def test_routed_sqs_requires_startup_and_tenant(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_sqs_secret_errors(
-    localstack_container: LocalStackContainer,
+    floci_container: FlociContainer,
 ) -> None:
-    endpoint = localstack_container.get_url()
+    endpoint = floci_container.get_url()
     t_ok, t_miss, t_break = uuid4(), uuid4(), uuid4()
     tenant_get, tenant_set = _tenant_holder()
 
@@ -260,9 +258,9 @@ async def test_routed_sqs_secret_errors(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_sqs_invalid_json_raises_core_error(
-    localstack_container: LocalStackContainer,
+    floci_container: FlociContainer,
 ) -> None:
-    # endpoint = localstack_container.get_url()
+    # endpoint = floci_container.get_url()
     t1 = uuid4()
     secrets = _MemSecretsJson(
         {f"tenants/{t1}/sqs": "{bad-json"},
@@ -288,9 +286,9 @@ async def test_routed_sqs_invalid_json_raises_core_error(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_sqs_lru_and_evict(
-    localstack_container: LocalStackContainer,
+    floci_container: FlociContainer,
 ) -> None:
-    endpoint = localstack_container.get_url()
+    endpoint = floci_container.get_url()
     p = _payload(endpoint)
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
     secrets = _MemSecretsTenantJson(sqs_payloads_for_lru_eviction(p, t1, t2, t3))

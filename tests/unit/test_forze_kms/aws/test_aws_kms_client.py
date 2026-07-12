@@ -1,6 +1,6 @@
 """The AWS KMS kernel client and its config (mocked boto).
 
-The LocalStack suite covers the happy paths; these pin the branches a live backend will
+The emulator-backed integration suite covers the happy paths; these pin the branches a live backend will
 not readily produce — the un-initialized guards, the credential/endpoint wiring handed to
 botocore, and the orphan-CMK cleanup when aliasing a freshly minted key fails.
 """

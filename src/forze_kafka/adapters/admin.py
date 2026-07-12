@@ -69,12 +69,20 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
     async def _partition_ids(self, topic: str) -> list[int]:
         """Partition ids for *topic* from cluster metadata (via the admin client).
 
-        The reliable source: a bare consumer's ``partitions_for_topic`` only
-        knows a topic it is subscribed to, whereas ``describe_topics`` returns
-        the metadata directly.
+        Existence is checked against the all-topics listing first: naming a
+        missing topic in a metadata request makes a broker with topic
+        auto-creation enabled (Redpanda's default; also a default-configured
+        Kafka) create it as a side effect, and an admin *read* like ``lag``
+        must not mint topics. The reliable partition source after that is
+        ``describe_topics`` — a bare consumer's ``partitions_for_topic`` only
+        knows a topic it is subscribed to.
         """
 
         admin = await self.client.admin()
+
+        if topic not in await admin.list_topics():
+            return []
+
         described = await admin.describe_topics([topic])
         by_topic = {entry.get("topic"): entry for entry in described}
         entry = by_topic.get(topic)

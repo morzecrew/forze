@@ -49,7 +49,7 @@ s3_module = S3DepsModule(
 lifecycle = LifecyclePlan.from_steps(
     s3_lifecycle_step(
         # read credentials from env/secrets — never commit literal keys
-        endpoint=os.environ.get("S3_ENDPOINT"),          # e.g. http://localhost:9000 for MinIO/LocalStack
+        endpoint=os.environ.get("S3_ENDPOINT"),          # e.g. http://localhost:9000 for MinIO or another S3-compatible endpoint
         access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
         secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
         config=S3Config(max_pool_connections=20),
@@ -148,7 +148,7 @@ With `tenant_aware=True`, the adapter derives the tenant from `ExecutionContext`
 
 ## Testing
 
-`MockDepsModule` registers the storage keys with `MockStorageAdapter` (`forze_mock`), so unit tests use the facade or `ctx.storage.query/command(StorageSpec(...))` with no S3/GCS. For integration checks, use MinIO/LocalStack (S3) or `fake-gcs-server` (GCS).
+`MockDepsModule` registers the storage keys with `MockStorageAdapter` (`forze_mock`), so unit tests use the facade or `ctx.storage.query/command(StorageSpec(...))` with no S3/GCS. For integration checks, use MinIO or floci (S3) or `fake-gcs-server` (GCS).
 
 ## Anti-patterns
 
