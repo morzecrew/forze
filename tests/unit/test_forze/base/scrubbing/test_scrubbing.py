@@ -184,7 +184,7 @@ class TestCredentialFragmentCoverage:
             ("wallet passphrase=correcthorse rejected", "correcthorse"),
             ("wallet passphrase: correcthorse rejected", "correcthorse"),
             ("kms private-key=abc rotated", "abc"),
-            ("card credit_card=4111111111111111 declined", "4111111111111111"),
+            ("card credit_card=cc-test-value-1 declined", "cc-test-value-1"),
             ("payload social_security=078-05-1120 stripped", "078-05-1120"),
             ("auth=abc123 attached to request", "abc123"),
             ("connect dsn=Server=db;Uid=sa;Pwd=x1 failed", "Pwd=x1"),
@@ -277,16 +277,16 @@ class TestFragmentListParity:
 
     # Key-heuristic terms with no value-form assignment counterpart, with the
     # reason the value form is handled elsewhere (or inapplicable).
-    _KEY_ONLY_TERMS = {
+    _KEY_ONLY_TERMS = frozenset({
         # The value form is owned by the dedicated full-line
         # ``authorization\s*:\s*[^\r\n]+`` extras pattern: an assignment-term
         # match would stop at the first token (the scheme word, e.g. ``Basic``)
         # and leak the credential that follows it.
         "authorization",
-    }
+    })
 
     # Value-form terms with no key-heuristic counterpart.
-    _VALUE_ONLY_TERMS: set[str] = set()
+    _VALUE_ONLY_TERMS: frozenset[str] = frozenset()
 
     @staticmethod
     def _canonical_term(fragment: str) -> str:
