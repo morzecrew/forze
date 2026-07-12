@@ -69,3 +69,7 @@ lifecycle = LifecyclePlan.from_steps(
   scheduler or [Temporal](temporal.md) for longer waits.
 - Visibility timeout, redrive/DLQ, and IAM are queue attributes managed outside
   Forze.
+- On a **FIFO** queue an undecodable message is deleted to unblock its message
+  group (standard queues leave it for redrive → DLQ); set
+  `SQSConfig(poison_queue_url="…")` to retain a raw copy — ideally on a
+  standard queue — before that delete instead of destroying it.

@@ -157,9 +157,12 @@ class CommitStreamGroupConsumer[M]:
        attempt optionally wrapped in the named ``retry_policy``).
     5. **Handler poison (log-shaped)** — a log cannot requeue one message without
        wedging the partition. After ``max_attempts``, if ``dlq_stream`` is set the
-       (decoded) message is produced there and the offset is **committed past**
-       (freeing the partition); otherwise the run **pauses and alerts** — the
-       offset stays uncommitted for redelivery, never silently skipped.
+       message is produced there **as received** (an end-to-end-sealed envelope is
+       forwarded still sealed, keeping the event-id/tenant headers its AAD is
+       bound to, so the dead-letter copy stays decryptable and correlated) and the
+       offset is **committed past** (freeing the partition); otherwise the run
+       **pauses and alerts** — the offset stays uncommitted for redelivery, never
+       silently skipped.
     6. **Idle** — a finite ``timeout`` drains what is available and returns;
        ``None`` runs forever, polling.
 
@@ -209,10 +212,11 @@ class CommitStreamGroupConsumer[M]:
     """Optional **named** resilience policy wrapping each process attempt."""
 
     dlq_stream: str | None = None
-    """Dead-letter stream name for **handler** poison. When set, a decoded message
-    that exhausts ``max_attempts`` is produced here (via ``stream_spec``'s command
-    port) and the offset is committed past it; when ``None``, it **pauses and
-    alerts** instead. Decrypt/decode poison always pauses (nothing to re-produce)."""
+    """Dead-letter stream name for **handler** poison. When set, a message that
+    exhausts ``max_attempts`` is produced here as received (via ``stream_spec``'s
+    command port; a sealed envelope stays sealed with its original headers) and the
+    offset is committed past it; when ``None``, it **pauses and alerts** instead.
+    Decrypt/decode poison always pauses (nothing to re-produce)."""
 
     batch_limit: int | None = None
     """Max messages per ``read`` (``None`` = the whole uncommitted tail)."""
@@ -349,6 +353,12 @@ class CommitStreamGroupConsumer[M]:
                 self._alert_pause(message, reason="decode")
                 return await _pause()
 
+            # Keep the message as received: a dead-letter forwards it untouched (an
+            # end-to-end-sealed envelope stays sealed, with the event-id/tenant
+            # headers its AAD is bound to), so the copy is decryptable on the
+            # dead-letter stream and correlates back to the source event.
+            received = message
+
             # -- Decrypt: end-to-end ciphertext → typed model before the ladder. -- #
             try:
                 message = await _decrypt_message(
@@ -397,7 +407,7 @@ class CommitStreamGroupConsumer[M]:
 
             if outcome is None:
                 # Exhausted max_attempts — poison.
-                if await self._dead_letter(message, dlq_producer, reason="handler"):
+                if await self._dead_letter(received, dlq_producer, reason="handler"):
                     positions.append(StreamPosition.from_message(message))
                     totals.dead_lettered += 1
                     continue
@@ -484,7 +494,13 @@ class CommitStreamGroupConsumer[M]:
         *,
         reason: str,
     ) -> bool:
-        """Produce *message* to the dead-letter stream; return whether it was dead-lettered."""
+        """Produce *message* — as received off the log — to the dead-letter stream.
+
+        Returns whether it was dead-lettered. Forwarding the received payload and
+        headers unchanged keeps an end-to-end-sealed envelope decryptable (the AAD
+        the headers carry still matches the ciphertext) and preserves the original
+        event id for correlation and dedup on the dead-letter stream.
+        """
 
         if dlq_producer is None or self.dlq_stream is None:
             return False

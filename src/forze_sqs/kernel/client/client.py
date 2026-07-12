@@ -64,6 +64,16 @@ mapping on read."""
 _RECEIVE_COUNT_ATTR = "ApproximateReceiveCount"
 """SQS system attribute reporting deliveries including the current one."""
 
+_POISON_SOURCE_QUEUE_ATTR = "forze_poison_source_queue"
+"""Provenance attribute on a retained poison copy: the logical source queue name."""
+
+_POISON_SOURCE_ID_ATTR = "forze_poison_message_id"
+"""Provenance attribute on a retained poison copy: the original broker ``MessageId``
+(the copy is assigned a new one by the poison queue)."""
+
+_SQS_MAX_MESSAGE_ATTRIBUTES: Final[int] = 10
+"""AWS cap on message attributes per message."""
+
 _SQS_SEND_MESSAGE_BATCH_MAX: Final[int] = 10
 """AWS limit for ``send_message_batch`` entries per request."""
 
@@ -123,6 +133,9 @@ class SQSClient(SQSClientPort):
     """Owns the persistent client's async context; closed by :meth:`close`."""
 
     __queue_url_cache: dict[str, str] = attrs.field(factory=dict, init=False)
+
+    __poison_queue_url: str | None = attrs.field(default=None, init=False)
+    """Retention queue for undecodable FIFO messages (``SQSConfig.poison_queue_url``)."""
 
     __pending: dict[str, tuple[str, str]] = attrs.field(factory=dict, init=False)
     """In-flight deliveries: message id -> (queue, receipt handle).
@@ -200,6 +213,9 @@ class SQSClient(SQSClientPort):
             self.__enqueue_batch_concurrency = clamp(
                 pool_cap, 1, _MAX_ENQUEUE_BATCH_CONCURRENCY
             )
+            self.__poison_queue_url = (
+                config.poison_queue_url if config is not None else None
+            )
 
             self.__opts = SQSConnectionOpts(
                 endpoint=endpoint,
@@ -250,6 +266,7 @@ class SQSClient(SQSClientPort):
             finally:
                 self.__session = None
                 self.__opts = None
+                self.__poison_queue_url = None
                 self.__queue_url_cache.clear()
 
                 async with self.__pending_lock:
@@ -1018,6 +1035,69 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
+    async def __send_poison_copy(
+        self,
+        *,
+        source_queue: str,
+        message_id: str,
+        body: str,
+        attributes: dict[str, Any] | None,
+    ) -> None:
+        """Send a raw copy of an undecodable message to the configured poison queue.
+
+        The still-encoded ``Body`` goes out verbatim (byte-identical) together with the
+        original message attributes, plus provenance attributes carrying the source queue
+        and original ``MessageId`` (the copy gets a new broker-assigned one). Provenance
+        wins the per-message attribute cap; original attributes past it are dropped — the
+        body is the artifact that matters.
+
+        A ``.fifo`` poison queue needs FIFO entry fields: the original message id serves
+        as both ``MessageGroupId`` (each poison is its own group, so one poison can never
+        block another — poison ordering is meaningless) and ``MessageDeduplicationId``
+        (a redelivered original never lands twice within the dedup window). A standard
+        poison queue needs neither and is the recommended shape.
+
+        Raises on failure — the caller deletes the original either way (unblocking the
+        message group is the primary duty) and upgrades its log to ERROR.
+        """
+
+        poison_queue_url = self.__poison_queue_url
+
+        if poison_queue_url is None:
+            raise exc.internal("SQS poison queue URL is not configured")
+
+        message_attributes: dict[str, Any] = {
+            _POISON_SOURCE_QUEUE_ATTR: {
+                "StringValue": source_queue,
+                "DataType": "String",
+            },
+            _POISON_SOURCE_ID_ATTR: {
+                "StringValue": message_id,
+                "DataType": "String",
+            },
+        }
+
+        if attributes:
+            for name, value in attributes.items():
+                if len(message_attributes) >= _SQS_MAX_MESSAGE_ATTRIBUTES:
+                    break
+
+                message_attributes.setdefault(name, value)
+
+        payload: dict[str, Any] = {
+            "QueueUrl": poison_queue_url,
+            "MessageBody": body,
+            "MessageAttributes": message_attributes,
+        }
+
+        if poison_queue_url.rstrip("/").endswith(".fifo"):
+            payload["MessageGroupId"] = message_id
+            payload["MessageDeduplicationId"] = message_id
+
+        await self.__require_client().send_message(**payload)
+
+    # ....................... #
+
     @exc_interceptor.coroutine("sqs.receive")  # type: ignore[untyped-decorator]
     async def receive(
         self,
@@ -1100,19 +1180,58 @@ class SQSClient(SQSClientPort):
                 # FIFO queue: a skipped-but-undeleted message stays at the head of its message
                 # group and blocks every later message in that group until the visibility timeout,
                 # then redelivers at the head again — a hard deadlock when no redrive policy trims
-                # it. There is no client-side per-message DLQ, so delete it to unblock the group.
-                # The raw body is NOT logged: a malformed/attacker-supplied payload can carry
-                # production data, and this lands in central error logs — only its size and the
-                # (bounded) decode error are recorded. Best-effort: a failed delete only leaves the
-                # group blocked until redrive/visibility, no worse than before.
-                logger.error(
-                    "SQS FIFO message %s on queue %s could not be decoded (body %d bytes); "
-                    "deleting to unblock its message group: %s",
-                    message_id,
-                    queue,
-                    len(body),
-                    e,
-                )
+                # it. So the message is deleted to unblock the group — after retaining a raw copy
+                # on the configured poison queue, when one is set; without one this is the only
+                # place the framework destroys a poison message with no retained copy, so the log
+                # names the knob. The raw body is NOT logged: a malformed/attacker-supplied
+                # payload can carry production data, and this lands in central error logs — only
+                # its size and the (bounded) decode error are recorded. The delete is best-effort:
+                # a failure only leaves the group blocked until redrive/visibility, no worse than
+                # before. A failed copy-send never blocks the delete (unblocking the group is the
+                # primary duty) but upgrades the log to ERROR.
+                if self.__poison_queue_url is None:
+                    logger.warning(
+                        "SQS FIFO message %s on queue %s could not be decoded (body %d "
+                        "bytes); deleting to unblock its message group — the message is "
+                        "destroyed (set SQSConfig(poison_queue_url=...) to retain a raw "
+                        "copy): %s",
+                        message_id,
+                        queue,
+                        len(body),
+                        e,
+                    )
+                else:
+                    try:
+                        await self.__send_poison_copy(
+                            source_queue=queue,
+                            message_id=message_id,
+                            body=body,
+                            attributes=attrs_,
+                        )
+                        logger.warning(
+                            "SQS FIFO message %s on queue %s could not be decoded (body "
+                            "%d bytes); raw copy retained on %s; deleting the original "
+                            "to unblock its message group: %s",
+                            message_id,
+                            queue,
+                            len(body),
+                            self.__poison_queue_url,
+                            e,
+                        )
+                    except Exception as send_err:
+                        logger.error(
+                            "SQS FIFO message %s on queue %s could not be decoded (body "
+                            "%d bytes) and its raw copy could not be sent to %s (%s); "
+                            "deleting anyway to unblock the message group — the message "
+                            "is destroyed: %s",
+                            message_id,
+                            queue,
+                            len(body),
+                            self.__poison_queue_url,
+                            send_err,
+                            e,
+                        )
+
                 try:
                     await c.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt)
                 except Exception as del_err:

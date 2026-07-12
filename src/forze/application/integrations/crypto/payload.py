@@ -131,7 +131,15 @@ async def seal_message_payload[M](
     fresh record (event) id, encrypts the encoded payload under it, and returns the
     one-key wrapper plus headers carrying the event id (always) and tenant id (when bound),
     so the consume side reconstructs the same ``(domain, tenant, id)`` AAD.
+
+    An already-sealed envelope wrapper (a dead-letter or other forwarding re-produce)
+    passes through unchanged with the headers it arrived with: its AAD is bound to the
+    ``(tenant, id)`` those headers carry, so re-sealing would mint a new binding the
+    forwarded copy's headers contradict — undecryptable at the consumer.
     """
+
+    if is_encrypted_payload(payload):
+        return cast(JsonDict, payload), dict(headers or {})
 
     record_id = uuid7()
 
@@ -147,6 +155,10 @@ async def seal_message_payload[M](
     sealed_headers[HEADER_EVENT_ID] = str(record_id)
     if tenant_id is not None:
         sealed_headers[HEADER_TENANT_ID] = str(tenant_id)
+    else:
+        # A forwarded stale tenant header would contradict the AAD minted just above
+        # (sealed under no tenant), so the consumer could never reconstruct it.
+        sealed_headers.pop(HEADER_TENANT_ID, None)
 
     return wrapper, sealed_headers
 

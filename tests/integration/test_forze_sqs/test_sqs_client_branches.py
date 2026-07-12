@@ -462,3 +462,85 @@ async def test_initialize_is_idempotent(
         _, ok = await client.health()
         assert ok is True
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_fifo_poison_retained_on_poison_queue_before_delete(
+    sqs_client: SQSClient,
+    floci_container,
+) -> None:
+    """A FIFO base64-poison message is copied raw to ``poison_queue_url`` (body
+    byte-identical, provenance + original attributes carried) and then deleted
+    from the source, unblocking its message group."""
+
+    poison_name = f"forze-poison-{uuid4().hex[:10]}"
+    source = f"forze-poisonsrc-{uuid4().hex[:10]}.fifo"
+
+    async with sqs_client.client():
+        poison_url = await sqs_client.create_queue(poison_name)
+        source_url = await sqs_client.create_queue(
+            source,
+            attributes={"FifoQueue": "true", "ContentBasedDeduplication": "false"},
+        )
+
+    reader = SQSClient()
+    await reader.initialize(
+        endpoint=floci_container.get_url(),
+        region_name="us-east-1",
+        access_key_id="test",
+        secret_access_key="test",
+        config=SQSConfig(poison_queue_url=poison_url),
+    )
+
+    try:
+        async with reader.client() as boto:
+            # Marked base64 but not decodable: poison on receive.
+            await boto.send_message(
+                QueueUrl=source_url,
+                MessageBody="!!! not base64 !!!",
+                MessageAttributes={
+                    "forze_encoding": {"StringValue": "b64", "DataType": "String"},
+                },
+                MessageGroupId="g1",
+                MessageDeduplicationId=uuid4().hex,
+            )
+
+            copy = None
+            for _ in range(10):
+                assert (
+                    await reader.receive(
+                        source_url, limit=10, timeout=timedelta(seconds=1)
+                    )
+                    == []
+                )  # poison never surfaces to the caller
+                resp = await boto.receive_message(
+                    QueueUrl=poison_url,
+                    MaxNumberOfMessages=1,
+                    WaitTimeSeconds=1,
+                    MessageAttributeNames=["All"],
+                )
+                messages = resp.get("Messages") or []
+                if messages:
+                    copy = messages[0]
+                    break
+            assert copy is not None, "poison copy did not land on the poison queue"
+
+            # Byte-identical still-encoded body; provenance + original attributes carried.
+            assert copy["Body"] == "!!! not base64 !!!"
+            copy_attrs = copy["MessageAttributes"]
+            assert (
+                copy_attrs["forze_poison_source_queue"]["StringValue"] == source_url
+            )
+            assert copy_attrs["forze_poison_message_id"]["StringValue"]
+            assert copy_attrs["forze_encoding"]["StringValue"] == "b64"
+
+        # The original was deleted: group g1 is unblocked, so a follow-up
+        # message in the same group is deliverable (FIFO head is clear).
+        async with reader.client():
+            await reader.enqueue(source_url, b"after-poison", key="g1")
+            messages = await _receive_until(reader, source_url)
+            assert messages[0].body == b"after-poison"
+            await reader.ack(source_url, [messages[0].id])
+
+    finally:
+        await reader.close()
