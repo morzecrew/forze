@@ -1,4 +1,4 @@
-"""End-to-end envelope tracing across the SQS (LocalStack) broker boundary.
+"""End-to-end envelope tracing across the SQS (floci emulator) broker boundary.
 
 Mirrors the RabbitMQ showcase: stage with bound correlation metadata ->
 relay -> consume -> ``process_with_inbox`` rebinds the original correlation

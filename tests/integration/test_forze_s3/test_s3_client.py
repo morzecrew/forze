@@ -73,19 +73,18 @@ async def test_s3_ensure_bucket_creates_missing_bucket_and_is_idempotent(
 
 @pytest.mark.asyncio
 async def test_sequential_operations_reuse_single_aiobotocore_client(
-    minio_container,
+    s3_backend,  # noqa: ANN001 - session backend fixture
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``initialize`` opens one aiobotocore client; sequential ops reuse it.
 
-    MinIO requires explicit static credentials, so the credential-chain
-    (``access_key_id=None``) path is exercised by unit tests only.
+    The backend fixture passes explicit static credentials, so the
+    credential-chain (``access_key_id=None``) path is exercised by unit
+    tests only.
     """
     import aioboto3
 
     from forze_s3.kernel.client import S3Config
-
-    _container, endpoint = minio_container
 
     create_calls = 0
     original_client = aioboto3.Session.client
@@ -99,9 +98,9 @@ async def test_sequential_operations_reuse_single_aiobotocore_client(
 
     client = S3Client()
     await client.initialize(
-        endpoint=endpoint,
-        access_key_id="minioadmin",  # MinIO root creds from conftest fixture
-        secret_access_key="minioadmin",
+        endpoint=s3_backend.endpoint,
+        access_key_id=s3_backend.access_key,
+        secret_access_key=s3_backend.secret_key,
         config=S3Config(s3={"addressing_style": "path"}),
     )
 

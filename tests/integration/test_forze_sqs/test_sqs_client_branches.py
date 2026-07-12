@@ -1,7 +1,7 @@
 """Branch-coverage integration tests for :class:`SQSClient`.
 
 Exercises queue-resolution, batch send/ack/nack, attribute extraction,
-empty-input fast paths, and failure paths against LocalStack.
+empty-input fast paths, and failure paths against the SQS emulator.
 """
 
 from __future__ import annotations
@@ -398,11 +398,11 @@ async def test_client_options_missing_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_initialize_with_config_pool_size(
-    localstack_container,
+    floci_container,
 ) -> None:
     """Passing a config with max_pool_connections sizes batch concurrency."""
 
-    endpoint = localstack_container.get_url()
+    endpoint = floci_container.get_url()
     client = SQSClient()
     await client.initialize(
         endpoint=endpoint,
@@ -441,9 +441,9 @@ async def test_health_reports_failure_on_broken_endpoint() -> None:
 
 @pytest.mark.asyncio
 async def test_initialize_is_idempotent(
-    localstack_container,
+    floci_container,
 ) -> None:
-    endpoint = localstack_container.get_url()
+    endpoint = floci_container.get_url()
     client = SQSClient()
     await client.initialize(
         endpoint=endpoint,

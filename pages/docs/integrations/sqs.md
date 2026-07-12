@@ -5,7 +5,7 @@ summary: Produce and consume queue messages on Amazon SQS
 ---
 
 `forze[sqs]` implements the queue contracts on Amazon SQS (or an SQS-compatible
-endpoint like LocalStack) — the same produce/consume ports as RabbitMQ, on a
+endpoint like YMQ or the floci emulator) — the same produce/consume ports as RabbitMQ, on a
 managed queue.
 
 ## Install

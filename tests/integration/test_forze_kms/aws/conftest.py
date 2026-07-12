@@ -1,4 +1,11 @@
-"""Pytest configuration for forze_kms.aws integration tests (LocalStack KMS)."""
+"""Pytest configuration for forze_kms.aws integration tests (floci KMS).
+
+The suite runs against floci's KMS — an independent reimplementation of the
+KMS wire protocol with full envelope + rotation support (see
+``tests/support/floci.py`` for why it replaced LocalStack, what was verified
+about its fidelity, and the one accepted gap: no server-side ``KeyId``
+enforcement on ``Decrypt``, a guard the keyring already applies client-side).
+"""
 
 from typing import AsyncGenerator
 
@@ -6,12 +13,12 @@ import pytest
 import pytest_asyncio
 from docker import from_env
 from docker.errors import DockerException
-from testcontainers.localstack import LocalStackContainer
 
 pytest.importorskip("aioboto3")
-pytest.importorskip("testcontainers.localstack")
+pytest.importorskip("testcontainers")
 
 from forze_kms.aws import AwsKmsClient
+from tests.support.floci import FlociContainer
 
 _REGION = "us-east-1"
 
@@ -32,24 +39,22 @@ def _ensure_docker_available() -> None:
 
 
 @pytest.fixture(scope="session")
-def localstack_container() -> LocalStackContainer:
-    """Start a LocalStack container with the KMS service enabled."""
+def floci_container() -> FlociContainer:
+    """Start a floci container serving KMS."""
 
     _ensure_docker_available()
 
-    with LocalStackContainer(image="localstack/localstack:3.8.1").with_services(
-        "kms"
-    ) as localstack:
-        yield localstack
+    with FlociContainer() as floci:
+        yield floci
 
 
 @pytest_asyncio.fixture(scope="function")
 async def kms_client(
-    localstack_container: LocalStackContainer,
+    floci_container: FlociContainer,
 ) -> AsyncGenerator[AwsKmsClient]:
-    """Provide an initialized AWS KMS client connected to LocalStack."""
+    """Provide an initialized AWS KMS client connected to the emulator."""
 
-    endpoint = localstack_container.get_url()
+    endpoint = floci_container.get_url()
 
     client = AwsKmsClient()
     await client.initialize(

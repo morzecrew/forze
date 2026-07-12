@@ -1,6 +1,6 @@
 """Pytest configuration for forze_kms.yc integration tests (real Yandex Cloud KMS).
 
-Yandex Cloud publishes no KMS emulator, so — unlike AWS (LocalStack) and GCP
+Yandex Cloud publishes no KMS emulator, so — unlike AWS (floci) and GCP
 (fake-cloud-kms) — these tests run against the real service and are **skipped
 unless credentials are supplied**:
 

@@ -1,4 +1,4 @@
-"""End-to-end queue-consumer runner over SQS (LocalStack).
+"""End-to-end queue-consumer runner over SQS (floci emulator).
 
 Mirrors the RabbitMQ runner showcase: stage with bound correlation
 metadata -> relay to SQS -> ``QueueConsumer.run`` (one-shot, finite idle

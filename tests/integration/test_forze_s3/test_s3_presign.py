@@ -82,9 +82,18 @@ async def test_presigned_upload_put_with_bound_content_type(
 
 @pytest.mark.asyncio
 async def test_presigned_upload_rejects_unbound_content_type(
-    s3_client: S3Client, s3_bucket: str
+    s3_client: S3Client,
+    s3_bucket: str,
+    s3_backend,  # noqa: ANN001 - session backend fixture
 ) -> None:
     """SigV4 binds ContentType: a PUT with a different one must not verify."""
+
+    if s3_backend.name == "floci":
+        # Emulator infidelity, not an adapter concern: floci (1.5.32) does not
+        # verify signed headers on presigned PUTs, so the mismatched upload is
+        # accepted. Real S3 and MinIO reject it; the MinIO leg asserts the
+        # property on every run.
+        pytest.skip("floci does not enforce SigV4 signed-header binding")
 
     async with s3_client.client():
         vo = await s3_client.presign_upload_url(
@@ -106,8 +115,18 @@ async def test_presigned_upload_rejects_unbound_content_type(
 
 @pytest.mark.asyncio
 async def test_presigned_download_url_expires(
-    s3_client: S3Client, s3_bucket: str
+    s3_client: S3Client,
+    s3_bucket: str,
+    s3_backend,  # noqa: ANN001 - session backend fixture
 ) -> None:
+    if s3_backend.name == "floci":
+        # Emulator infidelity, not an adapter concern: floci's presigned-URL
+        # verification is immature (floci-io/floci#1841) and its expiry
+        # enforcement proved environment-dependent — a 1s-expiry URL dies
+        # locally but never expires on CI runners. MinIO asserts the property
+        # on every run.
+        pytest.skip("floci presigned-URL expiry enforcement is unreliable")
+
     async with s3_client.client():
         await s3_client.upload_bytes(s3_bucket, "fleeting.txt", b"gone-soon")
 
@@ -117,12 +136,25 @@ async def test_presigned_download_url_expires(
             expires_in=timedelta(seconds=1),
         )
 
-    await asyncio.sleep(2.5)
+    # SigV4 expiry has one-second timestamp granularity and the server checks
+    # it against its own clock, so the exact moment the URL dies can drift by
+    # a few seconds on a loaded runner: poll until it does instead of pinning
+    # a single instant.
+    await asyncio.sleep(1.5)
+    deadline = asyncio.get_running_loop().time() + 15
 
     async with httpx.AsyncClient() as http:
-        resp = await http.get(vo.url)
+        while True:
+            resp = await http.get(vo.url)
 
-    assert resp.status_code == 403
+            if resp.status_code == 403:
+                break
+
+            assert resp.status_code == 200  # a still-valid read stays well-formed
+            if asyncio.get_running_loop().time() > deadline:
+                pytest.fail("presigned URL did not expire within 15s")
+
+            await asyncio.sleep(0.5)
 
 
 @pytest.mark.asyncio

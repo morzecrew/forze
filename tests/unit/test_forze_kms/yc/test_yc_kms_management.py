@@ -1,6 +1,6 @@
 """Unit tests for the Yandex Cloud KMS client, adapter, and deps wiring (mocked stub).
 
-Yandex Cloud publishes no KMS emulator, so — unlike AWS (LocalStack) and GCP
+Yandex Cloud publishes no KMS emulator, so — unlike AWS (floci) and GCP
 (fake-cloud-kms) — these mocked-stub tests are the primary coverage: they pin the
 gRPC request/response mapping and the error translation that an integration test
 would otherwise exercise. A real-credentials integration test lives under

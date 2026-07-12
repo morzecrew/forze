@@ -173,6 +173,9 @@ class FakeAdmin:
         del group
         return self._group_offsets
 
+    async def list_topics(self) -> list[str]:
+        return [*self._topic_partitions, *(topic.name for topic in self.created)]
+
     async def describe_topics(self, topics: list[str]) -> list[dict[str, Any]]:
         return [
             {

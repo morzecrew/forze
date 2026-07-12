@@ -1,4 +1,9 @@
-"""Pytest configuration for forze_sqs performance tests."""
+"""Pytest configuration for forze_sqs performance tests.
+
+Benchmarks run against floci's SQS (see ``tests/support/floci.py`` for why it
+replaced LocalStack). Absolute numbers are emulator numbers either way; the
+perf gate compares runs on the same backend, so the swap does not skew it.
+"""
 
 from uuid import uuid4
 
@@ -7,14 +12,14 @@ import pytest_asyncio
 from docker import from_env
 from docker.errors import DockerException
 from pydantic import BaseModel
-from testcontainers.localstack import LocalStackContainer
 
 pytest.importorskip("aioboto3")
-pytest.importorskip("testcontainers.localstack")
+pytest.importorskip("testcontainers")
 
 from forze_sqs.adapters import SQSQueueAdapter, SQSQueueCodec
 from forze_sqs.kernel.client import SQSClient
 from forze.base.serialization import PydanticModelCodec
+from tests.support.floci import FlociContainer
 
 
 def _ensure_docker_available() -> None:
@@ -31,20 +36,18 @@ def _ensure_docker_available() -> None:
 
 
 @pytest.fixture(scope="session")
-def localstack_container() -> LocalStackContainer:
-    """Start a LocalStack container with SQS enabled for performance testing."""
+def floci_container() -> FlociContainer:
+    """Start a floci container serving SQS for performance testing."""
     _ensure_docker_available()
 
-    with LocalStackContainer(image="localstack/localstack:3.8.1").with_services(
-        "sqs"
-    ) as localstack:
-        yield localstack
+    with FlociContainer() as floci:
+        yield floci
 
 
 @pytest_asyncio.fixture(scope="function")
-async def sqs_client(localstack_container: LocalStackContainer) -> SQSClient:
-    """Provide an initialized SQS client connected to LocalStack."""
-    endpoint = localstack_container.get_url()
+async def sqs_client(floci_container: FlociContainer) -> SQSClient:
+    """Provide an initialized SQS client connected to the emulator."""
+    endpoint = floci_container.get_url()
 
     client = SQSClient()
     await client.initialize(

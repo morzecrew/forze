@@ -1,4 +1,13 @@
-"""Pytest configuration for forze_kafka integration tests (real Kafka via testcontainers)."""
+"""Pytest configuration for forze_kafka integration tests (real brokers via testcontainers).
+
+The whole suite runs against an engine matrix — Apache Kafka and Redpanda, two
+independent implementations of the Kafka protocol — so nothing here quietly
+specializes to one broker's behavior (admin-API response shapes, first-subscribe
+and rebalance timing, ``offsets_for_times``). That is the same differential move
+as mock ≡ real conformance, one level up: a divergence between engines is a
+finding to fix in the adapter or declare in capabilities, never to special-case
+per engine in ``src/``.
+"""
 
 from collections.abc import AsyncIterator, Iterator
 
@@ -6,7 +15,7 @@ import pytest
 import pytest_asyncio
 from docker import from_env
 from docker.errors import DockerException
-from testcontainers.kafka import KafkaContainer
+from testcontainers.kafka import KafkaContainer, RedpandaContainer
 
 pytest.importorskip("aiokafka")
 
@@ -42,12 +51,25 @@ def _ensure_docker_available() -> None:
 # ....................... #
 
 
-@pytest.fixture(scope="session")
-def kafka_container() -> Iterator[KafkaContainer]:
+_REDPANDA_IMAGE = "docker.redpanda.com/redpandadata/redpanda:v26.1.12"
+
+
+@pytest.fixture(scope="session", params=["kafka", "redpanda"])
+def kafka_container(
+    request: pytest.FixtureRequest,
+) -> Iterator[KafkaContainer | RedpandaContainer]:
+    """One broker per engine; every test in the suite runs against both."""
+
     _ensure_docker_available()
 
-    with KafkaContainer() as kafka:
-        yield kafka
+    broker: KafkaContainer | RedpandaContainer = (
+        KafkaContainer()
+        if request.param == "kafka"
+        else RedpandaContainer(_REDPANDA_IMAGE)
+    )
+
+    with broker:
+        yield broker
 
 
 # ....................... #
