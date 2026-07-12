@@ -1047,9 +1047,12 @@ class SQSClient(SQSClientPort):
 
         The still-encoded ``Body`` goes out verbatim (byte-identical) together with the
         original message attributes, plus provenance attributes carrying the source queue
-        and original ``MessageId`` (the copy gets a new broker-assigned one). Provenance
-        wins the per-message attribute cap; original attributes past it are dropped — the
-        body is the artifact that matters.
+        and original ``MessageId`` (the copy gets a new broker-assigned one). The original
+        attributes win the per-message attribute cap — they are the routing/decoding
+        context replay needs, and an SQS original carries at most the cap itself, so they
+        always all fit; a provenance attribute that no longer fits is dropped with a
+        warning naming it (the same facts are in the poison log line, and on FIFO the
+        original id doubles as the group/dedup id).
 
         A ``.fifo`` poison queue needs FIFO entry fields: the original message id serves
         as both ``MessageGroupId`` (each poison is its own group, so one poison can never
@@ -1066,23 +1069,38 @@ class SQSClient(SQSClientPort):
         if poison_queue_url is None:
             raise exc.internal("SQS poison queue URL is not configured")
 
-        message_attributes: dict[str, Any] = {
-            _POISON_SOURCE_QUEUE_ATTR: {
-                "StringValue": source_queue,
-                "DataType": "String",
-            },
-            _POISON_SOURCE_ID_ATTR: {
-                "StringValue": message_id,
-                "DataType": "String",
-            },
-        }
+        message_attributes: dict[str, Any] = dict(attributes) if attributes else {}
 
-        if attributes:
-            for name, value in attributes.items():
-                if len(message_attributes) >= _SQS_MAX_MESSAGE_ATTRIBUTES:
-                    break
+        # The original id first: it is the correlation key back to the source log
+        # line (and the FIFO group/dedup id below), so under slot pressure it
+        # outlives the source-queue attribute.
+        provenance: tuple[tuple[str, dict[str, str]], ...] = (
+            (_POISON_SOURCE_ID_ATTR, {"StringValue": message_id, "DataType": "String"}),
+            (
+                _POISON_SOURCE_QUEUE_ATTR,
+                {"StringValue": source_queue, "DataType": "String"},
+            ),
+        )
 
-                message_attributes.setdefault(name, value)
+        dropped: list[str] = []
+
+        for name, value in provenance:
+            if name in message_attributes:
+                continue
+
+            if len(message_attributes) >= _SQS_MAX_MESSAGE_ATTRIBUTES:
+                dropped.append(name)
+                continue
+
+            message_attributes[name] = value
+
+        if dropped:
+            logger.warning(
+                "SQS poison copy has no free attribute slots for provenance",
+                queue=source_queue,
+                message_id=message_id,
+                dropped=dropped,
+            )
 
         payload: dict[str, Any] = {
             "QueueUrl": poison_queue_url,

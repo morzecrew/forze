@@ -584,3 +584,20 @@ class TestDurableSagaTransientFailures:
         assert record.status is DurableRunStatus.COMPLETED
         assert record.output_json == {"trail": ["a", "b"]}
         assert effects == ["do:a", "do:b", "do:b"]
+
+
+class TestRetryKnobValidation:
+    def test_negative_retry_attempts_rejected(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            DurableSagaExecutor(retry_attempts=-1)
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_negative_retry_base_delay_rejected(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            DurableSagaExecutor(retry_base_delay=-0.1)
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_zero_values_are_legitimate(self) -> None:
+        # 0 attempts disables in-place retries; 0 delay retries immediately.
+        executor = DurableSagaExecutor(retry_attempts=0, retry_base_delay=0.0)
+        assert executor.retry_attempts == 0

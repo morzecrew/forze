@@ -288,3 +288,73 @@ async def test_receive_does_not_delete_poison_on_standard_queue() -> None:
 
     assert msgs == []
     mock_boto.delete_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_poison_copy_keeps_all_originals_under_slot_pressure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An original already at the 10-attribute SQS cap keeps every original
+    # attribute on the copy (they are the replay context); the provenance
+    # attributes are dropped with a warning naming them — never silently.
+    recorder = _Recorder()
+    monkeypatch.setattr("forze_sqs.kernel.client.client.logger", recorder)
+
+    client = SQSClient()
+    client._SQSClient__poison_queue_url = "https://sqs/poison"  # type: ignore[attr-defined]
+
+    originals = {
+        f"attr_{i}": {"StringValue": f"v{i}", "DataType": "String"} for i in range(10)
+    }
+
+    mock_boto = AsyncMock()
+    mock_boto.send_message = AsyncMock(return_value={})
+
+    with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        await client._SQSClient__send_poison_copy(  # type: ignore[attr-defined]
+            source_queue="jobs.fifo",
+            message_id="m-1",
+            body="raw",
+            attributes=originals,
+        )
+
+    sent = mock_boto.send_message.await_args.kwargs["MessageAttributes"]
+    assert sent == originals  # all 10 originals, byte-identical
+    assert "forze_poison_message_id" not in sent
+    assert "forze_poison_source_queue" not in sent
+    assert any("no free attribute slots" in w for w in recorder.warnings)
+
+
+@pytest.mark.asyncio
+async def test_poison_copy_prefers_message_id_when_one_slot_remains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With exactly one free slot, the original message id wins it — the
+    # correlation key back to the source log line; the queue name is dropped
+    # with a warning.
+    recorder = _Recorder()
+    monkeypatch.setattr("forze_sqs.kernel.client.client.logger", recorder)
+
+    client = SQSClient()
+    client._SQSClient__poison_queue_url = "https://sqs/poison"  # type: ignore[attr-defined]
+
+    originals = {
+        f"attr_{i}": {"StringValue": f"v{i}", "DataType": "String"} for i in range(9)
+    }
+
+    mock_boto = AsyncMock()
+    mock_boto.send_message = AsyncMock(return_value={})
+
+    with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        await client._SQSClient__send_poison_copy(  # type: ignore[attr-defined]
+            source_queue="jobs.fifo",
+            message_id="m-1",
+            body="raw",
+            attributes=originals,
+        )
+
+    sent = mock_boto.send_message.await_args.kwargs["MessageAttributes"]
+    assert sent["forze_poison_message_id"]["StringValue"] == "m-1"
+    assert "forze_poison_source_queue" not in sent
+    assert all(sent[k] == originals[k] for k in originals)
+    assert any("no free attribute slots" in w for w in recorder.warnings)

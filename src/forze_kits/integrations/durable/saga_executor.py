@@ -87,6 +87,19 @@ class DurableSagaExecutor:
     retry_base_delay: float = 0.05
     """Initial backoff delay in seconds between in-place retries, doubled per retry."""
 
+    def __attrs_post_init__(self) -> None:
+        if self.retry_attempts < 0:
+            raise exc.configuration(
+                "Saga retry attempts must be non-negative (0 disables in-place retries)"
+            )
+
+        if self.retry_base_delay < 0:
+            raise exc.configuration(
+                "Saga retry base delay must be non-negative (0 retries immediately)"
+            )
+
+    # ....................... #
+
     async def run[Ctx](
         self,
         ctx: ExecutionContext,
