@@ -6,12 +6,16 @@ a process crash mid-saga resumes at the first un-journaled step / compensation i
 leaving committed steps un-compensated. A step that *fails* journals its failure too, so a
 re-invocation of the same run re-raises it rather than re-running the action (a failed step's
 body is not re-run on replay, like a completed one's — keep step bodies idempotent, as a body
-can still run more than once if a worker is reclaimed mid-body). It depends only on the
+can still run more than once if a worker is reclaimed mid-body). A failure classified as
+retryable (infrastructure, throttled, concurrency) is retried in place with backoff before
+it is journaled — compensation is irreversible business action, so it is reserved for
+genuine failures and exhausted retries, never a one-off blip. It depends only on the
 contract, so the same code runs over the mock (tests), Postgres (self-hosted), or any backend.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Awaitable, Callable, cast, final
 
 import attrs
@@ -23,8 +27,9 @@ from forze.application.contracts.saga import (
     SagaProgress,
     SagaStep,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc, exception_egress_policy
 
+from .._logger import logger
 from ._resolve import resolve_durable_step
 from .registry import DurableFunctionHandler
 
@@ -54,7 +59,7 @@ class _JournaledStepFailure(Exception):
 
 
 @final
-@attrs.define(slots=True, frozen=True)
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class DurableSagaExecutor:
     """A ``SagaExecutorPort`` that journals each saga step for crash-resumable orchestration.
 
@@ -63,9 +68,24 @@ class DurableSagaExecutor:
     context must be a serializable ``pydantic.BaseModel`` — it is encoded before each step
     is journaled and decoded after, so a completed step replays its context on recovery.
 
+    A step action (or compensation) that fails with a *retryable* kind — infrastructure,
+    throttled, concurrency — is retried in place with exponential backoff before its failure
+    is journaled, so a one-off blip never triggers the compensation chain (an irreversible
+    business action). The failed attempt's transaction rolled back, so a retry re-runs the
+    action fresh — the same at-least-once caveat the journal already carries for a body
+    interrupted before its result is recorded. A step with an explicit ``retry_policy``
+    (or ``compensation_policy``) uses that named policy instead of these defaults.
+
     Wire it in via ``SagaDepsModule(executor=DurableSagaExecutor())`` and drive the saga as
     a durable function (see :func:`durable_saga_handler`).
     """
+
+    retry_attempts: int = 2
+    """Bounded in-place retries after a retryable-classified failure (``0`` disables them);
+    on exhaustion the failure is journaled and the saga compensates."""
+
+    retry_base_delay: float = 0.05
+    """Initial backoff delay in seconds between in-place retries, doubled per retry."""
 
     async def run[Ctx](
         self,
@@ -145,17 +165,19 @@ class DurableSagaExecutor:
                 if step.retry_policy is not None:
                     return await ctx.resilience().run(_act, policy=step.retry_policy)
 
-                return await _act()
+                return await self._retry_transient(str(step.name), _act)
 
             except Exception as error:  # noqa: BLE001 — journaled as the outcome, re-raised
                 # Record the failure as this step's journaled outcome so a re-invocation of
                 # the same durable run (crash recovery / replay) re-raises it instead of
-                # re-running the action's body.
+                # re-running the action's body. Only genuine failures reach here: a
+                # retryable-classified one was already retried in place (by the step's own
+                # policy or the executor's bounded default) and exhausted its attempts.
                 return {_STEP_FAILURE_KEY: str(error)}
 
         # Journaled: a completed step returns its recorded context on replay and its action
         # is not re-run; a failed step records its failure and re-raises it on replay (never
-        # re-running the action). A retry_policy retries transient failures before it journals.
+        # re-running the action). Transient failures are retried before anything journals.
         encoded = await step_port.run(str(step.name), _journaled)
 
         if _STEP_FAILURE_KEY in encoded:
@@ -217,11 +239,45 @@ class DurableSagaExecutor:
                     _comp, policy=step.compensation_policy
                 )
 
-            return await _comp()
+            # A compensation must eventually succeed, so a transient failure is retried in
+            # place too — otherwise a blip would mark the rollback "compensation failed"
+            # (manual intervention) when a retry would have kept it clean.
+            return await self._retry_transient(f"compensate:{step.name}", _comp)
 
         # A distinct step id per compensation, so a crash during rollback resumes it in
         # reverse and skips already-compensated steps.
         await step_port.run(f"compensate:{step.name}", _journaled)
+
+    # ....................... #
+
+    async def _retry_transient(
+        self,
+        step_id: str,
+        fn: Callable[[], Awaitable[JsonDict]],
+    ) -> JsonDict:
+        # Bounded in-place retry on retryable-classified kinds only (infrastructure,
+        # throttled, concurrency); anything else — and the last exhausted attempt —
+        # propagates to be journaled as the step's outcome.
+        for attempt in range(self.retry_attempts):
+            try:
+                return await fn()
+
+            except CoreException as error:
+                if not exception_egress_policy(error.kind).retryable:
+                    raise
+
+                logger.warning(
+                    "Durable saga step %s failed with a transient %s error; "
+                    "retrying in place (%d/%d)",
+                    step_id,
+                    error.kind.value,
+                    attempt + 1,
+                    self.retry_attempts,
+                    exc_info=True,
+                )
+                await asyncio.sleep(self.retry_base_delay * (2**attempt))
+
+        return await fn()
 
 
 # ....................... #

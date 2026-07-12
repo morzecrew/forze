@@ -83,10 +83,15 @@ A background scanner re-claims runs abandoned by a crash and re-invokes them —
 `durable_recovery_background_lifecycle_step(runner=runner)`. It is **multi-worker-safe**:
 concurrent scanners never claim the same run (`FOR UPDATE SKIP LOCKED`) and a terminal
 write is **fenced** against a reclaimed lease, so a stalled worker whose lease expired can't
-finish a run the new owner already took over. Run it on every replica, or pair it with the
-singleton lifecycle guard to elect one. `max_concurrency` bounds how many runs a sweep
-recovers at once. Enqueue with `run_at=<when>` for a **delayed** run — the scan skips it
-until it's due.
+finish a run the new owner already took over. A still-executing run heartbeats its lease
+alive, so a long body is never reclaimed mid-flight — bounded by the runner's
+`max_run_duration` (default 1 hour): past the cap the body is cancelled while the lease is
+still held (nothing double-executes) and the run lands `FAILED` with the deadline reason, so
+a body hung on a dead peer can't pin a recovery slot forever. Set it above your longest
+body, or `None` to remove the cap; re-enqueue a deadline-failed run to retry it. Run the
+scanner on every replica, or pair it with the singleton lifecycle guard to elect one.
+`max_concurrency` bounds how many runs a sweep recovers at once. Enqueue with
+`run_at=<when>` for a **delayed** run — the scan skips it until it's due.
 
 **Multi-tenant.** The stores resolve their table under the bound tenant. On a **tagged**
 shared table (a `tenant_id` column), an unbound scanner recovers every tenant's runs and the
@@ -127,9 +132,11 @@ await runner.run_now(ctx, str(saga.name), initial.model_dump(mode="json"))
 ```
 
 The saga context must be a serializable `pydantic.BaseModel` (it is journaled between
-steps). This tier is self-hosted-Postgres only; a full workflow engine (timers, signals,
-versioning) is still Temporal/Inngest. The two tables come from your migrations; their
-schema is documented on the adapter classes.
+steps). A step failure classified retryable (infrastructure, throttled, concurrency) is
+retried in place with backoff before it is journaled — compensation only runs on genuine
+failures or exhausted retries, never a one-off blip. This tier is self-hosted-Postgres only;
+a full workflow engine (timers, signals, versioning) is still Temporal/Inngest. The two
+tables come from your migrations; their schema is documented on the adapter classes.
 
 ### Recurring schedules
 

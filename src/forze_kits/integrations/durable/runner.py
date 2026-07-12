@@ -20,7 +20,7 @@ from forze.application.contracts.durable.function import (
     reset_durable_run,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 
 from .._logger import logger
 from ._resolve import resolve_durable_run_store
@@ -72,8 +72,28 @@ class DurableFunctionRunner:
     that legitimately outlives one lease is not reclaimed mid-flight. Must be ``>= 2`` so a
     renewal lands before the lease expires (a single missed heartbeat still leaves headroom)."""
 
+    max_run_duration: timedelta | None = timedelta(hours=1)
+    """Cap on how long a single body may execute before the runner stops treating it as
+    live: the body task is cancelled, heartbeat renewal stops, and the run lands ``FAILED``
+    with the deadline reason. Without a cap a body hung on a dead peer heartbeats its lease
+    alive forever — never reclaimed, pinning a recovery slot on this replica. The body is
+    cancelled while the lease is still held, so nothing double-executes; re-enqueue to retry.
+    Must comfortably exceed the longest legitimate body; ``None`` removes the cap (and
+    restores the hang hazard)."""
+
     telemetry: DurableTelemetry | None = None
     """Optional OpenTelemetry spans + metrics for run execution and recovery."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if (
+            self.max_run_duration is not None
+            and self.max_run_duration.total_seconds() <= 0
+        ):
+            raise exc.configuration(
+                "Max run duration must be positive (None disables the cap)"
+            )
 
     # ....................... #
 
@@ -336,28 +356,62 @@ class DurableFunctionRunner:
         # legitimately outlives one lease keeps the run leased instead of being reclaimed
         # mid-flight (which would double-execute its side effects). If a renewal reports the
         # lease was reclaimed, the heartbeat cancels the body and we surface ``_LeaseLost``.
+        # A deadline watchdog bounds the whole execution: a hung body must not heartbeat its
+        # lease alive forever, pinning a recovery slot on this replica.
         body = asyncio.ensure_future(handler(ctx, record.input_json))
         reclaimed = asyncio.Event()
-        heartbeat = asyncio.ensure_future(
-            self._heartbeat(store, record.run_id, fence, body, reclaimed)
-        )
+        expired = asyncio.Event()
+        watchers = [
+            asyncio.ensure_future(
+                self._heartbeat(store, record.run_id, fence, body, reclaimed)
+            )
+        ]
+
+        if self.max_run_duration is not None:
+            watchers.append(
+                asyncio.ensure_future(
+                    self._expire_body_after(self.max_run_duration, body, expired)
+                )
+            )
 
         try:
             return await body
 
         except asyncio.CancelledError:
             # A cancel raised because the heartbeat reclaimed the run is turned into
-            # ``_LeaseLost``; an external cancel (``reclaimed`` unset) propagates untouched.
+            # ``_LeaseLost``; a deadline-watchdog cancel becomes a recorded failure; an
+            # external cancel (neither flag set) propagates untouched.
             if reclaimed.is_set():
                 raise _LeaseLost from None
+
+            if expired.is_set():
+                # The body was cancelled while the lease was still held (no lapse, so no
+                # double-execution) and the run lands FAILED — there is no retry machinery
+                # here; an operator re-enqueues.
+                raise exc.timeout(
+                    f"Durable run {record.run_id} ({record.name}) exceeded "
+                    f"max_run_duration ({self.max_run_duration}); the body was cancelled "
+                    "before its lease could lapse — re-enqueue to retry",
+                ) from None
 
             raise
 
         finally:
-            heartbeat.cancel()
+            for watcher in watchers:
+                watcher.cancel()
 
-            with suppress(asyncio.CancelledError):
-                await heartbeat
+            for watcher in watchers:
+                with suppress(asyncio.CancelledError):
+                    await watcher
+
+            if not body.done():
+                # Only reachable when the awaiter itself was cancelled (a shutdown drain,
+                # an enclosing timeout): tear the body down with it and wait for its
+                # unwind, or it keeps executing — and heartbeating — detached.
+                body.cancel()
+
+                with suppress(asyncio.CancelledError):
+                    await body
 
     # ....................... #
 
@@ -403,6 +457,22 @@ class DurableFunctionRunner:
                 body.cancel()
 
                 return
+
+    # ....................... #
+
+    async def _expire_body_after(
+        self,
+        cap: timedelta,
+        body: "asyncio.Future[JsonDict | None]",
+        expired: asyncio.Event,
+    ) -> None:
+        await asyncio.sleep(cap.total_seconds())
+
+        # Past the cap the body is no longer treated as live: cancel it (the same teardown
+        # the heartbeat uses on lease loss) so the run frees its recovery slot instead of
+        # renewing its lease forever.
+        expired.set()
+        body.cancel()
 
     # ....................... #
 

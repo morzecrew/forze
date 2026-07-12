@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 
+import pytest
+
 from forze.application.contracts.durable.function import DurableRunStatus
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import utcnow
@@ -215,3 +217,59 @@ class TestRunnerHeartbeat:
         result = await run_task
         assert result.status is DurableRunStatus.COMPLETED
         assert side_effects["count"] == 1  # ran exactly once, never reclaimed
+
+
+class TestExternalCancelTeardown:
+    async def test_cancelling_the_awaiter_cancels_body_and_heartbeat(self) -> None:
+        # Cancelling the runner's execute task (a shutdown drain, an enclosing timeout)
+        # must tear the body task down with it — otherwise the body keeps running
+        # detached, still heartbeating, past the cancellation.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        store = resolve_durable_run_store(ctx)
+
+        started = asyncio.Event()
+        unwound = {"body": False}
+
+        registry = DurableFunctionRegistry()
+
+        async def handler(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            started.set()
+            try:
+                await asyncio.Event().wait()  # never set: hold until cancelled
+            finally:
+                unwound["body"] = True
+
+            return {"ok": True}
+
+        registry.register("fn", handler)
+        runner = DurableFunctionRunner(registry=registry)
+
+        record = await store.enqueue("fn", input_json=None, idempotency_key="k")
+
+        before = asyncio.all_tasks()
+        run_task = asyncio.ensure_future(runner.run_now(ctx, "fn", idempotency_key="k"))
+        await started.wait()
+
+        run_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await run_task
+
+        # The body's unwind completed BEFORE the cancellation propagated out of the
+        # awaiter — nothing keeps executing detached.
+        assert unwound["body"] is True
+
+        # No orphan task remains: body, heartbeat, and watchdog were all torn down.
+        leaked = {
+            task
+            for task in asyncio.all_tasks() - before
+            if not task.done() and task is not run_task
+        }
+        assert leaked == set()
+
+        # No terminal write happened on this path: the run stays RUNNING and a later
+        # recovery sweep re-claims it after lease expiry.
+        reloaded = await store.load(record.run_id)
+        assert reloaded is not None
+        assert reloaded.status is DurableRunStatus.RUNNING
