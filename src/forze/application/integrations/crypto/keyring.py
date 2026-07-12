@@ -699,11 +699,15 @@ class Keyring:
         The read pre-pass: with per-tenant data-key reuse a result set carries
         only a handful of distinct wrapped keys, so this is a few KMS calls
         regardless of row count. A same-process read-after-write is already a
-        cache hit and unwraps nothing. When *tenant* is given, each envelope's key
-        id is authorized against the tenant's key before it is unwrapped.
+        cache hit and unwraps nothing. When *tenant* is given, each envelope's
+        key id is authorized against the tenant's key on hits and misses alike —
+        a warm ``wrapped_dek`` (cached by another tenant's legitimate call) must
+        not skip the check, so authorization never depends on cache state.
         """
 
         for envelope in envelopes:
+            await self._authorize_key_id(envelope, tenant)
+
             if self._cached_dek(envelope.wrapped_dek) is None:
                 await self._unwrap(envelope, tenant=tenant)
 

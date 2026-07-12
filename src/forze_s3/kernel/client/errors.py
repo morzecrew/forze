@@ -69,10 +69,22 @@ def _s3_eh(  # skipcq: PY-R1000
                     details=details,
                 )
 
-            # missing resources (bucket / key etc.)
-            if code in {"NoSuchBucket", "NoSuchKey", "NotFound"}:
+            # A missing object is caller-caused (the caller named the key), so it
+            # classifies not_found — retrying it is waste and the breaker must not
+            # count it as downstream ill health. Bare "NotFound"/"404" comes from
+            # HEAD responses (no error body), which in practice are object-level:
+            # bucket existence is probed via bucket_exists, which returns False
+            # before this mapper ever sees the error.
+            if code in {"NoSuchKey", "NotFound", "404"}:
+                return CoreException.not_found(
+                    "S3 object not found.",
+                    details=details,
+                )
+
+            # A missing bucket is a deployment/provisioning fault, not a caller miss.
+            if code == "NoSuchBucket":
                 return CoreException.infrastructure(
-                    "S3 resource not found.",
+                    "S3 bucket not found.",
                     details=details,
                 )
 

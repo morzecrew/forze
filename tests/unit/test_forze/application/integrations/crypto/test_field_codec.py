@@ -193,6 +193,45 @@ def test_envelope_b64_prefix_gate_skips_plaintext() -> None:
 
 
 async def test_cross_tenant_aad_mismatch_fails() -> None:
+    """With a shared key (single key id) the key-id guard passes, so the AAD —
+    which binds the tenant — is the layer that rejects a cross-tenant read."""
+
+    from uuid import uuid4
+
+    from forze.application.contracts.tenancy import TenantIdentity
+
+    ring = _keyring()  # shared key: both tenants resolve the same key id
+    tenant_a = TenantIdentity(tenant_id=uuid4())
+    tenant_b = TenantIdentity(tenant_id=uuid4())
+
+    writer = EncryptingModelCodec(
+        inner=default_model_codec(_Profile),
+        cipher=ring,
+        fields=frozenset({"email"}),
+        tenant_provider=lambda: tenant_a,
+    )
+    await writer.prepare_encrypt()
+    mapping = writer.encode_persistence_mapping(_PROFILE)
+
+    # Tenant B reads tenant A's row: the data key unwraps (same key id), but the
+    # AAD (which binds the tenant) does not match, so authentication fails.
+    reader = EncryptingModelCodec(
+        inner=default_model_codec(_Profile),
+        cipher=ring,
+        fields=frozenset({"email"}),
+        tenant_provider=lambda: tenant_b,
+    )
+    await reader.prepare_decrypt([mapping])
+
+    with pytest.raises(CoreException) as excinfo:
+        reader.decode_mapping(mapping)
+    assert excinfo.value.kind is ExceptionKind.VALIDATION
+
+
+async def test_cross_tenant_pre_pass_rejects_foreign_key_id() -> None:
+    """With per-tenant keys the pre-pass fails closed on the foreign key id —
+    even when the writer's encrypt already warmed the shared decrypt cache."""
+
     from uuid import uuid4
 
     from forze.application.contracts.crypto import TenantTemplateKeyDirectory
@@ -217,19 +256,17 @@ async def test_cross_tenant_aad_mismatch_fails() -> None:
     await writer.prepare_encrypt()
     mapping = writer.encode_persistence_mapping(_PROFILE)
 
-    # Tenant B reads tenant A's row: even after unwrapping, the AAD (which binds
-    # the tenant) does not match, so authentication fails.
     reader = EncryptingModelCodec(
         inner=default_model_codec(_Profile),
         cipher=ring,
         fields=frozenset({"email"}),
         tenant_provider=lambda: tenant_b,
     )
-    await reader.prepare_decrypt([mapping])
 
     with pytest.raises(CoreException) as excinfo:
-        reader.decode_mapping(mapping)
-    assert excinfo.value.kind is ExceptionKind.VALIDATION
+        await reader.prepare_decrypt([mapping])
+
+    assert excinfo.value.code == "core.crypto.key_id_unauthorized"
 
 
 # ....................... #

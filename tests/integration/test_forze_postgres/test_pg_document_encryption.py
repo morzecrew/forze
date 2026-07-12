@@ -222,7 +222,7 @@ async def test_pg_reencrypt_documents_refreshes_envelope(
 
     # Re-encrypt sweep (fresh context/keyring, like a maintenance job).
     sweep = _ctx(pg_client)
-    count = await reencrypt_documents(
+    report = await reencrypt_documents(
         sweep.document.query(_SPEC),
         sweep.document.command(_SPEC),
         to_update=lambda d: _PersonUpdate(email=d.email),
@@ -234,7 +234,7 @@ async def test_pg_reencrypt_documents_refreshes_envelope(
         )
     )["email"]
 
-    assert count == 1
+    assert report.rewritten == 1
     assert after != before  # re-encrypted under a fresh data key
     # Still decrypts to the original value.
     assert (await _ctx(pg_client).document.query(_SPEC).get(created.id)).email == (

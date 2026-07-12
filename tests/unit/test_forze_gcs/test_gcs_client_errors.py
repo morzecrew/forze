@@ -35,9 +35,11 @@ class TestGCSErrorHandler:
         assert exc_interceptor.mapper(original, site="op") is original
 
     def test_not_found(self) -> None:
+        # A caller miss, not downstream ill health: no retries, no breaker
+        # failure, a 404 at the edge — and the mock/real kinds agree.
         r = _gcs_eh(_client_error(404), site="get")
         assert r is not None
-        assert r.kind == ExceptionKind.INFRASTRUCTURE
+        assert r.kind == ExceptionKind.NOT_FOUND
         assert "not found" in r.summary.lower()
 
     def test_forbidden(self) -> None:
@@ -87,6 +89,6 @@ class TestAssembledChain:
 
         out = exc_interceptor.mapper(_client_error(404), site="get")
         assert out is not None
-        assert out.kind == ExceptionKind.INFRASTRUCTURE
+        assert out.kind == ExceptionKind.NOT_FOUND
         assert out.code != "core.unhandled"
         assert "not found" in out.summary.lower()

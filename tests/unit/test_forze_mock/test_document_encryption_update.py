@@ -122,11 +122,11 @@ async def test_reencrypt_through_mock() -> None:
     created = await adapter.create(_CustomerCreate(name="Alice", email="a@example.com"))
     before = _stored_email(state, created.id)
 
-    count = await reencrypt_documents(
+    report = await reencrypt_documents(
         adapter, adapter, to_update=lambda d: _CustomerUpdate(email=d.email)
     )
 
-    assert count == 1
+    assert report.rewritten == 1
     assert _stored_email(state, created.id) != before  # fresh envelope
     assert (await adapter.get(created.id)).email == "a@example.com"  # value preserved
 

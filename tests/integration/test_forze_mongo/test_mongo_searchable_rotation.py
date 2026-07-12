@@ -130,12 +130,12 @@ async def test_mongo_searchable_key_rotation_lifecycle(
     assert await _find_names(rot_ctx, "shared@example.com") == {"Alice", "Bob"}
 
     # 3. Re-index every row under the NEW root (a maintenance sweep).
-    count = await reencrypt_documents(
+    report = await reencrypt_documents(
         rot_ctx.document.query(_SPEC),
         rot_ctx.document.command(_SPEC),
         to_update=lambda d: _PersonUpdate(email=d.email),
     )
-    assert count == 2
+    assert report.rewritten == 2
 
     # 4. Drop the old root — queries still match both, proving the re-index moved
     #    Alice onto the new key (a new-only codec can't see old-key ciphertext).

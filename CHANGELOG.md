@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **KEK replacement with a migration overlap** — a key directory may name a previous key: reads accept current and previous while writes use current, re-encryption sweeps move the data, and dropping the previous key restores the strict guard. Key-version rotation still needs no action.
 
-- **Blob re-encryption sweep (`reencrypt_objects`)** — streams every object of a route down and back under a fresh data key in bounded memory, in place; object metadata survives streamed writes. Backed by the only key-taking write, `overwrite_stream`, under the tenant-namespace guard.
+- **Blob re-encryption sweep (`reencrypt_objects`)** — streams every object of a route down and back under a fresh data key in bounded memory, in place; metadata survives, an object deleted mid-sweep is counted and skipped, and the sweep returns a `ReencryptReport` (rewritten and skipped counts).
 
 - **Cloud KMS backends (`forze_kms`)** — AWS, GCP and Yandex Cloud envelope-key backends behind the shared `KeyManagementPort` (extras kms-aws / kms-gcp / kms-yc), with transparent key-version rotation and per-tenant KEK provisioning through the same provisioner port as schemas and buckets.
 
@@ -186,6 +186,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hot-path micro-optimizations** — byte-identical output: faster normalization, cursor canonicalization, bulk decode and span construction.
 
 - **Generated FastAPI routes omit null response fields by default** — opt out per attach call to restore explicit nulls; raw-Response routes unaffected.
+
+- **`reencrypt_documents` returns a `ReencryptReport`** *(breaking)* — rewritten and skipped counts instead of a bare int; a row deleted between listing and its write-back is now skipped instead of aborting the pass.
 
 ### Removed
 
@@ -327,7 +329,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Cached data keys honor a TTL** — a KEK rotation or revocation takes effect within the configured window; the crypto module now forwards the TTL and cache bounds to the keyring it builds.
 
-- **Confused-deputy guard on decrypt** — with a tenant supplied, the keyring authorizes an envelope's key id against the tenant's own key before any KMS unwrap.
+- **Confused-deputy guard on decrypt** — with a tenant supplied, the keyring authorizes an envelope's key id against the tenant's own key before any KMS unwrap. The guard holds on decrypt-cache hits too — the sync pre-pass previously skipped it when the key was already cached.
 
 - **Vault Transit signer picks up key rotation** — the cached public key re-fetches after a TTL, so a rotated key verifies without a restart.
 
@@ -374,6 +376,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Temporal tenant scoping covers listing and handle ops** — signal, cancel, terminate, describe and every schedule op resolve ids through the create-time tenant prefix and refuse a foreign tenant's id; schedule listing filters to the tenant's prefix. Non-tenant-aware wiring is unchanged.
 
 - **Object storage tenant isolation covers reads, not just writes** — every key-taking read, delete, copy and presign path now requires the key to lie within the active tenant's prefix.
+
+- **A missing S3/GCS object classifies as not_found, not retryable infrastructure** — a caller miss is no longer retried or counted against the breaker, generated download routes return 404 on real backends as on the mock, and the re-encryption sweep can skip a deleted object instead of aborting.
 
 - **Meilisearch write path** — a failed task raises instead of reporting success, task waits are bounded, tenant-tagged writes and deletes are scoped, and windows crossing maxTotalHits fail closed with the index provisioned to match.
 

@@ -3,7 +3,7 @@
 from .codec import EncryptingModelCodec, encrypting_document_codecs
 from .deterministic import DeterministicFieldCipher
 from .keyring import Keyring
-from .maintenance import reencrypt_documents, reencrypt_objects
+from .maintenance import ReencryptReport, reencrypt_documents, reencrypt_objects
 from .payload import (
     MESSAGE_PAYLOAD_DOMAIN,
     PAYLOAD_CIPHER_MISSING_CODE,
@@ -25,6 +25,7 @@ __all__ = [
     "EncryptingModelCodec",
     "encrypting_document_codecs",
     "DeterministicFieldCipher",
+    "ReencryptReport",
     "reencrypt_documents",
     "reencrypt_objects",
     "resolve_document_codecs",

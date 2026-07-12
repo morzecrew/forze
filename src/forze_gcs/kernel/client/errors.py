@@ -27,6 +27,10 @@ _gcs_eh = make_http_exception_mapper(
     label="GCS",
     response_error_type=aiohttp.ClientResponseError,
     http_status_message=_gcs_http_message,
+    # GCS 404s here name objects the caller addresses by key: a miss is
+    # caller-caused, not retryable downstream ill health. Bucket existence is
+    # probed by the lifecycle ensure path before errors reach this mapper.
+    missing_as_not_found=True,
 )
 """Normalize gcloud-aio / aiohttp GCS errors into the :class:`exc.internal` hierarchy."""
 
