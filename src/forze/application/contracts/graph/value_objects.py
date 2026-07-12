@@ -12,6 +12,26 @@ from .types import GraphDirection
 # ----------------------- #
 
 
+def _require_int(value: object, *, name: str, minimum: int, code: str) -> None:
+    """Fail closed on a non-integer or out-of-range traversal bound.
+
+    These bounds end up inlined into backend query text (e.g. a Cypher ``*1..n``
+    quantifier cannot be parameterized), so a loosely-typed caller's value must be
+    rejected here — not silently truncated or interpolated downstream.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise exc.validation(
+            f"{name} must be an integer, got {type(value).__name__}", code=code
+        )
+
+    if value < minimum:
+        raise exc.validation(f"{name} must be >= {minimum}", code=code)
+
+
+# ----------------------- #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class GraphEdgeEndpoint:
     """One allowed (tail, head) pair for an edge kind.
@@ -155,7 +175,8 @@ class GraphWalkParams:
     """Maximum hops from the start vertex (>= 1)."""
 
     max_results: int
-    """Maximum total returned steps or frontier size — adapter defines which (document both)."""
+    """Maximum total returned steps or frontier size — adapter defines which (document both).
+    Must be >= 1."""
 
     direction: GraphDirection = GraphDirection.BOTH
     """Traversal direction for each hop."""
@@ -165,6 +186,22 @@ class GraphWalkParams:
     If non-empty, only these logical edge :attr:`GraphEdgeSpec.name` values may be followed.
     If empty, the adapter may follow all edge kinds in the spec (subject to ``max_depth``/limits).
     """
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        _require_int(
+            self.max_depth,
+            name="GraphWalkParams.max_depth",
+            minimum=1,
+            code="graph_walk_params_bounds",
+        )
+        _require_int(
+            self.max_results,
+            name="GraphWalkParams.max_results",
+            minimum=1,
+            code="graph_walk_params_bounds",
+        )
 
 
 # ....................... #
@@ -211,11 +248,18 @@ class GraphPathStep:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.min_hops < 0 or self.max_hops < self.min_hops:
-            raise exc.validation(
-                "GraphPathStep requires 0 <= min_hops <= max_hops",
-                code="graph_path_step_bounds",
-            )
+        _require_int(
+            self.min_hops,
+            name="GraphPathStep.min_hops",
+            minimum=0,
+            code="graph_path_step_bounds",
+        )
+        _require_int(
+            self.max_hops,
+            name="GraphPathStep.max_hops",
+            minimum=self.min_hops,
+            code="graph_path_step_bounds",
+        )
 
 
 # ....................... #
@@ -254,11 +298,12 @@ class ScopedWalkParams:
                 code="graph_scoped_walk_steps",
             )
 
-        if self.limit < 1:
-            raise exc.validation(
-                "ScopedWalkParams limit must be >= 1",
-                code="graph_scoped_walk_limit",
-            )
+        _require_int(
+            self.limit,
+            name="ScopedWalkParams.limit",
+            minimum=1,
+            code="graph_scoped_walk_limit",
+        )
 
 
 # ....................... #
@@ -275,7 +320,8 @@ class ShortestPathParams:
     """
 
     max_hops: int
-    """Upper bound on path length (number of edges)."""
+    """Upper bound on path length (number of edges); must be >= 0 (with 0, only a
+    zero-length path — from == to — can qualify)."""
 
     edge_kinds: frozenset[str] = frozenset()
     """
@@ -292,6 +338,16 @@ class ShortestPathParams:
     rejects the request (``graph_algorithm_unavailable``). ``max_hops`` bounds the search: the
     cheapest path using at most ``max_hops`` edges is returned — a cheaper path that exists only
     beyond the bound does not suppress a valid bounded one."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        _require_int(
+            self.max_hops,
+            name="ShortestPathParams.max_hops",
+            minimum=0,
+            code="graph_shortest_path_bounds",
+        )
 
 
 # ....................... #

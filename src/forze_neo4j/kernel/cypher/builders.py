@@ -15,6 +15,7 @@ anchor — so a cross-tenant edge cannot leak a foreign node's properties (defen
 that does not depend on the "no edge crosses a tenant boundary" write-path invariant).
 """
 
+import re
 from collections.abc import Iterable, Sequence
 
 from forze.application.contracts.graph import GraphDirection
@@ -266,7 +267,10 @@ def expand(
     tenant_field: str | None = None,
     interior: bool = False,
 ) -> str:
-    rel = _rel(direction, _type_pattern(edge_types), quant=f"*1..{max_depth}")
+    # Coerce to int before inlining: the ``*1..n`` quantifier can't be parameterized, so
+    # this value is interpolated into the query text — ``int()`` keeps a non-integer from
+    # ever reaching it (defense-in-depth even though the field is typed).
+    rel = _rel(direction, _type_pattern(edge_types), quant=f"*1..{int(max_depth)}")
 
     return (
         f"MATCH path = (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}(m)\n"
@@ -584,8 +588,27 @@ def _where(*preds: str) -> str:
     return f"WHERE {' AND '.join(active)}\n" if active else ""
 
 
+_FILTER_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def is_valid_filter_key(key: str) -> bool:
+    """Whether *key* can be safely embedded in a ``$pf_<key>`` parameter name."""
+
+    return _FILTER_KEY_RE.fullmatch(key) is not None
+
+
 def property_predicate(alias: str, keys: Sequence[str]) -> str:
-    """Equality ``AND`` predicate over *keys* (params ``$pf_<key>``); empty for no keys."""
+    """Equality ``AND`` predicate over *keys* (params ``$pf_<key>``); empty for no keys.
+
+    Each key lands inside a ``$pf_<key>`` parameter *name*, which — unlike the property
+    access, protected by :func:`quote` — cannot be backtick-quoted. Keys are therefore
+    restricted to identifier characters; anything else fails closed here rather than
+    becoming query text.
+    """
+
+    for key in keys:
+        if not is_valid_filter_key(key):
+            raise ValueError(f"Invalid property-filter key: {key!r}")
 
     return " AND ".join(f"{alias}.{quote(k)} = $pf_{k}" for k in keys)
 

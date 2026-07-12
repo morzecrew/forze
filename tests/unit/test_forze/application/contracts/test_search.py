@@ -2,9 +2,10 @@
 
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from pydantic import BaseModel, computed_field
 
+from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchQueryDepKey,
@@ -245,6 +246,90 @@ class TestSearchMaterialized:
             read_conformity="lenient",
         )
         assert "total" not in spec.resolved_lenient_read_fields
+
+
+class _Contract(BaseModel):
+    title: str = ""
+    ssn: str = ""
+
+
+class _EncryptedSearchModel(BaseModel):
+    id: str = ""
+    title: str = ""
+    email: str = ""
+    secret: str = ""
+    contract: _Contract = _Contract()
+
+
+class TestSearchEncryptedContentFields:
+    """A field-encrypted field cannot be an indexed content field — the index would
+    store ciphertext and every content search against it would silently match nothing."""
+
+    def test_randomized_encrypted_field_rejected_as_content_field(self) -> None:
+        with pytest.raises(CoreException, match="field-encrypted") as ei:
+            SearchSpec(
+                name="docs",
+                model_type=_EncryptedSearchModel,
+                fields=["title", "secret"],
+                encryption=FieldEncryption(encrypted={"secret"}),
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_searchable_encrypted_field_rejected_as_content_field(self) -> None:
+        # Deterministic ("searchable") encryption supports equality filters only —
+        # its ciphertext still does not tokenize, so content matching cannot work.
+        with pytest.raises(CoreException, match="field-encrypted") as ei:
+            SearchSpec(
+                name="docs",
+                model_type=_EncryptedSearchModel,
+                fields=["title", "email"],
+                encryption=FieldEncryption(searchable={"email"}),
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_nested_content_field_with_sealed_root_rejected(self) -> None:
+        # Sealing applies to the whole top-level column: ``contract.title`` lives
+        # inside the ``contract`` ciphertext.
+        with pytest.raises(CoreException, match="field-encrypted"):
+            SearchSpec(
+                name="docs",
+                model_type=_EncryptedSearchModel,
+                fields=["title", "contract.title"],
+                encryption=FieldEncryption(encrypted={"contract"}),
+            )
+
+    def test_encrypted_field_only_projected_still_resolves(self) -> None:
+        # An encrypted field that is only returned (not searched, faceted,
+        # highlighted, or sorted) is a legitimate config.
+        spec = SearchSpec(
+            name="docs",
+            model_type=_EncryptedSearchModel,
+            fields=["title"],
+            encryption=FieldEncryption(
+                encrypted={"secret"}, searchable={"email"}
+            ),
+        )
+
+        assert spec.encryption is not None
+        assert "secret" not in spec.fields
+
+    def test_hub_member_with_sealed_content_field_rejected(self) -> None:
+        # Hub members and federated legs are SearchSpecs, so they self-validate.
+        with pytest.raises(CoreException, match="field-encrypted"):
+            HubSearchSpec(
+                name="hub",
+                model_type=_EncryptedSearchModel,
+                members=(
+                    SearchSpec(
+                        name="leg",
+                        model_type=_EncryptedSearchModel,
+                        fields=["secret"],
+                        encryption=FieldEncryption(encrypted={"secret"}),
+                    ),
+                ),
+            )
 
 
 class TestSearchQueryDepKey:

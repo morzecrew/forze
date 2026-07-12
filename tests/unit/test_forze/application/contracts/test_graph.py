@@ -344,6 +344,47 @@ class TestScopedWalkParams:
                 limit=0,
             )
 
+    def test_step_rejects_non_integer_hops(self) -> None:
+        from forze.application.contracts.graph import GraphPathStep
+
+        with pytest.raises(CoreException, match="graph_path_step_bounds"):
+            GraphPathStep(min_hops="1", max_hops=2)  # type: ignore[arg-type]
+
+        with pytest.raises(CoreException, match="graph_path_step_bounds"):
+            GraphPathStep(min_hops=1, max_hops="3]->() //")  # type: ignore[arg-type]
+
+    def test_rejects_non_integer_limit(self) -> None:
+        from forze.application.contracts.graph import GraphPathStep, ScopedWalkParams
+
+        with pytest.raises(CoreException, match="graph_scoped_walk_limit"):
+            ScopedWalkParams(
+                steps=[GraphPathStep()],
+                target_kind="person",
+                limit="10",  # type: ignore[arg-type]
+            )
+
+
+class TestShortestPathParams:
+    def test_valid(self) -> None:
+        params = ShortestPathParams(max_hops=4)
+        assert params.max_hops == 4
+        assert params.weight_property is None
+
+    def test_zero_max_hops_allowed(self) -> None:
+        # 0 is a legitimate degenerate bound: only a zero-length path can qualify.
+        assert ShortestPathParams(max_hops=0).max_hops == 0
+
+    def test_rejects_negative_max_hops(self) -> None:
+        with pytest.raises(CoreException, match="graph_shortest_path_bounds"):
+            ShortestPathParams(max_hops=-3)
+
+    def test_rejects_non_integer_max_hops(self) -> None:
+        with pytest.raises(CoreException, match="graph_shortest_path_bounds"):
+            ShortestPathParams(max_hops="5]->() DETACH DELETE n //")  # type: ignore[arg-type]
+
+        with pytest.raises(CoreException, match="graph_shortest_path_bounds"):
+            ShortestPathParams(max_hops=2.5)  # type: ignore[arg-type]
+
 
 class TestKeyField:
     def test_node_key_field_default_and_override(self) -> None:
@@ -407,6 +448,29 @@ class TestWalkValueObjects:
         )
         assert params.direction is GraphDirection.OUT
         assert params.edge_kinds == frozenset({"knows"})
+
+    def test_walk_params_reject_bad_bounds(self) -> None:
+        with pytest.raises(CoreException, match="graph_walk_params_bounds"):
+            GraphWalkParams(max_depth=0, max_results=10)
+
+        with pytest.raises(CoreException, match="graph_walk_params_bounds"):
+            GraphWalkParams(max_depth=-1, max_results=10)
+
+        with pytest.raises(CoreException, match="graph_walk_params_bounds"):
+            GraphWalkParams(max_depth=3, max_results=0)
+
+    def test_walk_params_reject_non_integer_bounds(self) -> None:
+        with pytest.raises(CoreException, match="graph_walk_params_bounds"):
+            GraphWalkParams(
+                max_depth="3] MATCH (x) DETACH DELETE x //",  # type: ignore[arg-type]
+                max_results=10,
+            )
+
+        with pytest.raises(CoreException, match="graph_walk_params_bounds"):
+            GraphWalkParams(max_depth=True, max_results=10)
+
+        with pytest.raises(CoreException, match="graph_walk_params_bounds"):
+            GraphWalkParams(max_depth=3, max_results=2.5)  # type: ignore[arg-type]
 
     def test_walk_step_root(self) -> None:
         step = GraphWalkStep(

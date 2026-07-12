@@ -34,7 +34,9 @@ can't drift.
   content-searchable, aggregatable, or matchable in a predicate. Use `searchable`
   (deterministic) for equality lookups — it trades secrecy for queryability (identical
   plaintexts share a ciphertext), so mark a field `searchable` only when you must query
-  it by exact value.
+  it by exact value. Declaring a sealed field (either set) as an indexed
+  `SearchSpec.fields` member is refused at spec construction — the index would hold
+  ciphertext, so every content search over it would silently match nothing.
 - **`searchable` needs a stable root** (`deterministic_root` on the crypto module);
   rotate with `deterministic_previous_root` overlap + `reencrypt_documents`.
 - **Migration tolerance:** legacy plaintext in a sealed field passes through on read by

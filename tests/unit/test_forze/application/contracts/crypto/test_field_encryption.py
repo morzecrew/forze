@@ -71,6 +71,18 @@ def test_validate_fields_exist_rejects_typo() -> None:
     assert "scret" in str(ei.value)
 
 
+def test_sealed_fields_in_covers_both_sets_and_nested_roots() -> None:
+    enc = FieldEncryption(
+        encrypted=frozenset({"ssn"}), searchable=frozenset({"contract"})
+    )
+
+    assert enc.sealed_fields_in(["title", "ssn", "contract.title"]) == [
+        "contract.title",
+        "ssn",
+    ]
+    assert enc.sealed_fields_in(["title", "address.city"]) == []
+
+
 def test_forbidden_sort_fields() -> None:
     enc = FieldEncryption(encrypted=frozenset({"ssn"}), searchable=frozenset({"email"}))
 

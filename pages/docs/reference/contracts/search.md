@@ -25,7 +25,7 @@ result-set snapshots.
 |-------|------|---------|---------|
 | `name` | `str \| StrEnum` | required | logical name / index route |
 | `model_type` | `type[M]` | required | the searchable Pydantic model |
-| `fields` | `Sequence[str]` | required | indexed fields (non-empty, unique) |
+| `fields` | `Sequence[str]` | required | indexed fields (non-empty, unique, never field-encrypted — the index would store ciphertext and content search would silently miss) |
 | `default_weights` | `Mapping[str, float] \| None` | `None` | per-field relevance weights |
 | `fuzzy` | `SearchFuzzySpec \| None` | `None` | fuzzy-matching configuration |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts` (required if the model has no `id`) |

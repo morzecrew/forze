@@ -165,6 +165,32 @@ def test_expand_inlines_depth() -> None:
     assert "*1..3" in q
 
 
+def test_expand_coerces_max_depth_blocking_injection() -> None:
+    """The inlined ``*1..n`` quantifier goes through ``int()`` — a non-integer string
+    can't reach the query text (defense-in-depth even though the field is typed ``int``)."""
+
+    with pytest.raises(ValueError):
+        builders.expand(
+            label="User",
+            key_field="id",
+            direction=GraphDirection.OUT,
+            edge_types=[],
+            max_depth="3..3]->(m) DETACH DELETE m //",  # type: ignore[arg-type]
+        )
+
+
+def test_scoped_walk_coerces_segment_bounds() -> None:
+    with pytest.raises(ValueError):
+        builders.scoped_walk(
+            anchor_label="User",
+            anchor_key_field="id",
+            segments=[
+                (GraphDirection.OUT, [], 1, "3]->() DETACH DELETE n //"),  # type: ignore[list-item]
+            ],
+            target_label="User",
+        )
+
+
 def test_shortest_path_inlines_hops() -> None:
     q = builders.shortest_path(
         from_label="User",
@@ -288,6 +314,24 @@ def test_shortest_path_coerces_max_hops_blocking_injection() -> None:
             edge_types=[],
             max_hops="5]->() DETACH DELETE n //",  # type: ignore[arg-type]
         )
+
+
+def test_property_predicate_renders_equality_params() -> None:
+    assert builders.property_predicate("n", ["name", "age"]) == (
+        "n.`name` = $pf_name AND n.`age` = $pf_age"
+    )
+    assert builders.property_predicate("n", []) == ""
+
+
+def test_property_predicate_rejects_non_identifier_key() -> None:
+    """A filter key lands inside a ``$pf_<key>`` parameter *name*, which cannot be
+    backtick-quoted — a non-identifier key must fail closed, never become query text."""
+
+    with pytest.raises(ValueError):
+        builders.property_predicate("n", ["a OR $pf_a IS NOT NULL"])
+
+    with pytest.raises(ValueError):
+        builders.property_predicate("n", ["a`: 1}) DETACH DELETE n //"])
 
 
 # ----------------------- #
