@@ -508,12 +508,18 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
 
         # Feed the shared page-boundary helper the same shape a flipped backend fetch would
         # produce: a ``before`` page walks the merged (final-order) rows from the cursor
-        # backwards, so its over-fetch window is the reversed tail. Slicing the plain tail
-        # and reversing it here instead would return the page in descending order and mint
-        # the next/prev cursors from each other's rows.
-        window = list(reversed(merged)) if use_before else merged
+        # backwards, so its over-fetch window is the last ``lim + 1`` rows, reversed —
+        # descending from the cursor with the sentinel (the farthest row) last. Only that
+        # tail is copied and flipped; feeding the plain ascending tail instead would return
+        # the page in descending order and mint the next/prev cursors from each other's rows.
+        if use_before:
+            window = merged[-(lim + 1) :]
+            window.reverse()
+        else:
+            window = merged[: lim + 1]
+
         rows, has_more, nxt, prv = keyset_page_bounds(
-            window[: lim + 1],
+            window,
             lim,
             sort_keys=sort_keys,
             directions=directions,

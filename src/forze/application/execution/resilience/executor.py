@@ -15,6 +15,7 @@ import attrs
 from forze.application.contracts.resilience import (
     AdaptiveBulkheadStrategy,
     AdaptiveThrottleStrategy,
+    BreakerStateResettable,
     BulkheadStrategy,
     CircuitBreakerStore,
     CircuitBreakerStrategy,
@@ -469,13 +470,32 @@ class InProcessResilienceExecutor:
 
         ``route=None`` mirrors the wildcard on :meth:`force_open`: it releases the policy-wide
         switch **and** every route-scoped switch under *policy*.
+
+        Also resets the released scope's stored breaker state when the wired store supports
+        it (:class:`BreakerStateResettable` — the in-memory default does): nothing is
+        recorded while the switch is armed, so without the reset a breaker that tripped
+        organically just before the switch would keep rejecting until its ``break_duration``
+        elapsed — after the operator declared recovery. A still-unhealthy downstream
+        re-trips the fresh breaker on real failures. A reset failure is surfaced as a
+        ``breaker_store_error`` metric and never fails the clear.
         """
 
         if route is None:
             self._forced_open -= {k for k in self._forced_open if k[0] == policy}
-            return
+        else:
+            self._forced_open.discard((policy, route))
 
-        self._forced_open.discard((policy, route))
+        if isinstance(self.breaker_store, BreakerStateResettable):
+            try:
+                await self.breaker_store.reset_breaker(policy, route)
+
+            except Exception:  # noqa: BLE001 — bookkeeping, must not fail the clear
+                # The switch is already released; a reset failure only means the
+                # scope recovers on the breaker's own break_duration instead of
+                # immediately. Surfaced as a metric, like a record() failure.
+                pol = self.policies.get(policy)
+                if pol is not None:
+                    self._emit("breaker_store_error", pol, route)
 
     # ....................... #
 

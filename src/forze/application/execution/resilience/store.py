@@ -23,7 +23,7 @@ from forze.application.contracts.resilience import (
     RateLimitStrategy,
     Transition,
 )
-from forze.base.primitives import BoundedLruMap, WindowedP2Quantile, monotonic
+from forze.base.primitives import BoundedLruMap, StrKey, WindowedP2Quantile, monotonic
 
 from .state import BreakerState, RateLimitState
 
@@ -98,6 +98,27 @@ class InMemoryCircuitBreakerStore(CircuitBreakerStore):
         state = self._state_for(key, strat)
 
         return state.on_success(self.clock()) if ok else state.on_failure(self.clock())
+
+    # ....................... #
+
+    async def reset_breaker(
+        self,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> None:
+        """Drop breaker state so the scope starts a fresh epoch (``route=None`` = whole policy).
+
+        Consulted by ``clear_forced_open``: releasing a manual kill-switch must not leave
+        the released scope rejecting on state that predates the switch (nothing was
+        recorded while it was armed). A dropped entry is recreated closed on next access.
+        """
+
+        if route is None:
+            for key in [k for k in self._states if k[0] == policy]:
+                self._states.pop(key, None)
+
+        else:
+            self._states.pop((policy, route), None)
 
 
 # ....................... #

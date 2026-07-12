@@ -81,6 +81,33 @@ class CircuitBreakerStore(Protocol):
 
 
 @runtime_checkable
+class BreakerStateResettable(Protocol):
+    """Optional :class:`CircuitBreakerStore` capability: drop stored breaker state.
+
+    ``clear_forced_open`` consults it so releasing a manual kill-switch starts the
+    released scope on a fresh breaker epoch: nothing is recorded while the switch
+    is armed (rejection happens before breaker admission), so the stored state is
+    stale, and without the reset a breaker that tripped organically just before
+    the switch was armed keeps rejecting until its ``break_duration`` elapses —
+    after the operator has declared recovery. If the downstream is in fact still
+    unhealthy, the fresh breaker re-trips on real failures. A store without this
+    capability keeps its state; the clear itself still succeeds.
+    """
+
+    def reset_breaker(
+        self,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> Awaitable[None]:
+        """Drop the ``(policy, route)`` breaker state; ``route=None`` drops every
+        route under *policy*. Missing state is a no-op."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
 class RateLimitStore(Protocol):
     """Stores token-bucket state and applies acquisition atomically.
 

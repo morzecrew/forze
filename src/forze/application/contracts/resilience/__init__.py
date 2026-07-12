@@ -13,6 +13,7 @@ from .ports import ResilienceExecutorPort
 from .specs import ResilienceSpec
 from .stores import (
     BreakerKey,
+    BreakerStateResettable,
     CircuitBreakerStore,
     LatencyDigestKey,
     LatencyDigestStore,
@@ -43,6 +44,7 @@ from .value_objects import (
 
 __all__ = [
     "BreakerKey",
+    "BreakerStateResettable",
     "CircuitBreakerStore",
     "LatencyDigestKey",
     "LatencyDigestStore",

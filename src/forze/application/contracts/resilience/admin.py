@@ -118,6 +118,12 @@ class ResilienceAdminPort(Protocol):
         ``route=None`` releases the policy-wide wildcard and every route-scoped switch
         under the policy; a route-scoped clear releases only that exact key and does not
         punch a hole in an armed wildcard.
+
+        The released scope also starts a fresh circuit-breaker epoch when the wired
+        breaker store supports resetting (the in-memory default does): a breaker that
+        tripped organically before the switch was armed would otherwise keep rejecting
+        until its ``break_duration`` elapsed, after the operator declared recovery. A
+        still-unhealthy downstream re-trips the fresh breaker on real failures.
         """
 
         ...  # pragma: no cover

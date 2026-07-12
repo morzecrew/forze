@@ -319,9 +319,10 @@ async def _prepare_apply_handler[Args, R](
 
     if once.future is None:
         # The prepare task is an engine-internal continuation of the admitted
-        # operation (awaited below; cancelled on unwind by
-        # run_resolved_operation_plan): adopt the operation onto it so a dispatch
-        # prepare makes rides the admitted drain slot instead of being re-admitted.
+        # operation and inherits its drain slot: any dispatch made during
+        # prepare is classified as nested, not re-admitted (and so cannot be
+        # rejected mid-drain). The task is awaited below and cancelled on
+        # unwind by run_resolved_operation_plan.
         once.future = asyncio.create_task(
             continue_operation_on_task(_run_prepare(handler, args, inv_ctx)),
             name="two-phase-prepare",

@@ -14,6 +14,7 @@ from forze.application.contracts.document import DocumentCommandDepKey
 from forze.application.contracts.resilience import (
     AdaptiveBulkheadStrategy,
     BackoffStrategy,
+    CircuitBreakerStrategy,
     HedgeStrategy,
     PortPolicy,
     ResilienceAdminDepKey,
@@ -23,8 +24,11 @@ from forze.application.contracts.resilience import (
     TimeoutStrategy,
 )
 from forze.application.execution import ResilienceDepsModule
-from forze.application.execution.resilience import InProcessResilienceExecutor
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.application.execution.resilience import (
+    InMemoryCircuitBreakerStore,
+    InProcessResilienceExecutor,
+)
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 # ----------------------- #
 
@@ -337,3 +341,97 @@ class TestRetuneValidation:
                 _retry_policy("occ", retry_on=frozenset({ExceptionKind.INFRASTRUCTURE}))
             )
         assert excinfo.value.code == "resilience.blanket_write_retry"
+
+
+# ....................... #
+
+
+def _breaker_policy(name: str = "p") -> ResiliencePolicy:
+    return ResiliencePolicy(
+        name=name,
+        strategies=(
+            CircuitBreakerStrategy(
+                failure_ratio=1.0,
+                sampling_window=timedelta(seconds=100),
+                min_throughput=2,
+                break_duration=timedelta(seconds=100),
+                half_open_max_calls=1,
+            ),
+        ),
+    )
+
+
+async def _trip_breaker(
+    ex: InProcessResilienceExecutor, policy: str, route: str
+) -> None:
+    async def down() -> str:
+        raise exc.infrastructure("down")
+
+    for _ in range(2):
+        with pytest.raises(CoreException):
+            await ex.run(down, policy=policy, route=route)
+
+    with pytest.raises(CoreException, match="Circuit breaker open"):
+        await ex.run(_ok, policy=policy, route=route)
+
+
+class TestClearForcedOpenResetsBreaker:
+    async def test_clear_restores_traffic_blocked_by_an_open_breaker(self) -> None:
+        # The operator's model: clear = traffic flows. A breaker that tripped
+        # organically just before the switch was armed must not keep rejecting
+        # for its remaining break_duration after the clear.
+        ex = InProcessResilienceExecutor(policies={"p": _breaker_policy()})
+        await _trip_breaker(ex, "p", "r")
+
+        await ex.force_open("p")
+        await ex.clear_forced_open("p")
+
+        assert await ex.run(_ok, policy="p", route="r") == "ok"
+
+    async def test_route_scoped_clear_resets_only_that_route(self) -> None:
+        ex = InProcessResilienceExecutor(policies={"p": _breaker_policy()})
+        await _trip_breaker(ex, "p", "r1")
+        await _trip_breaker(ex, "p", "r2")
+
+        await ex.clear_forced_open("p", "r1")
+
+        assert await ex.run(_ok, policy="p", route="r1") == "ok"
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await ex.run(_ok, policy="p", route="r2")
+
+    async def test_wildcard_clear_resets_only_that_policy(self) -> None:
+        ex = InProcessResilienceExecutor(
+            policies={"p": _breaker_policy(), "q": _breaker_policy("q")}
+        )
+        await _trip_breaker(ex, "p", "r")
+        await _trip_breaker(ex, "q", "r")
+
+        await ex.clear_forced_open("p")
+
+        assert await ex.run(_ok, policy="p", route="r") == "ok"
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await ex.run(_ok, policy="q", route="r")
+
+    async def test_clear_survives_a_store_without_the_reset_capability(self) -> None:
+        # A store implementing only admit/record keeps its state; the clear
+        # itself must still release the switch without erroring.
+        class _MinimalStore:
+            def __init__(self) -> None:
+                self.inner = InMemoryCircuitBreakerStore()
+
+            async def admit(self, key: Any, strat: Any) -> Any:
+                return await self.inner.admit(key, strat)
+
+            async def record(self, key: Any, strat: Any, ok: bool) -> Any:
+                return await self.inner.record(key, strat, ok)
+
+        ex = InProcessResilienceExecutor(
+            policies={"p": _breaker_policy()}, breaker_store=_MinimalStore()
+        )
+        await _trip_breaker(ex, "p", "r")
+
+        await ex.force_open("p")
+        await ex.clear_forced_open("p")
+
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await ex.run(_ok, policy="p", route="r")
