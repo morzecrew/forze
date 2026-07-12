@@ -13,8 +13,9 @@ logging on hot paths costs nothing by default. An expected domain failure logs a
 
 from __future__ import annotations
 
+from contextlib import aclosing
 from time import perf_counter
-from typing import Any, AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator, cast
 
 import attrs
 
@@ -107,40 +108,45 @@ class LoggingInterceptor:
         start = perf_counter()
         items = 0
 
-        try:
-            async for item in nxt(call):
-                items += 1
-                yield item
+        # ``aclosing`` closes the inner stream deterministically on any exit (consumer
+        # ``aclose``, early break, a thrown-in exception) — a backend cursor is released
+        # at scope exit, not whenever GC finalizes an abandoned generator. Abandonment is
+        # not an error: ``GeneratorExit`` bypasses the handlers below, so nothing is logged.
+        async with aclosing(cast("AsyncGenerator[Any, None]", nxt(call))) as stream:
+            try:
+                async for item in stream:
+                    items += 1
+                    yield item
 
-        except CoreException as error:
-            log.debug(
-                "port stream failed",
+            except CoreException as error:
+                log.debug(
+                    "port stream failed",
+                    surface=call.surface,
+                    route=call.route,
+                    op=call.op,
+                    items=items,
+                    duration_ms=round((perf_counter() - start) * 1000, 2),
+                    error_kind=error.kind.value,
+                )
+                raise
+
+            except Exception:
+                log.warning(
+                    "port stream raised",
+                    surface=call.surface,
+                    route=call.route,
+                    op=call.op,
+                    items=items,
+                    duration_ms=round((perf_counter() - start) * 1000, 2),
+                    exc_info=True,
+                )
+                raise
+
+            log.trace(
+                "port stream",
                 surface=call.surface,
                 route=call.route,
                 op=call.op,
                 items=items,
                 duration_ms=round((perf_counter() - start) * 1000, 2),
-                error_kind=error.kind.value,
             )
-            raise
-
-        except Exception:
-            log.warning(
-                "port stream raised",
-                surface=call.surface,
-                route=call.route,
-                op=call.op,
-                items=items,
-                duration_ms=round((perf_counter() - start) * 1000, 2),
-                exc_info=True,
-            )
-            raise
-
-        log.trace(
-            "port stream",
-            surface=call.surface,
-            route=call.route,
-            op=call.op,
-            items=items,
-            duration_ms=round((perf_counter() - start) * 1000, 2),
-        )

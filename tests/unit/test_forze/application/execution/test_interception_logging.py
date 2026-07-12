@@ -140,9 +140,7 @@ class TestLoggingInterceptorStream:
         stream = io.StringIO()
         _configure(stream)
 
-        got = [
-            i async for i in LoggingInterceptor().around_stream(_call(), _ok_stream)
-        ]
+        got = [i async for i in LoggingInterceptor().around_stream(_call(), _ok_stream)]
 
         assert got == [1, 2]
         (record,) = _records(stream)
@@ -154,9 +152,7 @@ class TestLoggingInterceptorStream:
         stream = io.StringIO()
         _configure(stream, level="info")
 
-        got = [
-            i async for i in LoggingInterceptor().around_stream(_call(), _ok_stream)
-        ]
+        got = [i async for i in LoggingInterceptor().around_stream(_call(), _ok_stream)]
 
         assert got == [1, 2]
         assert _records(stream) == []
@@ -192,3 +188,26 @@ class TestLoggingInterceptorStream:
         (record,) = _records(stream)
         assert record["event"] == "port stream raised"
         assert record["level"] == "warning"
+
+    async def test_stream_consumer_aclose_closes_inner_and_logs_nothing(self) -> None:
+        # Closing the logged stream closes the inner stream at that moment (before the
+        # consumer's scope exits, not at GC), and an abandoned stream is not an error —
+        # nothing is logged.
+        stream = io.StringIO()
+        _configure(stream)
+        events: list[str] = []
+
+        async def _cursor(_call: PortCall):
+            try:
+                yield 1
+                yield 2
+            finally:
+                events.append("inner:closed")
+
+        agen = LoggingInterceptor().around_stream(_call(), _cursor)
+        assert await anext(agen) == 1
+        await agen.aclose()
+        events.append("scope:exit")
+
+        assert events == ["inner:closed", "scope:exit"]
+        assert _records(stream) == []

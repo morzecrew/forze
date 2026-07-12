@@ -1,7 +1,14 @@
 """In-process resilience executor composing strategies into a call pipeline."""
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+)
 
 import attrs
 
@@ -85,9 +92,7 @@ _BREAKER_FAILURE_KINDS = frozenset(
 )
 """Kinds that mean the downstream is unreachable / unresponsive — a breaker *failure*."""
 
-_BREAKER_NEUTRAL_KINDS = frozenset(
-    {ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY}
-)
+_BREAKER_NEUTRAL_KINDS = frozenset({ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY})
 """Kinds the breaker ignores: throttling is backpressure and concurrency is contention —
 neither is a downstream *health* signal, so they are recorded as neither success nor failure."""
 
@@ -541,6 +546,102 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
+    async def run_stream[T](
+        self,
+        fn: Callable[[], AsyncIterator[T]],
+        *,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> AsyncGenerator[T]:
+        """Stream ``fn`` under the named ``policy``'s circuit breaker.
+
+        Streams get exactly two things from the policy — the breaker gate and
+        breaker outcome recording:
+
+        * Acquisition is breaker-gated: opening a stream under an open (or
+          operator force-opened, including the policy-wide wildcard) breaker
+          is rejected exactly like a unary call. The gate runs on the first
+          pull — calling an async-generator function performs no I/O, so the
+          first iteration *is* the acquisition.
+        * Outcomes feed the breaker with the same downstream-health
+          classification as unary calls: a mid-stream infrastructure/timeout
+          failure is a breaker failure; clean exhaustion — or the consumer
+          closing the stream early without an error — is a success;
+          caller-caused errors are successes and throttling/contention is
+          neutral.
+
+        The remaining strategies deliberately do not apply to streams:
+
+        * Retry / hedging: a partially consumed stream has already delivered
+          items to the caller — replaying it would re-deliver them.
+        * Per-call timeout and the invocation deadline: they bound one call,
+          and a long-lived stream (a queue ``consume`` loop) is legitimate.
+        * Bulkhead / adaptive concurrency, rate limit, and the adaptive
+          throttle: the controllers meter *completed calls* — holding a slot
+          or token for an open-ended stream lifetime would pin the limit and
+          starve the policy's unary traffic, and a stream's completion
+          latency is not a congestion signal. Acquisition-only accounting
+          would meter nothing (the open itself does no work), so streams are
+          simply not counted.
+        """
+
+        pol = self.policies.get(policy)
+
+        if pol is None:
+            raise exc.configuration(f"Unknown resilience policy {policy!r}")
+
+        self._reject_if_forced_open(pol, route)
+
+        strat = pol.circuit_breaker
+        key = (pol.name, route)
+
+        if strat is not None:
+            await self._admit_breaker(key, strat, pol, route)
+
+        stream = fn()
+
+        try:
+            async for item in stream:
+                yield item
+
+        except GeneratorExit:
+            # The consumer closed the stream early without an error: the
+            # downstream answered fine — a success, same as clean exhaustion.
+            if strat is not None:
+                await self._record_breaker_outcome(key, strat, True, pol, route)
+
+            raise
+
+        except CoreException as error:
+            # Classify by downstream health, exactly like the unary path: a
+            # throttle or a concurrency conflict is not a breaker failure, and
+            # a timeout is not a success.
+            ok = _classify_breaker_outcome(error.kind)
+
+            if strat is not None and ok is not None:
+                await self._record_breaker_outcome(key, strat, ok, pol, route)
+
+            raise
+
+        except Exception:
+            if strat is not None:
+                await self._record_breaker_outcome(key, strat, False, pol, route)
+
+            raise
+
+        else:
+            if strat is not None:
+                await self._record_breaker_outcome(key, strat, True, pol, route)
+
+        finally:
+            # Close the inner stream deterministically on every exit (a no-op
+            # when it already finished); otherwise an abandoned inner generator
+            # is finalized whenever GC gets to it.
+            if isinstance(stream, AsyncGenerator):
+                await stream.aclose()
+
+    # ....................... #
+
     async def run_hedged[T](
         self,
         fn: Callable[[], Awaitable[T]],
@@ -899,22 +1000,7 @@ class InProcessResilienceExecutor:
     ) -> T:
         key = (pol.name, route)
 
-        try:
-            allowed, transition = await self.breaker_store.admit(key, strat)
-
-        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
-            # Store unreachable (e.g. a distributed breaker's Redis is down):
-            # fail open by default so the breaker can't become the outage, or
-            # fail closed if the policy demands it.
-            self._on_store_unavailable("breaker_store_error", pol, route, error)
-            allowed, transition = True, None
-
-        if transition == "half_open":
-            self._emit("breaker_half_open", pol, route)
-
-        if not allowed:
-            self._emit("breaker_open", pol, route)
-            raise exc.infrastructure(f"Circuit breaker open for policy {pol.name!r}")
+        await self._admit_breaker(key, strat, pol, route)
 
         try:
             result = await inner()
@@ -1303,6 +1389,34 @@ class InProcessResilienceExecutor:
         except Exception:  # noqa: BLE001 — controller bookkeeping must never fail a completed call
             self._emit("bulkhead_controller_error", pol, route)
             return False
+
+    # ....................... #
+
+    async def _admit_breaker(
+        self,
+        key: _StateKey,
+        strat: CircuitBreakerStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> None:
+        """Gate one admission through the breaker, shared by the unary and stream paths."""
+
+        try:
+            allowed, transition = await self.breaker_store.admit(key, strat)
+
+        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
+            # Store unreachable (e.g. a distributed breaker's Redis is down):
+            # fail open by default so the breaker can't become the outage, or
+            # fail closed if the policy demands it.
+            self._on_store_unavailable("breaker_store_error", pol, route, error)
+            allowed, transition = True, None
+
+        if transition == "half_open":
+            self._emit("breaker_half_open", pol, route)
+
+        if not allowed:
+            self._emit("breaker_open", pol, route)
+            raise exc.infrastructure(f"Circuit breaker open for policy {pol.name!r}")
 
     # ....................... #
 

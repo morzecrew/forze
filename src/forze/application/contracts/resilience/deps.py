@@ -45,10 +45,12 @@ class PortPolicy:
 
     Applies to **configurable** (spec-built) ports — the families resolved via
     contract accessors (``ctx.document.query(...)``, ``ctx.http.service(...)``,
-    queue/pubsub ports, ...). Non-callables, private/dunder attributes, and
-    **async-generator methods** (``consume``/``tail``/``subscribe``-style
-    streams) are never wrapped: a stream cannot run inside a single
-    ``run()`` call — guard the *consumption loop* with a policy instead.
+    queue/pubsub ports, ...). Non-callables and private/dunder attributes are
+    never wrapped. **Async-generator methods** (``consume``/``tail``/
+    ``subscribe``-style streams) run through ``run_stream``: the stream is
+    breaker-gated at acquisition and its outcome feeds the same breaker as the
+    port's unary methods, but the policy's retry, hedging, timeout, bulkhead,
+    and rate-limit strategies never apply to a stream.
     """
 
     key: DepKey[Any]

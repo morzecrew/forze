@@ -5,7 +5,7 @@ so tests exercise business logic without resilience-induced latency. Fallbacks a
 still honored so fallback-dependent behavior remains testable.
 """
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from typing import final
 
 import attrs
@@ -38,6 +38,27 @@ class PassthroughResilienceExecutor:
                 return await fallback(error)
 
             raise
+
+    # ....................... #
+
+    async def run_stream[T](
+        self,
+        fn: Callable[[], AsyncIterator[T]],
+        *,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> AsyncGenerator[T]:
+        """Stream ``fn`` directly; no breaker gating or recording in the test double."""
+
+        stream = fn()
+
+        try:
+            async for item in stream:
+                yield item
+
+        finally:
+            if isinstance(stream, AsyncGenerator):
+                await stream.aclose()
 
     # ....................... #
 

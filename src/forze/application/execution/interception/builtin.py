@@ -1,7 +1,8 @@
 """Built-in port interceptors for deterministic simulation."""
 
 import asyncio
-from typing import Any, AsyncIterator, Callable
+from contextlib import aclosing
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, cast
 
 import attrs
 
@@ -62,6 +63,10 @@ class CooperativeInterceptor:
 
         await asyncio.sleep(delay)  # stream-open cost + a yield
 
-        async for item in nxt(call):
-            await asyncio.sleep(0)  # each item is an interleaving point
-            yield item
+        # ``aclosing`` closes the inner stream deterministically on any exit (consumer
+        # ``aclose``, early break, a thrown-in exception) — a backend cursor is released
+        # at scope exit, not whenever GC finalizes an abandoned generator.
+        async with aclosing(cast("AsyncGenerator[Any, None]", nxt(call))) as stream:
+            async for item in stream:
+                await asyncio.sleep(0)  # each item is an interleaving point
+                yield item
