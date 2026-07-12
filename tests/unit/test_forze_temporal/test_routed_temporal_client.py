@@ -187,10 +187,20 @@ async def test_routed_temporal_delegates_to_inner_client() -> None:
         await routed.unpause_schedule("sched")
         await routed.trigger_schedule("sched")
         await routed.describe_schedule("sched")
-        await routed.list_schedules(workflow_name="Wf", limit=10)
+        await routed.list_schedules(
+            workflow_name="Wf",
+            limit=10,
+            schedule_id_prefix="tenant:x:",
+        )
 
         assert routed.get_workflow_handle("wf", run_id="run-1") is wf_handle
 
+    inner.list_schedules.assert_awaited_once_with(
+        workflow_name="Wf",
+        limit=10,
+        next_page_token=None,
+        schedule_id_prefix="tenant:x:",
+    )
     inner.signal_workflow.assert_awaited_once_with(
         "wf",
         signal="sig",

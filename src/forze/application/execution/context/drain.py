@@ -1,14 +1,24 @@
 """Per-scope drain gate: in-flight operation accounting for graceful shutdown.
 
 The gate is owned by the scope's :class:`ExecutionContext`; the engine admits
-every **top-level** invocation through it, while nested dispatch (an operation
-invoked from within an already-admitted operation) rides the outer
-invocation's slot — so draining never starves in-flight work of its own
-dispatch chains. :meth:`ExecutionRuntime.shutdown` flips the gate before
-running lifecycle teardown: new invocations are rejected with a retryable
-``THROTTLED`` error (``code="draining"``; **429** at the FastAPI edge, a
-requeue-worthy nack for queue consumers) and in-flight operations get a
-bounded window to finish before the clients they depend on are closed.
+every **top-level** invocation through it, while an admitted operation's own
+dispatch chains ride its slot — so draining never starves an admitted
+operation of them. A dispatch rides the slot in exactly two shapes: a genuine
+in-await nested call (made on the task that owns the enclosing invocation) and
+an engine-internal task hop that explicitly adopts the operation via
+:func:`~forze.application.execution.context.active_operation.continue_operation_on_task`
+(the two-phase ``prepare`` task, hedged attempts, the post-commit callback
+runner, concurrent graph-wave steps — each structurally awaited by the
+invocation, so the slot is held until the whole chain settles and drain waits
+for all of it). Everything else — including an operation a handler spawns on
+its own new task — is a fresh top-level driver: admitted, counted, and
+rejectable.
+
+:meth:`ExecutionRuntime.shutdown` flips the gate before running lifecycle
+teardown: new invocations are rejected with a retryable ``THROTTLED`` error
+(``code="draining"``; **429** at the FastAPI edge, a requeue-worthy nack for
+queue consumers) and in-flight operations get a bounded window to finish
+before the clients they depend on are closed.
 """
 
 import asyncio

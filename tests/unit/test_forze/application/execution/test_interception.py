@@ -14,6 +14,7 @@ import asyncio
 from typing import Any, AsyncIterator
 
 import attrs
+import pytest
 
 from forze.application.execution.interception import (
     CooperativeInterceptor,
@@ -22,6 +23,7 @@ from forze.application.execution.interception import (
     bind_interceptors,
     wrap_intercepted,
 )
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
 
@@ -285,6 +287,162 @@ def test_interceptor_can_rewrite_awaitable_call_args() -> None:
 
     assert asyncio.run(port.step("hi")) == "HI"  # terminal used the rewritten arg
     assert fake.order == ["HI"]  # the real port saw the rewritten value
+
+
+@attrs.define(slots=True)
+class _CursorPort:
+    """A port whose stream tracks its own teardown, like a driver cursor would."""
+
+    events: list[str] = attrs.field(factory=list)
+
+    async def stream(self, n: int) -> AsyncIterator[int]:
+        try:
+            for i in range(n):
+                yield i
+        finally:
+            self.events.append("backend:closed")
+
+
+def test_async_gen_aclose_closes_backend_stream_before_scope_exit() -> None:
+    # Closing the intercepted stream must close the backend generator at that moment —
+    # its ``finally`` (the cursor release) runs before the consumer's scope exits, not
+    # whenever GC finalizes an abandoned generator.
+    fake = _CursorPort()
+    port = wrap_intercepted(fake, interceptors=(), surface="fake", route=None)
+
+    async def run() -> None:
+        stream = port.stream(10)
+        assert await anext(stream) == 0
+        await stream.aclose()
+        fake.events.append("scope:exit")
+
+    asyncio.run(run())
+    assert fake.events == ["backend:closed", "scope:exit"]
+
+
+def test_async_gen_aclose_propagates_through_mixed_chain() -> None:
+    # Close chains through every wrapper — acquisition-only, stream-aware
+    # (CooperativeInterceptor), and the proxy itself — down to the backend generator.
+    @attrs.define(slots=True, frozen=True)
+    class _AroundOnly:
+        async def around(self, call: PortCall, nxt: PortNext) -> Any:
+            return await nxt(call)
+
+    fake = _CursorPort()
+    port = wrap_intercepted(
+        fake,
+        interceptors=(_AroundOnly(), CooperativeInterceptor()),
+        surface="fake",
+        route=None,
+    )
+
+    async def run() -> None:
+        stream = port.stream(10)
+        assert await anext(stream) == 0
+        await stream.aclose()
+        fake.events.append("scope:exit")
+
+    asyncio.run(run())
+    assert fake.events == ["backend:closed", "scope:exit"]
+
+
+def test_async_gen_full_consumption_closes_backend_once() -> None:
+    # Natural exhaustion runs the backend ``finally`` exactly once; a later ``aclose`` on
+    # the exhausted stream is a no-op (no double-close error, no second teardown).
+    fake = _CursorPort()
+    port = wrap_intercepted(
+        fake, interceptors=(CooperativeInterceptor(),), surface="fake", route=None
+    )
+
+    async def run() -> list[int]:
+        stream = port.stream(3)
+        got = [i async for i in stream]
+        await stream.aclose()
+        return got
+
+    assert asyncio.run(run()) == [0, 1, 2]
+    assert fake.events == ["backend:closed"]
+
+
+def test_async_gen_consumer_athrow_closes_backend_and_propagates() -> None:
+    # An exception thrown in by the consumer surfaces from the outer stream and still
+    # closes the backend generator on the way out.
+    fake = _CursorPort()
+    port = wrap_intercepted(
+        fake, interceptors=(CooperativeInterceptor(),), surface="fake", route=None
+    )
+
+    async def run() -> None:
+        stream = port.stream(10)
+        assert await anext(stream) == 0
+
+        with pytest.raises(ValueError, match="stop"):
+            await stream.athrow(ValueError("stop"))
+
+        fake.events.append("scope:exit")
+
+    asyncio.run(run())
+    assert fake.events == ["backend:closed", "scope:exit"]
+
+
+def test_async_gen_inner_failure_surfaces_intact_and_closes_backend() -> None:
+    # A mid-stream backend failure keeps its type/kind through the chain and the backend
+    # ``finally`` still runs deterministically.
+    events: list[str] = []
+
+    @attrs.define(slots=True)
+    class _FailingPort:
+        async def stream(self, n: int) -> AsyncIterator[int]:
+            try:
+                yield 0
+                raise exc.not_found("gone")
+            finally:
+                events.append("backend:closed")
+
+    port = wrap_intercepted(
+        _FailingPort(),
+        interceptors=(CooperativeInterceptor(),),
+        surface="fake",
+        route=None,
+    )
+
+    async def run() -> list[int]:
+        got: list[int] = []
+
+        with pytest.raises(CoreException) as excinfo:
+            async for i in port.stream(10):
+                got.append(i)
+
+        assert excinfo.value.kind.value == "not_found"
+        events.append("scope:exit")
+        return got
+
+    assert asyncio.run(run()) == [0]
+    assert events == ["backend:closed", "scope:exit"]
+
+
+def test_cooperative_around_stream_closes_inner_on_aclose() -> None:
+    # The builtin stream-aware interceptor, taken alone: closing its stream closes the
+    # inner continuation at that moment.
+    events: list[str] = []
+
+    async def inner(_call: PortCall) -> AsyncIterator[int]:
+        try:
+            yield 1
+            yield 2
+        finally:
+            events.append("inner:closed")
+
+    call = PortCall(surface="fake", route=None, op="stream", args=(), kwargs={})
+
+    async def run() -> None:
+        stream = CooperativeInterceptor().around_stream(call, inner)
+        assert await anext(stream) == 1
+        await stream.aclose()
+        events.append("scope:exit")
+
+    asyncio.run(run())
+    assert events == ["inner:closed", "scope:exit"]
 
 
 def test_interceptor_can_rewrite_async_gen_call_args() -> None:

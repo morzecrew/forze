@@ -123,7 +123,7 @@ async def test_dispatch_notification_rejects_unsupported_command() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_notification_message_uses_queue_type_and_key() -> None:
+async def test_process_notification_message_uses_queue_type() -> None:
     event_id = uuid4()
     router = NotificationRouter().register(
         "project.created",
@@ -182,23 +182,35 @@ def test_integration_event_id_deterministic_without_key() -> None:
     assert other.event_id != first.event_id
 
 
-def test_integration_event_id_uses_valid_key() -> None:
-    event_id = uuid4()
-    message = QueueMessage(
-        queue="jobs",
-        id="broker-msg-1",
-        payload=_ProjectCreated(project_id="abc"),
-        type="project.created",
-        key=str(event_id),
-    )
+def test_integration_event_ids_distinct_for_headerless_uuid_shaped_key() -> None:
+    """Two header-less events sharing a UUID-shaped ordering key stay distinct.
 
-    event = integration_event_from_queue_message(message)
+    The key is a grouping token (every event of one aggregate shares it), so a
+    UUID-shaped key must not become the event id — that would collapse the two
+    events into one dedup identity and silently drop the second notification.
+    """
 
-    assert event.event_id == event_id
+    ordering_key = str(uuid4())
+
+    def build(broker_id: str) -> QueueMessage[_ProjectCreated]:
+        return QueueMessage(
+            queue="jobs",
+            id=broker_id,
+            payload=_ProjectCreated(project_id="abc"),
+            type="project.created",
+            key=ordering_key,
+        )
+
+    first = integration_event_from_queue_message(build("broker-msg-1"))
+    second = integration_event_from_queue_message(build("broker-msg-2"))
+
+    assert first.event_id != second.event_id
+    assert str(first.event_id) != ordering_key
 
 
 # ....................... #
-# event_id priority: forze_event_id header > UUID key > broker identity.
+# event_id priority: forze_event_id header > broker identity ("<queue>:<id>").
+# key is never used — it is the relay's ordering (grouping) key.
 
 
 def test_integration_event_id_header_beats_uuid_shaped_key() -> None:
@@ -245,20 +257,24 @@ def test_integration_event_ids_distinct_for_same_ordering_key() -> None:
     assert first.event_id != second.event_id
 
 
-def test_integration_event_id_malformed_header_falls_back_to_key() -> None:
-    event_id = uuid4()
-    message = QueueMessage(
-        queue="jobs",
-        id="broker-msg-9",
-        payload=_ProjectCreated(project_id="abc"),
-        type="project.created",
-        key=str(event_id),
-        headers={HEADER_EVENT_ID: "not-a-uuid"},
-    )
+def test_integration_event_id_malformed_header_falls_back_to_broker_identity() -> None:
+    def build() -> QueueMessage[_ProjectCreated]:
+        return QueueMessage(
+            queue="jobs",
+            id="broker-msg-9",
+            payload=_ProjectCreated(project_id="abc"),
+            type="project.created",
+            key=str(uuid4()),  # UUID-shaped ordering key must not masquerade
+            headers={HEADER_EVENT_ID: "not-a-uuid"},
+        )
 
-    event = integration_event_from_queue_message(message)
+    first = integration_event_from_queue_message(build())
+    second = integration_event_from_queue_message(build())
 
-    assert event.event_id == event_id
+    # Deterministic across redeliveries of the same broker message...
+    assert first.event_id == second.event_id
+    # ...and never taken from the grouping key.
+    assert str(first.event_id) != build().key
 
 
 def test_integration_event_id_header_with_non_uuid_key_uses_header() -> None:

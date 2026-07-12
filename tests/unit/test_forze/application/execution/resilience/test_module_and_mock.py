@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import AsyncGenerator
 
 import pytest
 
@@ -231,6 +232,16 @@ class TestMockWiring:
         # Passthrough ignores the policy name and applies no behavior.
         assert await ctx.resilience().run(fn, policy="anything") == "ok"
         assert calls == 1
+
+    async def test_passthrough_streams_directly(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+
+        async def stream() -> AsyncGenerator[int]:
+            yield 1
+            yield 2
+
+        items = [i async for i in ctx.resilience().run_stream(stream, policy="x")]
+        assert items == [1, 2]
 
     async def test_passthrough_honors_fallback(self) -> None:
         ctx = context_from_modules(MockDepsModule())

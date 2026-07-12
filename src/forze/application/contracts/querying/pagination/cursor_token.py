@@ -4,10 +4,11 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal, InvalidOperation
-from typing import Any, Iterator, Sequence, cast
+from typing import Any, Callable, Iterator, Sequence, cast
 
 import attrs
 
@@ -669,6 +670,11 @@ def _parse_value(v: Any) -> Any:
     if v is None:
         return None
 
+    # A non-finite float can't be a legitimate sort-key boundary and would poison the
+    # Python-side seek comparisons, so it is rejected here like any tampered value.
+    if isinstance(v, float) and not math.isfinite(v):
+        raise exc.validation("Invalid cursor token")
+
     if isinstance(v, (int, float, str, bool)):
         return v
 
@@ -681,12 +687,20 @@ def _parse_value(v: Any) -> Any:
         and isinstance(v[_DECIMAL_TAG], str)
     ):
         try:
-            return Decimal(
+            dec = Decimal(
                 v[_DECIMAL_TAG]  # pyright: ignore[reportUnknownArgumentType]
             )
 
         except InvalidOperation as e:
             raise exc.validation("Invalid cursor token") from e
+
+        # ``Decimal("NaN")`` / ``Decimal("Infinity")`` parse without error but a NaN
+        # comparison raises ``InvalidOperation`` in the seek paths (a 500); a non-finite
+        # boundary is a tampered cursor and must fail closed at decode time.
+        if not dec.is_finite():
+            raise exc.validation("Invalid cursor token")
+
+        return dec
 
     # Token values are client-controlled: any other container (or non-scalar) is rejected
     # as a tampered cursor.
@@ -820,7 +834,19 @@ def decode_keyset_v1(
     except ValueError as e:
         raise exc.validation("Invalid cursor token") from e
 
-    if not isinstance(data, dict) or int(data.get("v", 0)) != _KEYSET_V1:  # type: ignore[arg-type]
+    if not isinstance(data, dict):
+        raise exc.validation("Invalid cursor token")
+
+    # The version field is client-controlled: a non-coercible ``v`` (``"abc"``, a list,
+    # ``null``, an over-large float) is a tampered cursor, never a raw ValueError /
+    # TypeError / OverflowError (500).
+    try:
+        version = int(data.get("v", 0))  # type: ignore[arg-type]
+
+    except (TypeError, ValueError, OverflowError) as e:
+        raise exc.validation("Invalid cursor token") from e
+
+    if version != _KEYSET_V1:
         raise exc.validation("Invalid cursor token")
 
     if binding is not None and (signer is not None or cipher is not None):
@@ -913,8 +939,8 @@ def validate_cursor_token(
 # ....................... #
 
 
-def keyset_page_bounds(
-    raw_rows: list[dict[str, Any]],
+def keyset_page_bounds[R](
+    raw_rows: Sequence[R],
     limit: int,
     *,
     sort_keys: Sequence[str],
@@ -923,15 +949,19 @@ def keyset_page_bounds(
     use_before: bool,
     nulls: Sequence[str] | None = None,
     binding: CursorBinding | None = None,
-) -> tuple[list[dict[str, Any]], bool, str | None, str | None]:
+    row_values: Callable[[R], list[Any]] | None = None,
+) -> tuple[list[R], bool, str | None, str | None]:
     """Trim an over-fetched keyset result to one page and compute next/prev cursors.
 
     *raw_rows* holds up to ``limit + 1`` rows — the extra row signals more pages. A ``before``
     page arrives in flipped (descending-from-cursor) order, so its over-fetch sentinel is the
     row *farthest* from the cursor (the last one); the ``limit`` rows nearest the cursor are
     kept and only then reversed back into ascending order. Returns
-    ``(rows, has_more, next_cursor, prev_cursor)``. Shared by the keyset-cursor search
-    paths so the page-boundary and token-emission logic is single-sourced.
+    ``(rows, has_more, next_cursor, prev_cursor)``. The single home of the sentinel-trim and
+    token-boundary logic: the keyset-cursor search paths call it on plain dict rows, and
+    :func:`~forze.application.contracts.querying.pagination.cursor_page.assemble_keyset_cursor_page`
+    delegates to it for the document adapters. *row_values* extracts a row's token values;
+    the default reads the sort keys off a dict row, so pass it for any other row shape.
     """
 
     has_more = len(raw_rows) > limit
@@ -943,10 +973,12 @@ def keyset_page_bounds(
         # window (e.g. ``before=5&limit=2`` over ``[1..5]`` -> ``[2,3]`` instead of ``[3,4]``).
         rows = list(reversed(raw_rows[:limit]))
     else:
-        rows = raw_rows[:limit]
+        rows = list(raw_rows[:limit])
 
-    def _row_token_vals(row: dict[str, Any]) -> list[Any]:
-        return [row_value_for_sort_key(row, k) for k in sort_keys]
+    def _dict_token_vals(row: R) -> list[Any]:
+        return [row_value_for_sort_key(cast("dict[str, Any]", row), k) for k in sort_keys]
+
+    _row_token_vals = row_values if row_values is not None else _dict_token_vals
 
     nxt = (
         encode_keyset_v1(

@@ -2,7 +2,8 @@
 
 Mirrors the tracing proxy in :mod:`forze.application.execution.tracing.port_proxy`
 but routes public coroutine methods through the registered resilience executor
-(``ctx.resilience().run(...)``) instead of recording events. The two compose:
+(``ctx.resilience().run(...)``, async-generator methods through
+``ctx.resilience().run_stream(...)``) instead of recording events. The two compose:
 the policy proxy wraps **outside** the tracing proxy, so port trace events
 correspond 1:1 with real invocations of the underlying port — each retry
 attempt is traced, and a rejected (throttled / bulkhead-full / breaker-open)
@@ -32,10 +33,14 @@ class ResiliencePortProxy(PortProxy):
 
     Method calls go through ``ctx.resilience().run(fn, policy=..., route=...)``
     lazily at call time, so the proxy never resolves the executor during
-    dependency resolution. Skipped (returned unwrapped): non-callables,
-    private/dunder attributes, methods outside an explicit ``methods`` tuple,
-    async-generator methods (a stream cannot run inside one ``run()`` call —
-    the base default), and plain sync methods (the base default).
+    dependency resolution. Async-generator methods go through ``run_stream``
+    instead: the stream is breaker-gated at acquisition and its outcome feeds
+    the same breaker its unary siblings use, but the policy's retry, hedging,
+    timeout, bulkhead, and rate-limit strategies never apply to a stream (a
+    partially consumed stream cannot be replayed, and a long-lived stream must
+    not be timed out or hold a concurrency slot). Skipped (returned unwrapped):
+    non-callables, private/dunder attributes, methods outside an explicit
+    ``methods`` tuple, and plain sync methods (the base default).
     """
 
     ctx: "ExecutionContext"
@@ -66,6 +71,31 @@ class ResiliencePortProxy(PortProxy):
             )
 
         return guarded
+
+    # ....................... #
+
+    def _wrap_async_gen(self, name: str, attr: Any) -> Any:
+        del name
+
+        @wraps(attr)
+        async def guarded_stream(*args: Any, **kwargs: Any) -> Any:
+            stream = self.ctx.resilience().run_stream(
+                lambda: attr(*args, **kwargs),
+                policy=self.policy,
+                route=self.route,
+            )
+
+            try:
+                async for item in stream:
+                    yield item
+
+            finally:
+                # Close the executor stream deterministically: a consumer
+                # abandoning this wrapper records the breaker outcome now, not
+                # whenever GC finalizes the orphaned generator.
+                await stream.aclose()
+
+        return guarded_stream
 
 
 # ....................... #

@@ -58,7 +58,8 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                     # timeout=None: consume forever. Poison / per-message failures
                     # are absorbed inside the runner's decision ladder (which already
                     # rewinds to committed on a pause); only a mid-batch crash
-                    # (broker connection loss, ...) escapes to here.
+                    # (broker connection loss, a transient KMS fault on decrypt, ...)
+                    # escapes to here.
                     result = await self.consumer.run(ctx, timeout=None)
 
                 except asyncio.CancelledError:

@@ -45,9 +45,17 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         *,
         workflow_id_base: str | None,
     ) -> str:
+        # An explicit base names the started workflow runs, so it must live in
+        # the same tenant id-space as the schedule itself.
+        base = (
+            self.resolve_workflow_id(workflow_id_base)
+            if workflow_id_base is not None
+            else None
+        )
+
         return resolve_scheduled_workflow_id(
             schedule_id,
-            workflow_id_base=workflow_id_base,
+            workflow_id_base=base,
         )
 
     # ....................... #
@@ -142,16 +150,15 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         note: str | None = None,
     ) -> None:
         await self._prepare_queue()
+        sid = self.resolve_schedule_id(handle.schedule_id)
         workflow_id = (
-            self._workflow_id(
-                handle.schedule_id, workflow_id_base=workflow_id_base
-            )
+            self._workflow_id(sid, workflow_id_base=workflow_id_base)
             if workflow_id_base is not None
             else None
         )
 
         await self.client.update_schedule(
-            handle.schedule_id,
+            sid,
             workflow_name=self.spec.name,
             queue=await self._resolved_queue(),
             arg=args,
@@ -163,7 +170,9 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
     # ....................... #
 
     async def delete(self, handle: DurableWorkflowScheduleHandle) -> None:
-        await self.client.delete_schedule(handle.schedule_id)
+        await self.client.delete_schedule(
+            self.resolve_schedule_id(handle.schedule_id),
+        )
 
     # ....................... #
 
@@ -173,7 +182,10 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         *,
         note: str | None = None,
     ) -> None:
-        await self.client.pause_schedule(handle.schedule_id, note=note)
+        await self.client.pause_schedule(
+            self.resolve_schedule_id(handle.schedule_id),
+            note=note,
+        )
 
     # ....................... #
 
@@ -183,12 +195,17 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         *,
         note: str | None = None,
     ) -> None:
-        await self.client.unpause_schedule(handle.schedule_id, note=note)
+        await self.client.unpause_schedule(
+            self.resolve_schedule_id(handle.schedule_id),
+            note=note,
+        )
 
     # ....................... #
 
     async def trigger(self, handle: DurableWorkflowScheduleHandle) -> None:
-        await self.client.trigger_schedule(handle.schedule_id)
+        await self.client.trigger_schedule(
+            self.resolve_schedule_id(handle.schedule_id),
+        )
 
 
 # ....................... #
@@ -211,7 +228,9 @@ class TemporalWorkflowScheduleQueryAdapter[In: BaseModel](
         self,
         handle: DurableWorkflowScheduleHandle,
     ) -> DurableWorkflowScheduleDescription:
-        desc = await self.client.describe_schedule(handle.schedule_id)
+        desc = await self.client.describe_schedule(
+            self.resolve_schedule_id(handle.schedule_id),
+        )
 
         if desc.workflow_name != self.spec.name:
             raise exc.not_found(
@@ -228,10 +247,13 @@ class TemporalWorkflowScheduleQueryAdapter[In: BaseModel](
         limit: int | None = None,
         next_page_token: str | None = None,
     ) -> tuple[tuple[DurableWorkflowScheduleDescription, ...], str | None]:
+        # Tenant-aware listing narrows to the tenant's own id prefix, so ids,
+        # timing, and paused state of other tenants' schedules never surface.
         page = await self.client.list_schedules(
             workflow_name=self.spec.name,
             limit=limit,
             next_page_token=next_page_token,
+            schedule_id_prefix=self._tenant_id_prefix(),
         )
 
         return page.descriptions, page.next_page_token

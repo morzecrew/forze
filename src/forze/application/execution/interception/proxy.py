@@ -162,8 +162,14 @@ class InterceptingPortProxy(PortProxy):
             # Compose per call: the ambient chain is read per call (see ``_chain``).
             stream = compose_stream_chain(self._chain(), terminal)
 
-            async for item in stream(call):
-                yield item
+            # Close the composed stream deterministically on any exit (consumer ``aclose``,
+            # early break, a thrown-in exception) so the close chains down to the backend
+            # generator at scope exit rather than at GC time.
+            async with aclosing(
+                cast("AsyncGenerator[Any, None]", stream(call))
+            ) as agen:
+                async for item in agen:
+                    yield item
 
         return intercepted_async_gen
 

@@ -15,19 +15,26 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.contracts.resilience import (
+    CircuitBreakerStrategy,
     PortPolicy,
     RateLimitStrategy,
     ResilienceExecutorDepKey,
     ResiliencePolicy,
     ResiliencePortPoliciesDepKey,
 )
+from forze.application.contracts.interception import (
+    PortCall,
+    PortNext,
+    StreamPortNext,
+)
 from forze.application.execution import Deps, DepsRegistry, ExecutionContext
+from forze.application.execution.interception import wrap_intercepted
 from forze.application.execution.resilience import InProcessResilienceExecutor
 from forze.application.execution.resilience.port_policy import (
     ResiliencePortProxy,
     wrap_port_policy,
 )
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
@@ -58,8 +65,18 @@ def _policies(permits: int = 1) -> dict[str, ResiliencePolicy]:
     return {
         "port_rl": ResiliencePolicy(
             name="port_rl",
+            strategies=(RateLimitStrategy(permits=permits, per=timedelta(seconds=1)),),
+        ),
+        "port_cb": ResiliencePolicy(
+            name="port_cb",
             strategies=(
-                RateLimitStrategy(permits=permits, per=timedelta(seconds=1)),
+                CircuitBreakerStrategy(
+                    failure_ratio=1.0,
+                    sampling_window=timedelta(seconds=100),
+                    min_throughput=1,
+                    break_duration=timedelta(seconds=10),
+                    half_open_max_calls=1,
+                ),
             ),
         ),
     }
@@ -140,8 +157,26 @@ class _StubPort:
         for i in range(n):
             yield i
 
+    async def broken_stream(self, n: int) -> AsyncGenerator[int]:
+        for i in range(n):
+            yield i
+        raise exc.infrastructure("stream died mid-iteration")
+
     async def _internal(self) -> str:
         return "private"
+
+
+class _PassthroughStreamInterceptor:
+    """Interceptor double standing in for a real interception layer inside the policy."""
+
+    async def around(self, call: PortCall, nxt: PortNext) -> Any:
+        return await nxt(call)
+
+    async def around_stream(
+        self, call: PortCall, nxt: StreamPortNext
+    ) -> AsyncGenerator[Any]:
+        async for item in nxt(call):
+            yield item
 
 
 # ....................... #
@@ -184,11 +219,11 @@ class TestProxyDirect:
         with pytest.raises(CoreException):
             await port.push(1)
 
-    async def test_async_generator_method_not_wrapped(self) -> None:
+    async def test_async_generator_method_not_rate_limited(self) -> None:
         port = self._wrapped()
 
-        # Exhaust the bucket, then stream anyway: async-gen methods are never
-        # run through the policy (a stream cannot run inside one run() call).
+        # Exhaust the bucket, then stream anyway: streams get only the
+        # breaker from a policy — the rate limit never gates them.
         assert await port.fetch(2) == 4
         assert [i async for i in port.stream(3)] == [0, 1, 2]
 
@@ -215,6 +250,118 @@ class TestProxyDirect:
 
         # push is outside the tuple: unwrapped, unthrottled.
         assert await port.push(1) == 1
+
+
+# ....................... #
+
+
+class TestStreamBreaker:
+    """Streams share the port's breaker: gated at acquisition, outcomes recorded."""
+
+    def _wrapped(self, *, methods: tuple[str, ...] | None = None) -> _StubPort:
+        ctx = _build_ctx()
+        stub = _StubPort()
+        return wrap_port_policy(
+            stub,
+            ctx=ctx,
+            port_policy=PortPolicy(
+                key=DocumentQueryDepKey,
+                policy="port_cb",
+                methods=methods,
+            ),
+            resolved_route=None,
+        )
+
+    async def test_mid_stream_failure_opens_breaker_for_unary_sibling(self) -> None:
+        port = self._wrapped()
+
+        with pytest.raises(CoreException) as ei:
+            async for _ in port.broken_stream(2):
+                pass
+
+        assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
+
+        # The stream failure fed the shared breaker: the unary sibling under
+        # the same (policy, route) is fast-failed without reaching the port.
+        calls_before = port.calls
+
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await port.fetch(1)
+
+        assert port.calls == calls_before
+
+    async def test_open_breaker_rejects_new_stream(self) -> None:
+        port = self._wrapped()
+
+        with pytest.raises(CoreException):
+            async for _ in port.broken_stream(0):
+                pass
+
+        # Opening a fresh stream against the known-dead backend is rejected
+        # exactly like a unary call.
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            async for _ in port.stream(3):
+                pass
+
+    async def test_early_close_is_not_a_failure(self) -> None:
+        port = self._wrapped()
+
+        agen = port.stream(3)
+        assert await anext(agen) == 0
+        await agen.aclose()
+
+        # Abandoning the stream cleanly recorded a success: unary calls under
+        # the same breaker are still admitted.
+        assert await port.fetch(2) == 4
+
+    async def test_methods_narrowing_applies_to_streams(self) -> None:
+        port = self._wrapped(methods=("fetch",))
+
+        # broken_stream is outside the tuple: unwrapped, so its failure never
+        # reaches the breaker and fetch stays admitted.
+        with pytest.raises(CoreException):
+            async for _ in port.broken_stream(0):
+                pass
+
+        assert await port.fetch(2) == 4
+
+    def _wrapped_over_interception(self) -> _StubPort:
+        # Mirror the real resolution order: interception innermost, the
+        # resilience policy outermost.
+        ctx = _build_ctx()
+        intercepted = wrap_intercepted(
+            _StubPort(),
+            interceptors=(_PassthroughStreamInterceptor(),),
+            surface=None,
+            route=None,
+        )
+        return wrap_port_policy(
+            intercepted,
+            ctx=ctx,
+            port_policy=PortPolicy(key=DocumentQueryDepKey, policy="port_cb"),
+            resolved_route=None,
+        )
+
+    async def test_mid_stream_failure_recorded_through_interception(self) -> None:
+        port = self._wrapped_over_interception()
+
+        with pytest.raises(CoreException):
+            async for _ in port.broken_stream(1):
+                pass
+
+        # The failure surfaced through the interception wrapper still lands in
+        # the resilience layer's breaker.
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await port.fetch(1)
+
+    async def test_early_close_through_interception_is_not_a_failure(self) -> None:
+        port = self._wrapped_over_interception()
+
+        agen = port.stream(3)
+        assert await anext(agen) == 0
+        await agen.aclose()
+
+        assert await port.fetch(2) == 4
 
 
 # ....................... #
@@ -330,11 +477,9 @@ class TestQueueFamily:
         _assert_throttled(ei)
         assert ei.value.details == {"policy": "port_rl", "route": "jobs"}
 
-    async def test_consume_async_generator_not_wrapped_and_works(self) -> None:
+    async def test_consume_async_generator_not_rate_limited_and_works(self) -> None:
         ctx = _build_ctx(
-            port_policies=(
-                PortPolicy(key=QueueQueryDepKey, policy="port_rl"),
-            ),
+            port_policies=(PortPolicy(key=QueueQueryDepKey, policy="port_rl"),),
             permits=1,
         )
         spec = _queue_spec()
@@ -361,7 +506,8 @@ class TestQueueFamily:
         with pytest.raises(CoreException):
             await query.ack("jobs", [])
 
-        # consume is an async-generator method: never wrapped, still streams.
+        # consume is an async-generator method: wrapped for the breaker only,
+        # so the exhausted rate-limit bucket does not gate it.
         agen = query.consume("jobs", timeout=timedelta(milliseconds=50))
         received = None
 

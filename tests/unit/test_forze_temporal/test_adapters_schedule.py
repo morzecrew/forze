@@ -118,6 +118,7 @@ class TestTemporalWorkflowScheduleQueryAdapter:
             workflow_name="ItSumWorkflow",
             limit=10,
             next_page_token=None,
+            schedule_id_prefix=None,
         )
 
     @pytest.mark.asyncio
@@ -200,3 +201,175 @@ class TestTemporalScheduleCommandLifecycle:
         client.unpause_schedule.assert_awaited_once_with("sched-1", note=None)
         client.trigger_schedule.assert_awaited_once_with("sched-1")
         client.delete_schedule.assert_awaited_once_with("sched-1")
+
+
+class TestTemporalScheduleTenantScoping:
+    """Schedule ops must address only the active tenant's schedule id-space."""
+
+    _tid = UUID("00000000-0000-7000-8000-0000000000aa")
+    _other = UUID("00000000-0000-7000-8000-0000000000bb")
+
+    def _command_adapter(
+        self, client: TemporalClient
+    ) -> TemporalWorkflowScheduleCommandAdapter[_In]:
+        return TemporalWorkflowScheduleCommandAdapter(
+            client=client,
+            queue="tq-a",
+            spec=_spec(),
+            tenant_aware=True,
+            tenant_provider=lambda: TenantIdentity(tenant_id=self._tid),
+        )
+
+    def _query_adapter(
+        self, client: TemporalClient
+    ) -> TemporalWorkflowScheduleQueryAdapter[_In]:
+        return TemporalWorkflowScheduleQueryAdapter(
+            client=client,
+            queue="tq-a",
+            spec=_spec(),
+            tenant_aware=True,
+            tenant_provider=lambda: TenantIdentity(tenant_id=self._tid),
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_ops_prefix_raw_ids(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.update_schedule = AsyncMock()
+        client.pause_schedule = AsyncMock()
+        client.unpause_schedule = AsyncMock()
+        client.trigger_schedule = AsyncMock()
+        client.delete_schedule = AsyncMock()
+
+        adapter = self._command_adapter(client)
+        handle = DurableWorkflowScheduleHandle(schedule_id="sched-1")
+        sid = f"tenant:{self._tid}:sched-1"
+
+        await adapter.update(handle, timing=_timing(), note="n")
+        await adapter.pause(handle, note="paused")
+        await adapter.unpause(handle)
+        await adapter.trigger(handle)
+        await adapter.delete(handle)
+
+        assert client.update_schedule.await_args.args[0] == sid
+        client.pause_schedule.assert_awaited_once_with(sid, note="paused")
+        client.unpause_schedule.assert_awaited_once_with(sid, note=None)
+        client.trigger_schedule.assert_awaited_once_with(sid)
+        client.delete_schedule.assert_awaited_once_with(sid)
+
+    @pytest.mark.asyncio
+    async def test_handle_ops_pass_through_own_prefixed_ids(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.pause_schedule = AsyncMock()
+
+        adapter = self._command_adapter(client)
+        sid = f"tenant:{self._tid}:sched-1"
+
+        await adapter.pause(DurableWorkflowScheduleHandle(schedule_id=sid))
+
+        client.pause_schedule.assert_awaited_once_with(sid, note=None)
+
+    @pytest.mark.asyncio
+    async def test_handle_ops_reject_foreign_tenant_ids(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.pause_schedule = AsyncMock()
+        client.delete_schedule = AsyncMock()
+        client.describe_schedule = AsyncMock()
+
+        cmd = self._command_adapter(client)
+        qry = self._query_adapter(client)
+        handle = DurableWorkflowScheduleHandle(
+            schedule_id=f"tenant:{self._other}:sched-1",
+        )
+
+        with pytest.raises(CoreException, match="outside the active tenant"):
+            await cmd.pause(handle)
+
+        with pytest.raises(CoreException, match="outside the active tenant"):
+            await cmd.delete(handle)
+
+        with pytest.raises(CoreException, match="outside the active tenant"):
+            await qry.describe(handle)
+
+        client.pause_schedule.assert_not_awaited()
+        client.delete_schedule.assert_not_awaited()
+        client.describe_schedule.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_describe_prefixes_raw_ids(self) -> None:
+        from forze.application.contracts.durable.workflow import (
+            DurableWorkflowScheduleDescription,
+        )
+
+        client = MagicMock(spec=TemporalClient)
+        sid = f"tenant:{self._tid}:sched-1"
+        client.describe_schedule = AsyncMock(
+            return_value=DurableWorkflowScheduleDescription(
+                schedule_id=sid,
+                workflow_name="ItSumWorkflow",
+                paused=False,
+                timing=_timing(),
+            ),
+        )
+
+        adapter = self._query_adapter(client)
+
+        out = await adapter.describe(
+            DurableWorkflowScheduleHandle(schedule_id="sched-1"),
+        )
+
+        assert out.schedule_id == sid
+        client.describe_schedule.assert_awaited_once_with(sid)
+
+    @pytest.mark.asyncio
+    async def test_list_filters_to_tenant_prefix(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        page = MagicMock()
+        page.descriptions = ()
+        page.next_page_token = None
+        client.list_schedules = AsyncMock(return_value=page)
+
+        adapter = self._query_adapter(client)
+
+        await adapter.list(limit=5)
+
+        client.list_schedules.assert_awaited_once_with(
+            workflow_name="ItSumWorkflow",
+            limit=5,
+            next_page_token=None,
+            schedule_id_prefix=f"tenant:{self._tid}:",
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_prefixes_workflow_id_base(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.create_schedule = AsyncMock()
+
+        adapter = self._command_adapter(client)
+
+        await adapter.create(
+            "nightly",
+            _In(x=1),
+            _timing(),
+            workflow_id_base="run-base",
+        )
+
+        call = client.create_schedule.await_args
+        assert call.args[0] == f"tenant:{self._tid}:nightly"
+        assert call.kwargs["workflow_id"] == f"tenant:{self._tid}:run-base"
+
+    @pytest.mark.asyncio
+    async def test_update_prefixes_workflow_id_base(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.update_schedule = AsyncMock()
+
+        adapter = self._command_adapter(client)
+
+        await adapter.update(
+            DurableWorkflowScheduleHandle(schedule_id="sched-1"),
+            timing=_timing(),
+            workflow_id_base="run-base",
+        )
+
+        call = client.update_schedule.await_args
+        assert call.args[0] == f"tenant:{self._tid}:sched-1"
+        assert call.kwargs["workflow_id"] == f"tenant:{self._tid}:run-base"

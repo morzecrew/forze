@@ -16,12 +16,20 @@ invoke path tell a genuine in-await nested call (same task — rides the outer
 drain slot) apart from a spawned operation (a *different* task — a fresh
 top-level driver that must be admitted and tracked by the drain gate); see
 :mod:`forze.application.execution.operations.run.invoke`.
+
+The engine's own machinery also hops tasks while remaining *inside* one
+admitted operation — a two-phase ``prepare`` task, a hedged attempt, the
+post-commit callback runner, a concurrent graph wave. Those hops adopt the
+enclosing operation onto the new task **explicitly** via
+:func:`continue_operation_on_task` at each engine spawn site (never ambiently —
+ambient inheritance is exactly what misclassifies user-spawned tasks), so a
+dispatch they make is recognized as nested and rides the admitted slot.
 """
 
 import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Generator
+from typing import Any, Awaitable, Generator
 
 # ----------------------- #
 
@@ -48,6 +56,47 @@ def operation_running() -> Generator[None]:
 
     try:
         yield
+
+    finally:
+        active_operation_var.reset(token)
+
+
+# ....................... #
+
+
+async def continue_operation_on_task[T](awaitable: Awaitable[T]) -> T:
+    """Await *awaitable* as an engine-internal continuation of the enclosing operation.
+
+    Re-stamps an inherited active-operation marker onto the **current** task, so a
+    dispatch made while awaiting is classified as nested — it rides the admitted
+    operation's drain slot instead of being re-admitted (and, mid-drain, rejected
+    with ``THROTTLED`` ``code="draining"``). Wrap the payload of every engine task
+    spawn that stays *inside* one admitted operation: the two-phase ``prepare``
+    task, each hedged attempt, the post-commit callback runner, a concurrent
+    graph-wave step.
+
+    Only for spawns the enclosing invocation structurally awaits (directly, or by
+    cancelling on unwind) before releasing its slot — that is what keeps the
+    drain gate's in-flight accounting exact: the slot is held until the whole
+    chain settles, so drain still waits for it. A task that outlives its spawner
+    must **not** adopt the operation; leave it unwrapped so the gate admits,
+    counts, and can cancel it as the fresh top-level driver it is.
+
+    No enclosing operation (or already on the owning task) is a plain
+    passthrough, so the wrapper is safe on engine paths that also run outside
+    operations (e.g. lifecycle waves).
+    """
+
+    inherited = active_operation_var.get()
+    task = asyncio.current_task()
+
+    if not inherited or task is None or inherited is task:
+        return await awaitable
+
+    token = active_operation_var.set(task)
+
+    try:
+        return await awaitable
 
     finally:
         active_operation_var.reset(token)

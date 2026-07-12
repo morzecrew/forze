@@ -207,8 +207,13 @@ ResilienceDepsModule(
 `route` defaults to the route the port resolved under (its `spec.name`), so
 each backend keys its own breaker/bucket state; set it explicitly to share.
 `methods=None` wraps every public coroutine method. Async-generator methods
-(`consume`, `tail`, `subscribe`-style streams) are never wrapped — a stream
-can't run inside a single `run()` call; guard the consumption loop instead.
+(`consume`, `tail`, `subscribe`-style streams) get the **circuit breaker
+only**: opening a stream is rejected while the breaker is open, and a
+mid-stream infrastructure failure counts as a breaker failure for the port's
+unary methods too (clean completion — or the consumer closing early — counts
+as success). Retry, hedging, timeout, bulkhead, and rate-limit strategies
+never apply to a stream: a partially consumed stream can't be replayed, and a
+long-lived stream must not be timed out or hold a concurrency slot.
 
 ## Fleet-wide state
 

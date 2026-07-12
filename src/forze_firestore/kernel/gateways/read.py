@@ -91,7 +91,10 @@ class FirestoreReadGateway[M: BaseModel](
             self._storage_pk(pk),
         )
 
-        if raw is None:
+        # Firestore cannot combine a by-id fetch with a query filter, so the
+        # tenant scope is enforced on the fetched row: a document owned by
+        # another tenant reads as not-found, matching the filtered read paths.
+        if raw is None or not self._row_matches_tenant(raw):
             raise exc.not_found(f"Record not found: {pk}")
 
         data = self._from_storage_doc(raw)
@@ -435,8 +438,7 @@ class FirestoreReadGateway[M: BaseModel](
             )
 
         _id_asc = normalized[0][1] == "asc"
-        start_after: str | None = None
-        start_before: str | None = None
+        seek_id: str | None = None
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
@@ -459,13 +461,14 @@ class FirestoreReadGateway[M: BaseModel](
             if not rid:
                 raise exc.validation("Invalid cursor for current sort")
 
-            if use_after:
-                start_after = rid
-            else:
-                start_before = rid
+            seek_id = rid
 
         sort_asc = _id_asc
 
+        # A "before" page runs the query in the flipped order with the same
+        # strictly-after seek, then re-reverses the rows below — so rows strictly
+        # preceding the cursor come back in the requested sort order, mirroring
+        # the Mongo adapter's keyset handling.
         if use_before:
             sort_asc = not sort_asc
 
@@ -476,8 +479,7 @@ class FirestoreReadGateway[M: BaseModel](
             filters=flt,
             order_by=order,
             limit=lim + 1,
-            start_after_id=start_after,
-            start_before_id=start_before,
+            start_after_id=seek_id,
         )
 
         if use_before:

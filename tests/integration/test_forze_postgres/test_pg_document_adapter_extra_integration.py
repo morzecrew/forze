@@ -205,6 +205,7 @@ async def test_pg_adapter_cursor_prev_next_desc_before_and_projection(
         UUID("20000000-0000-0000-0000-000000000002"),
         UUID("20000000-0000-0000-0000-000000000003"),
         UUID("20000000-0000-0000-0000-000000000004"),
+        UUID("20000000-0000-0000-0000-000000000005"),
     ]
     for u in ids:
         await cmd.create(_CxCreate(sku=str(u)[:8]), id=u)
@@ -233,7 +234,22 @@ async def test_pg_adapter_cursor_prev_next_desc_before_and_projection(
         cursor={"limit": 2, "before": p1.next_cursor},
         sorts=None,
     )
-    assert len(p_before.hits) >= 1
+    assert [h.id for h in p_before.hits] == [ids[0]]
+    assert p_before.has_more is False
+
+    # Over-fetched before window: the cursor sits at ids[3], three rows precede it, and
+    # the page must be the two rows NEAREST the cursor ([ids[1], ids[2]]), not the two
+    # farthest ([ids[0], ids[1]]).
+    assert p2.next_cursor is not None
+    p_before_far = await q.find_cursor(
+        None,
+        cursor={"limit": 2, "before": p2.next_cursor},
+        sorts=None,
+    )
+    assert [h.id for h in p_before_far.hits] == [ids[1], ids[2]]
+    assert p_before_far.has_more is True
+    assert p_before_far.prev_cursor is not None
+    assert p_before_far.next_cursor is not None
 
     p_proj = await q.project_cursor(
         ["id", "sku"],

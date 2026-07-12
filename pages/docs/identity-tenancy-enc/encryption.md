@@ -106,6 +106,14 @@ folds the record's `id` into the AAD of every randomized field, so a ciphertext
 can't be copied between rows — it applies only to randomized fields, never
 searchable ones (whose ciphertext must stay record-independent to compare).
 
+By default the read path **tolerates plaintext** in a sealed field, so you can
+enable encryption on a live table and backfill without downtime. That tolerance
+is also a fail-open hole once the backfill is done — a ciphertext swapped for
+chosen plaintext would be accepted. Set `reject_plaintext=True` on the policy
+after backfill: a non-ciphertext (or unauthentic searchable) value in a sealed
+field then raises `core.crypto.plaintext_rejected` on read, and id-bound
+ciphertext stops accepting the legacy pre-binding fallback.
+
 !!! warning "Marking a field requires a wired keyring"
 
     A spec that marks any field for encryption but finds no `KeyringDepKey` (or

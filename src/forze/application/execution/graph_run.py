@@ -6,6 +6,8 @@ from typing import Awaitable, Callable
 from forze.application.contracts.execution import ExecutionGraph
 from forze.base.primitives import StrKey, StrKeyMapping
 
+from .context.active_operation import continue_operation_on_task
+
 # ----------------------- #
 
 
@@ -29,8 +31,17 @@ async def _run_wave[G](
         return
 
     if concurrent:
+        # gather wraps each step coroutine in its own task. When a wave runs
+        # inside an admitted operation, each step is an engine-internal
+        # continuation of it (the gather is awaited right here): adopt the
+        # operation onto the step task so a dispatch it makes rides the admitted
+        # drain slot instead of being re-admitted. Outside an operation (e.g. a
+        # lifecycle wave) the wrapper is a passthrough.
         results = await asyncio.gather(
-            *(run_step(steps[step_id]) for step_id in step_ids),
+            *(
+                continue_operation_on_task(run_step(steps[step_id]))
+                for step_id in step_ids
+            ),
             return_exceptions=True,
         )
 

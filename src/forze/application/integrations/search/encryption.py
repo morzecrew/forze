@@ -149,6 +149,7 @@ def resolve_search_read_codec_spec[S: _EncryptableReadSpec](
         deterministic=deterministic,
         tenant_provider=tenant_provider,
         record_id_field=ID_FIELD if encryption.binds_record_id else None,
+        reject_plaintext=encryption.reject_plaintext,
     )
 
     # ``spec`` is always a concrete attrs spec (SearchSpec / HubSearchSpec) at runtime;

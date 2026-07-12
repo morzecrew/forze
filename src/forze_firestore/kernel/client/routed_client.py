@@ -180,7 +180,6 @@ class RoutedFirestoreClient(
         order_by: Sequence[tuple[str, str]] | None = None,
         limit: int | None = None,
         start_after_id: str | None = None,
-        start_before_id: str | None = None,
     ) -> list[JsonDict]:
         inner = await self._get_client()
         return await inner.query_stream(
@@ -189,7 +188,6 @@ class RoutedFirestoreClient(
             order_by=order_by,
             limit=limit,
             start_after_id=start_after_id,
-            start_before_id=start_before_id,
         )
 
     async def query_stream_batched(

@@ -865,6 +865,52 @@ def test_decode_keyset_rejects_container_values() -> None:
         assert exc_info.value.kind == ExceptionKind.VALIDATION
 
 
+def test_decode_keyset_non_integer_version_is_validation_not_500() -> None:
+    # The ``v`` field is client-controlled: a non-coercible version (``"abc"``, a list,
+    # ``null``, an over-large float) must be a clean invalid-cursor validation error,
+    # never a raw ValueError / TypeError / OverflowError (500).
+    import base64
+    import json
+
+    for bad_v in ("abc", [1], None, float("inf")):
+        raw = json.dumps({"v": bad_v, "k": ["a"], "d": ["asc"], "x": [1]}).encode()
+        token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+        with pytest.raises(CoreException, match="Invalid cursor token") as exc_info:
+            decode_keyset_v1(token)
+        assert exc_info.value.kind == ExceptionKind.VALIDATION
+
+
+def test_decode_keyset_rejects_non_finite_decimal_tag() -> None:
+    # ``Decimal("NaN")`` parses without error but poisons the Python-side seek
+    # comparisons (``Decimal("NaN") < x`` raises InvalidOperation -> 500), so a
+    # non-finite ``$dec`` must be rejected at decode time.
+    import base64
+    import json
+
+    for bad in ("NaN", "sNaN", "Infinity", "-Infinity", "abc"):
+        raw = json.dumps(
+            {"v": 1, "k": ["a"], "d": ["asc"], "x": [{"$dec": bad}]}
+        ).encode()
+        token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+        with pytest.raises(CoreException, match="Invalid cursor token") as exc_info:
+            decode_keyset_v1(token)
+        assert exc_info.value.kind == ExceptionKind.VALIDATION
+
+
+def test_decode_keyset_rejects_non_finite_float_values() -> None:
+    # A crafted token could try to smuggle a bare NaN/Infinity literal into the seek
+    # comparisons without the ``$dec`` tag; the strict JSON codec (and, past it, the
+    # value parser) must fail closed with the uniform invalid-cursor error.
+    import base64
+
+    for lit in ("NaN", "Infinity", "-Infinity"):
+        raw = f'{{"v": 1, "k": ["a"], "d": ["asc"], "x": [{lit}]}}'.encode()
+        token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+        with pytest.raises(CoreException, match="Invalid cursor token") as exc_info:
+            decode_keyset_v1(token)
+        assert exc_info.value.kind == ExceptionKind.VALIDATION
+
+
 def test_compare_keyset_mixed_types_raises_validation_not_type_error() -> None:
     # A tampered cursor can put an int next to a str row value; that must surface
     # as an invalid-cursor validation error, never a raw TypeError (500).

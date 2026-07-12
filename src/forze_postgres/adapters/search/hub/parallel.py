@@ -20,9 +20,8 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     build_cursor_binding,
     cursor_protection_active,
-    encode_keyset_v1,
+    keyset_page_bounds,
     row_passes_keyset_seek,
-    row_value_for_sort_key,
     validate_cursor_token,
 )
 from forze.application.contracts.search import SearchOptions, SearchResultSnapshotOptions
@@ -30,7 +29,7 @@ from forze.application.integrations.search import (
     SearchResultSnapshot,
     decrypt_search_rows,
 )
-from forze.base.primitives import JsonDict, build_projection
+from forze.base.primitives import build_projection
 from forze.domain.constants import ID_FIELD
 
 from ....kernel.client import gather_db_work
@@ -507,40 +506,31 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 )
             ]
 
-        has_more = len(merged) > lim
-        rows = merged[-lim:] if use_before else merged[:lim]
-
+        # Feed the shared page-boundary helper the same shape a flipped backend fetch would
+        # produce: a ``before`` page walks the merged (final-order) rows from the cursor
+        # backwards, so its over-fetch window is the last ``lim + 1`` rows, reversed —
+        # descending from the cursor with the sentinel (the farthest row) last. Only that
+        # tail is copied and flipped; feeding the plain ascending tail instead would return
+        # the page in descending order and mint the next/prev cursors from each other's rows.
         if use_before:
-            rows = list(reversed(rows))
+            window = merged[-(lim + 1) :]
+            window.reverse()
+        else:
+            window = merged[: lim + 1]
+
+        rows, has_more, nxt, prv = keyset_page_bounds(
+            window,
+            lim,
+            sort_keys=sort_keys,
+            directions=directions,
+            use_after=use_after,
+            use_before=use_before,
+            binding=binding,
+        )
 
         # Capture the hub score off the page rows before hydration strips ``_hub_rank``
         # (aligned with the final hit order; browse has no score).
         scores = [float(r[HUB_RANK]) for r in rows] if plan.do_legs else None
-
-        def _row_token_vals(row: JsonDict) -> list[Any]:
-            return [row_value_for_sort_key(row, k) for k in sort_keys]
-
-        if has_more and rows:
-            nxt = encode_keyset_v1(
-                sort_keys=sort_keys,
-                directions=directions,
-                values=_row_token_vals(rows[-1]),
-                binding=binding,
-            )
-
-        else:
-            nxt = None
-
-        if rows and (use_after or (use_before and has_more)):
-            prv = encode_keyset_v1(
-                sort_keys=sort_keys,
-                directions=directions,
-                values=_row_token_vals(rows[0]),
-                binding=binding,
-            )
-
-        else:
-            prv = None
 
         trust = search_trust_source(host.read_validation)
         # Phase B: keyset bounds / cursors were computed from the thin sort-key values above;

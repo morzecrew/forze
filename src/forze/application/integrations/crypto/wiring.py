@@ -112,4 +112,5 @@ def resolve_document_codecs(
         searchable_fields=encryption.searchable,
         deterministic=deterministic,
         record_id_field="id" if encryption.binds_record_id else None,
+        reject_plaintext=encryption.reject_plaintext,
     )

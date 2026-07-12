@@ -12,14 +12,18 @@ back with its transaction, or retry semantics could not be exercised.
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import timedelta
 from typing import Any
+from uuid import uuid4
 
 import attrs
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import KeyringDepKey, wrap_encrypted_payload
+from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.inbox import InboxDepKey, InboxSpec
 from forze.application.contracts.queue import (
     QueueMessage,
@@ -29,7 +33,7 @@ from forze.application.contracts.queue import (
 from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
 from tests.support.execution_context import context_from_deps, context_from_modules
@@ -80,6 +84,7 @@ def _plain_ctx(
     state: MockState,
     queue_port: Any | None = None,
     resilience: Any | None = None,
+    cipher: Any | None = None,
 ) -> ExecutionContext:
     """Minimal context: strict tx + mock inbox + a swappable queue query port."""
 
@@ -97,6 +102,9 @@ def _plain_ctx(
 
     if resilience is not None:
         deps[ResilienceExecutorDepKey] = resilience
+
+    if cipher is not None:
+        deps[KeyringDepKey] = cipher
 
     return context_from_deps(Deps.plain(deps))
 
@@ -214,6 +222,41 @@ def _message(
 # ....................... #
 
 
+@attrs.define(slots=True, kw_only=True)
+class _FailingCipher:
+    """Keyring stub whose decrypt always raises the configured error."""
+
+    error: CoreException
+    calls: int = 0
+
+    async def decrypt(self, blob: bytes, *, aad: bytes = b"") -> bytes:
+        del blob, aad
+        self.calls += 1
+        raise self.error
+
+
+# ....................... #
+
+
+def _encrypted_message(
+    message_id: str,
+    *,
+    delivery_count: int | None = 1,
+) -> QueueMessage[Any]:
+    """A message whose payload is a whole-envelope ciphertext wrapper."""
+
+    return QueueMessage(
+        queue="jobs",
+        id=message_id,
+        payload=wrap_encrypted_payload(base64.b64encode(b"sealed").decode("ascii")),
+        headers={HEADER_EVENT_ID: str(uuid4())},
+        delivery_count=delivery_count,
+    )
+
+
+# ....................... #
+
+
 @attrs.define(slots=True)
 class _CountingResilienceExecutor:
     """Executor double: records the policy/route and retries the call once."""
@@ -278,17 +321,20 @@ async def test_happy_path_processes_and_acks() -> None:
 
 
 async def test_duplicate_redelivery_acked_without_handler_rerun() -> None:
-    # At-least-once relay: the same event key published as two broker messages.
+    # At-least-once relay: the same event (same forze_event_id header, as the
+    # relay stamps it) published as two broker messages.
     ctx, q, state = _mock_harness()
     calls: list[str] = []
 
     async def handler(msg: QueueMessage[_Payload]) -> None:
         calls.append(msg.id)
 
-    await q.enqueue("jobs", _Payload(value="x"), key="evt-1")
+    event_headers = {HEADER_EVENT_ID: str(uuid4())}
+
+    await q.enqueue("jobs", _Payload(value="x"), key="order-1", headers=event_headers)
     first = await _run(ctx, handler)
 
-    await q.enqueue("jobs", _Payload(value="x"), key="evt-1")
+    await q.enqueue("jobs", _Payload(value="x"), key="order-1", headers=event_headers)
     second = await _run(ctx, handler)
 
     assert first == ConsumerRunResult(processed=1)
@@ -428,6 +474,55 @@ async def test_warns_once_when_backend_cannot_report_delivery_count(
 
     no_count = [w for w in warnings if "does not report a delivery count" in w]
     assert len(no_count) == 1  # warned once, not per message
+
+
+# ----------------------- #
+# Decrypt failure classification: transient requeues, tampering parks
+
+
+async def test_transient_decrypt_failure_requeues_instead_of_parking() -> None:
+    # A KMS blip on a cold data key surfaces from decrypt as a retryable-kind
+    # error; the message must go back for redelivery, never be dropped as poison.
+    cipher = _FailingCipher(error=exc.infrastructure("KMS unavailable"))
+    stub = _ScriptedQueue(script=[_encrypted_message("m-1")])
+    ctx = _plain_ctx(state=MockState(), queue_port=stub, cipher=cipher)
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:  # pragma: no cover
+        del msg
+        raise AssertionError("handler must not run on an undecrypted message")
+
+    result = await _run(ctx, handler)
+
+    assert cipher.calls == 1
+    assert result == ConsumerRunResult(failed=1)
+    assert stub.nacked == [("m-1", True)]  # requeued, not parked
+    assert stub.acked == []
+
+
+# ....................... #
+
+
+async def test_tampered_decrypt_failure_still_parked_as_poison() -> None:
+    # AEAD auth failure (tampering) is caller/data-caused — non-retryable kind:
+    # redelivery can never fix it, so the message is parked.
+    cipher = _FailingCipher(
+        error=exc.validation(
+            "AEAD authentication failed", code="core.crypto.aead_auth_failed"
+        )
+    )
+    stub = _ScriptedQueue(script=[_encrypted_message("m-1")])
+    ctx = _plain_ctx(state=MockState(), queue_port=stub, cipher=cipher)
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:  # pragma: no cover
+        del msg
+        raise AssertionError("handler must not run on a decrypt-poison message")
+
+    result = await _run(ctx, handler)
+
+    assert cipher.calls == 1
+    assert result == ConsumerRunResult(parked=1)
+    assert stub.nacked == [("m-1", False)]  # parked as poison
+    assert stub.acked == []
 
 
 # ----------------------- #
@@ -605,8 +700,12 @@ async def test_stats_across_mixed_outcomes_in_one_run() -> None:
             failed_once = True
             raise RuntimeError("transient")
 
-    await q.enqueue("jobs", _Payload(value="ok"), key="evt-ok")
-    await q.enqueue("jobs", _Payload(value="ok"), key="evt-ok")  # duplicate publish
+    ok_headers = {HEADER_EVENT_ID: str(uuid4())}
+
+    await q.enqueue("jobs", _Payload(value="ok"), key="evt-ok", headers=ok_headers)
+    await q.enqueue(  # duplicate publish: same event id, new broker message
+        "jobs", _Payload(value="ok"), key="evt-ok", headers=ok_headers
+    )
     await q.enqueue("jobs", _Payload(value="flaky"), key="evt-flaky")
 
     result = await _run(ctx, handler)

@@ -49,7 +49,7 @@ async def test_mongo_text_search_cursor(mongo_client: MongoClient) -> None:
     coll = await mongo_client.collection(collection, db_name=db_name)
     await coll.create_index([("title", "text")])
 
-    ids = [uuid4(), uuid4(), uuid4()]
+    ids = [uuid4() for _ in range(5)]
     await coll.insert_many(
         [
             {"_id": str(i), "id": str(i), "title": f"item {n}"}
@@ -67,7 +67,7 @@ async def test_mongo_text_search_cursor(mongo_client: MongoClient) -> None:
         sorts={"title": "asc"},
     )
 
-    assert len(first.hits) == 2
+    assert [h.title for h in first.hits] == ["item 0", "item 1"]
     assert first.has_more
     assert first.next_cursor is not None
 
@@ -77,7 +77,23 @@ async def test_mongo_text_search_cursor(mongo_client: MongoClient) -> None:
         sorts={"title": "asc"},
     )
 
-    assert len(second.hits) >= 1
+    assert [h.title for h in second.hits] == ["item 2", "item 3"]
+    assert second.has_more
+    assert second.next_cursor is not None
+
+    # Over-fetched before window: the cursor sits at "item 3", three rows precede it,
+    # and the page must be the two rows NEAREST the cursor (["item 1", "item 2"]) in
+    # ascending order, not the two farthest.
+    back = await adapter.search_cursor(
+        "item",
+        cursor={"before": second.next_cursor, "limit": 2},
+        sorts={"title": "asc"},
+    )
+
+    assert [h.title for h in back.hits] == ["item 1", "item 2"]
+    assert back.has_more
+    assert back.prev_cursor is not None
+    assert back.next_cursor is not None
 
 
 @pytest.mark.mongo_atlas_search

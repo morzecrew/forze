@@ -167,7 +167,7 @@ class DurableFunctionRunner:
 
         if max_concurrency is None or max_concurrency <= 1:
             for record in claimed:
-                await self._execute(ctx, record, reraise=False)
+                await self._recover_one(ctx, record)
 
             return len(claimed)
 
@@ -175,11 +175,33 @@ class DurableFunctionRunner:
 
         async def _bounded(record: DurableRunRecord) -> None:
             async with semaphore:
-                await self._execute(ctx, record, reraise=False)
+                await self._recover_one(ctx, record)
 
         await asyncio.gather(*(_bounded(record) for record in claimed))
 
         return len(claimed)
+
+    # ....................... #
+
+    async def _recover_one(
+        self,
+        ctx: ExecutionContext,
+        record: DurableRunRecord,
+    ) -> None:
+        try:
+            await self._execute(ctx, record, reraise=False)
+
+        except Exception:  # noqa: BLE001 — one bad run must not strand the batch
+            # ``_execute`` records body failures itself; anything reaching here escaped
+            # that path (a terminal write against the store errored, tenant binding
+            # failed, ...). Swallow it so the co-claimed runs still drain — the run
+            # stays leased RUNNING and a later sweep re-claims it after lease expiry.
+            logger.exception(
+                "Durable run %s (%s) escaped its failure path during recovery; "
+                "continuing with the rest of the claimed batch",
+                record.run_id,
+                record.name,
+            )
 
     # ....................... #
 
@@ -214,7 +236,6 @@ class DurableFunctionRunner:
         reraise: bool,
     ) -> None:
         store = resolve_durable_run_store(ctx)
-        handler = self.registry.get(record.name)
 
         # The claim's attempt count is this execution's fence token: a stale worker whose
         # lease was reclaimed (attempts advanced) cannot finish the run out from under the
@@ -240,6 +261,12 @@ class DurableFunctionRunner:
         try:
             with span_cm as span:
                 try:
+                    # Resolved inside the failure-handled region: a run whose name is
+                    # no longer registered (deploy skew, a renamed function, a stale
+                    # schedule) must land in FAILED like any other failing run — the
+                    # scanner claims oldest-first, so letting it escape would strand
+                    # every run co-claimed with it as leased RUNNING, sweep after sweep.
+                    handler = self.registry.get(record.name)
                     output = await self._run_body_with_heartbeat(
                         ctx, store, handler, record, fence
                     )

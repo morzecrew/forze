@@ -436,3 +436,95 @@ class TestTemporalClientWorkflowApi:
         )
         handle.describe.assert_awaited_once()
         map_fn.assert_called_once_with(temporal_desc)
+
+
+class _FakeScheduleIterator:
+    """Async iterator standing in for the SDK's schedule list iterator."""
+
+    def __init__(self, entries: list[object]) -> None:
+        self._entries = entries
+        self.next_page_token = b""
+
+    def __aiter__(self):
+        async def gen():
+            for entry in self._entries:
+                yield entry
+
+        return gen()
+
+
+class TestTemporalClientListSchedules:
+    """Schedule listing filters (workflow name, id prefix, limit)."""
+
+    @staticmethod
+    def _connected_client(backend: MagicMock) -> TemporalClient:
+        client = TemporalClient()
+        client._TemporalClient__client = backend  # type: ignore[attr-defined]
+        return client
+
+    @staticmethod
+    def _desc(schedule_id: str):
+        from datetime import timedelta
+
+        from forze.application.contracts.durable.workflow import (
+            DurableWorkflowScheduleDescription,
+            DurableWorkflowScheduleTiming,
+        )
+
+        return DurableWorkflowScheduleDescription(
+            schedule_id=schedule_id,
+            workflow_name="Wf",
+            paused=False,
+            timing=DurableWorkflowScheduleTiming(interval=timedelta(minutes=5)),
+        )
+
+    @pytest.mark.asyncio
+    async def test_schedule_id_prefix_filters_before_limit(self) -> None:
+        """Foreign-prefix entries are skipped and do not consume the limit."""
+
+        entries = ["e1", "e2", "e3"]
+        mapped = {
+            "e1": self._desc("tenant:a:s1"),
+            "e2": self._desc("tenant:b:s1"),
+            "e3": self._desc("tenant:a:s2"),
+        }
+
+        backend = MagicMock()
+        backend.list_schedules = AsyncMock(
+            return_value=_FakeScheduleIterator(entries),
+        )
+        client = self._connected_client(backend)
+
+        with patch(
+            "forze_temporal.kernel.client.client.description_from_list_entry",
+            side_effect=lambda entry: mapped[entry],
+        ):
+            page = await client.list_schedules(
+                limit=2,
+                schedule_id_prefix="tenant:a:",
+            )
+
+        ids = tuple(d.schedule_id for d in page.descriptions)
+        assert ids == ("tenant:a:s1", "tenant:a:s2")
+
+    @pytest.mark.asyncio
+    async def test_no_prefix_returns_all(self) -> None:
+        entries = ["e1", "e2"]
+        mapped = {
+            "e1": self._desc("tenant:a:s1"),
+            "e2": self._desc("plain"),
+        }
+
+        backend = MagicMock()
+        backend.list_schedules = AsyncMock(
+            return_value=_FakeScheduleIterator(entries),
+        )
+        client = self._connected_client(backend)
+
+        with patch(
+            "forze_temporal.kernel.client.client.description_from_list_entry",
+            side_effect=lambda entry: mapped[entry],
+        ):
+            page = await client.list_schedules()
+
+        assert len(page.descriptions) == 2

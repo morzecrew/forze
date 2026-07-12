@@ -158,4 +158,5 @@ class TemporalClientPort(Protocol):
         workflow_name: str | None = None,
         limit: int | None = None,
         next_page_token: str | None = None,
+        schedule_id_prefix: str | None = None,
     ) -> Awaitable[TemporalScheduleListPage]: ...  # pragma: no cover

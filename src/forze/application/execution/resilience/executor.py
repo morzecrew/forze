@@ -1,13 +1,21 @@
 """In-process resilience executor composing strategies into a call pipeline."""
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+)
 
 import attrs
 
 from forze.application.contracts.resilience import (
     AdaptiveBulkheadStrategy,
     AdaptiveThrottleStrategy,
+    BreakerStateResettable,
     BulkheadStrategy,
     CircuitBreakerStore,
     CircuitBreakerStrategy,
@@ -37,6 +45,7 @@ from forze.base.primitives import (
     monotonic,
 )
 
+from ..context.active_operation import continue_operation_on_task
 from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
@@ -84,9 +93,7 @@ _BREAKER_FAILURE_KINDS = frozenset(
 )
 """Kinds that mean the downstream is unreachable / unresponsive — a breaker *failure*."""
 
-_BREAKER_NEUTRAL_KINDS = frozenset(
-    {ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY}
-)
+_BREAKER_NEUTRAL_KINDS = frozenset({ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY})
 """Kinds the breaker ignores: throttling is backpressure and concurrency is contention —
 neither is a downstream *health* signal, so they are recorded as neither success nor failure."""
 
@@ -109,6 +116,48 @@ def _classify_breaker_outcome(kind: ExceptionKind) -> bool | None:
         return None
 
     return True
+
+
+# ....................... #
+
+_AMBIGUOUS_RETRY_KINDS = frozenset(
+    {ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT}
+)
+"""Retry-triggering kinds whose outcome is *ambiguous* — an infrastructure error or a
+per-attempt timeout can leave a write applied-but-unacknowledged, so retrying may duplicate
+it. Concurrency conflicts and throttles are unambiguous (the call did not take effect), so
+they are safe to retry on any method."""
+
+
+def reject_blanket_ambiguous_retry(
+    policy: ResiliencePolicy,
+    key_name: str,
+) -> None:
+    """Refuse *policy* when applying it to **every** method of the port at *key_name* is unsafe.
+
+    A retrying policy bound to a whole port (``methods=None``) retries writes too, and retrying
+    an ambiguous failure can duplicate a non-idempotent write — so the author must opt in per
+    method. Enforced at wiring time (the deps module) and again on every
+    :meth:`InProcessResilienceExecutor.retune`, so a hot-swap cannot re-enable the hazard the
+    wiring gate refused.
+    """
+
+    retry = policy.retry
+
+    if retry is None:
+        return
+
+    if ambiguous := sorted(
+        kind.value for kind in retry.retry_on & _AMBIGUOUS_RETRY_KINDS
+    ):
+        raise exc.configuration(
+            f"Port policy for {key_name!r} applies retrying policy "
+            f"{str(policy.name)!r} (retries {ambiguous}) to every method: this would "
+            "retry a non-idempotent write on an ambiguous failure and risk "
+            "duplicating it. Declare an explicit `methods` list of the operations "
+            "that are safe to retry.",
+            code="resilience.blanket_write_retry",
+        )
 
 
 # ....................... #
@@ -163,6 +212,13 @@ class InProcessResilienceExecutor:
     safe to drop (recreated fresh on next access); the bulkhead maps evict **only idle**
     entries (no permits held, no waiters), so eviction never resets live concurrency control.
     The breaker and rate-limit *stores* have their own caps."""
+
+    blanket_policy_bindings: Mapping[StrKey, tuple[str, ...]] = attrs.field(
+        factory=dict[StrKey, tuple[str, ...]],
+    )
+    """Dependency-key names bound to each policy with no ``methods`` narrowing (the whole
+    port), keyed by policy name. :meth:`retune` re-runs the wiring-time ambiguous-retry gate
+    against these bindings before swapping a policy in."""
 
     # ....................... #
 
@@ -253,7 +309,8 @@ class InProcessResilienceExecutor:
         repr=False,
     )
     """``(policy, route)`` keys an operator has force-opened via the admin port — a manual
-    kill-switch that rejects every call under the key until cleared (see :meth:`force_open`)."""
+    kill-switch that rejects every call under the key until cleared (see :meth:`force_open`).
+    A ``route=None`` entry is a policy-wide wildcard matching every route under the policy."""
 
     # ....................... #
 
@@ -376,7 +433,7 @@ class InProcessResilienceExecutor:
                 ResilienceStateSnapshot(
                     policy=str(name),
                     route=str(route) if route is not None else None,
-                    forced_open=key in self._forced_open,
+                    forced_open=self._is_forced_open(name, route),
                     concurrency_limit=bulkhead.limit if bulkhead is not None else None,
                     in_use=bulkhead.in_use if bulkhead is not None else None,
                     waiting=bulkhead.waiting if bulkhead is not None else None,
@@ -393,7 +450,12 @@ class InProcessResilienceExecutor:
         policy: StrKey,
         route: StrKey | None = None,
     ) -> None:
-        """Trip the ``(policy, route)`` breaker open by hand — a manual kill-switch. Idempotent."""
+        """Trip the ``(policy, route)`` breaker open by hand — a manual kill-switch. Idempotent.
+
+        ``route=None`` is a policy-wide wildcard: it sheds **every** route under *policy*.
+        Port policies key their state by the resolved route (typically the spec name), so an
+        operator force-opening a whole policy must not have to enumerate them.
+        """
 
         self._forced_open.add((policy, route))
 
@@ -404,14 +466,49 @@ class InProcessResilienceExecutor:
         policy: StrKey,
         route: StrKey | None = None,
     ) -> None:
-        """Release a :meth:`force_open` kill-switch for ``(policy, route)``. Idempotent."""
+        """Release a :meth:`force_open` kill-switch for ``(policy, route)``. Idempotent.
 
-        self._forced_open.discard((policy, route))
+        ``route=None`` mirrors the wildcard on :meth:`force_open`: it releases the policy-wide
+        switch **and** every route-scoped switch under *policy*.
+
+        Also resets the released scope's stored breaker state when the wired store supports
+        it (:class:`BreakerStateResettable` — the in-memory default does): nothing is
+        recorded while the switch is armed, so without the reset a breaker that tripped
+        organically just before the switch would keep rejecting until its ``break_duration``
+        elapsed — after the operator declared recovery. A still-unhealthy downstream
+        re-trips the fresh breaker on real failures. A reset failure is surfaced as a
+        ``breaker_store_error`` metric and never fails the clear.
+        """
+
+        if route is None:
+            self._forced_open -= {k for k in self._forced_open if k[0] == policy}
+        else:
+            self._forced_open.discard((policy, route))
+
+        if isinstance(self.breaker_store, BreakerStateResettable):
+            try:
+                await self.breaker_store.reset_breaker(policy, route)
+
+            except Exception:  # noqa: BLE001 — bookkeeping, must not fail the clear
+                # The switch is already released; a reset failure only means the
+                # scope recovers on the breaker's own break_duration instead of
+                # immediately. Surfaced as a metric, like a record() failure.
+                pol = self.policies.get(policy)
+                if pol is not None:
+                    self._emit("breaker_store_error", pol, route)
 
     # ....................... #
 
     async def retune(self, policy: ResiliencePolicy) -> None:
-        """Hot-swap a policy's parameters by name and rebuild its adaptive state on the next call."""
+        """Hot-swap a policy's parameters by name and rebuild its adaptive state on the next call.
+
+        Re-runs the wiring-time blanket-retry gate first: if the retuned policy would retry an
+        ambiguous failure on a port it is bound to with no ``methods`` narrowing, the retune is
+        rejected and the current policy stays in place.
+        """
+
+        for key_name in self.blanket_policy_bindings.get(policy.name, ()):
+            reject_blanket_ambiguous_retry(policy, key_name)
 
         self.policies = {**self.policies, policy.name: policy}
         self._evict_policy_state(policy.name)
@@ -469,6 +566,102 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
+    async def run_stream[T](
+        self,
+        fn: Callable[[], AsyncIterator[T]],
+        *,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> AsyncGenerator[T]:
+        """Stream ``fn`` under the named ``policy``'s circuit breaker.
+
+        Streams get exactly two things from the policy — the breaker gate and
+        breaker outcome recording:
+
+        * Acquisition is breaker-gated: opening a stream under an open (or
+          operator force-opened, including the policy-wide wildcard) breaker
+          is rejected exactly like a unary call. The gate runs on the first
+          pull — calling an async-generator function performs no I/O, so the
+          first iteration *is* the acquisition.
+        * Outcomes feed the breaker with the same downstream-health
+          classification as unary calls: a mid-stream infrastructure/timeout
+          failure is a breaker failure; clean exhaustion — or the consumer
+          closing the stream early without an error — is a success;
+          caller-caused errors are successes and throttling/contention is
+          neutral.
+
+        The remaining strategies deliberately do not apply to streams:
+
+        * Retry / hedging: a partially consumed stream has already delivered
+          items to the caller — replaying it would re-deliver them.
+        * Per-call timeout and the invocation deadline: they bound one call,
+          and a long-lived stream (a queue ``consume`` loop) is legitimate.
+        * Bulkhead / adaptive concurrency, rate limit, and the adaptive
+          throttle: the controllers meter *completed calls* — holding a slot
+          or token for an open-ended stream lifetime would pin the limit and
+          starve the policy's unary traffic, and a stream's completion
+          latency is not a congestion signal. Acquisition-only accounting
+          would meter nothing (the open itself does no work), so streams are
+          simply not counted.
+        """
+
+        pol = self.policies.get(policy)
+
+        if pol is None:
+            raise exc.configuration(f"Unknown resilience policy {policy!r}")
+
+        self._reject_if_forced_open(pol, route)
+
+        strat = pol.circuit_breaker
+        key = (pol.name, route)
+
+        if strat is not None:
+            await self._admit_breaker(key, strat, pol, route)
+
+        stream = fn()
+
+        try:
+            async for item in stream:
+                yield item
+
+        except GeneratorExit:
+            # The consumer closed the stream early without an error: the
+            # downstream answered fine — a success, same as clean exhaustion.
+            if strat is not None:
+                await self._record_breaker_outcome(key, strat, True, pol, route)
+
+            raise
+
+        except CoreException as error:
+            # Classify by downstream health, exactly like the unary path: a
+            # throttle or a concurrency conflict is not a breaker failure, and
+            # a timeout is not a success.
+            ok = _classify_breaker_outcome(error.kind)
+
+            if strat is not None and ok is not None:
+                await self._record_breaker_outcome(key, strat, ok, pol, route)
+
+            raise
+
+        except Exception:
+            if strat is not None:
+                await self._record_breaker_outcome(key, strat, False, pol, route)
+
+            raise
+
+        else:
+            if strat is not None:
+                await self._record_breaker_outcome(key, strat, True, pol, route)
+
+        finally:
+            # Close the inner stream deterministically on every exit (a no-op
+            # when it already finished); otherwise an abandoned inner generator
+            # is finalized whenever GC gets to it.
+            if isinstance(stream, AsyncGenerator):
+                await stream.aclose()
+
+    # ....................... #
+
     async def run_hedged[T](
         self,
         fn: Callable[[], Awaitable[T]],
@@ -511,7 +704,11 @@ class InProcessResilienceExecutor:
         def spawn() -> asyncio.Future[T]:
             nonlocal attempts
             attempts += 1
-            task = asyncio.ensure_future(fn())
+            # Each attempt task is an engine-internal continuation of the
+            # operation awaiting run_hedged (awaited or cancelled in the finally
+            # below): adopt the operation onto it so a dispatch the attempt makes
+            # rides the admitted drain slot instead of being re-admitted.
+            task = asyncio.ensure_future(continue_operation_on_task(fn()))
             tasks.add(task)
 
             if attempts > 1:
@@ -823,22 +1020,7 @@ class InProcessResilienceExecutor:
     ) -> T:
         key = (pol.name, route)
 
-        try:
-            allowed, transition = await self.breaker_store.admit(key, strat)
-
-        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
-            # Store unreachable (e.g. a distributed breaker's Redis is down):
-            # fail open by default so the breaker can't become the outage, or
-            # fail closed if the policy demands it.
-            self._on_store_unavailable("breaker_store_error", pol, route, error)
-            allowed, transition = True, None
-
-        if transition == "half_open":
-            self._emit("breaker_half_open", pol, route)
-
-        if not allowed:
-            self._emit("breaker_open", pol, route)
-            raise exc.infrastructure(f"Circuit breaker open for policy {pol.name!r}")
+        await self._admit_breaker(key, strat, pol, route)
 
         try:
             result = await inner()
@@ -1167,6 +1349,20 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
+    def _is_forced_open(
+        self,
+        policy: StrKey,
+        route: StrKey | None,
+    ) -> bool:
+        """Whether a kill-switch covers ``(policy, route)`` — its own key or the policy-wide
+        ``route=None`` wildcard. The single lookup shared by enforcement and :meth:`inspect`,
+        so what is reported forced-open is exactly what is enforced."""
+
+        forced = self._forced_open
+        return (policy, route) in forced or (policy, None) in forced
+
+    # ....................... #
+
     def _reject_if_forced_open(
         self,
         pol: ResiliencePolicy,
@@ -1179,7 +1375,7 @@ class InProcessResilienceExecutor:
         open breaker does, so callers already tolerant of a tripped breaker need no new handling.
         """
 
-        if (pol.name, route) in self._forced_open:
+        if self._is_forced_open(pol.name, route):
             self._emit("breaker_forced_open", pol, route)
             raise exc.infrastructure(
                 f"Resilience policy {pol.name!r} force-opened by operator",
@@ -1213,6 +1409,34 @@ class InProcessResilienceExecutor:
         except Exception:  # noqa: BLE001 — controller bookkeeping must never fail a completed call
             self._emit("bulkhead_controller_error", pol, route)
             return False
+
+    # ....................... #
+
+    async def _admit_breaker(
+        self,
+        key: _StateKey,
+        strat: CircuitBreakerStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> None:
+        """Gate one admission through the breaker, shared by the unary and stream paths."""
+
+        try:
+            allowed, transition = await self.breaker_store.admit(key, strat)
+
+        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
+            # Store unreachable (e.g. a distributed breaker's Redis is down):
+            # fail open by default so the breaker can't become the outage, or
+            # fail closed if the policy demands it.
+            self._on_store_unavailable("breaker_store_error", pol, route, error)
+            allowed, transition = True, None
+
+        if transition == "half_open":
+            self._emit("breaker_half_open", pol, route)
+
+        if not allowed:
+            self._emit("breaker_open", pol, route)
+            raise exc.infrastructure(f"Circuit breaker open for policy {pol.name!r}")
 
     # ....................... #
 

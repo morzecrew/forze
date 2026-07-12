@@ -136,6 +136,45 @@ def test_assemble_has_more_and_next_cursor() -> None:
     assert prev is None
 
 
+def test_assemble_before_returns_nearest_previous_page() -> None:
+    # before=5&limit=2 over ids [1..5]: the gateway seeks < 5 in flipped order ([4,3,2])
+    # and re-reverses into ascending [2,3,4], so the over-fetch sentinel (2) is the FRONT
+    # row. The page is the ``limit`` rows nearest the cursor — [3,4], never [2,3] — and
+    # the next/prev tokens come from those rows.
+    fetched = [{ID_FIELD: 2}, {ID_FIELD: 3}, {ID_FIELD: 4}]
+    hits, has_more, nxt, prev = assemble_keyset_cursor_page(
+        fetched,
+        cursor={"limit": 2, "before": "opaque"},
+        sort_keys=[ID_FIELD],
+        directions=["asc"],
+        dump_row=_as_json_dict,
+    )
+    assert hits == [{ID_FIELD: 3}, {ID_FIELD: 4}]
+    assert has_more is True
+    assert nxt is not None
+    _k, _d, _n, next_vals = decode_keyset_v1(nxt)
+    assert next_vals == [4]
+    assert prev is not None
+    _k, _d, _n, prev_vals = decode_keyset_v1(prev)
+    assert prev_vals == [3]
+
+
+def test_assemble_before_exact_fit_keeps_all_rows() -> None:
+    # No sentinel: the whole before-window fits in one page, in ascending order.
+    fetched = [{ID_FIELD: 1}, {ID_FIELD: 2}]
+    hits, has_more, nxt, prev = assemble_keyset_cursor_page(
+        fetched,
+        cursor={"limit": 2, "before": "opaque"},
+        sort_keys=[ID_FIELD],
+        directions=["asc"],
+        dump_row=_as_json_dict,
+    )
+    assert hits == fetched
+    assert has_more is False
+    assert nxt is None
+    assert prev is None
+
+
 def test_assemble_prev_when_after_cursor_present() -> None:
     rows = [{ID_FIELD: "x"}, {ID_FIELD: "y"}]
     _hits, _hm, _nxt, prev = assemble_keyset_cursor_page(

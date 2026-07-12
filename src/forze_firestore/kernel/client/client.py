@@ -467,7 +467,6 @@ class FirestoreClient(FirestoreClientPort):
         order_by: Sequence[tuple[str, str]] | None,
         limit: int | None,
         start_after_id: str | None,
-        start_before_id: str | None,
     ) -> Any:
         query: Any = coll
         tx = await self._transaction_for_op()
@@ -482,14 +481,22 @@ class FirestoreClient(FirestoreClientPort):
         if start_after_id is not None:
             snap = await coll.document(start_after_id).get(transaction=tx)  # type: ignore[untyped-call]
 
-            if snap.exists:
-                query = query.start_after([snap])
+            if not snap.exists:
+                # A missing anchor means the cursor points at a deleted document.
+                # Silently ignoring it would restart pagination from the first
+                # page, so fail closed as a caller-caused error instead.
+                raise exc.precondition(
+                    "Cursor references a document that no longer exists; "
+                    "restart pagination without a cursor",
+                    code="core.document.cursor_stale",
+                )
 
-        if start_before_id is not None:
-            snap = await coll.document(start_before_id).get(transaction=tx)  # type: ignore[untyped-call]
-
-            if snap.exists:
-                query = query.end_before([snap])
+            # The snapshot is passed directly: wrapping it in a list would make
+            # the SDK read it as per-order_by field values, which cannot encode
+            # a snapshot. The "before" side of cursor pagination is expressed by
+            # the caller flipping the sort order (and re-reversing the rows), so
+            # this single strictly-after seek serves both directions.
+            query = query.start_after(snap)
 
         if limit is not None:
             query = query.limit(limit)
@@ -507,7 +514,6 @@ class FirestoreClient(FirestoreClientPort):
         order_by: Sequence[tuple[str, str]] | None = None,
         limit: int | None = None,
         start_after_id: str | None = None,
-        start_before_id: str | None = None,
     ) -> list[JsonDict]:
         tx = await self._transaction_for_op()
         query = await self._build_query(
@@ -516,7 +522,6 @@ class FirestoreClient(FirestoreClientPort):
             order_by=order_by,
             limit=limit,
             start_after_id=start_after_id,
-            start_before_id=start_before_id,
         )
         out: list[JsonDict] = []
 
@@ -555,7 +560,6 @@ class FirestoreClient(FirestoreClientPort):
             order_by=order_by,
             limit=limit,
             start_after_id=None,
-            start_before_id=None,
         )
         batch: list[JsonDict] = []
 

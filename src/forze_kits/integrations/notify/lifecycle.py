@@ -37,7 +37,7 @@ def notification_consumer_lifecycle_step(
 
     Notifications inherit the consumer's inbox dedup and poison parking. The dedup key is
     the same deterministic event id :func:`integration_event_from_queue_message` derives
-    (the ``forze_event_id`` header the relay sets, else ``message.key``, else
+    (the ``forze_event_id`` header the relay sets, else the broker identity
     ``"<queue>:<message.id>"``), so an at-least-once redelivery cannot double-send.
 
     All ``QueueConsumer`` knobs (*max_deliveries*, *retry_policy*,

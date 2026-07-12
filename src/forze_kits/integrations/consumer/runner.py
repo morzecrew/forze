@@ -23,7 +23,7 @@ from forze.application.contracts.queue import (
 from forze.application.execution.context import ExecutionContext
 from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.application.integrations.outbox import decrypt_consumed_payload
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, exc, exception_egress_policy
 from forze.base.primitives import StrKey
 
 from ..inbox import process_with_inbox
@@ -62,7 +62,8 @@ class ConsumerRunResult:
     """Poison messages parked via ``nack(requeue=False)`` after exceeding *max_deliveries*."""
 
     failed: int = 0
-    """Handler failures nacked back (``requeue=True``) for redelivery."""
+    """Handler failures and transient decrypt failures nacked back
+    (``requeue=True``) for redelivery."""
 
 
 # ....................... #
@@ -170,8 +171,12 @@ class QueueConsumer[M]:
        inside their ``consume`` generator and reject undecodable (poison) messages there
        (dead-letter/redrive per broker), so a decode-poison message never reaches the loop.
     2. **Decrypt** — an end-to-end ciphertext envelope is decrypted to the typed model
-       (see :func:`_decrypt_message`); a tamper/decode failure is parked as poison, while a
-       missing-keyring config error aborts the loop (a deployment fault, not per-message).
+       (see :func:`_decrypt_message`). Decrypt failures are classified by exception
+       kind: a **retryable** kind (the keyring's KMS dependency unavailable or
+       throttled while unwrapping a cold data key) is nacked back (``requeue=True``)
+       for redelivery, a non-retryable kind (tampering, unknown key, malformed
+       envelope) is parked as poison, and a missing-keyring config error aborts the
+       loop (a deployment fault, not per-message).
     3. **Park** — when ``max_deliveries`` is set and the message's ``delivery_count``
        exceeds it, the message is parked with ``nack(requeue=False)`` **without** running
        the handler (handler-poison). When the backend can't report a count, parking never
@@ -204,7 +209,7 @@ class QueueConsumer[M]:
 
     message_id: Callable[[QueueMessage[M]], str] | None = None
     """Dedup-id extractor override (default: ``forze_event_id`` header, then
-    ``message.key``, then ``message.id``)."""
+    ``message.id`` — never ``message.key``, which is a grouping key)."""
 
     bind_tenant_from_headers: bool = False
     """Forwarded to ``process_with_inbox``; **opt-in** because headers are untrusted."""
@@ -282,6 +287,25 @@ class QueueConsumer[M]:
                 except CoreException as e:
                     if e.code == _CIPHER_MISSING_CODE:
                         raise  # deployment fault — abort, don't dead-letter every message
+
+                    # Decrypt runs through the KMS-backed keyring, so a transient
+                    # dependency fault (KMS unavailable/throttled on a cold data
+                    # key) surfaces here too and is indistinguishable from
+                    # tampering by failure alone — classify by kind: retryable
+                    # kinds go back for redelivery, only the rest are poison.
+                    if exception_egress_policy(e.kind).retryable:
+                        logger.warning(
+                            "Queue consumer could not decrypt message %s on queue "
+                            "%s (transient %s failure); nack(requeue=True) for "
+                            "redelivery",
+                            message.id,
+                            queue,
+                            e.kind.value,
+                            exc_info=True,
+                        )
+                        await _dispose(port, queue, message.id, requeue=True)
+                        failed += 1
+                        continue
 
                     logger.exception(
                         "Queue consumer could not decrypt message %s on queue %s; "

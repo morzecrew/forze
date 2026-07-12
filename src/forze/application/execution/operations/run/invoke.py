@@ -137,9 +137,10 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         A **top-level** invocation (no operation already active on this task)
         is admitted through the scope's drain gate: rejected with ``THROTTLED``
         (``code="draining"``) once the runtime is draining, counted in flight
-        otherwise. Genuine in-await nested dispatch rides the outer invocation's
-        slot — so draining never starves an admitted operation of its own
-        dispatch chains.
+        otherwise. An admitted operation's own dispatch chains ride its slot —
+        genuine in-await nested dispatch, and engine-internal task hops that
+        adopt the operation explicitly (see below) — so draining never starves
+        an admitted operation of them.
 
         Nesting is decided by **task identity**, not by the marker's mere
         presence: the marker is a ContextVar, so a task a handler spawns
@@ -149,6 +150,16 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         fresh top-level driver it is, so the spawned operation is admitted,
         counted in flight, and its task tracked by the gate — otherwise it would
         escape drain and run on against the clients teardown is closing.
+
+        The engine's own machinery hops tasks *within* one admitted operation —
+        the two-phase ``prepare`` task, hedged attempts, the post-commit
+        callback runner, concurrent graph-wave steps. Each such spawn site wraps
+        its payload in
+        :func:`~forze.application.execution.context.active_operation.continue_operation_on_task`,
+        re-stamping the marker onto the new task, so a dispatch made there is
+        recognized as nested here. The adoption is explicit at the spawn site
+        (never ambient) precisely so user-spawned tasks stay classified as fresh
+        top-level drivers.
 
         Hot path: both flags are token set/reset directly (the equivalent of the
         :func:`~forze.application.execution.context.active_operation.operation_running`

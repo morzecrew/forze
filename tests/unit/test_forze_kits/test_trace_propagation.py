@@ -58,7 +58,7 @@ def _claim(*, traceparent: str | None) -> OutboxClaim:
 
 @attrs.define(slots=True, kw_only=True)
 class _Msg:
-    key: str | None = None
+    id: str | None = None
     headers: Mapping[str, str] = attrs.field(factory=dict)
 
 
@@ -99,7 +99,7 @@ class TestConsumerLink:
                 seen["parent"] = work.parent
 
         ctx = context_from_modules(MockDepsModule())
-        msg = _Msg(key=str(uuid7()), headers={HEADER_TRACEPARENT: traceparent})
+        msg = _Msg(id=str(uuid7()), headers={HEADER_TRACEPARENT: traceparent})
 
         processed = await process_with_inbox(
             ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"
@@ -122,7 +122,7 @@ class TestConsumerLink:
         ctx = context_from_modules(MockDepsModule())
         await process_with_inbox(
             ctx,
-            _Msg(key=str(uuid7())),
+            _Msg(id=str(uuid7())),
             inbox_spec=_SPEC,
             handler=handler,
             tx_route="mock",
@@ -138,7 +138,7 @@ class TestConsumerLink:
                 seen["parent"] = work.parent
 
         ctx = context_from_modules(MockDepsModule())
-        msg = _Msg(key=str(uuid7()), headers={HEADER_TRACEPARENT: "not-a-traceparent"})
+        msg = _Msg(id=str(uuid7()), headers={HEADER_TRACEPARENT: "not-a-traceparent"})
 
         processed = await process_with_inbox(
             ctx, msg, inbox_spec=_SPEC, handler=handler, tx_route="mock"

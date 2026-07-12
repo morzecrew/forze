@@ -196,3 +196,34 @@ class TestDurableScheduler:
             await DurableScheduler().put(
                 ctx, "bad", "fn", "nonsense", now=datetime(2026, 1, 1, tzinfo=UTC)
             )
+
+    async def test_a_poison_schedule_does_not_strand_the_due_batch(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        scheduler = DurableScheduler()
+
+        # The poison schedule has the EARLIEST next_fire_at, so claim_due returns it
+        # first every tick; its stored cron is then corrupted (the shape of a row
+        # written by a version whose syntax this one rejects).
+        await scheduler.put(
+            ctx, "bad", "old_fn", "* * * * *", now=datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC)
+        )
+        state.durable_run_schedules["bad"]["cron"] = "not a cron"
+
+        await scheduler.put(
+            ctx, "good", "fn", "* * * * *", now=datetime(2026, 1, 1, 0, 1, 30, tzinfo=UTC)
+        )
+
+        due = datetime(2026, 1, 1, 0, 2, 5, tzinfo=UTC)
+        assert await scheduler.tick(ctx, now=due) == 2
+
+        # The healthy schedule fired and advanced despite the poison one ahead of it.
+        assert len(_runs_for(state, "fn")) == 1
+        reloaded = await resolve_durable_schedule_store(ctx).load("good")
+        assert reloaded is not None
+        assert reloaded.next_fire_at > due
+
+        # The poison schedule never advances (retried each tick, visible in logs); its
+        # fired instant converges on one run via the idempotency key — no duplicates.
+        assert await scheduler.tick(ctx, now=due) == 1
+        assert len(_runs_for(state, "old_fn")) == 1

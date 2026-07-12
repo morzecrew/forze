@@ -112,10 +112,36 @@ def test_add_tenant_filter_and_tenant_id() -> None:
         if isinstance(filt, FieldFilter) and filt.field_path == TENANT_ID_FIELD
     ]
     assert len(tenant_filters) == 1
-    assert tenant_filters[0].value == tid
+    # Canonical string form: the driver cannot encode a raw UUID, and the filter
+    # value must be byte-identical to the stamp writes store.
+    assert tenant_filters[0].value == str(tid)
 
     data = gw._add_tenant_id({"name": "a"})
-    assert data[TENANT_ID_FIELD] == tid
+    assert data[TENANT_ID_FIELD] == str(tid)
+
+
+def test_adapt_payload_for_write_stamps_tenant_on_every_write() -> None:
+    """Non-create writes are stamped too: gateway updates rewrite the full document."""
+
+    tid = uuid4()
+
+    @attrs.define
+    class _Tenant:
+        tenant_id: UUID
+
+    gw = _Gw(
+        client=MagicMock(),
+        model_type=IntegrationDocument,
+        codec=_INTEGRATION_CODEC,
+        relation=("db", "c"),
+        tenant_aware=True,
+        tenant_provider=lambda: _Tenant(tenant_id=tid),
+    )
+    out = gw.adapt_payload_for_write({"name": "a"})
+    assert out[TENANT_ID_FIELD] == str(tid)
+
+    [many] = gw.adapt_many_payload_for_write([{"name": "b"}])
+    assert many[TENANT_ID_FIELD] == str(tid)
 
 
 def test_tenant_aware_requires_provider() -> None:

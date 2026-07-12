@@ -208,7 +208,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     async def create(self, payload: C, *, id: UUID | None = None) -> D:
         model = self._from_cdto(payload, id)
         data = await self._encode_domain_one(model)
-        data = self.adapt_payload_for_write(data, create=True)
+        data = self.adapt_payload_for_write(data)
         coll = await self.coll()
         # Fail closed on an existing id (``conflict``) rather than overwriting it,
         # matching the Postgres/Mongo ``create`` contract. Callers wanting
@@ -235,7 +235,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         models = self._from_cdto_many(payloads)
         raw_payloads = await self._encode_domain_many(models)
-        write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        write_payloads = self.adapt_many_payload_for_write(raw_payloads)
         documents = [
             (self._storage_pk(m.id), dict(p))
             for m, p in zip(models, write_payloads, strict=True)
@@ -295,10 +295,14 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
             diff = self._bump_rev(current, diff)
             merged = await self._encode_domain_one(current)
-            merged.update(self.adapt_payload_for_write(diff, create=False))
+            merged.update(self.adapt_payload_for_write(diff))
 
             coll = await self.coll()
-            storage = self.adapt_payload_for_write(merged, create=False)
+            # The merged image is rebuilt from the domain model, which cannot
+            # carry infrastructure-plane fields; ``adapt_payload_for_write``
+            # re-stamps the tenant so the full-document ``set`` below does not
+            # strip it from the stored row.
+            storage = self.adapt_payload_for_write(merged)
             await self.client.set_document(coll, self._storage_pk(pk), storage)
             updated = await self._load_after_write(pk, merged=merged)
             await self._write_history(updated)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from typing import AsyncGenerator
 
 import attrs
 import pytest
@@ -366,6 +367,191 @@ class TestCircuitBreaker:
 
         with pytest.raises(CoreException, match="Circuit breaker open"):
             await executor.run(unexpected, policy="p")
+
+
+# ....................... #
+
+
+class TestRunStream:
+    """Streams under a policy: breaker gate at acquisition + outcome recording."""
+
+    async def test_mid_stream_failures_open_breaker_for_unary_sibling(self) -> None:
+        clock = _Clock()
+        executor = _executor(_breaker_policy(), clock=clock)
+
+        async def broken() -> AsyncGenerator[int]:
+            yield 1
+            raise exc.infrastructure("died mid-stream")
+
+        # Two mid-stream failures reach min_throughput and trip the breaker.
+        for _ in range(2):
+            with pytest.raises(CoreException):
+                async for _ in executor.run_stream(broken, policy="p"):
+                    pass
+
+        # The stream failures were recorded, so a unary call under the same
+        # (policy, route) is fast-failed without running.
+        async def unexpected() -> str:  # pragma: no cover - must not run
+            raise AssertionError("breaker should have short-circuited")
+
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await executor.run(unexpected, policy="p")
+
+    async def test_open_breaker_rejects_stream_acquisition(self) -> None:
+        clock = _Clock()
+        executor = _executor(_breaker_policy(min_throughput=1), clock=clock)
+
+        async def boom() -> str:
+            raise exc.infrastructure("down")
+
+        with pytest.raises(CoreException):
+            await executor.run(boom, policy="p")
+
+        started = _Counter()
+
+        async def stream() -> AsyncGenerator[int]:
+            started.calls += 1
+            yield 1
+
+        # The unary failure opened the breaker: opening a stream against the
+        # known-dead backend is rejected before the port stream ever starts.
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            async for _ in executor.run_stream(stream, policy="p"):
+                pass
+
+        assert started.calls == 0
+
+    async def test_forced_open_wildcard_rejects_stream_acquisition(self) -> None:
+        executor = _executor(_breaker_policy())
+        await executor.force_open("p")
+
+        async def stream() -> AsyncGenerator[int]:
+            yield 1  # pragma: no cover - must not run
+
+        # The route=None kill-switch is a policy-wide wildcard: it sheds
+        # streams on every route under the policy, same as unary calls.
+        with pytest.raises(CoreException, match="force-opened"):
+            async for _ in executor.run_stream(stream, policy="p", route="r"):
+                pass
+
+    async def test_caller_caused_mid_stream_error_does_not_trip_breaker(self) -> None:
+        clock = _Clock()
+        executor = _executor(_breaker_policy(min_throughput=1), clock=clock)
+
+        async def rejected() -> AsyncGenerator[int]:
+            yield 1
+            raise exc.conflict("caller-caused")
+
+        for _ in range(5):
+            with pytest.raises(CoreException):
+                async for _ in executor.run_stream(rejected, policy="p"):
+                    pass
+
+        # The downstream answered fine every time: the breaker is still closed.
+        counter = _Counter()
+
+        async def ok() -> str:
+            counter.calls += 1
+            return "ok"
+
+        assert await executor.run(ok, policy="p") == "ok"
+        assert counter.calls == 1
+
+    async def test_throttled_mid_stream_is_neutral(self) -> None:
+        # Backpressure mid-stream is not a health signal — same as unary.
+        clock = _Clock()
+        executor = _executor(_breaker_policy(min_throughput=1), clock=clock)
+
+        async def throttled() -> AsyncGenerator[int]:
+            yield 1
+            raise exc.throttled("downstream 429", code="rate_limited")
+
+        for _ in range(5):
+            with pytest.raises(CoreException):
+                async for _ in executor.run_stream(throttled, policy="p"):
+                    pass
+
+        counter = _Counter()
+
+        async def ok() -> str:
+            counter.calls += 1
+            return "ok"
+
+        assert await executor.run(ok, policy="p") == "ok"
+        assert counter.calls == 1
+
+    async def test_clean_completion_closes_half_open_breaker(self) -> None:
+        clock = _Clock()
+        executor = _executor(_breaker_policy(min_throughput=1), clock=clock)
+
+        async def boom() -> str:
+            raise exc.infrastructure("down")
+
+        # Trip open at t=0, then advance past break_duration -> half-open.
+        with pytest.raises(CoreException):
+            await executor.run(boom, policy="p")
+
+        clock.now = 10.0
+
+        async def stream() -> AsyncGenerator[int]:
+            yield 1
+            yield 2
+
+        # A cleanly exhausted stream is the probe success that closes the breaker.
+        assert [i async for i in executor.run_stream(stream, policy="p")] == [1, 2]
+
+        counter = _Counter()
+
+        async def ok() -> str:
+            counter.calls += 1
+            return "ok"
+
+        assert await executor.run(ok, policy="p") == "ok"
+        assert counter.calls == 1
+
+    async def test_consumer_close_records_success_immediately(self) -> None:
+        clock = _Clock()
+        executor = _executor(_breaker_policy(min_throughput=1), clock=clock)
+
+        async def boom() -> str:
+            raise exc.infrastructure("down")
+
+        with pytest.raises(CoreException):
+            await executor.run(boom, policy="p")
+
+        clock.now = 10.0
+
+        async def endless() -> AsyncGenerator[int]:
+            i = 0
+            while True:
+                yield i
+                i += 1
+
+        # The half-open probe is a long-lived stream the consumer abandons
+        # cleanly: the close records a success right away (not at GC time),
+        # so the breaker is closed again for unary traffic.
+        stream = executor.run_stream(endless, policy="p")
+        assert await anext(stream) == 0
+        await stream.aclose()
+
+        counter = _Counter()
+
+        async def ok() -> str:
+            counter.calls += 1
+            return "ok"
+
+        assert await executor.run(ok, policy="p") == "ok"
+        assert counter.calls == 1
+
+    async def test_unknown_policy_rejected(self) -> None:
+        executor = _executor(_breaker_policy())
+
+        async def stream() -> AsyncGenerator[int]:
+            yield 1  # pragma: no cover - must not run
+
+        with pytest.raises(CoreException, match="Unknown resilience policy"):
+            async for _ in executor.run_stream(stream, policy="nope"):
+                pass
 
 
 # ....................... #

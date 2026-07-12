@@ -5,7 +5,7 @@ from typing import Any, Callable, Mapping, Sequence
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from .cursor_token import CursorBinding, encode_keyset_v1, row_value_for_sort_key
+from .cursor_token import CursorBinding, keyset_page_bounds, row_value_for_sort_key
 
 # ----------------------- #
 
@@ -101,10 +101,13 @@ def assemble_keyset_cursor_page(
     """Slice ``fetched`` to the requested window and derive opaque cursors.
 
     Gateways commonly return ``limit + 1`` rows so callers can infer
-    ``has_more`` without a separate count query. *nulls* (the per-key placement) is
-    carried into the emitted tokens so a follow-up page validates; omit it for the
-    canonical default. *binding* is embedded in the emitted tokens when signing is active
-    so a follow-up page can prove it belongs to this query.
+    ``has_more`` without a separate count query. A ``before`` page is fetched in flipped
+    (descending-from-cursor) order and re-reversed by the gateway before it reaches here,
+    so its over-fetch sentinel — the row *farthest* from the cursor — sits at the **front**
+    of ``fetched``; the ``limit`` rows nearest the cursor are the tail. *nulls* (the
+    per-key placement) is carried into the emitted tokens so a follow-up page validates;
+    omit it for the canonical default. *binding* is embedded in the emitted tokens when
+    signing is active so a follow-up page can prove it belongs to this query.
     """
 
     c = dict(cursor or {})
@@ -113,33 +116,26 @@ def assemble_keyset_cursor_page(
     use_after = c.get("after") is not None
     use_before = c.get("before") is not None
 
-    has_more = len(fetched) > lim
-    page_raw = list(fetched)[:lim]
+    raw = list(fetched)
 
-    if has_more and page_raw:
-        last = dump_row(page_raw[-1])
-        next_tok = encode_keyset_v1(
-            sort_keys=sort_keys,
-            directions=directions,
-            nulls=nulls,
-            values=[row_value_for_sort_key(last, k) for k in sort_keys],
-            binding=binding,
-        )
+    if use_before:
+        # The gateway re-reversed its flipped ``before`` fetch into ascending order
+        # (sentinel first); flip it back so the shared bounds helper sees the single
+        # orientation it defines (sentinel last) — the trim itself lives only there.
+        raw.reverse()
 
-    else:
-        next_tok = None
+    def _token_values(row: Any) -> list[Any]:
+        dumped = dump_row(row)
+        return [row_value_for_sort_key(dumped, k) for k in sort_keys]
 
-    if page_raw and (use_after or (use_before and has_more)):
-        first = dump_row(page_raw[0])
-        prev_tok = encode_keyset_v1(
-            sort_keys=sort_keys,
-            directions=directions,
-            nulls=nulls,
-            values=[row_value_for_sort_key(first, k) for k in sort_keys],
-            binding=binding,
-        )
-
-    else:
-        prev_tok = None
-
-    return page_raw, has_more, next_tok, prev_tok
+    return keyset_page_bounds(
+        raw,
+        lim,
+        sort_keys=sort_keys,
+        directions=directions,
+        use_after=use_after,
+        use_before=use_before,
+        nulls=nulls,
+        binding=binding,
+        row_values=_token_values,
+    )

@@ -123,11 +123,12 @@ async def process_with_inbox[M](
 
     **Dedup id priority**: an explicit *message_id* extractor wins; otherwise
     the ``forze_event_id`` header (written by the outbox relay), then
-    ``message.key``, then ``message.id``. The header outranks ``key`` because
-    the relay publishes ``key`` as the staged *ordering key* when one is set —
-    two **different** events of the same aggregate then share a ``key`` and
-    must not dedupe each other, while a redelivery of the **same** event keeps
-    its ``forze_event_id`` and is skipped.
+    ``message.id``. ``message.key`` is never used: the relay publishes ``key``
+    as the staged *ordering key* when one is set — a **grouping** key that
+    two **different** events of the same aggregate share, so deduping on it
+    would silently drop the second event. The broker message id is the
+    delivery identity (stable across redeliveries), so a redelivery of the
+    **same** message is skipped even without the header.
 
     **Envelope rebinding** — when the message carries the well-known envelope
     headers (see :mod:`forze.application.contracts.envelope`, written by the
@@ -136,9 +137,10 @@ async def process_with_inbox[M](
 
     - ``correlation_id`` — the ``forze_correlation_id`` header value: the
       handler runs under the *originating* correlation id.
-    - ``causation_id`` — the consumed event's id (``forze_event_id`` header,
-      falling back to ``message.key``): the consumed event *causes* the
-      handler's effects, extending the standard causation chain.
+    - ``causation_id`` — the consumed event's id (the ``forze_event_id``
+      header): the consumed event *causes* the handler's effects, extending
+      the standard causation chain. ``message.key`` is never used — it is the
+      ordering key, not an event identity.
     - ``execution_id`` — kept from the already-bound consumer metadata when
       present (processing a message is its own execution), otherwise a fresh
       id.
@@ -163,15 +165,12 @@ async def process_with_inbox[M](
         dedup_id: str | None = message_id(message)
 
     else:
-        dedup_id = (
-            header_event_id
-            or getattr(message, "key", None)
-            or getattr(message, "id", None)
-        )
+        dedup_id = header_event_id or getattr(message, "id", None)
 
     if not dedup_id:
         raise exc.precondition(
-            "Cannot deduplicate message: no event-id header, key, or id; "
+            "Cannot deduplicate message: no event-id header or message id "
+            "(the key is a grouping token, not an identity); "
             "pass a message_id extractor",
         )
 
@@ -183,9 +182,7 @@ async def process_with_inbox[M](
         _attach_trace_context(headers, stack)
 
         if correlation_id is not None:
-            causation_id = _parse_uuid(header_event_id) or _parse_uuid(
-                getattr(message, "key", None)
-            )
+            causation_id = _parse_uuid(header_event_id)
             current = ctx.inv_ctx.get_metadata()
             metadata = InvocationMetadata(
                 execution_id=current.execution_id if current is not None else uuid7(),

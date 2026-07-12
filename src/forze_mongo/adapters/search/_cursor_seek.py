@@ -25,6 +25,27 @@ def _cmp_op(direction: str, *, after: bool) -> str:
     return "$lt" if asc else "$gt"
 
 
+def build_keyset_sort_spec(
+    key_spec: list[tuple[str, str]],
+    *,
+    flip: bool,
+) -> JsonDict:
+    """Mongo ``$sort`` spec over the keyset key order; *flip* inverts every key.
+
+    A flipped spec fetches a ``before`` page in descending-from-cursor order, so the
+    ``limit + 1`` window is anchored at the cursor (the rows nearest it) instead of at
+    the start of the result set.
+    """
+
+    out: JsonDict = {}
+
+    for field, direction in key_spec:
+        forward = 1 if direction == "asc" else -1
+        out[_storage_field(field)] = -forward if flip else forward
+
+    return out
+
+
 def build_keyset_seek_match(
     key_spec: list[tuple[str, str]],
     values: list[Any],

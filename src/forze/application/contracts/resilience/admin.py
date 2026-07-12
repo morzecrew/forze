@@ -99,6 +99,9 @@ class ResilienceAdminPort(Protocol):
         Every subsequent call under this policy/route is rejected (as if the circuit breaker were
         open) until :meth:`clear_forced_open`, regardless of the policy's configured strategies —
         the operator escape hatch to shed a failing dependency without a redeploy. Idempotent.
+
+        ``route=None`` is a policy-wide wildcard: every route under the policy is shed,
+        including routes first seen after the switch is armed.
         """
 
         ...  # pragma: no cover
@@ -110,7 +113,18 @@ class ResilienceAdminPort(Protocol):
         policy: StrKey,
         route: StrKey | None = None,
     ) -> Awaitable[None]:
-        """Release a :meth:`force_open` kill-switch for ``(policy, route)``. Idempotent."""
+        """Release a :meth:`force_open` kill-switch for ``(policy, route)``. Idempotent.
+
+        ``route=None`` releases the policy-wide wildcard and every route-scoped switch
+        under the policy; a route-scoped clear releases only that exact key and does not
+        punch a hole in an armed wildcard.
+
+        The released scope also starts a fresh circuit-breaker epoch when the wired
+        breaker store supports resetting (the in-memory default does): a breaker that
+        tripped organically before the switch was armed would otherwise keep rejecting
+        until its ``break_duration`` elapsed, after the operator declared recovery. A
+        still-unhealthy downstream re-trips the fresh breaker on real failures.
+        """
 
         ...  # pragma: no cover
 
@@ -124,6 +138,10 @@ class ResilienceAdminPort(Protocol):
         the new parameters on the next call. Calls already in flight drain safely on the state they
         captured at start (they are never stranded). Breaker/rate-limit *thresholds* live in the
         pluggable store and are passed per call, so they follow the store's own state lifecycle.
+
+        The replacement is validated with the same gate as initial wiring: a policy bound to a
+        whole port must not retry ambiguous outcomes. A rejected retune raises and leaves the
+        current policy and its adaptive state untouched.
         """
 
         ...  # pragma: no cover

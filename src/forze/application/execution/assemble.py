@@ -8,6 +8,7 @@ from forze.base.primitives import CpuExecutor
 from forze.application.contracts.deps import Deps, DepsModule
 from forze.application.contracts.execution import LifecycleModule, LifecycleStep
 
+from .context.transaction import AfterCommitErrorHandler
 from .deps import DepsRegistry
 from .lifecycle import LifecyclePlan
 from .runtime import DeploymentProfile, ExecutionRuntime
@@ -27,6 +28,7 @@ def build_runtime(
     deployment: DeploymentProfile = DeploymentProfile.SINGLE_PROCESS,
     cpu_executor: CpuExecutor | None = None,
     cpu_workers: int | None = None,
+    after_commit_error_handler: AfterCommitErrorHandler | None = None,
 ) -> ExecutionRuntime:
     """Assemble an :class:`ExecutionRuntime` in one call.
 
@@ -74,6 +76,11 @@ def build_runtime(
         it closes on exit, unless one is already bound in the surrounding context.
     :param cpu_workers: Size of the runtime-owned CPU pool when ``cpu_executor`` is
         ``None`` (see :attr:`ExecutionRuntime.cpu_workers`); ``None`` uses default sizing.
+    :param after_commit_error_handler: Passed through to
+        :attr:`ExecutionRuntime.after_commit_error_handler` — an out-of-band handler
+        notified when a non-fatal post-commit callback fails on an already-committed
+        transaction (the operation still returns its committed result). Must not raise.
+        ``None`` (default) logs only.
     :returns: Runtime ready for :meth:`ExecutionRuntime.scope`.
     """
 
@@ -100,4 +107,5 @@ def build_runtime(
         deployment=deployment,
         cpu_executor=cpu_executor,
         cpu_workers=cpu_workers,
+        after_commit_error_handler=after_commit_error_handler,
     )
