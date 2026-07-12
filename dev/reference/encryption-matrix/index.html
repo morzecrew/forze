@@ -5579,9 +5579,10 @@ surface that marks something for encryption but finds no keyring refuses to pers
 plaintext.</p>
 <h2 id="field-level-surfaces-one-shared-policy">Field-level surfaces (one shared policy)<a class="headerlink" href="#field-level-surfaces-one-shared-policy" title="Permanent link">&para;</a></h2>
 <p>A single <code>FieldEncryption</code> policy — <code>encrypted</code> (randomized AEAD) and <code>searchable</code>
-(deterministic, equality-only) field sets, plus <code>binds_record_id</code> — is declared once on
-the document spec and <strong>carried to search, analytics, and graph</strong> by pointing their spec
-at the same policy, so the planes can't drift.</p>
+(deterministic, equality-only) field sets, plus <code>binds_record_id</code> and
+<code>reject_plaintext</code> — is declared once on the document spec and <strong>carried to search,
+analytics, and graph</strong> by pointing their spec at the same policy, so the planes
+can't drift.</p>
 <table>
 <thead>
 <tr>
@@ -5635,6 +5636,10 @@ at the same policy, so the planes can't drift.</p>
   it by exact value.</li>
 <li><strong><code>searchable</code> needs a stable root</strong> (<code>deterministic_root</code> on the crypto module);
   rotate with <code>deterministic_previous_root</code> overlap + <code>reencrypt_documents</code>.</li>
+<li><strong>Migration tolerance:</strong> legacy plaintext in a sealed field passes through on read by
+  default (zero-downtime backfill). Set <code>reject_plaintext=True</code> on the policy once the
+  backfill is done — an unencrypted or unauthentic value then raises
+  <code>core.crypto.plaintext_rejected</code> on every plane sharing the policy.</li>
 </ul>
 <h2 id="whole-payload-object-surfaces">Whole-payload &amp; object surfaces<a class="headerlink" href="#whole-payload-object-surfaces" title="Permanent link">&para;</a></h2>
 <table>

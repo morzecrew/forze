@@ -5927,6 +5927,13 @@ deterministic cipher so equality queries still match. Setting <code>binds_record
 folds the record's <code>id</code> into the <abbr title="Additional Authenticated Data">AAD</abbr> of every randomized field, so a ciphertext
 can't be copied between rows — it applies only to randomized fields, never
 searchable ones (whose ciphertext must stay record-independent to compare).</p>
+<p>By default the read path <strong>tolerates plaintext</strong> in a sealed field, so you can
+enable encryption on a live table and backfill without downtime. That tolerance
+is also a fail-open hole once the backfill is done — a ciphertext swapped for
+chosen plaintext would be accepted. Set <code>reject_plaintext=True</code> on the policy
+after backfill: a non-ciphertext (or unauthentic searchable) value in a sealed
+field then raises <code>core.crypto.plaintext_rejected</code> on read, and id-bound
+ciphertext stops accepting the legacy pre-binding fallback.</p>
 <div class="admonition warning">
 <p class="admonition-title">Marking a field requires a wired keyring</p>
 <p>A spec that marks any field for encryption but finds no <code>KeyringDepKey</code> (or

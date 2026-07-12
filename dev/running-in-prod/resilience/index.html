@@ -5895,8 +5895,13 @@ the policy, transparently:</p>
 <p><code>route</code> defaults to the route the port resolved under (its <code>spec.name</code>), so
 each backend keys its own breaker/bucket state; set it explicitly to share.
 <code>methods=None</code> wraps every public coroutine method. Async-generator methods
-(<code>consume</code>, <code>tail</code>, <code>subscribe</code>-style streams) are never wrapped — a stream
-can't run inside a single <code>run()</code> call; guard the consumption loop instead.</p>
+(<code>consume</code>, <code>tail</code>, <code>subscribe</code>-style streams) get the <strong>circuit breaker
+only</strong>: opening a stream is rejected while the breaker is open, and a
+mid-stream infrastructure failure counts as a breaker failure for the port's
+unary methods too (clean completion — or the consumer closing early — counts
+as success). Retry, hedging, timeout, bulkhead, and rate-limit strategies
+never apply to a stream: a partially consumed stream can't be replayed, and a
+long-lived stream must not be timed out or hold a concurrency slot.</p>
 <h2 id="fleet-wide-state">Fleet-wide state<a class="headerlink" href="#fleet-wide-state" title="Permanent link">&para;</a></h2>
 <p>Breaker and rate-limit state is per-process by default — which means N
 replicas each enforce <code>permits/per</code> independently (a fleet-effective rate of

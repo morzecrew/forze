@@ -5804,6 +5804,12 @@ mechanism is the foundation of the transactional outbox — covered next.</p>
 <a href="../../running-in-prod/deadlines/">deadline</a> expiring between the commit and the deferred
 callbacks can't skip them — they run to completion, then the cancellation
 re-raises. A committed transaction is never left half-announced.</p>
+<p>A deferred callback that <strong>fails</strong> never takes the committed result down with
+it: the failure is logged and the operation still returns normally. To surface
+those failures for alerting instead of relying on logs, install a handler when
+building the runtime — <code>build_runtime(..., after_commit_error_handler=...)</code> —
+and it is notified out-of-band with an <code>AfterCommitError</code> describing each failed
+callback. The handler must not raise.</p>
 <h2 id="transactions-under-the-mock">Transactions under the mock<a class="headerlink" href="#transactions-under-the-mock" title="Permanent link">&para;</a></h2>
 <p>The mock transaction manager is <strong>faithful by default</strong> (<code>transactions="journal"</code>):
 an aborted transaction undoes <em>only its own</em> writes, so a "forgot to run it in the
