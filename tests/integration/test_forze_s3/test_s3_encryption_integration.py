@@ -88,8 +88,8 @@ async def test_reencrypt_objects_reseals_in_place_preserving_metadata(
     async with s3_client.client():
         before = (await s3_client.download_bytes(bucket=s3_bucket, key=stored.key)).data
 
-    count = await reencrypt_objects(storage_q, storage_c)
-    assert count == 1
+    report = await reencrypt_objects(storage_q, storage_c)
+    assert report.rewritten == 1
 
     async with s3_client.client():
         after = (await s3_client.download_bytes(bucket=s3_bucket, key=stored.key)).data
@@ -118,3 +118,61 @@ async def test_reencrypt_objects_reseals_in_place_preserving_metadata(
     )
     assert rewritten.filename == "secret.txt"
     assert rewritten.description == "a note"
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_reencrypt_objects_skips_an_object_deleted_mid_sweep(
+    s3_client, s3_bucket: str
+) -> None:
+    """A churning bucket still finishes a pass: a real-S3 miss is a skip, not an abort."""
+
+    from forze.application.integrations.crypto import reencrypt_objects
+
+    ctx = context_from_modules(
+        CryptoDepsModule(
+            kms=MockKeyManagement(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        ),
+        S3DepsModule(
+            client=s3_client,
+            storages={s3_bucket: S3StorageConfig(bucket=s3_bucket, encrypt=True)},
+        ),
+    )
+    spec = StorageSpec(name=s3_bucket)
+    storage_q = ctx.storage.query(spec)
+    storage_c = ctx.storage.command(spec)
+
+    survivor = await storage_c.upload(
+        UploadedObject(filename="keep.txt", data=b"keep-me"),
+    )
+    victim = await storage_c.upload(
+        UploadedObject(filename="gone.txt", data=b"delete-me"),
+    )
+
+    class _DeletesVictimOnFirstTouch:
+        """Query-port wrapper: the victim vanishes between listing and its rewrite."""
+
+        def __getattr__(self, name: str):
+            return getattr(storage_q, name)
+
+        async def head(self, key: str, *args, **kwargs):
+            if key == victim.key:
+                async with s3_client.client():
+                    await s3_client.delete_object(bucket=s3_bucket, key=victim.key)
+
+            return await storage_q.head(key, *args, **kwargs)
+
+    report = await reencrypt_objects(_DeletesVictimOnFirstTouch(), storage_c)  # type: ignore[arg-type]
+
+    assert report.rewritten == 1
+    assert report.skipped_missing == 1
+
+    # The survivor round-trips and the victim stays deleted (no resurrection).
+    assert (await storage_q.download(survivor.key)).data == b"keep-me"
+
+    async with s3_client.client():
+        assert not await s3_client.object_exists(bucket=s3_bucket, key=victim.key)

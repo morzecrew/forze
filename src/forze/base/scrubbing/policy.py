@@ -49,11 +49,15 @@ _LOGFIRE_SENSITIVE_FRAGMENTS: tuple[str, ...] = (
 )
 
 # Extra key terms for egress/log key masking (not all appear in Logfire defaults).
+# Short fragments are anchored ``(?:\b|_)…(?:\b|_)`` (the csrf/jwt convention above)
+# so ``pwd``/``db_pwd``/``pwd_hash`` match but a mid-token run (``backupwd``) does not.
 _FORZE_KEY_EXTRAS: tuple[str, ...] = (
     "token",
     "dsn",
     "uri",
     "authorization",
+    r"(?:\b|_)pwd(?:\b|_)",
+    "passphrase",
 )
 
 # Log-context string rules only (assignments, email, Bearer tokens).
@@ -72,9 +76,46 @@ _FORZE_KEY_EXTRAS: tuple[str, ...] = (
 # immediately followed by the separator — e.g. ``client_secret=`` — was caught). Each suffix
 # segment must be separator-led (``_``/``.``/``-`` then word chars), so a bare word
 # continuation is *not* swallowed: ``secretary=`` / ``tokenizer=`` stay ordinary text.
+#
+# This vocabulary is the value-form projection of the sensitive-key terms above
+# (Logfire fragments + Forze key extras): every key term has an assignment
+# counterpart here and vice versa, so a credential is masked whether it appears
+# as an event-dict key or inline in a message string. The one deliberate
+# key-only term is ``authorization``, whose value form is owned by the
+# full-line ``authorization\s*:`` rule below — an assignment match would stop
+# at the scheme word (``Basic``) and leak the credential after it. A parity
+# test enforces the reconciliation.
+_LOG_ASSIGNMENT_TERM_FRAGMENTS: tuple[str, ...] = (
+    "password",
+    "passwd",
+    r"mysql[._ -]?pwd",
+    # Left-bounded like its key-heuristic twin: ``pwd=`` / ``db_pwd=`` match,
+    # a mid-token run (``backupwd=``) stays ordinary text.
+    r"(?:\b|_)pwd",
+    "passphrase",
+    "secret",
+    "token",
+    r"logfire[._ -]?token",
+    r"api[._ -]?key",
+    r"private[._ -]?key",
+    r"auth(?!ors?\b)",
+    "credential",
+    "session",
+    "cookie",
+    r"social[._ -]?security",
+    r"credit[._ -]?card",
+    "csrf",
+    "xsrf",
+    "jwt",
+    "ssn",
+    "dsn",
+    "uri",
+)
+
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
-    r"(?:password|passwd|mysql[._ -]?pwd|secret|token|api[._ -]?key"
-    r"|credential|session|cookie|csrf|xsrf|jwt|ssn)(?:[._-]\w+){0,6}\s*[=:]\s*\S+",
+    "(?:"
+    + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS)
+    + r")(?:[._-]\w+){0,6}\s*[=:]\s*\S+",
 )
 
 _LOG_STRING_EXTRAS: tuple[str, ...] = (

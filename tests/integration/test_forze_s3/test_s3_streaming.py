@@ -15,7 +15,12 @@ import pytest
 from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import CryptoDepsModule
-from forze.base.crypto import is_chunked_envelope
+from forze.base.crypto import (
+    chunk_frame_stride,
+    is_chunked_envelope,
+    unpack_chunked_header,
+)
+from forze.base.exceptions import CoreException
 from forze_mock import MockKeyManagement
 from forze_s3.execution.deps import S3DepsModule
 from forze_s3.execution.deps.configs import S3StorageConfig
@@ -117,6 +122,49 @@ async def test_s3_streamed_encrypted_ranged_read(
     # A tail range (end=None → to EOF).
     tail = await query.download_range(stored.key, start=9990)
     assert tail.data == data[9990:]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_s3_streamed_encrypted_ranged_read_rejects_truncation(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    """A stored object that lost its tail (truncated at a frame boundary) must be
+    refused by every ranged read — the layout-derived plaintext size under-reports,
+    so even a window far from the tail would serve a lie."""
+
+    ctx = _encrypted_ctx(s3_client, s3_bucket)
+    spec = StorageSpec(name=s3_bucket)
+    query = ctx.storage.query(spec)
+    command = ctx.storage.command(spec)
+
+    data = bytes((i * 13) % 256 for i in range(10_000))  # 10 chunks of 1024
+    stored = await command.upload_stream(
+        _aiter(data), filename="t.bin", chunk_size=1024
+    )
+
+    async with s3_client.client():
+        raw = (await s3_client.download_bytes(bucket=s3_bucket, key=stored.key)).data
+        _header, header_len = unpack_chunked_header(raw)
+        stride = chunk_frame_stride(raw, header_len)
+        assert stride is not None
+        # Drop the last frames, cutting exactly at a frame boundary.
+        await s3_client.upload_bytes(
+            s3_bucket, stored.key, raw[: header_len + 4 * stride]
+        )
+
+    with pytest.raises(CoreException) as ei:  # a range covering the apparent tail
+        await query.download_range(stored.key, start=3900)
+    assert ei.value.code == "core.crypto.chunked_truncated"
+
+    with pytest.raises(CoreException) as ei:  # a range far from the tail
+        await query.download_range(stored.key, start=0, end=99)
+    assert ei.value.code == "core.crypto.chunked_truncated"
+
+    with pytest.raises(CoreException) as ei:  # the streaming path still refuses too
+        downloaded = await query.download_stream(stored.key)
+        await _collect(downloaded.chunks)
+    assert ei.value.code == "core.crypto.chunked_truncated"
 
 
 @pytest.mark.integration

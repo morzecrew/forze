@@ -192,7 +192,7 @@ async def test_gcs_reencrypt_objects_reseals_in_place_preserving_metadata(
             await gcs_client.download_bytes(bucket=gcs_bucket, key=stored.key)
         ).data
 
-    assert await reencrypt_objects(storage_q, storage_c) == 1
+    assert (await reencrypt_objects(storage_q, storage_c)).rewritten == 1
 
     async with gcs_client.client():
         after = (

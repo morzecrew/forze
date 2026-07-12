@@ -5,7 +5,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from forze.application.integrations.crypto import reencrypt_documents
+import pytest
+
+from forze.application.integrations.crypto import ReencryptReport, reencrypt_documents
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -41,13 +44,13 @@ async def test_reencrypts_every_doc_passing_id_rev_and_update() -> None:
     query = _FakeQuery(docs)
     command = _FakeCommand()
 
-    count = await reencrypt_documents(
+    report = await reencrypt_documents(
         query,  # type: ignore[arg-type]
         command,  # type: ignore[arg-type]
         to_update=lambda d: {"email": d.email},
     )
 
-    assert count == 2
+    assert report == ReencryptReport(rewritten=2, skipped_missing=0)
     assert command.calls == [
         ("a", 3, {"email": "x"}),
         ("b", 5, {"email": "y"}),
@@ -61,24 +64,76 @@ async def test_streams_across_multiple_batches() -> None:
     )
     command = _FakeCommand()
 
-    count = await reencrypt_documents(
+    report = await reencrypt_documents(
         query,  # type: ignore[arg-type]
         command,  # type: ignore[arg-type]
         to_update=lambda d: d.email,
     )
 
-    assert count == 2
+    assert report.rewritten == 2
     assert [pk for pk, _, _ in command.calls] == ["a", "b"]
 
 
 async def test_empty_collection_is_a_noop() -> None:
     command = _FakeCommand()
 
-    count = await reencrypt_documents(
+    report = await reencrypt_documents(
         _FakeQuery(),  # type: ignore[arg-type]
         command,  # type: ignore[arg-type]
         to_update=lambda d: d,
     )
 
-    assert count == 0
+    assert report == ReencryptReport(rewritten=0, skipped_missing=0)
     assert command.calls == []
+
+
+async def test_skips_a_doc_deleted_before_the_write_back() -> None:
+    """A row deleted between the stream read and the update is skipped, not fatal.
+
+    On a live collection some streamed rows are always gone by the time the
+    sweep writes them back; there is nothing left to re-encrypt, so the sweep
+    counts the skip and keeps going instead of aborting the pass.
+    """
+
+    docs = [
+        SimpleNamespace(id="a", rev=3, email="x"),
+        SimpleNamespace(id="b", rev=5, email="y"),
+    ]
+    query = _FakeQuery(docs)
+
+    class _MissingRowCommand(_FakeCommand):
+        async def update(self, pk, rev, dto, **kw):  # type: ignore[no-untyped-def]
+            if pk == "a":
+                raise CoreException.not_found(f"Document not found: {pk}")
+
+            return await super().update(pk, rev, dto, **kw)
+
+    command = _MissingRowCommand()
+
+    report = await reencrypt_documents(
+        query,  # type: ignore[arg-type]
+        command,  # type: ignore[arg-type]
+        to_update=lambda d: {"email": d.email},
+    )
+
+    assert report == ReencryptReport(rewritten=1, skipped_missing=1)
+    assert command.calls == [("b", 5, {"email": "y"})]
+
+
+async def test_any_other_error_still_aborts_the_sweep() -> None:
+    """Only a missing row is skipped; a revision conflict still propagates."""
+
+    query = _FakeQuery([SimpleNamespace(id="a", rev=3, email="x")])
+
+    class _ConflictingCommand(_FakeCommand):
+        async def update(self, pk, rev, dto, **kw):  # type: ignore[no-untyped-def]
+            raise CoreException.concurrency("Revision conflict")
+
+    with pytest.raises(CoreException) as ei:
+        await reencrypt_documents(
+            query,  # type: ignore[arg-type]
+            _ConflictingCommand(),  # type: ignore[arg-type]
+            to_update=lambda d: {"email": d.email},
+        )
+
+    assert ei.value.kind is ExceptionKind.CONCURRENCY

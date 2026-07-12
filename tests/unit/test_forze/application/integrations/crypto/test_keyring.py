@@ -587,3 +587,43 @@ async def test_ensure_unwrapped_rejects_foreign_key_id() -> None:
         await reader.ensure_unwrapped([envelope], tenant=tenant_b)
 
     assert excinfo.value.code == "core.crypto.key_id_unauthorized"
+
+
+async def test_ensure_unwrapped_rejects_foreign_key_id_on_warm_cache_hit() -> None:
+    """The pre-pass guard also runs when the wrapped_dek is already cached — a warm
+    entry (left by another tenant's legitimate call) must not skip the key-id check."""
+
+    kms = _CountingKms(MockKeyManagement())
+    ring = _per_tenant_ring(kms)
+    tenant_a = TenantIdentity(tenant_id=uuid4())
+    tenant_b = TenantIdentity(tenant_id=uuid4())
+
+    # Tenant A's encrypt seeds the decrypt cache for this wrapped_dek.
+    blob = await ring.encrypt(b"a-secret", tenant=tenant_a)
+    envelope = unpack_envelope(blob)
+
+    unwrapped_before = kms.unwrapped
+
+    with pytest.raises(CoreException) as excinfo:
+        await ring.ensure_unwrapped([envelope], tenant=tenant_b)
+
+    assert excinfo.value.code == "core.crypto.key_id_unauthorized"
+    assert kms.unwrapped == unwrapped_before  # rejected with no backend call
+
+
+async def test_ensure_unwrapped_warm_hit_with_own_tenant_skips_kms() -> None:
+    """A warm entry under the rightful tenant still passes the guard without a KMS
+    unwrap — the cache keeps saving the round-trip on the authorized path."""
+
+    kms = _CountingKms(MockKeyManagement())
+    ring = _per_tenant_ring(kms)
+    tenant_a = TenantIdentity(tenant_id=uuid4())
+
+    blob = await ring.encrypt(b"a-secret", tenant=tenant_a)
+    envelope = unpack_envelope(blob)
+
+    unwrapped_before = kms.unwrapped
+    await ring.ensure_unwrapped([envelope], tenant=tenant_a)
+
+    assert kms.unwrapped == unwrapped_before  # warm hit: no unwrap needed
+    assert ring.decrypt_sync(blob) == b"a-secret"

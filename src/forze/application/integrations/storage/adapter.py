@@ -1152,12 +1152,25 @@ class ObjectStorageAdapter(
         filename: str,
         probe: bytes,
     ) -> RangedDownload:
-        """Decrypt only the chunks a byte range covers, then trim to the exact bytes."""
+        """Decrypt only the chunks a byte range covers, then trim to the exact bytes.
+
+        The chunk layout is derived from the stored length, which a truncated object
+        under-reports, so every request verifies the last stored frame carries the
+        authenticated terminator flag before any range is served (see
+        :meth:`_open_chunk_at`). The last frame is already fetched to learn the exact
+        plaintext total, so the verification adds no extra reads.
+        """
 
         opener = await self._streaming_cipher().open_chunked_stream(
             probe, aad=self._encryption_aad(bucket, key), tenant=self._cipher_tenant()
         )
         chunk_size = opener.chunk_size
+
+        if raw_total <= opener.header_len:
+            raise exc.validation(
+                "Chunked object ends before its first frame (truncated)",
+                code="core.crypto.chunked_truncated",
+            )
 
         stride = chunk_frame_stride(probe, opener.header_len)
 
@@ -1177,11 +1190,12 @@ class ObjectStorageAdapter(
                 )
 
         # Chunk count and plaintext total (the last chunk's length is only known once
-        # decrypted, so read it — it is also reused if the range covers it).
+        # decrypted, so read it — it is also reused if the range covers it). Opening
+        # the last frame also proves it is the stream's authentic terminator.
         num_chunks = -(-(raw_total - opener.header_len) // stride)  # ceil division
         last_index = num_chunks - 1
         last_plaintext = await self._open_chunk_at(
-            bucket, key, opener, stride, last_index, raw_total
+            bucket, key, opener, stride, last_index, last_index, raw_total
         )
         plaintext_total = last_index * chunk_size + len(last_plaintext)
 
@@ -1199,7 +1213,7 @@ class ObjectStorageAdapter(
                 last_plaintext
                 if index == last_index
                 else await self._open_chunk_at(
-                    bucket, key, opener, stride, index, raw_total
+                    bucket, key, opener, stride, index, last_index, raw_total
                 )
             )
 
@@ -1223,9 +1237,17 @@ class ObjectStorageAdapter(
         opener: ChunkedStreamOpener,
         stride: int,
         index: int,
+        last_index: int,
         raw_total: int,
     ) -> bytes:
-        """Fetch and decrypt a single chunk by index (ranged GET of its frame)."""
+        """Fetch and decrypt a single chunk by index (ranged GET of its frame).
+
+        Beyond AEAD authentication, the frame's terminator flag is checked against
+        the stored layout: the last stored frame must carry it — otherwise the
+        object lost its tail and the layout-derived plaintext size under-reports —
+        and no earlier frame may, matching the streaming path's refusal of a
+        truncated stream or of data after the final chunk.
+        """
 
         offset = opener.header_len + index * stride
         end = min(offset + stride, raw_total) - 1  # over-read clamps to the final frame
@@ -1236,6 +1258,19 @@ class ObjectStorageAdapter(
             )
 
         frame, _consumed = parse_frame(body.data, 0)
+
+        if index == last_index and not frame.is_final:
+            raise exc.validation(
+                "Chunked object's last stored frame is not its final chunk (truncated)",
+                code="core.crypto.chunked_truncated",
+            )
+
+        if index != last_index and frame.is_final:
+            raise exc.validation(
+                "Chunked object carries a frame after its final chunk",
+                code="core.crypto.chunked_trailing_data",
+            )
+
         return opener.open_frame(index, frame)
 
     # ....................... #

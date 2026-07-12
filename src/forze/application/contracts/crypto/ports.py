@@ -152,6 +152,8 @@ class FieldCipherPort(Protocol):
         :param tenant: When given, each envelope's key id is checked against the
             tenant's key-encryption key before it is unwrapped, so a foreign key id
             fails closed (``core.crypto.key_id_unauthorized``) with no KMS call.
+            The check runs whether or not the data key is already cached — a warm
+            cache never bypasses it.
         """
 
         ...  # pragma: no cover

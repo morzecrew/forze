@@ -34,6 +34,7 @@ def make_http_exception_mapper(
     response_error_type: type[BaseException],
     http_status_message: Callable[[int | None], str],
     fallback: ExceptionMapper | None = None,
+    missing_as_not_found: bool | Callable[[BaseException], bool] = False,
 ) -> ExceptionMapper:
     """Build an :class:`ExceptionMapper` for aiohttp-style HTTP backends.
 
@@ -43,6 +44,14 @@ def make_http_exception_mapper(
     A non-HTTP error is handed to *fallback*, or — when *fallback* is ``None`` —
     returned as ``None`` so an enclosing chain (e.g. :func:`build_exc_interceptor`)
     supplies the terminal fallback.
+
+    *missing_as_not_found* flips a ``404`` to caller-caused ``not_found`` — for a
+    backend whose 404s name resources the caller addresses by key (object storage),
+    where a miss must not be retried or counted against downstream health. Backends
+    whose 404s indicate deployment faults (a missing table or dataset) keep the
+    ``infrastructure`` default. Pass a predicate instead of ``True`` when only some
+    404s are caller misses — e.g. object-scoped request URLs but not bucket-level
+    ones — and the rest stay ``infrastructure``.
 
     ``aiohttp`` is not imported here; callers pass ``aiohttp.ClientResponseError``
     as *response_error_type* so core keeps no dependency on it.
@@ -61,6 +70,17 @@ def make_http_exception_mapper(
             status = response_status(exc)
 
             if status == 404:
+                caller_miss = (
+                    missing_as_not_found(exc)
+                    if callable(missing_as_not_found)
+                    else missing_as_not_found
+                )
+
+                if caller_miss:
+                    return CoreException.not_found(
+                        f"{label} resource not found.", details=details
+                    )
+
                 return CoreException.infrastructure(
                     f"{label} resource not found.", details=details
                 )

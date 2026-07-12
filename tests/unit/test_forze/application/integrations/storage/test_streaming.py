@@ -431,6 +431,151 @@ async def test_encrypted_ranged_read_detects_tamper() -> None:
 
 
 # ....................... #
+# ranged reads must reject a truncated / spliced chunked object
+
+
+def _chunk_layout(blob: bytes) -> tuple[int, int]:
+    """Return ``(header_len, stride)`` of a stored chunked object."""
+
+    from forze.base.crypto import chunk_frame_stride, unpack_chunked_header
+
+    _header, header_len = unpack_chunked_header(blob)
+    stride = chunk_frame_stride(blob, header_len)
+    assert stride is not None
+    return header_len, stride
+
+
+async def _truncated_chunked_object(
+    client: _FakeClient, adapter: ObjectStorageAdapter, *, keep_frames: int
+) -> str:
+    """Store a 5-chunk encrypted object, then drop everything past *keep_frames*."""
+
+    data = bytes((i * 11) % 256 for i in range(300))  # 5 chunks of 64 (last short)
+    stored = await adapter.upload_stream(_aiter(data), filename="f.bin", chunk_size=64)
+
+    blob = client.objects[stored.key]
+    header_len, stride = _chunk_layout(blob)
+    client.objects[stored.key] = blob[: header_len + keep_frames * stride]
+
+    return stored.key
+
+
+async def test_encrypted_ranged_read_detects_boundary_truncation() -> None:
+    """A tail range over an object truncated at a frame boundary must not be served."""
+
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1 << 20)
+    key = await _truncated_chunked_object(client, adapter, keep_frames=2)
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download_range(key, start=100)
+    assert ei.value.code == "core.crypto.chunked_truncated"
+
+
+async def test_encrypted_ranged_read_detects_truncation_outside_window() -> None:
+    """Even a range that never touches the tail must reject a truncated object: the
+    layout-derived plaintext size is a lie, so no range over it is trustworthy."""
+
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1 << 20)
+    key = await _truncated_chunked_object(client, adapter, keep_frames=2)
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download_range(key, start=0, end=10)  # first chunk only
+    assert ei.value.code == "core.crypto.chunked_truncated"
+
+
+async def test_encrypted_ranged_read_detects_midframe_truncation() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1 << 20)
+    data = bytes((i * 11) % 256 for i in range(300))
+    stored = await adapter.upload_stream(_aiter(data), filename="f.bin", chunk_size=64)
+
+    blob = client.objects[stored.key]
+    header_len, stride = _chunk_layout(blob)
+    client.objects[stored.key] = blob[: header_len + 2 * stride + 7]  # cut mid-frame
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download_range(stored.key, start=0, end=10)
+    assert ei.value.code == "core.crypto.chunked_truncated"
+
+
+async def test_encrypted_ranged_read_detects_header_only_truncation() -> None:
+    """An object cut back to just its header (zero frames) is truncated, not empty."""
+
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1 << 20)
+    key = await _truncated_chunked_object(client, adapter, keep_frames=0)
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download_range(key, start=0, end=10)
+    assert ei.value.code == "core.crypto.chunked_truncated"
+
+
+async def test_encrypted_ranged_read_rejects_early_final_frame() -> None:
+    """An authentic final frame *before* the layout's last frame (a splice) is
+    rejected, mirroring the streaming path's trailing-data refusal."""
+
+    from forze.application.contracts.crypto import KeyRef as _KeyRef
+    from forze.base.crypto import ChunkedHeader, pack_chunked_header, seal_chunk
+
+    client = _FakeClient()
+    ring = _keyring()
+    adapter = _adapter(client, cipher=ring, stream_part_size=1 << 20)
+
+    key = "crafted/spliced"
+    aad = adapter._encryption_aad("bucket", key)
+    data_key = await ring.kms.generate_data_key(_KeyRef(key_id="cmk"))
+
+    header = pack_chunked_header(
+        ChunkedHeader(
+            alg=ring.aead.algorithm,
+            key_id=data_key.key_id,
+            key_version=data_key.key_version,
+            wrapped_dek=data_key.wrapped,
+            chunk_size=64,
+        )
+    )
+    # Frame 1 is honestly sealed as final, yet frames keep coming after it — the
+    # last stored frame (3) also carries the flag, so sizing alone looks clean.
+    flags = [False, True, False, True]
+    frames = [
+        seal_chunk(
+            ring.aead,
+            key=data_key.plaintext,
+            base_aad=aad,
+            index=i,
+            is_final=flag,
+            plaintext=bytes([i]) * 64,
+        )
+        for i, flag in enumerate(flags)
+    ]
+    client.objects[key] = header + b"".join(frames)
+    client.content_types[key] = "application/octet-stream"
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download_range(key, start=64, end=100)  # covers frame 1
+    assert ei.value.code == "core.crypto.chunked_trailing_data"
+
+
+async def test_download_and_download_stream_still_detect_truncation() -> None:
+    """The full-object paths' truncation refusal is unchanged by the ranged fix."""
+
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring(), stream_part_size=1 << 20)
+    key = await _truncated_chunked_object(client, adapter, keep_frames=2)
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download(key)
+    assert ei.value.code == "core.crypto.chunked_truncated"
+
+    with pytest.raises(CoreException) as ei:
+        dl = await adapter.download_stream(key)
+        await _collect(dl.chunks)
+    assert ei.value.code == "core.crypto.chunked_truncated"
+
+
+# ....................... #
 # whole-object download of a streamed (chunked) object (review fix)
 
 

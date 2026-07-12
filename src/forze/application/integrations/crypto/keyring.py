@@ -699,13 +699,17 @@ class Keyring:
         The read pre-pass: with per-tenant data-key reuse a result set carries
         only a handful of distinct wrapped keys, so this is a few KMS calls
         regardless of row count. A same-process read-after-write is already a
-        cache hit and unwraps nothing. When *tenant* is given, each envelope's key
-        id is authorized against the tenant's key before it is unwrapped.
+        cache hit and unwraps nothing. When *tenant* is given, each envelope's
+        key id is authorized against the tenant's key on hits and misses alike —
+        a warm ``wrapped_dek`` (cached by another tenant's legitimate call) must
+        not skip the check, so authorization never depends on cache state.
         """
 
         for envelope in envelopes:
+            await self._authorize_key_id(envelope, tenant)
+
             if self._cached_dek(envelope.wrapped_dek) is None:
-                await self._unwrap(envelope, tenant=tenant)
+                await self._unwrap(envelope, tenant=tenant, authorized=True)
 
     # ....................... #
 
@@ -859,12 +863,18 @@ class Keyring:
         envelope: EncryptedEnvelope,
         *,
         tenant: TenantIdentity | None = None,
+        authorized: bool = False,
     ) -> bytes:
         # Authorize the key id against the tenant *before* any cache lookup, so a warm
         # cached ``wrapped_dek`` can never return a data key for an envelope the tenant is
         # not entitled to (a cross-tenant confused-deputy on a cache hit). The check is
         # cheap and cached (``_tenant_key`` LRU); a ``None`` tenant is a no-op.
-        await self._authorize_key_id(envelope, tenant)
+        # ``authorized=True`` is for the one internal caller that already ran the check
+        # for this exact (envelope, tenant) pair before its own cache lookup
+        # (``ensure_unwrapped``); every other path keeps the default so a direct
+        # decrypt can never reach an unwrap unauthorized.
+        if not authorized:
+            await self._authorize_key_id(envelope, tenant)
 
         cached = self._cached_dek(envelope.wrapped_dek)
 

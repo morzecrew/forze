@@ -55,8 +55,6 @@ class TestS3ErrorHandler:
         [
             ("AccessDenied", "access denied"),
             ("NoSuchBucket", "not found"),
-            ("NoSuchKey", "not found"),
-            ("NotFound", "not found"),
             ("SlowDown", "throttl"),
             ("Throttling", "throttl"),
             ("InternalError", "internal error"),
@@ -67,6 +65,14 @@ class TestS3ErrorHandler:
         r = _s3_eh(_client_error(code), site="op")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert needle in r.summary.lower()
+
+    @pytest.mark.parametrize("code", ["NoSuchKey", "NotFound", "404"])
+    def test_missing_object_is_caller_caused(self, code: str) -> None:
+        # A caller miss, not downstream ill health: no retries, no breaker
+        # failure, a 404 at the edge — and the mock/real kinds agree.
+        r = _s3_eh(_client_error(code), site="op")
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.NOT_FOUND
+        assert "not found" in r.summary.lower()
 
     def test_botocore_fallback(self) -> None:
         raised = s3_errors.BotoCoreError()

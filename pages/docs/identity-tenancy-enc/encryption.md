@@ -226,7 +226,10 @@ Each streams the data through and writes it back; the read→write round-trip re
 it under a fresh data key. `reencrypt_objects` rewrites every object **in place** — an
 object's associated data binds it to its key, so it is never copied to a new one — and
 holds only one chunk in memory, however large the object. Both are resumable: re-run an
-interrupted sweep.
+interrupted sweep. Both also tolerate churn: an object or row deleted by normal traffic
+before the sweep reaches it has nothing left to re-encrypt, so it is skipped rather than
+aborting the pass — each sweep returns a `ReencryptReport` whose `rewritten` and
+`skipped_missing` counts keep the two outcomes apart. Any other failure still aborts.
 
 Nothing else needs a sweep. Outbox rows drain as they relay, and idempotency results and
 search snapshots expire on their TTL.
