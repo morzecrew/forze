@@ -1,15 +1,13 @@
 """Unified object-storage client port and value objects for S3/GCS integrations."""
 
 import math
+from collections.abc import Awaitable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 from typing import (
-    AsyncContextManager,
-    Awaitable,
     Final,
     Literal,
-    Mapping,
     Protocol,
-    Sequence,
     final,
 )
 
@@ -51,8 +49,7 @@ def presign_expiry_seconds(
 
     if max_expiry is not None and expires_in > max_expiry:
         raise exc.validation(
-            f"Presigned URL expiry {expires_in!r} exceeds the backend cap "
-            f"of {max_expiry!r}",
+            f"Presigned URL expiry {expires_in!r} exceeds the backend cap of {max_expiry!r}",
         )
 
     return math.ceil(expires_in.total_seconds())
@@ -287,7 +284,7 @@ class ObjectStorageClientPort(Protocol):
 
     def close(self) -> Awaitable[None]: ...  # pragma: no cover
 
-    def client(self) -> AsyncContextManager[object]: ...  # pragma: no cover
+    def client(self) -> AbstractAsyncContextManager[object]: ...  # pragma: no cover
 
     def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
@@ -299,9 +296,7 @@ class ObjectStorageClientPort(Protocol):
         """Create *bucket* when it does not exist (idempotent create-if-missing)."""
         ...  # pragma: no cover
 
-    def object_exists(
-        self, bucket: str, key: str
-    ) -> Awaitable[bool]: ...  # pragma: no cover
+    def object_exists(self, bucket: str, key: str) -> Awaitable[bool]: ...  # pragma: no cover
 
     def upload_bytes(
         self,

@@ -17,7 +17,9 @@ require_fastapi()
 
 # ....................... #
 
-from typing import AbstractSet, Any, Callable
+from collections.abc import Callable
+from collections.abc import Set as AbstractSet
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -25,9 +27,7 @@ from .value_objects import AuthnRequirement
 
 # ----------------------- #
 
-_HTTP_METHODS = frozenset(
-    {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-)
+_HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
 """OpenAPI path-item keys that are operations (the rest are metadata)."""
 
 _APPLIED_MARKER = "x-forze-security-applied"

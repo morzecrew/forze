@@ -1,10 +1,9 @@
 """Transaction manager and scoped port contracts."""
 
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from enum import IntEnum
 from typing import (
-    AsyncContextManager,
-    Awaitable,
-    Callable,
     Protocol,
     final,
     runtime_checkable,
@@ -136,7 +135,7 @@ class TransactionManagerPort(Protocol):
         """Return the key used to scope the transaction."""
         ...
 
-    def transaction(self, *, read_only: bool = False) -> AsyncContextManager[None]:
+    def transaction(self, *, read_only: bool = False) -> AbstractAsyncContextManager[None]:
         """Return an async context manager that scopes a transaction.
 
         On entry, begins a transaction; on exit, commits or rolls back
@@ -182,6 +181,6 @@ class IsolationAware(Protocol):
         *,
         read_only: bool = False,
         isolation: "IsolationLevel | None" = None,
-    ) -> AsyncContextManager[None]:
+    ) -> AbstractAsyncContextManager[None]:
         """Open a transaction at *isolation* (honored at root only; nested inherits)."""
         ...

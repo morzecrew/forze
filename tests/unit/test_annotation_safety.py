@@ -41,6 +41,25 @@ def _type_checking_only_names(tree: ast.Module) -> set[str]:
     return names
 
 
+def _import_time_ann_assigns(tree: ast.Module) -> list[ast.AnnAssign]:
+    """``AnnAssign`` nodes evaluated at import: module/class level, not inside functions."""
+
+    found: list[ast.AnnAssign] = []
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue  # function bodies are never evaluated at import
+
+            if isinstance(child, ast.AnnAssign):
+                found.append(child)
+
+            visit(child)
+
+    visit(tree)
+    return found
+
+
 def _has_future_annotations(tree: ast.Module) -> bool:
     return any(
         isinstance(node, ast.ImportFrom)
@@ -69,15 +88,15 @@ def test_no_unquoted_type_checking_annotations_without_future_import() -> None:
 
         # An *unquoted* annotation that references a TYPE_CHECKING-only name is evaluated at
         # definition time on Python < 3.14 → NameError on import. (Quoted annotations are
-        # strings and stay safe.)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.AnnAssign) and node.annotation is not None:
-                if any(
-                    isinstance(ref, ast.Name) and ref.id in type_checking
-                    for ref in ast.walk(node.annotation)
-                ):
-                    offenders.append(f"{path}: {node.target.lineno}")
-                    break
+        # strings and stay safe.) Only module- and class-level annotations are evaluated at
+        # import; function-body variable annotations never are, so they are skipped here.
+        for node in _import_time_ann_assigns(tree):
+            if node.annotation is not None and any(
+                isinstance(ref, ast.Name) and ref.id in type_checking
+                for ref in ast.walk(node.annotation)
+            ):
+                offenders.append(f"{path}: {node.target.lineno}")
+                break
 
     assert not offenders, (
         "Modules reference a TYPE_CHECKING-only name in a runtime-evaluated annotation "

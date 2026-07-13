@@ -5,10 +5,11 @@ import hashlib
 import hmac
 import json
 import math
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Iterator, Sequence, cast
+from typing import Any, cast
 
 import attrs
 
@@ -734,9 +735,7 @@ def encode_keyset_v1(
         or len(sort_keys) != len(null_order)
         or not sort_keys
     ):
-        raise exc.internal(
-            "Keyset token fields must be aligned in length and non-empty"
-        )
+        raise exc.internal("Keyset token fields must be aligned in length and non-empty")
 
     payload: dict[str, Any] = {
         "v": _KEYSET_V1,
@@ -852,9 +851,7 @@ def decode_keyset_v1(
     if binding is not None and (signer is not None or cipher is not None):
         embedded = data.get("b")  # type: ignore[assignment, misc]
 
-        if not isinstance(embedded, str) or not hmac.compare_digest(
-            embedded, binding.digest()
-        ):
+        if not isinstance(embedded, str) or not hmac.compare_digest(embedded, binding.digest()):
             raise exc.validation("Invalid cursor token")
 
     k = data.get("k")  # type: ignore[assignment, misc]
@@ -918,15 +915,9 @@ def validate_cursor_token(
     """
 
     null_order = _resolved_nulls(directions, nulls)
-    tk, td, tn, tv = decode_keyset_v1(
-        token, signer=signer, cipher=cipher, binding=binding
-    )
+    tk, td, tn, tv = decode_keyset_v1(token, signer=signer, cipher=cipher, binding=binding)
 
-    if (
-        list(tk) != list(sort_keys)
-        or len(td) != len(directions)
-        or len(tn) != len(null_order)
-    ):
+    if list(tk) != list(sort_keys) or len(td) != len(directions) or len(tn) != len(null_order):
         raise exc.validation("Cursor does not match current search sort")
 
     for i, di in enumerate(directions):
@@ -966,14 +957,11 @@ def keyset_page_bounds[R](
 
     has_more = len(raw_rows) > limit
 
-    if use_before:
-        # Keep the ``limit`` rows nearest the cursor (the front of the descending fetch,
-        # dropping the far sentinel), then reverse into ascending order. Reversing the whole
-        # ``limit + 1`` set first would move the sentinel to the front and return the wrong
-        # window (e.g. ``before=5&limit=2`` over ``[1..5]`` -> ``[2,3]`` instead of ``[3,4]``).
-        rows = list(reversed(raw_rows[:limit]))
-    else:
-        rows = list(raw_rows[:limit])
+    # Under ``before``, keep the ``limit`` rows nearest the cursor (the front of the descending
+    # fetch, dropping the far sentinel), then reverse into ascending order. Reversing the whole
+    # ``limit + 1`` set first would move the sentinel to the front and return the wrong
+    # window (e.g. ``before=5&limit=2`` over ``[1..5]`` -> ``[2,3]`` instead of ``[3,4]``).
+    rows = list(reversed(raw_rows[:limit])) if use_before else list(raw_rows[:limit])
 
     def _dict_token_vals(row: R) -> list[Any]:
         return [row_value_for_sort_key(cast("dict[str, Any]", row), k) for k in sort_keys]

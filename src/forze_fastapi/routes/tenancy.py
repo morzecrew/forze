@@ -23,7 +23,9 @@ require_fastapi()
 
 # ....................... #
 
-from typing import AbstractSet, Any, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Set as AbstractSet
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel

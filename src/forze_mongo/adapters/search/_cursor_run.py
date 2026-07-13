@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchCursorPage
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
@@ -19,7 +19,7 @@ from forze.application.contracts.querying import (
     resolve_effective_sorts,
     resolved_cursor_limit,
 )
-from forze.application.contracts.search import ranked_search_cursor_key_spec
+from forze.application.contracts.search import SearchCursorPage, ranked_search_cursor_key_spec
 from forze.application.integrations.search import decrypt_search_rows
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -140,7 +140,8 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     coll = await gw.coll()
     rows = await client.aggregate(coll, data_pipeline, limit=None)
     normalized = [
-        gw._from_storage_doc(r) for r in rows  # pyright: ignore[reportPrivateUsage]
+        gw._from_storage_doc(r)  # pyright: ignore[reportPrivateUsage]
+        for r in rows
     ]
 
     # Carry the active null placement into the minted tokens so a non-default order
@@ -160,9 +161,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     # Per-hit engine score for the page window (ranked queries only); read before the
     # rank column is popped ahead of decode.
     scores = (
-        [float(doc.get(MONGO_RANK_FIELD, 0.0)) for doc in page_rows_with_rank]
-        if terms
-        else None
+        [float(doc.get(MONGO_RANK_FIELD, 0.0)) for doc in page_rows_with_rank] if terms else None
     )
 
     for doc in page_rows_with_rank:

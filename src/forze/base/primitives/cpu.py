@@ -29,11 +29,12 @@ import asyncio
 import functools
 import os
 import threading
+from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from itertools import batched
-from typing import Callable, Generator, Iterable, Protocol, final, runtime_checkable
+from typing import Protocol, final, runtime_checkable
 
 import attrs
 
@@ -331,7 +332,7 @@ async def run_cpu_map[I, R](
 
     out: list[R] = []
 
-    for chunk in batched(items, chunk_size):
+    for chunk in batched(items, chunk_size, strict=False):
         out.extend(await run_cpu(_map_chunk, fn, chunk))
 
     return out

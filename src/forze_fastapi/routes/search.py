@@ -16,7 +16,8 @@ require_fastapi()
 
 # ....................... #
 
-from typing import AbstractSet, Mapping
+from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 
 from fastapi import APIRouter
 

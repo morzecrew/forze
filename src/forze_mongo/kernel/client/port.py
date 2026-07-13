@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from typing import (
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
-    Awaitable,
-    Mapping,
     Protocol,
-    Sequence,
 )
 
 from bson import ObjectId
@@ -50,7 +47,7 @@ class MongoClientPort(Protocol):
         self,
         *,
         options: MongoTransactionOptions | None = None,
-    ) -> AsyncContextManager[AsyncClientSession | None]: ...  # pragma: no cover
+    ) -> AbstractAsyncContextManager[AsyncClientSession | None]: ...  # pragma: no cover
 
     def find_one(
         self,

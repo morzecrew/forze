@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import (
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
-    Callable,
-    Mapping,
-    Sequence,
     final,
 )
 from uuid import UUID
@@ -136,7 +132,7 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
         self,
         *,
         options: MongoTransactionOptions | None = None,
-    ) -> AsyncContextManager[AsyncClientSession | None]:
+    ) -> AbstractAsyncContextManager[AsyncClientSession | None]:
         @asynccontextmanager
         async def _cm() -> AsyncGenerator[AsyncClientSession | None]:
             inner = await self._get_client()
@@ -241,9 +237,7 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
         batch_size: int = 200,
     ) -> list[ObjectId]:
         inner = await self._get_client()
-        return await inner.insert_many(
-            coll, documents, ordered=ordered, batch_size=batch_size
-        )
+        return await inner.insert_many(coll, documents, ordered=ordered, batch_size=batch_size)
 
     async def bulk_write(
         self,
@@ -284,9 +278,7 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
         batch_size: int = 200,
     ) -> int:
         inner = await self._get_client()
-        return await inner.bulk_update(
-            coll, operations, ordered=ordered, batch_size=batch_size
-        )
+        return await inner.bulk_update(coll, operations, ordered=ordered, batch_size=batch_size)
 
     async def update_many(
         self,

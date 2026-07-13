@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import TYPE_CHECKING, Any, Sequence, TypeVar
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import attrs
 from psycopg import sql
@@ -158,18 +159,14 @@ class _PostgresSimpleOffsetHooks:
             count_with = self.plan.count_with_clause
             count_from = self.plan.count_from_outer
             count_params = (
-                self.plan.count_params
-                if self.plan.count_params is not None
-                else self.plan.params
+                self.plan.count_params if self.plan.count_params is not None else self.plan.params
             )
 
         else:
             count_with = self.plan.with_clause
             count_from = self.plan.from_outer
             count_params = (
-                self.plan.count_params
-                if self.plan.count_params is not None
-                else self.plan.params
+                self.plan.count_params if self.plan.count_params is not None else self.plan.params
             )
 
         count_stmt = sql.SQL(
@@ -200,11 +197,7 @@ class _PostgresSimpleOffsetHooks:
 
         hl = self.plan.highlight
         hl_cols = hl.select_fragment() if hl is not None else sql.SQL("")
-        rank_cols = (
-            self.plan.rank_select
-            if self.plan.rank_select is not None
-            else sql.SQL("")
-        )
+        rank_cols = self.plan.rank_select if self.plan.rank_select is not None else sql.SQL("")
 
         data_stmt = sql.SQL(
             """
@@ -244,20 +237,14 @@ class _PostgresSimpleOffsetHooks:
 
         rows = [
             dict(row)
-            for row in await self.gw.client.fetch_all(
-                data_stmt, params, row_factory="dict"
-            )
+            for row in await self.gw.client.fetch_all(data_stmt, params, row_factory="dict")
         ]
 
         scores = _take_score_column(rows) if self.plan.rank_select is not None else None
-        highlights = (
-            extract_and_strip_highlights(rows, hl) if hl is not None else None
-        )
+        highlights = extract_and_strip_highlights(rows, hl) if hl is not None else None
         facets = await self._fetch_facets()
 
-        return OffsetRowsResult(
-            rows=rows, facets=facets, highlights=highlights, scores=scores
-        )
+        return OffsetRowsResult(rows=rows, facets=facets, highlights=highlights, scores=scores)
 
     async def _fetch_rows_thin(self, window: OffsetFetchWindow) -> OffsetRowsResult:
         """Late materialization: rank an id-only projection, hydrate by id.
@@ -272,11 +259,7 @@ class _PostgresSimpleOffsetHooks:
         if read_qname is None:
             return await self.fetch_rows(window, want_snap=False)
 
-        rank_cols = (
-            self.plan.rank_select
-            if self.plan.rank_select is not None
-            else sql.SQL("")
-        )
+        rank_cols = self.plan.rank_select if self.plan.rank_select is not None else sql.SQL("")
 
         id_stmt = sql.SQL(
             """
@@ -334,10 +317,7 @@ class _PostgresSimpleOffsetHooks:
         if not self.facet_fields:
             return None
 
-        if (
-            self.plan.count_with_clause is not None
-            and self.plan.count_from_outer is not None
-        ):
+        if self.plan.count_with_clause is not None and self.plan.count_from_outer is not None:
             facet_with: sql.Composable = self.plan.count_with_clause
             facet_body: sql.Composable = self.plan.count_from_outer
         else:
@@ -345,9 +325,7 @@ class _PostgresSimpleOffsetHooks:
             facet_body = self.plan.from_outer
 
         facet_params = (
-            self.plan.count_params
-            if self.plan.count_params is not None
-            else self.plan.params
+            self.plan.count_params if self.plan.count_params is not None else self.plan.params
         )
 
         return await fetch_pg_facets(
@@ -466,9 +444,7 @@ async def hydrate_rows_by_id(
         )
 
     rel = relation if relation is not None else await gw._qname()  # pyright: ignore[reportPrivateUsage]
-    hyd_stmt = sql.SQL(
-        "SELECT {cols} FROM {rel} {ca} WHERE {ca}.{idf} = ANY({ph})"
-    ).format(
+    hyd_stmt = sql.SQL("SELECT {cols} FROM {rel} {ca} WHERE {ca}.{idf} = ANY({ph})").format(
         cols=cols,
         rel=rel.ident(),
         ca=sql.Identifier(hyd_alias),
@@ -623,6 +599,8 @@ async def execute_hub_ranked_offset_search(
 ) -> Any:
     """Ranked offset search for :class:`~forze_postgres.adapters.search.hub.PostgresHubSearchAdapter`."""
 
+    from .hub.sql import HubSearchSqlMixin
+
     # Facets ride the live page, not the id-only snapshot (a replay restores hits only), so a
     # facet request runs against a live execution — no snapshot read or write.
     rs_spec = None if facet_fields else hub_spec.snapshot
@@ -699,7 +677,8 @@ async def execute_hub_ranked_offset_search(
             total = int(plan.approximate_total)
 
         elif count_policy == "exact" and hasattr(gw, "_hub_sql_combo_count"):
-            hub_count = getattr(gw, "_hub_sql_combo_count")
+            hub_count = cast(HubSearchSqlMixin[Any], gw)._hub_sql_combo_count  # type: ignore[reportUnknownVariableType]
+
             total = int(
                 await hub_count(
                     query_terms=tuple(normalize_search_queries(query)),
@@ -707,7 +686,7 @@ async def execute_hub_ranked_offset_search(
                     leg_options=options,
                     member_weights_list=[float(w) for _name, w in members_weighted],
                     per_leg_limit=per_leg_limit,
-                    sorts=sorts if sorts else hub_spec.default_sort,
+                    sorts=sorts or hub_spec.default_sort,
                 )
             )
 
@@ -719,7 +698,7 @@ async def execute_hub_ranked_offset_search(
                 [],
                 pagination or {},
                 total=0,
-                facets={f: () for f in facet_fields} if facet_fields else None,
+                facets=dict.fromkeys(facet_fields, ()) if facet_fields else None,
             )
 
     if want_sn and result_snapshot is not None and rs_spec is not None:
@@ -727,9 +706,7 @@ async def execute_hub_ranked_offset_search(
         # memory is one chunk, never the whole (up to ``max_ids``) decoded pool at once.
         # When thin, each window is ranked over the id-only pipeline and hydrated by id, so
         # the heavy projection runs only for actually-stored windows.
-        page_limit = SearchResultSnapshot.snapshot_pagination(
-            True, 0, pagination_dict
-        )[2]
+        page_limit = SearchResultSnapshot.snapshot_pagination(True, 0, pagination_dict)[2]
         base_params = list(plan.params)
 
         thin_id_stmt = sql.SQL(
@@ -754,9 +731,7 @@ async def execute_hub_ranked_offset_search(
                 """
         ).format(
             with_clause=plan.with_clause,
-            cols=gw.return_clause(
-                return_type, return_fields, table_alias=plan.select_table_alias
-            ),
+            cols=gw.return_clause(return_type, return_fields, table_alias=plan.select_table_alias),
             combo=sql.Identifier(plan.data_relation),
             ca=sql.Identifier(combo_alias),
             order=plan.order_sql,
@@ -764,26 +739,20 @@ async def execute_hub_ranked_offset_search(
 
         drop_id = return_fields is not None and ID_FIELD not in return_fields
 
-        async def fetch_window(
-            window_offset: int, window_limit: int
-        ) -> SnapshotWindow:
+        async def fetch_window(window_offset: int, window_limit: int) -> SnapshotWindow:
             window_params = [*base_params, int(window_limit), int(window_offset)]
 
             if not plan.thin:
                 stmt = heavy_data_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
                     sql.Placeholder(), sql.Placeholder()
                 )
-                window_rows = await gw.client.fetch_all(
-                    stmt, window_params, row_factory="dict"
-                )
+                window_rows = await gw.client.fetch_all(stmt, window_params, row_factory="dict")
                 return SnapshotWindow(rows=[dict(row) for row in window_rows])
 
             stmt = thin_id_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
                 sql.Placeholder(), sql.Placeholder()
             )
-            id_rows = await gw.client.fetch_all(
-                stmt, window_params, row_factory="dict"
-            )
+            id_rows = await gw.client.fetch_all(stmt, window_params, row_factory="dict")
             window_ids = [row[ID_FIELD] for row in id_rows]
             hydrated = await hydrate_rows_by_id(
                 gw,
@@ -825,9 +794,7 @@ async def execute_hub_ranked_offset_search(
         return search_page_from_limit_offset(
             page,
             pagination_dict,
-            total=(
-                total if (return_count and count_policy != "none") else None
-            ),
+            total=(total if (return_count and count_policy != "none") else None),
             snapshot=stream.handle,
         )
 
@@ -901,9 +868,7 @@ async def execute_hub_ranked_offset_search(
         data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
         params.append(offset_from_dict(pagination_dict))
 
-    rows = [dict(row) for row in await gw.client.fetch_all(
-        data_stmt, params, row_factory="dict"
-    )]
+    rows = [dict(row) for row in await gw.client.fetch_all(data_stmt, params, row_factory="dict")]
     scores = _take_score_column(rows) if plan.rank_select is not None else None
 
     return await materialize_offset_page(

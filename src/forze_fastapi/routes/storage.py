@@ -16,10 +16,12 @@ require_fastapi()
 # ....................... #
 
 import re
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Set as AbstractSet
+from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from functools import partial
-from typing import AbstractSet, Annotated, Any, Awaitable, Callable, Final, Mapping
+from typing import Annotated, Any, Final
 from urllib.parse import quote
 
 import attrs
@@ -137,11 +139,7 @@ def _upload_endpoint(
         if max_upload_size is not None:
             declared = request.headers.get("content-length")
 
-            if (
-                declared is not None
-                and declared.isdigit()
-                and int(declared) > max_upload_size
-            ):
+            if declared is not None and declared.isdigit() and int(declared) > max_upload_size:
                 raise _upload_too_large(max_upload_size)
 
         payload = validate_payload(
@@ -423,8 +421,8 @@ def _http_date(dt: datetime) -> str:
     may hand back a naive datetime. Normalize both to ``timezone.utc`` first.
     """
 
-    aware = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-    return format_datetime(aware.astimezone(timezone.utc), usegmt=True)
+    aware = dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+    return format_datetime(aware.astimezone(UTC), usegmt=True)
 
 
 # ....................... #
@@ -695,9 +693,7 @@ _REST_BINDINGS: Mapping[str, RouteBinding] = {
         build=partial(_upload_endpoint, max_upload_size=DEFAULT_MAX_UPLOAD_SIZE),
         status_code=201,
     ),
-    StorageKernelOp.LIST: RouteBinding(
-        method="POST", path="/list", build=body_endpoint
-    ),
+    StorageKernelOp.LIST: RouteBinding(method="POST", path="/list", build=body_endpoint),
     # ``:path`` lets keys carry prefix slashes (folder-like namespaces).
     StorageKernelOp.DOWNLOAD: RouteBinding(
         method="GET",
@@ -875,9 +871,7 @@ def _with_streaming_download(
     ) -> Callable[..., Awaitable[Any]]:
         _ = runner, input_type, op  # the key rides the path; head/stream/range run the body
         return _streaming_download_endpoint(
-            head_runner=_operation_runner(
-                registry, ns.key(StorageKernelOp.HEAD), ctx_dep
-            ),
+            head_runner=_operation_runner(registry, ns.key(StorageKernelOp.HEAD), ctx_dep),
             stream_runner=_operation_runner(
                 registry, ns.key(StorageKernelOp.DOWNLOAD_STREAM), ctx_dep
             ),
@@ -889,9 +883,7 @@ def _with_streaming_download(
 
     return {
         **bindings,
-        StorageKernelOp.DOWNLOAD: attrs.evolve(
-            bindings[StorageKernelOp.DOWNLOAD], build=build
-        ),
+        StorageKernelOp.DOWNLOAD: attrs.evolve(bindings[StorageKernelOp.DOWNLOAD], build=build),
     }
 
 

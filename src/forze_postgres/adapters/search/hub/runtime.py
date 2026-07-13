@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Final, Literal, Mapping, Protocol, Sequence, final
+from collections.abc import Awaitable, Mapping, Sequence
+from typing import Any, Final, Literal, Protocol, final
 from uuid import UUID
 
 import attrs
@@ -30,7 +31,6 @@ from .constants import (
     LEG_EID,
     LEG_SCORE,
 )
-from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -81,11 +81,12 @@ class HubLegRuntime:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.engine == "vector":
-            if not self.vector_column or self.embedding_dimensions is None:
-                raise exc.internal(
-                    "Vector hub leg requires vector_column and embedding_dimensions.",
-                )
+        if self.engine == "vector" and (
+            not self.vector_column or self.embedding_dimensions is None
+        ):
+            raise exc.internal(
+                "Vector hub leg requires vector_column and embedding_dimensions.",
+            )
 
     # ....................... #
 

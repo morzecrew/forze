@@ -1,6 +1,7 @@
 """Pydantic-backed implementation of the model codec protocol."""
 
-from typing import Iterator, Literal, Sequence, cast
+from collections.abc import Iterator, Sequence
+from typing import Literal, cast
 
 import attrs
 from pydantic import BaseModel
@@ -109,8 +110,10 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         obj: T,
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> JsonDict:
+        if exclude is None:
+            exclude = {}
         return pydantic_dump(obj, mode=mode, exclude=exclude)
 
     # ....................... #
@@ -120,8 +123,10 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         objs: Sequence[T],
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> list[JsonDict]:
+        if exclude is None:
+            exclude = {}
         return pydantic_dump_many(objs, mode=mode, exclude=exclude)
 
     # ....................... #
@@ -132,8 +137,10 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         *,
         batch_size: int = 2000,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> Iterator[list[JsonDict]]:
+        if exclude is None:
+            exclude = {}
         return pydantic_dump_many_batched(
             objs,
             batch_size=batch_size,
@@ -148,8 +155,10 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         source: BaseModel,
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {"unset": True},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> T:
+        if exclude is None:
+            exclude = {"unset": True}
         return pydantic_transform(
             self.model_type,
             source,
@@ -164,8 +173,10 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         sources: Sequence[BaseModel],
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {"unset": True},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> list[T]:
+        if exclude is None:
+            exclude = {"unset": True}
         return pydantic_transform_many(
             self.model_type,
             sources,
@@ -188,10 +199,7 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
     # ....................... #
 
     def persisted_field_names(self) -> frozenset[str]:
-        return (
-            pydantic_field_names(self.model_type, include_computed=False)
-            | self.materialized
-        )
+        return pydantic_field_names(self.model_type, include_computed=False) | self.materialized
 
     # ....................... #
 
@@ -199,8 +207,10 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         self,
         obj: T,
         *,
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> bytes:
+        if exclude is None:
+            exclude = {}
         return pydantic_encode_json_bytes(obj, exclude=exclude)
 
     # ....................... #
@@ -210,8 +220,10 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         obj: T,
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> JsonDict:
+        if exclude is None:
+            exclude = {}
         merged = cast(
             ModelDumpExcludeOptions,
             {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
@@ -233,8 +245,10 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         objs: Sequence[T],
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> list[JsonDict]:
+        if exclude is None:
+            exclude = {}
         merged = cast(
             ModelDumpExcludeOptions,
             {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
@@ -242,10 +256,8 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         mappings = self.encode_mapping_many(objs, mode=mode, exclude=merged)
 
         if self.materialized and merged.get("computed_fields"):
-            fulls = self.encode_mapping_many(
-                objs, mode=mode, exclude=self._keep_computed(exclude)
-            )
-            for mapping, full in zip(mappings, fulls):
+            fulls = self.encode_mapping_many(objs, mode=mode, exclude=self._keep_computed(exclude))
+            for mapping, full in zip(mappings, fulls, strict=False):
                 for name in self.materialized:
                     if name in full:
                         mapping[name] = full[name]

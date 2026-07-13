@@ -25,10 +25,11 @@ import base64
 import hashlib
 import random
 import secrets
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from random import Random
-from typing import Iterator, Protocol, final, runtime_checkable
+from typing import Protocol, final, runtime_checkable
 from uuid import UUID
 from uuid import uuid4 as uuid4_func
 
@@ -81,18 +82,18 @@ process-global Mersenne Twister."""
 class SystemEntropySource:
     """The real system CSPRNG — the default replayable source (identical to direct stdlib reads)."""
 
-    def randbits(self, k: int) -> int:  # noqa: PYL-R0201
+    def randbits(self, k: int) -> int:
         return secrets.randbits(k)
 
-    def random(self) -> float:  # noqa: PYL-R0201
+    def random(self) -> float:
         # os.urandom-backed, not the process-global Mersenne Twister (``random.random``),
         # so this source is CSPRNG-backed across *all* reads as its name/docstring claim.
         return _SYSTEM_RANDOM.random()
 
-    def uuid4(self) -> UUID:  # noqa: PYL-R0201
+    def uuid4(self) -> UUID:
         return uuid4_func()
 
-    def as_random(self) -> Random:  # noqa: PYL-R0201
+    def as_random(self) -> Random:
         # A fresh CSPRNG-backed generator (os.urandom under the hood), matching the
         # non-deterministic intent of the jitter/backoff call sites it serves.
         return random.SystemRandom()
@@ -115,9 +116,7 @@ class SeededEntropySource:
     seed: int
     _rng: Random = attrs.field(
         default=attrs.Factory(
-            lambda self: Random(
-                self.seed
-            ),  # nosec B311 - deterministic sim RNG, not crypto
+            lambda self: Random(self.seed),  # nosec B311 - deterministic sim RNG, not crypto
             takes_self=True,
         ),
         init=False,
@@ -201,7 +200,7 @@ class SecretEntropy(Protocol):
 class SystemSecretEntropy:
     """The system CSPRNG (``secrets``/``os.urandom``) — the only source of durable-secret bytes."""
 
-    def secret_bytes(self, n: int) -> bytes:  # noqa: PYL-R0201
+    def secret_bytes(self, n: int) -> bytes:
         return secrets.token_bytes(n)
 
 

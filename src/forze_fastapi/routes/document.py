@@ -16,7 +16,8 @@ require_fastapi()
 
 # ....................... #
 
-from typing import AbstractSet, Mapping
+from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 
 from fastapi import APIRouter
 
@@ -45,31 +46,24 @@ def _rpc_path(op: object) -> str:
 
     return f"/{op.value}"  # type: ignore[attr-defined]
 
+
 # ----------------------- #
 
 _REST_BINDINGS: Mapping[str, RouteBinding] = {
     DocumentKernelOp.GET: RouteBinding(method="GET", path="/{id}", build=id_endpoint),
-    DocumentKernelOp.LIST: RouteBinding(
-        method="POST", path="/list", build=body_endpoint
-    ),
-    DocumentKernelOp.RAW_LIST: RouteBinding(
-        method="POST", path="/raw_list", build=body_endpoint
-    ),
+    DocumentKernelOp.LIST: RouteBinding(method="POST", path="/list", build=body_endpoint),
+    DocumentKernelOp.RAW_LIST: RouteBinding(method="POST", path="/raw_list", build=body_endpoint),
     DocumentKernelOp.LIST_CURSOR: RouteBinding(
         method="POST", path="/list_cursor", build=body_endpoint
     ),
     DocumentKernelOp.RAW_LIST_CURSOR: RouteBinding(
         method="POST", path="/raw_list_cursor", build=body_endpoint
     ),
-    DocumentKernelOp.AGG_LIST: RouteBinding(
-        method="POST", path="/agg_list", build=body_endpoint
-    ),
+    DocumentKernelOp.AGG_LIST: RouteBinding(method="POST", path="/agg_list", build=body_endpoint),
     DocumentKernelOp.CREATE: RouteBinding(
         method="POST", path="", build=body_endpoint, status_code=201
     ),
-    DocumentKernelOp.UPDATE: RouteBinding(
-        method="PATCH", path="/{id}", build=id_rev_body_endpoint
-    ),
+    DocumentKernelOp.UPDATE: RouteBinding(method="PATCH", path="/{id}", build=id_rev_body_endpoint),
     DocumentKernelOp.KILL: RouteBinding(
         method="DELETE", path="/{id}", build=id_endpoint, status_code=204
     ),
@@ -132,9 +126,7 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
     # List/aggregate operations carry filter/sort/pagination bodies that do not
     # map onto query parameters — POST with the input DTO as body.
     **{
-        op.value: RouteBinding(
-            method="POST", path=_rpc_path(op), build=body_endpoint
-        )
+        op.value: RouteBinding(method="POST", path=_rpc_path(op), build=body_endpoint)
         for op in _RPC_LIST_OPS
     },
 }
@@ -154,9 +146,7 @@ def attach_document_routes(
     style: RouteStyle,
     include: AbstractSet[DocumentKernelOp | SoftDeletionKernelOp | str] | None = None,
     resource: str | None = None,
-    path_overrides: (
-        Mapping[DocumentKernelOp | SoftDeletionKernelOp | str, str] | None
-    ) = None,
+    path_overrides: (Mapping[DocumentKernelOp | SoftDeletionKernelOp | str, str] | None) = None,
     exclude_none: bool = True,
 ) -> APIRouter:
     """Attach the registered document operations under *ns* to *router*.

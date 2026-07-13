@@ -10,21 +10,19 @@ import asyncio
 import base64
 import math
 import re
-from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, suppress
 from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from re import Pattern
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
     Final,
-    Mapping,
-    Sequence,
     cast,
     final,
 )
+
 import aioboto3
 import attrs
 from pydantic import SecretStr
@@ -210,12 +208,8 @@ class SQSClient(SQSClientPort):
             else:
                 aio_config = None
 
-            self.__enqueue_batch_concurrency = clamp(
-                pool_cap, 1, _MAX_ENQUEUE_BATCH_CONCURRENCY
-            )
-            self.__poison_queue_url = (
-                config.poison_queue_url if config is not None else None
-            )
+            self.__enqueue_batch_concurrency = clamp(pool_cap, 1, _MAX_ENQUEUE_BATCH_CONCURRENCY)
+            self.__poison_queue_url = config.poison_queue_url if config is not None else None
 
             self.__opts = SQSConnectionOpts(
                 endpoint=endpoint,
@@ -301,7 +295,7 @@ class SQSClient(SQSClientPort):
 
     @staticmethod
     def __is_queue_url(queue: str) -> bool:
-        return queue.startswith("https://") or queue.startswith("http://")
+        return queue.startswith(("https://", "http://"))
 
     # ....................... #
 
@@ -340,7 +334,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    def __create_client_cm(self) -> AsyncContextManager[AsyncSQSClient]:
+    def __create_client_cm(self) -> AbstractAsyncContextManager[AsyncSQSClient]:
         """Build the ``aiobotocore`` client async context manager from opts.
 
         When credentials are absent in the options, the ``aws_*`` kwargs are
@@ -369,7 +363,7 @@ class SQSClient(SQSClientPort):
 
         cm = session.client("sqs", **kwargs)  # type: ignore
 
-        return cast("AsyncContextManager[AsyncSQSClient]", cm)
+        return cast("AbstractAsyncContextManager[AsyncSQSClient]", cm)
 
     # ....................... #
 
@@ -607,9 +601,7 @@ class SQSClient(SQSClientPort):
         out: dict[str, str] = {}
 
         for attr_key, raw in attrs_.items():
-            if attr_key in _RESERVED_ATTRS or not isinstance(
-                raw, dict
-            ):  # pyright: ignore[reportUnnecessaryIsInstance]
+            if attr_key in _RESERVED_ATTRS or not isinstance(raw, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
                 continue
 
             value = raw.get("StringValue")
@@ -671,7 +663,7 @@ class SQSClient(SQSClientPort):
             sent = system_attrs.get("SentTimestamp")
 
             if sent and sent.isdigit():
-                return datetime.fromtimestamp(int(sent) / 1000.0, tz=timezone.utc)
+                return datetime.fromtimestamp(int(sent) / 1000.0, tz=UTC)
 
         return None
 
@@ -820,9 +812,7 @@ class SQSClient(SQSClientPort):
             raise exc.precondition("SQS message_ids size must match batch body size")
 
         if message_headers is not None and len(message_headers) != len(bodies):
-            raise exc.precondition(
-                "SQS message_headers size must match batch body size"
-            )
+            raise exc.precondition("SQS message_headers size must match batch body size")
 
         # Per-message effective headers (shared headers overridden by the
         # per-message entry) when message_headers is given; otherwise every
@@ -840,9 +830,7 @@ class SQSClient(SQSClientPort):
         elif message_headers is not None:
             # Each entry dedups on its own event id; absent one, a fresh random
             # id keeps distinct messages from colliding.
-            resolved_ids = [
-                mh.get(HEADER_EVENT_ID) or uuid4().hex for mh in message_headers
-            ]
+            resolved_ids = [mh.get(HEADER_EVENT_ID) or uuid4().hex for mh in message_headers]
 
         else:
             header_event_id = headers.get(HEADER_EVENT_ID) if headers else None
@@ -865,9 +853,7 @@ class SQSClient(SQSClientPort):
         )
         is_fifo = self.__is_fifo_target(queue, queue_url)
         c = self.__require_client()
-        delay_seconds = self._resolve_sqs_delay_seconds(
-            delay=delay, not_before=not_before
-        )
+        delay_seconds = self._resolve_sqs_delay_seconds(delay=delay, not_before=not_before)
 
         if is_fifo and delay_seconds is not None:
             # SQS rejects per-message DelaySeconds on a FIFO queue (only a queue-level delay is
@@ -929,9 +915,7 @@ class SQSClient(SQSClientPort):
             if failed:
                 failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
 
-                raise exc.internal(
-                    f"SQS send_message_batch has failed entries: {failed_ids}"
-                )
+                raise exc.internal(f"SQS send_message_batch has failed entries: {failed_ids}")
 
             # Map entry ids ("m{i}") back to broker-assigned MessageIds so the
             # returned identifiers correlate with received ``message.id``.
@@ -941,17 +925,12 @@ class SQSClient(SQSClientPort):
                 entry_id = success.get("Id")
                 broker_id = success.get("MessageId")
 
-                if isinstance(
-                    entry_id, str
-                ) and isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+                if isinstance(entry_id, str) and isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
                     broker_id, str
                 ):
                     by_entry[entry_id] = broker_id
 
-            return [
-                by_entry.get(f"m{i}", fallback_id)
-                for i, fallback_id in enumerate(chunk_ids)
-            ]
+            return [by_entry.get(f"m{i}", fallback_id) for i, fallback_id in enumerate(chunk_ids)]
 
         # Pack into batches bounded by BOTH limits: at most 10 entries (count) and at most
         # 256 KiB total (size). The size accounting is O(1) per message — the base64 body
@@ -1023,9 +1002,7 @@ class SQSClient(SQSClientPort):
             chunk_headers: list[Mapping[str, str] | None],
         ) -> None:
             async with sem:
-                chunk_results[index] = await _send_chunk(
-                    chunk, chunk_ids, chunk_headers
-                )
+                chunk_results[index] = await _send_chunk(chunk, chunk_ids, chunk_headers)
 
         async with asyncio.TaskGroup() as tg:
             for index, (ch, ids, hdrs) in enumerate(chunks):
@@ -1167,9 +1144,7 @@ class SQSClient(SQSClientPort):
             # ``id`` is the broker MessageId: stable across redeliveries and
             # correlatable with enqueue. Fall back to the receipt handle for
             # SQS-compatible backends that omit MessageId.
-            message_id = (
-                broker_id if isinstance(broker_id, str) and broker_id else receipt
-            )
+            message_id = broker_id if isinstance(broker_id, str) and broker_id else receipt
 
             body = raw.get("Body", "")
 
@@ -1303,9 +1278,7 @@ class SQSClient(SQSClientPort):
         """
 
         idle_seconds = (
-            timeout.total_seconds()
-            if timeout is not None and timeout.total_seconds() > 0
-            else None
+            timeout.total_seconds() if timeout is not None and timeout.total_seconds() > 0 else None
         )
         long_poll_seconds = _CONSUME_LONG_POLL_WAIT.total_seconds()
         backoff = _CONSUME_ERROR_BACKOFF_INITIAL
@@ -1335,7 +1308,7 @@ class SQSClient(SQSClientPort):
                     timeout=timedelta(seconds=wait_seconds),
                 )
 
-            except Exception as e:  # noqa: BLE001 — surface + back off, never hot-loop silently
+            except Exception as e:
                 # Log so a persistently failing receive is observable rather than a silent retry
                 # loop, then back off; the idle deadline (when set) still terminates.
                 logger.warning(
@@ -1421,8 +1394,7 @@ class SQSClient(SQSClientPort):
 
         for chunk in self.__chunked_pending(pending):
             entries = [
-                {"Id": f"m{i}", "ReceiptHandle": receipt}
-                for i, (_, receipt) in enumerate(chunk)
+                {"Id": f"m{i}", "ReceiptHandle": receipt} for i, (_, receipt) in enumerate(chunk)
             ]
 
             resp = await c.delete_message_batch(
@@ -1433,9 +1405,7 @@ class SQSClient(SQSClientPort):
             if failed := resp.get("Failed") or []:
                 failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
 
-                raise exc.internal(
-                    f"SQS delete_message_batch has failed entries: {failed_ids}"
-                )
+                raise exc.internal(f"SQS delete_message_batch has failed entries: {failed_ids}")
 
             acked_ids.extend(message_id for message_id, _ in chunk)
 

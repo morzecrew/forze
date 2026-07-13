@@ -9,8 +9,8 @@ Hub facets are computed during ``sql``-mode execution by a companion ``GROUP BY`
 merged candidate set (see :func:`..._facets.fetch_hub_facets`).
 """
 
-from collections.abc import Mapping
-from typing import Any, Protocol, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol
 
 import attrs
 
@@ -59,7 +59,9 @@ def _hit_text(hit: Any, field: str) -> Any:
             value.get(part)  # pyright: ignore[reportUnknownMemberType]
             if isinstance(value, Mapping)
             else getattr(
-                value, part, None  # pyright: ignore[reportUnknownArgumentType]
+                value,  # pyright: ignore[reportUnknownArgumentType]
+                part,
+                None,
             )
         )
 
@@ -94,9 +96,7 @@ def attach_hub_highlights[P: _HasHits](
 
     fields, pre_tag, post_tag = resolved
 
-    if return_fields is not None and (
-        unprojected := [f for f in fields if f not in return_fields]
-    ):
+    if return_fields is not None and (unprojected := [f for f in fields if f not in return_fields]):
         raise exc.precondition(
             f"Hub search cannot highlight field(s) {sorted(set(unprojected))} that are not in "
             "return_fields; include them in the projection or drop return_fields.",

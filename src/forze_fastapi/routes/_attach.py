@@ -16,14 +16,12 @@ require_fastapi()
 
 import inspect
 import re
+from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Set as AbstractSet
 from enum import Enum
 from typing import (
-    AbstractSet,
     Any,
-    Awaitable,
-    Callable,
     Literal,
-    Mapping,
     final,
 )
 from uuid import UUID
@@ -190,9 +188,7 @@ def _require_satisfiable(
     request-time 500 into a configuration error at attach time.
     """
 
-    required = {
-        name for name, field in dto_type.model_fields.items() if field.is_required()
-    }
+    required = {name for name, field in dto_type.model_fields.items() if field.is_required()}
 
     if missing := required - set(supplied):
         raise exc.configuration(
@@ -277,8 +273,7 @@ def _route_description(
     if entry.deadline is not None:
         budget = f"{entry.deadline.total_seconds():g}"
         lines.append(
-            f"Time budget: {budget}s — requests exceeding it fail with "
-            "504 (`deadline_exceeded`)."
+            f"Time budget: {budget}s — requests exceeding it fail with 504 (`deadline_exceeded`)."
         )
 
     return "\n\n".join(lines) if lines else None
@@ -467,17 +462,13 @@ def id_rev_body_endpoint(
     inner = fields["dto"].annotation
 
     async def endpoint(id: UUID, rev: int, payload: Any) -> Any:
-        return await runner(
-            validate_payload(dto_type, {"id": id, "rev": rev, "dto": payload}, op)
-        )
+        return await runner(validate_payload(dto_type, {"id": id, "rev": rev, "dto": payload}, op))
 
     endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         [
             inspect.Parameter("id", inspect.Parameter.KEYWORD_ONLY, annotation=UUID),
             inspect.Parameter("rev", inspect.Parameter.KEYWORD_ONLY, annotation=int),
-            inspect.Parameter(
-                "payload", inspect.Parameter.KEYWORD_ONLY, annotation=inner
-            ),
+            inspect.Parameter("payload", inspect.Parameter.KEYWORD_ONLY, annotation=inner),
         ]
     )
     endpoint.__annotations__ = {"id": UUID, "rev": int, "payload": inner}
@@ -550,9 +541,7 @@ def attach_operation_routes(
     wanted = known if include is None else {str(o) for o in include}
 
     if unknown := wanted - known:
-        raise exc.configuration(
-            f"Unknown operations: {sorted(unknown)} (expected {sorted(known)})"
-        )
+        raise exc.configuration(f"Unknown operations: {sorted(unknown)} (expected {sorted(known)})")
 
     overrides = {str(key): path for key, path in (path_overrides or {}).items()}
 
@@ -619,9 +608,7 @@ def attach_operation_routes(
         # Descriptor tags project onto OpenAPI route tags (additive to any
         # router-level tags). MCP attachers have no tag concept — this mapping
         # is HTTP-surface-specific by design.
-        tags: list[str | Enum] = (
-            list(descriptor.tags) if descriptor is not None else []
-        )
+        tags: list[str | Enum] = list(descriptor.tags) if descriptor is not None else []
 
         router.add_api_route(
             path,
@@ -640,8 +627,6 @@ def attach_operation_routes(
         attached += 1
 
     if not attached:
-        raise exc.configuration(
-            f"No matching operations registered under namespace '{ns.prefix}'"
-        )
+        raise exc.configuration(f"No matching operations registered under namespace '{ns.prefix}'")
 
     return router

@@ -172,17 +172,16 @@ class AuthnOrchestrator(AuthnPort):
 
         # Lockout gates BEFORE verification on the login *string* — nonexistent
         # logins lock identically to real ones (no account enumeration).
-        if self.lockout is not None and digest is not None:
-            if await self.lockout.is_locked(digest):
-                # Throttle-once semantics are not required: every attempt in a
-                # locked window re-emits LOGIN_LOCKED.
-                if self.events is not None:
-                    await self.events.emit(
-                        AuthnEventKind.LOGIN_LOCKED,
-                        login_digest=digest,
-                    )
+        if self.lockout is not None and digest is not None and await self.lockout.is_locked(digest):
+            # Throttle-once semantics are not required: every attempt in a
+            # locked window re-emits LOGIN_LOCKED.
+            if self.events is not None:
+                await self.events.emit(
+                    AuthnEventKind.LOGIN_LOCKED,
+                    login_digest=digest,
+                )
 
-                raise exc.throttled(LOCKED_LOGIN_MSG, code=LOCKED_LOGIN_CODE)
+            raise exc.throttled(LOCKED_LOGIN_MSG, code=LOCKED_LOGIN_CODE)
 
         try:
             assertion = await self.password_verifier.verify_password(credentials)
@@ -245,9 +244,7 @@ class AuthnOrchestrator(AuthnPort):
             if isinstance(act, Mapping):
                 identity = attrs.evolve(
                     identity,
-                    actor=await self._resolve_actor(
-                        assertion, cast("Mapping[str, Any]", act)
-                    ),
+                    actor=await self._resolve_actor(assertion, cast("Mapping[str, Any]", act)),
                 )
 
         return AuthnResult(
@@ -273,8 +270,7 @@ class AuthnOrchestrator(AuthnPort):
 
         if depth >= _MAX_ACTOR_CHAIN_DEPTH:
             raise exc.authentication(
-                "Delegation actor chain exceeds the maximum depth "
-                f"({_MAX_ACTOR_CHAIN_DEPTH})",
+                f"Delegation actor chain exceeds the maximum depth ({_MAX_ACTOR_CHAIN_DEPTH})",
                 code="actor_chain_too_deep",
             )
 
@@ -332,9 +328,7 @@ class AuthnOrchestrator(AuthnPort):
         if isinstance(act, Mapping):
             identity = attrs.evolve(
                 identity,
-                actor=await self._resolve_actor(
-                    assertion, cast("Mapping[str, Any]", act)
-                ),
+                actor=await self._resolve_actor(assertion, cast("Mapping[str, Any]", act)),
             )
 
         return AuthnResult(

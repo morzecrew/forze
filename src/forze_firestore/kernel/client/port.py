@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from typing import (
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
-    Awaitable,
-    Mapping,
     Protocol,
-    Sequence,
 )
 
 from google.cloud.firestore_v1.async_collection import AsyncCollectionReference
@@ -38,7 +35,7 @@ class FirestoreClientPort(Protocol):
 
     def require_transaction(self) -> None: ...  # pragma: no cover
 
-    def transaction(self) -> AsyncContextManager[Any]: ...  # pragma: no cover
+    def transaction(self) -> AbstractAsyncContextManager[Any]: ...  # pragma: no cover
 
     def get_document(
         self,

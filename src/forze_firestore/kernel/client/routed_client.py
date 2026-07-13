@@ -1,13 +1,9 @@
 """Firestore client that resolves project/database per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import (
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
-    Callable,
-    Mapping,
-    Sequence,
     cast,
     final,
 )
@@ -126,7 +122,7 @@ class RoutedFirestoreClient(
 
         inner.require_transaction()
 
-    def transaction(self) -> AsyncContextManager[Any]:
+    def transaction(self) -> AbstractAsyncContextManager[Any]:
         @asynccontextmanager
         async def _cm() -> AsyncGenerator[Any]:
             inner = await self._get_client()
@@ -228,6 +224,4 @@ class RoutedFirestoreClient(
         create_only: bool = False,
     ) -> None:
         inner = await self._get_client()
-        await inner.insert_many(
-            coll, documents, batch_size=batch_size, create_only=create_only
-        )
+        await inner.insert_many(coll, documents, batch_size=batch_size, create_only=create_only)

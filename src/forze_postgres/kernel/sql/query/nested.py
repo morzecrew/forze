@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import date, datetime
 from enum import Enum
+from types import UnionType
 from typing import Any, Union, get_args, get_origin
 from uuid import UUID
 
@@ -16,13 +17,6 @@ from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, Postgr
 from forze_postgres.kernel.sql.type_cast import cast_sql_for_column_type
 
 # ----------------------- #
-
-try:
-    from types import UnionType
-
-except ImportError:  # pragma: no cover
-    UnionType = type(Union[int, str])  # type: ignore[misc,assignment]
-
 
 # ....................... #
 
@@ -95,9 +89,7 @@ def _walk_field_chain(
 # ....................... #
 
 
-def _walk_through_ann(
-    ann: Any, segments: list[str], *, filter_path: str | None
-) -> Any | None:
+def _walk_through_ann(ann: Any, segments: list[str], *, filter_path: str | None) -> Any | None:
     """Follow *segments* inside annotation *ann* (nested model, mapping hop, or leaf)."""
 
     if not segments:
@@ -112,9 +104,7 @@ def _walk_through_ann(
         key_t, val_t = kv
 
         if filter_path is not None:
-            _mapping_key_must_be_str_for_json_path(
-                filter_path=filter_path, key_ann=key_t
-            )
+            _mapping_key_must_be_str_for_json_path(filter_path=filter_path, key_ann=key_t)
 
         elif not _is_str_like_mapping_key(key_t):
             return None
@@ -213,8 +203,7 @@ def resolve_leaf_python_type(
 
     if root not in model_type.model_fields:
         raise exc.internal(
-            f"Filter path {path!r}: root field {root!r} is not defined on "
-            f"{model_type.__name__}.",
+            f"Filter path {path!r}: root field {root!r} is not defined on {model_type.__name__}.",
         )
 
     hint = hints.get(path)
@@ -380,9 +369,7 @@ def build_nested_json_scalar_expr(
     leaf_pg = python_type_to_postgres_scalar(leaf_py)
 
     base_ident = (
-        sql.Identifier(table_alias, root)
-        if table_alias is not None
-        else sql.Identifier(root)
+        sql.Identifier(table_alias, root) if table_alias is not None else sql.Identifier(root)
     )
     text_expr = _json_path_expr(base_ident, inner)
     cast_name = cast_sql_for_column_type(leaf_pg) if leaf_pg is not None else None

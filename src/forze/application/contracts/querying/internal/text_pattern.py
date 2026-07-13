@@ -1,7 +1,7 @@
 """Text pattern validation and LIKE-to-regex conversion for filter operators."""
 
 import re
-from typing import Sequence
+from collections.abc import Sequence
 
 from forze.base.exceptions import exc
 
@@ -10,7 +10,7 @@ from forze.base.exceptions import exc
 _REGEX_METACHAR = re.compile(r"([\\.^$|?*+()\[\]{}])")
 
 _NESTED_QUANTIFIER = re.compile(
-    r"\([^()]*[+*?][^()]*\)[+*?]" r"|\(\.\*\)[+*?]" r"|\([^)]*[+|][^)]*\)[+*?]",
+    r"\([^()]*[+*?][^()]*\)[+*?]|\(\.\*\)[+*?]|\([^)]*[+|][^)]*\)[+*?]",
 )
 
 _LARGE_REPEAT = re.compile(r"\{\d*,(\d{3,})\}")

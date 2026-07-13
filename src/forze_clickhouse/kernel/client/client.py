@@ -5,14 +5,11 @@ require_clickhouse()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from datetime import timedelta
 from operator import itemgetter
 from typing import (
     Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    Sequence,
     TypeVar,
     cast,
     final,
@@ -210,9 +207,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
             if max_rows is not None:
                 effective_limit = (
-                    min(effective_limit, max_rows)
-                    if effective_limit is not None
-                    else max_rows
+                    min(effective_limit, max_rows) if effective_limit is not None else max_rows
                 )
 
             query_sql = apply_limit_offset(sql, limit=effective_limit, offset=offset)
@@ -273,11 +268,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
         query_sql = apply_limit_offset(sql, limit=max_rows, offset=None)
 
-        if isinstance(params, BaseModel):
-            bound_params = parameters_from_model(params)
-
-        else:
-            bound_params = params  # type: ignore[assignment]
+        bound_params = parameters_from_model(params) if isinstance(params, BaseModel) else params
 
         timeout_sec = self.__timeout_sec(timeout)
         target_db = self.__database(database)
@@ -292,9 +283,7 @@ class ClickHouseClient(ClickHouseClientPort):
         async def _run() -> list[JsonDict]:
             all_rows: list[JsonDict] = []
 
-            async for batch in self.__stream_blocks(
-                query_sql, bound_params, settings, max_rows
-            ):
+            async for batch in self.__stream_blocks(query_sql, bound_params, settings, max_rows):
                 all_rows.extend(batch)
 
             return all_rows
@@ -387,20 +376,14 @@ class ClickHouseClient(ClickHouseClientPort):
 
         query_sql = apply_limit_offset(sql, limit=max_rows, offset=None)
 
-        if isinstance(params, BaseModel):
-            bound_params = parameters_from_model(params)
-
-        else:
-            bound_params = params  # type: ignore[assignment]
+        bound_params = parameters_from_model(params) if isinstance(params, BaseModel) else params
 
         timeout_sec = self.__timeout_sec(timeout)
         target_db = self.__database(database)
         settings = self.__query_settings(database=target_db, timeout_sec=timeout_sec)
         settings["max_block_size"] = fetch_batch_size
 
-        async for batch in self.__stream_blocks(
-            query_sql, bound_params, settings, max_rows
-        ):
+        async for batch in self.__stream_blocks(query_sql, bound_params, settings, max_rows):
             yield batch
 
     # ....................... #
@@ -470,11 +453,7 @@ class ClickHouseClient(ClickHouseClientPort):
         database: str | None = None,
         timeout: timedelta | None = None,
     ) -> None:
-        if isinstance(params, BaseModel):
-            bound_params = parameters_from_model(params)
-
-        else:
-            bound_params = params  # type: ignore[assignment]
+        bound_params = parameters_from_model(params) if isinstance(params, BaseModel) else params
 
         timeout_sec = self.__timeout_sec(timeout)
         target_db = self.__database(database)

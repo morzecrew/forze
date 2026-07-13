@@ -7,12 +7,11 @@ require_kms_aws()
 # ....................... #
 
 import asyncio
-from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from collections.abc import AsyncGenerator
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, suppress
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
     cast,
     final,
 )
@@ -155,7 +154,7 @@ class AwsKmsClient(AwsKmsClientPort):
 
     # ....................... #
 
-    def __create_client_cm(self) -> AsyncContextManager[AsyncKmsClient]:
+    def __create_client_cm(self) -> AbstractAsyncContextManager[AsyncKmsClient]:
         """Build the ``aiobotocore`` KMS client async context manager from opts."""
 
         session = self.__require_session()
@@ -175,7 +174,7 @@ class AwsKmsClient(AwsKmsClientPort):
 
         cm = session.client("kms", **kwargs)  # type: ignore
 
-        return cast("AsyncContextManager[AsyncKmsClient]", cm)
+        return cast("AbstractAsyncContextManager[AsyncKmsClient]", cm)
 
     # ....................... #
 
