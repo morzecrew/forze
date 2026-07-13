@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from types import ModuleType
-from typing import Any, Callable
+from typing import Any
 
 import attrs
 from structlog.typing import EventDict, WrappedLogger
@@ -32,31 +33,37 @@ class ForzeConsoleRenderer:
     sep_width: int = attrs.field(default=1, validator=attrs.validators.ge(1))
     """Width of the separator between the parts."""
 
-    extra_aliases: dict[str, str] | None = {
-        "correlation_id": "corr",
-        "execution_id": "exec",
-        "causation_id": "caus",
-        "operation_id": "op",
-        "status_code": "status",
-    }
+    extra_aliases: dict[str, str] | None = attrs.field(
+        factory=lambda: {
+            "correlation_id": "corr",
+            "execution_id": "exec",
+            "causation_id": "caus",
+            "operation_id": "op",
+            "status_code": "status",
+        }
+    )
     """Aliases for extra keys (will be replaced by the alias)."""
 
-    extra_transforms: dict[str, Callable[[Any], str]] | None = {
-        "correlation_id": lambda value: str(value)[-6:],
-        "execution_id": lambda value: str(value)[-6:],
-        "causation_id": lambda value: str(value)[-6:],
-    }
+    extra_transforms: dict[str, Callable[[Any], str]] | None = attrs.field(
+        factory=lambda: {
+            "correlation_id": lambda value: str(value)[-6:],
+            "execution_id": lambda value: str(value)[-6:],
+            "causation_id": lambda value: str(value)[-6:],
+        }
+    )
     """Transforms for extra keys (will be applied to the value)."""
 
     traceback_supress: list[str | ModuleType] | None = attrs.field(factory=list)
     """Traceback suppress list."""
 
-    extra_dim: list[str] | None = [
-        "correlation_id",
-        "execution_id",
-        "causation_id",
-        "operation_id",
-    ]
+    extra_dim: list[str] | None = attrs.field(
+        factory=lambda: [
+            "correlation_id",
+            "execution_id",
+            "causation_id",
+            "operation_id",
+        ]
+    )
     """Keys to dim. Works only if colors are enabled."""
 
     # ....................... #
