@@ -14,10 +14,20 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
-def _sealed(encryption: FieldEncryption | None) -> frozenset[str]:
-    if encryption is None:
-        return frozenset()
+_NO_ENCRYPTION = FieldEncryption()
+"""The canonical "nothing is sealed" policy.
 
+``None`` and an empty :class:`FieldEncryption` are the same declaration — both seal zero
+fields — so they must compare equal. Normalizing here keeps the parity check on *policy*
+rather than on how the author happened to spell its absence.
+"""
+
+
+def _policy(encryption: FieldEncryption | None) -> FieldEncryption:
+    return _NO_ENCRYPTION if encryption is None else encryption
+
+
+def _sealed(encryption: FieldEncryption) -> frozenset[str]:
     return encryption.encrypted | encryption.searchable
 
 
@@ -40,14 +50,19 @@ def assert_search_encryption_parity(
     decryption instead — the AAD no longer reproduces the document write's.
 
     The two specs are two projections of one policy, so parity is the rule; this is the seam
-    that co-locates them, which is the only place the rule can be checked at all.
+    that co-locates them, which is the only place the rule can be checked at all. Declaring no
+    encryption at all is parity too, however it is spelled: ``None`` and an empty
+    ``FieldEncryption()`` seal the same zero fields, so a plain unencrypted aggregate passes.
     """
 
-    if document.encryption == search.encryption:
+    document_policy = _policy(document.encryption)
+    search_policy = _policy(search.encryption)
+
+    if document_policy == search_policy:
         return
 
-    doc_sealed = _sealed(document.encryption)
-    search_sealed = _sealed(search.encryption)
+    doc_sealed = _sealed(document_policy)
+    search_sealed = _sealed(search_policy)
     leaked = doc_sealed - search_sealed
 
     detail = (

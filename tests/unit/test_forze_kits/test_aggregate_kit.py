@@ -434,6 +434,30 @@ class TestSearchEncryptionParity:
         assert error.code == "search_encryption_parity_mismatch"
         assert "qty" in str(error)
 
+    @pytest.mark.parametrize(
+        ("doc_encryption", "search_encryption"),
+        [
+            (None, None),
+            (None, FieldEncryption()),
+            (FieldEncryption(), None),
+            (FieldEncryption(), FieldEncryption()),
+        ],
+        ids=["none/none", "none/empty", "empty/none", "empty/empty"],
+    )
+    def test_declaring_no_encryption_is_parity_however_it_is_spelled(
+        self,
+        doc_encryption: FieldEncryption | None,
+        search_encryption: FieldEncryption | None,
+    ) -> None:
+        # ``None`` and an empty policy seal the same zero fields, so neither can leak — a plain
+        # unencrypted aggregate must not be refused at startup over how its absence is spelled.
+        kit = AggregateKit(
+            spec=attrs.evolve(WIDGET_SPEC, encryption=doc_encryption),
+            search=attrs.evolve(WIDGET_INDEX, encryption=search_encryption),
+        )
+
+        assert kit.backend_requirements().search_route == "widgets_index"
+
     def test_kit_accepts_the_same_policy_on_both_specs(self) -> None:
         encryption = FieldEncryption(encrypted=frozenset({"qty"}))
         kit = AggregateKit(
