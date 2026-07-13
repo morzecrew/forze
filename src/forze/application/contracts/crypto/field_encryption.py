@@ -119,17 +119,27 @@ class FieldEncryption:
 
     # ....................... #
 
+    def sealed_fields_in(self, fields: Iterable[str]) -> list[str]:
+        """Of *fields*, the sealed ones — whose stored value is ciphertext.
+
+        Sealing applies to whole top-level columns, so a *nested* path is sealed when its
+        **root** segment is: ``contract.ssn`` is sealed when ``contract`` is encrypted (the
+        value still lives inside the sealed ciphertext). Shared by every "this field role
+        cannot be ciphertext" guard (sort keys, indexed content fields).
+        """
+
+        sealed = self.encrypted | self.searchable
+        return sorted({field for field in fields if field.split(".", 1)[0] in sealed})
+
+    # ....................... #
+
     def forbidden_sort_fields(self, fields: Iterable[str]) -> list[str]:
         """Of *fields*, the sealed ones — which have no order at rest and can't be sort keys.
 
         A randomized :attr:`encrypted` ciphertext is unordered and a deterministic
         :attr:`searchable` one supports equality only; sorting on either is meaningless and a
-        keyset cursor would leak its raw value in the token.
-
-        Sealing applies to whole top-level columns, so a *nested* sort key is forbidden when
-        its **root** segment is sealed: sorting on ``contract.ssn`` is rejected when
-        ``contract`` is encrypted (the value still lives inside the sealed ciphertext).
+        keyset cursor would leak its raw value in the token. Root-aware for nested paths
+        (see :meth:`sealed_fields_in`).
         """
 
-        sealed = self.encrypted | self.searchable
-        return sorted({field for field in fields if field.split(".", 1)[0] in sealed})
+        return self.sealed_fields_in(fields)

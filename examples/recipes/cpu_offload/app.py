@@ -140,7 +140,12 @@ async def import_article(ctx: ExecutionContext) -> ReadArticle:
 
     # The write committed and is readable afterwards.
     stored = await ctx.document.query(ARTICLE_SPEC).get(created.id)
-    assert stored is not None and stored.word_count == created.word_count
+
+    if (
+        stored is None  # pyright: ignore[reportUnnecessaryComparison]
+        or stored.word_count != created.word_count
+    ):
+        raise RuntimeError("expected the off-loop word count to be persisted")
 
     return created
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 
+import pytest
+
 from forze.application.contracts.durable.function import DurableRunStatus
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import utcnow
@@ -179,6 +181,45 @@ class TestRunnerHeartbeat:
         # Left RUNNING (no terminal write) for a later recovery, not FAILED with the DB error.
         assert result.status is DurableRunStatus.RUNNING
 
+    async def test_hung_renew_is_treated_as_lease_loss(self) -> None:
+        # A renewal that BLOCKS (hung connection, no server timeout) must not wedge the
+        # heartbeat silently while the lease lapses server-side: bounded by the heartbeat
+        # interval, it times out and follows the same lease-loss path as an erroring one.
+        from unittest.mock import AsyncMock, patch
+
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+
+        side_effects = {"count": 0}
+
+        registry = DurableFunctionRegistry()
+
+        async def handler(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            await asyncio.sleep(1.0)
+            side_effects["count"] += 1  # must NOT run — the body is cancelled on lease loss
+            return {"ok": True}
+
+        registry.register("fn", handler)
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=timedelta(milliseconds=60),
+            heartbeat_divisor=2,
+        )
+
+        async def hung_renew(*_a: object, **_kw: object) -> bool:
+            await asyncio.Event().wait()
+            return True  # pragma: no cover
+
+        with patch.object(
+            MockDurableRunStore,
+            "renew",
+            AsyncMock(side_effect=hung_renew),
+        ):
+            result = await runner.run_now(ctx, "fn")
+
+        assert side_effects["count"] == 0
+        assert result.status is DurableRunStatus.RUNNING
+
     async def test_side_effect_runs_once_across_would_be_reclaim_window(self) -> None:
         state = MockState()
         ctx = context_from_modules(MockDepsModule(state=state))
@@ -215,3 +256,59 @@ class TestRunnerHeartbeat:
         result = await run_task
         assert result.status is DurableRunStatus.COMPLETED
         assert side_effects["count"] == 1  # ran exactly once, never reclaimed
+
+
+class TestExternalCancelTeardown:
+    async def test_cancelling_the_awaiter_cancels_body_and_heartbeat(self) -> None:
+        # Cancelling the runner's execute task (a shutdown drain, an enclosing timeout)
+        # must tear the body task down with it — otherwise the body keeps running
+        # detached, still heartbeating, past the cancellation.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        store = resolve_durable_run_store(ctx)
+
+        started = asyncio.Event()
+        unwound = {"body": False}
+
+        registry = DurableFunctionRegistry()
+
+        async def handler(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            started.set()
+            try:
+                await asyncio.Event().wait()  # never set: hold until cancelled
+            finally:
+                unwound["body"] = True
+
+            return {"ok": True}
+
+        registry.register("fn", handler)
+        runner = DurableFunctionRunner(registry=registry)
+
+        record = await store.enqueue("fn", input_json=None, idempotency_key="k")
+
+        before = asyncio.all_tasks()
+        run_task = asyncio.ensure_future(runner.run_now(ctx, "fn", idempotency_key="k"))
+        await started.wait()
+
+        run_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await run_task
+
+        # The body's unwind completed BEFORE the cancellation propagated out of the
+        # awaiter — nothing keeps executing detached.
+        assert unwound["body"] is True
+
+        # No orphan task remains: body, heartbeat, and watchdog were all torn down.
+        leaked = {
+            task
+            for task in asyncio.all_tasks() - before
+            if not task.done() and task is not run_task
+        }
+        assert leaked == set()
+
+        # No terminal write happened on this path: the run stays RUNNING and a later
+        # recovery sweep re-claims it after lease expiry.
+        reloaded = await store.load(record.run_id)
+        assert reloaded is not None
+        assert reloaded.status is DurableRunStatus.RUNNING

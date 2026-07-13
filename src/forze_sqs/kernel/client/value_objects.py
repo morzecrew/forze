@@ -11,10 +11,16 @@ from forze.base.serialization.pydantic import pydantic_secret_converter
 # ----------------------- #
 
 
+_FORZE_ONLY_FIELDS = frozenset({"poison_queue_url"})
+"""Forze-level knobs on :class:`SQSConfig` that must not reach the botocore config."""
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SQSConfig:
-    """SQS optional configuration (botocore config)."""
+    """SQS optional configuration (botocore config plus Forze-level knobs)."""
 
     region_name: str | None = None
     signature_version: str | None = None
@@ -32,6 +38,20 @@ class SQSConfig:
     tcp_keepalive: bool | None = None
     request_min_compression_size_bytes: int | None = None
 
+    poison_queue_url: str | None = None
+    """Opt-in retention queue (URL) for undecodable FIFO messages (Forze-level, not botocore).
+
+    A FIFO queue's undecodable (base64-poison) message blocks its whole message group, so the
+    client deletes it to unblock the group. When this URL is set, the raw (still-encoded) body
+    and its message attributes are sent here **before** that delete — plus provenance attributes
+    carrying the source queue and original ``MessageId`` — so the poison is retained for
+    inspection instead of destroyed. A **standard** queue is the recommended shape; a ``.fifo``
+    URL works too (the original message id serves as both group and deduplication id, so one
+    poison never blocks another). Default ``None`` keeps the destructive delete (logged).
+    Standard source queues are unaffected — their poison stays in-flight for the broker-side
+    redrive policy (``maxReceiveCount`` → DLQ) configured outside Forze.
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -47,9 +67,17 @@ class SQSConfig:
     # ....................... #
 
     def to_aio_config(self) -> AioConfig:
-        """Build botocore :class:`~botocore.config.Config` for aioboto3."""
+        """Build botocore :class:`~botocore.config.Config` for aioboto3.
 
-        params = attrs.asdict(self, filter=lambda _attr, value: value is not None)
+        Forze-level fields are excluded — botocore rejects unknown options.
+        """
+
+        params = attrs.asdict(
+            self,
+            filter=lambda attr, value: (
+                value is not None and attr.name not in _FORZE_ONLY_FIELDS
+            ),
+        )
 
         for key in ("connect_timeout", "read_timeout"):
             val = params.get(key)

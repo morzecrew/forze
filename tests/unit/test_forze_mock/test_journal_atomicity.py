@@ -11,19 +11,22 @@ only *this* transaction's entries, never clobbering a concurrent transaction's c
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.inbox import InboxDepKey, InboxSpec
-from forze.application.contracts.outbox import OutboxSpec
+from forze.application.contracts.outbox import OutboxSpec, OutboxStatus
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
+from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_dst.runtime import run_simulation
 from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters.outbox import MockOutboxRow
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -156,6 +159,145 @@ def test_concurrent_rollback_keeps_the_committed_transactions_outbox_row() -> No
     rows = state.outbox_rows.get("things-events", [])
     notes = {row.payload["note"] for row in rows}
     assert notes == {"kept"}
+
+
+# ....................... #
+# Outbox STATUS transitions performed inside a transaction are UPDATEs in production —
+# Postgres rolls them back with the transaction — so the journal must revert them too,
+# exactly like the row append. Relay-side transitions on their own connection (no ambient
+# mock transaction) stay untouched: `record_undo` is a no-op outside a journal.
+
+
+async def _committed_pending_row(
+    ctx: ExecutionContext, state: MockState
+) -> MockOutboxRow:
+    """Commit one outbox row (the relay's input) and return the live stored row."""
+
+    async with ctx.tx_ctx.scope("mock"):
+        outbox = ctx.outbox.command(OUTBOX_SPEC)
+        await outbox.stage("thing.created", _EventPayload(note="n"))
+        await outbox.flush()
+
+    (row,) = state.outbox_rows["things-events"]
+    return row
+
+
+async def test_rollback_reverts_in_tx_outbox_claim() -> None:
+    state = MockState()
+    ctx = _journal_ctx(state)
+    row = await _committed_pending_row(ctx, state)
+
+    with pytest.raises(_Boom):
+        async with ctx.tx_ctx.scope("mock"):
+            claims = await ctx.outbox.query(OUTBOX_SPEC).claim_pending()
+            assert len(claims) == 1
+            assert row.status is OutboxStatus.PROCESSING
+            raise _Boom()
+
+    assert row.status is OutboxStatus.PENDING
+    assert row.processing_at is None
+
+
+async def test_rollback_reverts_in_tx_outbox_mark_published_and_failed() -> None:
+    state = MockState()
+    ctx = _journal_ctx(state)
+    row = await _committed_pending_row(ctx, state)
+    query = ctx.outbox.query(OUTBOX_SPEC)
+    await query.claim_pending()  # relay-side claim, outside any transaction
+
+    with pytest.raises(_Boom):
+        async with ctx.tx_ctx.scope("mock"):
+            assert await query.mark_published([row.id]) == 1
+            raise _Boom()
+
+    assert row.status is OutboxStatus.PROCESSING
+    assert row.published_at is None
+
+    with pytest.raises(_Boom):
+        async with ctx.tx_ctx.scope("mock"):
+            assert await query.mark_failed([row.id], error="boom") == 1
+            raise _Boom()
+
+    assert row.status is OutboxStatus.PROCESSING
+    assert row.last_error is None
+
+
+async def test_rollback_reverts_in_tx_outbox_mark_retry() -> None:
+    state = MockState()
+    ctx = _journal_ctx(state)
+    row = await _committed_pending_row(ctx, state)
+    query = ctx.outbox.query(OUTBOX_SPEC)
+    await query.claim_pending()
+    claimed_at = row.processing_at
+    assert claimed_at is not None
+
+    with pytest.raises(_Boom):
+        async with ctx.tx_ctx.scope("mock"):
+            updated = await query.mark_retry(
+                [row.id],
+                attempts=3,
+                available_at=utcnow() + timedelta(seconds=30),
+                error="transient",
+            )
+            assert updated == 1
+            raise _Boom()
+
+    assert row.status is OutboxStatus.PROCESSING
+    assert row.processing_at == claimed_at
+    assert row.attempts == 0
+    assert row.available_at is None
+    assert row.last_error is None
+
+
+async def test_rollback_reverts_in_tx_outbox_requeue_failed() -> None:
+    state = MockState()
+    ctx = _journal_ctx(state)
+    row = await _committed_pending_row(ctx, state)
+    query = ctx.outbox.query(OUTBOX_SPEC)
+    await query.claim_pending()
+    await query.mark_failed([row.id], error="boom")  # committed relay-side outcome
+    assert row.status is OutboxStatus.FAILED
+
+    with pytest.raises(_Boom):
+        async with ctx.tx_ctx.scope("mock"):
+            assert await query.requeue_failed([row.id]) == 1
+            raise _Boom()
+
+    assert row.status is OutboxStatus.FAILED
+    assert row.last_error == "boom"
+
+
+async def test_rollback_reverts_in_tx_outbox_reclaim_stale_processing() -> None:
+    state = MockState()
+    ctx = _journal_ctx(state)
+    row = await _committed_pending_row(ctx, state)
+    query = ctx.outbox.query(OUTBOX_SPEC)
+    await query.claim_pending()
+    claimed_at = row.processing_at
+    assert claimed_at is not None
+
+    with pytest.raises(_Boom):
+        async with ctx.tx_ctx.scope("mock"):
+            reclaimed = await query.reclaim_stale_processing(
+                older_than=utcnow() + timedelta(hours=1),
+            )
+            assert reclaimed == 1
+            raise _Boom()
+
+    assert row.status is OutboxStatus.PROCESSING
+    assert row.processing_at == claimed_at
+
+
+async def test_commit_keeps_in_tx_outbox_claim() -> None:
+    state = MockState()
+    ctx = _journal_ctx(state)
+    row = await _committed_pending_row(ctx, state)
+
+    async with ctx.tx_ctx.scope("mock"):
+        await ctx.outbox.query(OUTBOX_SPEC).claim_pending()
+
+    assert row.status is OutboxStatus.PROCESSING
+    assert row.processing_at is not None
 
 
 def test_identity_snapshot_restore_reverts_in_place_mutation() -> None:

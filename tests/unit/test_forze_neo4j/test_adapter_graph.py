@@ -20,7 +20,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException
 from forze_neo4j.adapters import Neo4jGraphAdapter
 
 # ----------------------- #
@@ -452,6 +452,31 @@ async def test_raw_query_disabled_by_default() -> None:
     assert client.calls == []
 
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_property_filter_rejects_non_identifier_key() -> None:
+    # A filter key is embedded in the ``$pf_<key>`` parameter name (which cannot be
+    # backtick-quoted), so a non-identifier key fails closed before any query is built.
+    adapter, client = _adapter(rows=[{"c": 0}])
+
+    with pytest.raises(CoreException, match="graph_filter_key_invalid"):
+        await adapter.count_vertices(
+            "User", property_filter={"name = $tenant OR true //": "x"}
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_property_filter_accepts_identifier_keys() -> None:
+    adapter, client = _adapter(rows=[{"c": 2}])
+
+    assert await adapter.count_vertices("User", property_filter={"name": "Ana"}) == 2
+
+    query, params = client.calls[-1]
+    assert "n.`name` = $pf_name" in query
+    assert params["pf_name"] == "Ana"
 
 
 @pytest.mark.asyncio

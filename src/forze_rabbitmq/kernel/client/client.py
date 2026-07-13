@@ -104,6 +104,8 @@ class RabbitMQClient(RabbitMQClientPort):
     )
     __pending_watermark_warned: bool = attrs.field(default=False, init=False)
     __dead_letter_ready: bool = attrs.field(default=False, init=False)
+    __poison_drop_warned_queues: set[str] = attrs.field(factory=set, init=False)
+    """Queues already warned about the destructive default poison posture (once per run)."""
     __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
@@ -171,8 +173,10 @@ class RabbitMQClient(RabbitMQClientPort):
             self.__pending.clear()
             self.__pending_watermark_warned = False
 
-        # A fresh connection must re-declare the DLX topology.
+        # A fresh connection must re-declare the DLX topology, and a fresh run
+        # should surface the no-poison-sink warning again.
         self.__dead_letter_ready = False
+        self.__poison_drop_warned_queues.clear()
 
     # ....................... #
 
@@ -353,6 +357,36 @@ class RabbitMQClient(RabbitMQClientPort):
         )
         await dlq.bind(exchange)
         self.__dead_letter_ready = True
+
+    # ....................... #
+
+    def __warn_poison_drop_once(self, queue: str) -> None:
+        """Warn once per queue (per run) when consuming without a poison sink.
+
+        The safe posture is double-opt-in — ``dead_letter_exchange`` and
+        ``redelivery_counting`` both default off — so a default topology has the broker
+        silently destroy every ``nack(requeue=False)`` poison message with no retained
+        copy. Surfaced here, at consumer startup for the queue, so operators learn about
+        it from a log line instead of during an incident; the default stays permissive.
+        The warned set is cleared on teardown (like the DLX-ready guard) so each run
+        surfaces it once per queue.
+        """
+
+        if self.__config.dead_letter_exchange is not None:
+            return
+
+        if queue in self.__poison_drop_warned_queues:
+            return
+
+        self.__poison_drop_warned_queues.add(queue)
+        logger.warning(
+            "RabbitMQ consumer on queue %s has no dead-letter exchange configured: "
+            "the broker destroys every nack(requeue=False) poison message with no "
+            "retained copy. Set RabbitMQConfig(dead_letter_exchange=...) to retain "
+            "poison in <dlx>.dlq (and redelivery_counting=True so max_deliveries "
+            "poison-parking can fire past the broker's redelivered ceiling).",
+            queue,
+        )
 
     # ....................... #
 
@@ -934,6 +968,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
+        self.__warn_poison_drop_once(queue)
 
         with suppress(TimeoutError):
             async with asyncio.timeout(window.total_seconds()):
@@ -972,6 +1007,7 @@ class RabbitMQClient(RabbitMQClientPort):
         )
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
+        self.__warn_poison_drop_once(queue)
 
         # aio_pika applies ``timeout`` per ``__anext__`` wait, which matches
         # idle-timeout semantics; ``None`` waits unbounded (consume forever).

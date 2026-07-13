@@ -13,21 +13,26 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
+from uuid import uuid4
 
 import attrs
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import is_encrypted_payload
+from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
 from forze.application.contracts.inbox import InboxDepKey, InboxSpec
 from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.contracts.stream import (
     CommitStreamGroupQueryDepKey,
     OffsetReset,
+    StreamCommandDepKey,
     StreamMessage,
     StreamPosition,
     StreamSpec,
     UndecodableStreamPayload,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
@@ -163,6 +168,69 @@ async def test_poison_dead_letters_and_advances() -> None:
     assert await query.read("g", "c", [_TOPIC]) == []
     # Produced to the dead-letter stream.
     assert len(state.streams[_TOPIC]["orders.dlq"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_dead_letter_forwards_sealed_envelope_round_trip() -> None:
+    """End-to-end-encrypted route: the dead-letter copy is the envelope as received —
+    same ciphertext, same event-id/tenant headers — so a consumer on the DLQ topic
+    with the same keyring decrypts it and correlates it back to the source event."""
+
+    e2e_spec = StreamSpec(name=_TOPIC, codec=_CODEC, encryption="end_to_end")  # type: ignore[arg-type]
+    ctx, _producer, admin, _query, state = _harness()
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+
+    # Seed one sealed message the way the governed path produces it: through the
+    # encrypting command port, under a bound tenant.
+    command = ctx.deps.resolve_configurable(
+        ctx, StreamCommandDepKey, e2e_spec, route=e2e_spec.name
+    )
+    tenant_id = uuid4()
+    with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_id)):
+        await command.append(_TOPIC, _Payload(value="0"), key="k")
+
+    [source] = state.streams[_TOPIC][_TOPIC]
+    assert is_encrypted_payload(source.payload)
+    source_event_id = source.headers[HEADER_EVENT_ID]
+    assert source.headers[HEADER_TENANT_ID] == str(tenant_id)
+
+    async def poison(_msg: StreamMessage[_Payload]) -> None:
+        raise ValueError("boom")
+
+    # The consumer runs tenant-unbound (a background drain), like production.
+    result = await _consumer(poison, stream_spec=e2e_spec, dlq_stream="orders.dlq").run(
+        ctx, timeout=_IDLE
+    )
+    assert result.dead_lettered == 1
+
+    # The DLQ copy is the source envelope untouched: ciphertext and headers intact.
+    [copy] = state.streams[_TOPIC]["orders.dlq"]
+    assert copy.payload == source.payload
+    assert copy.headers[HEADER_EVENT_ID] == source_event_id
+    assert copy.headers[HEADER_TENANT_ID] == str(tenant_id)
+
+    # Round-trip: a consumer on the DLQ topic decrypts the copy with the same
+    # keyring and sees the original event id (the dedup/correlation identity).
+    await admin.ensure_group("dlq-g", ["orders.dlq"], start=OffsetReset.EARLIEST)
+
+    seen: list[tuple[str, str | None]] = []
+
+    async def dlq_handler(msg: StreamMessage[_Payload]) -> None:
+        seen.append((msg.payload.value, msg.headers.get(HEADER_EVENT_ID)))
+
+    dlq_result = await CommitStreamGroupConsumer(
+        topics=["orders.dlq"],
+        group="dlq-g",
+        consumer="c",
+        stream_spec=e2e_spec,
+        handler=dlq_handler,
+        inbox_spec=InboxSpec(name="dlq-events"),
+        tx_route="default",
+    ).run(ctx, timeout=_IDLE)
+
+    assert dlq_result.failed == 0  # not classified as decrypt-poison
+    assert dlq_result.processed == 1
+    assert seen == [("0", source_event_id)]
 
 
 @pytest.mark.asyncio

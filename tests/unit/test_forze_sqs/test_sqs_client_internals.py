@@ -83,6 +83,25 @@ async def test_initialize_converts_timedelta_in_config() -> None:
     await client.close()
 
 @pytest.mark.asyncio
+async def test_initialize_stores_poison_queue_url_outside_botocore_config() -> None:
+    # poison_queue_url is a Forze-level knob: it must reach the client but never
+    # leak into the botocore Config (an unknown option there raises TypeError).
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="us-east-1",
+        config=SQSConfig(poison_queue_url="http://localhost:4566/queue/poison"),
+    )
+    assert (
+        client._SQSClient__poison_queue_url  # type: ignore[attr-defined]
+        == "http://localhost:4566/queue/poison"
+    )
+    await client.close()
+    assert client._SQSClient__poison_queue_url is None  # type: ignore[attr-defined]
+
+@pytest.mark.asyncio
 async def test_initialize_is_idempotent() -> None:
     client = SQSClient()
     await client.initialize(

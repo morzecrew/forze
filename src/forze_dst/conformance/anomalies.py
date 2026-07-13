@@ -115,9 +115,10 @@ class AnomalyCase:
     insert waits on the unique index, a ``FOR UPDATE`` lock waits on the row — which would wedge the
     vanilla Conductor (it advances one participant at a time, waiting for each to park). These cases
     therefore run via the dedicated block-aware ``_drive_lock_race`` driver, and the generic
-    parametrized differential legs (which use the vanilla Conductor) skip them; a dedicated
-    lock-race differential runs them against real Postgres's blocking semantics. See the
-    ``lock-block-vs-abort-conductor`` :data:`~forze_dst.conformance.MECHANISM_DIVERGENCES`."""
+    parametrized differential legs (which use the vanilla Conductor) split them into dedicated
+    lock-race classes: real Postgres exercises the blocking semantics, real Mongo the abort-based
+    (immediate WriteConflict) semantics. See the ``lock-block-vs-abort-conductor``
+    :data:`~forze_dst.conformance.MECHANISM_DIVERGENCES`."""
 
 
 # ....................... #
@@ -942,16 +943,25 @@ BATTERY: tuple[AnomalyCase, ...] = (
 # ....................... #
 
 
-def expected_verdict(case: AnomalyCase, level: IsolationLevel) -> Verdict:
+def expected_verdict(
+    case: AnomalyCase, level: IsolationLevel, *, engine: str | None = None
+) -> Verdict:
     """The verdict a correct Forze adapter should produce: the contract, overlaid with strengthenings.
 
     The textbook ``contract`` verdict unless a registered
     :data:`~forze_dst.conformance.divergence.CONTRACT_STRENGTHENINGS` entry overrides it — so a
     strengthening is the only sanctioned way an observed verdict may differ from the textbook.
+
+    :param engine: The backend scope name of the leg being asserted (its ``scope_name``:
+        ``"mongo"``, ``"postgres"``, …). ``None`` applies only the backend-agnostic
+        strengthenings; an engine-scoped entry overlays only its own backend's oracle.
     """
 
     for strengthening in CONTRACT_STRENGTHENINGS:
-        if strengthening.anomaly == case.name and strengthening.level == level:
+        if strengthening.anomaly != case.name or strengthening.level != level:
+            continue
+
+        if strengthening.engine is None or strengthening.engine == engine:
             return strengthening.observed
 
     return case.contract[level]

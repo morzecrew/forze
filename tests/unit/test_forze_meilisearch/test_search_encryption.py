@@ -18,6 +18,7 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.search import SearchSpec
 from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
 from forze.base.crypto import is_envelope
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
 from forze_meilisearch.adapters.search._command import MeilisearchSearchCommandAdapter
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
@@ -126,6 +127,20 @@ async def test_read_round_trip_decrypts_sealed_field() -> None:
     model = adapter.spec.resolved_read_codec.decode_mapping(row)
 
     assert model == _Doc(id="1", title="hello", secret="hunter2")
+
+
+def test_sealed_field_cannot_be_declared_searchable() -> None:
+    # A sealed field would land in the index as ciphertext, so a content search over
+    # it silently matches nothing — the spec refuses the declaration up front.
+    with pytest.raises(CoreException, match="field-encrypted") as ei:
+        SearchSpec(
+            name="items",
+            model_type=_Doc,
+            fields=["title", "secret"],
+            encryption=FieldEncryption(encrypted=frozenset({"secret"})),
+        )
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
 
 
 @pytest.mark.asyncio

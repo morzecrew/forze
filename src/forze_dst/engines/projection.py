@@ -22,8 +22,11 @@ from forze_dst.oracle.recorder import History, current_recorder, record_event
 def outcome_signature(history: History) -> tuple[Any, ...]:
     """The observable effect order of a run — operations + recorded facts, ignoring trace.
 
-    Two interleavings with the same signature are observationally equivalent (same effects in
-    the same order), so the explorer need not expand both — a partial-order reduction.
+    The DPOR engine's pruning key: two interleavings with the same signature produced the same
+    recorded effects in the same order on the *explored prefix*. That is a heuristic equivalence,
+    not proof of equivalent continuations — state the run never recorded (say, which of two silent
+    writes landed last) is invisible here yet can decide what a further reordering reaches, so
+    pruning by this signature trades completeness for speed. ``explore_dpor(prune=False)`` skips it.
     """
 
     return tuple(

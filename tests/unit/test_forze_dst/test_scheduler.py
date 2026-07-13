@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+from typing import Any
 
 import attrs
 from pydantic import BaseModel
@@ -19,11 +20,19 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 
-from forze_dst import ModelState, PCTScheduler, Rule, Scenario, Simulation, SimulationConfig, Strategy
+from forze_dst import (
+    ModelState,
+    PCTScheduler,
+    Rule,
+    Scenario,
+    Simulation,
+    SimulationConfig,
+    Strategy,
+)
 from forze_dst.markers import record_event
 from forze_dst.invariants import Violation, expect, no_duplicate_effect
 from forze_dst.engines import projection
-from forze_dst.engines.scenario import _expand_frontier, run_scenario
+from forze_dst.engines.scenario import _expand_frontier, explore_dpor, run_scenario
 from forze_dst.oracle.invariants import check
 from forze_dst.oracle.recorder import History
 from forze_dst.runtime import run_simulation
@@ -300,7 +309,9 @@ def _two_worker_two_phase_simulation(target: tuple[tuple[int, int], ...]) -> Sim
         class _Worker(Handler[None, None]):
             async def __call__(self, _args: None) -> None:
                 for phase in range(2):
-                    await asyncio.sleep(0)  # a per-phase yield ⇒ two ordered branch points
+                    await asyncio.sleep(
+                        0
+                    )  # a per-phase yield ⇒ two ordered branch points
                     record_event("mark", worker=worker_id, phase=phase)
 
         return _Worker()
@@ -385,7 +396,10 @@ class TestDPORCompleteness:
         branching = [2, 2]
 
         expanded = _expand_frontier((), branching)
-        assert (0, 1) in expanded  # FIFO at branch 0, deviate at branch 1 — now reachable
+        assert (
+            0,
+            1,
+        ) in expanded  # FIFO at branch 0, deviate at branch 1 — now reachable
 
         # The pre-fix truncating expansion could not reach it (its whole explored corner).
         old = [
@@ -445,3 +459,166 @@ class TestDPORCompleteness:
         rendered = report.format()
         assert "strategy=Strategy.DPOR" in rendered
         assert "SystematicReorderer(choices=" in rendered
+
+
+# ....................... #
+
+# The signature-pruning boundary: a violation whose ONLY witness flips the worker order at a
+# *silent* race (a shared list, nothing recorded) and flips it BACK at a recorded one — two
+# deviations. Both workers run the SAME op (roles assigned by arrival, so an invoke-order flip is
+# an isomorphic relabeling) and the recorded marks carry no worker identity, so every
+# single-deviation schedule records exactly FIFO's events: the outcome signature cannot tell them
+# apart, and the pruned search discards the flip-at-A-only intermediate whose subtree holds the
+# witness. Exhaustive mode (``prune=False``) expands it and finds the violation.
+
+
+def _hidden_race_simulation() -> tuple[Simulation, list[int]]:
+    shared: dict[str, Any] = {}
+    run_counter = [0]
+
+    @attrs.define(slots=True)
+    class _Worker(Handler[None, None]):
+        async def __call__(self, _args: None) -> None:
+            role = shared.setdefault("arrivals", 0)
+            shared["arrivals"] = (
+                role + 1
+            )  # role by arrival ⇒ invoke flips are isomorphic
+
+            await asyncio.sleep(
+                0
+            )  # race A: silent — only shared state, nothing recorded
+            order_a: list[int] = shared.setdefault("a_order", [])
+            order_a.append(role)
+            ahead_at_a = role == 1 and order_a[0] == 1
+
+            await asyncio.sleep(0)  # race B: recorded — but the mark names no worker
+            behind_at_b = role == 1 and shared.get("b_done") is not None
+            if role == 0:
+                shared["b_done"] = True
+            if ahead_at_a and behind_at_b:
+                record_event("mark", raced=True)
+            else:
+                record_event("mark")
+
+    registry = OperationRegistry(
+        handlers={"w": lambda _c: _Worker()},
+        descriptors={
+            "w": OperationDescriptor(input_type=None, output_type=None, description="w")
+        },
+    ).freeze()
+
+    def flip_then_restore(history: History) -> list[Violation]:
+        if any(e.kind == "mark" and e.fields.get("raced") for e in history.events):
+            return [
+                Violation(
+                    invariant="flip_then_restore", message="ahead at A, behind at B"
+                )
+            ]
+        return []
+
+    async def reset(_ctx: object) -> None:
+        shared.clear()
+        run_counter[0] += 1  # one setup per run — counts explored interleavings
+
+    sim = Simulation(
+        operations=registry,
+        deps=lambda: MockDepsModule(),
+        setup=reset,
+        invariants=[flip_then_restore],
+    )
+    return sim, run_counter
+
+
+def _hidden_race_scenario() -> Scenario:
+    return Scenario(state=ModelState, act=(Rule(op="w"), Rule(op="w")))
+
+
+class TestDPORPruningBoundary:
+    def test_signature_pruning_misses_a_reachable_violation(self) -> None:
+        # Pruning ON (the default): the flip-at-A-only intermediate records FIFO's exact events,
+        # so it is pruned — and with it the only path to the double-deviation witness.
+        sim, _ = _hidden_race_simulation()
+        report = explore_dpor(
+            sim,
+            _hidden_race_scenario(),
+            act_count=2,
+            concurrency=2,
+            seed=0,
+            max_runs=2000,
+        )
+        assert report is None
+
+    def test_exhaustive_walk_finds_it_and_explores_more(self) -> None:
+        sim, pruned_runs = _hidden_race_simulation()
+        missed = explore_dpor(
+            sim,
+            _hidden_race_scenario(),
+            act_count=2,
+            concurrency=2,
+            seed=0,
+            max_runs=2000,
+        )
+        assert missed is None
+
+        sim, full_runs = _hidden_race_simulation()
+        report = explore_dpor(
+            sim,
+            _hidden_race_scenario(),
+            act_count=2,
+            concurrency=2,
+            seed=0,
+            max_runs=2000,
+            prune=False,
+        )
+        assert report is not None
+        assert report.violations[0].invariant == "flip_then_restore"
+        assert (
+            full_runs[0] > pruned_runs[0]
+        )  # exhaustive explores strictly more schedules
+
+        # The witness needs two deviations — the chain the pruned search cut at its first link.
+        assert report.choices is not None
+        assert sum(1 for choice in report.choices if choice != 0) >= 2
+
+        # And it reproduces exactly from its captured choice vector.
+        sim, _ = _hidden_race_simulation()
+        replayed, _workload = run_scenario(
+            sim,
+            _hidden_race_scenario(),
+            act_workload=[("w", None), ("w", None)],
+            act_count=2,
+            concurrency=2,
+            seed=0,
+            schedule_seed=None,
+            epoch=SimulationConfig().epoch,
+            scheduler=SystematicReorderer(report.choices),
+        )
+        assert check(replayed, sim.invariants)
+
+    def test_config_threads_the_switch_and_defaults_to_pruning(self) -> None:
+        assert (
+            SimulationConfig().dpor_prune is True
+        )  # pruning stays the default (fast mode)
+
+        sim, _ = _hidden_race_simulation()
+        missed = sim.run(
+            SimulationConfig(
+                strategy=Strategy.DPOR, act_count=2, concurrency=2, max_runs=2000
+            ),
+            scenario=_hidden_race_scenario(),
+        )
+        assert missed is None
+
+        sim, _ = _hidden_race_simulation()
+        found = sim.run(
+            SimulationConfig(
+                strategy=Strategy.DPOR,
+                act_count=2,
+                concurrency=2,
+                max_runs=2000,
+                dpor_prune=False,
+            ),
+            scenario=_hidden_race_scenario(),
+        )
+        assert found is not None
+        assert found.violations[0].invariant == "flip_then_restore"

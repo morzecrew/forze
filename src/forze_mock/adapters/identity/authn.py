@@ -63,7 +63,9 @@ from forze_mock.state import MockState
 def _route_store(state: MockState, route: str) -> dict[str, Any]:
     identity = state.identity
     authn = identity.setdefault("authn", {})
-    assert isinstance(authn, dict)  # nosec: B101
+
+    if not isinstance(authn, dict):
+        raise exc.internal("Mock identity 'authn' substore must be a dict.")
 
     return authn.setdefault(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         route, {}
@@ -215,7 +217,8 @@ class MockPasswordVerifierPort(PasswordVerifierPort):
         if entry is None:
             raise exc.authentication("Invalid login or password")
 
-        assert isinstance(entry, dict)  # nosec: B101
+        if not isinstance(entry, dict):
+            raise exc.internal("Seeded mock password entry must be a dict.")
 
         if (
             entry.get("password")  # pyright: ignore[reportUnknownMemberType]
@@ -259,7 +262,9 @@ class MockTokenVerifierPort(TokenVerifierPort):
             entry = store.get("tokens", {}).get(credentials.token)
 
             if entry is not None:
-                assert isinstance(entry, dict)  # nosec: B101
+                if not isinstance(entry, dict):
+                    raise exc.internal("Seeded mock token entry must be a dict.")
+
                 return _assertion_from_store(
                     entry  # pyright: ignore[reportUnknownArgumentType]
                 )
@@ -318,7 +323,8 @@ class MockApiKeyVerifierPort(ApiKeyVerifierPort):
         entry = store.get("api_keys", {}).get(credentials.key)
         if entry is None:
             raise exc.authentication("Invalid API key")
-        assert isinstance(entry, dict)  # nosec: B101
+        if not isinstance(entry, dict):
+            raise exc.internal("Seeded mock API key entry must be a dict.")
         return _assertion_from_store(
             entry  # pyright: ignore[reportUnknownArgumentType]
         )
@@ -333,7 +339,8 @@ class MockPrincipalResolverPort(PrincipalResolverPort):
     async def resolve(self, assertion: VerifiedAssertion) -> AuthnIdentity:
         store = _route_store(self.state, self.route)
         mapping = store.setdefault("principal_map", {})
-        assert isinstance(mapping, dict)  # nosec: B101
+        if not isinstance(mapping, dict):
+            raise exc.internal("Mock 'principal_map' substore must be a dict.")
 
         key = assertion.subject
         if key in mapping:

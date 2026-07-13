@@ -52,7 +52,7 @@ def _step(
     async def action(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
         effects.append(f"do:{name}")
         if fail:
-            raise exc.infrastructure(f"{name} failed")
+            raise exc.precondition(f"{name} failed")
         return OrderCtx(trail=[*state.trail, name])
 
     async def compensation(_ctx: ExecutionContext, _state: OrderCtx) -> None:
@@ -234,13 +234,13 @@ def _flex_step(
     async def action(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
         effects.append(f"do:{name}")
         if fail:
-            raise exc.infrastructure(f"{name} failed")
+            raise exc.precondition(f"{name} failed")
         return OrderCtx(trail=[*state.trail, name])
 
     async def compensation(_ctx: ExecutionContext, _state: OrderCtx) -> None:
         effects.append(f"undo:{name}")
         if comp == "raise":
-            raise exc.infrastructure(f"{name} undo failed")
+            raise exc.precondition(f"{name} undo failed")
 
     return SagaStep(
         name=name,
@@ -378,3 +378,226 @@ class TestDurableSagaExecutorEdges:
 
         with pytest.raises(CoreException, match="initial context"):
             await handler(ctx, None)
+
+
+# ....................... #
+
+
+def _flaky_step(
+    name: str,
+    effects: list[str],
+    *,
+    fail_times: int = 0,
+    comp_fail_times: int = 0,
+) -> SagaStep[OrderCtx]:
+    """A step whose action (compensation) raises a retryable infrastructure error on its
+    first *fail_times* (*comp_fail_times*) invocations, then succeeds."""
+
+    action_blips = {"left": fail_times}
+    comp_blips = {"left": comp_fail_times}
+
+    async def action(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
+        effects.append(f"do:{name}")
+        if action_blips["left"] > 0:
+            action_blips["left"] -= 1
+            raise exc.infrastructure(f"{name} blipped")
+        return OrderCtx(trail=[*state.trail, name])
+
+    async def compensation(_ctx: ExecutionContext, _state: OrderCtx) -> None:
+        effects.append(f"undo:{name}")
+        if comp_blips["left"] > 0:
+            comp_blips["left"] -= 1
+            raise exc.infrastructure(f"{name} undo blipped")
+
+    return SagaStep(
+        name=name,
+        action=action,
+        compensation=compensation,
+        tx_route="mock",
+    )
+
+
+class TestDurableSagaTransientFailures:
+    async def test_transient_step_blip_is_retried_in_place_not_compensated(self) -> None:
+        # A one-off retryable failure must be absorbed by an in-place retry of the failing
+        # step alone — no compensation, no re-execution of the completed steps.
+        ctx = context_from_modules(MockDepsModule())
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("a", effects),
+                _step("b", effects),
+                _flaky_step("c", effects, fail_times=1),
+            ),
+        )
+
+        token = _bound()
+        try:
+            result = await DurableSagaExecutor(retry_base_delay=0.0).run(
+                ctx, saga, OrderCtx()
+            )
+        finally:
+            reset_durable_run(token)
+
+        assert result.trail == ["a", "b", "c"]
+        # a and b ran exactly once; only c re-ran; nothing was undone.
+        assert effects == ["do:a", "do:b", "do:c", "do:c"]
+
+    async def test_reinvocation_after_an_absorbed_blip_replays_from_the_journal(
+        self,
+    ) -> None:
+        # An in-place retry must leave the journal coherent: a later re-invocation under
+        # the same run replays every step from the journal without new side effects.
+        state = MockState()
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(_step("a", effects), _flaky_step("b", effects, fail_times=1)),
+        )
+        executor = DurableSagaExecutor(retry_base_delay=0.0)
+
+        ctx1 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            first = await executor.run(ctx1, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert first.trail == ["a", "b"]
+        assert effects == ["do:a", "do:b", "do:b"]
+
+        ctx2 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            replayed = await executor.run(ctx2, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert replayed.trail == ["a", "b"]
+        assert effects == ["do:a", "do:b", "do:b"]  # unchanged — replayed, not re-run
+
+    async def test_exhausted_retries_journal_the_failure_and_compensate(self) -> None:
+        # A retryable failure that outlives the bounded retries is a genuine failure:
+        # journaled and compensated, exactly like a non-retryable one.
+        ctx = context_from_modules(MockDepsModule())
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("a", effects),
+                _step("b", effects),
+                _flaky_step("c", effects, fail_times=100),
+            ),
+        )
+        executor = DurableSagaExecutor(retry_attempts=1, retry_base_delay=0.0)
+
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as ei:
+                await executor.run(ctx, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert ei.value.kind is ExceptionKind.DOMAIN  # consistent: compensated
+        # c attempted twice (initial + one retry), then rolled back in reverse.
+        assert effects == ["do:a", "do:b", "do:c", "do:c", "undo:b", "undo:a"]
+
+    async def test_non_retryable_step_failure_compensates_without_retrying(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("a", effects),
+                _step("b", effects),
+                _step("c", effects, fail=True),  # precondition — non-retryable
+            ),
+        )
+
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as ei:
+                await DurableSagaExecutor(retry_base_delay=0.0).run(
+                    ctx, saga, OrderCtx()
+                )
+        finally:
+            reset_durable_run(token)
+
+        assert ei.value.kind is ExceptionKind.DOMAIN  # consistent: compensated
+        # Exactly one do:c — a non-retryable failure is never retried in place.
+        assert effects == ["do:a", "do:b", "do:c", "undo:b", "undo:a"]
+
+    async def test_transient_compensation_blip_is_retried_not_collected(self) -> None:
+        # A one-off retryable failure while compensating must be absorbed the same way,
+        # keeping the rollback clean instead of leaving it "compensation failed".
+        ctx = context_from_modules(MockDepsModule())
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _flaky_step("a", effects, comp_fail_times=1),
+                _step("b", effects, fail=True),
+            ),
+        )
+
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as ei:
+                await DurableSagaExecutor(retry_base_delay=0.0).run(
+                    ctx, saga, OrderCtx()
+                )
+        finally:
+            reset_durable_run(token)
+
+        # The rollback ended clean (the blip was retried away), so the saga's outcome is
+        # the modeled "rolled back" DOMAIN failure with no collected compensation errors.
+        assert ei.value.kind is ExceptionKind.DOMAIN
+        assert "compensation_errors" not in (ei.value.details or {})
+        assert effects == ["do:a", "do:b", "undo:a", "undo:a"]
+
+    async def test_blip_absorbed_saga_completes_end_to_end_through_the_runner(
+        self,
+    ) -> None:
+        # Through the durable-function runner: a transient step blip never surfaces as a
+        # terminal run failure — the run completes.
+        state = MockState()
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(_step("a", effects), _flaky_step("b", effects, fail_times=1)),
+        )
+        registry = DurableFunctionRegistry()
+        registry.register(
+            "order",
+            durable_saga_handler(
+                saga, OrderCtx, executor=DurableSagaExecutor(retry_base_delay=0.0)
+            ),
+        )
+        runner = DurableFunctionRunner(registry=registry)
+
+        ctx = context_from_modules(MockDepsModule(state=state))
+        record = await runner.run_now(
+            ctx, "order", OrderCtx().model_dump(mode="json")
+        )
+
+        assert record.status is DurableRunStatus.COMPLETED
+        assert record.output_json == {"trail": ["a", "b"]}
+        assert effects == ["do:a", "do:b", "do:b"]
+
+
+class TestRetryKnobValidation:
+    def test_negative_retry_attempts_rejected(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            DurableSagaExecutor(retry_attempts=-1)
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_negative_retry_base_delay_rejected(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            DurableSagaExecutor(retry_base_delay=-0.1)
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_zero_values_are_legitimate(self) -> None:
+        # 0 attempts disables in-place retries; 0 delay retries immediately.
+        executor = DurableSagaExecutor(retry_attempts=0, retry_base_delay=0.0)
+        assert executor.retry_attempts == 0

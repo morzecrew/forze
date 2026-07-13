@@ -4,6 +4,7 @@ broker, plaintext after the consumer decrypts — no outbox involved."""
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -164,6 +165,74 @@ async def test_stream_append_seals_payload() -> None:
             headers=stored.headers,
         )
         assert plain == _Job(n=7)
+
+
+@pytest.mark.asyncio
+async def test_stream_append_forwards_pre_sealed_payload_unchanged() -> None:
+    """An already-sealed envelope (a dead-letter / forwarding re-produce) passes through
+    the encrypting command untouched — same ciphertext, same headers — because its AAD
+    is bound to the (tenant, id) the forwarded headers carry."""
+
+    spec = StreamSpec(name="events", codec=PydanticModelCodec(_Job), encryption="end_to_end")  # type: ignore[arg-type]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        state = ctx.deps.provide(MockStateDepKey)
+
+        command = ctx.deps.resolve_configurable(
+            ctx, StreamCommandDepKey, spec, route=spec.name
+        )
+        await command.append("events", _Job(n=7))
+        [sealed] = state.streams["events"]["events"]
+
+        # Re-produce the sealed envelope with its original headers (the DLQ shape).
+        await command.append("events", sealed.payload, headers=sealed.headers)
+        forwarded = state.streams["events"]["events"][1]
+
+        assert forwarded.payload == sealed.payload
+        assert forwarded.headers == sealed.headers
+
+        plain = await decrypt_consumed_payload(
+            ctx.deps.provide(KeyringDepKey),
+            forwarded.payload,
+            domain=MESSAGE_PAYLOAD_DOMAIN,
+            codec=spec.codec,
+            headers=forwarded.headers,
+        )
+        assert plain == _Job(n=7)
+
+
+@pytest.mark.asyncio
+async def test_tenant_unbound_seal_drops_stale_tenant_header() -> None:
+    """Sealing with no bound tenant must not forward a stale tenant header: the minted
+    AAD says tenant=None, so a kept header would make the message undecryptable."""
+
+    spec = StreamSpec(name="events", codec=PydanticModelCodec(_Job), encryption="end_to_end")  # type: ignore[arg-type]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        state = ctx.deps.provide(MockStateDepKey)
+
+        command = ctx.deps.resolve_configurable(
+            ctx, StreamCommandDepKey, spec, route=spec.name
+        )
+        await command.append(
+            "events", _Job(n=5), headers={"forze_tenant_id": str(uuid4())}
+        )
+
+        [stored] = state.streams["events"]["events"]
+        assert "forze_tenant_id" not in stored.headers
+
+        plain = await decrypt_consumed_payload(
+            ctx.deps.provide(KeyringDepKey),
+            stored.payload,
+            domain=MESSAGE_PAYLOAD_DOMAIN,
+            codec=spec.codec,
+            headers=stored.headers,
+        )
+        assert plain == _Job(n=5)
 
 
 @pytest.mark.asyncio

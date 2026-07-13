@@ -184,6 +184,14 @@ class SimulationConfig:
     dpor_seed: int = 0
     """DPOR: the single seed whose workload is fixed and re-interleaved."""
 
+    dpor_prune: bool = True
+    """DPOR: skip expanding an interleaving whose observed effect order matches one already
+    explored. On (the default, the fast mode) the search is complete only up to that
+    observed-effect equivalence — a heuristic that can prune a subtree hiding a violation, since
+    state a run never recorded is invisible to the signature. Off, every branch point of every
+    explored interleaving is expanded: exhaustive over the schedule tree of the fixed workload
+    whenever the tree fits within :attr:`max_runs`."""
+
     # Coverage-guided exploration (``Simulation.coverage``).
     coverage_plateau: int = 8
     """Stop a coverage-guided sweep after this many consecutive seeds add no new behavioral

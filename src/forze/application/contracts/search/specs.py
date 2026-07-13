@@ -96,10 +96,12 @@ def _validate_search_encryption(
     spec_name: object,
     model_type: type[BaseModel],
     encryption: FieldEncryption | None,
+    fields: Sequence[str] = (),
     default_sort: QuerySortExpression | None,
     lenient_read_fields: frozenset[str] = frozenset(),
 ) -> None:
-    """Reject typo'd sealed field names and sealed fields used as ``default_sort`` keys."""
+    """Reject typo'd sealed field names and sealed fields used as indexed content
+    (:attr:`SearchSpec.fields`) or ``default_sort`` keys."""
 
     if encryption is None:
         return
@@ -108,6 +110,15 @@ def _validate_search_encryption(
     encryption.validate_fields_exist(
         stored_field_names_for(model_type) - lenient_read_fields, spec_name=spec_name
     )
+
+    if sealed := encryption.sealed_fields_in(fields):
+        raise exc.configuration(
+            f"Search spec {spec_name!r}: indexed (searchable) field(s) {sealed} are "
+            "field-encrypted — the index stores ciphertext, so a content search over them "
+            "can never match. A `searchable` (deterministic) field supports equality "
+            "filters only, never full-text matching; keep sealed fields out of `fields` "
+            "(they can still be returned in results)."
+        )
 
     if default_sort is not None and (
         forbidden := encryption.forbidden_sort_fields(default_sort)
@@ -372,7 +383,9 @@ class SearchSpec[M: BaseModel](BaseSpec):
     for **in-place search** (Postgres/Mongo over an encrypted document table) they are
     decrypted out of the search results. Must be the **same policy** as the underlying
     ``DocumentSpec.encryption`` so in-place search reproduces the document write's AAD and
-    decrypts its ciphertext. ``None`` (default) = no field encryption."""
+    decrypts its ciphertext. A sealed field cannot be an indexed :attr:`fields` member on
+    any backend — the stored value is ciphertext, so content matching over it can never
+    hit (rejected at spec construction). ``None`` (default) = no field encryption."""
 
     max_results: int | None = None
     """Server-side cap on offset-search results when a caller passes **no** ``limit``.
@@ -423,6 +436,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
             spec_name=self.name,
             model_type=self.model_type,
             encryption=self.encryption,
+            fields=self.fields,
             default_sort=self.default_sort,
             lenient_read_fields=self.resolved_lenient_read_fields,
         )

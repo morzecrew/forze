@@ -24,8 +24,13 @@ from forze.application.contracts.authz import (
     PrincipalRegistryDepKey,
     RoleAssignmentDepKey,
 )
+from forze.application.contracts.authn.value_objects.assertion import (
+    VerifiedAssertion,
+)
 from forze.application.contracts.authn.value_objects.credentials import (
+    ApiKeyCredentials,
     PasswordCredentials,
+    AccessTokenCredentials,
 )
 from forze.application.contracts.authz.value_objects import (
     AuthzRequest,
@@ -42,12 +47,15 @@ from forze.application.contracts.tenancy import (
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters.identity import (
+    MockApiKeyVerifierPort,
     MockAuthzDecisionPort,
     MockAuthzScopePort,
     MockPasswordVerifierPort,
+    MockPrincipalResolverPort,
     MockSecretsPort,
     MockTenantManagementPort,
     MockTenantResolverPort,
+    MockTokenVerifierPort,
 )
 from tests.support.execution_context import context_from_modules
 
@@ -368,3 +376,90 @@ async def test_list_tenant_principals_returns_members() -> None:
     await mgmt.detach_principal(p1, tenant.tenant_id)
     assert set(await mgmt.list_tenant_principals(tenant.tenant_id)) == {p2}
     assert await mgmt.list_tenant_principals(uuid4()) == []
+
+
+# ....................... #
+# Substore-shape invariants: the mock fails closed (exc.internal) on a corrupted
+# identity substore instead of silently misbehaving on a malformed shape.
+
+
+async def test_api_key_verifier_happy_path_and_unknown_key() -> None:
+    state = MockState()
+    authn = state.identity.setdefault("authn", {})
+    authn.setdefault("main", {}).setdefault("api_keys", {})["k-1"] = {
+        "subject": "svc-1",
+    }
+    verifier = MockApiKeyVerifierPort(state=state)
+
+    assertion = await verifier.verify_api_key(ApiKeyCredentials(key="k-1"))
+    assert assertion.subject == "svc-1"
+
+    with pytest.raises(CoreException) as ei:
+        await verifier.verify_api_key(ApiKeyCredentials(key="nope"))
+    assert ei.value.kind is ExceptionKind.AUTHENTICATION
+
+
+async def test_authn_substore_must_be_a_dict() -> None:
+    state = MockState()
+    state.identity["authn"] = "corrupted"
+    verifier = MockPasswordVerifierPort(state=state)
+
+    with pytest.raises(CoreException) as ei:
+        await verifier.verify_password(PasswordCredentials(login="a", password="b"))
+    assert ei.value.kind is ExceptionKind.INTERNAL
+
+
+async def test_seeded_password_entry_must_be_a_dict() -> None:
+    state = MockState()
+    authn = state.identity.setdefault("authn", {})
+    authn.setdefault("main", {}).setdefault("passwords", {})["alice"] = "not-a-dict"
+    verifier = MockPasswordVerifierPort(state=state)
+
+    with pytest.raises(CoreException) as ei:
+        await verifier.verify_password(
+            PasswordCredentials(login="alice", password="x")
+        )
+    assert ei.value.kind is ExceptionKind.INTERNAL
+
+
+async def test_seeded_token_entry_must_be_a_dict() -> None:
+    state = MockState()
+    authn = state.identity.setdefault("authn", {})
+    authn.setdefault("main", {}).setdefault("tokens", {})["t-1"] = "not-a-dict"
+    verifier = MockTokenVerifierPort(state=state)
+
+    with pytest.raises(CoreException) as ei:
+        await verifier.verify_token(AccessTokenCredentials(token="t-1"))
+    assert ei.value.kind is ExceptionKind.INTERNAL
+
+
+async def test_seeded_api_key_entry_must_be_a_dict() -> None:
+    state = MockState()
+    authn = state.identity.setdefault("authn", {})
+    authn.setdefault("main", {}).setdefault("api_keys", {})["k-1"] = "not-a-dict"
+    verifier = MockApiKeyVerifierPort(state=state)
+
+    with pytest.raises(CoreException) as ei:
+        await verifier.verify_api_key(ApiKeyCredentials(key="k-1"))
+    assert ei.value.kind is ExceptionKind.INTERNAL
+
+
+async def test_principal_map_substore_must_be_a_dict() -> None:
+    state = MockState()
+    authn = state.identity.setdefault("authn", {})
+    authn.setdefault("main", {})["principal_map"] = "not-a-dict"
+    resolver = MockPrincipalResolverPort(state=state)
+
+    with pytest.raises(CoreException) as ei:
+        await resolver.resolve(VerifiedAssertion(issuer="mock", subject="alice"))
+    assert ei.value.kind is ExceptionKind.INTERNAL
+
+
+async def test_secrets_substore_must_be_a_dict() -> None:
+    state = MockState()
+    state.identity["secrets"] = "corrupted"
+    port = MockSecretsPort(state=state)
+
+    with pytest.raises(CoreException) as ei:
+        await port.resolve_str(SecretRef(path="k"))
+    assert ei.value.kind is ExceptionKind.INTERNAL

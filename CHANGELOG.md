@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Reliability & durability**
 
-- **Self-hosted durable execution (Postgres)** — crash-resumable durable functions and sagas: exactly-once step replay, lease-based recovery with heartbeat renewal, delayed and cron runs, multi-worker fencing, and an opt-in read-only admin port. Wired via `forze_kits`; adds a croniter dependency.
+- **Self-hosted durable execution (Postgres)** — crash-resumable durable functions and sagas: exactly-once step replay, lease-based recovery with heartbeat renewal, an execution deadline (`max_run_duration`, default 1h — a hung body is cancelled and FAILED instead of renewing its lease forever), multi-worker fencing, delayed and cron runs, and an opt-in read-only admin port. Wired via `forze_kits`; adds croniter.
 
 - **HLC durable high-water mark** — the hybrid logical clock resumes from a checkpoint so a restart cannot re-issue a stamp; the outbox flush advances the mark in-transaction. Opt-in, node-global.
 
@@ -135,11 +135,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Oracles** — built-in invariants (duplicate effects, mutual exclusion, linearizability, consistency models), transactional-isolation oracles up to serializability cycles, commutativity checks, reachability targets, and opt-in value-level checks.
 
-- **Reporting & regression corpus** — causal-graph violation reports and timelines, failure bundles with honest replay semantics, a regression corpus, and a CLI (`forze dst run` / replay / coverage / topology / derive).
+- **Reporting & regression corpus** — causal-graph violation reports and timelines, failure bundles with honest replay semantics, a regression corpus, and a CLI (`forze dst run` / replay / coverage / topology / derive). Bundle serialization round-trips every config field (an introspective guard fails on any future field a serializer misses — it caught stream-fault rules and the pruning flag being dropped).
 
 - **Mock substrate** *(behavior change)* — journalled transactions with MVCC isolation are now the mock default; in-memory outbound HTTP added.
 
-- **Adapter conformance** — a backend-agnostic isolation-anomaly battery asserts the mock matches real Postgres and Mongo, including lock races, outbox→inbox delivery under crash, resilience stores under partition, and identity rotation/revocation under fault.
+- **Adapter conformance** — a backend-agnostic isolation-anomaly battery asserts the mock matches real Postgres and Mongo, including lock races, outbox→inbox delivery under crash, resilience stores under partition, and identity rotation/revocation under fault. The Mongo leg runs the full battery (abort-vs-block catalogued as a mechanism divergence); contract strengthenings can be engine-scoped, so a backend-specific one never masks a mock deviation.
 
 ### Changed
 
@@ -203,17 +203,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Inngest deterministic failures stop retrying** — malformed events, failed decrypts and non-retryable errors raise NonRetriableError; retryable kinds still propagate.
 
-- **SQS: one poison message no longer poisons the receive batch** — per-message decode failures are isolated (left for redrive; deleted on FIFO so a message group cannot deadlock); FIFO per-message delay and over-length queue names fail closed.
+- **SQS: one poison message no longer poisons the receive batch** — per-message decode failures are isolated (left for redrive; deleted on FIFO so a message group cannot deadlock); FIFO per-message delay and over-length queue names fail closed. Opt-in `poison_queue_url` retains a raw copy (with provenance attributes) before the FIFO delete — the framework's one poison-destroying path; unconfigured destruction now logs a warning naming the knob.
 
-- **RabbitMQ: opt-in dead-letter sink and redelivery counting** — a configured DLX makes a poison nack dead-letter instead of drop, and opt-in redelivery counting lets poison-parking fire past the broker's redelivered ceiling (requires publisher confirms; enabling the DLX on an existing queue requires recreating it).
+- **RabbitMQ: opt-in dead-letter sink and redelivery counting** — a configured DLX makes a poison nack dead-letter instead of drop, and opt-in redelivery counting lets poison-parking fire past the broker's redelivered ceiling (requires publisher confirms; enabling the DLX on an existing queue requires recreating it). A consumer starting on a queue with no DLX now warns once per queue that poison messages would be destroyed.
 
 - **Kafka admin reads no longer auto-create topics** — existence is checked against the all-topics listing, so querying lag for a mistyped topic returns empty instead of minting the topic.
 
 - **Inngest function-level config** — `InngestFunctionConfig` forwards Inngest's native controls (retries, concurrency, rate limits, batching and more).
 
-- **An unregistered durable run name cannot livelock recovery** — the run lands FAILED with the reason recorded instead of stranding every co-claimed run each sweep; the scheduler likewise isolates a corrupt cron expression.
+- **An unregistered durable run name cannot livelock recovery** — the run lands FAILED with the reason recorded instead of stranding every co-claimed run each sweep; the scheduler likewise isolates a corrupt cron expression. Externally cancelling a run's awaiter also tears down the body and heartbeat tasks instead of leaving them running detached.
+
+- **A transient saga step error no longer triggers irreversible compensation** — a retryable kind (infrastructure, throttled, concurrency) is retried in place with backoff before anything is journaled, so a one-off blip cannot undo committed steps; compensation fires only on exhausted retries or a genuinely non-retryable failure, and a crash mid-blip replays completed steps from the journal. The same retry now guards transient errors during compensation itself.
 
 - **A transient KMS failure during consume is retried, not poison** — decrypt failures classify through the egress policy: retryable kinds requeue (queue consumer) or crash for a supervised rewind-and-restart (commit-stream) instead of being dropped; tampering still parks.
+
+- **The e2e-encrypted DLQ copy is decryptable and keeps its identity** — the commit-stream dead-letter path forwarded the decrypted payload back through the producer, re-sealing it tenant-unbound with a fresh id while keeping the old tenant header, so a DLQ consumer's rebuilt AAD failed auth and correlation was severed. The diverted copy is now the original sealed envelope byte-identical (payload and headers, including the event id); sealing with no bound tenant also drops a stale forwarded tenant header so minted headers can never contradict the AAD.
 
 **Reliability — durability, shutdown, resilience**
 
@@ -281,7 +285,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Cursor limits and token fields are validated at decode** — a non-integer page size is rejected and clamped to the 10,000 cap; a crafted token version or non-finite decimal/float raises validation instead of an uncaught 500.
 
-- **Encryption fail-closed** — filtering a randomized-encrypted field raises precondition; encrypted-sort rejection covers every search backend.
+- **Encryption fail-closed** — filtering a randomized-encrypted field raises precondition; encrypted-sort rejection covers every search backend. Declaring an encrypted field as an indexed search content field (randomized or deterministic-searchable — ciphertext never tokenizes) is now refused at spec construction with a configuration error, instead of sealing ciphertext into the index and silently matching nothing.
 
 - **Consistent adapter errors** — the mock rev-conflict matches the real adapters; a missing dependency names what is registered; database errors classify on codes, not message text.
 
@@ -301,11 +305,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mock isolation matches Postgres at the default level** — READ COMMITTED conflict detection anchors on the version actually read, a duplicate-id create race raises conflict, and FOR UPDATE is honoured; verified against real Postgres.
 
-- **DST systematic search is complete again** — the DPOR frontier zero-pads the choice prefix, so previously-unreachable schedules are explored; violation reports print a faithful reproduce line.
+- **DST systematic search is complete again — and honest about pruning** — the DPOR frontier zero-pads the choice prefix, so previously-unreachable schedules are explored; violation reports print a faithful reproduce line. Signature-pruning (a heuristic that can miss a violation behind an effect-equivalent prefix) is now switchable: `dpor_prune=False` walks the full choice tree, and the docs state the actual guarantee.
 
 - **Regression bundles handle non-self-contained strategies honestly** — a bundle that cannot self-replay reports as a clear failure, and one bad bundle cannot crash the batch.
 
-- **Mock outbox/inbox write-through is a catalogued DST divergence** — confirm a premature-visibility finding against a real broker or store.
+- **Mock outbox/inbox write-through is a catalogued DST divergence** — confirm a premature-visibility finding against a real broker or store. In-transaction outbox status transitions (claim, mark, retry, requeue, reclaim) now journal and revert on rollback, matching Postgres — the catalogued divergence covers visibility only.
 
 - **Kafka commit-stream consumer is loss-free under poison and rebalance** — malformed payloads pause instead of raising, every pause or abort re-seeks to committed, a rebalance listener drops stale routing, and the supervised lifecycle restarts crash-loss-free.
 
@@ -381,7 +385,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Meilisearch write path** — a failed task raises instead of reporting success, task waits are bounded, tenant-tagged writes and deletes are scoped, and windows crossing maxTotalHits fail closed with the index provisioned to match.
 
-- **Neo4j keyed-edge identity & quantifier coercion** — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; hop quantifiers are int-coerced before inlining.
+- **Neo4j keyed-edge identity & quantifier coercion** — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; every hop quantifier (including expand) is int-coerced before inlining; a filter key must be a plain identifier — a crafted key could reach query text through the parameter name (`graph_filter_key_invalid`); walk/path params validate their numeric bounds at construction.
 
 - **`forze_redis` imports on redis-py 7 again** — version-specific typing aliases are self-owned; client-side caching fails closed below redis-py 8.
 

@@ -79,9 +79,11 @@ def uuid7(
     if timestamp_ns is not None:
         timestamp_ns = int(timestamp_ns)
 
-    else:
-        assert timestamp_ms is not None  # nosec: B101
+    elif timestamp_ms is not None:
         timestamp_ns = int(timestamp_ms * 1_000_000)
+
+    else:  # pragma: no cover - unreachable: the both-None case returned above
+        raise exc.internal("One of timestamp_ms or timestamp_ns must be provided.")
 
     if timestamp_ns < 0:
         raise exc.internal("Timestamp must be positive.")

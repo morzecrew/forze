@@ -100,7 +100,8 @@ async def idempotent_create(ctx: ExecutionContext) -> tuple[ReadOrder, ReadOrder
         first = await facade.create(cmd)
         second = await facade.create(cmd)  # replay — handler skipped, stored result
 
-    assert first.id == second.id  # created once, returned twice
+    if first.id != second.id:  # created once, returned twice
+        raise RuntimeError("expected the retry to replay the recorded result")
     return first, second
 
 

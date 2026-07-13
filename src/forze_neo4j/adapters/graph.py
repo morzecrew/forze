@@ -251,11 +251,24 @@ class Neo4jGraphAdapter(TenancyMixin):
         """Validate an equality filter and render it to ``$pf_<key>`` params.
 
         Rejects a filter on a sealed (encrypted) property — its stored value is ciphertext,
-        so an equality match against a plaintext value can never be correct.
+        so an equality match against a plaintext value can never be correct. Also rejects a
+        non-identifier key: it is embedded in the ``$pf_<key>`` parameter name, which cannot
+        be backtick-quoted, so anything else must fail closed before a query is built.
         """
 
         if not property_filter:
             return {}
+
+        malformed = sorted(
+            k for k in property_filter if not builders.is_valid_filter_key(k)
+        )
+
+        if malformed:
+            raise exc.validation(
+                f"Invalid graph property-filter keys {malformed}: a filter key must be "
+                "an identifier (letters, digits, underscores; not starting with a digit).",
+                code="graph_filter_key_invalid",
+            )
 
         blocked = sorted(k for k in property_filter if k in sealed)
 

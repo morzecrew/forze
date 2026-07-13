@@ -142,7 +142,12 @@ async def place_priced_order(ctx: ExecutionContext) -> ReadOrder:
 
     # The write committed and is readable afterwards.
     stored = await ctx.document.query(ORDER_SPEC).get(created.id)
-    assert stored is not None and stored.price == created.price
+
+    if (
+        stored is None  # pyright: ignore[reportUnnecessaryComparison]
+        or stored.price != created.price
+    ):
+        raise RuntimeError("expected the committed price to match the prepared one")
 
     return created
 

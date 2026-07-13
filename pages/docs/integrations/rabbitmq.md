@@ -64,3 +64,8 @@ lifecycle = LifecyclePlan.from_steps(
   precondition error.
 - Exchange/queue/binding topology and DLQs are operational config, managed
   outside Forze.
+- **Poison retention is opt-in** — by default a `nack(requeue=False)` poison
+  message is destroyed by the broker (the consumer logs a warning per queue);
+  set `RabbitMQConfig(dead_letter_exchange="…")` to retain poison in
+  `<dlx>.dlq`, and `redelivery_counting=True` so `max_deliveries` parking can
+  count past the broker's redelivered ceiling.
