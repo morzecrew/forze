@@ -242,24 +242,33 @@ async def quiesce(
     outboxes: Sequence[OutboxSpec[Any]] = (),
     streams: Sequence[tuple[StreamSpec[Any], str]] = (),
     tenants: Sequence[UUID] | None = None,
+    close_gate: bool = True,
     poll: timedelta = timedelta(milliseconds=200),
 ) -> QuiesceReport:
     """Stop admitting work, then wait for the operational planes to come to rest.
 
-    In order: the runtime stops accepting new top-level invocations and waits for the ones
-    in flight; then each named outbox route, the durable-run plane, and each named stream
-    group is polled until it is empty or the budget runs out. The report says, plane by
-    plane, what settled and what did not — see :meth:`QuiesceReport.attested`.
+    In order: the runtime stops accepting new top-level invocations and waits for the ones in
+    flight; then each named outbox route, the durable-run plane, and each named stream group
+    is polled until it is empty or the budget runs out. The report says, plane by plane, what
+    settled and what did not — and, in :attr:`QuiesceReport.attested`, whether the result is
+    something a caller may actually build on.
 
-    **One-way.** The drain gate does not reopen: once this returns, every new invocation on
-    this scope is refused with ``THROTTLED``/``draining`` for as long as the scope lives.
-    This is the step before a shutdown, an export, or a migration — not a pause button.
+    **Closing the gate is one-way.** The drain gate does not reopen: with *close_gate* (the
+    default), every new invocation on this scope is refused with ``THROTTLED``/``draining``
+    for as long as the scope lives. That is deliberate — it is the *shutdown* gate, and this
+    is the step before a shutdown, an export, or a migration.
+
+    Pass ``close_gate=False`` to only **look**: the sweep reads each plane and reports, and
+    the scope keeps serving. Nothing is then holding the door shut, so the report can be
+    :attr:`~QuiesceReport.settled` but never :attr:`~QuiesceReport.attested` — a plane that
+    was empty when it was read can be filled the moment the sweep looks away. Use it for a
+    health check; do not build an export on it.
 
     **It waits for the relay; it does not relay.** An outbox only empties because something
-    is relaying it (the background lifecycle step, or an external worker). Quiesce holds the
-    gate shut so no *new* rows can be staged, which makes the backlog finite — but if nothing
-    is draining it, the plane will simply be reported as ``residual``, with the age of the
-    oldest pending row to say so. Give the budget room for at least one relay tick.
+    is relaying it — the background lifecycle step, or (the shape production usually takes)
+    an external worker this process cannot reach at all. Closing the gate makes the backlog
+    finite, but if nothing is draining it the plane is reported ``residual``, with the age of
+    the oldest pending row to say so. Give the budget room for at least one relay tick.
 
     *outboxes* and *streams* are named explicitly because nothing enumerates an application's
     specs yet; a runtime-wide inventory would let quiesce discover them itself, and is the
@@ -267,8 +276,10 @@ async def quiesce(
     outbox, each partition is probed under its own bound tenant.
 
     Planes the runtime does not wire are reported ``not_wired`` and do not count against
-    attestation. Work the framework cannot see at all — a Temporal-backed workflow lives in
-    the Temporal cluster — is outside what quiesce can speak for: do not migrate mid-workflow.
+    attestation. Two things are outside what this can speak for, in either mode: a
+    Temporal-backed workflow (its state lives in the Temporal cluster), and a **sibling
+    replica** — quiesce holds one process still, and a fleet that is still serving writes
+    elsewhere will happily invalidate whatever this one attested. Stop the fleet first.
     """
 
     ctx = runtime.get_context()
@@ -276,9 +287,11 @@ async def quiesce(
     deadline = loop.time() + timeout.total_seconds()
     poll_seconds = poll.total_seconds()
 
-    logger.info("Quiescing runtime", timeout=timeout.total_seconds())
+    logger.info("Quiescing runtime", timeout=timeout.total_seconds(), close_gate=close_gate)
 
-    planes: list[QuiescePlane] = [await _operations_plane(ctx, deadline=deadline)]
+    planes: list[QuiescePlane] = [
+        await _operations_plane(ctx, deadline=deadline, close_gate=close_gate)
+    ]
 
     for spec in outboxes:
         planes.append(
@@ -300,10 +313,18 @@ async def quiesce(
             )
         )
 
-    report = QuiesceReport(planes=tuple(planes))
+    # Read the gate rather than trusting *close_gate*: a scope already going down was holding
+    # the door before this sweep started, and that counts.
+    report = QuiesceReport(planes=tuple(planes), admission_held=ctx.drain_gate.draining)
 
     if report.attested:
         logger.info("Runtime quiesced", planes=len(report.planes))
+
+    elif report.settled:
+        logger.info(
+            "Runtime is at rest but was not held there; not attested",
+            planes=len(report.planes),
+        )
 
     else:
         logger.warning(
@@ -317,17 +338,38 @@ async def quiesce(
 # ....................... #
 
 
-async def _operations_plane(ctx: ExecutionContext, *, deadline: float) -> QuiescePlane:
-    """Close the gate and wait for in-flight operations — the phase that makes the rest finite.
+async def _operations_plane(
+    ctx: ExecutionContext,
+    *,
+    deadline: float,
+    close_gate: bool,
+) -> QuiescePlane:
+    """Stop admitting work and wait for what is in flight — or, when only looking, just read it.
 
-    Until new commands stop being admitted, every other plane is chasing a moving target: a
-    handler that commits while the outbox is being watched stages another row.
+    Closing the gate is what makes every *other* plane finite: until new commands stop being
+    admitted, a handler can commit behind the sweep's back and stage another outbox row, and
+    the sweep is chasing a moving target.
+
+    Without it, waiting would be that same chase, so this takes the instantaneous reading
+    instead. The report records that admission was never held, which is what stops such a
+    reading from attesting anything.
     """
 
-    loop = asyncio.get_running_loop()
-    settled = await ctx.drain_gate.drain(max(0.0, deadline - loop.time()))
+    if not close_gate:
+        in_flight = ctx.drain_gate.in_flight
 
-    if settled:
+        if in_flight == 0:
+            return QuiescePlane(name="operations", state="settled")
+
+        return QuiescePlane(
+            name="operations",
+            state="residual",
+            detail=f"{in_flight} operation(s) in flight",
+        )
+
+    loop = asyncio.get_running_loop()
+
+    if await ctx.drain_gate.drain(max(0.0, deadline - loop.time())):
         return QuiescePlane(name="operations", state="settled")
 
     return QuiescePlane(

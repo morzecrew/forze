@@ -260,19 +260,30 @@ not settle:
 from forze_kits.integrations.quiesce import quiesce
 
 report = await quiesce(runtime, outboxes=[OUTBOX], timeout=timedelta(seconds=60))
-report.raise_if_unsettled()   # or inspect report.attested / report.unsettled
+report.raise_if_unattested()   # or inspect report.attested / report.unsettled
 ```
 
-Two things to hold onto:
+**Settled and attested are different claims**, and the report keeps them apart. *Settled*
+means nothing was moving when the sweep finished. *Attested* means nothing was moving **and
+nothing could arrive**, because the runtime was holding the door shut. Only the second is
+safe to build on: an export written from a merely-settled runtime can be overtaken by a write
+before it finishes.
 
-- **It is one-way.** The drain gate does not reopen: after `quiesce()` returns, every new
-  invocation on that scope is refused with `THROTTLED`. It is the step before a shutdown, an
-  export, or a migration — not a pause button.
+- **Closing the gate is one-way.** By default `quiesce()` stops the runtime admitting work,
+  and the drain gate does not reopen — that is deliberate, because it is the *shutdown* gate.
+  This is the step before a shutdown, an export, or a migration.
+- **`close_gate=False` only looks.** The sweep reads each plane and the scope keeps serving.
+  Nothing is holding the door, so the report can be `settled` but never `attested`. Use it
+  for a health check; do not build an export on it.
 - **It waits for the relay; it does not relay.** Closing the gate makes the backlog finite,
-  but something still has to publish it — the background step or an external worker. If
-  nothing does, the outbox plane comes back `residual` with the age of the oldest pending
-  row. Give the budget room for at least one relay tick.
+  but something still has to publish it — the background step, or (the usual production
+  shape) an external worker this process cannot reach at all. If nothing does, the outbox
+  plane comes back `residual` with the age of the oldest pending row. Give the budget room
+  for at least one relay tick.
 
 Planes the runtime does not wire are reported `not_wired` and do not count against
-attestation. Work the framework cannot see at all — a Temporal-backed workflow lives in the
-Temporal cluster — is outside what `quiesce()` can speak for: do not migrate mid-workflow.
+attestation. Two things sit outside what `quiesce()` can speak for in either mode: a
+Temporal-backed workflow, whose state lives in the Temporal cluster; and **a sibling
+replica** — quiesce holds *one process* still, and a fleet that is still serving writes
+elsewhere will invalidate whatever this one attested. Stop the fleet before you trust the
+attestation.

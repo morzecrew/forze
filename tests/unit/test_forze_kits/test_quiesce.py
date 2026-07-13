@@ -184,12 +184,14 @@ async def test_oldest_pending_age_is_none_on_an_empty_route() -> None:
 
 
 @pytest.mark.asyncio
-async def test_quiesce_attests_when_every_plane_is_at_rest() -> None:
+async def test_quiesce_attests_when_every_plane_is_at_rest_and_the_gate_is_shut() -> None:
     report = await _quiesce([_row(status=OutboxStatus.PUBLISHED)])
 
+    assert report.settled
+    assert report.admission_held
     assert report.attested
     assert report.unsettled == ()
-    report.raise_if_unsettled()  # must not raise
+    report.raise_if_unattested()  # must not raise
 
 
 @pytest.mark.asyncio
@@ -207,8 +209,8 @@ async def test_quiesce_refuses_to_attest_an_outbox_that_never_drains() -> None:
     assert "2 pending" in plane.detail
     assert "oldest pending" in plane.detail  # names the cause: nothing is draining it
 
-    with pytest.raises(CoreException, match="did not quiesce"):
-        report.raise_if_unsettled()
+    with pytest.raises(CoreException, match="not quiesced"):
+        report.raise_if_unattested()
 
 
 @pytest.mark.asyncio
@@ -250,12 +252,44 @@ async def test_quiesce_closes_the_gate_so_no_new_work_is_admitted() -> None:
 
         assert not ctx.drain_gate.draining
 
-        await quiesce(runtime, timeout=timedelta(milliseconds=50))
+        report = await quiesce(runtime, timeout=timedelta(milliseconds=50))
 
         assert ctx.drain_gate.draining
+        assert report.admission_held
 
         with pytest.raises(CoreException, match="drain"):
             ctx.drain_gate.admit("some.op")
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_leaves_the_scope_serving() -> None:
+    # Looking must not brick the runtime: closing the gate is one-way, so a caller who only
+    # wants to know the state of the planes must be able to ask without paying for a restart.
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        await quiesce(runtime, close_gate=False, timeout=timedelta(milliseconds=50))
+
+        assert not ctx.drain_gate.draining
+        ctx.drain_gate.admit("some.op")  # still serving
+        ctx.drain_gate.release()
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_can_settle_but_never_attests() -> None:
+    # The distinction the report exists to make. Every plane was at rest — but nothing was
+    # holding the door, so it could have been filled the moment the sweep looked away. That
+    # reading is fine for a health check and unsafe to build an export on.
+    report = await _quiesce([_row(status=OutboxStatus.PUBLISHED)], close_gate=False)
+
+    assert report.settled
+    assert not report.admission_held
+    assert not report.attested
+
+    with pytest.raises(CoreException, match="admission was never closed"):
+        report.raise_if_unattested()
 
 
 @pytest.mark.asyncio
