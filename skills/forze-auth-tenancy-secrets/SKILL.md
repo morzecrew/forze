@@ -228,7 +228,7 @@ TenancyDepsModule(
 )
 ```
 
-`TenantManagementPort.provision_tenant(...)` records the tenant first, then runs the provisioner — idempotent, so a failure leaves the record for retry; `deprovision_tenant(tenant_id)` runs the inverse. Provisioners receive the onboarded `TenantIdentity` **explicitly** (it is not the ambient bound tenant — an admin onboards tenant X without acting as X). Compose per-integration provisioners with `CompositeTenantProvisioner`, wrap a callable with `FunctionTenantProvisioner`, or omit it (`NoopTenantProvisioner`, the default). `forze_postgres` ships `PostgresSchemaTenantProvisioner` (`CREATE SCHEMA IF NOT EXISTS`); object storage ships `ObjectStorageTenantProvisioner`.
+`TenantManagementPort.provision_tenant(...)` records the tenant first, then runs the provisioner — idempotent, so a failure leaves the record for retry; `deprovision_tenant(tenant_id)` runs the inverse. Provisioners receive the onboarded `TenantIdentity` **explicitly** (it is not the ambient bound tenant — an admin onboards tenant X without acting as X). Compose per-integration provisioners with `CompositeTenantProvisioner`, wrap a callable with `FunctionTenantProvisioner`, or omit it (`NoopTenantProvisioner`, the default). `forze_postgres` ships `PostgresSchemaTenantProvisioner` (`CREATE SCHEMA IF NOT EXISTS`); object storage ships `ObjectStorageTenantProvisioner`. Per-tenant encryption keys (BYOK) use the same seam — `VaultTransitTenantProvisioner` (`forze_vault`) and `AwsKmsTenantProvisioner` / `GcpKmsTenantProvisioner` / `YcKmsTenantProvisioner` (`forze_kms.*`) create a tenant's KEK on onboarding; see [`forze-encryption-kms`](../forze-encryption-kms/SKILL.md).
 
 ## Secrets
 
@@ -288,9 +288,9 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 > Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
 
 - [Authentication](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/identity/)
-- [Authentication reference](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/identity/)
 - [Authn, authz, tenancy (FastAPI) recipe](https://morzecrew.github.io/forze/latest/recipes/authn-authz-tenancy-fastapi/)
 - [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/latest/recipes/external-idp-oidc/)
 - [OIDC integration](https://morzecrew.github.io/forze/latest/integrations/oidc/)
 - [FastAPI integration](https://morzecrew.github.io/forze/latest/integrations/fastapi/)
 - [Multi-tenancy](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/multi-tenancy/)
+- [`forze-encryption-kms`](../forze-encryption-kms/SKILL.md)
