@@ -33,17 +33,27 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
+from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.stream import StreamQueryDepKey, StreamSpec
-from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
+from forze.application.execution import (
+    Deps,
+    DepsRegistry,
+    ExecutionRuntime,
+    LifecyclePlan,
+)
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.outbox import OutboxRelay
+from forze_kits.integrations.outbox import (
+    OutboxRelay,
+    outbox_relay_background_lifecycle_step,
+)
 from forze_kits.integrations.outbox._relay_core import relay_outbox_claims
 from forze_mock import MockStateDepKey
 from forze_mock.adapters import MockState
 from forze_mock.execution.module import ConfigurableMockQueue, MockDepsModule
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
+from forze_postgres.execution.lifecycle.capabilities import POSTGRES_CLIENT_CAPABILITY
 from forze_postgres.kernel.client import PostgresClient
 from forze_redis import (
     RedisDepsModule,
@@ -1002,3 +1012,120 @@ async def test_outbox_relays_to_module_wired_redis_stream(
         assert len(messages) == 1
         assert messages[0].payload.label == "from-pg-outbox"
         assert messages[0].type == "demo.created"
+
+
+# ----------------------- #
+# Relay lifecycle: drain on shutdown
+#
+# covers: forze_kits.integrations.outbox.outbox_relay_background_lifecycle_step
+
+
+def _drain_relay_runtime(
+    pg_client: PostgresClient,
+    outbox_table: str,
+    shared_state: MockState,
+    *,
+    drain_on_shutdown: bool,
+) -> tuple[ExecutionRuntime, OutboxSpec[_OutboxPayload]]:
+    """A runtime whose only lifecycle step is the background relay for *outbox_table*."""
+
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    queue_spec = QueueSpec(name="relay", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(relation=("public", outbox_table)),
+        },
+    )
+
+    # The drain reads and writes the outbox *during* teardown, so the relay must be torn
+    # down before whatever owns the client. Declaring the capability is what puts it in a
+    # later wave; the stub stands in for the real pool step, which would close the pool this
+    # test still reads from afterwards.
+    client_step = LifecycleStep(
+        id="pg_client_stub", provides=(POSTGRES_CLIENT_CAPABILITY,)
+    )
+    relay_step = outbox_relay_background_lifecycle_step(
+        outbox_spec=outbox_spec,
+        queue_spec=queue_spec,
+        interval=timedelta(hours=1),  # no tick of its own: only the drain can publish
+        reclaim_stale_after=None,
+        drain_on_shutdown=drain_on_shutdown,
+        requires=(POSTGRES_CLIENT_CAPABILITY,) if drain_on_shutdown else (),
+    )
+
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(pg_module)
+        .with_deps(_mock_queue_deps(shared_state))
+        .freeze(),
+        lifecycle=LifecyclePlan.from_steps(client_step, relay_step).freeze(),
+    )
+
+    return runtime, outbox_spec
+
+
+async def _stage_after_first_tick(
+    runtime: ExecutionRuntime,
+    outbox_spec: OutboxSpec[_OutboxPayload],
+) -> None:
+    """Run a scope that stages one row *after* the relay's first tick has come up empty."""
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await asyncio.sleep(0.05)
+
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage("demo.created", _OutboxPayload(label="drain"))
+            await outbox.flush()
+    # Scope exit runs lifecycle shutdown — the only thing that can publish this row.
+
+
+@pytest.mark.asyncio
+async def test_relay_drains_the_outbox_on_shutdown(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    shared_state = MockState()
+    runtime, outbox_spec = _drain_relay_runtime(
+        pg_client, outbox_table, shared_state, drain_on_shutdown=True
+    )
+
+    await _stage_after_first_tick(runtime, outbox_spec)
+
+    rows = await pg_client.fetch_all(
+        sql.SQL("SELECT status FROM {t} WHERE outbox_route = %s").format(
+            t=sql.Identifier("public", outbox_table)
+        ),
+        ("integration",),
+    )
+
+    assert [row["status"] for row in rows] == ["published"]
+    assert len(shared_state.queues["relay"]["relay"]) == 1  # it really reached the queue
+
+
+@pytest.mark.asyncio
+async def test_relay_without_drain_leaves_the_row_for_the_next_process(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    # The default. Together with the test above this is the whole feature: the row is either
+    # published at teardown, or it waits — nothing in between, and never stuck 'processing'.
+    shared_state = MockState()
+    runtime, outbox_spec = _drain_relay_runtime(
+        pg_client, outbox_table, shared_state, drain_on_shutdown=False
+    )
+
+    await _stage_after_first_tick(runtime, outbox_spec)
+
+    rows = await pg_client.fetch_all(
+        sql.SQL("SELECT status FROM {t} WHERE outbox_route = %s").format(
+            t=sql.Identifier("public", outbox_table)
+        ),
+        ("integration",),
+    )
+
+    assert [row["status"] for row in rows] == ["pending"]
+    assert shared_state.queues == {}

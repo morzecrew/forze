@@ -120,6 +120,22 @@ class RelayBinding:
     tenants: Callable[[], Sequence[UUID]] | None = None
     """When set, the outbox is tenant-partitioned; the shard is frozen at startup."""
 
+    drain_on_shutdown: bool = False
+    """Publish what is still claimable at shutdown instead of leaving it pending.
+
+    Needs :attr:`requires` or :attr:`depends_on` (the drain touches the database during
+    teardown), and is rejected for a ``pubsub`` transport — see
+    :func:`~forze_kits.integrations.outbox.outbox_relay_background_lifecycle_step`."""
+
+    shutdown_drain_timeout: timedelta = timedelta(seconds=5)
+    """Budget for the shutdown drain; keep it under the runtime's ``shutdown_step_timeout``."""
+
+    requires: tuple[StrKey, ...] = ()
+    """Capabilities this step is ordered after (e.g. the one its database client provides)."""
+
+    depends_on: tuple[StrKey, ...] = ()
+    """Step ids this step is ordered after."""
+
     # ....................... #
 
     def as_lifecycle_step(
@@ -142,6 +158,10 @@ class RelayBinding:
             retry_max_backoff=self.retry_max_backoff,
             max_batches_per_tick=self.max_batches_per_tick,
             tenants=self.tenants,
+            drain_on_shutdown=self.drain_on_shutdown,
+            shutdown_drain_timeout=self.shutdown_drain_timeout,
+            requires=self.requires,
+            depends_on=self.depends_on,
             step_id=step_id,
         )
 

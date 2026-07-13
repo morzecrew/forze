@@ -179,3 +179,43 @@ indexes, migration steps, and the optional Hybrid Logical Clock ordering column
 - The background lifecycle step drains the whole backlog each tick (batches
   until a short claim, capped at `max_batches_per_tick=100`), then sleeps
   `interval`.
+
+## Draining on shutdown
+
+By default the relay task is cancelled at shutdown, so rows staged just before the
+process goes away stay `pending` until a later process claims them — up to `interval`
+later, or until the next deploy. Set `drain_on_shutdown=True` to publish what is still
+claimable first:
+
+```python
+relay = outbox_relay_background_lifecycle_step(
+    outbox_spec=OUTBOX,
+    queue_spec=JOBS,
+    drain_on_shutdown=True,
+    requires=(POSTGRES_CLIENT_CAPABILITY,),   # order the relay ahead of the pool teardown
+)
+```
+
+The drain burns **exactly one delivery attempt per row** — the same blast radius as one
+ordinary tick. It ends the moment a batch reschedules a row, so it can never re-claim
+(and re-attempt) what it just parked; a failing destination stops it instead of being
+hammered; and it never opens a batch it does not expect to finish inside
+`shutdown_drain_timeout` (default 5s). Anything it cannot reach stays `pending` for the
+next process — exactly where it would have been without the drain.
+
+Three constraints, two of which are enforced at wiring time:
+
+- **Declare the ordering edge.** The drain touches the database *during* teardown, and
+  lifecycle shutdown runs in reverse wave order — without `requires` (a capability) or
+  `depends_on` (a step id) tying the relay to whatever owns its client, the pool can close
+  underneath it. Enabling the drain without one is rejected.
+- **`pubsub` is rejected.** It is at-most-once past the broker, so publishing while
+  subscribers are going away turns a delayed delivery into a lost one. Leaving the rows
+  pending is strictly safer there.
+- **Keep `shutdown_drain_timeout` under the runtime's `shutdown_step_timeout`** (default
+  10s). On expiry the runtime cancels and abandons the hook, and a batch cut between claim
+  and mark leaves rows `processing` until `reclaim_stale_after` elapses — consider
+  lowering that when draining.
+
+The drain is a best-effort teardown courtesy, not a delivery guarantee: correctness still
+rests on the relay claiming those rows eventually, from this process or the next.

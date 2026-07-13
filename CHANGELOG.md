@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Outbox relay drains on shutdown** (opt-in) — `outbox_relay_background_lifecycle_step(drain_on_shutdown=True)` publishes rows still claimable at teardown instead of cancelling the poll loop and leaving them `pending` for a later process. The drain burns exactly one delivery attempt per row (it ends as soon as a batch reschedules one, so it cannot re-claim what it just parked and dead-letter a backlog), stops on a failing batch rather than hammering a dead backend, and never opens a batch it cannot finish inside `shutdown_drain_timeout` (default 5s). Fails closed at wiring: it requires an ordering edge (`requires=` / `depends_on=`) to the step owning the database client — shutdown runs in reverse wave order, so the pool could otherwise close mid-drain — and rejects a `pubsub` destination, where publishing as subscribers go away would turn a delayed delivery into a lost one. Also passed through on `RelayBinding`. Default behavior is unchanged.
+
 ## [0.5.0] - 2026-07-13
 
 ### Added
