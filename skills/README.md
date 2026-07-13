@@ -32,12 +32,12 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 | **forze-fastapi-interface** | FastAPI context deps, generated routes (`attach_*_routes`), middleware, errors. |
 | **forze-object-storage** | `StorageSpec` + `StorageFacade`, S3 (`S3DepsModule`) and GCS (`GCSDepsModule`) backends, tenant-aware buckets, presigned/multipart uploads, mock tests. |
 | **forze-http-outbound** | Outbound HTTP: declarative `BaseHttpIntegration` / `async_http_op`, `HttpServiceSpec`, `HttpDepsModule`, auth, tenant routing. |
-| **forze-messaging-streaming** | Queue, pub/sub, stream contracts; SQS/RabbitMQ; Redis custom wiring notes. |
+| **forze-messaging-streaming** | Queue, pub/sub, stream contracts; SQS/RabbitMQ queues, Redis streams/pub-sub, Kafka commit-stream groups. |
 | **forze-temporal-workflows** | `DurableWorkflowSpec`, Temporal deps, workflow ports, schedules, worker context. |
-| **forze-inngest-durable-functions** | Durable functions with Inngest: events, registration, steps, FastAPI serve. |
+| **forze-inngest-durable-functions** | Durable functions: Inngest events/registration/steps/FastAPI serve, plus the self-hosted Postgres runner. |
 | **forze-auth-tenancy-secrets** | Authn/authz, tenancy, secrets, OIDC, FastAPI identity binding. |
 | **forze-encryption-kms** | Envelope encryption: `FieldEncryption`, `CryptoDepsModule`, KMS backends (Vault, AWS/GCP/Yandex Cloud), per-tenant KEKs (BYOK), key rotation/replacement, re-encryption sweeps. |
-| **forze-graph-contracts** | Graph specs and ports; custom adapter wiring (no official graph package). |
+| **forze-graph-contracts** | Graph specs and ports; Neo4j integration (`forze_neo4j`) or custom adapter wiring. |
 | **forze-observability-errors** | `CoreException` / `exc` factories, logging, call context, FastAPI error responses. |
 | **forze-resilience-deadlines** | Resilience policies, invocation deadlines, graceful drain/readiness, fleet deployment posture. |
 | **forze-analytics** | `AnalyticsSpec` query/ingest ports, BigQuery (`@param`) and ClickHouse (`{name:Type}`) backends, named SQL templates. |

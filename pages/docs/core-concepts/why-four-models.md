@@ -35,7 +35,7 @@ class Order(Document):           # domain: the real state + its rules
 class OrderCreate(BaseDTO):      # inbound: status is server-set, so it is absent
     customer: str
 
-class OrderUpdate(BaseDTO):      # merge-patch: optional, None means "don't touch"
+class OrderUpdate(BaseDTO):      # merge-patch: omit a field to leave it alone
     customer: str | None = None
     status: str | None = None
 

@@ -40,16 +40,20 @@ Backend limits:
 ## Recurring schedules (cron)
 
 A queue delay is one-shot. For *recurring* work, register a **durable function**
-with a cron trigger — the durable backend ([Temporal](../integrations/temporal.md)
-/ [Inngest](../integrations/inngest.md)) owns the schedule:
+with a cron trigger and let the durable side own the schedule — pass the spec to
+the self-hosted scheduler step, or let [Inngest](../integrations/inngest.md)
+register the cron with the provider (see
+[Recurring schedules](../data-events/durable-execution.md#recurring-schedules)):
 
 ```python
 from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
+    DurableFunctionInvokeSpec,
     DurableFunctionSpec,
 )
 
 nightly = DurableFunctionSpec(
+    name="nightly-report",
     run=DurableFunctionInvokeSpec(...),
     triggers=(DurableFunctionCronTrigger(expression="0 2 * * *"),),  # 02:00 daily
     operation="reports.nightly",  # run the same frozen-registry operation as HTTP
@@ -61,8 +65,9 @@ routes do — one implementation, two triggers.
 
 ## Notes
 
-- The **scheduler lives outside Forze** — the queue/durable backend fires the
-  trigger; Forze runs the work. There's no Celery Beat to operate.
+- **No Celery Beat to operate** — the queue backend holds delayed messages, and
+  the cron trigger is fired by the durable side (the scheduler lifecycle step or
+  the provider); Forze runs the work.
 - To schedule a job *reliably* as part of a transaction, stage it through the
   [outbox](transactional-outbox.md) rather than enqueuing inline.
 - For a single deferred run with no recurrence, the queue `delay` is simpler than

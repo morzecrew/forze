@@ -47,14 +47,19 @@ lifecycle = LifecyclePlan.from_steps(
 
 | Contract | Keyed by |
 |----------|----------|
-| Graph query / command / raw Cypher | `GraphModuleSpec.name` (bundling `GraphNodeSpec` + `GraphEdgeSpec`) |
+| Graph query / command / raw Cypher / management | `GraphModuleSpec.name` (`graphs`, bundling `GraphNodeSpec` + `GraphEdgeSpec`) |
+| Transactions | route in the module `tx` set |
 
 ## Notes
 
-- **Vertical slice.** The common operations are implemented — `get_vertex`,
-  `create_vertex`, `neighbors`, `expand`, `shortest_path`, `create_edge`,
-  `ensure_edge`, raw `run` — while several others (bulk ops, some edge queries)
-  still raise `NotImplementedError`.
+- **Full graph surface.** All graph ports are implemented — vertex/edge CRUD
+  (single and batch), `neighbors`, `expand`, `find_vertices` / `find_edges`,
+  counts and degrees, `shortest_path` and `k_shortest_paths` (weighted variants
+  need the Graph Data Science plugin), raw `run`, plus `ensure_schema` /
+  `drop_schema` on the management port.
+- **Transactions.** Bind an operation's `tx_route` to a name in `tx` so a
+  handler's graph writes commit or roll back as a unit; Neo4j is not
+  co-transactional with other backends.
 - **Tenancy spans three tiers.** `tagged` — with `tenant_aware`, a `tenant_property`
   (default `tenant_id`) is stamped on writes and matched on reads (raw `run` fails closed
   without a bound tenant). `namespace` — set `Neo4jGraphConfig.database` to a

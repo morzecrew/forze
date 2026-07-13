@@ -53,6 +53,7 @@ from forze_kits.aggregates.search import (
     SearchMappers,
     SearchSyncOutboxWiring,
     SearchSyncSteps,
+    assert_search_encryption_parity,
     bind_search_sync,
     bind_search_sync_outbox,
     build_search_registry,
@@ -146,7 +147,11 @@ class AggregateKit(Generic[R, D, C, U]):
     """Wire an external search index: its query ops plus index-on-write sync (delivery per
     :attr:`search_delivery`). With :attr:`soft_delete`, the kit's search query ops also
     exclude soft-deleted rows, which requires the spec to declare ``is_deleted`` in
-    ``facetable_fields`` (the external index must be able to filter it)."""
+    ``facetable_fields`` (the external index must be able to filter it).
+
+    Must declare the **same** ``encryption`` policy as :attr:`spec` — the sync feeds the index
+    the document's decrypted read model, so a field sealed on the document and omitted here is
+    written to the index in clear. Enforced at construction (``search_encryption_parity_mismatch``)."""
 
     search_delivery: OutboxSearchSync | None = None
     """How index maintenance reaches the external index. ``None`` (default) keeps the
@@ -192,6 +197,13 @@ class AggregateKit(Generic[R, D, C, U]):
             raise exc.configuration(
                 "AggregateKit search_delivery requires a search spec (search=…) to deliver to.",
             )
+
+        if self.search is not None:
+            # The kit is the one place both specs are declared together, so it is the one place
+            # their encryption policies can be held to the parity the sync path assumes. Checked
+            # here (not only when the sync wiring is composed) so the drift is a declaration-time
+            # error, not a runtime one.
+            assert_search_encryption_parity(document=self.spec, search=self.search)
 
         if (
             self.soft_delete

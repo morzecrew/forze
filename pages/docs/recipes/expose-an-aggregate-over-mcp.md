@@ -53,6 +53,7 @@ npx -y @modelcontextprotocol/inspector             # choose "Streamable HTTP" + 
 - **Discovery is built in.** The example also registers the querying-DSL guidance
   prompts and a field-schema resource, so an agent can learn which fields are
   filterable/sortable before building a `notes.list` query.
-- **Bring your own `FastMCP` in production** for auth and transport;
-  `build_mcp_server` is the convenience wrapper. The wiring surface is in the
-  [MCP integration page](../integrations/mcp.md).
+- **Auth is a parameter.** Pass `auth=ForzeApiKeyVerifier(…)` plus an `identity`
+  resolver to `build_mcp_server` and the server validates an API-key bearer
+  through the same authn stack as your HTTP routes — wiring, including agent
+  impersonation, is in the [MCP integration page](../integrations/mcp.md).

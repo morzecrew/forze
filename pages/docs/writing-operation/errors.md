@@ -59,8 +59,8 @@ a raise — a `finally_` hook, say — it receives an `Outcome`: `Success(value)
 Beyond its meaning, each kind has an **egress policy** with two booleans:
 
 - **`expose_details`** — are the details safe to show a caller? (`internal`,
-  `authentication`, `authorization`, `infrastructure`, `throttled`, and
-  `timeout` say no.)
+  `authentication`, `authorization`, `configuration`, `infrastructure`,
+  `throttled`, and `timeout` say no.)
 - **`retryable`** — is this transient? Only **`concurrency`**,
   **`infrastructure`**, and **`throttled`** are. This flag is what the
   [resilience](../running-in-prod/resilience.md) retry policies key on — you can only retry a kind

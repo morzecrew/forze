@@ -33,6 +33,7 @@ Ports, via `ctx.authn.<x>(spec)`:
 | `password_lifecycle` | `PasswordLifecyclePort` | set / change a password |
 | `password_reset` | `PasswordResetPort` | request / confirm a reset (the [recipe](../../recipes/password-reset.md)) |
 | `api_key_lifecycle` | `ApiKeyLifecyclePort` | mint / rotate / revoke API keys |
+| `password_account_provisioning` | `PasswordAccountProvisioningPort` | register / provision password accounts, issue + accept invites |
 | `principal_deactivation` | `PrincipalDeactivationPort` | deactivate a principal (cascades logout) |
 | `event_sink` | `AuthnEventSink` | structured authn events (login, lockout, refresh-reuse) |
 
@@ -45,6 +46,7 @@ Ports, via `ctx.authn.<x>(spec)`:
 | `name` | `str \| StrEnum` | required | route name |
 | `tenancy_mode` | `"global" \| "require_invocation_tenant"` | `"global"` | whether grant resolution is partitioned by the invocation tenant — set `require_invocation_tenant` in a multi-tenant deployment |
 | `enforce_principal_active` | `bool` | `True` | refuse a decision for a deactivated principal |
+| `enforce_delegation_grant` | `bool` | `False` | a delegated identity (`actor` set) also needs a recorded delegation grant |
 
 Ports, via `ctx.authz.<x>(spec)`:
 

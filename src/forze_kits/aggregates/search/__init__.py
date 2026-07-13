@@ -9,6 +9,7 @@ from .dto import (
     SearchPaginated,
     SearchRequestDTO,
 )
+from .encryption import assert_search_encryption_parity
 from .facades import SearchFacade
 from .factories import (
     build_federated_search_registry,
@@ -30,6 +31,7 @@ from .value_objects import SearchDTOs, SearchMappers
 # ----------------------- #
 
 __all__ = [
+    "assert_search_encryption_parity",
     "SearchFacade",
     "SearchKernelOp",
     "build_search_registry",

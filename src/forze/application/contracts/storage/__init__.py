@@ -15,6 +15,7 @@ from .ports import (
 from .specs import StorageSpec
 from .value_objects import (
     OVERWRITE_PRECONDITION_FAILED_CODE,
+    RANGE_NOT_SATISFIABLE_CODE,
     RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
     DownloadedObject,
     ObjectHead,
@@ -41,6 +42,7 @@ __all__ = [
     "DownloadedObject",
     "ObjectHead",
     "OVERWRITE_PRECONDITION_FAILED_CODE",
+    "RANGE_NOT_SATISFIABLE_CODE",
     "RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE",
     "RangedDownload",
     "StreamedDownload",

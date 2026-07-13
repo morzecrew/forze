@@ -40,6 +40,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.aggregates.document.dto import written_read_model
+from forze_kits.aggregates.search.encryption import assert_search_encryption_parity
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 from forze_kits.integrations.outbox import RelayBinding
 
@@ -329,7 +330,14 @@ def bind_search_sync_outbox(
     (``config.resolved_route``) with a marker codec, so staging, relay, and consumption
     all speak :class:`SearchSyncMarker`. The backend configs for those routes stay the
     author's (deps module), preserving the app/backend split.
+
+    The two specs must declare the same field encryption: the consumer re-reads the row and
+    applies the **decrypted** read model to the index, so a field sealed on the document but
+    omitted on the search spec reaches the index in clear (see
+    :func:`assert_search_encryption_parity`) — durable delivery does not change that.
     """
+
+    assert_search_encryption_parity(document=document, search=search)
 
     route = config.resolved_route(search)
     codec = PydanticModelCodec(SearchSyncMarker)

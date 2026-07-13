@@ -52,6 +52,17 @@ ALTER TABLE app.outbox
     ADD COLUMN ordering_key TEXT;
 ```
 
+### Trace propagation (optional column)
+
+`PostgresOutboxConfig(propagate_trace=True)` persists each event's W3C `traceparent` so
+the relay forwards it as the `traceparent` header and the consume side links its span to
+the publish span. Opt in **after** adding the nullable column (legacy / `NULL` rows simply
+carry no parent); independent of `hlc_ordering`:
+
+```sql
+ALTER TABLE app.outbox ADD COLUMN traceparent TEXT;
+```
+
 ### Causal ordering (Hybrid Logical Clock)
 
 By default claims are ordered by `created_at` — assigned per flush batch, so

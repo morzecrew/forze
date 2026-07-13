@@ -21,7 +21,7 @@ from collections.abc import Set as AbstractSet
 from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from functools import partial
-from typing import Annotated, Any, Final
+from typing import Annotated, Any, Final, final
 from urllib.parse import quote
 
 import attrs
@@ -30,6 +30,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from forze.application.contracts.storage import (
+    RANGE_NOT_SATISFIABLE_CODE,
     RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
     RangedDownload,
     StreamedDownload,
@@ -284,15 +285,30 @@ def _is_not_modified(request: Request, etag: str) -> bool:
 # ....................... #
 
 
+@final
+@attrs.frozen
 class _Unsatisfiable:
-    """Sentinel: a well-formed byte range that does not overlap the body → 416.
+    """A well-formed byte range that does not overlap the body → 416.
 
     Distinct from ``None``, which marks an unparseable Range or unknown unit
-    that RFC 7233 says to ignore (serve the full body, 200).
+    that RFC 7233 says to ignore (serve the full body, 200). Carries the
+    complete length 416's ``Content-Range: bytes */<total>`` must report.
     """
 
+    total: int
 
-_UNSATISFIABLE = _Unsatisfiable()
+
+@final
+@attrs.frozen
+class _SuffixRange:
+    """A ``bytes=-N`` range: the last *length* bytes, defined relative to the total."""
+
+    length: int
+
+
+# A parsed-but-unresolved range: an absolute window (``end`` open when the client wrote
+# ``start-``), or a suffix. Only the suffix form needs the object's length to resolve.
+_RangeSpec = tuple[int, int | None] | _SuffixRange
 
 
 def _ranged_response(
@@ -307,44 +323,45 @@ def _ranged_response(
     range (malformed syntax or an unknown unit); per RFC 7233 the caller then
     ignores the header and serves the full body. A well-formed range that does
     not overlap the body yields **416**.
+
+    The body is in hand, so its length *is* the plaintext total (contrast the
+    streaming route, which must ask the adapter — see :func:`_plaintext_total`).
     """
 
-    total = len(body)
-    parsed = _parse_byte_range(range_header, total)
+    parsed = _parse_byte_range(range_header, len(body))
 
     if parsed is None:
         return None
 
     if isinstance(parsed, _Unsatisfiable):
-        headers = {**base_headers, "Content-Range": f"bytes */{total}"}
+        headers = {**base_headers, "Content-Range": f"bytes */{parsed.total}"}
         return Response(status_code=416, headers=headers)
 
     start, end = parsed
-    chunk = body[start : end + 1]
     headers = {
         **base_headers,
-        "Content-Range": f"bytes {start}-{end}/{total}",
+        "Content-Range": f"bytes {start}-{end}/{len(body)}",
     }
 
     return Response(
-        content=chunk,
+        content=body[start : end + 1],
         status_code=206,
         media_type=content_type,
         headers=headers,
     )
 
 
-def _parse_byte_range(
-    range_header: str,
-    total: int,
-) -> tuple[int, int] | _Unsatisfiable | None:
-    """Parse a single ``bytes=start-end`` range.
+def _parse_range_spec(range_header: str) -> _RangeSpec | None:
+    """Parse a single ``bytes=`` range **syntactically** — no object size needed.
 
-    Supports ``start-end``, ``start-`` (open-ended to EOF), and ``-suffix``
-    (last *suffix* bytes). Returns ``None`` for a malformed range or an unknown
-    unit (multi-range, non-``bytes``, non-numeric positions) so the caller can
-    ignore it and serve the full body; returns :data:`_UNSATISFIABLE` for a
-    well-formed range that does not overlap the body (→ 416).
+    Supports ``start-end``, ``start-`` (open-ended to EOF), and ``-suffix`` (last *suffix*
+    bytes). Returns ``None`` for a malformed range or an unknown unit (multi-range,
+    non-``bytes``, non-numeric positions) so the caller can ignore it and serve the full
+    body per RFC 7233.
+
+    Split from resolution deliberately: an absolute window is meaningful without knowing
+    how long the object is, and the streaming route has no trustworthy length to hand
+    (see :func:`_range_response`).
     """
 
     value = range_header.strip()
@@ -356,39 +373,52 @@ def _parse_byte_range(
     first, _, last = spec.partition("-")
 
     if first == "":
-        # Suffix range: last N bytes.
-        if not last.isdigit():
-            return None
-
-        suffix = int(last)
-
-        # A zero-length suffix, or any suffix against an empty body, has no
-        # bytes to serve (the latter would otherwise yield ``bytes 0--1/0``).
-        if suffix == 0 or total == 0:
-            return _UNSATISFIABLE
-
-        start = max(0, total - suffix)
-
-        return start, total - 1
+        return _SuffixRange(length=int(last)) if last.isdigit() else None
 
     if not first.isdigit():
         return None
 
     start = int(first)
 
-    if start >= total:
-        return _UNSATISFIABLE
-
     if last == "":
-        end = total - 1
+        return start, None
 
-    elif last.isdigit():
-        end = min(int(last), total - 1)
+    return (start, int(last)) if last.isdigit() else None
 
-    else:
-        return None
+
+def _resolve_range_spec(
+    spec: _RangeSpec,
+    total: int,
+) -> tuple[int, int] | _Unsatisfiable | None:
+    """Resolve a parsed *spec* against the object's **plaintext** *total*."""
+
+    if isinstance(spec, _SuffixRange):
+        # A zero-length suffix, or any suffix against an empty body, has no bytes to
+        # serve (the latter would otherwise yield ``bytes 0--1/0``).
+        if spec.length == 0 or total == 0:
+            return _Unsatisfiable(total=total)
+
+        return max(0, total - spec.length), total - 1
+
+    start, last = spec
+
+    if start >= total:
+        return _Unsatisfiable(total=total)
+
+    end = total - 1 if last is None else min(last, total - 1)
 
     return None if end < start else (start, end)
+
+
+def _parse_byte_range(
+    range_header: str,
+    total: int,
+) -> tuple[int, int] | _Unsatisfiable | None:
+    """Parse and resolve a single ``bytes=start-end`` range against a known *total*."""
+
+    spec = _parse_range_spec(range_header)
+
+    return None if spec is None else _resolve_range_spec(spec, total)
 
 
 # ....................... #
@@ -517,11 +547,15 @@ def _streaming_download_endpoint(
     A plain, unconditional ``GET`` runs a **single** governed operation (``download_stream``),
     whose result carries the cache validators (``ETag`` / ``Last-Modified``), so no separate
     ``head`` round-trip is needed. A conditional request (``If-None-Match`` / ``If-Modified-Since``)
-    or a ``Range`` request first runs ``head`` — to answer **304** without a body, or to fetch a
-    backend range (**206**, bounded by :data:`DEFAULT_MAX_RANGE_BYTES`; **416** if unsatisfiable).
-    ``ETag`` is the backend etag (for a client-side-encrypted object, over the stored ciphertext —
-    an opaque-but-stable validator); ``Content-Length`` is set only when the plaintext size is
-    known (absent → chunked transfer, e.g. an encrypted object).
+    or a ``Range`` request first runs ``head`` — to answer **304** without a body, or to supply the
+    validators alongside a backend range (**206**, bounded by :data:`DEFAULT_MAX_RANGE_BYTES`;
+    **416** if unsatisfiable). ``ETag`` is the backend etag (for a client-side-encrypted object,
+    over the stored ciphertext — an opaque-but-stable validator); ``Content-Length`` is set only
+    when the plaintext size is known (absent → chunked transfer, e.g. an encrypted object).
+
+    The ``head`` is used for the validators **only**, never to resolve the range: its ``size`` is
+    the *stored* length, which is the ciphertext's on an encrypting route (see
+    :func:`_range_response`).
     """
 
     async def endpoint(key: str, request: Request) -> Response:
@@ -553,7 +587,6 @@ def _streaming_download_endpoint(
             ranged_response = await _range_response(
                 key=key,
                 range_header=request.headers["range"],
-                head=head,
                 base_headers=base_headers,
                 range_runner=range_runner,
                 max_range_bytes=max_range_bytes,
@@ -571,11 +604,31 @@ def _streaming_download_endpoint(
 # ....................... #
 
 
+async def _plaintext_total(key: str, *, range_runner: OperationRunner) -> int:
+    """The object's plaintext length, from the only party that knows it — the adapter.
+
+    A one-byte ranged read reports the object's full plaintext total
+    (:attr:`~forze.application.contracts.storage.RangedDownload.total_size`), decrypted-length
+    aware on an encrypting route. An empty object has no first byte, so its probe is itself
+    unsatisfiable — and that *is* the answer (total 0).
+    """
+
+    try:
+        probe: RangedDownload = await range_runner(DownloadRangeArgs(key=key, start=0, end=0))
+
+    except CoreException as e:
+        if e.code == RANGE_NOT_SATISFIABLE_CODE:
+            return 0
+
+        raise
+
+    return probe.total_size
+
+
 async def _range_response(
     *,
     key: str,
     range_header: str,
-    head: ObjectHeadDTO,
     base_headers: Mapping[str, str],
     range_runner: OperationRunner,
     max_range_bytes: int,
@@ -584,31 +637,53 @@ async def _range_response(
 
     Returns ``None`` when the range is malformed / an unknown unit (ignore per RFC 7233) or when the
     object is whole-payload encrypted (can't be sliced) — the caller then streams the full body.
+
+    Deliberately does **not** take the ``head``: a range is defined against the object's
+    *plaintext* length, and ``head.size`` is the **stored** length — on a client-side-encrypting
+    route, the ciphertext's. Resolving against it would hand a ``bytes=-N`` suffix a start of
+    ``ciphertext_size - N`` and serve a shifted window (with a plausible-looking ``Content-Range``),
+    and would draw the 416 boundary in the wrong place. Only the adapter knows the plaintext
+    total, so the route asks it for exactly the two things it cannot derive: where a suffix begins,
+    and where the object ends. An absolute ``start-end`` / ``start-`` window needs neither — the
+    adapter clamps ``end`` to the plaintext end and refuses a start past it — so it costs no extra
+    round-trip, which keeps the common (media-player) path at the same cost as before.
     """
 
-    parsed = _parse_byte_range(range_header, head.size)
+    spec = _parse_range_spec(range_header)
 
-    if parsed is None:
+    if spec is None:
         return None
 
-    if isinstance(parsed, _Unsatisfiable):
-        return Response(
-            status_code=416,
-            headers={**base_headers, "Content-Range": f"bytes */{head.size}"},
-        )
-
-    start, end = parsed
-    # Cap the buffered window; a wider request is served truncated (a valid partial the client
-    # re-requests from) rather than buffering an unbounded slice.
-    end = min(end, start + max_range_bytes - 1)
-
     try:
+        window = await _resolve_window(spec, key=key, range_runner=range_runner)
+
+        if window is None:
+            return None
+
+        if isinstance(window, _Unsatisfiable):
+            return _unsatisfiable_response(base_headers, window.total)
+
+        start, open_end = window
+        # Cap the buffered window; a wider request is served truncated (a valid partial the client
+        # re-requests from) rather than buffering an unbounded slice. An open-ended ``start-`` has
+        # no end of its own, so the cap *is* its end (the adapter clamps it to the object's).
+        capped = start + max_range_bytes - 1
+        end = capped if open_end is None else min(open_end, capped)
+
         ranged: RangedDownload = await range_runner(
             DownloadRangeArgs(key=key, start=start, end=end)
         )
+
     except CoreException as e:
         if e.code == RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE:
             return None  # can't slice a whole-payload envelope → stream the full body instead
+
+        if e.code == RANGE_NOT_SATISFIABLE_CODE:
+            # The start is past the plaintext end — where that is, only the adapter knew.
+            return _unsatisfiable_response(
+                base_headers, await _plaintext_total(key, range_runner=range_runner)
+            )
+
         raise
 
     return Response(
@@ -626,6 +701,29 @@ async def _range_response(
                 ranged.filename or key.rsplit("/", 1)[-1] or "download"
             ),
         },
+    )
+
+
+async def _resolve_window(
+    spec: _RangeSpec,
+    *,
+    key: str,
+    range_runner: OperationRunner,
+) -> tuple[int, int | None] | _Unsatisfiable | None:
+    """Resolve a parsed range *spec* to a concrete ``(start, end | None)`` window."""
+
+    if not isinstance(spec, _SuffixRange):
+        return spec
+
+    return _resolve_range_spec(spec, await _plaintext_total(key, range_runner=range_runner))
+
+
+def _unsatisfiable_response(base_headers: Mapping[str, str], total: int) -> Response:
+    """The 416 for a range that does not overlap the object's *total* plaintext bytes."""
+
+    return Response(
+        status_code=416,
+        headers={**base_headers, "Content-Range": f"bytes */{total}"},
     )
 
 

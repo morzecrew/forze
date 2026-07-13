@@ -107,7 +107,7 @@ forze stays the Resource Server and never runs an authorization server.
   as actor).
 - Reads are read-only by default; `include_writes=True` opts in and tags command
   tools as destructive.
-- For production, bring your own `FastMCP` (auth, transport); `build_mcp_server`
-  is a convenience. See the
+- API-key auth is built in (`auth=` above); for custom transports or server
+  policies, bring your own `FastMCP` — `build_mcp_server` is a convenience. See the
   [expose-an-aggregate-over-MCP recipe](../recipes/expose-an-aggregate-over-mcp.md)
   for a runnable walkthrough.

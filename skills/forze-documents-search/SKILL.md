@@ -81,6 +81,8 @@ filters = {
 
 Common operators: `$eq`, `$neq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$null`, `$empty`, `$superset`, `$subset`, `$overlaps`, `$disjoint`.
 
+Field keys are **dot-separated paths** into nested objects (`"address.geo.lat"`), usable in filters, sorts, group-bys, and the `fields` list of projected (`raw_*` / `projected_*`) calls — a dotted projection returns a nested shape.
+
 ## Cache-aware documents
 
 Attach `CacheSpec` to `DocumentSpec.cache` and register a matching cache route, usually in `RedisDepsModule.caches`. Reads then serve from the cache on a hit and populate it on a miss; writes invalidate. The facade code is unchanged — caching is pure wiring.
@@ -147,6 +149,8 @@ Use `HubSearchSpec` with `build_hub_search_registry` when one hub entity searche
 ## Custom operations and raw ports
 
 The facade covers the standard document/search surface. When you need behaviour the facade doesn't model — a multi-step domain operation, a saga step, a one-off projection — write a handler (or reach the port directly) via the namespaced context: `ctx.document.query(spec)` → `DocumentQueryPort[read]`, `ctx.document.command(spec)` → `DocumentCommandPort`, `ctx.search.query(spec)` → `SearchQueryPort`. This is the escape hatch, not the default for CRUD.
+
+For bounded-memory **exports**, the query ports stream keyset chunks: documents expose `find_stream` / `project_stream` / `select_stream`, search exposes `search_stream` / `project_search_stream` / `select_search_stream` (`chunk_size=500` default, no total count; backends without keyset support refuse with `query_feature_unsupported`).
 
 ## Adapter boundaries
 

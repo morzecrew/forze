@@ -57,7 +57,7 @@ reverse.
     Concrete implementations of application contracts — one optional package
     per backend:
 
-    - `forze_postgres`, `forze_mongo`, `forze_firestore` — documents, search, transactions
+    - `forze_postgres`, `forze_mongo`, `forze_firestore` — documents and transactions (Postgres and Mongo add search)
     - `forze_redis` — cache, counters, idempotency, pub/sub, streams
     - `forze_s3`, `forze_gcs` — object storage
     - `forze_temporal`, `forze_inngest` — durable workflows and functions

@@ -243,7 +243,9 @@ async def reencrypt_objects(
             # itself is still healthy: on some backends a bucket that vanished
             # mid-sweep 404s object reads exactly like a deleted object, and a
             # pass that "skipped" every key would read as complete. The listing
-            # succeeded at enumeration, so re-probing it separates the two.
+            # succeeded at enumeration, so re-probing it separates the two —
+            # and the probe is a *read*, so a vanished bucket raises here instead
+            # of being recreated by the probe that went looking for it.
             try:
                 await query.list(1, 0, prefix=prefix)
 

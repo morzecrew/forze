@@ -62,7 +62,7 @@ parking, for free. In production wire the consumer as a background step with
 ## Notes
 
 - The dedup key is the relayed event's deterministic id (`forze_event_id` header,
-  else `<queue>:<message.id>`), so a redelivered message is processed once even
+  else the broker `message.id`), so a redelivered message is processed once even
   though delivery is at-least-once. `key` is never used — it is the ordering
   (grouping) key, shared by every event of one aggregate.
 - `notification_queue_consumer_handler` adapts `process_notification_message` (which

@@ -260,6 +260,34 @@ exception handlers from the [integration setup](../integrations/fastapi.md) —
 generated routes only validate the input DTO and run the operation through the
 normal pipeline.
 
+## Tenancy routes
+
+`attach_tenancy_routes` projects the self-service tenant-selector registry — fixed
+paths, no style choice: `GET /tenants` (the caller's tenants), `POST
+/tenants/{id}/activate` (switch the active tenant), `DELETE /tenants/{id}` (204,
+leave). `attach_tenancy_admin_routes` projects the admin plane: `POST /tenants`
+(201, create), `GET /tenants/{id}/members`, `POST /tenants/{id}/deactivate` (204),
+`POST /memberships` (204, invite) and `DELETE /memberships` (204, remove). Admin
+operations ship without hooks bound — guard them with `AuthnRequired` + authz hooks
+in the registry, like `deactivate`.
+
+## Aggregate routes
+
+`attach_aggregate_routes(router, kit, *, ctx_dep, style="rest", tx_route="default",
+storage_prefix="/blobs")` is the composite: given an `AggregateKit` it attaches the
+kit's document (+ soft-deletion), search, and — when the kit declares storage —
+blob routes (under `storage_prefix`) onto one router with a single call, each
+sub-surface exactly as its dedicated attacher would. `tx_route` must match the
+transaction route the deps module registers.
+
+## Infrastructure routes
+
+- `attach_jwks_route(router, jwks_provider, *, path="/.well-known/jwks.json",
+  cache_max_age=300)` — the JWKS document for token verification; excluded from the
+  OpenAPI schema.
+- `attach_readiness_route(router, runtime, *, path="/readyz")` — 200 while the
+  runtime is active and not draining, 503 otherwise; excluded from the schema.
+
 ## Document auth in OpenAPI
 
 `SecurityContextMiddleware` extracts identity; it doesn't tell the schema. By

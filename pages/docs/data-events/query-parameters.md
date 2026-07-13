@@ -108,7 +108,7 @@ returning wrong rows:
 The in-memory mock supports the channel too: register a per-resource source that
 receives the bound parameters and produces the rows the view would, and the
 document DSL composes over its output exactly as against Postgres. The recipe runs
-the leaderboard this way, so the as-of behaviour is test-backed without Docker:
+the leaderboard this way — no database required:
 
 ```python
 --8<-- "recipes/bound_query_parameters/app.py:source-model"

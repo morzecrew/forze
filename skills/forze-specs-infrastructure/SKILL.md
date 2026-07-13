@@ -80,11 +80,13 @@ pg_module = PostgresDepsModule(
 `CacheSpec(name=ResourceName.PROJECTS, ...)` must match the key in `RedisDepsModule.caches`. Use the same naming style for counters, distributed locks, idempotency routes, and search result snapshots:
 
 ```python
+from forze_redis import RedisCacheConfig, RedisCounterConfig, RedisDistributedLockConfig
+
 redis_module = RedisDepsModule(
     client=redis_client,
-    caches={ResourceName.PROJECTS: {"namespace": "app:projects"}},
-    counters={ResourceName.PROJECTS: {"namespace": "app:projects:counter"}},
-    dlocks={ResourceName.PROJECTS: {"namespace": "app:projects:locks"}},
+    caches={ResourceName.PROJECTS: RedisCacheConfig(namespace="app:projects")},
+    counters={ResourceName.PROJECTS: RedisCounterConfig(namespace="app:projects:counter")},
+    dlocks={ResourceName.PROJECTS: RedisDistributedLockConfig(namespace="app:projects:locks")},
 )
 ```
 
@@ -98,6 +100,8 @@ from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.durable.workflow import DurableWorkflowSpec
 from forze.base.serialization import PydanticModelCodec
 from forze_s3 import S3StorageConfig
+from forze_sqs import SQSQueueConfig
+from forze_temporal import TemporalWorkflowConfig
 
 attachments = StorageSpec(name=ResourceName.PROJECT_ATTACHMENTS)
 orders = QueueSpec(
@@ -112,12 +116,12 @@ s3_module = S3DepsModule(
 )
 sqs_module = SQSDepsModule(
     client=sqs_client,
-    queue_readers={ResourceName.ORDERS: {"namespace": "app"}},
-    queue_writers={ResourceName.ORDERS: {"namespace": "app"}},
+    queue_readers={ResourceName.ORDERS: SQSQueueConfig(namespace="app")},
+    queue_writers={ResourceName.ORDERS: SQSQueueConfig(namespace="app")},
 )
 temporal_module = TemporalDepsModule(
     client=temporal_client,
-    workflows={workflow_spec.name: {"queue": "orders"}},
+    workflows={workflow_spec.name: TemporalWorkflowConfig(queue="orders")},
 )
 ```
 

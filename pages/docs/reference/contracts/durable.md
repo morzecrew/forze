@@ -4,11 +4,12 @@ icon: lucide/workflow
 summary: Crash-resumable workflows, schedules, and event-driven functions on an external engine
 ---
 
-Durable execution runs **crash-resumable** work on an external engine: a long-running
-workflow that survives process restarts, a schedule that fires it on a cron, or an
-event-driven function. These contracts are **resolved by dep key** — there is no short
-`ctx.*` accessor — and the engine integration ([Temporal](../../integrations/temporal.md) /
-[Inngest](../../integrations/inngest.md)) provides the adapter. The concept is
+Durable execution runs **crash-resumable** work: a long-running workflow that survives
+process restarts, a schedule that fires it on a cron, or an event-driven function. These
+contracts are **resolved by dep key** — there is no short `ctx.*` accessor — and an engine
+integration ([Temporal](../../integrations/temporal.md) /
+[Inngest](../../integrations/inngest.md)) or the self-hosted Postgres tier provides the
+adapter. The concept is
 [Durable execution](../../data-events/durable-execution.md); worked flows are the
 [background workflow](../../recipes/background-workflow.md) and
 [scheduled queue jobs](../../recipes/scheduled-queue-jobs.md) recipes.
@@ -29,8 +30,8 @@ Resolve the two ports by dep key:
 
 | Dep key | Side |
 |---------|------|
-| `DurableWorkflowCommandDepKey` | start, signal, update, cancel, terminate |
-| `DurableWorkflowQueryDepKey` | run status (`DurableWorkflowRunStatus`), result, query |
+| `DurableWorkflowCommandDepKey` | `start`, `signal`, `update`, `cancel`, `terminate` |
+| `DurableWorkflowQueryDepKey` | `query`, `result`, `describe` (a `DurableWorkflowRunDescription` with the `DurableWorkflowRunStatus`) |
 
 A start returns a `DurableWorkflowHandle` (`workflow_id`, optional `run_id`).
 
@@ -54,8 +55,12 @@ queue's delayed jobs.
 |---------|------|
 | `DurableFunctionEventCommandDepKey` | emit events that trigger functions |
 | `DurableFunctionStepDepKey` | run memoized, individually-retried steps inside a function |
+| `DurableRunStoreDepKey` | the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, `claim_abandoned` recovery |
+| `DurableRunAdminDepKey` | run listing — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage` of `DurableRunRecord`s |
+| `DurableScheduleStoreDepKey` | the cron schedule store — put / claim_due / advance / load / delete |
 
-A `DurableFunctionEventSpec` binds an event channel to its payload codec.
+A `DurableFunctionEventSpec` binds an event channel to its payload codec. A run's status is
+a `DurableRunStatus` — `pending` / `running` / `completed` / `failed` / `forward_incomplete`.
 
 ## Implemented by
 
@@ -63,5 +68,6 @@ A `DurableFunctionEventSpec` binds an event channel to its payload codec.
 |---------|--------|-------------|
 | Workflows + schedules | Temporal | [Temporal](../../integrations/temporal.md) |
 | Event-driven functions | Inngest | [Inngest](../../integrations/inngest.md) |
+| Functions + steps + cron (self-hosted: run/step/schedule stores + `forze_kits` runner) | Postgres | [Postgres](../../integrations/postgres.md) — see [Durable execution → Self-hosted](../../data-events/durable-execution.md#self-hosted-on-postgres) |
 
 A mock implements the surfaces so durable flows are testable without an engine.

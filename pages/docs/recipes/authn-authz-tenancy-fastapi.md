@@ -114,7 +114,7 @@ registry = (
 ```
 
 - **`AuthnRequired`** demands a principal; **`TenantRequired`** demands a bound
-  tenant — both raise `401`/`403` when missing.
+  tenant — both raise `401` when missing.
 - **`AuthzBeforeAuthorize`** asks the decision port whether the subject may
   perform `action`; a deny raises `403`.
 - **`AuthzDocumentScopeWrap`** asks the scope port for a row filter and **merges

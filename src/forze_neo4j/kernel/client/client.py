@@ -13,7 +13,7 @@ from contextvars import ContextVar
 from typing import final
 
 import attrs
-from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncTransaction
+from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncSession, AsyncTransaction
 from pydantic import SecretStr
 
 from forze.base.exceptions import exc
@@ -23,6 +23,33 @@ from .._logger import logger
 from .errors import exc_interceptor
 from .port import Neo4jClientPort
 from .value_objects import Neo4jConfig
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True)
+class _TxScope:
+    """The explicit transaction bound to the current context — opened lazily.
+
+    A Neo4j transaction belongs to a *session*, and a session is bound to one database for
+    its lifetime; a transaction cannot span databases. Under the ``namespace`` tenancy tier
+    the target database is per-tenant and is only known when a statement names it, so the
+    session is not opened at scope entry — the first statement inside the scope decides which
+    database the transaction runs on, and every later statement in it must agree.
+
+    Opening eagerly on the client's static default was the bug: a per-tenant statement's
+    ``database=`` was silently dropped and the write landed in the shared default database.
+    """
+
+    database: str | None
+    """The bound database: the scope's own (pinned at entry) or the first statement's.
+    ``None`` means undecided — until :attr:`opened`, when it means the driver default."""
+
+    opened: bool = False
+    session: AsyncSession | None = None
+    tx: AsyncTransaction | None = None
+
 
 # ----------------------- #
 
@@ -44,7 +71,7 @@ class Neo4jClient(Neo4jClientPort):
 
     _driver: AsyncDriver | None = attrs.field(default=None, init=False)
     _config: Neo4jConfig = attrs.field(factory=Neo4jConfig, init=False)
-    _tx_var: ContextVar[AsyncTransaction | None] = attrs.field(
+    _tx_var: ContextVar[_TxScope | None] = attrs.field(
         factory=lambda: ContextVar("forze_neo4j_tx", default=None),
         init=False,
         repr=False,
@@ -124,6 +151,60 @@ class Neo4jClient(Neo4jClientPort):
 
     # ....................... #
 
+    async def _tx_for(self, scope: _TxScope, database: str | None) -> AsyncTransaction:
+        """The scope's transaction, opened on *database* if this is the first statement.
+
+        The first statement in a scope that did not pin a database decides which one the
+        transaction runs on — that is how a per-tenant (``namespace``-tier) database reaches
+        an enlisted transaction at all, since the transaction manager opens the scope long
+        before any tenant-resolved name exists. Once bound, a statement naming a *different*
+        database is refused: a Neo4j transaction lives in one session, and a session in one
+        database, so there is no honest way to run it — and silently running it on the bound
+        database is how tenant A's writes land in tenant B's (or the shared default's) store.
+        A statement that names no database has no opinion and joins whatever is bound.
+        """
+
+        target = self._database(database)
+
+        if scope.opened:
+            if target is not None and target != scope.database:
+                raise self._tx_database_conflict(target, scope.database)
+
+            if scope.tx is None:  # pragma: no cover - opened implies tx
+                raise exc.internal("Neo4j transaction scope is open without a transaction")
+
+            return scope.tx
+
+        if scope.database is None:
+            scope.database = target
+
+        elif target is not None and target != scope.database:
+            raise self._tx_database_conflict(target, scope.database)
+
+        session = self._require_driver.session(  # pyright: ignore[reportUnknownMemberType]
+            database=scope.database
+        )
+        scope.session = session
+        scope.tx = await session.begin_transaction()
+        scope.opened = True
+
+        return scope.tx
+
+    # ....................... #
+
+    @staticmethod
+    def _tx_database_conflict(target: str | None, bound: str | None) -> Exception:
+        return exc.configuration(
+            f"Graph statement targets Neo4j database {target!r} but the active transaction is "
+            f"bound to {bound!r}. A Neo4j transaction cannot span databases: enlist only routes "
+            f"that resolve to one database per transaction (a per-tenant 'database' resolver "
+            f"resolves per tenant, so this means two routes disagree), or run the statement "
+            f"outside the transaction scope.",
+            code="neo4j_tx_database_conflict",
+        )
+
+    # ....................... #
+
     @exc_interceptor.coroutine("neo4j.run")  # type: ignore[untyped-decorator]
     async def run(
         self,
@@ -132,9 +213,10 @@ class Neo4jClient(Neo4jClientPort):
         *,
         database: str | None = None,
     ) -> list[JsonDict]:
-        tx = self._tx_var.get()
+        scope = self._tx_var.get()
 
-        if tx is not None:
+        if scope is not None:
+            tx = await self._tx_for(scope, database)
             result = await tx.run(
                 query,  # pyright: ignore[reportArgumentType]
                 parameters=dict(params or {}),
@@ -166,28 +248,40 @@ class Neo4jClient(Neo4jClientPort):
         *,
         database: str | None = None,
     ) -> AsyncGenerator[None]:
-        """Bind an explicit transaction for the duration of the context."""
+        """Bind an explicit transaction for the duration of the context.
+
+        The underlying session/transaction is opened by the **first statement** inside the
+        scope, not at entry: the transaction manager enlists this scope with no database of its
+        own, while the database a statement runs on may be resolved per tenant. Passing
+        *database* (or configuring a static one) pins the scope up front instead; a statement
+        that then names a different database is refused rather than silently redirected. A scope
+        with no statements in it opens nothing and commits nothing.
+        """
 
         if self._tx_var.get() is not None:
             # Already inside a transaction — reuse it (nested scope is a no-op).
             yield
             return
 
-        async with self._require_driver.session(  # pyright: ignore[reportUnknownMemberType]
-            database=self._database(database)
-        ) as session:
-            tx = await session.begin_transaction()
-            token = self._tx_var.set(tx)
+        scope = _TxScope(database=self._database(database))
+        token = self._tx_var.set(scope)
 
+        try:
             try:
                 yield
 
             except BaseException:
-                await tx.rollback()
+                if scope.tx is not None:
+                    await scope.tx.rollback()
+
                 raise
 
             else:
-                await tx.commit()
+                if scope.tx is not None:
+                    await scope.tx.commit()
 
-            finally:
-                self._tx_var.reset(token)
+        finally:
+            self._tx_var.reset(token)
+
+            if scope.session is not None:
+                await scope.session.close()

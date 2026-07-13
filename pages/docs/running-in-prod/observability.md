@@ -72,18 +72,18 @@ The name stays low-cardinality (`surface.op`); the specification name rides as t
 `route` attribute, never in the name. The span sits **inside** the resilience
 policy, so a retried call is one span per attempt and a call shed by an open breaker
 or a full bulkhead emits none — the trace shows the work that actually reached the
-backend.
-
-For a **log line** per outbound call instead of (or alongside) a span, add
-`deps.with_port_logging()`. It logs every port call uniformly — `surface`, `route`,
-`op`, and `duration_ms` under `forze.integrations.<domain>` — at `trace` on success
-(so it costs nothing in production unless you turn trace on), `debug` on an expected
-domain failure, and `warning` with a traceback on an unexpected one. Failure status follows the exception *kind*: an infrastructure, internal,
+backend. Failure status follows the exception *kind*: an infrastructure, internal,
 or configuration fault reds the span, while a domain failure the caller can handle —
 not-found, conflict, precondition — leaves it clean, exactly as a 404 does not red an
 HTTP client span. Streaming methods (a cursor, a consume loop, a subscription) pass
 through un-spanned — a lone span around a long-lived stream is the wrong shape;
 per-message spans belong in the consumer.
+
+For a **log line** per outbound call instead of (or alongside) a span, add
+`deps.with_port_logging()`. It logs every port call uniformly — `surface`, `route`,
+`op`, and `duration_ms` under `forze.integrations.<domain>` — at `trace` on success
+(so it costs nothing in production unless you turn trace on), `debug` on an expected
+domain failure, and `warning` with a traceback on an unexpected one.
 
 ## Follow the trace across boundaries
 

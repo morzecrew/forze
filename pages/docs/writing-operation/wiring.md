@@ -100,6 +100,24 @@ runtime = ExecutionRuntime(
 From here, `async with runtime.scope():` opens the pools and serves requests, as
 covered in [Runtime](../core-concepts/runtime.md#the-scope-lifecycle).
 
+Freezing validates the plan's *shape* — not that every operation can actually
+resolve its ports from these deps. A rarely-hit operation asking for a port
+nobody registered would otherwise fail on its first call. To close that gap,
+dry-run the frozen operation registry with `check_wiring` (exported from
+`forze.application.execution`): it eagerly resolves every operation — handler,
+hooks, transactional stages, saga dispatch targets — through the same code path
+a real call takes, and collects every failure instead of stopping at the first:
+
+```python
+from forze.application.execution import ExecutionContext, check_wiring
+
+report = check_wiring(operations, lambda: ExecutionContext(deps=runtime.deps.resolve()))
+report.raise_if_failed()
+```
+
+Run it as a startup gate in dev and staging, or as a test against your mock
+wiring, and a missing dependency surfaces before traffic does.
+
 ## Routed clients
 
 When the current tenant decides *which* database or cache to talk to, swap the

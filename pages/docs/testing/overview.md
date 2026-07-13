@@ -49,14 +49,20 @@ For tests that need real infrastructure — or to exercise database-level logic 
 ```python
 import pytest
 from testcontainers.postgres import PostgresContainer
+from forze.application.execution import build_runtime
+from forze_postgres import PostgresClient, PostgresDepsModule, PostgresLifecycleModule
 
 @pytest.fixture(scope="session")
-def postgres_url():
-    with PostgresContainer("postgres:16") as pg:
+def postgres_dsn():
+    with PostgresContainer("postgres:18", driver=None) as pg:
         yield pg.get_connection_url()
 
-async def test_postgres_integration(postgres_url):
-    runtime = build_runtime(PostgresDepsModule(dsn=postgres_url))
+async def test_postgres_integration(postgres_dsn):
+    client = PostgresClient()
+    runtime = build_runtime(
+        PostgresDepsModule(client=client, rw_documents={"users": users_pg}),
+        lifecycle_modules=[PostgresLifecycleModule(client=client, dsn=postgres_dsn)],
+    )
 
     async with runtime.scope():          # starts the pool, runs lifecycle
         ctx = runtime.get_context()

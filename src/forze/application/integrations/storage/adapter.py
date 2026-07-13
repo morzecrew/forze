@@ -1514,6 +1514,15 @@ class ObjectStorageAdapter(
         metadata; with ``True`` tags are guaranteed populated and backends
         needing extra calls pay them (S3 fans out ``GetObjectTagging`` per
         listed object with bounded concurrency).
+
+        Like every other read (:meth:`download` / :meth:`head` / :meth:`download_range`)
+        this does **not** create the bucket: a missing container raises rather than being
+        conjured into existence and reported as an empty listing. Only the write paths
+        (``upload`` / ``upload_stream`` / ``presign_upload`` / ``begin_upload``) create on
+        demand. A read that created would make an *absent* bucket indistinguishable from an
+        *empty* one — and would silently undo a deletion for any caller that merely listed,
+        including the re-encryption sweep, whose bucket-vanished guard is exactly that
+        distinction.
         """
 
         prefix = default_path_codec.join(prefix)
@@ -1524,8 +1533,6 @@ class ObjectStorageAdapter(
         bucket = await self._resolved_bucket()
 
         async with self.client.client():
-            await self.client.ensure_bucket(bucket)
-
             objects, total_count = await self.client.list_objects(
                 bucket=bucket,
                 prefix=path,

@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException
 from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.client import S3Client
@@ -91,3 +92,34 @@ async def test_s3_storage_list_pagination(
 
     for k in keys:
         await storage_c.delete(k)
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_list_does_not_create_a_missing_bucket(
+    s3_client: S3Client,
+) -> None:
+    """A read must not conjure its container into existence.
+
+    ``list`` used to ``ensure_bucket`` first, so listing a bucket that had been deleted
+    re-created it and answered "empty" — a write on a read path that makes an *absent*
+    bucket indistinguishable from an *empty* one. The re-encryption sweep leans on exactly
+    that distinction to tell "the object was deleted" (skip) from "the bucket vanished"
+    (abort), so under the old behavior its guard could never fire and a break-glass rotation
+    against a deleted bucket reported a false-complete pass.
+    """
+
+    missing = f"forze-absent-{uuid4().hex[:12]}"
+    ctx = context_from_deps(
+        S3DepsModule(
+            client=s3_client,
+            storages={missing: S3StorageConfig(bucket=missing)},
+        )()
+    )
+    storage_q = ctx.storage.query(StorageSpec(name=missing))
+
+    with pytest.raises(CoreException):
+        await storage_q.list(limit=10, offset=0)
+
+    # The read raised *and* left the world alone — the bucket is still gone.
+    async with s3_client.client():
+        assert not await s3_client.bucket_exists(missing)

@@ -140,7 +140,7 @@ shrinking only gates admission, never evicting in-flight work. The three kinds a
 mutually exclusive within a policy.
 
 A queued bulkhead can additionally bound waiting by *time* (CoDel) and shed by
-criticality rather than length. Every parameter — the AIMD and Gradient2
+[criticality](load-shedding.md) rather than length. Every parameter — the AIMD and Gradient2
 mechanics, the distributional `latency_quantile` signal, and the CoDel /
 adaptive-LIFO / prioritized queue controls — is in
 [resilience tuning](../reference/resilience-tuning.md#bulkheads).

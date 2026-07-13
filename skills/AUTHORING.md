@@ -64,5 +64,5 @@ Do not re-create these — they were merged and removed (breaking change):
 
 1. Add `skills/<name>/SKILL.md` with app-scoped `description`.
 2. Link integration topics to an existing page under `pages/docs/` (add a doc page if missing).
-3. Update [`skills/README.md`](README.md) and root [`README.md`](../README.md) Agent Skills table.
+3. Update the [`skills/README.md`](README.md) table (the root [`README.md`](../README.md) Agent Skills section only links here).
 4. Grep: `rg '../../(pages|src|tests)' skills/` should return nothing in `SKILL.md` files.

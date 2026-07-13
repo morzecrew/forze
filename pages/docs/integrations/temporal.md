@@ -60,7 +60,7 @@ lifecycle = LifecyclePlan.from_steps(
 | Contract | Keyed by |
 |----------|----------|
 | Durable workflow command / query (start, signal, update, query, result, cancel) | `DurableWorkflowSpec.name` |
-| Durable workflow schedule command / query | `DurableWorkflowScheduleSpec.name` |
+| Durable workflow schedule command / query | `DurableWorkflowSpec.name` (same workflow route) |
 | Raw client | `TemporalClientDepKey` |
 
 ## Notes

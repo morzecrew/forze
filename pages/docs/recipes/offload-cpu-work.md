@@ -58,9 +58,9 @@ synchronous call from monopolizing the loop, not to parse faster.
 
 ## Sizing the pool
 
-By default `run_cpu` uses a process-wide bounded pool — zero configuration. To size and
-scope-manage it, pass a `ThreadPoolCpuExecutor` to the runtime; it is bound for the scope
-and drained on shutdown:
+By default the runtime binds a bounded worker pool for its scope and closes it on exit —
+zero configuration (`cpu_workers=` sizes it). To manage the pool yourself, pass a
+`ThreadPoolCpuExecutor`; the runtime binds it for the scope but you own its lifetime:
 
 ```python
 from forze.base.primitives import ThreadPoolCpuExecutor

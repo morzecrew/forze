@@ -12,7 +12,7 @@ connection, but as a **signal you publish as data**, which a gateway delivers.
 
 This page is the conceptual tour. The [Socket.IO integration](../integrations/socketio.md)
 has the wiring; the [`realtime_offline` example](https://github.com/morzecrew/forze/tree/main/examples/recipes/realtime_offline)
-is a runnable, test-backed program.
+is a complete, runnable program.
 
 ## A connection is not a port
 

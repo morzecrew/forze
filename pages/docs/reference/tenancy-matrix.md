@@ -5,9 +5,11 @@ summary: The tier each integration reaches, the mechanism behind it, and the rea
 ---
 
 The narrative is in [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md); this is
-the exhaustive surface — every integration, the tiers it reaches, and how. Tiers are
-`tagged` < `namespace` < `dedicated`, classified by the *isolation you get*:
+the exhaustive surface — every integration, the tiers it reaches, and how. Tiers
+(`TenantIsolationMode`) are `none` < `tagged` < `namespace` < `dedicated`, classified by
+the *isolation you get*:
 
+- **`none`** — a deliberately shared resource with no tenant boundary at all.
 - **`tagged`** — one shared container, a tenant marker you filter on (leakable by a
   forgotten predicate).
 - **`namespace`** — a separate key / path / schema / collection / dataset / index per

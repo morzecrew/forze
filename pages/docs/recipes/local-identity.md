@@ -45,7 +45,7 @@ from forze_identity.builtin.local import local_identity_deps
 
 local = local_identity_deps(config, authn_route="main", tenancy_route="main")
 
-deps = DepsRegistry.from_modules(local)
+deps = DepsRegistry.from_deps(local)
 ```
 
 ??? note "Wiring it by hand"

@@ -13,7 +13,16 @@ tier (`none` / `end_to_end`). Realtime push rides on the stream; see
 
 ## Streams
 
-`StreamSpec[M]` — an ordered, replayable log. The producer and plain reader are shared;
+`StreamSpec[M]` — an ordered, replayable log. It adds one field over the codec spec:
+`requires_transactions` (default `False`). It is a **capability gate, not a delivery-semantics
+switch**: setting it changes nothing about how messages are delivered, it only refuses at
+resolve to wire a `CommitStreamGroupQueryPort` onto a backend that doesn't report
+`supports_transactions` — so a consumer written against native transport-level exactly-once
+can never be silently attached to a backend that only offers at-least-once. No shipped
+backend reports `supports_transactions` today, so enabling it currently fails closed
+everywhere; it is a forward guard for a transactional backend, not a way to obtain one.
+Leave it `False` and pair the consumer with an [inbox](messaging.md) for the portable
+exactly-once-*effect* path. Ignored by the ack sub-model. The producer and plain reader are shared;
 consumption comes in two disciplines, named for how they acknowledge — per-message **ack**
 (Redis-class) or per-partition offset **commit** (Kafka-class):
 
@@ -23,15 +32,18 @@ consumption comes in two disciplines, named for how they acknowledge — per-mes
 | `StreamQueryDepKey` | reader | `read` (by offset), `tail` (follow) |
 | `AckStreamGroupQueryDepKey` | ack consumer group | `read`, `tail`, `ack`, `claim`, `pending` |
 | `AckStreamGroupAdminDepKey` | ack group admin | `ensure_group` |
-| `CommitStreamGroupQueryDepKey` | commit consumer group | `read`, `tail`, `commit` |
+| `CommitStreamGroupQueryDepKey` | commit consumer group | `read`, `tail`, `commit`, `seek_to_committed` |
 | `CommitStreamGroupAdminDepKey` | commit group admin | `ensure_topic`, `ensure_group`, `reset_offsets`, `lag` |
 
 The **ack** group gives competing consumers, per-message acks, and explicit `claim` recovery
 of stranded entries. The **commit** group is a partitioned, offset-committed log: a single
 committed `StreamPosition` acknowledges every message up to it on that partition, recovery is
 broker-coordinated (no per-message claim), and `reset_offsets` replays. Both are
-at-least-once; pair either with the [inbox](messaging.md) for exactly-once *effect*. A plain
-reader replays from any offset. For picking a model, see
+at-least-once — including with `requires_transactions` set, which gates *which backend may be
+wired*, not what the wired backend delivers — so pair either with the [inbox](messaging.md)
+for exactly-once *effect*. A plain reader replays from any offset. The commit sub-model has context shortcuts —
+`ctx.stream.commit_query(spec)` / `ctx.stream.commit_admin(spec)`; the other ports resolve
+by dep key. For picking a model, see
 [Messaging delivery models](../../data-events/messaging-delivery-models.md).
 
 ## Pub/sub

@@ -50,10 +50,13 @@ Skim it, or search for a single word.
 :   Declares a message queue for async task dispatch.
 
 **StreamSpec**
-:   Declares a pub/sub stream for event distribution.
+:   Declares an ordered, replayable stream (an append log read by offset or consumer group).
 
-**GraphSpec**
-:   Declares a graph data model for relationship queries.
+**PubSubSpec**
+:   Declares a fire-and-forget pub/sub topic for fan-out to live subscribers.
+
+**GraphModuleSpec**
+:   Declares a graph data model — typed node and edge kinds — for relationship queries.
 
 ---
 
@@ -107,7 +110,7 @@ Skim it, or search for a single word.
 :   The verified identity of a request — who is making the call.
 
 **AuthzScope**
-:   The permissions associated with an identity — what they're allowed to do.
+:   The tenant partition an authorization decision or grant lookup runs within. (The permissions themselves resolve as `EffectiveGrants` — roles plus permissions.)
 
 **TenantIdentity**
 :   The tenant context bound to a request. Determines data isolation strategy.

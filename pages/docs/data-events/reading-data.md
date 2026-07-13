@@ -49,6 +49,7 @@ How many, and how you walk them, is the suffix:
 | *(none)* / `_many` | `CountlessPage` | lists where the total doesn't matter |
 | `_page` | `Page` (with a total count) | UIs that show "X of N" |
 | `_cursor` | `CursorPage` | large or infinite lists, stable under writes |
+| `_stream` | an async generator of batches | full exports — walk the whole set in bounded memory |
 
 Offset pages (`_page`, `_many`) are simple but get slower the deeper you go, and
 can skip or repeat rows as data shifts underneath. **Cursor (keyset)** pages walk
@@ -69,8 +70,12 @@ port** — the same shape × pagination naming, but results come back **ranked**
 hits = await ctx.search.query(order_search).search("blue widget")
 ```
 
-`search` / `search_page` / `search_cursor` (with `project_` and `select_`
-variants) mirror the document methods. Engines cover full-text, vector
+`search` / `search_page` / `search_cursor` / `search_stream` (with `project_`
+and `select_` variants) mirror the document methods. A query can also ask for
+**facet** counts and **highlighted** fragments alongside its hits — per query,
+through `SearchOptions`, over fields the spec declares facetable or
+highlightable (the full option surface is the
+[search contract](../reference/contracts/search.md)). Engines cover full-text, vector
 similarity, and **hub / federated** search that spans several relations. Vector
 search ranks by **embeddings** — vectors produced by an embeddings provider
 (`ctx.embeddings.provider(spec)`) — so semantically similar text scores together. Keeping

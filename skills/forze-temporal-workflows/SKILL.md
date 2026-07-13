@@ -49,6 +49,7 @@ from forze_temporal import (
     TemporalClient,
     TemporalConfig,
     TemporalDepsModule,
+    TemporalWorkflowConfig,
     temporal_lifecycle_step,
 )
 
@@ -56,10 +57,10 @@ temporal_client = TemporalClient()
 temporal_module = TemporalDepsModule(
     client=temporal_client,
     workflows={
-        WorkflowName.PROJECT_ONBOARDING: {
-            "queue": "project-tasks",
-            "tenant_aware": True,
-        }
+        WorkflowName.PROJECT_ONBOARDING: TemporalWorkflowConfig(
+            queue="project-tasks",
+            tenant_aware=True,
+        )
     },
 )
 
@@ -163,7 +164,7 @@ from forze.application.contracts.durable.workflow import DurableWorkflowSchedule
 
 TemporalDepsModule(
     client=client,
-    workflows={WorkflowName.PROJECT_ONBOARDING: {"queue": "project-tasks"}},
+    workflows={WorkflowName.PROJECT_ONBOARDING: TemporalWorkflowConfig(queue="project-tasks")},
     schedule_bootstraps=[
         DurableWorkflowScheduleBootstrap(
             workflow_name=WorkflowName.PROJECT_ONBOARDING,
@@ -197,5 +198,5 @@ For handlers that only need to verify a workflow command was issued, register fa
 > Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
 
 - [Temporal integration](https://morzecrew.github.io/forze/latest/integrations/temporal/)
-- [Durable workflow contracts](https://morzecrew.github.io/forze/latest/reference/contracts/)
+- [Durable workflow contracts](https://morzecrew.github.io/forze/latest/reference/contracts/durable/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)

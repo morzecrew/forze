@@ -5,9 +5,9 @@ summary: Document storage, search, and transactions on PostgreSQL
 ---
 
 `forze[postgres]` implements document storage (read + write), full-text / vector
-/ hub / federated search, and transaction coordination on PostgreSQL. Persistence
-stays behind Forze contracts; PostgreSQL tables, indexes, and pools live at the
-edge.
+/ hub / federated search, transaction coordination, the transactional outbox /
+inbox, idempotency, and durable execution on PostgreSQL. Persistence stays behind
+Forze contracts; PostgreSQL tables, indexes, and pools live at the edge.
 
 ## Install
 
@@ -62,9 +62,13 @@ lifecycle = LifecyclePlan.from_modules(
 | Contract | Keyed by | Notes |
 |----------|----------|-------|
 | Document query / command | `DocumentSpec.name` (`rw_documents`, `ro_documents`) | read-write or read-only relations |
-| Search | `SearchSpec.name` (`searches`) | `engine="pgroonga"` / `"fts"` / `"vector"`, plus hub & federated |
+| Search | `SearchSpec.name` (`searches`, `hub_searches`, `federated_searches`) | `engine="pgroonga"`, `FtsEngine(...)`, or `VectorEngine(...)` |
 | Transactions | route in the module `tx` set | coordinates Postgres-backed ports on one connection |
 | Analytics | `AnalyticsSpec.name` (`analytics`) | named, parameterized warehouse SQL — optional |
+| Outbox / inbox | `OutboxSpec.name` (`outboxes`), `InboxSpec.name` (`inboxes`) | transactional outbox + consumer-side dedup inbox |
+| Idempotency | `IdempotencySpec.name` (`idempotencies`) | co-located store — the record commits inside the business transaction |
+| Procedures | `ProcedureSpec.name` (`procedures`) | named, governed SQL command / compute |
+| Durable execution | `durable_step` / `durable_run` / `durable_schedule` | step memo, run store, and cron schedules — optional |
 
 ## Notes
 

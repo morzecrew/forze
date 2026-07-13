@@ -8,7 +8,9 @@ The narrative is in [Resilience](../running-in-prod/resilience.md); this is the
 exhaustive surface — each strategy's constructor parameters and defaults, and the
 algorithm behind the adaptive controllers. A `ResiliencePolicy` composes these
 outer→inner: rate limit → bulkhead → circuit breaker → retry → timeout, plus
-optional fallback and hedge.
+optional fallback and hedge. The policy itself carries one more knob —
+`fail_open_on_store_error` (default `True`): when a shared breaker / rate-limit
+store errors, admit the call instead of failing it.
 
 ## Rate limit
 
@@ -173,3 +175,15 @@ idempotent reads; `budget` caps the extra load. Applied outside the strategy pip
 The effective adaptive delay is the `forze.resilience.hedge.delay` gauge once
 [`instrument_resilience`](../running-in-prod/observability.md#resilience-metrics) is
 attached.
+
+## Control plane
+
+`ResilienceAdminPort` (`ctx.resilience.admin()`, `ResilienceAdminDepKey`) inspects and
+retunes live policy state without a redeploy:
+
+| Method | Notes |
+|--------|-------|
+| `inspect(*, policy=None)` | `ResilienceStateSnapshot`s — per `(policy, route)`: `forced_open`, the adaptive `concurrency_limit`, `in_use`, `waiting`, and the effective `hedge_delay` |
+| `force_open(policy, route=None)` | manual kill-switch — trip the breaker open (`route=None` = every route) |
+| `clear_forced_open(policy, route=None)` | lift a manual trip |
+| `retune(policy)` | hot-swap a `ResiliencePolicy` by name; drops that policy's cached adaptive state |

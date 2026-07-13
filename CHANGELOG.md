@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-13
 
 ### Added
 
@@ -345,6 +345,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Vault Transit signer picks up key rotation** — the cached public key re-fetches after a TTL, so a rotated key verifies without a restart.
 
+- **A sealed field cannot reach the external search index in clear** — index sync feeds the search spec the aggregate's *decrypted* read model and re-seals it under the search spec's own policy, so a `SearchSpec` that omitted a field the `DocumentSpec` sealed published that field's plaintext to Meilisearch (and, for in-place search, broke decryption instead). The "same policy on both specs" rule was documented but unenforced; it is now checked wherever the two specs meet — `AggregateKit` construction, `bind_search_sync`, and `bind_search_sync_outbox` — failing closed with `search_encryption_parity_mismatch`.
+
 **Identity & authorization**
 
 - **OIDC verifier no longer re-fetches JWKS per request** — the verifier and its key provider are built once and reused, so the JWKS cache actually spans requests.
@@ -371,11 +373,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Generated FastAPI routes render one 422 shape** — request-validation errors use the shared error envelope; raw ctx/input dropped.
 
+- **A `Range` over a client-side-encrypted object serves the right bytes** — the streaming download route resolved the range against the object's *stored* size, which on an encrypting route is the ciphertext's, so a `bytes=-N` suffix (what media and zip readers ask for first) returned a window shifted by the envelope overhead, under a plausible-looking `Content-Range`; a range past the plaintext end surfaced as a 400 rather than a clean 416. Ranges now resolve against the plaintext total, which only the adapter knows. Adds `RANGE_NOT_SATISFIABLE_CODE`.
+
 - **`forze dst replay` survives a bad corpus target** — one unloadable target counts as a failure while the rest of the corpus replays.
 
 **PostgreSQL**
 
-- **Query parameters no longer leak across reads in a caller transaction** — each param-bound read resets its session settings after the fetch; the analytics timeout/search-path settings get the same capture-and-restore inside a caller transaction. A failed reset never masks the original query error (logged as context; debug-level when the transaction was already aborted, where rollback discards the settings anyway).
+- **Query parameters no longer leak across reads in a caller transaction** — each param-bound read resets its session settings after the fetch; the analytics **and procedure** timeout/search-path settings get the same capture-and-restore inside a caller transaction. (Both issue `SET LOCAL` inside what is a *savepoint* when a caller transaction is already open, and Postgres merges a savepoint's `SET LOCAL` values into the enclosing transaction on release — so a procedure's per-tenant `search_path` and `statement_timeout` would otherwise apply to every statement the caller ran afterwards.) A failed reset never masks the original query error (logged as context; debug-level when the transaction was already aborted, where rollback discards the settings anyway).
 
 - **An OCC retry inside a caller transaction can no longer die on the aborted transaction** — on Mongo a write conflict aborts the whole server transaction, so the in-place retry failed with NoSuchTransaction; on Postgres a serialization failure or deadlock did the same, surfacing as masked infrastructure. Both now surface the original clean concurrency error for a whole-scope re-run; Postgres still heals a healthy zero-rows rev conflict in place.
 
@@ -395,9 +399,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A missing S3/GCS object classifies as not_found, not retryable infrastructure** — a caller miss is no longer retried or counted against the breaker, and download routes 404 on real backends as on the mock. Bucket-level 404s stay infrastructure, and the re-encryption sweep confirms the container still lists before counting a skip.
 
+- **Object-storage reads no longer create the bucket** *(behavior change)* — `list` was the only read path calling `ensure_bucket`, so listing a deleted bucket re-created it and answered "empty", making an absent container indistinguishable from an empty one. That also defeated the re-encryption sweep's bucket-vanished guard above: the sweep's re-probe recreated the bucket it went looking for, counted every object as skipped, and returned a "complete" rotation report. Reads (`list`, like `download` / `head`) now raise on a missing bucket; only the write paths (`upload`, `upload_stream`, `presign_upload`, `begin_upload`) create on demand.
+
 - **Meilisearch write path** — a failed task raises instead of reporting success, task waits are bounded, tenant-tagged writes and deletes are scoped, and windows crossing maxTotalHits fail closed with the index provisioned to match.
 
 - **Neo4j keyed-edge identity & quantifier coercion** — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; every hop quantifier (including expand) is int-coerced before inlining; a filter key must be a plain identifier — a crafted key could reach query text through the parameter name (`graph_filter_key_invalid`); walk/path params validate their numeric bounds at construction. The mock graph adapter enforces the identical filter-key rule from a shared contracts helper, pinned by a differential conformance case.
+
+- **Neo4j transactions honour the per-tenant database** — an enlisted transaction bound to the client's static default and ignored each statement's `database=`, so under the `namespace` tier (a per-tenant database) a tenant's transactional graph writes landed in the shared database and reads cross-contaminated. The transaction's session is now opened by its first statement, binding it to that statement's tenant-resolved database — the transaction manager enlists the scope before any tenant name exists, so nothing earlier can know it. A second, different database inside one transaction is refused (`neo4j_tx_database_conflict`) rather than silently redirected.
+
+- **Credentials in a logged JSON or dict-repr body are masked** — the log scrubber's value rule matched only `key=value` / `key: value`, but in a serialized body the key's closing quote sits between the name and the separator (`{"api_key":"sk_live_…"}`), so every secret term except `private_key` — which had a hand-written rule of its own — went out verbatim wherever a request, response or webhook body was logged. The quoted-key form is now derived from the same term vocabulary as the plain form (plus `authorization`, whose quoted value is bounded), and the mask stops at the value so neighbouring fields survive.
+
+- **Logger-name constants are importable as documented** — `FORZE_POSTGRES_LOGGER_NAMES` / `FORZE_REDIS_LOGGER_NAMES` (and their logger enums) are now re-exported from the package roots for `bootstrap_logging` wiring, matching `forze_http`.
 
 - **`forze_redis` imports on redis-py 7 again** — version-specific typing aliases are self-owned; client-side caching fails closed below redis-py 8.
 
@@ -1387,6 +1399,7 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
+[0.5.0]: https://github.com/morzecrew/forze/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/morzecrew/forze/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/morzecrew/forze/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/morzecrew/forze/compare/v0.2.0...v0.3.0

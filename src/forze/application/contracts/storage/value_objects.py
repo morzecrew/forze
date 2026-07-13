@@ -13,6 +13,15 @@ fallback (e.g. the FastAPI streaming route) reference one symbol and cannot drif
 
 # ....................... #
 
+RANGE_NOT_SATISFIABLE_CODE: Final[str] = "range_not_satisfiable"
+"""Error code (``precondition`` kind) raised when a ranged read starts past the end of the
+object — the HTTP 416 equivalent. The *plaintext* end: on a client-side-encrypting route only
+the adapter knows where that is (the stored size is the ciphertext length), so a transport
+translating this to 416 must react to the error rather than pre-computing the boundary from a
+``head``. Shared so the raising adapters/clients and those transports reference one symbol."""
+
+# ....................... #
+
 OVERWRITE_PRECONDITION_FAILED_CODE: Final[str] = "core.storage.overwrite_precondition_failed"
 """Error code (``conflict`` kind) raised when a conditional
 :meth:`~forze.application.contracts.storage.StorageCommandPort.overwrite_stream` finds the

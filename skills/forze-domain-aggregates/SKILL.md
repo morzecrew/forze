@@ -60,7 +60,8 @@ class ProjectReadModel(ReadDocument):
 | `MetadataMixin` (`forze_kits.domain.metadata`) | `name`, `display_name`, … | Named entities |
 
 ```python
-from forze_kits.domain.number_id import NumberIdCreateCmdMixin, NumberIdMixin, SoftDeletionMixin
+from forze_kits.domain.number_id import NumberIdCreateCmdMixin, NumberIdMixin
+from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze.domain.models import CreateDocumentCmd, Document
 
 class Ticket(NumberIdMixin, SoftDeletionMixin, Document):
@@ -128,7 +129,7 @@ Once a `DepsRegistry` registers document adapters for that `name`, handlers obta
 | `cache` | Optional `CacheSpec` for read-through caching |
 | `encryption` | Optional `FieldEncryption` policy (fields sealed at rest) — see [`forze-encryption-kms`](../forze-encryption-kms/SKILL.md) |
 
-Use `spec.supports_soft_delete()`, `supports_update()`, `supports_number_id()` when branching composition logic.
+Use `spec.supports_update()` when branching composition logic on whether the spec declares an update command.
 
 Once the four models and the spec exist, a **governed** aggregate (soft delete, search sync, invariants, outbox) is one `AggregateKit(spec=...)` declaration away — the kit composes the wiring, never the models. See [`forze-wiring`](../forze-wiring/SKILL.md).
 

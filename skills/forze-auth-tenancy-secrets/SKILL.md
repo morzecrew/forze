@@ -43,7 +43,7 @@ Authentication is split into two seams:
 - Resolvers — `JwtNativeUuidResolver` (subject is already a UUID), `DeterministicUuidResolver` (`uuid4({"iss": ..., "sub": ...})`), `MappingTableResolver` (document-backed registry with optional just-in-time provisioning).
 - `AuthnOrchestrator` and the `Configurable*` factories that compose them through the dep keys.
 
-External IdPs (`forze_identity.oidc`, `forze_firebase_auth`, …) plug in via `TokenVerifierPort` and reuse a Forze resolver — install the matching identity extra; handlers stay on existing authn ports.
+External IdPs plug in via `TokenVerifierPort` and reuse a Forze resolver — `forze_identity.oidc` covers any OIDC-compliant IdP (Google, Firebase Auth, Casdoor, …); handlers stay on existing authn ports.
 
 See [Authentication](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/identity/) for the full architectural rationale.
 
@@ -210,6 +210,15 @@ TenancyDepsModule(
 ```
 
 See [Multi-tenancy](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/multi-tenancy/) for aggregates, adapters, and FastAPI `TenantIdentityResolver` pairing.
+
+## Tenant selector and admin plane
+
+Two pre-built aggregates cover org switching and tenant administration:
+
+- **Self-service selector** — `build_tenancy_registry(spec)` (`forze_kits.aggregates.tenancy`) → `attach_tenancy_routes(...)`: a principal lists their own memberships and switches the active tenant (the choice rides the signed `tid` claim, re-validated against live membership per request). Needs `TenancyDepsModule` with both `tenant_resolver` and `tenant_management` routes.
+- **Admin plane** — `build_tenancy_admin_registry(ns)` (`forze_kits.aggregates.tenancy_admin`, ops in `TenancyAdminKernelOp`) → `attach_tenancy_admin_routes(...)`: create a tenant, invite/remove members, list members, deactivate. These ops ship **unguarded** (who may administer is your authz model) — bind `AuthnRequired` + an `AuthzBeforeAuthorize` on each op before exposing the router.
+
+See [Tenant selector and admin recipe](https://morzecrew.github.io/forze/latest/recipes/tenant-selector-and-admin/).
 
 ## Tenant provisioning
 

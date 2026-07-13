@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze import build_runtime
+from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.invariants import ReadSet, SumOf, SystemInvariant
@@ -33,6 +34,11 @@ from forze_kits.aggregates import AggregateKit
 from forze_kits.aggregates.document import DocumentIdDTO, DocumentUpdateDTO
 from forze_kits.aggregates.document.dto import DocumentIdRevDTO, ListRequestDTO
 from forze_kits.aggregates.document.operations import DocumentKernelOp
+from forze_kits.aggregates.search import (
+    OutboxSearchSync,
+    bind_search_sync,
+    bind_search_sync_outbox,
+)
 from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
 from forze_kits.aggregates.storage import StorageFacade, StorageKernelOp
 from forze_kits.integrations.outbox import EmitMapping, OutboxEmit, RelayBinding
@@ -394,11 +400,127 @@ class TestBackendRequirements:
         from forze.application.contracts.crypto import FieldEncryption
 
         encrypted = attrs.evolve(
-            WIDGET_SPEC, encryption=FieldEncryption(encrypted=frozenset({"group"}))
+            WIDGET_SPEC, encryption=FieldEncryption(encrypted=frozenset({"qty"}))
         )
         assert (
             AggregateKit(spec=encrypted).backend_requirements().crypto_required is True
         )
+
+
+# ....................... #
+
+
+class TestSearchEncryptionParity:
+    """A sealed document field must never reach the external index in clear.
+
+    The index is fed the aggregate's *decrypted* read model and re-sealed by the search
+    spec's own policy, so a document that seals a field the search spec omits publishes
+    that field's plaintext to Meilisearch. Only the seam that co-locates both specs can
+    see the drift, so it must refuse it.
+    """
+
+    @staticmethod
+    def _sealed_spec() -> DocumentSpec[WidgetRead, Widget, WidgetCreate, WidgetUpdate]:
+        return attrs.evolve(
+            WIDGET_SPEC, encryption=FieldEncryption(encrypted=frozenset({"qty"}))
+        )
+
+    def test_kit_refuses_a_search_spec_that_does_not_seal_the_sealed_field(self) -> None:
+        with pytest.raises(CoreException) as exc_info:
+            AggregateKit(spec=self._sealed_spec(), search=WIDGET_INDEX)
+
+        error = exc_info.value
+        assert error.kind is ExceptionKind.CONFIGURATION
+        assert error.code == "search_encryption_parity_mismatch"
+        assert "qty" in str(error)
+
+    @pytest.mark.parametrize(
+        ("doc_encryption", "search_encryption"),
+        [
+            (None, None),
+            (None, FieldEncryption()),
+            (FieldEncryption(), None),
+            (FieldEncryption(), FieldEncryption()),
+        ],
+        ids=["none/none", "none/empty", "empty/none", "empty/empty"],
+    )
+    def test_declaring_no_encryption_is_parity_however_it_is_spelled(
+        self,
+        doc_encryption: FieldEncryption | None,
+        search_encryption: FieldEncryption | None,
+    ) -> None:
+        # ``None`` and an empty policy seal the same zero fields, so neither can leak — a plain
+        # unencrypted aggregate must not be refused at startup over how its absence is spelled.
+        kit = AggregateKit(
+            spec=attrs.evolve(WIDGET_SPEC, encryption=doc_encryption),
+            search=attrs.evolve(WIDGET_INDEX, encryption=search_encryption),
+        )
+
+        assert kit.backend_requirements().search_route == "widgets_index"
+
+    def test_kit_accepts_the_same_policy_on_both_specs(self) -> None:
+        encryption = FieldEncryption(encrypted=frozenset({"qty"}))
+        kit = AggregateKit(
+            spec=attrs.evolve(WIDGET_SPEC, encryption=encryption),
+            search=attrs.evolve(WIDGET_INDEX, encryption=encryption),
+        )
+
+        assert kit.backend_requirements().crypto_required is True
+
+    def test_a_field_sealed_only_on_the_search_spec_is_named_as_such(self) -> None:
+        # The reverse drift is a different failure from the leak, and must not be reported as
+        # "the field sets agree" — the document stores the field in plaintext, so the index
+        # cannot reproduce a seal the read model never carried.
+        with pytest.raises(CoreException) as exc_info:
+            AggregateKit(
+                spec=WIDGET_SPEC,  # seals nothing
+                search=attrs.evolve(
+                    WIDGET_INDEX,
+                    encryption=FieldEncryption(encrypted=frozenset({"qty"})),
+                ),
+            )
+
+        message = str(exc_info.value)
+        assert exc_info.value.code == "search_encryption_parity_mismatch"
+        assert "sealed on the search spec but not on the document" in message
+        assert "qty" in message
+        assert "the field sets agree" not in message
+
+    def test_kit_refuses_a_policy_that_differs_only_in_strictness(self) -> None:
+        # Same field set, different AAD/plaintext-tolerance — still not one policy.
+        with pytest.raises(CoreException) as exc_info:
+            AggregateKit(
+                spec=attrs.evolve(
+                    WIDGET_SPEC,
+                    encryption=FieldEncryption(
+                        encrypted=frozenset({"qty"}), binds_record_id=True
+                    ),
+                ),
+                search=attrs.evolve(
+                    WIDGET_INDEX,
+                    encryption=FieldEncryption(encrypted=frozenset({"qty"})),
+                ),
+            )
+
+        assert exc_info.value.code == "search_encryption_parity_mismatch"
+
+    @pytest.mark.parametrize("delivery", [None, OutboxSearchSync()])
+    def test_standalone_sync_seams_refuse_the_drift_too(self, delivery) -> None:
+        # The kit is not the only caller: binding the sync directly must fail the same way,
+        # or the guard is just the kit's private habit.
+        sealed = self._sealed_spec()
+
+        with pytest.raises(CoreException) as exc_info:
+            if delivery is None:
+                bind_search_sync(
+                    OperationRegistry(), document=sealed, search=WIDGET_INDEX
+                )
+            else:
+                bind_search_sync_outbox(
+                    document=sealed, search=WIDGET_INDEX, config=delivery
+                )
+
+        assert exc_info.value.code == "search_encryption_parity_mismatch"
 
 
 # ....................... #
