@@ -284,7 +284,8 @@ show_missing = true
 skip_covered = true
 sort = "cover"
 precision = 1
-# Core packages: enforced in CI (see .github/workflows/ci.yml).
+# Global floor: enforced in CI (see .github/workflows/ci.yml). Per-package
+# floors are enforced on top of it — see [tool.coverage_floors] below.
 fail_under = 80
 exclude_lines = [
     "pragma: no cover",
@@ -303,6 +304,29 @@ exclude_lines = [
     # honest for inline-stub Protocols (e.g. forze.base.serialization.model_codec).
     ": \\.\\.\\.\\s*$",
 ]
+
+# ....................... #
+# Per-package coverage floors
+#
+# Enforced by .github/scripts/coverage_floors.py in the CI coverage job, on top
+# of the global fail_under gate above (a thin new package must not hide behind
+# the well-covered core). Every top-level forze* package under src/ is gated:
+# packages get `default` unless listed in `exceptions`, so a brand-new package
+# is enforced automatically. Locally: `just coverage-floors` (full suite +
+# check) or `just coverage-floors-check` (existing .coverage data).
+#
+# Calibration: floors gate the COMBINED unit+integration coverage that CI
+# measures (all test shards merged) — a unit-only run reports far lower numbers
+# for integration-heavy packages and must not be used to tune this table.
+
+[tool.coverage_floors]
+default = 80
+
+# Exceptions ratchet reality, not aspiration: one entry per package that
+# legitimately sits below the default TODAY (package = its current floor, with
+# a trailing reason). Raise or delete entries as coverage improves.
+# Empty as of 2026-07-13: combined CI coverage has every package >= 82%.
+[tool.coverage_floors.exceptions]
 
 # ....................... #
 # Mypy configuration
@@ -582,5 +606,65 @@ DEP003 = [
 # ....................... #
 # Ruff configuration
 
+[tool.ruff]
+line-length = 100
+
 [tool.ruff.lint]
-ignore = ["E402"]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort (import sorting)
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "RUF",   # ruff-specific rules
+    "ASYNC", # flake8-async
+    "C4",    # flake8-comprehensions
+    "ISC",   # flake8-implicit-str-concat
+    "PIE",   # flake8-pie
+    "T20",   # flake8-print
+    "SIM",   # flake8-simplify
+]
+ignore = [
+    "E402",     # module-import-not-at-top: deferred/guarded imports are an established pattern here
+    "E501",     # line length is owned by `ruff format` (code is wrapped at 100); the remaining long
+                # lines are unwrappable prose — single-token Sphinx :class: refs, minified embedded
+                # HTML/JS assets, and `type: ignore`/`nosec` justification comments
+    "ISC001",   # single-line implicit concat: conflicts with `ruff format`
+    "ASYNC109", # ports/adapters deliberately expose `timeout` parameters as API surface
+    "RUF001",   # ambiguous unicode: docs deliberately use typographic/math notation (×, −, ∪, –)
+    "RUF002",   # see RUF001
+    "RUF003",   # see RUF001
+    "RUF022",   # __all__ is deliberately grouped by category (mirrors lazy-export tables), not sorted
+    "UP040",    # PEP 695 type aliases/generics: migration is a separate arc — the framework does
+    "UP046",    # heavy runtime type introspection (codecs/specs) and mechanical conversion of
+    "UP047",    # ~80 generic declarations is not behavior-neutral enough to adopt via lint fixes
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# Calls that are provably immutable (frozen attrs classes / Typer's declarative
+# option markers), safe as argument or ContextVar defaults (B006/B008/B039).
+# Config classes appear twice: ruff resolves qualified names from the import
+# site, and they are imported both from the defining module and its re-export.
+extend-immutable-calls = [
+    "typer.Option",
+    "forze.base.primitives.entropy_source.SystemEntropySource",
+    "forze.base.primitives.entropy_source.SystemSecretEntropy",
+    "forze.base.primitives.time_source.SystemTimeSource",
+    "forze_kits.aggregates.document.value_objects.DocumentMappers",
+    "forze_kits.aggregates.search.value_objects.SearchMappers",
+    "forze_kafka.kernel.client.KafkaConfig",
+    "forze_kafka.kernel.client.value_objects.KafkaConfig",
+    "forze_mongo.kernel.client.MongoConfig",
+    "forze_mongo.kernel.client.value_objects.MongoConfig",
+    "forze_neo4j.kernel.client.Neo4jConfig",
+    "forze_neo4j.kernel.client.value_objects.Neo4jConfig",
+    "forze_postgres.kernel.client.PostgresConfig",
+    "forze_postgres.kernel.client.value_objects.PostgresConfig",
+    "forze_rabbitmq.kernel.client.RabbitMQConfig",
+    "forze_rabbitmq.kernel.client.value_objects.RabbitMQConfig",
+    "forze_redis.kernel.client.RedisConfig",
+    "forze_redis.kernel.client.value_objects.RedisConfig",
+    "forze_temporal.kernel.client.TemporalConfig",
+    "forze_temporal.kernel.client.value_objects.TemporalConfig",
+]

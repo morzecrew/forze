@@ -60,6 +60,9 @@
     "python.analysis.diagnosticSeverityOverrides": {
         "reportMissingTypeStubs": "none"
     },
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+    },
     "[json]": {
         "editor.tabSize": 2,
     },

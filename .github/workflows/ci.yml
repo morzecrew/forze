@@ -264,6 +264,13 @@ jobs:
       - name: Enforce coverage threshold
         run: uv run coverage report --fail-under=80
 
+      # Global floor alone lets a thin new package ship near-0% while the total
+      # barely moves — gate every forze* package too (see [tool.coverage_floors]).
+      - name: Enforce per-package coverage floors
+        run: |
+          uv run coverage json --fail-under=0 -o coverage.json
+          uv run python .github/scripts/coverage_floors.py coverage.json
+
   required-ci:
     name: Required Continuous Integration
     needs: [changes, quality, test, coverage]
