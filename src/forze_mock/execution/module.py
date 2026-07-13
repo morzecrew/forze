@@ -84,6 +84,7 @@ from forze.application.contracts.idempotency import (
 )
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import (
+    OutboxAdminDepKey,
     OutboxCommandDepKey,
     OutboxQueryDepKey,
 )
@@ -391,6 +392,9 @@ class MockDepsModule(DepsModule):
             CommitStreamGroupAdminDepKey: ConfigurableMockCommitStreamGroupAdmin(module=self),
             OutboxCommandDepKey: ConfigurableMockOutboxCommand(module=self),
             OutboxQueryDepKey: ConfigurableMockOutboxQuery(module=self),
+            # The store serves both protocols; the admin key is separate so a read-only
+            # QUERY can acquire the depth probes without the claim/mark port.
+            OutboxAdminDepKey: ConfigurableMockOutboxQuery(module=self),
             DistributedLockQueryDepKey: dlock,
             DistributedLockCommandDepKey: dlock,
             EmbeddingsProviderDepKey: ConfigurableMockEmbeddings(

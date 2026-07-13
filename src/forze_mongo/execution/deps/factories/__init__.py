@@ -3,6 +3,7 @@
 from .document import ConfigurableMongoDocument, ConfigurableMongoReadOnlyDocument
 from .outbox import (
     ConfigurableMongoOutbox,
+    ConfigurableMongoOutboxAdmin,
     ConfigurableMongoOutboxCommand,
     ConfigurableMongoOutboxQuery,
 )
@@ -14,6 +15,7 @@ from .tx import mongo_txmanager
 __all__ = [
     "ConfigurableMongoDocument",
     "ConfigurableMongoOutbox",
+    "ConfigurableMongoOutboxAdmin",
     "ConfigurableMongoOutboxCommand",
     "ConfigurableMongoOutboxQuery",
     "ConfigurableMongoReadOnlyDocument",

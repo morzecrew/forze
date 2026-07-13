@@ -824,3 +824,69 @@ async def test_mongo_hlc_ordering_persists_and_claims_in_causal_order(
     packed = [c.hlc.pack() for c in claims]  # type: ignore[union-attr]
     assert packed == sorted(packed)
     assert len(set(packed)) == 3
+
+
+# ----------------------- #
+# Admin (observability) port
+#
+# covers: OutboxAdminPort.has_undrained
+# covers: OutboxAdminPort.depth
+# covers: OutboxAdminPort.oldest_pending_age
+
+
+@pytest.mark.asyncio
+async def test_mongo_outbox_admin_depth_age_and_future_retries(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    db_name, coll_name = outbox_collection
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    now = utcnow()
+
+    def _doc(status: OutboxStatus, *, created_at: Any, available_at: Any = None) -> dict[str, Any]:
+        return {
+            "id": str(uuid4()),
+            "outbox_route": "integration",
+            "event_id": str(uuid4()),
+            "event_type": "demo.created",
+            "payload": {"label": "x"},
+            "status": status.value,
+            "occurred_at": created_at,
+            "created_at": created_at,
+            "available_at": available_at,
+            "attempts": 0,
+        }
+
+    coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+    await coll.insert_many(
+        [
+            # A row backing off: invisible to claim_pending, but still undelivered work.
+            _doc(OutboxStatus.PENDING, created_at=now - timedelta(seconds=90), available_at=now + timedelta(hours=1)),
+            _doc(OutboxStatus.PENDING, created_at=now - timedelta(seconds=30)),
+            _doc(OutboxStatus.PROCESSING, created_at=now),
+            _doc(OutboxStatus.FAILED, created_at=now),
+            _doc(OutboxStatus.PUBLISHED, created_at=now),  # never counted: nothing prunes it
+        ]
+    )
+
+    mongo_module = MongoDepsModule(
+        client=mongo_client_replica,
+        tx={"default"},
+        outboxes={
+            "integration": MongoOutboxConfig(collection=(db_name, coll_name)),
+        },
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module).freeze())
+
+    async with runtime.scope():
+        admin = runtime.get_context().outbox.admin(outbox_spec)
+        depth = await admin.depth()
+        undrained = await admin.has_undrained()
+        age = await admin.oldest_pending_age()
+
+    assert (depth.pending, depth.processing, depth.failed) == (2, 1, 1)
+    assert depth.undrained == 3
+    assert undrained is True
+    assert age is not None
+    assert timedelta(seconds=80) < age < timedelta(seconds=100)  # the parked row is the oldest

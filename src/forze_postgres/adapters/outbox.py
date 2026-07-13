@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
 
@@ -13,7 +13,9 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
 from forze.application.contracts.outbox import (
+    OutboxAdminPort,
     OutboxClaim,
+    OutboxDepth,
     OutboxQueryPort,
     OutboxSpec,
     OutboxStatus,
@@ -32,8 +34,8 @@ from forze_postgres.kernel.relation import resolve_postgres_qname
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
-    """Postgres-backed outbox persistence and query port.
+class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdminPort):
+    """Postgres-backed outbox persistence, query, and admin port.
 
     **Delivery model — at-least-once.** :meth:`claim_pending` moves rows to ``processing``
     under ``FOR UPDATE SKIP LOCKED`` and there is no fence token: a relay that is merely
@@ -409,3 +411,98 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
 
         rowcount = await self.client.execute(stmt, params, return_rowcount=True)
         return int(rowcount or 0)
+
+    # ....................... #
+    # Admin (observability) port
+
+    def _admin_scope(self) -> tuple[sql.SQL, dict[str, Any]]:
+        """Route + tenant predicate shared by every admin probe."""
+
+        params: dict[str, Any] = {
+            "route": str(self.spec.name),
+            "pending": OutboxStatus.PENDING.value,
+            "processing": OutboxStatus.PROCESSING.value,
+            "failed": OutboxStatus.FAILED.value,
+        }
+        tenant_id = self.require_tenant_if_aware()
+        tenant_filter = sql.SQL("")
+
+        if tenant_id is not None:
+            tenant_filter = sql.SQL("AND tenant_id = %(tenant_id)s")
+            params["tenant_id"] = tenant_id
+
+        return tenant_filter, params
+
+    # ....................... #
+
+    async def has_undrained(self) -> bool:
+        table = await self._table()
+        tenant_filter, params = self._admin_scope()
+
+        # EXISTS, not count(*): one index seek and stop at the first hit, so a quiesce loop
+        # can poll this without paying for the table's published history. Statuses are an
+        # IN-list rather than `status <> 'published'` — an inequality cannot seek a btree,
+        # so the negated form would scan every row ever emitted.
+        stmt = sql.SQL(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM {table}
+                WHERE outbox_route = %(route)s
+                  AND status IN (%(pending)s, %(processing)s)
+                  {tenant_filter}
+            )
+            """
+        ).format(table=table.ident(), tenant_filter=tenant_filter)
+
+        return bool(await self.client.fetch_value(stmt, params, default=False))
+
+    # ....................... #
+
+    async def depth(self) -> OutboxDepth:
+        table = await self._table()
+        tenant_filter, params = self._admin_scope()
+
+        # Undrained buckets only. `published` is excluded deliberately: nothing prunes it, so
+        # it grows with every event ever emitted and counting it would scan the whole table.
+        stmt = sql.SQL(
+            """
+            SELECT status, count(*) AS n
+            FROM {table}
+            WHERE outbox_route = %(route)s
+              AND status IN (%(pending)s, %(processing)s, %(failed)s)
+              {tenant_filter}
+            GROUP BY status
+            """
+        ).format(table=table.ident(), tenant_filter=tenant_filter)
+
+        rows = await self.client.fetch_all(stmt, params)
+        counts = {str(row["status"]): int(row["n"]) for row in rows}
+
+        return OutboxDepth(
+            pending=counts.get(OutboxStatus.PENDING.value, 0),
+            processing=counts.get(OutboxStatus.PROCESSING.value, 0),
+            failed=counts.get(OutboxStatus.FAILED.value, 0),
+        )
+
+    # ....................... #
+
+    async def oldest_pending_age(self) -> timedelta | None:
+        table = await self._table()
+        tenant_filter, params = self._admin_scope()
+
+        # Keyed on created_at, which every route has — `hlc` exists only under
+        # `hlc_ordering`, so ordering by it would make this probe config-dependent.
+        stmt = sql.SQL(
+            """
+            SELECT min(created_at) AS oldest
+            FROM {table}
+            WHERE outbox_route = %(route)s
+              AND status = %(pending)s
+              {tenant_filter}
+            """
+        ).format(table=table.ident(), tenant_filter=tenant_filter)
+
+        oldest = await self.client.fetch_value(stmt, params)
+
+        return None if oldest is None else utcnow() - oldest

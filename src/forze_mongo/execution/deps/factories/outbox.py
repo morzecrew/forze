@@ -53,6 +53,26 @@ class ConfigurableMongoOutboxQuery:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableMongoOutboxAdmin:
+    """Build the read-only admin (depth/age) view of an outbox spec route.
+
+    The same store serves it — it implements both protocols — but the key is separate so a
+    read-only ``QUERY`` can acquire the admin surface without the claim/mark port.
+    """
+
+    config: MongoOutboxConfig
+    """Mongo-specific configuration for the route."""
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: OutboxSpec[Any],
+    ) -> MongoOutboxStore[Any]:
+        return _build_store(ctx, spec, self.config)
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurableMongoOutboxCommand:
     """Build a :class:`~forze.application.integrations.outbox.StagingOutboxCommand`."""
 

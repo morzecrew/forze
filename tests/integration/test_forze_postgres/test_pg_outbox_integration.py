@@ -1129,3 +1129,153 @@ async def test_relay_without_drain_leaves_the_row_for_the_next_process(
 
     assert [row["status"] for row in rows] == ["pending"]
     assert shared_state.queues == {}
+
+
+# ----------------------- #
+# Admin (observability) port
+#
+# covers: OutboxAdminPort.has_undrained
+# covers: OutboxAdminPort.depth
+# covers: OutboxAdminPort.oldest_pending_age
+
+
+async def _seed_row(
+    pg_client: PostgresClient,
+    outbox_table: str,
+    *,
+    status: OutboxStatus,
+    created_at: Any,
+    available_at: Any = None,
+) -> None:
+    await pg_client.execute(
+        sql.SQL(
+            """
+            INSERT INTO {t} (
+                id, outbox_route, event_id, event_type, occurred_at, payload,
+                status, created_at, available_at, attempts
+            )
+            VALUES (%s, 'integration', %s, 'demo.created', %s, %s, %s, %s, %s, 0)
+            """
+        ).format(t=sql.Identifier("public", outbox_table)),
+        (
+            uuid4(),
+            uuid4(),
+            created_at,
+            Jsonb({"label": "x"}),
+            status.value,
+            created_at,
+            available_at,
+        ),
+    )
+
+
+def _admin_runtime(pg_client: PostgresClient, outbox_table: str) -> tuple[ExecutionRuntime, OutboxSpec[Any]]:
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(relation=("public", outbox_table)),
+        },
+    )
+
+    return ExecutionRuntime(deps=DepsRegistry.from_modules(pg_module).freeze()), outbox_spec
+
+
+@pytest.mark.asyncio
+async def test_outbox_depth_counts_undrained_and_ignores_published(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    now = utcnow()
+
+    for status in (
+        OutboxStatus.PENDING,
+        OutboxStatus.PENDING,
+        OutboxStatus.PROCESSING,
+        OutboxStatus.FAILED,
+        OutboxStatus.PUBLISHED,
+    ):
+        await _seed_row(pg_client, outbox_table, status=status, created_at=now)
+
+    runtime, outbox_spec = _admin_runtime(pg_client, outbox_table)
+
+    async with runtime.scope():
+        admin = runtime.get_context().outbox.admin(outbox_spec)
+        depth = await admin.depth()
+        undrained = await admin.has_undrained()
+
+    assert (depth.pending, depth.processing, depth.failed) == (2, 1, 1)
+    assert depth.undrained == 3  # failed is parked, not on its way out
+    assert undrained is True
+
+
+@pytest.mark.asyncio
+async def test_outbox_depth_counts_rows_parked_for_a_future_retry(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    # The semantic that makes quiesce trustworthy: `claim_pending` hides a row backing off,
+    # but it is still undelivered work. A depth that agreed with the claim would attest an
+    # empty outbox while events were queued behind a retry.
+    now = utcnow()
+    await _seed_row(
+        pg_client,
+        outbox_table,
+        status=OutboxStatus.PENDING,
+        created_at=now,
+        available_at=now + timedelta(hours=1),
+    )
+
+    runtime, outbox_spec = _admin_runtime(pg_client, outbox_table)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        depth = await ctx.outbox.admin(outbox_spec).depth()
+        claimed = await ctx.outbox.query(outbox_spec).claim_pending()
+
+    assert depth.pending == 1
+    assert not depth.is_empty
+    assert claimed == []  # invisible to the claim path, visible to the depth
+
+
+@pytest.mark.asyncio
+async def test_outbox_admin_is_empty_and_ageless_when_everything_is_published(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    await _seed_row(
+        pg_client, outbox_table, status=OutboxStatus.PUBLISHED, created_at=utcnow()
+    )
+
+    runtime, outbox_spec = _admin_runtime(pg_client, outbox_table)
+
+    async with runtime.scope():
+        admin = runtime.get_context().outbox.admin(outbox_spec)
+
+        assert await admin.has_undrained() is False
+        assert (await admin.depth()).is_empty
+        assert await admin.oldest_pending_age() is None
+
+
+@pytest.mark.asyncio
+async def test_outbox_oldest_pending_age_tracks_the_head_of_the_backlog(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    now = utcnow()
+    await _seed_row(
+        pg_client, outbox_table, status=OutboxStatus.PENDING, created_at=now - timedelta(seconds=30)
+    )
+    await _seed_row(
+        pg_client, outbox_table, status=OutboxStatus.PENDING, created_at=now - timedelta(seconds=120)
+    )
+
+    runtime, outbox_spec = _admin_runtime(pg_client, outbox_table)
+
+    async with runtime.scope():
+        age = await runtime.get_context().outbox.admin(outbox_spec).oldest_pending_age()
+
+    assert age is not None
+    assert timedelta(seconds=110) < age < timedelta(seconds=130)

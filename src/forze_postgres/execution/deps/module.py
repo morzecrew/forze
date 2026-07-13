@@ -32,7 +32,11 @@ from forze.application.contracts.durable.function import (
 from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
-from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
+from forze.application.contracts.outbox import (
+    OutboxAdminDepKey,
+    OutboxCommandDepKey,
+    OutboxQueryDepKey,
+)
 from forze.application.contracts.procedure import ProcedureCommandDepKey
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
@@ -81,6 +85,7 @@ from .factories import (
     ConfigurablePostgresHubSearch,
     ConfigurablePostgresIdempotency,
     ConfigurablePostgresInbox,
+    ConfigurablePostgresOutboxAdmin,
     ConfigurablePostgresOutboxCommand,
     ConfigurablePostgresOutboxQuery,
     ConfigurablePostgresProcedure,
@@ -561,6 +566,13 @@ class PostgresDepsModule(DepsModule):
                         },
                         OutboxQueryDepKey: {
                             name: ConfigurablePostgresOutboxQuery(config=config)
+                            for name, config in self.outboxes.items()
+                        },
+                        # Always registered, unlike the opt-in durable-run admin: quiesce and
+                        # the relay's own drain depend on it, and a flag would fail them
+                        # closed in every deployment that forgot to set it. It is read-only.
+                        OutboxAdminDepKey: {
+                            name: ConfigurablePostgresOutboxAdmin(config=config)
                             for name, config in self.outboxes.items()
                         },
                     }

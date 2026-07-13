@@ -219,3 +219,60 @@ Three constraints, two of which are enforced at wiring time:
 
 The drain is a best-effort teardown courtesy, not a delivery guarantee: correctness still
 rests on the relay claiming those rows eventually, from this process or the next.
+
+## Is the outbox drained?
+
+`ctx.outbox.admin(spec)` is a read-only view of a route's backlog. It exists because
+emptiness used to be observable only through `claim_pending` — which *claims*, so asking
+the question changed the answer and raced the relay for rows the caller did not want.
+
+```python
+admin = ctx.outbox.admin(OUTBOX)
+
+await admin.has_undrained()      # bool — one index seek; poll this
+await admin.depth()              # OutboxDepth(pending=, processing=, failed=)
+await admin.oldest_pending_age() # timedelta | None — "is the relay stuck?"
+```
+
+Three semantics worth knowing, because they are deliberately *not* the claim path's:
+
+- **`pending` includes rows parked for a future retry.** `claim_pending` hides them; a row
+  backing off is still undelivered work, and a check that ignored it would call an outbox
+  empty while events were queued behind a retry.
+- **`published` is never counted.** Nothing prunes published rows, so that bucket grows with
+  every event the application has ever emitted — counting it would scan the whole history.
+  `depth()` reports only the undrained buckets.
+- **`failed` is reported apart and never waited on.** Failed rows are terminal until an
+  operator calls `requeue_failed`, so treating them as work-in-progress would hang forever
+  on a poison row.
+
+These probes assume the route's claim index exists (the table is yours — see
+[Outbox table schema](../reference/outbox-schema.md)). Without it they degrade to a
+sequential scan.
+
+## Quiescing before a shutdown or a migration
+
+`quiesce()` stops the runtime admitting new work, then waits for the operational planes —
+outbox routes, durable runs, stream groups — to come to rest, and reports what did and did
+not settle:
+
+```python
+from forze_kits.integrations.quiesce import quiesce
+
+report = await quiesce(runtime, outboxes=[OUTBOX], timeout=timedelta(seconds=60))
+report.raise_if_unsettled()   # or inspect report.attested / report.unsettled
+```
+
+Two things to hold onto:
+
+- **It is one-way.** The drain gate does not reopen: after `quiesce()` returns, every new
+  invocation on that scope is refused with `THROTTLED`. It is the step before a shutdown, an
+  export, or a migration — not a pause button.
+- **It waits for the relay; it does not relay.** Closing the gate makes the backlog finite,
+  but something still has to publish it — the background step or an external worker. If
+  nothing does, the outbox plane comes back `residual` with the age of the oldest pending
+  row. Give the budget room for at least one relay tick.
+
+Planes the runtime does not wire are reported `not_wired` and do not count against
+attestation. Work the framework cannot see at all — a Temporal-backed workflow lives in the
+Temporal cluster — is outside what `quiesce()` can speak for: do not migrate mid-workflow.

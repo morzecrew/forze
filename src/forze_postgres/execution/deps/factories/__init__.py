@@ -18,6 +18,7 @@ from .idempotency import ConfigurablePostgresIdempotency
 from .inbox import ConfigurablePostgresInbox
 from .outbox import (
     ConfigurablePostgresOutbox,
+    ConfigurablePostgresOutboxAdmin,
     ConfigurablePostgresOutboxCommand,
     ConfigurablePostgresOutboxQuery,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "ConfigurablePostgresIdempotency",
     "ConfigurablePostgresInbox",
     "ConfigurablePostgresOutbox",
+    "ConfigurablePostgresOutboxAdmin",
     "ConfigurablePostgresOutboxCommand",
     "ConfigurablePostgresOutboxQuery",
     "ConfigurablePostgresDocument",
