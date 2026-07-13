@@ -16,6 +16,12 @@ jobs:
       force_full: true
     permissions:
       contents: read
+      # The called workflow's `changes` job declares `pull-requests: read` (dorny/paths-filter
+      # reads the PR's file list through the API on pull_request events). A called workflow's
+      # jobs cannot exceed the calling job's permission ceiling, and GitHub checks that
+      # statically — so the grant is required here even though a tag push never resolves a PR
+      # (paths-filter falls back to git, and force_full skips the filter's result anyway).
+      pull-requests: read
 
   build:
     name: Build the package
