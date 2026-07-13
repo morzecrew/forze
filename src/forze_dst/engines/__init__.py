@@ -9,9 +9,9 @@ the others are exposed for direct use and for the documented plugin seam.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from forze_dst.engines.cases import OperationCase
 from forze_dst.config import SimulationConfig, Strategy
 from forze_dst.engines import (
     coverage_sweep,
@@ -19,8 +19,11 @@ from forze_dst.engines import (
     derive_probe,
     guided,
     op_case,
+)
+from forze_dst.engines import (
     scenario as scenario_engine,
 )
+from forze_dst.engines.cases import OperationCase
 from forze_dst.oracle import ViolationReport
 from forze_dst.scenario import Scenario
 
@@ -53,7 +56,7 @@ __all__ = [
 
 
 def dispatch(
-    sim: "Simulation",
+    sim: Simulation,
     config: SimulationConfig,
     *,
     scenario: Scenario | None = None,

@@ -18,9 +18,7 @@ from .enrichment import InvocationOutboxEnricher
 # ----------------------- #
 
 
-def _resolve_payload_cipher(
-    ctx: ExecutionContext, spec: OutboxSpec[Any]
-) -> BytesCipherPort | None:
+def _resolve_payload_cipher(ctx: ExecutionContext, spec: OutboxSpec[Any]) -> BytesCipherPort | None:
     """The keyring for whole-payload encryption, or ``None`` when the route is plaintext.
 
     Fails closed when a route declares ``encrypt=True`` but no keyring is wired — the
@@ -28,9 +26,7 @@ def _resolve_payload_cipher(
     floor first, before the plaintext early-out, so a ``none`` route is rejected under a floor.
     """
 
-    enforce_required_reach(
-        ctx.deps, route=str(spec.name), declared=spec.encryption, kind="outbox"
-    )
+    enforce_required_reach(ctx.deps, route=str(spec.name), declared=spec.encryption, kind="outbox")
 
     if not spec.encrypts:
         return None
@@ -83,9 +79,7 @@ def build_staging_outbox_command[M: BaseModel](
         # The node-global checkpoint only advances atomically with the rows when the flush
         # runs inside the business transaction, so wire it only for routes that require one;
         # a non-transactional route keeps the prior resume-from-(0,0) behavior.
-        checkpoint=(
-            _resolve_hlc_checkpoint(ctx) if spec.require_transaction else None
-        ),
+        checkpoint=(_resolve_hlc_checkpoint(ctx) if spec.require_transaction else None),
     )
     return StagingOutboxCommand(spec=spec, staging=staging)
 

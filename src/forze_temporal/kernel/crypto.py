@@ -19,7 +19,8 @@ falls back to the deployment's default key (``tenant=None``).
 """
 
 import dataclasses
-from typing import Callable, Sequence, final
+from collections.abc import Callable, Sequence
+from typing import final
 
 import attrs
 from temporalio.api.common.v1 import Payload

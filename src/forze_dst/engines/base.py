@@ -8,7 +8,8 @@ the minimize/report logic applies everywhere and a new engine only writes its "r
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Sequence, TypeVar
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from forze.base.primitives import derive_seed
 from forze_dst.oracle import ViolationReport, minimize
@@ -27,8 +28,8 @@ T = TypeVar("T")
 
 def explore_seeds(
     seeds: Sequence[int],
-    attempt_fn: Callable[[int], "ViolationReport | None"],
-) -> "ViolationReport | None":
+    attempt_fn: Callable[[int], ViolationReport | None],
+) -> ViolationReport | None:
     """Run *attempt_fn* over *seeds*; return the first violating seed's report (else ``None``)."""
 
     for seed in seeds:
@@ -40,9 +41,7 @@ def explore_seeds(
     return None
 
 
-def scheduler_for(
-    seed: int, factory: Callable[[int], Reorderer | None] | None
-) -> Reorderer | None:
+def scheduler_for(seed: int, factory: Callable[[int], Reorderer | None] | None) -> Reorderer | None:
     """A fresh per-seed scheduler from *factory* (seeded with the schedule sub-seed), or ``None``.
 
     Stateful schedulers (PCT) must be rebuilt per run so the initial run, every minimization
@@ -54,14 +53,14 @@ def scheduler_for(
 
 
 def attempt_and_minimize(
-    sim: "Simulation",
+    sim: Simulation,
     *,
     seed: int,
     schedule_seed: int | None,
     run_initial: Callable[[], tuple[History, Sequence[T]]],
     run_subset: Callable[[Sequence[T]], History],
     format_workload: Callable[[Sequence[T]], tuple[Any, ...]],
-) -> "ViolationReport | None":
+) -> ViolationReport | None:
     """The shared find → minimize → report tail.
 
     Run the initial attempt (*run_initial* returns its history and workload); if no invariant is
@@ -75,9 +74,7 @@ def attempt_and_minimize(
     if not check(history, sim.invariants):
         return None
 
-    minimal = minimize(
-        workload, lambda subset: bool(check(run_subset(subset), sim.invariants))
-    )
+    minimal = minimize(workload, lambda subset: bool(check(run_subset(subset), sim.invariants)))
     final_history = run_subset(minimal)
 
     return ViolationReport(

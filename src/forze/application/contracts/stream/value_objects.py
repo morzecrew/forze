@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, ClassVar, Final, Mapping, Self, final
+from typing import Any, ClassVar, Final, Self, final
 
 import attrs
 

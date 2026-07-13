@@ -16,7 +16,8 @@ contract, so the same code runs over the mock (tests), Postgres (self-hosted), o
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Awaitable, Callable, cast, final
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -144,9 +145,7 @@ class DurableSagaExecutor:
                     # Past the pivot: complete forward (manually), never compensate.
                     raise progress.forward_incomplete_error(index, error) from error
 
-                comp_errors = await self._compensate(
-                    ctx, definition, progress, states, step_port
-                )
+                comp_errors = await self._compensate(ctx, definition, progress, states, step_port)
                 raise progress.step_failed_error(index, error, comp_errors) from error
 
             progress.record_success(index)
@@ -180,7 +179,7 @@ class DurableSagaExecutor:
 
                 return await self._retry_transient(str(step.name), _act)
 
-            except Exception as error:  # noqa: BLE001 — journaled as the outcome, re-raised
+            except Exception as error:
                 # Record the failure as this step's journaled outcome so a re-invocation of
                 # the same durable run (crash recovery / replay) re-raises it instead of
                 # re-running the action's body. Only genuine failures reach here: a
@@ -218,11 +217,9 @@ class DurableSagaExecutor:
                 continue
 
             try:
-                await self._run_compensation(
-                    ctx, step, compensation, states[index], step_port
-                )
+                await self._run_compensation(ctx, step, compensation, states[index], step_port)
 
-            except Exception as comp_error:  # noqa: BLE001 — best-effort; collect all
+            except Exception as comp_error:
                 errors.append(comp_error)
 
         return errors
@@ -248,9 +245,7 @@ class DurableSagaExecutor:
 
         async def _journaled() -> JsonDict:
             if step.compensation_policy is not None:
-                return await ctx.resilience().run(
-                    _comp, policy=step.compensation_policy
-                )
+                return await ctx.resilience().run(_comp, policy=step.compensation_policy)
 
             # A compensation must eventually succeed, so a transient failure is retried in
             # place too — otherwise a blip would mark the rollback "compensation failed"

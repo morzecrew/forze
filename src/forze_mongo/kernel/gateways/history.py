@@ -6,7 +6,8 @@ require_mongo()
 
 # ....................... #
 
-from typing import Any, Sequence, final
+from collections.abc import Sequence
+from typing import Any, final
 from uuid import UUID
 
 import attrs

@@ -6,8 +6,8 @@ import attrs
 
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution.lifecycle.builtin import ClientShutdownHook
 from forze.application.execution import ExecutionContext
+from forze.application.execution.lifecycle.builtin import ClientShutdownHook
 
 from ...kernel.client import VaultClient
 from ..deps import VaultClientDepKey

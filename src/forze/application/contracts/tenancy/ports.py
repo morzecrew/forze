@@ -1,4 +1,5 @@
-from typing import Awaitable, Protocol, Sequence
+from collections.abc import Awaitable, Sequence
+from typing import Protocol
 from uuid import UUID
 
 from .value_objects import TenantIdentity

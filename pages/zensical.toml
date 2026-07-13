@@ -71,6 +71,7 @@ nav = [
             "identity-tenancy-enc/identity.md",
             "identity-tenancy-enc/multi-tenancy.md",
             "identity-tenancy-enc/encryption.md",
+            "identity-tenancy-enc/cursor-tokens.md",
         ] },
         { "Running in production" = [
             "running-in-prod/deadlines.md",
@@ -108,6 +109,7 @@ nav = [
             "integrations/duckdb.md",
         ] },
         { "Messaging" = [
+            "integrations/kafka.md",
             "integrations/rabbitmq.md",
             "integrations/sqs.md",
         ] },

@@ -37,10 +37,7 @@ async def process_notification_message[M](
 
     event = integration_event_from_queue_message(message)
 
-    if skip_unmapped:
-        commands = router.resolve(event)
-    else:
-        commands = router.resolve_or_raise(event)
+    commands = router.resolve(event) if skip_unmapped else router.resolve_or_raise(event)
 
     for command in commands:
         await dispatch_notification(command, senders)

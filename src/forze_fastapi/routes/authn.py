@@ -50,7 +50,9 @@ require_fastapi()
 
 # ....................... #
 
-from typing import AbstractSet, Any, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Set as AbstractSet
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -90,12 +92,8 @@ def _no_body_endpoint(
 # ....................... #
 
 _AUTHN_BINDINGS: Mapping[str, RouteBinding] = {
-    AuthnKernelOp.PASSWORD_LOGIN: RouteBinding(
-        method="POST", path="/login", build=body_endpoint
-    ),
-    AuthnKernelOp.REFRESH_TOKENS: RouteBinding(
-        method="POST", path="/refresh", build=body_endpoint
-    ),
+    AuthnKernelOp.PASSWORD_LOGIN: RouteBinding(method="POST", path="/login", build=body_endpoint),
+    AuthnKernelOp.REFRESH_TOKENS: RouteBinding(method="POST", path="/refresh", build=body_endpoint),
     # Logout takes no input (the identity is the context binding) and returns
     # nothing — no body in, 204 out.
     AuthnKernelOp.LOGOUT: RouteBinding(

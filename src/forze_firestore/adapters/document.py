@@ -6,18 +6,18 @@ require_firestore()
 
 # ....................... #
 
-from typing import Literal, Sequence, TypeVar, final, overload
+from collections.abc import Sequence
+from typing import Literal, TypeVar, final, overload
 from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.integrations.document import DocumentCache, DocumentAdapter
+from forze.application.integrations.document import DocumentAdapter, DocumentCache
 from forze.application.integrations.document.hydration import (
     validate_read_write_gateway_compat,
 )
-
 from forze.domain.models import BaseDTO, Document
 
 from ..kernel.gateways import FirestoreReadGateway, FirestoreWriteGateway
@@ -79,11 +79,7 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
 
         write_gw = self.write_gw
 
-        if (
-            write_gw is None
-            or not return_new
-            or not write_gw.client.is_in_transaction()
-        ):
+        if write_gw is None or not return_new or not write_gw.client.is_in_transaction():
             return await super().create(payload, id=id, return_new=return_new)  # type: ignore[call-overload]
 
         domain = await write_gw.create(payload, id=id)
@@ -91,9 +87,7 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
 
         res = self.read_gw.read_codec.transform(domain)
 
-        await self.document_cache.after_commit_or_now(
-            lambda: self.document_cache.set_one(res)
-        )
+        await self.document_cache.after_commit_or_now(lambda: self.document_cache.set_one(res))
 
         return res
 
@@ -123,11 +117,7 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
     ) -> Sequence[R] | None:
         write_gw = self.write_gw
 
-        if (
-            write_gw is None
-            or not return_new
-            or not write_gw.client.is_in_transaction()
-        ):
+        if write_gw is None or not return_new or not write_gw.client.is_in_transaction():
             return await super().create_many(payloads, return_new=return_new)  # type: ignore[call-overload]
 
         if not payloads:
@@ -139,7 +129,5 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
 
         res = self.read_gw.read_codec.transform_many(domains)
 
-        await self.document_cache.after_commit_or_now(
-            lambda: self.document_cache.set_many(res)
-        )
+        await self.document_cache.after_commit_or_now(lambda: self.document_cache.set_many(res))
         return res

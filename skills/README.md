@@ -24,7 +24,7 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 | -------- | -------- |
 | **forze-framework-usage** | ExecutionContext, ports, transactions, identity context, and query DSL in handlers. |
 | **forze-domain-aggregates** | Document aggregates, mixins, validators, logical `DocumentSpec` / `SearchSpec`, composition DTOs. |
-| **forze-wiring** | Runtime, `DepsRegistry`, lifecycle, composition, operation pipeline stages, FastAPI attach. |
+| **forze-wiring** | Runtime, `DepsRegistry`, lifecycle, `AggregateKit` governed aggregates, composition, operation pipeline stages, FastAPI attach. |
 | **forze-specs-infrastructure** | Map logical `StrEnum` spec names to Postgres/Mongo/Redis/S3/queue/workflow configs. |
 | **forze-deps-consumption** | Plain vs routed deps, `route=spec.name`, built-in `*DepsModule`, merge debugging. |
 | **forze-custom-deps** | Advanced: custom `DepKey` and `DepsModule` for private integrations. |
@@ -36,6 +36,7 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 | **forze-temporal-workflows** | `DurableWorkflowSpec`, Temporal deps, workflow ports, schedules, worker context. |
 | **forze-inngest-durable-functions** | Durable functions with Inngest: events, registration, steps, FastAPI serve. |
 | **forze-auth-tenancy-secrets** | Authn/authz, tenancy, secrets, OIDC, FastAPI identity binding. |
+| **forze-encryption-kms** | Envelope encryption: `FieldEncryption`, `CryptoDepsModule`, KMS backends (Vault, AWS/GCP/Yandex Cloud), per-tenant KEKs (BYOK), key rotation/replacement, re-encryption sweeps. |
 | **forze-graph-contracts** | Graph specs and ports; custom adapter wiring (no official graph package). |
 | **forze-observability-errors** | `CoreException` / `exc` factories, logging, call context, FastAPI error responses. |
 | **forze-resilience-deadlines** | Resilience policies, invocation deadlines, graceful drain/readiness, fleet deployment posture. |

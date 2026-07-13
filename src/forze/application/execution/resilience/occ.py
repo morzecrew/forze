@@ -1,9 +1,8 @@
 """Decorator applying the ``occ`` resilience policy to read-modify-write methods."""
 
 import functools
+from collections.abc import Awaitable, Callable
 from typing import (
-    Awaitable,
-    Callable,
     Concatenate,
     Final,
     ParamSpec,

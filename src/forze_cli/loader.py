@@ -71,9 +71,7 @@ def load_object(ref: str) -> Any:
     module_path, separator, attr_path = ref.partition(":")
 
     if not separator or not module_path or not attr_path:
-        raise ValueError(
-            f"expected an import string of the form 'module:attribute', got {ref!r}"
-        )
+        raise ValueError(f"expected an import string of the form 'module:attribute', got {ref!r}")
 
     obj: Any = importlib.import_module(module_path)
 
@@ -103,9 +101,7 @@ def _discover(module_path: str) -> Simulation:
             f"{module_path!r} exposes several Simulations — name one with 'module:attr'"
         )
 
-    registries = [
-        value for value in public if isinstance(value, FrozenOperationRegistry)
-    ]
+    registries = [value for value in public if isinstance(value, FrozenOperationRegistry)]
 
     if len(registries) == 1:
         return _coerce(registries[0])  # type: ignore[return-value]  # not None for a registry

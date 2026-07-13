@@ -1,6 +1,7 @@
 """Normalize :class:`~forze.application.contracts.search.SearchOptions` for adapter shape."""
 
-from typing import Any, Literal, Mapping, cast
+from collections.abc import Mapping
+from typing import Any, Literal, cast
 
 from forze.application.contracts.search.specs import (
     FederatedSearchSpec,

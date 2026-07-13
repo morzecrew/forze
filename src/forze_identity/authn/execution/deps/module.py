@@ -1,6 +1,7 @@
 """Authn dependency module for the application kernel."""
 
-from typing import Collection, final
+from collections.abc import Collection
+from typing import final
 
 import attrs
 
@@ -167,7 +168,7 @@ class AuthnDepsModule(DepsModule):
 
     # ....................... #
 
-    def __call__(self) -> Deps:  # noqa: C901
+    def __call__(self) -> Deps:
         authn_map = self.authn or {}
         tl = _normalize_route_set(self.token_lifecycle)
         pl = _normalize_route_set(self.password_lifecycle)
@@ -182,9 +183,7 @@ class AuthnDepsModule(DepsModule):
             return Deps()
 
         if self.kernel is None:
-            raise exc.internal(
-                "kernel is required when registering authn dependency routes"
-            )
+            raise exc.internal("kernel is required when registering authn dependency routes")
 
         shared = build_authn_shared_services(self.kernel)
 
@@ -242,9 +241,7 @@ class AuthnDepsModule(DepsModule):
             merged = merged.merge(
                 Deps.routed(
                     {
-                        AuthnEventSinkDepKey: {
-                            name: self.events for name in eligibility_routes
-                        },
+                        AuthnEventSinkDepKey: dict.fromkeys(eligibility_routes, self.events),
                     },
                 ),
             )
@@ -336,8 +333,7 @@ class AuthnDepsModule(DepsModule):
                 Deps.routed(
                     {
                         TokenLifecycleDepKey: {
-                            name: ConfigurableTokenLifecycle(shared=shared)
-                            for name in tl
+                            name: ConfigurableTokenLifecycle(shared=shared) for name in tl
                         },
                     },
                 ),
@@ -365,8 +361,7 @@ class AuthnDepsModule(DepsModule):
                 Deps.routed(
                     {
                         ApiKeyLifecycleDepKey: {
-                            name: ConfigurableApiKeyLifecycle(shared=shared)
-                            for name in akl
+                            name: ConfigurableApiKeyLifecycle(shared=shared) for name in akl
                         },
                     },
                 ),
@@ -391,9 +386,7 @@ class AuthnDepsModule(DepsModule):
                         PasswordResetDepKey: {
                             name: ConfigurablePasswordReset(
                                 shared=shared,
-                                revoke_sessions_on_reset=(
-                                    self.revoke_sessions_on_reset
-                                ),
+                                revoke_sessions_on_reset=(self.revoke_sessions_on_reset),
                             )
                             for name in pr
                         },

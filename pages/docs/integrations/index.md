@@ -20,7 +20,7 @@ extras in `pyproject.toml`; each `forze[<name>]` maps to the `<name>` extra.
 | Area | Extras |
 |------|--------|
 | **Data** | `postgres` · `mongo` · `firestore` · `neo4j` · `redis` · `s3` · `gcs` · `meilisearch` · `bigquery` · `clickhouse` · `duckdb` |
-| **Messaging** | `rabbitmq` · `sqs` |
+| **Messaging** | `kafka` · `rabbitmq` · `sqs` |
 | **Workflows** | `temporal` · `inngest` |
 | **Inbound** | `fastapi` · `socketio` · `mcp` |
 | **Identity** | `authn` · `oidc` |

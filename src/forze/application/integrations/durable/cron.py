@@ -7,7 +7,7 @@ caller passes the instant from the time source).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
@@ -60,4 +60,4 @@ def next_cron_fire(
     base = after if tz is None else after.astimezone(ZoneInfo(tz))
     fire = croniter(expression, base).get_next(datetime)
 
-    return fire.astimezone(timezone.utc)
+    return fire.astimezone(UTC)

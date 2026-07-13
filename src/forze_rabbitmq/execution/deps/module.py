@@ -4,6 +4,7 @@ from typing import final
 
 import attrs
 
+from forze.application.contracts.deps import Deps, DepsModule, merge_deps, routed_from_mapping
 from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepKey
 from forze.application.contracts.tenancy import (
     TenancyRouteGroup,
@@ -11,8 +12,6 @@ from forze.application.contracts.tenancy import (
     validate_module_tenancy,
     warn_integration_routes,
 )
-from forze.application.contracts.deps import Deps, DepsModule
-from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.client import RabbitMQClientPort, RoutedRabbitMQClient

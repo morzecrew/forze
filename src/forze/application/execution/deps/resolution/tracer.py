@@ -4,9 +4,9 @@ from typing import Protocol, final, runtime_checkable
 
 import attrs
 
+from forze.application.contracts.deps import ResolutionFrame
 from forze.base.primitives import ContextVarTrace
 
-from forze.application.contracts.deps import ResolutionFrame
 from .graph import DepsResolutionTrace
 
 # ----------------------- #

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Callable, Literal, Sequence, final
+from collections.abc import Callable, Sequence
+from typing import Literal, final
 
 import attrs
 
@@ -158,10 +159,7 @@ def _event_matches(event: TracingEvent, expectation: TraceExpectation) -> bool:
     if expectation.phase is not None and event.phase != expectation.phase:
         return False
 
-    if expectation.tx_depth is not None and event.tx_depth != expectation.tx_depth:
-        return False
-
-    return True
+    return not (expectation.tx_depth is not None and event.tx_depth != expectation.tx_depth)
 
 
 # ....................... #

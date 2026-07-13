@@ -1,6 +1,6 @@
 """Self-service handlers for the tenant selector (list memberships, switch active tenant)."""
 
-from typing import Callable
+from collections.abc import Callable
 
 import attrs
 
@@ -65,9 +65,7 @@ class ListTenants(Handler[None, TenantListDTO]):
         current = self.current_tenant()
         current_id = current.tenant_id if current is not None else None
 
-        tenants = await self.tenant_management.list_principal_tenants(
-            identity.principal_id
-        )
+        tenants = await self.tenant_management.list_principal_tenants(identity.principal_id)
 
         return TenantListDTO(
             tenants=[

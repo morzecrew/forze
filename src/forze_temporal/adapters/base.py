@@ -4,7 +4,7 @@ require_temporal()
 
 # ....................... #
 
-from typing import Callable
+from collections.abc import Callable
 
 import attrs
 

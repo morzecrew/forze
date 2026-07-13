@@ -7,7 +7,8 @@ the document read-through coordinator's L1 — detect the capability with
 the L1 TTL, which demotes the TTL from "the staleness budget" to a backstop.
 """
 
-from typing import Awaitable, Callable, Protocol, final, runtime_checkable
+from collections.abc import Awaitable, Callable
+from typing import Protocol, final, runtime_checkable
 
 import attrs
 

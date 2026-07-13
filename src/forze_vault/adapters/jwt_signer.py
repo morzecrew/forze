@@ -66,9 +66,7 @@ class VaultTransitSigner:
     _fetched_at: float | None = attrs.field(default=None, init=False, repr=False)
     """Monotonic time the cached PEM was fetched, for TTL expiry."""
 
-    _refresh_lock: asyncio.Lock = attrs.field(
-        factory=asyncio.Lock, init=False, repr=False
-    )
+    _refresh_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False, repr=False)
     """Serializes the re-fetch so a concurrent TTL expiry doesn't stampede Vault."""
 
     # ....................... #
@@ -146,9 +144,7 @@ class VaultTransitSigner:
     async def public_jwk(self) -> JsonDict:
         public_key = await self._public_key()
         algo = (
-            ECAlgorithm(ECAlgorithm.SHA256)
-            if self._is_ecdsa
-            else RSAAlgorithm(RSAAlgorithm.SHA256)
+            ECAlgorithm(ECAlgorithm.SHA256) if self._is_ecdsa else RSAAlgorithm(RSAAlgorithm.SHA256)
         )
         jwk: JsonDict = json.loads(algo.to_jwk(public_key))
         jwk["use"] = "sig"

@@ -257,9 +257,7 @@ async def _run_shutdown_step_logged(
     error = task.exception()
 
     if error is not None:
-        logger.error(
-            "Lifecycle shutdown failed for '%s'", step.id, exc_info=error
-        )
+        logger.error("Lifecycle shutdown failed for '%s'", step.id, exc_info=error)
 
 
 # ....................... #
@@ -298,9 +296,7 @@ async def run_lifecycle_shutdown(
             # gather results carry no step errors to inspect here.
             await asyncio.gather(
                 *(
-                    _run_shutdown_step_logged(
-                        graph.steps[step_id], ctx, step_timeout=step_timeout
-                    )
+                    _run_shutdown_step_logged(graph.steps[step_id], ctx, step_timeout=step_timeout)
                     for step_id in wave
                 ),
                 return_exceptions=True,

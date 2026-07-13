@@ -1,7 +1,8 @@
 """Meilisearch client that resolves URL and API key per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
+from collections.abc import Callable, Mapping
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Mapping, cast, final
+from typing import TYPE_CHECKING, Any, cast, final
 
 if TYPE_CHECKING:
     from meilisearch_python_sdk.models.search import SearchParams
@@ -92,7 +93,7 @@ class RoutedMeilisearchClient(
         try:
             inner = await self._get_client()
 
-        except Exception as e:  # noqa: BLE001 - health must not raise
+        except Exception as e:
             return str(e) or "Meilisearch health check failed", False
 
         return await inner.health()

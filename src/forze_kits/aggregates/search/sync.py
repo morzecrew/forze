@@ -64,8 +64,9 @@ class SearchSyncSteps:
     backoff (:attr:`retry_attempts` / :attr:`retry_base_delay`), and on exhaustion a WARNING
     carrying the index name, action, and document id is logged and the failure is reported
     out-of-band — the committed write still returns, and the index stays stale for that row
-    until its next successful write. Route index maintenance through the transactional
-    outbox where stronger delivery is required.
+    until its next successful write. Where stronger delivery is required, route index
+    maintenance through the transactional outbox instead (``AggregateKit`` with
+    ``search_delivery=OutboxSearchSync()``, or :mod:`.outbox_sync` standalone).
     """
 
     search: SearchSpec[Any]
@@ -86,7 +87,7 @@ class SearchSyncSteps:
         def _factory(ctx: ExecutionContext) -> OnSuccess[Any, Any]:
             command = ctx.search.command(steps.search)
 
-            async def _hook(args: Any, result: Any) -> None:  # noqa: ARG001
+            async def _hook(args: Any, result: Any) -> None:
                 row = written_read_model(result)
 
                 if getattr(row, SOFT_DELETE_FIELD, False):
@@ -117,7 +118,7 @@ class SearchSyncSteps:
         def _factory(ctx: ExecutionContext) -> OnSuccess[Any, Any]:
             command = ctx.search.command(steps.search)
 
-            async def _hook(args: Any, result: Any) -> None:  # noqa: ARG001
+            async def _hook(args: Any, result: Any) -> None:
                 doc_id = str(args.id)
                 await steps._apply(
                     lambda: command.delete([doc_id]),
@@ -211,13 +212,7 @@ def bind_search_sync(
         key = ns.key(op)
 
         if key in present:
-            reg = (
-                reg.bind(key)
-                .bind_tx()
-                .set_route(tx_route)
-                .after_commit(upsert)
-                .finish(deep=True)
-            )
+            reg = reg.bind(key).bind_tx().set_route(tx_route).after_commit(upsert).finish(deep=True)
 
     kill_key = ns.key(DocumentKernelOp.KILL)
 

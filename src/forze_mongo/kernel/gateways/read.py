@@ -6,12 +6,11 @@ require_mongo()
 
 # ....................... #
 
+from collections.abc import AsyncGenerator, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
     Literal,
     Never,
-    Sequence,
     TypeVar,
     final,
     overload,
@@ -179,7 +178,6 @@ class MongoReadGateway[M: BaseModel](
         return_fields: None = ...,
     ) -> M | None:
         """Find one document matching filters as the gateway model."""
-        ...
 
     @overload
     async def find(
@@ -191,7 +189,6 @@ class MongoReadGateway[M: BaseModel](
         return_fields: None = ...,
     ) -> T | None:
         """Find one document matching filters validated against *return_model*."""
-        ...
 
     @overload
     async def find(
@@ -203,7 +200,6 @@ class MongoReadGateway[M: BaseModel](
         return_fields: Sequence[str],
     ) -> JsonDict | None:
         """Find one document matching filters projected to *return_fields*."""
-        ...
 
     @overload
     async def find(
@@ -215,7 +211,6 @@ class MongoReadGateway[M: BaseModel](
         return_fields: Sequence[str],
     ) -> Never:
         """Invalid combination; specifying both *return_model* and *return_fields* is unsupported."""
-        ...
 
     async def find(
         self,
@@ -277,7 +272,6 @@ class MongoReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]:
         """Find aggregate rows as JSON mappings."""
-        ...
 
     @overload
     async def find_many(
@@ -293,7 +287,6 @@ class MongoReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[T]:
         """Find aggregate rows validated against *return_model*."""
-        ...
 
     @overload
     async def find_many(
@@ -309,7 +302,6 @@ class MongoReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[M]:
         """Find documents as the gateway model."""
-        ...
 
     @overload
     async def find_many(
@@ -325,7 +317,6 @@ class MongoReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[T]:
         """Find documents validated against *return_model*."""
-        ...
 
     @overload
     async def find_many(
@@ -341,7 +332,6 @@ class MongoReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]:
         """Find documents projected to *return_fields*."""
-        ...
 
     @overload
     async def find_many(
@@ -357,7 +347,6 @@ class MongoReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> Never:
         """Invalid combination; specifying both *return_model* and *return_fields* is unsupported."""
-        ...
 
     async def find_many(
         self,
@@ -524,13 +513,11 @@ class MongoReadGateway[M: BaseModel](
         projection = self.render_projection(return_fields)
 
         if projection is None:
-            projection = {rank: 0 for rank in rank_fields}
+            projection = dict.fromkeys(rank_fields, 0)
 
         pipeline.append({"$project": projection})
 
-        return await self.client.aggregate(
-            await self.coll(), pipeline, limit=eff_limit
-        )
+        return await self.client.aggregate(await self.coll(), pipeline, limit=eff_limit)
 
     # ....................... #
 
@@ -663,9 +650,7 @@ class MongoReadGateway[M: BaseModel](
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise exc.validation(
-                "Cursor pagination: pass at most one of 'after' or 'before'"
-            )
+            raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
         # Coerced + clamped like the document/search cursor paths: a non-integer is a clean
         # 400 (not a raw ValueError) and an over-large value is clamped to MAX_CURSOR_LIMIT
@@ -718,10 +703,7 @@ class MongoReadGateway[M: BaseModel](
             if use_after and _id_asc:
                 seek = {"_id": {"$gt": _rid}}
 
-            elif use_after and not _id_asc:
-                seek = {"_id": {"$lt": _rid}}
-
-            elif use_before and _id_asc:
+            elif (use_after and not _id_asc) or (use_before and _id_asc):
                 seek = {"_id": {"$lt": _rid}}
 
             else:

@@ -4,8 +4,9 @@ require_rabbitmq()
 
 # ....................... #
 
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, ClassVar, Mapping, Sequence, final
+from typing import ClassVar, final
 
 import attrs
 from pydantic import BaseModel
@@ -171,8 +172,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
                 # successfully decoded remainder is still returned: one bad
                 # payload must not fail or wedge the whole batch.
                 logger.error(
-                    "RabbitMQ queue %s: failed to decode message %s; "
-                    "rejecting without requeue",
+                    "RabbitMQ queue %s: failed to decode message %s; rejecting without requeue",
                     physical_queue,
                     msg.id,
                     exc_info=True,
@@ -208,8 +208,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
                 # timeout semantics are untouched — the client iterator
                 # already counted this delivery as activity.
                 logger.error(
-                    "RabbitMQ queue %s: failed to decode message %s; "
-                    "rejecting without requeue",
+                    "RabbitMQ queue %s: failed to decode message %s; rejecting without requeue",
                     physical_queue,
                     msg.id,
                     exc_info=True,

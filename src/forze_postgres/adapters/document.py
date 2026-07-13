@@ -15,7 +15,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
     validate_query_parameters,
 )
-from forze.application.integrations.document import DocumentCache, DocumentAdapter
+from forze.application.integrations.document import DocumentAdapter, DocumentCache
 from forze.application.integrations.document.hydration import (
     can_hydrate_read_from_write_domain,
     validate_read_write_gateway_compat,
@@ -75,16 +75,12 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
 
     # ....................... #
 
-    def with_parameters(
-        self, params: BaseModel
-    ) -> "PostgresDocumentAdapter[R, D, C, U]":
+    def with_parameters(self, params: BaseModel) -> "PostgresDocumentAdapter[R, D, C, U]":
         # Validate against the spec contract, then bind the params onto a clone of the read
         # gateway — its reads apply them as transaction-local session settings (the view reads
         # them via current_setting).
         validate_query_parameters(self.spec, params)
-        return attrs.evolve(
-            self, read_gw=attrs.evolve(self.read_gw, bound_params=params)
-        )
+        return attrs.evolve(self, read_gw=attrs.evolve(self.read_gw, bound_params=params))
 
     # ....................... #
 

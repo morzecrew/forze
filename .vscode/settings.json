@@ -21,7 +21,7 @@
         "**/.devcontainer/": true,
         "**/.venv/": true,
         ".agent": true,
-        ".claude": true,
+        // ".claude": true,
         ".benchmarks": true,
         ".markdownlint.yaml": true,
         "CLAUDE.md": true,
@@ -59,6 +59,9 @@
     },
     "python.analysis.diagnosticSeverityOverrides": {
         "reportMissingTypeStubs": "none"
+    },
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
     },
     "[json]": {
         "editor.tabSize": 2,

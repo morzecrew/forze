@@ -10,7 +10,8 @@ coordinator.
 import weakref
 import zlib
 from collections import OrderedDict
-from typing import Any, Callable, Iterator, Protocol, cast, final, runtime_checkable
+from collections.abc import Callable, Iterator
+from typing import Any, Protocol, cast, final, runtime_checkable
 
 import attrs
 
@@ -222,9 +223,7 @@ class _FrequencySketch:
     # ....................... #
 
     def estimate(self, key: str) -> int:
-        return min(
-            row[idx] for row, idx in zip(self._rows, self._indexes(key), strict=True)
-        )
+        return min(row[idx] for row, idx in zip(self._rows, self._indexes(key), strict=True))
 
     # ....................... #
 

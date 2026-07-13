@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 from typing import (
     TYPE_CHECKING,
-    AsyncContextManager,
-    AsyncGenerator,
-    Awaitable,
-    Mapping,
     Protocol,
-    Sequence,
 )
 
 if TYPE_CHECKING:
@@ -28,7 +25,7 @@ class SQSClientPort(Protocol):
 
     def close(self) -> Awaitable[None]: ...  # pragma: no cover
 
-    def client(self) -> AsyncContextManager[AsyncSQSClient]: ...  # pragma: no cover
+    def client(self) -> AbstractAsyncContextManager[AsyncSQSClient]: ...  # pragma: no cover
 
     def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
@@ -86,9 +83,7 @@ class SQSClientPort(Protocol):
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[SQSQueueMessage]: ...  # pragma: no cover
 
-    def ack(
-        self, queue: str, ids: Sequence[str]
-    ) -> Awaitable[int]: ...  # pragma: no cover
+    def ack(self, queue: str, ids: Sequence[str]) -> Awaitable[int]: ...  # pragma: no cover
 
     def nack(
         self,

@@ -6,8 +6,9 @@ require_psycopg()
 
 # ....................... #
 
+from collections.abc import Sequence
 from statistics import mean
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 from psycopg import sql
 
@@ -18,8 +19,8 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import exc
 
-from ...kernel.gateways import PostgresQualifiedName
 from ...kernel.catalog.introspect import PostgresIntrospector
+from ...kernel.gateways import PostgresQualifiedName
 
 # ----------------------- #
 
@@ -80,9 +81,7 @@ def fts_tsquery_expr_disjunction(
 
     parts = [q.strip() for q in queries if q.strip()]
     if not parts:
-        raise exc.internal(
-            "fts_tsquery_expr_disjunction requires at least one non-empty query."
-        )
+        raise exc.internal("fts_tsquery_expr_disjunction requires at least one non-empty query.")
     if len(parts) == 1:
         return fts_tsquery_expr(parts[0], options=options)
 
@@ -102,9 +101,7 @@ def fts_tsquery_expr_conjunction(
 
     parts = [q.strip() for q in queries if q.strip()]
     if not parts:
-        raise exc.internal(
-            "fts_tsquery_expr_conjunction requires at least one non-empty query."
-        )
+        raise exc.internal("fts_tsquery_expr_conjunction requires at least one non-empty query.")
     if len(parts) == 1:
         return fts_tsquery_expr(parts[0], options=options)
 

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable, TypeVar, cast, final
+from collections.abc import Awaitable, Callable
+from typing import TypeVar, cast, final
 
 import attrs
 

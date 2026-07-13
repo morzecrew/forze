@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 # pyright: reportPrivateUsage=false
-
 import attrs
 from pydantic import BaseModel
 
@@ -125,9 +125,7 @@ class _MongoOffsetHooks:
 
         return OffsetRowsResult(rows=self._normalize(hydrated), scores=thin_scores)
 
-    def _take_scores(
-        self, rows: list[JsonDict], rank_field: str
-    ) -> list[float] | None:
+    def _take_scores(self, rows: list[JsonDict], rank_field: str) -> list[float] | None:
         """Pop the rank column off each row into an index-aligned score list."""
 
         if not self.is_ranked:

@@ -79,6 +79,4 @@ class PostgresHlcCheckpointStore(HlcCheckpointPort):
             hlc=sql.Placeholder("hlc"),
         )
 
-        await self.client.execute(
-            stmt, {"node_key": self.config.node_key, "hlc": mark.pack()}
-        )
+        await self.client.execute(stmt, {"node_key": self.config.node_key, "hlc": mark.pack()})

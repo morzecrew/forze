@@ -50,9 +50,7 @@ TokenLifecycleDepPort = ConfigurableDepPort[AuthnSpec, TokenLifecyclePort]
 ApiKeyLifecycleDepPort = ConfigurableDepPort[AuthnSpec, ApiKeyLifecyclePort]
 """API key lifecycle dependency port."""
 
-PasswordAccountProvisioningDepPort = ConfigurableDepPort[
-    AuthnSpec, PasswordAccountProvisioningPort
-]
+PasswordAccountProvisioningDepPort = ConfigurableDepPort[AuthnSpec, PasswordAccountProvisioningPort]
 """Password account provisioning dependency port."""
 
 # ....................... #
@@ -103,9 +101,7 @@ AuthnEventSinkDepPort = ConfigurableDepPort[AuthnSpec, AuthnEventSink]
 PrincipalEligibilityDepKey = DepKey[PrincipalEligibilityDepPort]("authn_principal_eligibility")
 """Key used to register the `PrincipalEligibilityPort` builder implementation."""
 
-PrincipalDeactivationDepKey = DepKey[PrincipalDeactivationDepPort](
-    "authn_principal_deactivation"
-)
+PrincipalDeactivationDepKey = DepKey[PrincipalDeactivationDepPort]("authn_principal_deactivation")
 """Key used to register the `PrincipalDeactivationPort` builder implementation."""
 
 AuthnEventSinkDepKey = DepKey[AuthnEventSinkDepPort]("authn_event_sink")
@@ -134,8 +130,7 @@ def resolve_authn_event_emitter(
     deps = ctx.deps
 
     if not (
-        deps.exists(AuthnEventSinkDepKey, route=spec.name)
-        or deps.exists(AuthnEventSinkDepKey)
+        deps.exists(AuthnEventSinkDepKey, route=spec.name) or deps.exists(AuthnEventSinkDepKey)
     ):
         return None
 

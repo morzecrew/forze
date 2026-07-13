@@ -1,6 +1,7 @@
+from collections.abc import Callable
 from io import StringIO
 from types import ModuleType
-from typing import Any, Callable, Final
+from typing import Any, Final
 
 from rich.console import Console, Group
 from rich.syntax import Syntax

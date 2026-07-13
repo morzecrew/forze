@@ -96,8 +96,7 @@ class HttpOperationSpec(Generic[In, Out]):
 
             if unknown:
                 raise exc.configuration(
-                    f"HTTP operation {self.name!r}: query_from unknown fields "
-                    f"{sorted(unknown)}",
+                    f"HTTP operation {self.name!r}: query_from unknown fields {sorted(unknown)}",
                 )
 
 

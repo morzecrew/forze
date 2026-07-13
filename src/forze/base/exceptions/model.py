@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Mapping, Protocol, Self
+from typing import TYPE_CHECKING, Any, Protocol, Self
 
 import attrs
 
@@ -192,9 +193,9 @@ class CoreException(Exception):
     def enrich(
         self,
         *,
-        callsite: "CallsiteFrame | JsonDict | None" = None,
-        resource: "JsonDict | None" = None,
-        cause: "JsonDict | None" = None,
+        callsite: CallsiteFrame | JsonDict | None = None,
+        resource: JsonDict | None = None,
+        cause: JsonDict | None = None,
         **semantic: Any,
     ) -> Self:
         """Enrich the exception with additional details."""

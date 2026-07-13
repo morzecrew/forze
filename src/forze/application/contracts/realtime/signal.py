@@ -11,7 +11,8 @@ payload against its declared :class:`RealtimeEvent` and enforces the event's
 audience-kind constraint.
 """
 
-from typing import Any, Mapping, Self
+from collections.abc import Mapping
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict
 
@@ -77,8 +78,7 @@ class RealtimeSignal(BaseModel):
 
         if not event.accepts(audience):
             raise exc.precondition(
-                f"Realtime event `{event.name}` may not target a "
-                f"`{audience.kind.value}` audience"
+                f"Realtime event `{event.name}` may not target a `{audience.kind.value}` audience"
             )
 
         validated = event.parse(payload)

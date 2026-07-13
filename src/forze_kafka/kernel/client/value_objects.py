@@ -70,11 +70,7 @@ class KafkaConfig:
             raise exc.configuration("Kafka linger_ms must be non-negative")
 
         if self.security_protocol.startswith("SASL_") and self.sasl_mechanism is None:
-            raise exc.configuration(
-                "Kafka sasl_mechanism is required for SASL security protocols"
-            )
+            raise exc.configuration("Kafka sasl_mechanism is required for SASL security protocols")
 
         if self.enable_idempotence and self.acks not in ("all", -1):
-            raise exc.configuration(
-                "Kafka enable_idempotence=True requires acks='all' (or -1)"
-            )
+            raise exc.configuration("Kafka enable_idempotence=True requires acks='all' (or -1)")

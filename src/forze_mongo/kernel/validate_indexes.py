@@ -1,6 +1,6 @@
 """Validate Mongo write-collection indexes for document ensure/upsert."""
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import attrs
 

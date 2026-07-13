@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Sequence, TypedDict, final
+from typing import TypedDict, final
 from uuid import UUID
 
 import attrs
@@ -82,11 +83,7 @@ class MockTenantResolverPort(_TenantRouteStore, TenantResolverPort):
 
             if requested_tenant_id is not None:
                 match = next(
-                    (
-                        (tid, entry)
-                        for tid, entry in member_of
-                        if tid == str(requested_tenant_id)
-                    ),
+                    ((tid, entry) for tid, entry in member_of if tid == str(requested_tenant_id)),
                     None,
                 )
 
@@ -161,9 +158,7 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
             principals = entry.setdefault("principals", [])
 
             if (
-                isinstance(
-                    principals, list
-                )  # pyright: ignore[reportUnnecessaryIsInstance]
+                isinstance(principals, list)  # pyright: ignore[reportUnnecessaryIsInstance]
                 and principal_id not in principals
             ):
                 principals.append(principal_id)
@@ -182,9 +177,7 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
             principals = entry.get("principals", [])
 
             if (
-                isinstance(
-                    principals, list
-                )  # pyright: ignore[reportUnnecessaryIsInstance]
+                isinstance(principals, list)  # pyright: ignore[reportUnnecessaryIsInstance]
                 and principal_id in principals
             ):
                 principals.remove(principal_id)
@@ -200,8 +193,7 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
                     tenant_key=str(entry.get("tenant_key", tid)),
                 )
                 for tid, entry in self._tenants().items()
-                if entry.get("active", True)
-                and principal_id in entry.get("principals", [])
+                if entry.get("active", True) and principal_id in entry.get("principals", [])
             ]
 
     async def list_tenant_principals(
@@ -218,9 +210,7 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
 
             return (
                 list(principals)  # pyright: ignore[reportUnknownArgumentType]
-                if isinstance(
-                    principals, list
-                )  # pyright: ignore[reportUnnecessaryIsInstance]
+                if isinstance(principals, list)  # pyright: ignore[reportUnnecessaryIsInstance]
                 else []
             )
 
@@ -246,6 +236,4 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
                 entry["tenant_key"]  # pyright: ignore[reportTypedDictNotRequiredAccess]
             )
 
-        await self.provisioner.deprovision(
-            TenantIdentity(tenant_id=tenant_id, tenant_key=key)
-        )
+        await self.provisioner.deprovision(TenantIdentity(tenant_id=tenant_id, tenant_key=key))

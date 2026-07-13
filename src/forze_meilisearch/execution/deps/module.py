@@ -4,6 +4,7 @@ from typing import final
 
 import attrs
 
+from forze.application.contracts.deps import Deps, DepsModule, merge_deps, routed_from_mapping
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     SearchCommandDepKey,
@@ -17,8 +18,6 @@ from forze.application.contracts.tenancy import (
     warn_dynamic_relation_with_tenant_aware,
     warn_integration_routes,
 )
-from forze.application.contracts.deps import Deps, DepsModule
-from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
@@ -54,11 +53,9 @@ class MeilisearchDepsModule(DepsModule):
     )
     """Mapping from search names to their Meilisearch-specific configurations."""
 
-    federated_searches: StrKeyMapping[MeilisearchFederatedSearchConfig] | None = (
-        attrs.field(
-            default=None,
-            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
-        )
+    federated_searches: StrKeyMapping[MeilisearchFederatedSearchConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from federated search names to their Meilisearch-specific configurations."""
 
@@ -129,9 +126,7 @@ class MeilisearchDepsModule(DepsModule):
             ),
             routed_from_mapping(
                 self.federated_searches,
-                bindings=[
-                    (FederatedSearchQueryDepKey, ConfigurableMeilisearchFederatedSearch)
-                ],
+                bindings=[(FederatedSearchQueryDepKey, ConfigurableMeilisearchFederatedSearch)],
             ),
             plain={MeilisearchClientDepKey: self.client},
         )

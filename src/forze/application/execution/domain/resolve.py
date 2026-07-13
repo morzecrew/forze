@@ -1,6 +1,6 @@
 """Resolve the domain-event dispatcher for injection into write adapters."""
 
-from typing import Callable
+from collections.abc import Callable
 
 from forze.application.contracts.domain import (
     DomainEventDispatcherDepKey,

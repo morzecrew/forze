@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import update_wrapper
 from typing import (
     Any,
-    Callable,
     Concatenate,
     Generic,
     ParamSpec,
@@ -95,7 +95,7 @@ class hybridmethod(Generic[OwnerT, P, R]):
         objtype: type[Any] | None = None,
     ) -> Callable[P, R]:
         """Return a bound callable that invokes the class-level method."""
-        ...  # pragma: no cover
+        # pragma: no cover
 
     @overload
     def __get__(
@@ -104,7 +104,7 @@ class hybridmethod(Generic[OwnerT, P, R]):
         objtype: type[Any] | None = None,
     ) -> Callable[P, R]:
         """Return a bound callable that invokes the instance-level method."""
-        ...  # pragma: no cover
+        # pragma: no cover
 
     def __get__(
         self,

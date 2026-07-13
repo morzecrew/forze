@@ -57,7 +57,8 @@ Consume it with the `CommitStreamGroupConsumer` runner, which commits the offset
 processing and silently drop the guarantee. On a poison message it either produces to a
 dead-letter stream and commits past it (freeing the partition) or, with no dead-letter route,
 pauses and alerts — never a silent skip. Reach for it for **high-throughput logs and event
-sourcing** where partitioned ordering and replay matter.
+sourcing** where partitioned ordering and replay matter. The production backend is
+[Kafka](../integrations/kafka.md) (or any Kafka-protocol broker).
 
 !!! note "Ack vs commit"
     Both are consumer groups over an ordered log; the difference is the acknowledgment unit —

@@ -36,9 +36,9 @@ from .schedule_mapping import (
     description_from_temporal,
     timing_to_schedule_spec,
 )
-from .workflow_mapping import description_from_temporal_execution
 from .schedule_types import TemporalScheduleListPage
 from .value_objects import TemporalConfig
+from .workflow_mapping import description_from_temporal_execution
 
 # ----------------------- #
 
@@ -82,9 +82,7 @@ class TemporalClient(TemporalClientPort):
                 interceptors=config.interceptors or [],
                 **connect_kwargs,
             )
-            logger.trace(
-                "Temporal client connected", host=host, namespace=config.namespace
-            )
+            logger.trace("Temporal client connected", host=host, namespace=config.namespace)
 
         await self.__lifecycle.initialize(
             setup,
@@ -388,18 +386,14 @@ class TemporalClient(TemporalClientPort):
 
     # ....................... #
 
-    async def describe_schedule(
-        self, schedule_id: str
-    ) -> DurableWorkflowScheduleDescription:
+    async def describe_schedule(self, schedule_id: str) -> DurableWorkflowScheduleDescription:
         c = self.__require_client()
 
         handle = c.get_schedule_handle(schedule_id)
         desc = await handle.describe()
 
         action = desc.schedule.action
-        workflow_name = (
-            action.workflow if isinstance(action, ScheduleActionStartWorkflow) else ""
-        )
+        workflow_name = action.workflow if isinstance(action, ScheduleActionStartWorkflow) else ""
         return description_from_temporal(desc, workflow_name=workflow_name)
 
     # ....................... #
@@ -416,9 +410,7 @@ class TemporalClient(TemporalClientPort):
         page_size = limit if limit is not None else 100
 
         token_bytes = (
-            base64.urlsafe_b64decode(next_page_token.encode())
-            if next_page_token
-            else None
+            base64.urlsafe_b64decode(next_page_token.encode()) if next_page_token else None
         )
 
         descriptions: list[DurableWorkflowScheduleDescription] = []

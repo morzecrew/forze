@@ -1,10 +1,7 @@
 """Port for executing a callable under a named resilience policy."""
 
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from typing import (
-    AsyncGenerator,
-    AsyncIterator,
-    Awaitable,
-    Callable,
     Protocol,
     runtime_checkable,
 )

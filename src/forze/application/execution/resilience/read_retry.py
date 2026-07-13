@@ -6,7 +6,8 @@ loop around transient transport failures on their read paths.
 """
 
 import asyncio
-from typing import Awaitable, Callable, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from forze.base.exceptions import exc
 

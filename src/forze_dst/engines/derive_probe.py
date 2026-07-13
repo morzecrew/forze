@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 def reactive_map(
-    sim: "Simulation",
+    sim: Simulation,
     *,
     create_verbs: frozenset[str] = DEFAULT_CREATE_VERBS,
     arrange_each: int = 1,
@@ -65,11 +65,7 @@ def reactive_map(
         # Ops the harness drove directly carry an ``op_start`` anchor; a cascade (saga step /
         # event handler) is invoked deep in a handler and has none — so it shows up in the trace's
         # invokes but not here, which is exactly the cascade set.
-        direct = {
-            event.fields.get("op")
-            for event in history.events
-            if event.kind == "op_start"
-        }
+        direct = {event.fields.get("op") for event in history.events if event.kind == "op_start"}
         invoked = {
             event.fields.get("op")
             for event in history.events
@@ -85,12 +81,8 @@ def reactive_map(
             and event.fields.get("op") == "dispatch"
         }
 
-        cascades[rule.op] = frozenset(
-            str(op) for op in (invoked - direct) if op is not None
-        )
-        events[rule.op] = frozenset(
-            str(name) for name in dispatched if name is not None
-        )
+        cascades[rule.op] = frozenset(str(op) for op in (invoked - direct) if op is not None)
+        events[rule.op] = frozenset(str(name) for name in dispatched if name is not None)
 
     return ReactiveMap(cascades=cascades, events=events)
 
@@ -99,7 +91,7 @@ def reactive_map(
 
 
 def derive_scenario(
-    sim: "Simulation",
+    sim: Simulation,
     *,
     create_verbs: frozenset[str] = DEFAULT_CREATE_VERBS,
     arrange_each: int = 1,

@@ -8,18 +8,17 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.embeddings import EmbeddingsProviderPort
+from forze.application.contracts.querying import QuerySortExpression
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     resolve_scoped_namespace,
 )
-from forze.base.primitives import OnceCell
-from forze_mongo.kernel.relation import resolve_mongo_named_resource
-from forze.application.contracts.querying import QuerySortExpression
 from forze.application.contracts.search import SearchCapabilities, SearchOptions
+from forze.base.primitives import OnceCell
+from forze_mongo.adapters._logger import logger
+from forze_mongo.kernel.relation import resolve_mongo_named_resource
 
 from ._pipeline import build_browse_pipeline, build_vector_ranked_pipeline
-from forze_mongo.adapters._logger import logger
-
 from ._simple_base import MongoSimpleSearchAdapter
 
 # ----------------------- #

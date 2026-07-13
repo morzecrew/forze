@@ -6,7 +6,8 @@ field names. Request validation lives in the contract (``resolve_facet_fields`` 
 ``resolve_highlight``) so it is identical across backends.
 """
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import attrs
 
@@ -123,9 +124,7 @@ def extract_facets(result: Any, plan: FacetPlan) -> FacetResults:
     value-asc, capped at ``plan.size``.
     """
 
-    distribution: dict[str, Any] = dict(
-        getattr(result, "facet_distribution", None) or {}
-    )
+    distribution: dict[str, Any] = dict(getattr(result, "facet_distribution", None) or {})
     out: dict[str, tuple[FacetBucket, ...]] = {}
 
     for physical, logical in plan.phys_to_logical.items():
@@ -133,8 +132,7 @@ def extract_facets(result: Any, plan: FacetPlan) -> FacetResults:
         ordered = sorted(raw.items(), key=lambda kv: (-int(kv[1]), str(kv[0])))
 
         out[logical] = tuple(
-            FacetBucket(value=value, count=int(count))
-            for value, count in ordered[: plan.size]
+            FacetBucket(value=value, count=int(count)) for value, count in ordered[: plan.size]
         )
 
     return out

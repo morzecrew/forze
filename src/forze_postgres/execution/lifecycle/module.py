@@ -1,6 +1,7 @@
 """Postgres lifecycle module (pool, catalog warmup, schema validation)."""
 
-from typing import Sequence, final
+from collections.abc import Sequence
+from typing import final
 
 import attrs
 from pydantic import SecretStr
@@ -62,11 +63,9 @@ class PostgresLifecycleModule(LifecycleModule):
     )
     """When set, registers catalog warmup for hub search routes."""
 
-    federated_searches: StrKeyMapping[PostgresFederatedSearchConfig] | None = (
-        attrs.field(
-            default=None,
-            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
-        )
+    federated_searches: StrKeyMapping[PostgresFederatedSearchConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """When set, registers catalog warmup for federated search routes."""
 

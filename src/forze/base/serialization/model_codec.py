@@ -14,7 +14,8 @@ its keep as the wrapping/single-source seam — not as a switch between model
 libraries.
 """
 
-from typing import Iterator, Literal, Protocol, Sequence, TypedDict
+from collections.abc import Iterator, Sequence
+from typing import Literal, Protocol, TypedDict
 
 from ..primitives import JsonDict
 
@@ -81,7 +82,7 @@ class ModelCodec[T, TSource](Protocol):
         obj: T,
         *,
         mode: EncodeMode = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> JsonDict: ...
 
     def encode_mapping_many(
@@ -89,7 +90,7 @@ class ModelCodec[T, TSource](Protocol):
         objs: Sequence[T],
         *,
         mode: EncodeMode = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> list[JsonDict]: ...
 
     def encode_mapping_many_batched(
@@ -98,7 +99,7 @@ class ModelCodec[T, TSource](Protocol):
         *,
         batch_size: int = 2000,
         mode: EncodeMode = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> Iterator[list[JsonDict]]: ...
 
     def transform(
@@ -106,7 +107,7 @@ class ModelCodec[T, TSource](Protocol):
         source: TSource,
         *,
         mode: EncodeMode = "python",
-        exclude: ModelDumpExcludeOptions = {"unset": True},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> T: ...
 
     def transform_many(
@@ -114,7 +115,7 @@ class ModelCodec[T, TSource](Protocol):
         sources: Sequence[TSource],
         *,
         mode: EncodeMode = "python",
-        exclude: ModelDumpExcludeOptions = {"unset": True},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> list[T]: ...
 
     @property
@@ -147,7 +148,7 @@ class ModelCodec[T, TSource](Protocol):
         self,
         obj: T,
         *,
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> bytes: ...
 
     def encode_persistence_mapping(
@@ -155,7 +156,7 @@ class ModelCodec[T, TSource](Protocol):
         obj: T,
         *,
         mode: EncodeMode = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> JsonDict: ...
 
     def encode_persistence_mapping_many(
@@ -163,7 +164,7 @@ class ModelCodec[T, TSource](Protocol):
         objs: Sequence[T],
         *,
         mode: EncodeMode = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> list[JsonDict]: ...
 
     def decode_json_bytes(

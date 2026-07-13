@@ -72,9 +72,7 @@ SearchManagementDepKey = DepKey[SearchManagementDepPort]("search_management")
 HubSearchQueryDepKey = DepKey[HubSearchQueryDepPort]("hub_search_query")
 """Key used to register the hub :class:`SearchQueryPort` builder implementation."""
 
-FederatedSearchQueryDepKey = DepKey[FederatedSearchQueryDepPort](
-    "federated_search_query"
-)
+FederatedSearchQueryDepKey = DepKey[FederatedSearchQueryDepPort]("federated_search_query")
 """Key used to register the federated :class:`SearchQueryPort` builder implementation."""
 
 SearchResultSnapshotDepKey = DepKey[SearchResultSnapshotDepPort](

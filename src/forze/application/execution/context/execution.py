@@ -1,4 +1,5 @@
-from typing import Any, Callable, final
+from collections.abc import Callable
+from typing import Any, final
 
 import attrs
 
@@ -15,7 +16,7 @@ from forze.application.contracts.graph import GraphDeps
 from forze.application.contracts.http import HttpServiceDeps
 from forze.application.contracts.idempotency import IdempotencyDeps
 from forze.application.contracts.inbox import InboxDeps
-from forze.application.contracts.outbox import OutboxDeps
+from forze.application.contracts.outbox import OutboxDeps, OutboxStagingContext
 from forze.application.contracts.procedure import ProcedureDeps
 from forze.application.contracts.resilience import ResilienceDeps
 from forze.application.contracts.search import SearchDeps
@@ -35,7 +36,6 @@ from .active_operation import warn_if_constructed_in_operation
 from .background import BackgroundOwners
 from .drain import OperationDrainGate
 from .invocation import InvocationContext
-from forze.application.contracts.outbox import OutboxStagingContext
 from .transaction import AfterCommitErrorHandler, TransactionContext
 
 # ----------------------- #

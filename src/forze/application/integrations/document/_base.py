@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Awaitable, Callable, Generic, Protocol, Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from typing import TYPE_CHECKING, Generic, Protocol
 from uuid import UUID
 
 from forze.application.contracts.document import DocumentSpec
@@ -40,7 +41,7 @@ class DocumentAdapterProtocol(Protocol, Generic[R, D, C, U]):
     max_scan_pages: int | None
     max_stream_pages: int | None
     max_chunked_command_pages: int | None
-    dispatcher_provider: Callable[[], "DomainEventDispatcherPort | None"]
+    dispatcher_provider: Callable[[], DomainEventDispatcherPort | None]
 
     @property
     def _read_fields(self) -> frozenset[str]: ...
@@ -52,8 +53,8 @@ class DocumentAdapterProtocol(Protocol, Generic[R, D, C, U]):
 
     def _resolve_sorts(
         self,
-        sorts: "QuerySortExpression | None",
-    ) -> "QuerySortExpression": ...
+        sorts: QuerySortExpression | None,
+    ) -> QuerySortExpression: ...
 
     def _to_read(self, domain: D | None, *, pk: UUID | None = None) -> Awaitable[R]: ...
 
@@ -85,10 +86,10 @@ class DocumentAdapterProtocol(Protocol, Generic[R, D, C, U]):
     def project_many(
         self,
         fields: Sequence[str],
-        filters: "QueryFilterExpression | None" = None,  # type: ignore[valid-type]
-        pagination: "PaginationExpression | None" = None,
-        sorts: "QuerySortExpression | None" = None,
-    ) -> Awaitable["CountlessPage[JsonDict]"]: ...
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[CountlessPage[JsonDict]]: ...
 
 
 # ....................... #
@@ -107,10 +108,10 @@ class DocumentQueryDelegateMixin(Generic[R]):
         async def project_many(
             self,
             fields: Sequence[str],
-            filters: "QueryFilterExpression | None" = None,  # type: ignore[valid-type]
-            pagination: "PaginationExpression | None" = None,
-            sorts: "QuerySortExpression | None" = None,
-        ) -> "CountlessPage[JsonDict]": ...
+            filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+            pagination: PaginationExpression | None = None,
+            sorts: QuerySortExpression | None = None,
+        ) -> CountlessPage[JsonDict]: ...
 
 
 # ....................... #
@@ -130,7 +131,7 @@ class DocumentAdapterMixinBase(Generic[R, D, C, U]):
         max_scan_pages: int | None
         max_stream_pages: int | None
         max_chunked_command_pages: int | None
-        dispatcher_provider: Callable[[], "DomainEventDispatcherPort | None"]
+        dispatcher_provider: Callable[[], DomainEventDispatcherPort | None]
 
         @property
         def _read_fields(self) -> frozenset[str]: ...
@@ -142,8 +143,8 @@ class DocumentAdapterMixinBase(Generic[R, D, C, U]):
 
         def _resolve_sorts(
             self,
-            sorts: "QuerySortExpression | None",
-        ) -> "QuerySortExpression": ...
+            sorts: QuerySortExpression | None,
+        ) -> QuerySortExpression: ...
 
         async def _to_read(self, domain: D | None, *, pk: UUID | None = None) -> R: ...
 

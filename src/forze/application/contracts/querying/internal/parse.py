@@ -1,4 +1,5 @@
-from typing import Any, Sequence, cast, get_args
+from collections.abc import Sequence
+from typing import Any, cast, get_args
 
 import attrs
 
@@ -185,9 +186,7 @@ class QueryFilterExpressionParser:
 
         for item in items:
             if not isinstance(item, dict):
-                raise exc.precondition(
-                    f"{op} entries must be filter expression objects"
-                )
+                raise exc.precondition(f"{op} entries must be filter expression objects")
 
         return list(items)
 
@@ -214,8 +213,7 @@ class QueryFilterExpressionParser:
 
         if ctx.clause_count > self.limits.max_clauses:
             raise exc.precondition(
-                f"Filter expression exceeds maximum clause count of "
-                f"{self.limits.max_clauses}",
+                f"Filter expression exceeds maximum clause count of {self.limits.max_clauses}",
             )
 
     # ....................... #
@@ -297,9 +295,7 @@ class QueryFilterExpressionParser:
 
             self._add_clauses(ctx, len(raw))
 
-            return [
-                self._validate_fields_op(left, op, right) for op, right in raw.items()
-            ]
+            return [self._validate_fields_op(left, op, right) for op, right in raw.items()]
 
         raise exc.precondition(f"Invalid $fields map value: {raw!r}")
 
@@ -347,8 +343,7 @@ class QueryFilterExpressionParser:
             self._add_clauses(ctx, len(raw))
 
             field_nodes: list[QueryExpr] = [
-                self._validate_op_impl(field, op, value, ctx)
-                for op, value in raw.items()
+                self._validate_op_impl(field, op, value, ctx) for op, value in raw.items()
             ]
 
             self._validate_value_field(field, field_nodes)
@@ -488,8 +483,7 @@ class QueryFilterExpressionParser:
             self._add_clauses(ctx, len(raw))
 
             return [
-                self._validate_element_op(rel_field, op, value, ctx)
-                for op, value in raw.items()
+                self._validate_element_op(rel_field, op, value, ctx) for op, value in raw.items()
             ]
 
         raise exc.precondition(f"Invalid element $values entry: {raw!r}")
@@ -561,24 +555,16 @@ class QueryFilterExpressionParser:
         ops = QueryFilterExpressionParser._field_ops_from_nodes(nodes)
 
         if "$null" in ops:
-            null_node = next(
-                n for n in nodes if isinstance(n, QueryField) and n.op == "$null"
-            )
+            null_node = next(n for n in nodes if isinstance(n, QueryField) and n.op == "$null")
 
             if null_node.value is True and len(ops) > 1:
-                raise exc.precondition(
-                    f"Field {field} cannot be null and have other operators"
-                )
+                raise exc.precondition(f"Field {field} cannot be null and have other operators")
 
         if "$empty" in ops:
-            empty_node = next(
-                n for n in nodes if isinstance(n, QueryField) and n.op == "$empty"
-            )
+            empty_node = next(n for n in nodes if isinstance(n, QueryField) and n.op == "$empty")
 
             if empty_node.value is True and len(ops) > 1:
-                raise exc.precondition(
-                    f"Field {field} cannot be empty and have other operators"
-                )
+                raise exc.precondition(f"Field {field} cannot be empty and have other operators")
 
     # ....................... #
 
@@ -694,8 +680,7 @@ class QueryFilterExpressionParser:
 
             if not all(isinstance(v, str) for v in items):
                 raise exc.precondition(
-                    f"{op} requires a path string or a list of path strings, "
-                    f"got {value!r}",
+                    f"{op} requires a path string or a list of path strings, got {value!r}",
                 )
 
             self._check_in_size(field, op, items)

@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any, Mapping, Protocol
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from .model import CoreException

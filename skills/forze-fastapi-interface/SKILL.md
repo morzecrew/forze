@@ -3,7 +3,8 @@ name: forze-fastapi-interface
 description: >-
   Connects Forze handlers to FastAPI: runtime context dependency and lifespan,
   generated routes from an operation registry (attach_document_routes /
-  attach_search_routes / attach_storage_routes), SecurityContextMiddleware
+  attach_search_routes / attach_storage_routes / attach_aggregate_routes for a
+  whole AggregateKit slice), SecurityContextMiddleware
   identity binding, custom headers/logging middleware, Scalar docs, and
   CoreException error handling. Use when exposing handlers over HTTP.
 ---
@@ -84,6 +85,19 @@ app.include_router(router)
 - `attach_search_routes` (no `style` — every search request is a filter body,
   always `POST /<op>`) and `attach_storage_routes` (`style` required; multipart
   upload, raw-bytes download) follow the same pattern.
+- An aggregate declared with `AggregateKit` (see [`forze-wiring`](../forze-wiring/SKILL.md))
+  attaches its **whole slice** in one call — document, soft-delete, search, and
+  (under `storage_prefix`, default `/blobs`) storage routes:
+
+  ```python
+  from forze_fastapi.routes import attach_aggregate_routes
+
+  attach_aggregate_routes(router, kit, ctx_dep=ctx_dep, style="rest", tx_route="default")
+  ```
+
+  The routes execute through the kit's composed registry, so `tx_route` is
+  load-bearing — pass the same route the deps module registers its transaction
+  manager under (and the same one the kit's `facade()` uses).
 - An operation with a plan-declared deadline surfaces it as an
   `x-deadline-seconds` OpenAPI extension and a "Time budget" description line —
   see [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md).

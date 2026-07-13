@@ -1,6 +1,7 @@
 """Resilience executor dependency key, resolver, and port-level policy binding."""
 
-from typing import Any, Iterable, Mapping, final
+from collections.abc import Iterable, Mapping
+from typing import Any, final
 
 import attrs
 
@@ -83,9 +84,7 @@ class PortPolicy:
                     "methods tuple (use None to wrap all coroutine methods)",
                 )
 
-            if non_public := sorted(
-                m for m in self.methods if not m or m.startswith("_")
-            ):
+            if non_public := sorted(m for m in self.methods if not m or m.startswith("_")):
                 raise exc.configuration(
                     f"Port policy for {self.key.name!r} may only wrap public "
                     "methods: " + ", ".join(repr(m) for m in non_public),

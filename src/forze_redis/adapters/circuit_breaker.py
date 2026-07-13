@@ -113,7 +113,7 @@ class RedisCircuitBreakerStore(CircuitBreakerStore):
                 self._strat_args(strat),
             )
 
-        except Exception:  # noqa: BLE001 — fail-open: the store must never break calls
+        except Exception:
             self._degrade("admit", key)
             return await self.fallback.admit(key, strat)
 
@@ -139,7 +139,7 @@ class RedisCircuitBreakerStore(CircuitBreakerStore):
                 args,
             )
 
-        except Exception:  # noqa: BLE001 — fail-open
+        except Exception:
             self._degrade("record", key)
             return await self.fallback.record(key, strat, ok)
 

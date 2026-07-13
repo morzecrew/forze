@@ -21,17 +21,8 @@ coverage internals), and ``workload`` / ``explore_guided`` / ``derive`` (input g
 
 from __future__ import annotations
 
-# Core — the happy path: build a Simulation, feed inputs, run, read the report.
-from .cluster import Cluster
-from .config import SimulationConfig, Strategy
-from .engines.cases import OperationCase
-from .harness import Simulation
-from .oracle import ViolationReport
-from .scenario import ModelState, Rule, Scenario
-from .scheduler import FIFOScheduler, PCTScheduler, RandomScheduler
-
 # Namespaces — depth on demand (``forze_dst.<namespace>``).
-from . import (  # noqa: F401  (re-exported namespaces)
+from . import (
     artifacts,
     cluster,
     conformance,
@@ -46,6 +37,15 @@ from . import (  # noqa: F401  (re-exported namespaces)
     scheduler,
     workload,
 )
+
+# Core — the happy path: build a Simulation, feed inputs, run, read the report.
+from .cluster import Cluster
+from .config import SimulationConfig, Strategy
+from .engines.cases import OperationCase
+from .harness import Simulation
+from .oracle import ViolationReport
+from .scenario import ModelState, Rule, Scenario
+from .scheduler import FIFOScheduler, PCTScheduler, RandomScheduler
 
 # ----------------------- #
 

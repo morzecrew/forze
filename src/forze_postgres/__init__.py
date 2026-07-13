@@ -6,7 +6,9 @@ require_psycopg()
 
 # ....................... #
 
+from .adapters import PostgresSchemaTenantProvisioner
 from .execution import (
+    POSTGRES_CLIENT_CAPABILITY,
     FtsEngine,
     PgroongaAuto,
     PgroongaEngine,
@@ -19,19 +21,18 @@ from .execution import (
     PostgresFederatedSearchConfig,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
+    PostgresLifecycleModule,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
     SearchEngineSpec,
     VectorEngine,
-    POSTGRES_CLIENT_CAPABILITY,
-    PostgresLifecycleModule,
     postgres_catalog_warmup_lifecycle_step,
     postgres_document_schema_spec_for_binding,
     postgres_document_schema_validation_lifecycle_step,
-    warm_postgres_catalog,
     postgres_lifecycle_step,
     routed_postgres_lifecycle_step,
     validate_postgres_document_schemas,
+    warm_postgres_catalog,
 )
 from .kernel.client import (
     PostgresClient,
@@ -44,7 +45,6 @@ from .kernel.relation import (
     coerce_relation_spec,
     require_static_relation,
 )
-from .adapters import PostgresSchemaTenantProvisioner
 
 # ----------------------- #
 

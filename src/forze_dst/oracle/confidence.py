@@ -15,8 +15,9 @@ for the overlap relation and the injected-environment timeline for what actually
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Iterable, final
+from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
@@ -185,7 +186,7 @@ class ConfidenceProbe:
 
     # ....................... #
 
-    def report(self, *, faults: "FaultPolicy | None" = None) -> ConfidenceReport:
+    def report(self, *, faults: FaultPolicy | None = None) -> ConfidenceReport:
         """Build the report; *faults* is the declared policy whose rules are checked for firing."""
 
         declared: list[str] = []
@@ -214,7 +215,7 @@ class ConfidenceProbe:
 
 
 def assess_confidence(
-    histories: Iterable[History], *, faults: "FaultPolicy | None" = None
+    histories: Iterable[History], *, faults: FaultPolicy | None = None
 ) -> ConfidenceReport:
     """Read a sweep's recorded *histories* into a :class:`ConfidenceReport`.
 

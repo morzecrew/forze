@@ -185,8 +185,8 @@ async def reencrypt_objects(
             try:
                 await query.list(1, 0, prefix=prefix)
 
-            except CoreException:
-                raise error
+            except CoreException as probe_error:
+                raise error from probe_error
 
             skipped += 1
             continue

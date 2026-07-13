@@ -11,16 +11,16 @@ import attrs
 
 from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.stream import (
-    StreamCommandPort,
     AckStreamGroupAdminPort,
     AckStreamGroupQueryPort,
+    StreamCommandPort,
     StreamQueryPort,
     StreamSpec,
 )
 from forze.application.contracts.stream.deps import (
-    StreamCommandDepPort,
     AckStreamGroupAdminDepPort,
     AckStreamGroupQueryDepPort,
+    StreamCommandDepPort,
     StreamQueryDepPort,
 )
 from forze.application.execution import ExecutionContext
@@ -62,9 +62,7 @@ class ConfigurableRedisStreamQuery(StreamQueryDepPort):
         validator=attrs.validators.instance_of(RedisStreamConfig),
     )
 
-    def __call__(
-        self, ctx: ExecutionContext, spec: StreamSpec[Any]
-    ) -> StreamQueryPort[Any]:
+    def __call__(self, ctx: ExecutionContext, spec: StreamSpec[Any]) -> StreamQueryPort[Any]:
         enforce_required_reach(
             ctx.deps,
             route=str(spec.name),
@@ -87,9 +85,7 @@ class ConfigurableRedisStreamCommand(StreamCommandDepPort):
         validator=attrs.validators.instance_of(RedisStreamConfig),
     )
 
-    def __call__(
-        self, ctx: ExecutionContext, spec: StreamSpec[Any]
-    ) -> StreamCommandPort[Any]:
+    def __call__(self, ctx: ExecutionContext, spec: StreamSpec[Any]) -> StreamCommandPort[Any]:
         enforce_required_reach(
             ctx.deps,
             route=str(spec.name),
@@ -98,11 +94,7 @@ class ConfigurableRedisStreamCommand(StreamCommandDepPort):
             supports_at_rest=False,
         )
         adapter = _stream_adapter(ctx, spec, self.config)
-        cipher = (
-            ctx.deps.provide(KeyringDepKey)
-            if ctx.deps.exists(KeyringDepKey)
-            else None
-        )
+        cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
         return encrypting_stream_command(
             adapter, spec, cipher=cipher, tenant_provider=ctx.inv_ctx.get_tenant
         )
@@ -150,9 +142,7 @@ class ConfigurableRedisStreamGroupAdmin(AckStreamGroupAdminDepPort):
         validator=attrs.validators.instance_of(RedisStreamGroupConfig),
     )
 
-    def __call__(
-        self, ctx: ExecutionContext, spec: StreamSpec[Any]
-    ) -> AckStreamGroupAdminPort:
+    def __call__(self, ctx: ExecutionContext, spec: StreamSpec[Any]) -> AckStreamGroupAdminPort:
         return RedisStreamGroupAdminAdapter(
             client=ctx.deps.provide(RedisClientDepKey),
             tenant_aware=self.config.tenant_aware,

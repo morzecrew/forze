@@ -54,9 +54,7 @@ class ConfigurableTemporalWorkflowScheduleQuery(DurableWorkflowScheduleQueryDepP
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableTemporalWorkflowScheduleCommand(
-    DurableWorkflowScheduleCommandDepPort
-):
+class ConfigurableTemporalWorkflowScheduleCommand(DurableWorkflowScheduleCommandDepPort):
     """Configurable Temporal workflow schedule command adapter."""
 
     config: TemporalWorkflowConfig = attrs.field(

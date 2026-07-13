@@ -8,8 +8,9 @@ require_psycopg()
 
 import hashlib
 import json
+from collections.abc import Callable, Sequence
 from datetime import timedelta
-from typing import Any, Callable, Sequence, TypeVar, cast, final
+from typing import Any, TypeVar, cast, final
 
 import attrs
 from psycopg import sql
@@ -119,16 +120,12 @@ class PostgresIntrospector:
         mx = self.max_cache_entries_per_kind
 
         if mx is not None and mx < 1:
-            raise exc.configuration(
-                "max_cache_entries_per_kind must be at least 1 when set"
-            )
+            raise exc.configuration("max_cache_entries_per_kind must be at least 1 when set")
 
         mfe = self.max_filtered_estimate_entries
 
         if mfe is not None and mfe < 1:
-            raise exc.configuration(
-                "max_filtered_estimate_entries must be at least 1 when set"
-            )
+            raise exc.configuration("max_filtered_estimate_entries must be at least 1 when set")
 
         # The filtered-row-estimate lane honours its own (bounded-by-default) cap;
         # when a per-kind cap is also set, the tighter of the two applies.
@@ -780,21 +777,19 @@ class PostgresIntrospector:
 
         has_tsvector_col = bool(row.get("has_tsvector_col") or False)
 
-        if expr_s is None:
-            if maybe := extract_index_expr_from_indexdef(indexdef):
-                expr_s = maybe
+        if expr_s is None and (maybe := extract_index_expr_from_indexdef(indexdef)):
+            expr_s = maybe
 
         engine: PostgresIndexEngine = "unknown"
 
         if amname == "pgroonga":
             engine = "pgroonga"
 
-        elif amname == "gin":
-            # FTS when a tsvector column is indexed, or the expression is a
-            # to_tsvector(...) call -- not a bare "tsvector" substring match,
-            # which misfires on plain GIN indexes that merely mention the word.
-            if has_tsvector_col or index_expr_uses_to_tsvector(expr_s):
-                engine = "fts"
+        # FTS when a tsvector column is indexed, or the expression is a
+        # to_tsvector(...) call -- not a bare "tsvector" substring match,
+        # which misfires on plain GIN indexes that merely mention the word.
+        elif amname == "gin" and (has_tsvector_col or index_expr_uses_to_tsvector(expr_s)):
+            engine = "fts"
 
         info = PostgresIndexInfo(
             schema=schema,

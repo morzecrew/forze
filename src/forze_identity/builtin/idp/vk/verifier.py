@@ -179,11 +179,7 @@ class VkPublicInfoTokenVerifier(TokenVerifierPort):
 
         user = payload.get("user")
 
-        if isinstance(user, dict):
-            container = cast(JsonDict, user)
-
-        else:
-            container = payload
+        container = cast(JsonDict, user) if isinstance(user, dict) else payload
 
         raw = container.get("user_id")
 

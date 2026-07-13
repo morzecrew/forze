@@ -353,15 +353,11 @@ class ReadValidationCodecMixin(Generic[M]):
             plain = self._codec_for(model)
             return await run_cpu_map(
                 rows,
-                lambda r: plain.decode_mapping(
-                    frozen.decrypt_mapping(dict(r)), trust_source=ts
-                ),
+                lambda r: plain.decode_mapping(frozen.decrypt_mapping(dict(r)), trust_source=ts),
             )
 
         # Full read: frozen decrypt + inner decode, per row, off the loop.
-        return await run_cpu_map(
-            rows, lambda r: frozen.decode_mapping(dict(r), trust_source=ts)
-        )
+        return await run_cpu_map(rows, lambda r: frozen.decode_mapping(dict(r), trust_source=ts))
 
     # ....................... #
 
@@ -469,9 +465,7 @@ class DocumentWriteCodecMixin(Generic[D]):
 
     # ....................... #
 
-    async def _encode_patch_one(
-        self, dto: Any, *, record_id: UUID | None = None
-    ) -> JsonDict:
+    async def _encode_patch_one(self, dto: Any, *, record_id: UUID | None = None) -> JsonDict:
         await self._prepare_encode()
         codec = self._patch_codec()
 
@@ -527,11 +521,7 @@ class FilterParserMixin(Generic[M]):
         ``filter_parser`` field, so no post-init mutation is needed.
         """
 
-        limits = (
-            self.filter_limits
-            if self.filter_limits is not None
-            else QueryFilterLimits()
-        )
+        limits = self.filter_limits if self.filter_limits is not None else QueryFilterLimits()
 
         return QueryFilterExpressionParser(limits=limits)
 
@@ -701,11 +691,7 @@ class HistoryOccMixin(Generic[D]):
 
             return
 
-        to_check = [
-            (current, rev, update)
-            for current, rev, update in data
-            if rev != current.rev
-        ]
+        to_check = [(current, rev, update) for current, rev, update in data if rev != current.rev]
 
         if [rev for current, rev, _ in to_check if rev > current.rev]:
             raise exc.precondition(

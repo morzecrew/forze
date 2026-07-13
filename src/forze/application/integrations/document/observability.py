@@ -9,7 +9,8 @@ execution layer must not import integrations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING
 
 # OpenTelemetry is imported lazily inside ``instrument_document_l1`` so importing this
 # module (re-exported from the document integration package) does not pull
@@ -17,7 +18,7 @@ from typing import TYPE_CHECKING, Callable, Iterable
 from .l1 import L1Stats, iter_l1_stats
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import CallbackOptions, Meter  # noqa: F401
+    from opentelemetry.metrics import CallbackOptions, Meter
 
 # ----------------------- #
 
@@ -28,7 +29,7 @@ DOCUMENT_L1_MISSES_COUNTER = "forze.cache.l1.misses"
 DOCUMENT_L1_EVICTIONS_COUNTER = "forze.cache.l1.evictions"
 
 
-def instrument_document_l1(*, meter: "Meter | None" = None) -> None:
+def instrument_document_l1(*, meter: Meter | None = None) -> None:
     """Export live document L1 stores' counters as OpenTelemetry metrics.
 
     Per document name (labelled ``forze.document``, summed across multiple
@@ -57,8 +58,8 @@ def instrument_document_l1(*, meter: "Meter | None" = None) -> None:
 
     def _observe(
         pick: Callable[[L1Stats], int],
-    ) -> "Callable[[CallbackOptions], Iterable[Observation]]":
-        def callback(_options: "CallbackOptions") -> Iterable[Observation]:
+    ) -> Callable[[CallbackOptions], Iterable[Observation]]:
+        def callback(_options: CallbackOptions) -> Iterable[Observation]:
             aggregated: dict[str, int] = {}
 
             for name, stats in iter_l1_stats():

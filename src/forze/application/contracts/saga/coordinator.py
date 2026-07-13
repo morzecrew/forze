@@ -6,7 +6,8 @@ semantics. The driver performs the I/O (run an action / activity, run compensati
 coordinator decides *compensate-in-reverse vs forward-incomplete* and builds the errors.
 """
 
-from typing import Sequence, final
+from collections.abc import Sequence
+from typing import final
 
 import attrs
 

@@ -179,9 +179,7 @@ def compute_retry_delay(
         multiplier=2.0,
         jitter="equal",
     )
-    seconds = compute_delay(
-        strategy, attempts, 0.0, rng or current_entropy_source().as_random()
-    )
+    seconds = compute_delay(strategy, attempts, 0.0, rng or current_entropy_source().as_random())
 
     return timedelta(seconds=seconds)
 

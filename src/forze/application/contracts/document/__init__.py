@@ -1,3 +1,8 @@
+from .codecs import (
+    DocumentCodecs,
+    document_codecs_for_spec,
+    document_codecs_for_write_types,
+)
 from .deps import (
     DocumentCommandDepKey,
     DocumentCommandDepPort,
@@ -7,11 +12,6 @@ from .deps import (
 )
 from .gateways import DocumentReadGatewayPort, DocumentWriteGatewayPort
 from .ports import BaseDocumentPort, DocumentCommandPort, DocumentQueryPort
-from .codecs import (
-    DocumentCodecs,
-    document_codecs_for_spec,
-    document_codecs_for_write_types,
-)
 from .specs import DocumentSpec, validate_query_parameters
 from .value_objects import KeyedCreate, KeyedUpdate, RowLockMode, UpsertItem
 from .write_types import DocumentWriteTypes

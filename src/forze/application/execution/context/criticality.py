@@ -15,10 +15,10 @@ strategy opts in (``prioritized=True``) and callers bind distinct tiers.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from enum import IntEnum
-from typing import Generator
 
 # ----------------------- #
 

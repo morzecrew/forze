@@ -1,6 +1,7 @@
 """Low-level type aliases for Redis stream and pub/sub wire formats."""
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 # ----------------------- #
 # Raw redis-py stream shapes.

@@ -10,7 +10,8 @@ offset-only (Meilisearch) or top-k (vector) backend refuses up front rather than
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from typing import Any
 
 from forze.application.contracts.querying import CursorPaginationExpression
 from forze.application.contracts.search import SearchCursorPage

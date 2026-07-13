@@ -32,6 +32,5 @@ class ResilienceSpec(BaseSpec):
         for key, policy in self.policies.items():
             if key != policy.name:
                 raise exc.configuration(
-                    f"Resilience policy key {key!r} does not match "
-                    f"policy name {policy.name!r}",
+                    f"Resilience policy key {key!r} does not match policy name {policy.name!r}",
                 )

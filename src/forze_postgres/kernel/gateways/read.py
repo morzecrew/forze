@@ -7,12 +7,11 @@ require_psycopg()
 # ....................... #
 
 import json
+from collections.abc import AsyncGenerator, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
     Literal,
     Never,
-    Sequence,
     TypeVar,
     cast,
     final,
@@ -31,27 +30,24 @@ from forze.application.contracts.querying import (
     QueryExpr,
     QueryFilterExpression,
     QuerySortExpression,
+    normalize_sorts_for_keyset,
+    resolved_cursor_limit,
     validate_cursor_token,
+)
+from forze.application.integrations.persistence import (
+    ReadValidationCodecMixin,
+    document_cursor_binding,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, build_projection
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel._logger import logger
-from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
-from forze_postgres.kernel.sql.query.nested import sort_key_expr
-from forze.application.contracts.querying import (
-    normalize_sorts_for_keyset,
-    resolved_cursor_limit,
-)
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_seek_condition,
 )
-
-from forze.application.integrations.persistence import (
-    ReadValidationCodecMixin,
-    document_cursor_binding,
-)
+from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
+from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
 from .base import PostgresGateway
 
@@ -322,9 +318,7 @@ class PostgresReadGateway[M: BaseModel](
 
     # ....................... #
 
-    def _truncate_at_cap(
-        self, rows: list[JsonDict], implicit_cap: int | None
-    ) -> list[JsonDict]:
+    def _truncate_at_cap(self, rows: list[JsonDict], implicit_cap: int | None) -> list[JsonDict]:
         """Drop the probe row and warn when an implicit-cap read found more rows than the cap.
 
         A ``find_many`` without an explicit limit that hits the default cap silently loses
@@ -730,10 +724,8 @@ class PostgresReadGateway[M: BaseModel](
             model_type=self.model_type,
             nested_field_hints=self.nested_field_hints,
         )
-        parsed_, select_clause, group_clause, aggregate_params = (
-            renderer.render_aggregates(
-                aggregates,
-            )
+        parsed_, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
+            aggregates,
         )
         params = list(aggregate_params) + list(params)
         sort_clause = renderer.render_aggregate_order_by(parsed_, sorts)
@@ -799,10 +791,8 @@ class PostgresReadGateway[M: BaseModel](
             model_type=self.model_type,
             nested_field_hints=self.nested_field_hints,
         )
-        parsed_, select_clause, group_clause, aggregate_params = (
-            renderer.render_aggregates(
-                aggregates,
-            )
+        parsed_, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
+            aggregates,
         )
         params = list(aggregate_params) + list(params)
 
@@ -889,9 +879,7 @@ class PostgresReadGateway[M: BaseModel](
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise exc.validation(
-                "Cursor pagination: pass at most one of 'after' or 'before'"
-            )
+            raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
         # Coerced + clamped to [1, MAX_CURSOR_LIMIT] so a non-int is a 400 (not a 500) and a
         # huge value can't materialize an unbounded ``LIMIT``.

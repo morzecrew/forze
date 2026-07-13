@@ -10,7 +10,8 @@ only exist for search, so they do not weigh on document or analytics pages.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, overload
+from collections.abc import Mapping
+from typing import Any, overload
 
 import attrs
 

@@ -1,8 +1,9 @@
 """Built-in port interceptors for deterministic simulation."""
 
 import asyncio
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import aclosing
-from typing import Any, AsyncGenerator, AsyncIterator, Callable, cast
+from typing import Any, cast
 
 import attrs
 
@@ -39,17 +40,13 @@ class CooperativeInterceptor:
         if self.latency is not None:
             delay = self.latency(call.surface, call.route, call.op)
 
-        await asyncio.sleep(
-            delay
-        )  # delay 0 -> a bare yield; > 0 -> advances virtual time
+        await asyncio.sleep(delay)  # delay 0 -> a bare yield; > 0 -> advances virtual time
 
         return await nxt(call)
 
     # ....................... #
 
-    async def around_stream(
-        self, call: PortCall, nxt: StreamPortNext
-    ) -> AsyncIterator[Any]:
+    async def around_stream(self, call: PortCall, nxt: StreamPortNext) -> AsyncIterator[Any]:
         """Yield at stream open *and before each item*, so a streamed read is an interleaving
         point per item — not just once at acquisition. Without this, two concurrent operations
         consuming a stream run as if each item batch were atomic and interleaving bugs in
@@ -66,7 +63,7 @@ class CooperativeInterceptor:
         # ``aclosing`` closes the inner stream deterministically on any exit (consumer
         # ``aclose``, early break, a thrown-in exception) — a backend cursor is released
         # at scope exit, not whenever GC finalizes an abandoned generator.
-        async with aclosing(cast("AsyncGenerator[Any, None]", nxt(call))) as stream:
+        async with aclosing(cast("AsyncGenerator[Any]", nxt(call))) as stream:
             async for item in stream:
                 await asyncio.sleep(0)  # each item is an interleaving point
                 yield item

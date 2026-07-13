@@ -7,7 +7,8 @@ dispatches the result on the spec's declared cardinality.
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, cast, final
+from collections.abc import Awaitable, Callable
+from typing import Any, cast, final
 from uuid import UUID
 
 import attrs
@@ -66,9 +67,7 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
             tenant = self.tenant_provider()
 
             if tenant is None:
-                raise exc.authentication(
-                    "Tenant ID is required", code="tenant_required"
-                )
+                raise exc.authentication("Tenant ID is required", code="tenant_required")
 
             return tenant.tenant_id
 

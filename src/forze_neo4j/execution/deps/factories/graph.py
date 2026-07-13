@@ -42,11 +42,7 @@ class ConfigurableNeo4jGraph:
         client = ctx.deps.provide(Neo4jClientDepKey)
         codecs = resolve_graph_codecs(
             spec,
-            keyring=(
-                ctx.deps.provide(KeyringDepKey)
-                if ctx.deps.exists(KeyringDepKey)
-                else None
-            ),
+            keyring=(ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None),
             deterministic=(
                 ctx.deps.provide(DeterministicCipherDepKey)
                 if ctx.deps.exists(DeterministicCipherDepKey)

@@ -6,8 +6,8 @@ import attrs
 
 from forze.application.contracts.authn import AuthnSpec, TokenVerifierPort
 from forze.application.execution import ExecutionContext
-
 from forze_identity.oidc import ConfigurableOidcIdpVerifier
+
 from .config import GoogleOidcConfig
 
 # ----------------------- #

@@ -126,8 +126,11 @@ Once a `DepsRegistry` registers document adapters for that `name`, handlers obta
 | `write` | `domain`, `create_cmd`, optional `update_cmd`; omit / shape for read-only |
 | `history_enabled` | Adapter may persist revision history when infra provides it |
 | `cache` | Optional `CacheSpec` for read-through caching |
+| `encryption` | Optional `FieldEncryption` policy (fields sealed at rest) — see [`forze-encryption-kms`](../forze-encryption-kms/SKILL.md) |
 
 Use `spec.supports_soft_delete()`, `supports_update()`, `supports_number_id()` when branching composition logic.
+
+Once the four models and the spec exist, a **governed** aggregate (soft delete, search sync, invariants, outbox) is one `AggregateKit(spec=...)` declaration away — the kit composes the wiring, never the models. See [`forze-wiring`](../forze-wiring/SKILL.md).
 
 ## SearchSpec (logical)
 

@@ -1,6 +1,7 @@
 """Ingest (append) for Postgres analytics."""
 
-from typing import Any, Sequence, TypeVar
+from collections.abc import Sequence
+from typing import Any, TypeVar
 
 from psycopg import sql
 from pydantic import BaseModel
@@ -28,9 +29,7 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
         host = self._host
 
         if host.spec.ingest is None:
-            raise exc.internal(
-                f"Analytics ingest is not configured for route {host.spec.name!r}."
-            )
+            raise exc.internal(f"Analytics ingest is not configured for route {host.spec.name!r}.")
 
         if host.config.resolved_ingest_relation() is None:
             raise exc.internal(
@@ -43,9 +42,7 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
         max_append = host._max_append_rows()  # type: ignore[protected-access]
 
         if len(rows) > max_append:
-            raise exc.internal(
-                f"Analytics append batch exceeds max_append_rows ({max_append})."
-            )
+            raise exc.internal(f"Analytics append batch exceeds max_append_rows ({max_append}).")
 
         ingest_codec = host.spec.resolved_ingest_codec
         if ingest_codec is None:
@@ -58,9 +55,7 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
         keys = list(payloads[0].keys())
         col_idents = [sql.Identifier(k) for k in keys]
         row_template = (
-            sql.SQL("(")
-            + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-            + sql.SQL(")")
+            sql.SQL("(") + sql.SQL(", ").join(sql.Placeholder() for _ in keys) + sql.SQL(")")
         )
         value_parts = [row_template] * len(payloads)
         flat_params: list[Any] = []

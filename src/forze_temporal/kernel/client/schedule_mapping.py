@@ -1,6 +1,6 @@
 """Map Forze workflow schedule models to Temporal schedule types."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from temporalio.client import (
     Schedule,
@@ -138,8 +138,7 @@ def description_from_temporal(
 
     timing = schedule_spec_to_timing(desc.schedule.spec)
     next_times = tuple(
-        t.replace(tzinfo=timezone.utc) if t.tzinfo is None else t
-        for t in desc.info.next_action_times
+        t.replace(tzinfo=UTC) if t.tzinfo is None else t for t in desc.info.next_action_times
     )
 
     return DurableWorkflowScheduleDescription(
@@ -181,8 +180,7 @@ def description_from_list_entry(
 
     if entry.info is not None:
         next_times = tuple(
-            t.replace(tzinfo=timezone.utc) if t.tzinfo is None else t
-            for t in entry.info.next_action_times
+            t.replace(tzinfo=UTC) if t.tzinfo is None else t for t in entry.info.next_action_times
         )
 
     return DurableWorkflowScheduleDescription(

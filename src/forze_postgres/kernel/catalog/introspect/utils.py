@@ -112,10 +112,7 @@ def index_expr_uses_to_tsvector(expr: str | None) -> bool:
     (e.g. ``setweight(to_tsvector(...), 'A') || setweight(...)``).
     """
 
-    return (
-        expr is not None
-        and _TO_TSVECTOR_CALL_RE.search(mask_sql_literals(expr)) is not None
-    )
+    return expr is not None and _TO_TSVECTOR_CALL_RE.search(mask_sql_literals(expr)) is not None
 
 
 # ....................... #

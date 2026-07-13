@@ -1,7 +1,8 @@
 """Postgres single-index search execution configs and validation."""
 
+from collections.abc import Mapping, Sequence
 from functools import reduce
-from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import attrs
 
@@ -69,9 +70,7 @@ class PgroongaAuto:
             raise exc.configuration("pgroonga auto index_first_min_rows must be at least 1.")
 
         if self.filter_first_max_rows < 1:
-            raise exc.configuration(
-                "pgroonga auto filter_first_max_rows must be at least 1."
-            )
+            raise exc.configuration("pgroonga auto filter_first_max_rows must be at least 1.")
 
 
 # ....................... #
@@ -105,9 +104,7 @@ class PgroongaEngine:
             )
 
         if self.index_first_filter_margin < 1.0:
-            raise exc.configuration(
-                "pgroonga index_first_filter_margin must be at least 1.0."
-            )
+            raise exc.configuration("pgroonga index_first_filter_margin must be at least 1.0.")
 
 
 # ....................... #
@@ -283,48 +280,30 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
 
     @property
     def fts_groups(self) -> dict[FtsGroupLetter, Sequence[str]] | None:
-        return (
-            self.engine_spec.groups if isinstance(self.engine_spec, FtsEngine) else None
-        )
+        return self.engine_spec.groups if isinstance(self.engine_spec, FtsEngine) else None
 
     @property
     def vector_column(self) -> str | None:
-        return (
-            self.engine_spec.column
-            if isinstance(self.engine_spec, VectorEngine)
-            else None
-        )
+        return self.engine_spec.column if isinstance(self.engine_spec, VectorEngine) else None
 
     @property
     def vector_distance(self) -> VectorEngineDistance:
-        return (
-            self.engine_spec.distance
-            if isinstance(self.engine_spec, VectorEngine)
-            else "l2"
-        )
+        return self.engine_spec.distance if isinstance(self.engine_spec, VectorEngine) else "l2"
 
     @property
     def embeddings_name(self) -> StrKey | None:
         return (
-            self.engine_spec.embeddings_name
-            if isinstance(self.engine_spec, VectorEngine)
-            else None
+            self.engine_spec.embeddings_name if isinstance(self.engine_spec, VectorEngine) else None
         )
 
     @property
     def embedding_dimensions(self) -> int | None:
-        return (
-            self.engine_spec.dimensions
-            if isinstance(self.engine_spec, VectorEngine)
-            else None
-        )
+        return self.engine_spec.dimensions if isinstance(self.engine_spec, VectorEngine) else None
 
     @property
     def pgroonga_score_version(self) -> PgroongaScoreVersion:
         return (
-            self.engine_spec.score_version
-            if isinstance(self.engine_spec, PgroongaEngine)
-            else "v2"
+            self.engine_spec.score_version if isinstance(self.engine_spec, PgroongaEngine) else "v2"
         )
 
     @property
@@ -381,8 +360,7 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
     def __attrs_post_init__(self) -> None:
         if self.read_validation not in ("strict", "trusted"):
             raise exc.configuration(
-                "read_validation must be 'strict' or 'trusted', "
-                f"got {self.read_validation!r}",
+                f"read_validation must be 'strict' or 'trusted', got {self.read_validation!r}",
             )
 
         if self.candidate_limit is not None and self.candidate_limit < 1:

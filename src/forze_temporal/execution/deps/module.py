@@ -1,8 +1,9 @@
-from typing import Any, Sequence, final
+from collections.abc import Sequence
+from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps import DepKey, Deps, DepsModule
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowCommandDepKey,
     DurableWorkflowQueryDepKey,
@@ -16,7 +17,6 @@ from forze.application.contracts.tenancy import (
     validate_module_tenancy,
     warn_dynamic_relation_with_tenant_aware,
 )
-from forze.application.contracts.deps import Deps, DepsModule
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel._logger import logger
@@ -47,10 +47,8 @@ class TemporalDepsModule(DepsModule):
     )
     """Mapping from workflow names to their Temporal-specific configurations."""
 
-    schedule_bootstraps: Sequence[DurableWorkflowScheduleBootstrap[Any]] | None = (
-        attrs.field(
-            default=None,
-        )
+    schedule_bootstraps: Sequence[DurableWorkflowScheduleBootstrap[Any]] | None = attrs.field(
+        default=None,
     )
     """Declarative schedules upserted on Temporal lifecycle startup."""
 
@@ -117,9 +115,7 @@ class TemporalDepsModule(DepsModule):
                             for name, config in self.workflows.items()
                         },
                         DurableWorkflowScheduleQueryDepKey: {
-                            name: ConfigurableTemporalWorkflowScheduleQuery(
-                                config=config
-                            )
+                            name: ConfigurableTemporalWorkflowScheduleQuery(config=config)
                             for name, config in self.workflows.items()
                         },
                         DurableWorkflowScheduleCommandDepKey: {

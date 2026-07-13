@@ -1,7 +1,8 @@
 import asyncio
 import inspect
+from collections.abc import Callable, Mapping
 from functools import lru_cache
-from typing import Any, Callable, Final, Mapping, Never
+from typing import Any, Final, Never
 
 from .model import CoreException, ExceptionKind
 from .protocols import ExceptionMapper

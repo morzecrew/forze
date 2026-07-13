@@ -1,36 +1,34 @@
 """Backend-agnostic orchestration for simple offset search with optional snapshots."""
 
-from typing import Any, Protocol, Sequence, TypeVar, runtime_checkable
+from collections.abc import Awaitable, Sequence
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    FacetResults,
-    HitHighlights,
-    search_page_from_limit_offset,
-)
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
 )
 from forze.application.contracts.search import (
+    FacetResults,
+    HitHighlights,
     SearchResultSnapshotOptions,
     SearchSpec,
-)
-from forze.application.integrations.search.encryption import (
-    decrypt_search_rows,
-    reject_encrypted_sort_fields,
+    search_page_from_limit_offset,
 )
 from forze.application.integrations.search._snapshot_stream import (
     SnapshotWindow,
     build_snapshot_pool_streaming,
 )
+from forze.application.integrations.search.encryption import (
+    decrypt_search_rows,
+    reject_encrypted_sort_fields,
+)
 from forze.application.integrations.search.snapshot import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, materialize_mapping_rows
-from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -167,9 +165,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         fp_fingerprint = ""
 
     pagination_dict: dict[str, Any] = dict(pagination or {})
-    snap_return_count = (
-        return_count if snapshot_return_count is None else snapshot_return_count
-    )
+    snap_return_count = return_count if snapshot_return_count is None else snapshot_return_count
     emit_total = return_count if page_return_count is None else page_return_count
 
     if result_snapshot is not None and rs_spec is not None:
@@ -216,14 +212,10 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
     if want_snap and result_snapshot is not None and rs_spec is not None:
         # Snapshot write: stream the ordered pool window-by-window straight into the store so
         # peak memory is one chunk, never the whole (up to ``max_ids``) decoded pool at once.
-        page_limit = SearchResultSnapshot.snapshot_pagination(
-            True, 0, pagination_dict
-        )[2]
+        page_limit = SearchResultSnapshot.snapshot_pagination(True, 0, pagination_dict)[2]
         read_codec = codec
 
-        async def fetch_window(
-            window_offset: int, window_limit: int
-        ) -> SnapshotWindow:
+        async def fetch_window(window_offset: int, window_limit: int) -> SnapshotWindow:
             outcome = await hooks.fetch_rows(
                 OffsetFetchWindow(
                     fetch_limit=window_limit,
@@ -359,9 +351,7 @@ async def materialize_offset_page[M: BaseModel](
 
     page_offset = offset_from_dict(pagination_dict)
     effective_page_limit = (
-        int(pagination_dict["limit"])
-        if pagination_dict.get("limit") is not None
-        else len(rows)
+        int(pagination_dict["limit"]) if pagination_dict.get("limit") is not None else len(rows)
     )
 
     page = materialize_mapping_rows(

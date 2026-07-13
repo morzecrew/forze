@@ -1,9 +1,10 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
+from collections.abc import AsyncGenerator
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from datetime import timedelta
 from enum import StrEnum
-from typing import AsyncGenerator, final
+from typing import final
 
 import attrs
 
@@ -219,19 +220,20 @@ class ExecutionRuntime:
                     "singleton_lifecycle_step) or run it as a deploy step instead.",
                 )
 
-        elif self.deployment is DeploymentProfile.SERVERLESS:
-            if offending := sorted(
+        elif self.deployment is DeploymentProfile.SERVERLESS and (
+            offending := sorted(
                 str(step.id)
                 for step in self.lifecycle.graph.steps.values()
                 if step.requires_long_running
-            ):
-                raise exc.configuration(
-                    "SERVERLESS deployment forbids lifecycle steps that require a "
-                    "long-running host (background pollers/relays/schedulers cannot "
-                    "survive a function freeze between invocations): "
-                    + ", ".join(offending)
-                    + ". Run each as a separate long-running worker instead.",
-                )
+            )
+        ):
+            raise exc.configuration(
+                "SERVERLESS deployment forbids lifecycle steps that require a "
+                "long-running host (background pollers/relays/schedulers cannot "
+                "survive a function freeze between invocations): "
+                + ", ".join(offending)
+                + ". Run each as a separate long-running worker instead.",
+            )
 
     # ....................... #
 
@@ -353,9 +355,7 @@ class ExecutionRuntime:
             # Cancel detached background work (e.g. document-cache early refreshes) before
             # teardown closes the clients it uses — a straggler would otherwise run on
             # against a closing cache/gateway. Always runs, drain-timeout or not.
-            await ctx.background_owners.close(
-                grace=self.shutdown_step_timeout.total_seconds()
-            )
+            await ctx.background_owners.close(grace=self.shutdown_step_timeout.total_seconds())
 
             await self.lifecycle.shutdown(
                 ctx, step_timeout=self.shutdown_step_timeout.total_seconds()

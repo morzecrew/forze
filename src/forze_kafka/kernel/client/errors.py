@@ -4,7 +4,8 @@ require_kafka()
 
 # ....................... #
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from aiokafka import errors as kafka_errors
 
@@ -43,10 +44,7 @@ def _kafka_eh(
                 details=details,
             )
 
-        case (
-            kafka_errors.NodeNotReadyError()
-            | kafka_errors.GroupCoordinatorNotAvailableError()
-        ):
+        case kafka_errors.NodeNotReadyError() | kafka_errors.GroupCoordinatorNotAvailableError():
             return CoreException.infrastructure(
                 "Kafka broker / coordinator not ready.",
                 details=details,

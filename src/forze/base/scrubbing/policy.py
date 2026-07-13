@@ -113,9 +113,7 @@ _LOG_ASSIGNMENT_TERM_FRAGMENTS: tuple[str, ...] = (
 )
 
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
-    "(?:"
-    + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS)
-    + r")(?:[._-]\w+){0,6}\s*[=:]\s*\S+",
+    "(?:" + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS) + r")(?:[._-]\w+){0,6}\s*[=:]\s*\S+",
 )
 
 _LOG_STRING_EXTRAS: tuple[str, ...] = (

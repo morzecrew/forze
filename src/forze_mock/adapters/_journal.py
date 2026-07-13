@@ -20,8 +20,9 @@ automatically while it is set, and behave as plain containers when it is not.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextvars import ContextVar
-from typing import Any, Callable
+from typing import Any
 
 # ----------------------- #
 
@@ -30,9 +31,7 @@ _MISSING: Any = object()
 UndoThunk = Callable[[], None]
 """A zero-arg callable that reverts one write."""
 
-_journal: ContextVar[list[UndoThunk] | None] = ContextVar(
-    "forze_mock_tx_journal", default=None
-)
+_journal: ContextVar[list[UndoThunk] | None] = ContextVar("forze_mock_tx_journal", default=None)
 """The active transaction's undo journal, or ``None`` outside a transaction."""
 
 # ....................... #

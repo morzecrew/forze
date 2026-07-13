@@ -20,7 +20,6 @@ import re
 from typing import final
 
 import attrs
-
 from pydantic import BaseModel, SecretStr
 
 from forze.application.contracts.secrets import SecretRef
@@ -179,9 +178,7 @@ class S3Credentials(ObjectStoreCredentials):
             parts.append(f"USE_SSL {'true' if payload.use_ssl else 'false'}")
 
         if payload.session_token is not None:
-            parts.append(
-                f"SESSION_TOKEN {_sql_str(payload.session_token.get_secret_value())}"
-            )
+            parts.append(f"SESSION_TOKEN {_sql_str(payload.session_token.get_secret_value())}")
 
         return _render_secret(self.name, "S3", parts, self.scope)
 

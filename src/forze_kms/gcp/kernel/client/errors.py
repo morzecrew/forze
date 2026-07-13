@@ -4,7 +4,8 @@ require_kms_gcp()
 
 # ....................... #
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from google.api_core import exceptions as gcp_errors
 

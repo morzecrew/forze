@@ -1,5 +1,6 @@
+from collections.abc import Awaitable, Mapping, Sequence
 from datetime import timedelta
-from typing import Any, Awaitable, Protocol, Sequence, runtime_checkable, Mapping
+from typing import Any, Protocol, runtime_checkable
 
 from forze.base.primitives import JsonDict
 

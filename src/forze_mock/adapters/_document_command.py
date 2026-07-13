@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
-    Callable,
     Generic,
     Literal,
-    Sequence,
     cast,
     overload,
 )
@@ -174,9 +172,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         id: UUID | None = None,
         return_new: bool = True,
     ) -> R | None:
-        return await self._insert(
-            payload, id=id, return_new=return_new, conflict_on_duplicate=True
-        )
+        return await self._insert(payload, id=id, return_new=return_new, conflict_on_duplicate=True)
 
     async def _insert(
         self,
@@ -191,9 +187,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         # NOTHING`` idempotent on the real adapters — so a concurrent duplicate must not raise there.
         self._ensure_writable()
         domain = self._build_domain(payload, id)
-        serialized = self._apply_tenant(
-            self._domain_codec().encode_persistence_mapping(domain)
-        )
+        serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(domain))
 
         with self.state.lock:
             store = self._store()
@@ -272,9 +266,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         return_new: Literal[False],
     ) -> None: ...
 
-    async def ensure(
-        self, id: UUID, payload: C, *, return_new: bool = True
-    ) -> R | None:
+    async def ensure(self, id: UUID, payload: C, *, return_new: bool = True) -> R | None:
         self._ensure_writable()
         domain = self._build_domain(payload, id)
 
@@ -325,9 +317,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             raise exc.precondition("ensure_many requires distinct id values in the batch")
 
         if return_new:
-            return [
-                await self.ensure(it.id, it.payload, return_new=True) for it in items
-            ]
+            return [await self.ensure(it.id, it.payload, return_new=True) for it in items]
         for it in items:
             await self.ensure(it.id, it.payload, return_new=False)
         return None
@@ -418,10 +408,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             raise exc.precondition("upsert_many requires distinct id values in the batch")
 
         if return_new:
-            return [
-                await self.upsert(it.id, it.create, it.update, return_new=True)
-                for it in items
-            ]
+            return [await self.upsert(it.id, it.create, it.update, return_new=True) for it in items]
 
         for it in items:
             await self.upsert(it.id, it.create, it.update, return_new=False)
@@ -576,9 +563,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         pks = [u.id for u in updates]
         if len(set(pks)) != len(pks):
-            raise exc.precondition(
-                "update_many requires distinct id values in the batch"
-            )
+            raise exc.precondition("update_many requires distinct id values in the batch")
 
         if return_new:
             if return_diff:
@@ -673,9 +658,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     continue
 
                 current = self._to_domain(dict(raw))
-                updated, diff = current.update(
-                    patch, materialized=self.spec.materialized
-                )
+                updated, diff = current.update(patch, materialized=self.spec.materialized)
 
                 if not diff:
                     continue
@@ -762,8 +745,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 break
 
             updates = [
-                KeyedUpdate(id=UUID(str(r[ID_FIELD])), rev=int(r[REV_FIELD]), dto=dto)
-                for r in rows
+                KeyedUpdate(id=UUID(str(r[ID_FIELD])), rev=int(r[REV_FIELD]), dto=dto) for r in rows
             ]
 
             if return_new:

@@ -25,9 +25,9 @@ from forze.application.contracts.pubsub import (
 )
 from forze.application.contracts.search import SearchResultSnapshotDepKey
 from forze.application.contracts.stream import (
-    StreamCommandDepKey,
     AckStreamGroupAdminDepKey,
     AckStreamGroupQueryDepKey,
+    StreamCommandDepKey,
     StreamQueryDepKey,
 )
 from forze.application.contracts.tenancy import (
@@ -144,19 +144,19 @@ class RedisDepsModule(DepsModule):
     blocking_client: RedisClientPort | None = None
     """Optional second client registered under :data:`RedisBlockingClientDepKey`."""
 
-    caches: (
-        StrKeyMapping[RedisCacheConfig] | StrKeyMapping[RedisUniversalConfig] | None
-    ) = attrs.field(
-        default=None,
-        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    caches: StrKeyMapping[RedisCacheConfig] | StrKeyMapping[RedisUniversalConfig] | None = (
+        attrs.field(
+            default=None,
+            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+        )
     )
     """Mapping from cache names to their Redis-specific configurations."""
 
-    counters: (
-        StrKeyMapping[RedisCounterConfig] | StrKeyMapping[RedisUniversalConfig] | None
-    ) = attrs.field(
-        default=None,
-        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    counters: StrKeyMapping[RedisCounterConfig] | StrKeyMapping[RedisUniversalConfig] | None = (
+        attrs.field(
+            default=None,
+            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+        )
     )
 
     """Mapping from counter names to their Redis-specific configurations."""
@@ -174,9 +174,7 @@ class RedisDepsModule(DepsModule):
     """Redis-specific configurations for idempotency."""
 
     search_snapshots: (
-        StrKeyMapping[RedisSearchResultSnapshotConfig]
-        | StrKeyMapping[RedisUniversalConfig]
-        | None
+        StrKeyMapping[RedisSearchResultSnapshotConfig] | StrKeyMapping[RedisUniversalConfig] | None
     ) = attrs.field(
         default=None,
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
@@ -184,9 +182,7 @@ class RedisDepsModule(DepsModule):
     """Mapping from search snapshot names to their Redis-specific configurations."""
 
     dlocks: (
-        StrKeyMapping[RedisDistributedLockConfig]
-        | StrKeyMapping[RedisUniversalConfig]
-        | None
+        StrKeyMapping[RedisDistributedLockConfig] | StrKeyMapping[RedisUniversalConfig] | None
     ) = attrs.field(
         default=None,
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
@@ -340,11 +336,7 @@ class RedisDepsModule(DepsModule):
 
             elif _is_idem_plain(self.idempotency):
                 idempotency_deps = Deps.plain(
-                    {
-                        IdempotencyDepKey: ConfigurableRedisIdempotency(
-                            config=self.idempotency
-                        )
-                    }
+                    {IdempotencyDepKey: ConfigurableRedisIdempotency(config=self.idempotency)}
                 )
 
         return merge_deps(
@@ -359,9 +351,7 @@ class RedisDepsModule(DepsModule):
             idempotency_deps,
             routed_from_mapping(
                 self.search_snapshots,
-                bindings=[
-                    (SearchResultSnapshotDepKey, ConfigurableRedisSearchResultSnapshot)
-                ],
+                bindings=[(SearchResultSnapshotDepKey, ConfigurableRedisSearchResultSnapshot)],
             ),
             routed_shared_factories(
                 self.dlocks,

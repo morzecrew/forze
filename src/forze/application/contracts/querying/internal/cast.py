@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -160,7 +160,7 @@ class QueryValueCaster:
             )
 
             try:
-                dt = datetime.fromtimestamp(seconds, tz=timezone.utc)
+                dt = datetime.fromtimestamp(seconds, tz=UTC)
 
             except Exception as e:
                 raise exc.precondition(f"Invalid datetime timestamp: {v!r}") from e
@@ -179,11 +179,11 @@ class QueryValueCaster:
 
         if force_tz:
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(tzinfo=UTC)
 
         else:
             if dt.tzinfo is not None:
-                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                dt = dt.astimezone(UTC).replace(tzinfo=None)
 
         return dt
 

@@ -1,11 +1,9 @@
 """Search query and command port definitions."""
 
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from datetime import timedelta
 from typing import (
-    AsyncGenerator,
-    Awaitable,
     Protocol,
-    Sequence,
     TypeVar,
     runtime_checkable,
 )
@@ -14,14 +12,14 @@ from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
 
-from .capabilities import DEFAULT_SEARCH_CAPABILITIES, SearchCapabilities
-from .pages import SearchCountlessPage, SearchCursorPage, SearchPage
 from ..querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
 )
+from .capabilities import DEFAULT_SEARCH_CAPABILITIES, SearchCapabilities
+from .pages import SearchCountlessPage, SearchCursorPage, SearchPage
 from .types import SearchOptions, SearchResultSnapshotOptions
 from .value_objects import SearchResultSnapshotMeta
 

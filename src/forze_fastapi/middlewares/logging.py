@@ -48,9 +48,7 @@ class LoggingMiddleware:
     process_time_header: str = attrs.field(kw_only=True, default="X-Process-Time")
     """The header name for the process time."""
 
-    access_log: AccessLogSampler = attrs.field(
-        kw_only=True, factory=_default_access_sampler
-    )
+    access_log: AccessLogSampler = attrs.field(kw_only=True, factory=_default_access_sampler)
     """Access-log volume policy (sampled + health-excluded by default)."""
 
     # ....................... #
@@ -140,16 +138,16 @@ class LoggingMiddleware:
         http_method = request.method
         http_version = request.scope.get("http_version", "unknown")
 
-        return dict(
-            http={
+        return {
+            "http": {
                 "url": url,
                 "status_code": status_code,
                 "method": http_method,
                 "version": http_version,
             },
-            network={"client": {"ip": client_host, "port": client_port}},
-            duration=process_time_ms,
-        )
+            "network": {"client": {"ip": client_host, "port": client_port}},
+            "duration": process_time_ms,
+        }
 
     # ....................... #
 
@@ -160,14 +158,10 @@ class LoggingMiddleware:
         status_code: int,
         process_time_ms: int,
     ) -> None:
-        if not self.access_log.should_log(
-            subject=scope.get("path"), is_error=status_code >= 400
-        ):
+        if not self.access_log.should_log(subject=scope.get("path"), is_error=status_code >= 400):
             return
 
-        log_extra = self._prepare_log_extra(
-            request, scope, status_code, process_time_ms
-        )
+        log_extra = self._prepare_log_extra(request, scope, status_code, process_time_ms)
         logger.info("Processed request", **log_extra)
 
     # ....................... #

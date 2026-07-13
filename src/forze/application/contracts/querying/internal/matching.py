@@ -15,7 +15,8 @@ distinct from a present ``None``, so ``$null`` / ``$neq`` behave correctly on ab
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
+from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from forze.base.exceptions import exc
@@ -78,9 +79,7 @@ def _eq(left: Any, right: Any) -> bool:
 
 
 def _memb_contains(field_value: Any, values: Sequence[Any]) -> bool:
-    if isinstance(field_value, Sequence) and not isinstance(
-        field_value, (str, bytes, bytearray)
-    ):
+    if isinstance(field_value, Sequence) and not isinstance(field_value, (str, bytes, bytearray)):
         return any(
             _eq(item, candidate)
             for item in field_value  # pyright: ignore[reportUnknownVariableType]
@@ -378,7 +377,7 @@ def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
             raise exc.internal(f"Unknown query expression: {expr!r}")
 
 
-def _match_filters(doc: JsonDict, filters: "QueryFilterExpression | None") -> bool:  # type: ignore[valid-type]
+def _match_filters(doc: JsonDict, filters: QueryFilterExpression | None) -> bool:  # type: ignore[valid-type]
     if filters is None:
         return True
 
@@ -389,7 +388,7 @@ def _match_filters(doc: JsonDict, filters: "QueryFilterExpression | None") -> bo
 # ....................... #
 
 
-def evaluate_filter(row: JsonDict, filters: "QueryFilterExpression | None") -> bool:
+def evaluate_filter(row: JsonDict, filters: QueryFilterExpression | None) -> bool:
     """Whether *row* (a plain field mapping) satisfies *filters* — the in-memory DSL evaluator.
 
     ``None`` filters match every row (a match-all scan). The same parser the adapters use turns the
@@ -403,7 +402,7 @@ def evaluate_filter(row: JsonDict, filters: "QueryFilterExpression | None") -> b
 
 
 def compile_filter(
-    filters: "QueryFilterExpression | None",
+    filters: QueryFilterExpression | None,
 ) -> Callable[[JsonDict], bool]:
     """Parse *filters* **once** into a reusable ``row -> bool`` predicate (``None`` ⇒ match-all).
 

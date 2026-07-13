@@ -1,11 +1,23 @@
 """Execution kernel, dependency injection, and lifecycle."""
 
+from forze.application.contracts.deps import Deps, DepsModule
+
+from .assemble import build_runtime
 from .context import (
     ExecutionContext,
     InvocationMetadata,
     bind_deadline,
     current_deadline,
     remaining_time,
+)
+from .crypto import CryptoDepsModule
+from .deps import (
+    DepsRegistry,
+    FrozenDeps,
+    FrozenDepsRegistry,
+    ResolutionContext,
+    ResolutionTracer,
+    resolution_tracer_from_flag,
 )
 from .domain import (
     DomainEventHandler,
@@ -15,17 +27,23 @@ from .domain import (
     InProcessDomainEventDispatcher,
     outbox_event_handler,
 )
-from forze.application.contracts.deps import Deps, DepsModule
-
-from .deps import (
-    DepsRegistry,
-    FrozenDeps,
-    FrozenDepsRegistry,
-    ResolutionContext,
-    ResolutionTracer,
-    resolution_tracer_from_flag,
-)
 from .lifecycle import LifecyclePlan
+from .observability import (
+    BREAKER_STATE_GAUGE,
+    BULKHEAD_LIMIT_GAUGE,
+    BULKHEAD_QUEUE_GAUGE,
+    CRYPTO_CACHE_HITS_COUNTER,
+    CRYPTO_COLD_MISS_COUNTER,
+    CRYPTO_DATA_KEYS_GENERATED_COUNTER,
+    CRYPTO_DATA_KEYS_UNWRAPPED_COUNTER,
+    DURATION_HISTOGRAM,
+    OPERATIONS_COUNTER,
+    RESILIENCE_EVENTS_COUNTER,
+    instrument_crypto,
+    instrument_operations,
+    instrument_resilience,
+    instrument_tenant_pools,
+)
 from .operations import (
     OperationCatalogEntry,
     OperationDescriptor,
@@ -46,25 +64,7 @@ from .resilience import (
     occ_retry,
     resolve_resilience_executor,
 )
-from .observability import (
-    BREAKER_STATE_GAUGE,
-    BULKHEAD_LIMIT_GAUGE,
-    BULKHEAD_QUEUE_GAUGE,
-    CRYPTO_CACHE_HITS_COUNTER,
-    CRYPTO_COLD_MISS_COUNTER,
-    CRYPTO_DATA_KEYS_GENERATED_COUNTER,
-    CRYPTO_DATA_KEYS_UNWRAPPED_COUNTER,
-    DURATION_HISTOGRAM,
-    OPERATIONS_COUNTER,
-    RESILIENCE_EVENTS_COUNTER,
-    instrument_crypto,
-    instrument_operations,
-    instrument_resilience,
-    instrument_tenant_pools,
-)
 from .runtime import DeploymentProfile, ExecutionRuntime
-from .assemble import build_runtime
-from .crypto import CryptoDepsModule
 from .saga import (
     InProcessSagaExecutor,
     SagaDepsModule,
@@ -74,9 +74,9 @@ from .saga import (
 )
 from .tracing import (
     RuntimeTrace,
+    RuntimeTracer,
     RuntimeTraceValidationError,
     RuntimeTraceValidator,
-    RuntimeTracer,
     TracedOperationResult,
     TraceExpectation,
     TracingEvent,

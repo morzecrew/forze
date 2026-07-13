@@ -4,8 +4,9 @@ require_sqs()
 
 # ....................... #
 
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, ClassVar, Mapping, Sequence, final
+from typing import ClassVar, final
 
 import attrs
 from pydantic import BaseModel
@@ -59,7 +60,7 @@ class SQSQueueAdapter[M: BaseModel](
 
     @staticmethod
     def __is_queue_url(queue: str) -> bool:
-        return queue.startswith("https://") or queue.startswith("http://")
+        return queue.startswith(("https://", "http://"))
 
     # ....................... #
 
@@ -199,8 +200,7 @@ class SQSQueueAdapter[M: BaseModel](
                 # successfully decoded remainder is still returned: one bad
                 # payload must not fail or wedge the whole batch.
                 logger.error(
-                    "SQS queue %s: failed to decode message %s; "
-                    "rejecting without requeue",
+                    "SQS queue %s: failed to decode message %s; rejecting without requeue",
                     physical_queue,
                     msg.id,
                     exc_info=True,
@@ -235,8 +235,7 @@ class SQSQueueAdapter[M: BaseModel](
                     # loop keeps consuming: a single undecodable payload must
                     # not crash (and thereby wedge) the consumer stream.
                     logger.error(
-                        "SQS queue %s: failed to decode message %s; "
-                        "rejecting without requeue",
+                        "SQS queue %s: failed to decode message %s; rejecting without requeue",
                         physical_queue,
                         msg.id,
                         exc_info=True,

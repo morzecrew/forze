@@ -12,7 +12,8 @@ the engine also binds the read-only flag during ``prepare`` as a backstop for an
 lazily-resolved write port.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import attrs
 from pydantic import BaseModel
@@ -39,9 +40,7 @@ Cd = BaseDTO
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TwoPhaseDocumentHandler[In: Bd, Payload, Out: Bm, C: Cd](
-    TwoPhaseHandler[In, Payload, Out]
-):
+class TwoPhaseDocumentHandler[In: Bd, Payload, Out: Bm, C: Cd](TwoPhaseHandler[In, Payload, Out]):
     """Base for two-phase document handlers; override :meth:`prepare` / :meth:`apply`.
 
     ``prepare`` does the external/compute work (reading via :attr:`reader` if

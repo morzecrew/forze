@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterable, final
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsSpec
-from forze.application.contracts.procedure import ProcedureSpec
 from forze.application.contracts.authn import (
     ApiKeyVerifierDepKey,
     AuthnSpec,
@@ -31,6 +31,7 @@ from forze.application.contracts.http import HttpServiceSpec
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySpec
 from forze.application.contracts.inbox import InboxPort, InboxSpec
 from forze.application.contracts.outbox import OutboxSpec
+from forze.application.contracts.procedure import ProcedureSpec
 from forze.application.contracts.pubsub import PubSubCommandPort, PubSubSpec
 from forze.application.contracts.queue import QueueCommandPort, QueueSpec
 from forze.application.contracts.search import (
@@ -67,8 +68,12 @@ from forze.application.integrations.stream import encrypting_stream_command
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze_mock.adapters import (
+    MockAckStreamGroupAdapter,
+    MockAckStreamGroupAdminAdapter,
     MockAnalyticsAdapter,
     MockCacheAdapter,
+    MockCommitStreamGroupAdapter,
+    MockCommitStreamGroupAdminAdapter,
     MockCounterAdapter,
     MockDistributedLockAdapter,
     MockDocumentAdapter,
@@ -87,22 +92,18 @@ from forze_mock.adapters import (
     MockHubSearchAdapter,
     MockIdempotencyAdapter,
     MockInboxAdapter,
-    MockProcedureRegistry,
+    MockJournalTxManagerAdapter,
     MockProcedureAdapter,
+    MockProcedureRegistry,
     MockPubSubAdapter,
     MockQueueAdapter,
     MockSearchAdapter,
     MockSearchCommandAdapter,
     MockSearchManagementAdapter,
-    MockAckStreamGroupAdminAdapter,
-    MockCommitStreamGroupAdapter,
-    MockCommitStreamGroupAdminAdapter,
     MockSearchResultSnapshotAdapter,
     MockState,
     MockStorageAdapter,
     MockStreamAdapter,
-    MockAckStreamGroupAdapter,
-    MockJournalTxManagerAdapter,
     MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
 )
@@ -159,7 +160,7 @@ def _tenant_provider(ctx: ExecutionContext) -> TenantProviderPort:
 
 @attrs.define(slots=True, kw_only=True)
 class _MockFactoryBase:
-    module: "MockDepsModule"
+    module: MockDepsModule
 
     # ....................... #
 
@@ -208,9 +209,7 @@ class ConfigurableMockDocument(_MockFactoryBase):
         cfg = self._route(spec.name)
         domain_model = spec.write["domain"] if spec.write is not None else None
         sources = self.module.query_param_sources
-        query_params_source = (
-            sources.source_for(str(spec.name)) if sources is not None else None
-        )
+        query_params_source = sources.source_for(str(spec.name)) if sources is not None else None
 
         return MockDocumentAdapter[Any, Any, Any, Any](
             spec=spec,
@@ -288,9 +287,7 @@ class ConfigurableMockSearch(_MockFactoryBase):
         cfg = self._route(spec.name)
         snap = None
         if spec.snapshot is not None:
-            snap_port = context.deps.provide(SearchResultSnapshotDepKey)(
-                context, spec.snapshot
-            )
+            snap_port = context.deps.provide(SearchResultSnapshotDepKey)(context, spec.snapshot)
             snap = SearchResultSnapshot(store=snap_port)
         return MockSearchAdapter(
             state=self._state(context),
@@ -363,15 +360,11 @@ class ConfigurableMockHubSearch(_MockFactoryBase):
         legs: list[tuple[str, MockSearchAdapter[Any]]] = []
         search_factory = ConfigurableMockSearch(module=self.module)
 
-        legs.extend(
-            (member.name, search_factory(context, member)) for member in spec.members
-        )
+        legs.extend((member.name, search_factory(context, member)) for member in spec.members)
 
         snap = None
         if spec.snapshot is not None:
-            snap_port = context.deps.provide(SearchResultSnapshotDepKey)(
-                context, spec.snapshot
-            )
+            snap_port = context.deps.provide(SearchResultSnapshotDepKey)(context, spec.snapshot)
             snap = SearchResultSnapshot(store=snap_port)
         return MockHubSearchAdapter(
             hub_spec=spec,
@@ -398,9 +391,7 @@ class ConfigurableMockFederatedSearch(_MockFactoryBase):
             legs.append((member.name, search_factory(context, member)))
         snap = None
         if spec.snapshot is not None:
-            snap_port = context.deps.provide(SearchResultSnapshotDepKey)(
-                context, spec.snapshot
-            )
+            snap_port = context.deps.provide(SearchResultSnapshotDepKey)(context, spec.snapshot)
             snap = SearchResultSnapshot(store=snap_port)
         return MockFederatedSearchAdapter(
             federated_spec=spec,
@@ -473,9 +464,7 @@ class ConfigurableMockInbox(_MockFactoryBase):
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockStorageQuery(_MockFactoryBase):
-    def __call__(
-        self, context: ExecutionContext, spec: StorageSpec
-    ) -> StorageQueryPort:
+    def __call__(self, context: ExecutionContext, spec: StorageSpec) -> StorageQueryPort:
         cfg = self._route(spec.name)
         return MockStorageAdapter(
             state=self._state(context),
@@ -488,9 +477,7 @@ class ConfigurableMockStorageQuery(_MockFactoryBase):
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockStorageCommand(_MockFactoryBase):
-    def __call__(
-        self, context: ExecutionContext, spec: StorageSpec
-    ) -> StorageCommandPort:
+    def __call__(self, context: ExecutionContext, spec: StorageSpec) -> StorageCommandPort:
         cfg = self._route(spec.name)
         return MockStorageAdapter(
             state=self._state(context),
@@ -503,9 +490,7 @@ class ConfigurableMockStorageCommand(_MockFactoryBase):
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockStorageUploads(_MockFactoryBase):
-    def __call__(
-        self, context: ExecutionContext, spec: StorageSpec
-    ) -> StorageUploadSessionPort:
+    def __call__(self, context: ExecutionContext, spec: StorageSpec) -> StorageUploadSessionPort:
         cfg = self._route(spec.name)
         return MockStorageAdapter(
             state=self._state(context),
@@ -518,9 +503,7 @@ class ConfigurableMockStorageUploads(_MockFactoryBase):
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockGraph(_MockFactoryBase):
-    def __call__(
-        self, context: ExecutionContext, spec: GraphModuleSpec
-    ) -> MockGraphAdapter:
+    def __call__(self, context: ExecutionContext, spec: GraphModuleSpec) -> MockGraphAdapter:
         cfg = self._route(spec.name)
         return MockGraphAdapter(
             spec=spec,
@@ -564,11 +547,7 @@ class ConfigurableMockQueue(_MockFactoryBase):
         if not self.command:
             return adapter
 
-        cipher = (
-            context.deps.provide(KeyringDepKey)
-            if context.deps.exists(KeyringDepKey)
-            else None
-        )
+        cipher = context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
         return encrypting_queue_command(
             adapter, spec, cipher=cipher, tenant_provider=_tenant_provider(context)
         )
@@ -606,11 +585,7 @@ class ConfigurableMockPubSub(_MockFactoryBase):
         if not self.command:
             return adapter
 
-        cipher = (
-            context.deps.provide(KeyringDepKey)
-            if context.deps.exists(KeyringDepKey)
-            else None
-        )
+        cipher = context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
         return encrypting_pubsub_command(
             adapter, spec, cipher=cipher, tenant_provider=_tenant_provider(context)
         )
@@ -623,9 +598,7 @@ class ConfigurableMockStream(_MockFactoryBase):
     """When ``True`` (the command-side registration), wrap appends with encryption for an
     ``end_to_end`` route; the query/group-side registrations stay unwrapped."""
 
-    def _adapter(
-        self, context: ExecutionContext, spec: StreamSpec[Any]
-    ) -> MockStreamAdapter[Any]:
+    def _adapter(self, context: ExecutionContext, spec: StreamSpec[Any]) -> MockStreamAdapter[Any]:
         cfg = self._route(spec.name)
         return MockStreamAdapter(
             state=self._state(context),
@@ -653,11 +626,7 @@ class ConfigurableMockStream(_MockFactoryBase):
         if not self.command:
             return adapter
 
-        cipher = (
-            context.deps.provide(KeyringDepKey)
-            if context.deps.exists(KeyringDepKey)
-            else None
-        )
+        cipher = context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
         return encrypting_stream_command(
             adapter, spec, cipher=cipher, tenant_provider=_tenant_provider(context)
         )
@@ -678,9 +647,7 @@ class ConfigurableMockAckStreamGroup(_MockFactoryBase):
             kind="stream",
             supports_at_rest=False,
         )
-        stream = ConfigurableMockStream(
-            module=self.module
-        )._adapter(  # pyright: ignore[reportPrivateUsage]
+        stream = ConfigurableMockStream(module=self.module)._adapter(  # pyright: ignore[reportPrivateUsage]
             context, spec
         )
         return MockAckStreamGroupAdapter(
@@ -698,9 +665,7 @@ class ConfigurableMockAckStreamGroupAdmin(_MockFactoryBase):
         context: ExecutionContext,
         spec: StreamSpec[Any],
     ) -> MockAckStreamGroupAdminAdapter[Any]:
-        stream = ConfigurableMockStream(
-            module=self.module
-        )._adapter(  # pyright: ignore[reportPrivateUsage]
+        stream = ConfigurableMockStream(module=self.module)._adapter(  # pyright: ignore[reportPrivateUsage]
             context, spec
         )
         return MockAckStreamGroupAdminAdapter(stream=stream, state=self._state(context))
@@ -721,9 +686,7 @@ class ConfigurableMockCommitStreamGroup(_MockFactoryBase):
             kind="stream",
             supports_at_rest=False,
         )
-        stream = ConfigurableMockStream(
-            module=self.module
-        )._adapter(  # pyright: ignore[reportPrivateUsage]
+        stream = ConfigurableMockStream(module=self.module)._adapter(  # pyright: ignore[reportPrivateUsage]
             context, spec
         )
         return MockCommitStreamGroupAdapter(
@@ -741,14 +704,10 @@ class ConfigurableMockCommitStreamGroupAdmin(_MockFactoryBase):
         context: ExecutionContext,
         spec: StreamSpec[Any],
     ) -> MockCommitStreamGroupAdminAdapter[Any]:
-        stream = ConfigurableMockStream(
-            module=self.module
-        )._adapter(  # pyright: ignore[reportPrivateUsage]
+        stream = ConfigurableMockStream(module=self.module)._adapter(  # pyright: ignore[reportPrivateUsage]
             context, spec
         )
-        return MockCommitStreamGroupAdminAdapter(
-            stream=stream, state=self._state(context)
-        )
+        return MockCommitStreamGroupAdminAdapter(stream=stream, state=self._state(context))
 
 
 @final
@@ -1022,13 +981,9 @@ class ConfigurableMockAuthn(_MockFactoryBase):
             resolver=port(PrincipalResolverDepKey),
             eligibility=port(PrincipalEligibilityDepKey),
             enabled_methods=methods,
-            password_verifier=(
-                port(PasswordVerifierDepKey) if "password" in methods else None
-            ),
+            password_verifier=(port(PasswordVerifierDepKey) if "password" in methods else None),
             token_verifier=port(TokenVerifierDepKey) if "token" in methods else None,
-            api_key_verifier=(
-                port(ApiKeyVerifierDepKey) if "api_key" in methods else None
-            ),
+            api_key_verifier=(port(ApiKeyVerifierDepKey) if "api_key" in methods else None),
             events=resolve_authn_event_emitter(context, spec),
             lockout=guard,
         )
@@ -1124,6 +1079,5 @@ def route_stubs(
         return {route: ConstantMockPortFactory(port=cls()) for route in routes}
 
     return {
-        route: ConstantMockPortFactory(port=cls(state=state, route=str(route)))
-        for route in routes
+        route: ConstantMockPortFactory(port=cls(state=state, route=str(route))) for route in routes
     }

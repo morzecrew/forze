@@ -25,7 +25,8 @@ shares one timestamp this concentrates onto a single span (a documented best-eff
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, final
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
@@ -212,8 +213,7 @@ class CausalGraph:
                     result=event.fields.get("result"),
                 )
                 for event in history.events
-                if event.kind == _TRACE
-                and event.fields.get("trace_domain") != "operation"
+                if event.kind == _TRACE and event.fields.get("trace_domain") != "operation"
             ),
             key=lambda step: step.seq,
         )
@@ -230,17 +230,13 @@ class CausalGraph:
             # order, which never collides — unlike a shared virtual-time stamp). The projected
             # operation event carries it; fall back to the op_start anchor / recorder seq.
             start_seq = int(
-                event.fields.get(
-                    "start_seq", start.seq if start is not None else event.seq
-                )
+                event.fields.get("start_seq", start.seq if start is not None else event.seq)
             )
             end_seq = int(event.fields.get("end_seq", event.seq))
             outcome = str(event.fields.get("outcome", "ok"))
 
             detail = (
-                f"error={event.fields.get('error')}"
-                if outcome in {"error", "failed"}
-                else outcome
+                f"error={event.fields.get('error')}" if outcome in {"error", "failed"} else outcome
             )
 
             spans.append(
@@ -266,9 +262,7 @@ class CausalGraph:
             )
         )
         facts = tuple(
-            e
-            for e in history.events
-            if e.kind not in _STRUCTURAL and e.kind not in _ENVIRONMENT
+            e for e in history.events if e.kind not in _STRUCTURAL and e.kind not in _ENVIRONMENT
         )
 
         return cls(spans=tuple(spans), facts=facts, timeline=timeline)
@@ -285,9 +279,7 @@ class CausalGraph:
         buckets: dict[int, list[TraceStep]] = {span.call_id: [] for span in spans}
 
         for step in steps:
-            covering = [
-                span for span in spans if span.invoked_at <= step.at <= span.returned_at
-            ]
+            covering = [span for span in spans if span.invoked_at <= step.at <= span.returned_at]
 
             if not covering:
                 continue
@@ -295,10 +287,7 @@ class CausalGraph:
             owner = max(covering, key=lambda span: span.invoked_at)
             buckets[owner.call_id].append(step)
 
-        return [
-            attrs.evolve(span, steps=tuple(buckets.get(span.call_id, ())))
-            for span in spans
-        ]
+        return [attrs.evolve(span, steps=tuple(buckets.get(span.call_id, ()))) for span in spans]
 
     # ....................... #
 
@@ -426,11 +415,7 @@ def _env_label(event: Event) -> str:
 
     if event.kind == "partition":
         loss = fields.get("loss")
-        how = (
-            "cut off"
-            if loss is None or float(loss) >= 1.0
-            else f"lossy p={float(loss):.2f}"
-        )
+        how = "cut off" if loss is None or float(loss) >= 1.0 else f"lossy p={float(loss):.2f}"
         return f"partition (node {fields.get('node')} {how}) → {where}"
 
     return f"latency {float(fields.get('seconds', 0.0)):.3f}s → {where}"
@@ -583,9 +568,7 @@ def format_report(report: ViolationReport) -> str:
         lines.append(f"    [{index}] {op}{suffix}")
 
     if graph.timeline:
-        lines.extend(
-            ("", "  injected environment (faults + latency, by virtual time):")
-        )
+        lines.extend(("", "  injected environment (faults + latency, by virtual time):"))
 
         for event in graph.timeline:
             where = _injection_target(event)
@@ -618,9 +601,7 @@ def format_report(report: ViolationReport) -> str:
 
         for span in graph.spans:
             mark = "·" if span.outcome == "ok" else "✗"
-            lines.append(
-                f"    {mark} {span.op}#{span.call_id} → {span.outcome} [{span.detail}]"
-            )
+            lines.append(f"    {mark} {span.op}#{span.call_id} → {span.outcome} [{span.detail}]")
             lines.extend(
                 f"        ↳ {step.label}" for step in span.steps
             )  # the side effects the op caused
@@ -686,7 +667,7 @@ def _reproduce_kwargs(config: Any) -> str:
 # ....................... #
 
 
-def _reproduce_lines(report: "ViolationReport") -> list[str]:
+def _reproduce_lines(report: ViolationReport) -> list[str]:
     """A copy-pasteable, *faithful* repro block for a counterexample.
 
     Threads the actual config that found the bug into the printed command (so the scheduler /
@@ -726,9 +707,7 @@ def _reproduce_lines(report: "ViolationReport") -> list[str]:
 
     # The rich-environment note is only meaningful when the config that carries those knobs is
     # present.
-    if config is not None and any(
-        (config.faults, config.latency, config.crash, config.cluster)
-    ):
+    if config is not None and any((config.faults, config.latency, config.crash, config.cluster)):
         lines.append(
             "    # note: faults / latency / partitions / crash reproduce faithfully only from a"
         )

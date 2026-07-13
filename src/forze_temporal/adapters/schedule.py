@@ -47,11 +47,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
     ) -> str:
         # An explicit base names the started workflow runs, so it must live in
         # the same tenant id-space as the schedule itself.
-        base = (
-            self.resolve_workflow_id(workflow_id_base)
-            if workflow_id_base is not None
-            else None
-        )
+        base = self.resolve_workflow_id(workflow_id_base) if workflow_id_base is not None else None
 
         return resolve_scheduled_workflow_id(
             schedule_id,

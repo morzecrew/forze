@@ -44,7 +44,7 @@ class MockKeyManagement:
 
     def _kek(self, key_ref: KeyRef) -> bytes:
         version = key_ref.version or "v1"
-        material = f"mock-kek|{key_ref.key_id}|{version}".encode("utf-8")
+        material = f"mock-kek|{key_ref.key_id}|{version}".encode()
         return hashlib.sha256(material).digest()
 
     # ....................... #
@@ -53,7 +53,7 @@ class MockKeyManagement:
         version = key_ref.version or "v1"
         plaintext = secure_random_bytes(_DEK_SIZE)
         kek = self._kek(key_ref)
-        wrapped = bytes(d ^ k for d, k in zip(plaintext, kek))
+        wrapped = bytes(d ^ k for d, k in zip(plaintext, kek, strict=False))
         return DataKey(
             plaintext=plaintext,
             wrapped=wrapped,
@@ -77,4 +77,4 @@ class MockKeyManagement:
             )
 
         kek = self._kek(key_ref)
-        return bytes(w ^ k for w, k in zip(wrapped, kek))
+        return bytes(w ^ k for w, k in zip(wrapped, kek, strict=False))

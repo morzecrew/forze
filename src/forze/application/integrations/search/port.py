@@ -9,18 +9,11 @@ longer re-declares the identical delegation boilerplate.
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Literal, Sequence, TypeVar, overload
+from collections.abc import AsyncGenerator, Sequence
+from typing import Any, Literal, TypeVar, overload
 
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    DEFAULT_SEARCH_CAPABILITIES,
-    SearchCapabilities,
-    SearchCountlessPage,
-    SearchCursorPage,
-    SearchPage,
-    validate_stream_supported,
-)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -28,8 +21,14 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.search import (
+    DEFAULT_SEARCH_CAPABILITIES,
+    SearchCapabilities,
+    SearchCountlessPage,
+    SearchCursorPage,
     SearchOptions,
+    SearchPage,
     SearchResultSnapshotOptions,
+    validate_stream_supported,
 )
 from forze.base.primitives import JsonDict
 
@@ -374,13 +373,9 @@ class SimpleSearchPortMixin[M: BaseModel]:
         options: SearchOptions | None = None,
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[M]]:
-        validate_stream_supported(
-            self.search_capabilities, backend=type(self).__name__
-        )
+        validate_stream_supported(self.search_capabilities, backend=type(self).__name__)
         async for chunk in stream_search_pages(
-            lambda cursor: self.search_cursor(
-                query, filters, cursor, sorts, options=options
-            ),
+            lambda cursor: self.search_cursor(query, filters, cursor, sorts, options=options),
             chunk_size=chunk_size,
         ):
             yield chunk
@@ -395,9 +390,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         options: SearchOptions | None = None,
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[JsonDict]]:
-        validate_stream_supported(
-            self.search_capabilities, backend=type(self).__name__
-        )
+        validate_stream_supported(self.search_capabilities, backend=type(self).__name__)
         async for chunk in stream_search_pages(
             lambda cursor: self.project_search_cursor(
                 fields, query, filters, cursor, sorts, options=options
@@ -416,9 +409,7 @@ class SimpleSearchPortMixin[M: BaseModel]:
         options: SearchOptions | None = None,
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[T]]:
-        validate_stream_supported(
-            self.search_capabilities, backend=type(self).__name__
-        )
+        validate_stream_supported(self.search_capabilities, backend=type(self).__name__)
         async for chunk in stream_search_pages(
             lambda cursor: self.select_search_cursor(
                 return_type, query, filters, cursor, sorts, options=options

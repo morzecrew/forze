@@ -111,9 +111,7 @@ async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONRespon
 # ....................... #
 
 
-async def _request_validation_handler(
-    _: Request, exc_: RequestValidationError
-) -> JSONResponse:
+async def _request_validation_handler(_: Request, exc_: RequestValidationError) -> JSONResponse:
     """Render FastAPI's request-validation error in the shared Forze envelope.
 
     Without this, a body/query/path that fails FastAPI's own parsing returns FastAPI's default

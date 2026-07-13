@@ -5,11 +5,14 @@ from __future__ import annotations
 from typing import (
     final,
 )
+
 import attrs
+
 from forze.application.contracts.counter import CounterPort
 from forze.base.exceptions import exc
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)

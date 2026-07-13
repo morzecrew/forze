@@ -16,12 +16,12 @@ import attrs
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
-    from opentelemetry.metrics import (  # noqa: F401
+    from opentelemetry.metrics import (
         Counter,
         Histogram,
         Meter,
     )
-    from opentelemetry.trace import Span, Tracer  # noqa: F401
+    from opentelemetry.trace import Span, Tracer
 
     from forze.application.contracts.durable.function import DurableRunRecord
 
@@ -47,11 +47,11 @@ class DurableTelemetry:
     (counter) for reclaimed runs; and ``forze.durable.schedule.fires`` (counter) per fire.
     """
 
-    _tracer: "Tracer" = attrs.field(alias="tracer")
-    _runs: "Counter" = attrs.field(alias="runs")
-    _duration: "Histogram" = attrs.field(alias="duration")
-    _recovered: "Counter" = attrs.field(alias="recovered")
-    _fires: "Counter" = attrs.field(alias="fires")
+    _tracer: Tracer = attrs.field(alias="tracer")
+    _runs: Counter = attrs.field(alias="runs")
+    _duration: Histogram = attrs.field(alias="duration")
+    _recovered: Counter = attrs.field(alias="recovered")
+    _fires: Counter = attrs.field(alias="fires")
 
     # ....................... #
 
@@ -59,9 +59,9 @@ class DurableTelemetry:
     def create(
         cls,
         *,
-        tracer: "Tracer | None" = None,
-        meter: "Meter | None" = None,
-    ) -> "DurableTelemetry":
+        tracer: Tracer | None = None,
+        meter: Meter | None = None,
+    ) -> DurableTelemetry:
         """Build the telemetry, using the global OTel providers unless *tracer* / *meter* given."""
 
         from opentelemetry import metrics, trace
@@ -95,7 +95,7 @@ class DurableTelemetry:
 
     # ....................... #
 
-    def run_span(self, record: "DurableRunRecord") -> "AbstractContextManager[Span]":
+    def run_span(self, record: DurableRunRecord) -> AbstractContextManager[Span]:
         """Open a ``durable.run`` span for executing *record*."""
 
         attributes: dict[str, str] = {
@@ -111,7 +111,7 @@ class DurableTelemetry:
 
     # ....................... #
 
-    def mark_error(self, span: "Span", error: BaseException) -> None:
+    def mark_error(self, span: Span, error: BaseException) -> None:
         """Record *error* on *span* and set its status to error."""
 
         from opentelemetry.trace import Status, StatusCode

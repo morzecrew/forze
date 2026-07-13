@@ -4,8 +4,8 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from forze.base.serialization import stored_field_names_for
 from forze.base.exceptions import exc
+from forze.base.serialization import stored_field_names_for
 
 # ----------------------- #
 
@@ -39,9 +39,7 @@ def validate_read_write_gateway_compat(
         raise exc.internal("Write and read gateways must use the same client")
 
     if write_gw.tenant_aware != read_gw.tenant_aware:
-        raise exc.internal(
-            "Write and read gateways must have the same tenant awareness."
-        )
+        raise exc.internal("Write and read gateways must have the same tenant awareness.")
 
 
 # ....................... #

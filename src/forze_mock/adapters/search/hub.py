@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Sequence, cast, final
+from collections.abc import Sequence
+from typing import Any, Literal, cast, final
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchCountlessPage,
-    SearchPage,
-    search_page_from_limit_offset,
-)
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
@@ -21,7 +17,9 @@ from forze.application.contracts.search import (
     HubSearchSpec,
     MultiSourceSearchOptions,
     SearchCapabilities,
+    SearchCountlessPage,
     SearchOptions,
+    SearchPage,
     SearchQueryPort,
     SearchResultSnapshotOptions,
     highlight_fragment_bounds,
@@ -30,6 +28,7 @@ from forze.application.contracts.search import (
     resolve_facet_fields,
     resolve_fusion,
     resolve_highlight,
+    search_page_from_limit_offset,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze_mock.adapters.search._facets_highlights import (
@@ -133,11 +132,7 @@ class MockHubSearchAdapter[M: BaseModel](
         and whole-hub-row highlights; both keyed by the hub model fields."""
 
         facet_fields = resolve_facet_fields(self.hub_spec, options)
-        facets = (
-            compute_facets(all_docs, facet_fields, options=options)
-            if facet_fields
-            else None
-        )
+        facets = compute_facets(all_docs, facet_fields, options=options) if facet_fields else None
 
         highlight = resolve_highlight(self.hub_spec, options)
         fragment_size, max_fragments = highlight_fragment_bounds(options)
@@ -195,11 +190,7 @@ class MockHubSearchAdapter[M: BaseModel](
         ordered = await self._merged_docs(query, filters, sorts, options)
         window = self._window(ordered, pagination)
         page_docs = [doc for doc, _ in window]
-        scores = (
-            [score for _, score in window]
-            if normalize_search_queries(query)
-            else None
-        )
+        scores = [score for _, score in window] if normalize_search_queries(query) else None
         facets, highlights = self._facets_and_highlights(
             query, options, all_docs=[doc for doc, _ in ordered], page_docs=page_docs
         )
@@ -226,11 +217,7 @@ class MockHubSearchAdapter[M: BaseModel](
         ordered = await self._merged_docs(query, filters, sorts, options)
         window = self._window(ordered, pagination)
         page_docs = [doc for doc, _ in window]
-        scores = (
-            [score for _, score in window]
-            if normalize_search_queries(query)
-            else None
-        )
+        scores = [score for _, score in window] if normalize_search_queries(query) else None
         facets, highlights = self._facets_and_highlights(
             query, options, all_docs=[doc for doc, _ in ordered], page_docs=page_docs
         )

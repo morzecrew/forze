@@ -76,9 +76,7 @@ class DelegatedIdentityResolver(MCPIdentityResolver):
     agent: AuthnIdentity
     """The MCP server's own service principal (the delegate performing the calls)."""
 
-    resolve_subject: Callable[
-        [], Awaitable[tuple[AuthnIdentity, TenantIdentity | None]]
-    ]
+    resolve_subject: Callable[[], Awaitable[tuple[AuthnIdentity, TenantIdentity | None]]]
     """Resolve the on-behalf-of user (subject) and tenant for the current call."""
 
     # ....................... #

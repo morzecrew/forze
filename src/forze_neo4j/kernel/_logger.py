@@ -1,5 +1,4 @@
 from forze.base.logging import Logger
-
 from forze_neo4j._logging import ForzeNeo4jLogger
 
 # ----------------------- #

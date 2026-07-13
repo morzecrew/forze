@@ -11,8 +11,9 @@ partial non-transactional writes. Shares the scenario runner's act-driving and t
 from __future__ import annotations
 
 import random
+from collections.abc import Callable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.base.primitives import derive_seed
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 
 
 def run_crash_restart(
-    sim: "Simulation",
+    sim: Simulation,
     scenario: Scenario,
     *,
     act_workload: Sequence[tuple[str, Any]] | None,
@@ -76,9 +77,7 @@ def run_crash_restart(
             crash_policy,
             random.Random(derive_seed(seed, "crash")),  # nosec B311 - seeded sim crash
         )
-        registry = context.registry_from_modules(
-            sim, modules, fault_seed, extra=(crash,)
-        )
+        registry = context.registry_from_modules(sim, modules, fault_seed, extra=(crash,))
         ctx = ExecutionContext(deps=registry.resolve())
         rng = random.Random(derive_seed(seed, "input"))  # nosec B311
         state = scenario.state()
@@ -105,9 +104,7 @@ def run_crash_restart(
             else:
                 generated = scenario.generate_act(state, act_count, rng)
 
-            await scenario_engine.drive_act(
-                sim, ctx, generated, concurrency=concurrency
-            )
+            await scenario_engine.drive_act(sim, ctx, generated, concurrency=concurrency)
 
         except SimulatedCrash:
             # A crash during setup/arrange (serial, outside the act gather).
@@ -150,7 +147,7 @@ def run_crash_restart(
 
 
 def attempt(
-    sim: "Simulation",
+    sim: Simulation,
     scenario: Scenario,
     *,
     act_count: int,
@@ -210,7 +207,7 @@ def attempt(
 
 
 def explore(
-    sim: "Simulation",
+    sim: Simulation,
     scenario: Scenario,
     *,
     act_count: int,

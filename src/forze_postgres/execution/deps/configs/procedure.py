@@ -80,9 +80,7 @@ class PostgresProcedureConfig(TenantAwareIntegrationConfig):
         if (
             self.tenant_aware
             and not callable(self.query_schema)
-            and unreferenced_param_keys(
-                {str(spec.name): self.sql}, pattern=r"%\(tenant\)s"
-            )
+            and unreferenced_param_keys({str(spec.name): self.sql}, pattern=r"%\(tenant\)s")
         ):
             raise exc.configuration(
                 f"Postgres procedure route {str(spec.name)!r} is tenant_aware but its SQL never "

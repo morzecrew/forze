@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from typing import Protocol, final, runtime_checkable
 
 import attrs
@@ -12,7 +13,6 @@ from .payloads import (
     PushNotification,
     WebhookNotification,
 )
-from collections.abc import Awaitable
 
 # ----------------------- #
 

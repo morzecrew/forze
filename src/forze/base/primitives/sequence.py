@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Iterator, Self
+from collections.abc import Iterator
+from typing import Self
 
 import attrs
 

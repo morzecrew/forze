@@ -1,6 +1,7 @@
 """Inngest client that resolves app credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from typing import Callable, Mapping, cast, final
+from collections.abc import Callable, Mapping
+from typing import cast, final
 from uuid import UUID
 
 import attrs

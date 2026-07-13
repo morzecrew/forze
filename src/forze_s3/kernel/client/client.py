@@ -8,17 +8,14 @@ require_s3()
 
 import asyncio
 import io
-from collections.abc import Mapping
-from contextlib import AsyncExitStack, asynccontextmanager
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
     Final,
-    Sequence,
     cast,
     final,
 )
@@ -220,7 +217,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    def __create_client_cm(self) -> AsyncContextManager[AsyncS3Client]:
+    def __create_client_cm(self) -> AbstractAsyncContextManager[AsyncS3Client]:
         """Build the ``aiobotocore`` client async context manager from opts.
 
         When credentials are absent in the options, the ``aws_*`` kwargs are
@@ -244,7 +241,7 @@ class S3Client(S3ClientPort):
 
         cm = session.client("s3", **kwargs)  # type: ignore
 
-        return cast("AsyncContextManager[AsyncS3Client]", cm)
+        return cast("AbstractAsyncContextManager[AsyncS3Client]", cm)
 
     # ....................... #
 
@@ -622,9 +619,7 @@ class S3Client(S3ClientPort):
             resp = await c.get_object(**kwargs)
 
         except c.exceptions.ClientError as e:  # type: ignore[attr-defined]
-            status = (
-                (e.response or {}).get("ResponseMetadata", {}).get("HTTPStatusCode")
-            )
+            status = (e.response or {}).get("ResponseMetadata", {}).get("HTTPStatusCode")
             code = (e.response or {}).get("Error", {}).get("Code")
 
             if status == 304 or code in {"304", "NotModified", "PreconditionFailed"}:
@@ -1338,9 +1333,7 @@ def _decode_tag_set(resp: Mapping[str, Any]) -> dict[str, str]:
     tag_set = cast(list[dict[str, str]], resp.get("TagSet") or [])
 
     for entry in tag_set:
-        if not isinstance(
-            entry, Mapping
-        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+        if not isinstance(entry, Mapping):  # pyright: ignore[reportUnnecessaryIsInstance]
             continue
 
         tag_key = entry.get("Key")

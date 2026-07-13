@@ -1,6 +1,8 @@
 """Structural port for the Neo4j client (implemented by ``Neo4jClient``)."""
 
-from typing import AsyncContextManager, Awaitable, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from contextlib import AbstractAsyncContextManager
+from typing import Protocol, runtime_checkable
 
 from forze.base.primitives import JsonDict
 
@@ -37,6 +39,6 @@ class Neo4jClientPort(Protocol):
         """Whether a transaction is bound on the current context."""
         ...  # pragma: no cover
 
-    def transaction(self, *, database: str | None = None) -> AsyncContextManager[None]:
+    def transaction(self, *, database: str | None = None) -> AbstractAsyncContextManager[None]:
         """Bind an explicit transaction for the duration of the context."""
         ...  # pragma: no cover

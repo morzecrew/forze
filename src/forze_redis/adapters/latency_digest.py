@@ -15,7 +15,8 @@ never become a per-call single point of failure. A backoff drops the shared
 hash (a fleet-wide fresh epoch), and an idle digest expires by TTL.
 """
 
-from typing import Callable, final
+from collections.abc import Callable
+from typing import final
 
 import attrs
 
@@ -97,9 +98,7 @@ class RedisLatencyDigestStore(LatencyDigestStore):
             # a Redis failure). Serve the last known quantile, if still fresh.
             cached = self._cache.get(key)
 
-            return (
-                cached[0] if cached is not None and cached[1] > self.clock() else None
-            )
+            return cached[0] if cached is not None and cached[1] > self.clock() else None
 
         # Compute the bucket index outside the try so a domain error can never
         # masquerade as a Redis failure and silently route to the fallback.
@@ -112,7 +111,7 @@ class RedisLatencyDigestStore(LatencyDigestStore):
                 [str(index), self.window_ttl_ms],
             )
 
-        except Exception:  # noqa: BLE001 — fail-open: the signal must never break calls
+        except Exception:
             self._degrade("observe", key)
             return await self.fallback.observe(key, latency, strat)
 
@@ -132,7 +131,7 @@ class RedisLatencyDigestStore(LatencyDigestStore):
             # whose work already succeeded.
             value = None if res == "" else self._bucketer.index_value(int(res))
 
-        except Exception:  # noqa: BLE001 — fail-open: Redis error or bad result
+        except Exception:
             self._degrade("quantile", key)
             return await self.fallback.observe(key, latency, strat)
 
@@ -152,7 +151,7 @@ class RedisLatencyDigestStore(LatencyDigestStore):
         try:
             await self.client.run_script(LATENCY_DIGEST_RESET, [self._key(key)], [])
 
-        except Exception:  # noqa: BLE001 — fail-open
+        except Exception:
             self._degrade("reset", key)
 
         finally:

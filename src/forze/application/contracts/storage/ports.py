@@ -1,12 +1,9 @@
 """Storage query and command ports for object storage providers."""
 
+from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import (
-    AsyncIterator,
-    Awaitable,
-    Mapping,
     Protocol,
-    Sequence,
     runtime_checkable,
 )
 
@@ -129,9 +126,11 @@ class StorageQueryPort(Protocol):
         whose ``start`` is beyond the object's size is **unsatisfiable** and
         raises a precondition error (the HTTP 416 equivalent).
 
-        Refused (like :meth:`download`'s presign cousins) is out of scope here;
-        when client-side encryption is enabled the adapter rejects ranged reads
-        because a slice of ciphertext cannot be decrypted.
+        Client-side encryption: a chunked-AEAD (``FZEc``) object serves ranged
+        reads by fetching and decrypting only the covering chunks, with the
+        terminal frame verified so truncation cannot be served as authentic; a
+        legacy whole-payload (``FZEv``) envelope cannot be sliced and raises a
+        precondition (``core.storage.range_whole_payload_unsupported``).
 
         :param key: Storage key of the object (validated against traversal).
         :param start: First byte offset to read (inclusive, ``>= 0``).

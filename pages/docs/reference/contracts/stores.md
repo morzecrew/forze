@@ -69,12 +69,27 @@ name). Objects are addressed by string `key`.
 
 | Port | Method | Signature | Notes |
 |------|--------|-----------|-------|
-| query | `download` | `download(key)` | returns a `DownloadedObject` (bytes + metadata) |
-| query | `list` | `list(limit, offset, *, prefix=None)` | `(objects, total_count)` |
+| query | `download` | `download(key)` | the whole object, buffered — a `DownloadedObject` (bytes + metadata) |
+| query | `download_stream` | `download_stream(key)` | a `StreamedDownload` — single-use async chunk iterator, never buffers the whole object; encrypted objects decrypt chunk by chunk |
+| query | `download_range` | `download_range(key, *, start, end=None)` | inclusive byte range as a `RangedDownload` (HTTP `Range` semantics); a `start` beyond the object is a precondition error (the 416 equivalent) |
+| query | `download_if_changed` | `download_if_changed(key, *, if_none_match=None, if_modified_since=None)` | `None` when unchanged (the 304 equivalent); at least one condition required |
+| query | `head` | `head(key, *, include_tags=False)` | an `ObjectHead` — size, content type, ETag, last-modified — without the body; works for raw presigned uploads too |
+| query | `presign_download` | `presign_download(key, *, expires_in)` | time-limited direct-`GET` URL — a bearer credential, never log it |
+| query | `list` | `list(limit, offset, *, prefix=None, include_tags=False)` | `(objects, total_count)` |
 | command | `upload` | `upload(obj)` | takes an `UploadedObject`, returns `StoredObject` metadata |
+| command | `upload_stream` | `upload_stream(chunks, *, filename, ...)` | bounded-memory multipart upload from an async chunk iterator; an encrypting route seals it chunk by chunk |
+| command | `overwrite_stream` | `overwrite_stream(key, chunks, *, ...)` | replace an existing key in place, in bounded memory (the re-encryption seam) |
+| command | `presign_upload` | `presign_upload(key, *, expires_in, content_type=None)` | time-limited direct-`PUT` URL — a **write grant**, so it lives on the command port |
 | command | `delete` | `delete(key)` | remove by key |
+| command | `copy` / `move` | `copy(src_key, dst_key)` | server-side, same-bucket; `move` is copy-then-delete (non-atomic) |
+| command | `put_object_tags` | `put_object_tags(key, tags)` | full tag replacement |
 
-The core port has no presigned-URL method — that's backend-specific.
+A third port, `StorageUploadSessionPort`, drives resumable multipart uploads
+(begin / presign part / list parts / complete / abort) — its HTTP projection is
+on the [FastAPI route generators](../fastapi-routes.md#direct-resumable-uploads)
+page. Ranged reads work over chunked-AEAD encrypted objects (only the covering
+chunks are fetched and decrypted); a legacy whole-payload envelope cannot be
+sliced and refuses with `core.storage.range_whole_payload_unsupported`.
 
 ## Implemented by
 

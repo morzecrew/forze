@@ -7,13 +7,6 @@ from .deps import (
     TenantResolverDepPort,
 )
 from .fingerprint import ensure_dsn_fingerprint, ensure_structured_fingerprint
-from .tenant_hint import (
-    TENANT_ID_HEADER,
-    coalesce_tenant_request_hints,
-    parse_tenant_hint,
-    require_tenant_id,
-    soft_tenant_id,
-)
 from .integration_config import TenantAwareIntegrationConfig
 from .mixins import TenancyMixin
 from .ports import TenantManagementPort, TenantProviderPort, TenantResolverPort
@@ -24,11 +17,18 @@ from .provisioning import (
     TenantProvisionerPort,
 )
 from .registry import TenantClientRegistry, TenantPoolStats
+from .tenant_hint import (
+    TENANT_ID_HEADER,
+    coalesce_tenant_request_hints,
+    parse_tenant_hint,
+    require_tenant_id,
+    soft_tenant_id,
+)
 from .value_objects import TenantIdentity
 from .wiring import (
     IntegrationRouteWarning,
-    TenancyRouteSpec,
     TenancyRouteGroup,
+    TenancyRouteSpec,
     TenantIsolationMode,
     derive_tenant_isolation_mode,
     isolation_satisfies,

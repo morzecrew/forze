@@ -68,11 +68,12 @@ def _merge_exclusion(filters: QueryFilterExpression | None) -> QueryFilterExpres
     return {"$and": [_exclusion(), filters]}
 
 
-def _exclude_deleted_mapper(ctx: ExecutionContext) -> Mapper[Any, Any]:  # noqa: ARG001
-    """A list-request mapper that conjoins the soft-deleted exclusion into ``filters``.
+def exclude_soft_deleted_mapper(ctx: ExecutionContext) -> Mapper[Any, Any]:
+    """A request mapper that conjoins the soft-deleted exclusion into ``filters``.
 
-    Shape-agnostic across the LIST family: every list request DTO carries ``filters``, so one
-    mapper serves LIST / RAW_LIST / LIST_CURSOR / RAW_LIST_CURSOR / AGG_LIST.
+    Shape-agnostic across every ``filters``-carrying request DTO: one mapper serves the
+    document LIST family (LIST / RAW_LIST / LIST_CURSOR / RAW_LIST_CURSOR / AGG_LIST) and
+    the search request DTOs alike.
     """
 
     async def _map(source: Any) -> Any:
@@ -113,7 +114,7 @@ class SoftDeleteAwareGet[R: BaseModel](Handler[DocumentIdDTO, R]):
 
 def _purge_factory(purge: PurgeHook) -> OnSuccessFactory:
     def _factory(ctx: ExecutionContext) -> OnSuccess[Any, Any]:
-        async def _hook(args: Any, result: Any) -> None:  # noqa: ARG001
+        async def _hook(args: Any, result: Any) -> None:
             await purge(ctx, result)
 
         return _hook
@@ -153,11 +154,11 @@ class SoftDeleteWiring:
 
         return attrs.evolve(
             base,
-            list=_exclude_deleted_mapper,
-            projected_list=_exclude_deleted_mapper,
-            cursor_list=_exclude_deleted_mapper,
-            projected_cursor_list=_exclude_deleted_mapper,
-            aggregated_list=_exclude_deleted_mapper,
+            list=exclude_soft_deleted_mapper,
+            projected_list=exclude_soft_deleted_mapper,
+            cursor_list=exclude_soft_deleted_mapper,
+            projected_cursor_list=exclude_soft_deleted_mapper,
+            aggregated_list=exclude_soft_deleted_mapper,
         )
 
     # ....................... #
@@ -199,9 +200,7 @@ class SoftDeleteWiring:
                 reg.bind(ns.key(SoftDeletionKernelOp.DELETE))
                 .bind_tx()
                 .set_route(tx_route)
-                .after_commit(
-                    OnSuccessStep(id=_PURGE_STEP_ID, factory=_purge_factory(self.purge))
-                )
+                .after_commit(OnSuccessStep(id=_PURGE_STEP_ID, factory=_purge_factory(self.purge)))
                 .finish(deep=True)
             )
 

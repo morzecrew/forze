@@ -59,18 +59,10 @@ class ScopedQueueNamingMixin(TenancyMixin):
         separator = self.queue_name_separator
         tenant_id = self.require_tenant_if_aware()
 
-        if tenant_id is not None:
-            tenant_prefix = f"tenant{separator}{tenant_id}"
-
-        else:
-            tenant_prefix = ""
+        tenant_prefix = f"tenant{separator}{tenant_id}" if tenant_id is not None else ""
 
         namespace = await self._resolved_namespace()
 
-        if namespace:
-            namespaced_queue = f"{namespace}{separator}{queue}"
-
-        else:
-            namespaced_queue = queue
+        namespaced_queue = f"{namespace}{separator}{queue}" if namespace else queue
 
         return f"{tenant_prefix}{separator}{namespaced_queue}".lstrip(separator)

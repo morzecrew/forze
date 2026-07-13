@@ -1,7 +1,8 @@
 """Dict-diff and merge helpers used by higher-level composition logic."""
 
+from collections.abc import Iterable
 from copy import deepcopy
-from typing import Any, Iterable, cast
+from typing import Any, cast
 
 from .._logger import logger
 from ..exceptions import exc
@@ -108,7 +109,7 @@ def _diff_recursive(
 
         for k, av in after.items():
             if k not in before:
-                child_path = path + (k,)
+                child_path = (*path, k)
                 logger.trace("Diff added key at %s", child_path)
                 _set_nested(patch, child_path, deepcopy(av))
 
@@ -122,15 +123,15 @@ def _diff_recursive(
                         bv,
                         av,
                         patch,
-                        path + (k,),
+                        (*path, k),
                         deletions_as_none,
                     )
 
         if deletions_as_none:
             for k in before:
                 if k not in after:
-                    logger.trace("Diff removed key at %s", path + (k,))
-                    _set_nested(patch, path + (k,), None)
+                    logger.trace("Diff removed key at %s", (*path, k))
+                    _set_nested(patch, (*path, k), None)
 
         return
 
@@ -235,7 +236,7 @@ def split_touches_from_merge_patch(
         if isinstance(node, dict):
             for k, v in node.items():  # pyright: ignore[reportUnknownVariableType]
                 k = str(k)  # pyright: ignore[reportUnknownArgumentType]
-                p = prefix + (k,)
+                p = (*prefix, k)
 
                 if isinstance(v, (dict, list)):
                     container_paths.add(p)

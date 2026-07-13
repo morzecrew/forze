@@ -88,8 +88,6 @@ class FrozenNotificationRouter:
         """Like :meth:`resolve`, but raise when *event_type* has no mapper."""
 
         if event.event_type not in self.mappers:
-            raise exc.precondition(
-                f"no notification mapper for event_type={event.event_type!r}"
-            )
+            raise exc.precondition(f"no notification mapper for event_type={event.event_type!r}")
 
         return self.resolve(event)

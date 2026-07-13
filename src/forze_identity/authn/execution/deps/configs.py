@@ -1,6 +1,7 @@
 """Kernel and shared-service configuration for authn dependency factories."""
 
-from typing import Collection, final
+from collections.abc import Collection
+from typing import final
 
 import attrs
 
@@ -151,21 +152,15 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
     )
 
     refresh_svc = (
-        RefreshTokenService(
-            pepper=kernel.refresh_token_pepper, config=kernel.refresh_token
-        )
+        RefreshTokenService(pepper=kernel.refresh_token_pepper, config=kernel.refresh_token)
         if kernel.refresh_token_pepper is not None
         else None
     )
 
-    password_svc = (
-        PasswordService(config=kernel.password) if kernel.password is not None else None
-    )
+    password_svc = PasswordService(config=kernel.password) if kernel.password is not None else None
 
     invite_svc = (
-        InviteTokenService(
-            pepper=kernel.invite_token_pepper, config=kernel.invite_token
-        )
+        InviteTokenService(pepper=kernel.invite_token_pepper, config=kernel.invite_token)
         if kernel.invite_token_pepper is not None
         else None
     )
@@ -217,9 +212,7 @@ def validate_route_methods(
         raise exc.internal(msg)
 
     if "token" in methods and shared.access_svc is None and not skip_token_service:
-        msg = (
-            "'token' method requires kernel.access_token_secret or access_token_signer"
-        )
+        msg = "'token' method requires kernel.access_token_secret or access_token_signer"
         raise exc.internal(msg)
 
 
@@ -253,10 +246,7 @@ def validate_shared_matches_route_sets(
 
     if token_lifecycle:
         if shared.access_svc is None:
-            msg = (
-                "token_lifecycle routes require kernel.access_token_secret "
-                "or access_token_signer"
-            )
+            msg = "token_lifecycle routes require kernel.access_token_secret or access_token_signer"
 
             raise exc.internal(msg)
 
@@ -265,14 +255,10 @@ def validate_shared_matches_route_sets(
 
             raise exc.internal(msg)
 
-    if password_lifecycle or password_account_provisioning:
-        if shared.password_svc is None:
-            msg = (
-                "password_lifecycle / password_account_provisioning routes require "
-                "kernel.password"
-            )
+    if (password_lifecycle or password_account_provisioning) and shared.password_svc is None:
+        msg = "password_lifecycle / password_account_provisioning routes require kernel.password"
 
-            raise exc.internal(msg)
+        raise exc.internal(msg)
 
     if password_reset:
         if shared.password_svc is None:
@@ -285,8 +271,7 @@ def validate_shared_matches_route_sets(
 
             raise exc.internal(msg)
 
-    if api_key_lifecycle:
-        if shared.api_key_svc is None:
-            msg = "api_key_lifecycle routes require kernel.api_key_pepper"
+    if api_key_lifecycle and shared.api_key_svc is None:
+        msg = "api_key_lifecycle routes require kernel.api_key_pepper"
 
-            raise exc.internal(msg)
+        raise exc.internal(msg)

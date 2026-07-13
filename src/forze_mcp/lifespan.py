@@ -1,7 +1,7 @@
 """Run an :class:`ExecutionRuntime` for the lifetime of a FastMCP server."""
 
+from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import AsyncGenerator, Callable
 
 from fastmcp import FastMCP
 

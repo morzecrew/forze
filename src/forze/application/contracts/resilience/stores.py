@@ -22,7 +22,8 @@ surfaced as ``breaker_store_error`` / ``rate_limit_store_error`` metrics. The
 in-memory defaults never raise, so single-process deployments see none of this.
 """
 
-from typing import Awaitable, Literal, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import Literal, Protocol, runtime_checkable
 
 from forze.base.primitives import StrKey
 

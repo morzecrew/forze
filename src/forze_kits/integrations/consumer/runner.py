@@ -12,7 +12,6 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.crypto import BytesCipherPort, KeyringDepKey
-from forze_kits.integrations._logger import logger
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.queue import (
     QueueMessage,
@@ -25,6 +24,7 @@ from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.application.integrations.outbox import decrypt_consumed_payload
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 from forze.base.primitives import StrKey
+from forze_kits.integrations._logger import logger
 
 from ..inbox import process_with_inbox
 
@@ -259,9 +259,7 @@ class QueueConsumer[M]:
         # End-to-end encrypted messages arrive as ciphertext envelopes; decrypt before the
         # ladder. ``None`` keyring is fine for plaintext queues — an encrypted message then
         # fails loud (deployment fault) and aborts the loop.
-        cipher = (
-            ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
-        )
+        cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
 
         processed = 0
         duplicates = 0

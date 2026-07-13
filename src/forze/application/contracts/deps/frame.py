@@ -5,8 +5,9 @@ from typing import final
 
 import attrs
 
-from .keys import DepKey
 from forze.base.primitives import StrKey
+
+from .keys import DepKey
 
 # ----------------------- #
 

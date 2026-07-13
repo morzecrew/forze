@@ -1,10 +1,7 @@
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import (
-    AsyncGenerator,
-    Awaitable,
-    Mapping,
     Protocol,
-    Sequence,
     runtime_checkable,
 )
 
@@ -19,10 +16,10 @@ class QueueQueryPort[M](Protocol):
 
     def receive(
         self,
-        queue: str,  # noqa: F841
+        queue: str,
         *,
         limit: int | None = None,
-        timeout: timedelta | None = None,  # noqa: F841
+        timeout: timedelta | None = None,
     ) -> Awaitable[list[QueueMessage[M]]]:
         """Fetch a batch of messages from *queue*.
 
@@ -38,9 +35,9 @@ class QueueQueryPort[M](Protocol):
 
     def consume(
         self,
-        queue: str,  # noqa: F841
+        queue: str,
         *,
-        timeout: timedelta | None = None,  # noqa: F841
+        timeout: timedelta | None = None,
     ) -> AsyncGenerator[QueueMessage[M]]:
         """Yield messages continuously from *queue*.
 
@@ -54,7 +51,7 @@ class QueueQueryPort[M](Protocol):
 
     # ....................... #
 
-    def ack(self, queue: str, ids: Sequence[str]) -> Awaitable[int]:  # noqa: F841
+    def ack(self, queue: str, ids: Sequence[str]) -> Awaitable[int]:
         """Acknowledge processed messages, returning the count acknowledged."""
         ...  # pragma: no cover
 

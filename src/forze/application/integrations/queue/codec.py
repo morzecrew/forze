@@ -1,7 +1,8 @@
 """Shared queue payload codec for message-queue adapters (SQS, RabbitMQ, ...)."""
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Mapping, Protocol
+from typing import Any, Protocol
 
 import attrs
 import orjson

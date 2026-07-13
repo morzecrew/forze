@@ -1,7 +1,8 @@
 """GCS client that resolves GCP credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Callable, Mapping, cast, final
+from typing import cast, final
 from uuid import UUID
 
 import attrs

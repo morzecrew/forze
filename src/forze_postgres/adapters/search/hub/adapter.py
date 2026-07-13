@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Literal, Mapping, Sequence, cast, final
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal, cast, final
 
 import attrs
 from psycopg import sql
@@ -38,8 +39,8 @@ from .._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
 from .._pipeline_sql import SEARCH_SCORE_ALIAS
 from .._port import PostgresSearchPortMixin
 from .._search_count import resolve_ranked_approximate_total
-from ._typing_host import HubSearchHost
 from ._facets_highlights import attach_hub_highlights
+from ._typing_host import HubSearchHost
 from .constants import COMBO_ALIAS, HUB_RANK
 from .cursor import HubSearchCursorMixin
 from .plan import build_hub_search_plan, hub_members_weighted
@@ -189,13 +190,17 @@ class PostgresHubSearchAdapter[M: BaseModel](
         thin = self._hub_thin_projection(plan) is not None
 
         # do_legs (_) is not used for some reason
-        with_clause, params, _, count_relation, data_relation = (
-            await self._hub_build_with_clause_from_plan(
-                plan,
-                filters=filters,
-                combo_limit=combo_cap,
-                thin=thin,
-            )
+        (
+            with_clause,
+            params,
+            _,
+            count_relation,
+            data_relation,
+        ) = await self._hub_build_with_clause_from_plan(
+            plan,
+            filters=filters,
+            combo_limit=combo_cap,
+            thin=thin,
         )
 
         order_sql = await self.render_hub_order_sql(plan)

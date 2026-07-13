@@ -1,7 +1,8 @@
 """ClickHouse client that resolves connection settings per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from datetime import timedelta
-from typing import AsyncGenerator, Callable, Mapping, Sequence, cast, final
+from typing import cast, final
 from uuid import UUID
 
 import attrs

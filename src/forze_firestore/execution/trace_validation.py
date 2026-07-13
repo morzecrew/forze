@@ -1,6 +1,6 @@
 """Runtime-trace validators for Firestore transaction semantics."""
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from forze.application.execution.tracing import TracingEvent, TracingViolation
 
@@ -27,9 +27,7 @@ _READ_PREFIXES = (
 
 
 def _is_write_op(op: str) -> bool:
-    return any(
-        op == prefix or op.startswith(f"{prefix}_") for prefix in _WRITE_PREFIXES
-    )
+    return any(op == prefix or op.startswith(f"{prefix}_") for prefix in _WRITE_PREFIXES)
 
 
 def _is_read_op(op: str) -> bool:
@@ -67,11 +65,7 @@ def validate_reads_before_writes_in_tx(
             write_seen_in_segment = True
             continue
 
-        if (
-            write_seen_in_segment
-            and event.surface == "document_query"
-            and _is_read_op(event.op)
-        ):
+        if write_seen_in_segment and event.surface == "document_query" and _is_read_op(event.op):
             violations.append(
                 TracingViolation(
                     profile=_PROFILE,

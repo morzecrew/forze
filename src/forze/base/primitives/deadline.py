@@ -19,9 +19,9 @@ as the CPU offload primitive can read it without importing upward;
 the application layer.
 """
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Generator
 
 from .datetime import monotonic
 

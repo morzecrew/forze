@@ -20,7 +20,8 @@ The validator contract integrations implement is
 """
 
 import os
-from typing import TYPE_CHECKING, Any, Sequence, final
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
@@ -61,9 +62,7 @@ def log_runtime_trace(deps: "FrozenDeps") -> None:
     if trace is None or not trace.events:
         return
 
-    logger.debug(
-        "Runtime trace (%s events):\n%s", len(trace.events), trace.format_lines()
-    )
+    logger.debug("Runtime trace (%s events):\n%s", len(trace.events), trace.format_lines())
 
 
 # ....................... #
@@ -109,9 +108,7 @@ async def run_traced_operation(
     if trace is not None:
         for validator in validators:
             violations.extend(
-                validate_runtime_trace(
-                    trace, validator=validator, on_violation="return"
-                )
+                validate_runtime_trace(trace, validator=validator, on_violation="return")
             )
         log_runtime_trace(ctx.deps)
 

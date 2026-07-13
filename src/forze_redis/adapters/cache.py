@@ -9,8 +9,9 @@ require_redis()
 
 # ....................... #
 
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from datetime import timedelta
-from typing import Any, Awaitable, Callable, Final, Iterable, Mapping, Sequence, final
+from typing import Any, Final, final
 
 import attrs
 
@@ -389,9 +390,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             else:
                 async with self.client.pipeline(transaction=False):
                     for key in keys:
-                        await self.client.expire(
-                            self.__pointer_key(key), seconds, gt=True
-                        )
+                        await self.client.expire(self.__pointer_key(key), seconds, gt=True)
 
         except Exception:
             logger.debug("Sliding TTL extension failed, continuing", exc_info=True)
@@ -437,9 +436,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
         pointers = await self.__mget_pointers([key])
 
-        if pointers and await self.client.exists(
-            self.__body_key(key, pointers[key])
-        ):
+        if pointers and await self.client.exists(self.__body_key(key, pointers[key])):
             return True
 
         return await self.client.exists(self.__kv_key(key))
@@ -542,9 +539,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         if not key_version_mapping:
             return
 
-        pointer_mapping = {
-            key: version for (key, version) in key_version_mapping.keys()
-        }
+        pointer_mapping = dict(key_version_mapping.keys())
 
         async with self.client.pipeline(transaction=True):
             await self.__mset_bodies(

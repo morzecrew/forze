@@ -112,7 +112,7 @@ class RegressionEntry:
 
     # ....................... #
 
-    def behavior_drifted(self, history: "History") -> bool:
+    def behavior_drifted(self, history: History) -> bool:
         """Whether a replay's *history* diverges from the stored handler-logic signature.
 
         ``True`` only when a :attr:`behavioral_fingerprint` was recorded *and* the replay's

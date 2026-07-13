@@ -1,6 +1,7 @@
 import asyncio
+from collections.abc import Callable, Coroutine, Hashable
 from functools import partial
-from typing import Any, Callable, Coroutine, Hashable, cast, final
+from typing import Any, cast, final
 
 import attrs
 
@@ -166,7 +167,7 @@ class InflightLane[T]:
         try:
             return await asyncio.wait_for(shielded, timeout=timeout)
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise exc.internal("InflightLane timed out") from e
 
     # ....................... #

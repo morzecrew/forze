@@ -66,7 +66,6 @@ class RedisBaseAdapter(TenancyMixin):
 
         await self._resolved_namespace()
 
-
     # ....................... #
 
     async def _resolved_namespace(self) -> str:

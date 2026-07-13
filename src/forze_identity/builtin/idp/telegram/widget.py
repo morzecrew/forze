@@ -161,9 +161,7 @@ class TelegramWidgetVerifier(TokenVerifierPort):
         # ``strict_parsing`` surfaces a malformed query as a clear authentication error
         # rather than silently dropping fields (which would change the data-check-string).
         try:
-            pairs = parse_qsl(
-                credentials.token, keep_blank_values=True, strict_parsing=True
-            )
+            pairs = parse_qsl(credentials.token, keep_blank_values=True, strict_parsing=True)
 
         except ValueError as error:
             raise exc.authentication(
@@ -176,13 +174,9 @@ class TelegramWidgetVerifier(TokenVerifierPort):
     # ....................... #
 
     def _hash_matches(self, fields: Mapping[str, str], presented_hash: str) -> bool:
-        data_check_string = "\n".join(
-            f"{key}={fields[key]}" for key in sorted(fields)
-        )
+        data_check_string = "\n".join(f"{key}={fields[key]}" for key in sorted(fields))
         secret_key = hashlib.sha256(self._bot_token_value().encode()).digest()
-        computed = hmac.new(
-            secret_key, data_check_string.encode(), hashlib.sha256
-        ).hexdigest()
+        computed = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
         return hmac.compare_digest(computed, presented_hash)
 

@@ -1,7 +1,8 @@
 import asyncio
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from contextvars import ContextVar
-from typing import AsyncContextManager, AsyncGenerator, Awaitable, Callable, cast
+from typing import cast
 
 import attrs
 
@@ -198,9 +199,7 @@ class TransactionContext:
         """
 
         if self.depth() == 0:
-            raise exc.internal(
-                f"assert_enlisted({what}) requires an active transaction scope"
-            )
+            raise exc.internal(f"assert_enlisted({what}) requires an active transaction scope")
 
         if isinstance(resource, TransactionallyEnlistable) and (
             not resource.is_transactionally_enlisted()
@@ -231,17 +230,13 @@ class TransactionContext:
         q = self.__cb_stack.get()
 
         if q is None:
-            raise exc.internal(
-                "defer_callback requires an active TransactionContext.scope scope"
-            )
+            raise exc.internal("defer_callback requires an active TransactionContext.scope scope")
 
         q.append((cb, fatal))
 
     # ....................... #
 
-    async def run_or_defer(
-        self, cb: Callable[[], Awaitable[None]], *, fatal: bool = False
-    ) -> None:
+    async def run_or_defer(self, cb: Callable[[], Awaitable[None]], *, fatal: bool = False) -> None:
         """Defer a callback to run after the current root transaction commits successfully, or run it immediately if outside a transaction.
 
         See :meth:`_defer` for the post-commit failure semantics. ``fatal`` distinguishes a
@@ -264,7 +259,7 @@ class TransactionContext:
         *,
         read_only: bool,
         isolation: IsolationLevel | None,
-    ) -> AsyncContextManager[None]:
+    ) -> AbstractAsyncContextManager[None]:
         """Open the root transaction, forwarding ``isolation`` only to IsolationAware managers.
 
         The fail-closed check in :meth:`scope` guarantees an ``IsolationAware`` manager
@@ -275,9 +270,7 @@ class TransactionContext:
         if isolation is None:
             return tx.transaction(read_only=read_only)
 
-        return cast(IsolationAware, tx).transaction(
-            read_only=read_only, isolation=isolation
-        )
+        return cast(IsolationAware, tx).transaction(read_only=read_only, isolation=isolation)
 
     # ....................... #
 
@@ -399,9 +392,7 @@ class TransactionContext:
                 )
 
         token_h = self.__tx_handle.set(
-            TransactionHandle(
-                scope=tx.scope_key, read_only=root_read_only, isolation=isolation
-            )
+            TransactionHandle(scope=tx.scope_key, read_only=root_read_only, isolation=isolation)
         )
         token_d = self.__tx_depth.set(1)
         token_cb = self.__cb_stack.set([])
@@ -421,9 +412,7 @@ class TransactionContext:
 
         try:
             try:
-                async with self._open_root(
-                    tx, read_only=root_read_only, isolation=isolation
-                ):
+                async with self._open_root(tx, read_only=root_read_only, isolation=isolation):
                     yield
 
                     # Body completed cleanly; leaving this block runs the driver commit.
@@ -499,11 +488,7 @@ class TransactionContext:
             # error a poison-handling loop would swallow.
             task = asyncio.current_task()
 
-            if (
-                not commit_reached
-                or task is None
-                or active_operation_var.get() is not task
-            ):
+            if not commit_reached or task is None or active_operation_var.get() is not task:
                 raise
 
             # The conversion absorbs exactly the cancellation it caught, so
@@ -555,8 +540,7 @@ class TransactionContext:
             except Exception as error:
                 name = getattr(cb, "__qualname__", None) or repr(cb)
                 logger.exception(
-                    "After-commit callback %s/%s (%s) failed "
-                    "(transaction already committed)",
+                    "After-commit callback %s/%s (%s) failed (transaction already committed)",
                     index + 1,
                     len(deferred),
                     name,
@@ -585,9 +569,7 @@ class TransactionContext:
             if handler is not None:
                 try:
                     handler(
-                        AfterCommitError(
-                            route=route, tx_id=tx_id, failures=tuple(effect_failures)
-                        )
+                        AfterCommitError(route=route, tx_id=tx_id, failures=tuple(effect_failures))
                     )
 
                 except Exception:

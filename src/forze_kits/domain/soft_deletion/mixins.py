@@ -27,9 +27,7 @@ class SoftDeletionMixin(CoreModel):
         """Reject updates to soft-deleted documents unless only is deleted changes."""
 
         keys = set(diff.keys())
-        soft_deletion = (
-            SOFT_DELETE_FIELD in keys and keys <= ALLOWED_SOFT_DELETE_DIFF_KEYS
-        )
+        soft_deletion = SOFT_DELETE_FIELD in keys and keys <= ALLOWED_SOFT_DELETE_DIFF_KEYS
 
         if before.is_deleted and not soft_deletion:
             raise exc.domain("Cannot update a soft-deleted document.")

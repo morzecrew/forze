@@ -16,7 +16,8 @@ one row. Ordering/cursor values are the HLC the durable path carries, stored
 packed (monotonic int, range-queryable). Encryption is whatever the app sets on the spec.
 """
 
-from typing import Any, AsyncIterator, Final, final
+from collections.abc import AsyncIterator
+from typing import Any, Final, final
 from uuid import UUID, uuid5
 
 import attrs
@@ -245,9 +246,7 @@ class DocumentRealtimeMailbox:
 
     # ....................... #
 
-    async def read_since(
-        self, *, principal: str, since: HlcTimestamp | None
-    ) -> list[MailboxEntry]:
+    async def read_since(self, *, principal: str, since: HlcTimestamp | None) -> list[MailboxEntry]:
         values: dict[str, Any] = {"principal": principal}
 
         if since is not None:
@@ -321,9 +320,7 @@ class DocumentRealtimeMailbox:
 
     # ....................... #
 
-    async def position_of(
-        self, *, principal: str, event_id: str
-    ) -> HlcTimestamp | None:
+    async def position_of(self, *, principal: str, event_id: str) -> HlcTimestamp | None:
         row = await self.query.find(
             filters={"$values": {"principal": principal, "event_id": event_id}}
         )
@@ -340,18 +337,14 @@ class DocumentRealtimeMailbox:
         while True:
             stale = await self.query.project_many(
                 ["id"],
-                filters={
-                    "$values": {"principal": principal, "hlc": {"$lte": before.pack()}}
-                },
+                filters={"$values": {"principal": principal, "hlc": {"$lte": before.pack()}}},
                 pagination={"limit": self.cap},
             )
 
             if not stale.hits:
                 return
 
-            await self.command.kill_many(
-                [UUID(str(row["id"])) for row in stale.hits]
-            )
+            await self.command.kill_many([UUID(str(row["id"])) for row in stale.hits])
             self._trimmed += len(stale.hits)
 
 
@@ -400,9 +393,7 @@ class DocumentMailboxCursors:
 
     # ....................... #
 
-    async def advance(
-        self, *, principal: str, client_key: str, up_to: HlcTimestamp
-    ) -> None:
+    async def advance(self, *, principal: str, client_key: str, up_to: HlcTimestamp) -> None:
         target = up_to.pack()
 
         # Monotonic compare-and-advance. The first ack inserts under a deterministic
@@ -415,9 +406,7 @@ class DocumentMailboxCursors:
             if row is None:
                 try:
                     await self.command.create(
-                        _CursorCreate(
-                            principal=principal, client_key=client_key, hlc=target
-                        ),
+                        _CursorCreate(principal=principal, client_key=client_key, hlc=target),
                         id=_cursor_id(principal, client_key),
                         return_new=False,
                     )
@@ -474,9 +463,7 @@ def build_realtime_mailbox(
     """
 
     if ctx.inv_ctx.is_read_only():
-        raise exc.precondition(
-            "Cannot build a realtime mailbox in a read-only (QUERY) operation"
-        )
+        raise exc.precondition("Cannot build a realtime mailbox in a read-only (QUERY) operation")
 
     resolved = spec if spec is not None else realtime_mailbox_spec()
 
@@ -491,16 +478,12 @@ def build_realtime_mailbox(
 def build_realtime_cursors(
     ctx: ExecutionContext,
     *,
-    spec: (
-        DocumentSpec[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate] | None
-    ) = None,
+    spec: (DocumentSpec[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate] | None) = None,
 ) -> DocumentMailboxCursors:
     """Resolve the cursor collection's document ports once and build it (write-side guard)."""
 
     if ctx.inv_ctx.is_read_only():
-        raise exc.precondition(
-            "Cannot build realtime cursors in a read-only (QUERY) operation"
-        )
+        raise exc.precondition("Cannot build realtime cursors in a read-only (QUERY) operation")
 
     resolved = spec if spec is not None else realtime_cursor_spec()
 

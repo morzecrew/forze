@@ -1,7 +1,8 @@
 """Meilisearch dependency configuration types."""
 
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal
 
 import attrs
 

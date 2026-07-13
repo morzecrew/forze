@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import (
     Any,
-    AsyncGenerator,
-    Mapping,
-    Sequence,
     cast,
     final,
 )
@@ -553,9 +551,7 @@ class MockCommitStreamGroupAdapter[M: BaseModel](CommitStreamGroupQueryPort[M]):
             for topic in topics:
                 partitions = self._partitions(topic)
 
-                for msg, partition, offset in _assign_positions(
-                    self._log(topic), partitions
-                ):
+                for msg, partition, offset in _assign_positions(self._log(topic), partitions):
                     if offset < self._cursor(group, topic, partition):
                         continue
 
@@ -651,11 +647,9 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
 
     def _end_offsets(self, topic: str) -> dict[int, int]:
         partitions = self._partitions(topic)
-        counts: dict[int, int] = {p: 0 for p in range(partitions)}
+        counts: dict[int, int] = dict.fromkeys(range(partitions), 0)
 
-        for _msg, partition, _offset in _assign_positions(
-            self._log(topic), partitions
-        ):
+        for _msg, partition, _offset in _assign_positions(self._log(topic), partitions):
             counts[partition] = counts.get(partition, 0) + 1
 
         return counts
@@ -679,9 +673,7 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
 
         return end
 
-    def _target_offset(
-        self, target: OffsetReset, *, end: int, topic: str, partition: int
-    ) -> int:
+    def _target_offset(self, target: OffsetReset, *, end: int, topic: str, partition: int) -> int:
         if target.kind is OffsetResetKind.EARLIEST:
             return 0
 
@@ -751,9 +743,7 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
 
     # ....................... #
 
-    async def reset_offsets(
-        self, group: str, stream: str, *, to: OffsetReset
-    ) -> None:
+    async def reset_offsets(self, group: str, stream: str, *, to: OffsetReset) -> None:
         if not self.capabilities().supports_replay:
             raise exc.configuration(
                 f"Stream {stream!r} backend does not support offset reset / replay.",
@@ -765,10 +755,10 @@ class MockCommitStreamGroupAdminAdapter[M: BaseModel](CommitStreamGroupAdminPort
             ends = self._end_offsets(stream)
 
             for partition in range(partitions):
-                self.state.commit_stream_offsets[
-                    (self._ns(), group, stream, partition)
-                ] = self._target_offset(
-                    to, end=ends.get(partition, 0), topic=stream, partition=partition
+                self.state.commit_stream_offsets[(self._ns(), group, stream, partition)] = (
+                    self._target_offset(
+                        to, end=ends.get(partition, 0), topic=stream, partition=partition
+                    )
                 )
 
     # ....................... #

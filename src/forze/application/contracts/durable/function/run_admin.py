@@ -8,8 +8,9 @@ Backed by the same ``durable_run`` relation; listing never mutates a run.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Sequence
 from datetime import datetime
-from typing import Awaitable, Protocol, Sequence, final, runtime_checkable
+from typing import Protocol, final, runtime_checkable
 
 import attrs
 
@@ -93,8 +94,7 @@ def build_run_page(records: Sequence[DurableRunRecord], limit: int) -> DurableRu
         # and hide older runs — fail loud instead, since a listing store always sets it.
         if last.created_at is None:
             raise exc.internal(
-                "Cannot build a durable-run page cursor: the boundary record has no "
-                "created_at.",
+                "Cannot build a durable-run page cursor: the boundary record has no created_at.",
             )
 
         next_cursor = encode_run_cursor(last.created_at, last.run_id)
@@ -120,7 +120,7 @@ class DurableRunAdminPort(Protocol):
         status: DurableRunStatus | None = None,
         name: str | None = None,
         limit: int = 50,
-        cursor: str | None = None,  # noqa: F841
+        cursor: str | None = None,
     ) -> Awaitable[DurableRunPage]:
         """Return a newest-first page of runs, filtered by *status* / *name* if given.
 

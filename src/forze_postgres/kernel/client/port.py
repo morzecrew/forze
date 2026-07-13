@@ -7,14 +7,12 @@ require_psycopg()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator, Awaitable, Sequence
+from contextlib import AbstractAsyncContextManager
 from typing import (
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
-    Awaitable,
     Literal,
     Protocol,
-    Sequence,
     overload,
 )
 
@@ -74,13 +72,13 @@ class PostgresClientPort(Protocol):
 
     def bound_connection(
         self,
-    ) -> AsyncContextManager[AsyncConnection]: ...  # pragma: no cover
+    ) -> AbstractAsyncContextManager[AsyncConnection]: ...  # pragma: no cover
 
     def transaction(
         self,
         *,
         options: PostgresTransactionOptions | None = None,
-    ) -> AsyncContextManager[AsyncConnection | None]: ...  # pragma: no cover
+    ) -> AbstractAsyncContextManager[AsyncConnection | None]: ...  # pragma: no cover
 
     @overload
     def execute(

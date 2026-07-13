@@ -13,9 +13,10 @@ stays ``SimulationConfig(seeds=range(64))``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Sequence
+from typing import Any
 
 import attrs
 
@@ -267,7 +268,7 @@ class SimulationConfig:
     # ``SimulationConfig.thorough(seeds=range(1000), concurrency=16)``.
 
     @classmethod
-    def quick(cls, **overrides: Any) -> "SimulationConfig":
+    def quick(cls, **overrides: Any) -> SimulationConfig:
         """A fast inner-loop sweep — a handful of seeds under the default shuffle, small
         workloads. Runs in seconds; the config to reach for while iterating."""
 
@@ -277,7 +278,7 @@ class SimulationConfig:
         return cls(**overrides)
 
     @classmethod
-    def thorough(cls, **overrides: Any) -> "SimulationConfig":
+    def thorough(cls, **overrides: Any) -> SimulationConfig:
         """A pre-merge sweep — a broad seed range under PCT (biased toward deep interleavings),
         higher concurrency, and longer workloads. The 'before I ship' run."""
 
@@ -288,7 +289,7 @@ class SimulationConfig:
         return cls(**overrides)
 
     @classmethod
-    def nightly(cls, **overrides: Any) -> "SimulationConfig":
+    def nightly(cls, **overrides: Any) -> SimulationConfig:
         """A heavy overnight sweep — thousands of seeds under deeper PCT, sized for
         :func:`~forze_dst.artifacts.parallel_sweep`. Add a fault / latency policy for a
         hostile-environment run."""
@@ -300,7 +301,7 @@ class SimulationConfig:
         return cls(**overrides)
 
     @classmethod
-    def reproduce(cls, seed: int, **overrides: Any) -> "SimulationConfig":
+    def reproduce(cls, seed: int, **overrides: Any) -> SimulationConfig:
         """A single-seed debug run — sweep exactly *seed*. Reach for it with a seed from a
         :class:`~forze_dst.ViolationReport` to re-drive just that timeline."""
 

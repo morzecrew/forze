@@ -21,12 +21,12 @@ from .kernel.client import (
     TemporalConfig,
 )
 from .kernel.crypto import EncryptingPayloadCodec, encrypting_data_converter
+from .saga import TemporalSaga
 from .sandbox import (
     PASSTHROUGH_MODULES,
     default_sandbox_restrictions,
     sandboxed_workflow_runner,
 )
-from .saga import TemporalSaga
 
 # ----------------------- #
 

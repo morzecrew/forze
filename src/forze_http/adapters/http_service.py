@@ -29,9 +29,7 @@ from forze_http.kernel.client.errors import exc_interceptor
 
 
 def _return_type_allows_empty(return_type: type[BaseModel]) -> bool:
-    return not any(
-        field_info.is_required() for field_info in return_type.model_fields.values()
-    )
+    return not any(field_info.is_required() for field_info in return_type.model_fields.values())
 
 
 # ....................... #

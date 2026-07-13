@@ -6,13 +6,13 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence, TypeVar, cast
+from collections.abc import Sequence
+from typing import Any, TypeVar, cast
 
 import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchCursorPage
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
@@ -24,6 +24,7 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.search import (
     MultiSourceSearchOptions,
+    SearchCursorPage,
     SearchOptions,
     cursor_return_fields_for_select,
     facet_size_of,
@@ -145,13 +146,17 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         thin_fields = self._hub_thin_projection(plan)
         thin = thin_fields is not None
 
-        with_clause, params, do_legs, count_rel, data_relation = (
-            await self._hub_build_with_clause_from_plan(
-                plan,
-                filters=filters,
-                combo_limit=combo_cap,
-                thin=thin,
-            )
+        (
+            with_clause,
+            params,
+            do_legs,
+            count_rel,
+            data_relation,
+        ) = await self._hub_build_with_clause_from_plan(
+            plan,
+            filters=filters,
+            combo_limit=combo_cap,
+            thin=thin,
         )
 
         # Facets count over the full merged set, so capture the WITH-clause params before the
@@ -246,14 +251,11 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         cols: sql.Composable
 
         if (
-            thin
-            and thin_fields is not None  # pyright: ignore[reportUnnecessaryComparison]
+            thin and thin_fields is not None  # pyright: ignore[reportUnnecessaryComparison]
         ):
             # Phase A selects only key/sort columns (+ rank); heavy columns are hydrated
             # for the page after the keyset bounds are computed.
-            cols = sql.SQL(", ").join(
-                sql.Identifier(COMBO_ALIAS, f) for f in thin_fields
-            )
+            cols = sql.SQL(", ").join(sql.Identifier(COMBO_ALIAS, f) for f in thin_fields)
         else:
             cols = self._hub_host.return_clause(
                 return_type,
@@ -295,9 +297,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         params.append(lim + 1)
 
         raw_rows = list(
-            await self._hub_host.client.fetch_all(
-                data_stmt, params, row_factory="dict"
-            ),
+            await self._hub_host.client.fetch_all(data_stmt, params, row_factory="dict"),
         )  # type: ignore[assignment, arg-type]
 
         rows, has_more, nxt, prv = keyset_page_bounds(

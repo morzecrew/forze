@@ -1,6 +1,7 @@
 """Low-level executors for resolved scope stages."""
 
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from forze.application.contracts.execution import (
     Before,

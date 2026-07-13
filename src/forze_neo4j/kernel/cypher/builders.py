@@ -32,9 +32,7 @@ def quote(name: str) -> str:
 # ....................... #
 
 
-def _match_map(
-    key_field: str, tenant_field: str | None, *, key_param: str = "key"
-) -> str:
+def _match_map(key_field: str, tenant_field: str | None, *, key_param: str = "key") -> str:
     if tenant_field:
         return f"{{{quote(key_field)}: ${key_param}, {quote(tenant_field)}: $tenant}}"
 
@@ -44,9 +42,7 @@ def _match_map(
 # ....................... #
 
 
-def _rel_key_map(
-    key_field: str | None, tenant_field: str | None, *, key_param: str
-) -> str:
+def _rel_key_map(key_field: str | None, tenant_field: str | None, *, key_param: str) -> str:
     """Inline the keyed-edge ``MERGE`` relationship map.
 
     Empty for a keyless merge; ``{<key>: $key_param}`` for a keyed edge, with
@@ -58,9 +54,7 @@ def _rel_key_map(
         return ""
 
     if tenant_field:
-        return (
-            f" {{{quote(key_field)}: ${key_param}, {quote(tenant_field)}: $tenant}}"
-        )
+        return f" {{{quote(key_field)}: ${key_param}, {quote(tenant_field)}: $tenant}}"
 
     return f" {{{quote(key_field)}: ${key_param}}}"
 
@@ -77,9 +71,7 @@ def _tenant_only_map(tenant_field: str | None, *, interior: bool) -> str:
     return ""
 
 
-def _path_tenant_pred(
-    tenant_field: str | None, *, interior: bool, path_var: str = "path"
-) -> str:
+def _path_tenant_pred(tenant_field: str | None, *, interior: bool, path_var: str = "path") -> str:
     """``WHERE``-clause constraining every node on *path_var* to ``$tenant``.
 
     Used for variable-length and shortest-path matches where interior nodes cannot be
@@ -89,9 +81,7 @@ def _path_tenant_pred(
     if not (tenant_field and interior):
         return ""
 
-    return (
-        f"WHERE all(_n IN nodes({path_var}) WHERE _n.{quote(tenant_field)} = $tenant)\n"
-    )
+    return f"WHERE all(_n IN nodes({path_var}) WHERE _n.{quote(tenant_field)} = $tenant)\n"
 
 
 # ....................... #
@@ -127,17 +117,14 @@ def _rel(
 
 def get_vertex(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
     return (
-        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)})\n"
-        f"RETURN properties(n) AS n"
+        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)})\nRETURN properties(n) AS n"
     )
 
 
 # ....................... #
 
 
-def vertex_exists(
-    label: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def vertex_exists(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
     return (
         f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)})\n"
         f"RETURN count(n) > 0 AS exists"
@@ -154,9 +141,7 @@ def create_vertex(label: str) -> str:
 # ....................... #
 
 
-def update_vertex(
-    label: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def update_vertex(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
     return (
         f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)})\n"
         f"SET n += $props\nRETURN properties(n) AS n"
@@ -166,9 +151,7 @@ def update_vertex(
 # ....................... #
 
 
-def delete_vertex(
-    label: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def delete_vertex(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
     return f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)})\nDETACH DELETE n"
 
 
@@ -222,9 +205,7 @@ def create_edge(
 
     if merge:
         rel_key = _rel_key_map(key_field, tenant_field, key_param=key_param)
-        body = (
-            f"MERGE (a)-[r:{quote(edge_type)}{rel_key}]->(b)\nON CREATE SET r += $props\n"
-        )
+        body = f"MERGE (a)-[r:{quote(edge_type)}{rel_key}]->(b)\nON CREATE SET r += $props\n"
     else:
         body = f"CREATE (a)-[r:{quote(edge_type)}]->(b)\nSET r += $props\n"
 
@@ -465,10 +446,7 @@ def edge_uniqueness_constraint(
 def property_index(name: str, label: str, field: str) -> str:
     """A single-property node index (e.g. the tenant discriminator for scoped matches)."""
 
-    return (
-        f"CREATE INDEX {quote(name)} IF NOT EXISTS "
-        f"FOR (n:{quote(label)}) ON (n.{quote(field)})"
-    )
+    return f"CREATE INDEX {quote(name)} IF NOT EXISTS FOR (n:{quote(label)}) ON (n.{quote(field)})"
 
 
 def drop_constraint(name: str) -> str:
@@ -613,19 +591,14 @@ def property_predicate(alias: str, keys: Sequence[str]) -> str:
     return " AND ".join(f"{alias}.{quote(k)} = $pf_{k}" for k in keys)
 
 
-def get_vertices_by_keys(
-    label: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def get_vertices_by_keys(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
     where = _where(f"n.{quote(key_field)} IN $keys", _tenant_pred("n", tenant_field))
     return (
-        f"MATCH (n:{quote(label)})\n{where}"
-        f"RETURN properties(n) AS n, n.{quote(key_field)} AS _key"
+        f"MATCH (n:{quote(label)})\n{where}RETURN properties(n) AS n, n.{quote(key_field)} AS _key"
     )
 
 
-def get_edges_by_keys(
-    edge_type: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def get_edges_by_keys(edge_type: str, key_field: str, *, tenant_field: str | None = None) -> str:
     where = _where(
         f"r.{quote(key_field)} IN $keys",
         _tenant_pred("a", tenant_field),
@@ -637,9 +610,7 @@ def get_edges_by_keys(
     )
 
 
-def edge_exists_by_key(
-    edge_type: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def edge_exists_by_key(edge_type: str, key_field: str, *, tenant_field: str | None = None) -> str:
     where = _where(
         f"r.{quote(key_field)} = $key",
         _tenant_pred("a", tenant_field),
@@ -783,9 +754,7 @@ def find_edges(
 # Writes (update / delete / ensure / bulk)
 
 
-def update_edge_by_key(
-    edge_type: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def update_edge_by_key(edge_type: str, key_field: str, *, tenant_field: str | None = None) -> str:
     return (
         f"MATCH ()-[r:{quote(edge_type)} {_match_map(key_field, tenant_field)}]->()\n"
         f"SET r += $props\nRETURN properties(r) AS r"
@@ -809,13 +778,8 @@ def update_edge_by_endpoints(
     )
 
 
-def delete_edge_by_key(
-    edge_type: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
-    return (
-        f"MATCH ()-[r:{quote(edge_type)} {_match_map(key_field, tenant_field)}]->()\n"
-        f"DELETE r"
-    )
+def delete_edge_by_key(edge_type: str, key_field: str, *, tenant_field: str | None = None) -> str:
+    return f"MATCH ()-[r:{quote(edge_type)} {_match_map(key_field, tenant_field)}]->()\nDELETE r"
 
 
 def delete_edge_by_endpoints(
@@ -835,9 +799,7 @@ def delete_edge_by_endpoints(
     )
 
 
-def ensure_vertex(
-    label: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def ensure_vertex(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
     """MERGE on the key (+ tenant); populate only on create, so an existing vertex is
     returned unchanged (create-if-missing semantics)."""
 
@@ -854,16 +816,12 @@ def create_vertices(label: str) -> str:
     )
 
 
-def delete_vertices(
-    label: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def delete_vertices(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
     where = _where(f"n.{quote(key_field)} IN $keys", _tenant_pred("n", tenant_field))
     return f"MATCH (n:{quote(label)})\n{where}DETACH DELETE n"
 
 
-def delete_edges_by_keys(
-    edge_type: str, key_field: str, *, tenant_field: str | None = None
-) -> str:
+def delete_edges_by_keys(edge_type: str, key_field: str, *, tenant_field: str | None = None) -> str:
     where = _where(
         f"r.{quote(key_field)} IN $keys",
         _tenant_pred("a", tenant_field),

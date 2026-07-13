@@ -111,9 +111,7 @@ class PostgresConfig:
 
     def __attrs_post_init__(self) -> None:
         if self.min_size > self.max_size:
-            raise exc.configuration(
-                "Minimum size must be less than or equal to maximum size"
-            )
+            raise exc.configuration("Minimum size must be less than or equal to maximum size")
 
         if self.min_size < 0:
             raise exc.configuration("Minimum size must be greater than 0")
@@ -128,9 +126,7 @@ class PostgresConfig:
             raise exc.configuration("pool_headroom must be greater than or equal to 0")
 
         if self.max_concurrent_queries is not None and self.max_concurrent_queries < 1:
-            raise exc.configuration(
-                "max_concurrent_queries must be at least 1 when set"
-            )
+            raise exc.configuration("max_concurrent_queries must be at least 1 when set")
 
         if self.min_size > 10:
             logger.warning(
@@ -145,9 +141,7 @@ class PostgresConfig:
             )
 
         if self.application_name is not None and len(self.application_name) > 63:
-            raise exc.configuration(
-                "application_name must be at most 63 characters for Postgres"
-            )
+            raise exc.configuration("application_name must be at most 63 characters for Postgres")
 
         if self.max_lifetime.total_seconds() <= 0:
             raise exc.configuration("Max lifetime must be positive")
@@ -158,10 +152,7 @@ class PostgresConfig:
         if self.reconnect_timeout.total_seconds() <= 0:
             raise exc.configuration("Reconnect timeout must be positive")
 
-        if (
-            self.statement_timeout is not None
-            and self.statement_timeout.total_seconds() <= 0
-        ):
+        if self.statement_timeout is not None and self.statement_timeout.total_seconds() <= 0:
             raise exc.configuration("Statement timeout must be positive")
 
         if self.lock_timeout is not None and self.lock_timeout.total_seconds() <= 0:
@@ -171,6 +162,4 @@ class PostgresConfig:
             self.idle_in_transaction_session_timeout is not None
             and self.idle_in_transaction_session_timeout.total_seconds() <= 0
         ):
-            raise exc.configuration(
-                "Idle in transaction session timeout must be positive"
-            )
+            raise exc.configuration("Idle in transaction session timeout must be positive")

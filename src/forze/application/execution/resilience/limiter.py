@@ -81,9 +81,7 @@ class Gradient2Limiter:
             raise exc.configuration("Gradient2 max_limit must be >= min_limit")
 
         if not self.min_limit <= self.initial_limit <= self.max_limit:
-            raise exc.configuration(
-                "Gradient2 initial_limit must be within [min_limit, max_limit]"
-            )
+            raise exc.configuration("Gradient2 initial_limit must be within [min_limit, max_limit]")
 
         if self.rtt_tolerance < 1.0:
             raise exc.configuration("Gradient2 rtt_tolerance must be >= 1.0")

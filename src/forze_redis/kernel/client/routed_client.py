@@ -1,15 +1,10 @@
 """Redis client that resolves a DSN per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import timedelta
 from typing import (
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    Mapping,
-    Sequence,
     final,
 )
 from uuid import UUID
@@ -68,7 +63,7 @@ class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort)
 
     # ....................... #
 
-    def pipeline(self, *, transaction: bool = True) -> AsyncContextManager[Pipeline]:
+    def pipeline(self, *, transaction: bool = True) -> AbstractAsyncContextManager[Pipeline]:
         @asynccontextmanager
         async def _cm() -> AsyncGenerator[Pipeline]:
             inner = await self._get_client()

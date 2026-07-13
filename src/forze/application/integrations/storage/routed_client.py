@@ -1,7 +1,8 @@
 """Tenant-routed object-storage client base shared by S3/GCS integrations."""
 
+from collections.abc import Awaitable, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Mapping, Protocol, Sequence
+from typing import Protocol
 
 import attrs
 
@@ -18,7 +19,6 @@ from .client import (
     ObjectStoragePartInfo,
     ObjectStorageSSE,
 )
-from collections.abc import Awaitable
 
 # ----------------------- #
 

@@ -9,12 +9,13 @@ module does not pull ``opentelemetry`` into an uninstrumented app's import path.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any
 
 from .services.access_token import SigningStats
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import CallbackOptions, Meter, Observation  # noqa: F401
+    from opentelemetry.metrics import CallbackOptions, Meter, Observation
 
 # ----------------------- #
 
@@ -28,7 +29,7 @@ TOKENS_VERIFY_FAILED_COUNTER = "forze.authn.tokens.verify_failed"
 def instrument_signing(
     services: dict[str, Any],
     *,
-    meter: "Meter | None" = None,
+    meter: Meter | None = None,
 ) -> None:
     """Export each access-token service's sign/verify counters as OTel observable counters.
 
@@ -53,8 +54,8 @@ def instrument_signing(
 
     def _observe(
         pick: Callable[[SigningStats], int],
-    ) -> Callable[["CallbackOptions"], Iterable["Observation"]]:
-        def callback(_options: "CallbackOptions") -> Iterable["Observation"]:
+    ) -> Callable[[CallbackOptions], Iterable[Observation]]:
+        def callback(_options: CallbackOptions) -> Iterable[Observation]:
             for label, service in services.items():
                 stats: SigningStats = service.signing_stats()
                 attributes: dict[str, str] = {

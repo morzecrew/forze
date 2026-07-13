@@ -1,8 +1,7 @@
 """Document adapter orchestrating query/command ports over gateways."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import cached_property
-from typing import Sequence
 from uuid import UUID
 
 import attrs
@@ -27,9 +26,7 @@ from forze.application.contracts.querying import (
 from forze.base.exceptions import exc
 from forze.base.primitives import clamp
 
-
 from ..._logger import logger
-from .cache import DocumentCache
 from ._command import DocumentCommandMixin
 from ._limits import (
     DEFAULT_MAX_CHUNKED_COMMAND_PAGES,
@@ -42,6 +39,7 @@ from ._limits import (
 )
 from ._query import DocumentQueryMixin
 from ._types import C, D, R, U
+from .cache import DocumentCache
 
 # ----------------------- #
 
@@ -280,9 +278,7 @@ class DocumentAdapter(
 
         res = await self._to_read(domain, pk=pk)
 
-        await self.document_cache.after_commit_or_now(
-            lambda: self.document_cache.set_one(res)
-        )
+        await self.document_cache.after_commit_or_now(lambda: self.document_cache.set_one(res))
 
         return res
 
@@ -301,8 +297,6 @@ class DocumentAdapter(
             return None
 
         res = await self._to_read_many(domains, pks=pks)
-        await self.document_cache.after_commit_or_now(
-            lambda: self.document_cache.set_many(res)
-        )
+        await self.document_cache.after_commit_or_now(lambda: self.document_cache.set_many(res))
 
         return res

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Sequence, final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -49,11 +50,7 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
     # ....................... #
 
     async def put(self, record: DurableScheduleRecord) -> None:
-        tenant_id = (
-            record.tenant_id
-            if record.tenant_id is not None
-            else self._bound_tenant()
-        )
+        tenant_id = record.tenant_id if record.tenant_id is not None else self._bound_tenant()
 
         with self.state.lock:
             self.state.durable_run_schedules[_scoped_key(record.schedule_id, tenant_id)] = {

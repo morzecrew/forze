@@ -1,6 +1,7 @@
 """Structural protocol for Temporal clients (single cluster or tenant-routed)."""
 
-from typing import Any, Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 from temporalio.client import WorkflowHandle
@@ -125,9 +126,7 @@ class TemporalClientPort(Protocol):
         note: str | None,
     ) -> Awaitable[None]: ...  # pragma: no cover
 
-    def delete_schedule(
-        self, schedule_id: str
-    ) -> Awaitable[None]: ...  # pragma: no cover
+    def delete_schedule(self, schedule_id: str) -> Awaitable[None]: ...  # pragma: no cover
 
     def pause_schedule(
         self,
@@ -143,9 +142,7 @@ class TemporalClientPort(Protocol):
         note: str | None = None,
     ) -> Awaitable[None]: ...  # pragma: no cover
 
-    def trigger_schedule(
-        self, schedule_id: str
-    ) -> Awaitable[None]: ...  # pragma: no cover
+    def trigger_schedule(self, schedule_id: str) -> Awaitable[None]: ...  # pragma: no cover
 
     def describe_schedule(
         self,

@@ -221,14 +221,10 @@ class BulkheadStrategy:
             raise exc.configuration("Bulkhead queue_interval must be positive")
 
         if self.queue_target is not None and self.queue_target >= self.queue_interval:
-            raise exc.configuration(
-                "Bulkhead queue_target must be smaller than queue_interval"
-            )
+            raise exc.configuration("Bulkhead queue_target must be smaller than queue_interval")
 
         if (
-            self.queue_target is not None
-            or self.queue_adaptive_lifo
-            or self.prioritized
+            self.queue_target is not None or self.queue_adaptive_lifo or self.prioritized
         ) and self.max_queue < 1:
             raise exc.configuration(
                 "Bulkhead queue management (queue_target / queue_adaptive_lifo / "
@@ -328,24 +324,16 @@ class AdaptiveBulkheadStrategy:
 
     def __attrs_post_init__(self) -> None:
         if self.latency_threshold.total_seconds() <= 0:
-            raise exc.configuration(
-                "Adaptive bulkhead latency_threshold must be positive"
-            )
+            raise exc.configuration("Adaptive bulkhead latency_threshold must be positive")
 
-        if self.latency_quantile is not None and not (
-            0.0 < self.latency_quantile < 1.0
-        ):
-            raise exc.configuration(
-                "Adaptive bulkhead latency_quantile must be in (0, 1)"
-            )
+        if self.latency_quantile is not None and not (0.0 < self.latency_quantile < 1.0):
+            raise exc.configuration("Adaptive bulkhead latency_quantile must be in (0, 1)")
 
         if self.min_concurrency < 1:
             raise exc.configuration("Adaptive bulkhead min_concurrency must be >= 1")
 
         if self.max_concurrency < self.min_concurrency:
-            raise exc.configuration(
-                "Adaptive bulkhead max_concurrency must be >= min_concurrency"
-            )
+            raise exc.configuration("Adaptive bulkhead max_concurrency must be >= min_concurrency")
 
         if self.max_queue < 0:
             raise exc.configuration("Adaptive bulkhead max_queue must be >= 0")
@@ -366,14 +354,10 @@ class AdaptiveBulkheadStrategy:
             raise exc.configuration("Bulkhead queue_interval must be positive")
 
         if self.queue_target is not None and self.queue_target >= self.queue_interval:
-            raise exc.configuration(
-                "Bulkhead queue_target must be smaller than queue_interval"
-            )
+            raise exc.configuration("Bulkhead queue_target must be smaller than queue_interval")
 
         if (
-            self.queue_target is not None
-            or self.queue_adaptive_lifo
-            or self.prioritized
+            self.queue_target is not None or self.queue_adaptive_lifo or self.prioritized
         ) and self.max_queue < 1:
             raise exc.configuration(
                 "Bulkhead queue management (queue_target / queue_adaptive_lifo / "
@@ -441,9 +425,7 @@ class GradientBulkheadStrategy:
             raise exc.configuration("Gradient bulkhead min_concurrency must be >= 1")
 
         if self.max_concurrency < self.min_concurrency:
-            raise exc.configuration(
-                "Gradient bulkhead max_concurrency must be >= min_concurrency"
-            )
+            raise exc.configuration("Gradient bulkhead max_concurrency must be >= min_concurrency")
 
         if self.max_queue < 0:
             raise exc.configuration("Gradient bulkhead max_queue must be >= 0")
@@ -467,14 +449,10 @@ class GradientBulkheadStrategy:
             raise exc.configuration("Bulkhead queue_interval must be positive")
 
         if self.queue_target is not None and self.queue_target >= self.queue_interval:
-            raise exc.configuration(
-                "Bulkhead queue_target must be smaller than queue_interval"
-            )
+            raise exc.configuration("Bulkhead queue_target must be smaller than queue_interval")
 
         if (
-            self.queue_target is not None
-            or self.queue_adaptive_lifo
-            or self.prioritized
+            self.queue_target is not None or self.queue_adaptive_lifo or self.prioritized
         ) and self.max_queue < 1:
             raise exc.configuration(
                 "Bulkhead queue management (queue_target / queue_adaptive_lifo / "
@@ -607,15 +585,12 @@ class RetryStrategy:
             raise exc.configuration("Retry retry_on must not be empty")
 
         non_retryable = sorted(
-            kind.value
-            for kind in self.retry_on
-            if not exception_egress_policy(kind).retryable
+            kind.value for kind in self.retry_on if not exception_egress_policy(kind).retryable
         )
 
         if non_retryable:
             raise exc.configuration(
-                "Retry retry_on includes non-retryable kinds: "
-                + ", ".join(non_retryable),
+                "Retry retry_on includes non-retryable kinds: " + ", ".join(non_retryable),
             )
 
 
@@ -706,9 +681,7 @@ class HedgeStrategy:
         if (
             self.delay_min is not None or self.delay_max is not None
         ) and self.adaptive_delay_quantile is None:
-            raise exc.configuration(
-                "Hedge delay_min/delay_max require adaptive_delay_quantile"
-            )
+            raise exc.configuration("Hedge delay_min/delay_max require adaptive_delay_quantile")
 
         if self.delay_min is not None and self.delay_min.total_seconds() <= 0:
             raise exc.configuration("Hedge delay_min must be positive")
@@ -798,9 +771,7 @@ class ResiliencePolicy:
         if not self.strategies:
             raise exc.configuration("Resilience policy must declare a strategy")
 
-        functional = [
-            type(s) for s in self.strategies if not isinstance(s, FallbackStrategy)
-        ]
+        functional = [type(s) for s in self.strategies if not isinstance(s, FallbackStrategy)]
 
         if len(set(functional)) != len(functional):
             raise exc.configuration("Resilience policy has duplicate strategy types")
@@ -820,10 +791,7 @@ class ResiliencePolicy:
                 "GradientBulkhead strategies — they occupy the same slot",
             )
 
-        if (
-            CircuitBreakerStrategy in functional
-            and AdaptiveThrottleStrategy in functional
-        ):
+        if CircuitBreakerStrategy in functional and AdaptiveThrottleStrategy in functional:
             raise exc.configuration(
                 "Resilience policy cannot combine CircuitBreakerStrategy with "
                 "AdaptiveThrottleStrategy — composed, the throttle would count "

@@ -7,9 +7,10 @@ require_gcs()
 
 import json
 import os
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncGenerator, Literal, Mapping, Sequence, cast, final
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, cast, final
 
 import aiohttp
 import attrs
@@ -129,9 +130,7 @@ class GCSClient(GCSClientPort):
             if key_file is None and config is not None:
                 key_file = config.service_file
 
-            self.__credential_path = OwnedTempPath(
-                path=key_file, owned=service_file_owned
-            )
+            self.__credential_path = OwnedTempPath(path=key_file, owned=service_file_owned)
 
             self.__storage = Storage(
                 service_file=key_file,
@@ -800,9 +799,7 @@ class GCSClient(GCSClientPort):
         )
 
         signing_email = (
-            self.__config.signing_service_account_email
-            if self.__config is not None
-            else None
+            self.__config.signing_service_account_email if self.__config is not None else None
         )
 
         if not has_local_key and not signing_email:
@@ -1157,11 +1154,11 @@ class GCSClient(GCSClientPort):
     async def _insert_bucket(self, bucket: str) -> None:
         storage = self.__require_storage()
         project_id = self.__require_project_id()
-        url = f"{storage._api_root}/storage/v1/b?project={project_id}"  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        url = f"{storage._api_root}/storage/v1/b?project={project_id}"  # pyright: ignore[reportPrivateUsage]
         body = json.dumps({"name": bucket}).encode()
         headers = (
             await storage._headers()  # pyright: ignore[reportPrivateUsage]
-        )  # noqa: SLF001
+        )
         headers["Content-Type"] = "application/json"
 
         await storage.session.post(
@@ -1214,11 +1211,7 @@ def _http_date(value: datetime) -> str:
 
     # ``usegmt=True`` requires a UTC datetime: stamp naive values as UTC and
     # convert tz-aware non-UTC values, so a +02:00 input formats correctly.
-    value = (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
+    value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
     return format_datetime(value, usegmt=True)
 

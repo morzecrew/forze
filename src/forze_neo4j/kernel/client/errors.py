@@ -6,7 +6,8 @@ require_neo4j()
 
 # ....................... #
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from neo4j.exceptions import (
     ClientError,

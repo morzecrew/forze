@@ -48,11 +48,7 @@ def build_stored_file_registry(
         handlers={
             ns.key(StoredFileKernelOp.UPLOAD): lambda ctx: UploadStoredFile(
                 doc=ctx.doc.command(doc_spec),
-                outbox=(
-                    ctx.outbox.command(kit.outbox)
-                    if kit.outbox is not None
-                    else None
-                ),
+                outbox=(ctx.outbox.command(kit.outbox) if kit.outbox is not None else None),
             ),
             ns.key(StoredFileKernelOp.GET): lambda ctx: GetStoredFile(
                 doc=ctx.doc.query(doc_spec),
@@ -66,22 +62,22 @@ def build_stored_file_registry(
             ),
             ns.key(StoredFileKernelOp.DELETE): lambda ctx: SoftDeleteStoredFile(
                 doc=ctx.doc.command(doc_spec),
-                outbox=(
-                    ctx.outbox.command(kit.outbox)
-                    if kit.outbox is not None
-                    else None
-                ),
+                outbox=(ctx.outbox.command(kit.outbox) if kit.outbox is not None else None),
             ),
         },
     )
 
     # GET / LIST / DOWNLOAD only acquire read (query) ports.
-    reg = reg.bind(
-        StoredFileKernelOp.GET,
-        StoredFileKernelOp.LIST,
-        StoredFileKernelOp.DOWNLOAD,
-        namespace=ns,
-    ).as_query().finish()
+    reg = (
+        reg.bind(
+            StoredFileKernelOp.GET,
+            StoredFileKernelOp.LIST,
+            StoredFileKernelOp.DOWNLOAD,
+            namespace=ns,
+        )
+        .as_query()
+        .finish()
+    )
 
     reg = reg.set_descriptors(
         {

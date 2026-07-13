@@ -1,5 +1,6 @@
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
-from typing import Any, Mapping, Sequence, TypeAlias
+from typing import Any, TypeAlias
 
 import attrs
 from pydantic import BaseModel
@@ -77,9 +78,7 @@ def _validate_search_materialized(
     if not materialized:
         return
 
-    validate_materialized_computed(
-        model_type, materialized, spec_name=spec_name, label="read"
-    )
+    validate_materialized_computed(model_type, materialized, spec_name=spec_name, label="read")
 
     if overlap := materialized & lenient_read_fields:
         raise exc.configuration(
@@ -120,9 +119,7 @@ def _validate_search_encryption(
             "(they can still be returned in results)."
         )
 
-    if default_sort is not None and (
-        forbidden := encryption.forbidden_sort_fields(default_sort)
-    ):
+    if default_sort is not None and (forbidden := encryption.forbidden_sort_fields(default_sort)):
         raise exc.configuration(
             f"Search spec {spec_name!r} default_sort uses field-encrypted field(s) "
             f"{forbidden}: sealed fields have no order at rest and cannot be sort keys."
@@ -217,8 +214,7 @@ def _validate_search_default_sort(
 
     validate_sort_fields(
         default_sort,
-        read_fields=(read_fields_for_model(model_type) | materialized)
-        - lenient_read_fields,
+        read_fields=(read_fields_for_model(model_type) | materialized) - lenient_read_fields,
         spec_name=spec_name,
         model=model_type,
         client_facing=False,
@@ -460,9 +456,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
 
         for f, w in self.default_weights.items():
             if f not in self.fields:
-                raise exc.configuration(
-                    f"Default weight for unknown search field '{f}'."
-                )
+                raise exc.configuration(f"Default weight for unknown search field '{f}'.")
 
             if w < 0 or w > 1:
                 raise exc.configuration(
@@ -470,9 +464,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
                 )
 
         if any(f not in self.default_weights for f in self.fields):
-            raise exc.configuration(
-                "Default weights must be provided for all search fields."
-            )
+            raise exc.configuration("Default weights must be provided for all search fields.")
 
     # ....................... #
 

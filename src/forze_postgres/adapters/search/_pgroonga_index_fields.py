@@ -1,7 +1,8 @@
 """Resolve PGroonga index column order from catalog metadata (order-agnostic SearchSpec)."""
 
 import re
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from forze.application._logger import logger
 from forze.application.contracts.search import SearchSpec

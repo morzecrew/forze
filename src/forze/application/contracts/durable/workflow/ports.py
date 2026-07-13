@@ -1,4 +1,5 @@
-from typing import Awaitable, Generic, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import Generic, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -27,9 +28,7 @@ class BaseDurableWorkflowPort(Protocol, Generic[In, Out]):
 
 
 @runtime_checkable
-class DurableWorkflowCommandPort(
-    BaseDurableWorkflowPort[In, Out], Generic[In, Out], Protocol
-):
+class DurableWorkflowCommandPort(BaseDurableWorkflowPort[In, Out], Generic[In, Out], Protocol):
     """Port for commands on long-running workflow orchestration engines.
 
     Child workflows and continue-as-new are deliberately **not** exposed on
@@ -96,9 +95,7 @@ class DurableWorkflowCommandPort(
 
 
 @runtime_checkable
-class DurableWorkflowQueryPort(
-    BaseDurableWorkflowPort[In, Out], Generic[In, Out], Protocol
-):
+class DurableWorkflowQueryPort(BaseDurableWorkflowPort[In, Out], Generic[In, Out], Protocol):
     """Port for queries on long-running workflow orchestration engines."""
 
     def query[Q: BaseModel, Res: BaseModel](

@@ -6,8 +6,9 @@ require_mongo()
 
 # ....................... #
 
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Mapping, Sequence, cast, final
+from typing import Any, cast, final
 from uuid import UUID
 
 import attrs
@@ -60,10 +61,7 @@ def _bson_normalize_value(value: Any) -> Any:
         ]
 
     if isinstance(value, dict):
-        return {
-            key: _bson_normalize_value(item)
-            for key, item in cast(JsonDict, value).items()
-        }
+        return {key: _bson_normalize_value(item) for key, item in cast(JsonDict, value).items()}
 
     return value
 
@@ -105,9 +103,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
 
-    update_codec: ModelCodec[U, Any] | None = attrs.field(
-        kw_only=True, eq=False, repr=False
-    )
+    update_codec: ModelCodec[U, Any] | None = attrs.field(kw_only=True, eq=False, repr=False)
 
     history_gw: MongoHistoryGateway[D] | None = attrs.field(default=None)  # type: ignore[override]
     """Optional history gateway for revision snapshots."""
@@ -154,9 +150,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     def _require_update_cmd(self) -> None:
         if self.update_cmd_type is None:
-            raise exc.configuration(
-                "Update command type is not supported for this model"
-            )
+            raise exc.configuration("Update command type is not supported for this model")
 
     # ....................... #
 
@@ -253,9 +247,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return self.update_codec
 
         if self.update_cmd_type is not None:
-            raise exc.configuration(
-                "Update codec is required when update commands are supported"
-            )
+            raise exc.configuration("Update codec is required when update commands are supported")
 
         return self.read_codec
 
@@ -384,8 +376,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             )
 
         by_inserted: dict[int, D] = {
-            i: self._decode_inserted(self._storage_doc(write_payloads[i]))
-            for i in inserted_idx
+            i: self._decode_inserted(self._storage_doc(write_payloads[i])) for i in inserted_idx
         }
 
         if by_inserted:
@@ -461,8 +452,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             )
 
         by_inserted: dict[int, D] = {
-            i: self._decode_inserted(self._storage_doc(payloads[i]))
-            for i in inserted_idx
+            i: self._decode_inserted(self._storage_doc(payloads[i])) for i in inserted_idx
         }
 
         if by_inserted:
@@ -482,9 +472,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             u_dtos = [a[1] for a in to_update]
             by_c = await self._load_existing_by_ids(pks)
             revs = [by_c[pk].rev for pk in pks]
-            updated, _ = await self.update_many(
-                pks, u_dtos, revs=revs, batch_size=batch_size
-            )
+            updated, _ = await self.update_many(pks, u_dtos, revs=revs, batch_size=batch_size)
             by_updated = {d.id: d for d in updated}
 
         return [
@@ -526,9 +514,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         diff = self._bump_rev(current, diff)
         diff = self.adapt_payload_for_write(diff, create=False)
 
-        flt = self._add_tenant_filter(
-            {"_id": self._storage_pk(current.id), REV_FIELD: current.rev}
-        )
+        flt = self._add_tenant_filter({"_id": self._storage_pk(current.id), REV_FIELD: current.rev})
         # Atomic update-and-return: one round trip instead of update + re-get,
         # and the returned document cannot contain a concurrent writer's fields
         # (no read-back race between the update and the snapshot).
@@ -570,10 +556,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if updates is not None:
             if revs is not None:
                 await self._validate_history(
-                    *[
-                        (c, r, u)
-                        for c, r, u in zip(currents, revs, updates, strict=True)
-                    ]
+                    *[(c, r, u) for c, r, u in zip(currents, revs, updates, strict=True)]
                 )
 
             for i, (current, update) in enumerate(zip(currents, updates, strict=True)):
@@ -621,9 +604,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    async def update(
-        self, pk: UUID, dto: U, *, rev: int | None = None
-    ) -> tuple[D, JsonDict]:
+    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> tuple[D, JsonDict]:
         """Apply an update DTO to an existing document.
 
         :param pk: Document primary key.
@@ -823,15 +804,11 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         n = await self.client.delete_many(
             await self.coll(),
-            self._add_tenant_filter(
-                {"_id": {"$in": [self._storage_pk(pk) for pk in pks]}}
-            ),
+            self._add_tenant_filter({"_id": {"$in": [self._storage_pk(pk) for pk in pks]}}),
         )
 
         if n != len(pks):
             if self.tenant_aware:
-                raise exc.not_found(
-                    "Some records not found or not accessible in this tenant scope"
-                )
+                raise exc.not_found("Some records not found or not accessible in this tenant scope")
 
             raise exc.not_found("Some records not found")

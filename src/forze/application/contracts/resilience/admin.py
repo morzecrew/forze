@@ -14,7 +14,8 @@ parameters so the adaptive controllers rebuild against the new limits on the nex
 
 from __future__ import annotations
 
-from typing import Awaitable, Protocol, Sequence, final, runtime_checkable
+from collections.abc import Awaitable, Sequence
+from typing import Protocol, final, runtime_checkable
 
 import attrs
 

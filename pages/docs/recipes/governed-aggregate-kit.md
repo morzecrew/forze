@@ -42,7 +42,21 @@ Each concern is opt-in and independently useful on its own:
   one; you get `delete`/`restore` ops and an optional after-commit `purge`.
 - **`search`** — the external index is kept in sync on every committed write
   ([search stays consistent](../data-events/events-sagas.md)); a searchable aggregate
-  that silently drifts is worse than no search.
+  that silently drifts is worse than no search. Delivery is after-commit best-effort by
+  default (bounded in-place retry, then an **at-most-once** loss logged with reconcilable
+  identity — the index stays stale for that row until its next write). Pass
+  `search_delivery=OutboxSearchSync()` to route index maintenance through a dedicated
+  transactional outbox instead: an **identity-only marker** (no row data, so nothing
+  sensitive rides the outbox) is staged in the same transaction as the write, relayed
+  at-least-once, and applied by a consumer that **re-reads the row's committed state** —
+  idempotent and reorder-safe (a stale upsert marker delivered after a later delete
+  re-reads the deleted state, so it can never resurrect a ghost), deduped by an inbox.
+  Wire the reported `search_sync_route` (one name for its outbox, queue, and inbox) in the
+  deps module; `lifecycle_steps(tx_route=…)` then carries the sync relay and consumer.
+  Composed with `soft_delete`, the kit's search reads also exclude soft-deleted rows — the
+  spec must declare `is_deleted` in `facetable_fields` (which `ensure_index` provisions as
+  a filterable attribute on external indexes); the kit fails closed at construction
+  otherwise.
 - **`invariants`** — each [`SystemInvariant`](../writing-operation/system-invariants.md) is enforced
   *preventively* inside the write transaction, at the isolation floor it needs, so a
   write that would break the law is rolled back.
@@ -65,7 +79,8 @@ your call, wired into the deps module:
   `tx_route` you gave `registry()` and the routes emitter, so every surface executes the write ops
   on the one transaction route the deps module registers a manager under.
 - `domain_events()` — the outbox staging bridges, for the deps module.
-- `lifecycle_steps()` — the outbox relay, for the runtime.
+- `lifecycle_steps(tx_route=…)` — the outbox relay (plus, with durable `search_delivery`,
+  the search-sync relay and consumer), for the runtime.
 
 Field encryption declared on the spec flows through untouched. Backend config
 (`rw_documents=` / `searches=` / `outboxes=`) and HTTP routes stay yours — wire them
@@ -144,7 +159,7 @@ attach_aggregate_routes(router, TASKS, ctx_dep=ctx_dep, style="rest", tx_route="
 ```
 
 The routes *execute* through the composed registry, so `tx_route` must match the deps module.
-`kit.backend_requirements(tx_route="pg")` reports the document / search / storage / outbox routes,
+`kit.backend_requirements(tx_route="pg")` reports the document / search / search-sync / storage / outbox routes,
 the transaction route, and the crypto requirement (`crypto_required` — whether a keyring is needed)
 that module must provide — a checklist you can assert in a startup test (and `check_wiring` fails
 closed on anything missing).

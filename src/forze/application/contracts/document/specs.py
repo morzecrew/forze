@@ -7,18 +7,18 @@ from pydantic import BaseModel
 
 from forze.application._logger import logger
 from forze.base.exceptions import exc
+from forze.base.serialization import stored_field_names_for
 from forze.domain.models import BaseDTO, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
-from forze.base.serialization import stored_field_names_for
-from ..crypto import FieldEncryption
 from ..conformity import (
     ReadConformity,
     derive_lenient_read_fields,
     validate_lenient_read_fields,
     validate_materialized_computed,
 )
+from ..crypto import FieldEncryption
 from ..querying import QueryFieldPolicy, QuerySortExpression
 from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
@@ -225,12 +225,8 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             )
 
         if self.query_params is not None and not (
-            isinstance(
-                self.query_params, type
-            )  # pyright: ignore[reportUnnecessaryIsInstance]
-            and issubclass(
-                self.query_params, BaseModel
-            )  # pyright: ignore[reportUnnecessaryIsInstance]
+            isinstance(self.query_params, type)  # pyright: ignore[reportUnnecessaryIsInstance]
+            and issubclass(self.query_params, BaseModel)  # pyright: ignore[reportUnnecessaryIsInstance]
         ):
             raise exc.configuration(
                 f"DocumentSpec.query_params for {self.name!r} must be a Pydantic BaseModel "

@@ -1,7 +1,8 @@
 """Inngest step adapter and execution-scoped step binding."""
 
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar, Token
-from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar, final
+from typing import TYPE_CHECKING, TypeVar, final
 
 import attrs
 

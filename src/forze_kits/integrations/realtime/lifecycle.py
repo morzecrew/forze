@@ -68,9 +68,7 @@ def realtime_group_ensure_lifecycle_step(
 
     return LifecycleStep(
         id=step_id,
-        startup=_EnsureGroupStartup(
-            stream_spec=stream_spec, group=group, start_id=start_id
-        ),
+        startup=_EnsureGroupStartup(stream_spec=stream_spec, group=group, start_id=start_id),
         mutates_shared_state=True,
     )
 

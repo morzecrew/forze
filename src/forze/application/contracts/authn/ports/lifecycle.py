@@ -1,4 +1,5 @@
-from typing import Awaitable, Protocol, Sequence
+from collections.abc import Awaitable, Sequence
+from typing import Protocol
 from uuid import UUID
 
 from ..value_objects import (
@@ -18,9 +19,9 @@ class PasswordLifecyclePort(Protocol):  # pragma: no cover
 
     def change_password(
         self,
-        identity: AuthnIdentity,  # noqa: F841
-        current_password: str,  # noqa: F841
-        new_password: str,  # noqa: F841
+        identity: AuthnIdentity,
+        current_password: str,
+        new_password: str,
     ) -> Awaitable[None]:
         """Change the password after re-authenticating with the current password."""
         ...
@@ -34,19 +35,19 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
 
     def issue_tokens(
         self,
-        identity: AuthnIdentity,  # noqa: F841
+        identity: AuthnIdentity,
         *,
         tenant_id: UUID | None = None,
     ) -> Awaitable[IssuedTokens]: ...
 
     def refresh_tokens(
         self,
-        refresh_token: RefreshTokenCredentials,  # noqa: F841
+        refresh_token: RefreshTokenCredentials,
     ) -> Awaitable[IssuedTokens]: ...
 
     def revoke_tokens(
         self,
-        identity: AuthnIdentity,  # noqa: F841
+        identity: AuthnIdentity,
     ) -> Awaitable[None]: ...
 
 
@@ -58,30 +59,30 @@ class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
 
     def issue_api_key(
         self,
-        identity: AuthnIdentity,  # noqa: F841
+        identity: AuthnIdentity,
         *,
-        actor_principal_id: UUID | None = None,  # noqa: F841
-        label: str | None = None,  # noqa: F841
+        actor_principal_id: UUID | None = None,
+        label: str | None = None,
     ) -> Awaitable[IssuedApiKey]: ...
 
     def list_api_keys(
         self,
-        identity: AuthnIdentity,  # noqa: F841
+        identity: AuthnIdentity,
     ) -> Awaitable[Sequence[ApiKeyInfo]]: ...
 
     def refresh_api_key(
         self,
-        credentials: ApiKeyCredentials,  # noqa: F841
+        credentials: ApiKeyCredentials,
     ) -> Awaitable[IssuedApiKey]: ...
 
     def revoke_api_key(
         self,
-        identity: AuthnIdentity,  # noqa: F841
-        key_id: str,  # noqa: F841
+        identity: AuthnIdentity,
+        key_id: str,
     ) -> Awaitable[None]: ...
 
     def revoke_many_api_keys(
         self,
-        identity: AuthnIdentity,  # noqa: F841
-        key_ids: Sequence[str],  # noqa: F841
+        identity: AuthnIdentity,
+        key_ids: Sequence[str],
     ) -> Awaitable[None]: ...

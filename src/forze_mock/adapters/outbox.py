@@ -49,7 +49,7 @@ _TRANSITION_FIELDS = (
 """Row fields mutated by status transitions (claim / mark / retry / requeue / reclaim)."""
 
 
-def _restore_row(row: "MockOutboxRow") -> Callable[[], None]:
+def _restore_row(row: MockOutboxRow) -> Callable[[], None]:
     """Build an undo thunk restoring *row*'s transition fields to their current values.
 
     A status transition is a row UPDATE in production — Postgres rolls it back with the

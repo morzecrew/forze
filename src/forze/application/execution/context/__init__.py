@@ -5,7 +5,6 @@ from .criticality import (
 )
 from .deadline import bind_deadline, current_deadline, remaining_time
 from .drain import OperationDrainGate
-
 from .execution import ExecutionContext, ExecutionContextFactory
 from .invocation import InvocationMetadata
 

@@ -32,9 +32,7 @@ class PostgresFederatedSearchLegHub:
 
 # ....................... #
 
-PostgresFederatedSearchLeg = (
-    PostgresFederatedSearchLegSearch | PostgresFederatedSearchLegHub
-)
+PostgresFederatedSearchLeg = PostgresFederatedSearchLegSearch | PostgresFederatedSearchLegHub
 
 # ....................... #
 
@@ -72,9 +70,7 @@ class PostgresFederatedSearchConfig(TenantAwareIntegrationConfig):
         """Validate federated member count and nested configs."""
 
         if len(self.members) < 2:
-            raise exc.internal(
-                "Federated search requires at least two member configurations."
-            )
+            raise exc.internal("Federated search requires at least two member configurations.")
 
         for leg in self.members.values():
             if isinstance(leg, PostgresFederatedSearchLegHub):

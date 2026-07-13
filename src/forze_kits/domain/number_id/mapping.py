@@ -3,11 +3,11 @@ from pydantic import BaseModel
 
 from forze.application.contracts.counter import CounterPort, CounterSpec
 from forze.application.execution.context import ExecutionContext
+from forze.base.primitives import JsonDict
 from forze_kits.mapping import (
     PydanticPipelineMapperStep,
     PydanticPipelineMapperStepFactory,
 )
-from forze.base.primitives import JsonDict
 
 from .constants import NUMBER_ID_FIELD
 

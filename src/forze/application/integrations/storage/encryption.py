@@ -7,7 +7,8 @@ wiring time — the encryption analog of
 :func:`~forze.application.integrations.storage.validate_storage_tenancy_wiring`.
 """
 
-from typing import Mapping, Protocol
+from collections.abc import Mapping
+from typing import Protocol
 
 from forze.application.contracts.crypto import (
     EncryptionTier,
@@ -32,9 +33,7 @@ def validate_storage_encryption_wiring(
     *,
     integration: str,
     storages: (
-        StrKeyMapping[_EncryptableRouteConfig]
-        | Mapping[StrKey, _EncryptableRouteConfig]
-        | None
+        StrKeyMapping[_EncryptableRouteConfig] | Mapping[StrKey, _EncryptableRouteConfig] | None
     ),
     required_encryption: EncryptionTier | None,
     validation_failed_code: str,

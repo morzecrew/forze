@@ -4,7 +4,8 @@ require_kms_yc()
 
 # ....................... #
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import grpc
 
@@ -17,12 +18,8 @@ from forze.base.exceptions import (
 
 # ----------------------- #
 
-_ACCESS_DENIED = frozenset(
-    {grpc.StatusCode.PERMISSION_DENIED, grpc.StatusCode.UNAUTHENTICATED}
-)
-_UNAVAILABLE = frozenset(
-    {grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED}
-)
+_ACCESS_DENIED = frozenset({grpc.StatusCode.PERMISSION_DENIED, grpc.StatusCode.UNAUTHENTICATED})
+_UNAVAILABLE = frozenset({grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED})
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]

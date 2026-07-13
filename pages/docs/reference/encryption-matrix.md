@@ -50,7 +50,7 @@ can't drift.
 |---------|----------|-------|----------|
 | Object storage | whole object (`encrypt=True`) | client-side — backend stores only the envelope | S3, GCS, mock |
 | Outbox | whole payload (`OutboxEncryptionTier`) | `none` / `at_rest` (relay decrypts before publish) / `end_to_end` (consumer decrypts after dedup) | Postgres / Mongo store → any transport |
-| Direct queue / stream / pub-sub | whole payload | `none` / `end_to_end` only (no store, so no `at_rest`) | SQS, RabbitMQ, Redis, Inngest |
+| Direct queue / stream / pub-sub | whole payload | `none` / `end_to_end` only (no store, so no `at_rest`) | SQS, RabbitMQ, Redis, Kafka, Inngest |
 | Idempotency result | whole cached result (`encrypt_result=True`) | at rest (sealed on commit, opened on replay; metadata stays plaintext) | Redis, Postgres |
 
 - **Object storage caveat:** multipart / presigned uploads are **blocked** when a route

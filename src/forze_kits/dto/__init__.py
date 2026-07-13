@@ -2,6 +2,7 @@
 
 from .import_timestamps import ImportTimestamps
 from .paginated import (
+    MAX_PAGE_SIZE,
     CursorPaginated,
     CursorPagination,
     Paginated,
@@ -13,6 +14,7 @@ from .paginated import (
 # ----------------------- #
 
 __all__ = [
+    "MAX_PAGE_SIZE",
     "CursorPaginated",
     "ProjectedCursorPaginated",
     "Paginated",

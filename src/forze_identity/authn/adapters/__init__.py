@@ -9,8 +9,8 @@ from .api_key_lifecycle import ApiKeyLifecycleAdapter
 from .password_lifecycle import PasswordLifecycleAdapter
 from .password_provisioning import PasswordAccountProvisioningAdapter
 from .password_reset import PasswordResetAdapter
-from .principal_eligibility import PolicyPrincipalEligibilityAdapter
 from .principal_deactivation import PrincipalDeactivationAdapter
+from .principal_eligibility import PolicyPrincipalEligibilityAdapter
 from .token_lifecycle import TokenLifecycleAdapter
 
 # ----------------------- #

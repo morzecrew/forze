@@ -22,14 +22,10 @@ StreamQueryDepPort = ConfigurableDepPort[StreamSpec[Any], StreamQueryPort[Any]]
 StreamCommandDepPort = ConfigurableDepPort[StreamSpec[Any], StreamCommandPort[Any]]
 """Stream command dependency port."""
 
-AckStreamGroupQueryDepPort = ConfigurableDepPort[
-    StreamSpec[Any], AckStreamGroupQueryPort[Any]
-]
+AckStreamGroupQueryDepPort = ConfigurableDepPort[StreamSpec[Any], AckStreamGroupQueryPort[Any]]
 """Ack-stream (PEL) group query dependency port."""
 
-AckStreamGroupAdminDepPort = ConfigurableDepPort[
-    StreamSpec[Any], AckStreamGroupAdminPort
-]
+AckStreamGroupAdminDepPort = ConfigurableDepPort[StreamSpec[Any], AckStreamGroupAdminPort]
 """Ack-stream (PEL) group admin (control-plane) dependency port."""
 
 CommitStreamGroupQueryDepPort = ConfigurableDepPort[
@@ -37,9 +33,7 @@ CommitStreamGroupQueryDepPort = ConfigurableDepPort[
 ]
 """Commit-stream (offset-log) group query dependency port."""
 
-CommitStreamGroupAdminDepPort = ConfigurableDepPort[
-    StreamSpec[Any], CommitStreamGroupAdminPort
-]
+CommitStreamGroupAdminDepPort = ConfigurableDepPort[StreamSpec[Any], CommitStreamGroupAdminPort]
 """Commit-stream (offset-log) group admin (control-plane) dependency port."""
 
 # ....................... #
@@ -56,14 +50,10 @@ AckStreamGroupQueryDepKey = DepKey[AckStreamGroupQueryDepPort]("stream_group_que
 AckStreamGroupAdminDepKey = DepKey[AckStreamGroupAdminDepPort]("stream_group_admin")
 """Key used to register the :class:`AckStreamGroupAdminPort` builder implementation."""
 
-CommitStreamGroupQueryDepKey = DepKey[CommitStreamGroupQueryDepPort](
-    "commit_stream_group_query"
-)
+CommitStreamGroupQueryDepKey = DepKey[CommitStreamGroupQueryDepPort]("commit_stream_group_query")
 """Key used to register the :class:`CommitStreamGroupQueryPort` builder implementation."""
 
-CommitStreamGroupAdminDepKey = DepKey[CommitStreamGroupAdminDepPort](
-    "commit_stream_group_admin"
-)
+CommitStreamGroupAdminDepKey = DepKey[CommitStreamGroupAdminDepPort]("commit_stream_group_admin")
 """Key used to register the :class:`CommitStreamGroupAdminPort` builder implementation."""
 
 # ....................... #
@@ -89,8 +79,7 @@ class StreamDeps(ConvenientDeps):
         )
 
         if spec.requires_transactions and not (
-            isinstance(port, CommitStreamGroupAware)
-            and port.capabilities().supports_transactions
+            isinstance(port, CommitStreamGroupAware) and port.capabilities().supports_transactions
         ):
             raise exc.configuration(
                 f"Stream {spec.name!r} requires transactional exactly-once, but the "

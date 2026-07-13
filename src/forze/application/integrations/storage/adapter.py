@@ -4,10 +4,9 @@ import asyncio
 import builtins
 import mimetypes
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta
-from typing import Mapping
 from uuid import UUID
 
 import attrs
@@ -85,9 +84,7 @@ _FRAME_PREFIX_MAX = 512
 for the rare header-probe-too-small fallback when deriving the stride."""
 
 
-async def _count_bytes(
-    source: AsyncIterator[bytes], total: list[int]
-) -> AsyncIterator[bytes]:
+async def _count_bytes(source: AsyncIterator[bytes], total: list[int]) -> AsyncIterator[bytes]:
     """Pass *source* through untouched while tallying its byte count into ``total[0]``."""
 
     async for piece in source:
@@ -95,9 +92,7 @@ async def _count_bytes(
         yield piece
 
 
-async def _prepend(
-    first: bytes, rest: AsyncIterator[bytes]
-) -> AsyncIterator[bytes]:
+async def _prepend(first: bytes, rest: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
     """Yield *first* (when non-empty) then the remaining pieces of *rest*."""
 
     if first:
@@ -111,6 +106,7 @@ async def _aiter_once(data: bytes) -> AsyncIterator[bytes]:
     """A single-element async byte stream (feeds a fully-buffered blob to a stream API)."""
 
     yield data
+
 
 # ....................... #
 
@@ -212,7 +208,7 @@ class ObjectStorageAdapter(
         """
 
         tenant_id = self._tenant_id_for_resolve()
-        return f"forze.storage|{bucket}|{key}|tenant={tenant_id}".encode("utf-8")
+        return f"forze.storage|{bucket}|{key}|tenant={tenant_id}".encode()
 
     # ....................... #
 
@@ -477,11 +473,7 @@ class ObjectStorageAdapter(
         tags win when present.
         """
 
-        tags = (
-            dict(listed_tags)
-            if listed_tags
-            else (dict(head.tags) if head.tags else None)
-        )
+        tags = dict(listed_tags) if listed_tags else (dict(head.tags) if head.tags else None)
 
         if not head.metadata:
             return StoredObject(
@@ -506,9 +498,7 @@ class ObjectStorageAdapter(
         return StoredObject(
             key=key,
             filename=default_b64_codec.loads(meta.filename),
-            description=(
-                default_b64_codec.loads(meta.description) if meta.description else None
-            ),
+            description=(default_b64_codec.loads(meta.description) if meta.description else None),
             content_type=head.content_type,
             size=meta.size,
             created_at=meta.created_at,
@@ -655,9 +645,7 @@ class ObjectStorageAdapter(
             )
 
             try:
-                parts = await self._upload_stream_parts(
-                    bucket, key, upload_id, byte_source
-                )
+                parts = await self._upload_stream_parts(bucket, key, upload_id, byte_source)
                 await self.client.complete_multipart_upload(
                     bucket=bucket,
                     key=key,
@@ -743,9 +731,7 @@ class ObjectStorageAdapter(
             )
 
             try:
-                parts = await self._upload_stream_parts(
-                    bucket, key, upload_id, byte_source
-                )
+                parts = await self._upload_stream_parts(bucket, key, upload_id, byte_source)
                 await self.client.complete_multipart_upload(
                     bucket=bucket,
                     key=key,
@@ -858,9 +844,7 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
-    async def _raw_ranges(
-        self, bucket: str, key: str, total: int
-    ) -> AsyncIterator[bytes]:
+    async def _raw_ranges(self, bucket: str, key: str, total: int) -> AsyncIterator[bytes]:
         """Yield an object's raw bytes in ``stream_part_size`` ranged GETs.
 
         Holds the client connection open across the whole iteration, so the caller
@@ -872,10 +856,8 @@ class ObjectStorageAdapter(
 
             while offset < total:
                 end = offset + self.stream_part_size - 1
-                body, _content_range, _real_total = (
-                    await self.client.download_range_bytes(
-                        bucket=bucket, key=key, start=offset, end=end
-                    )
+                body, _content_range, _real_total = await self.client.download_range_bytes(
+                    bucket=bucket, key=key, start=offset, end=end
                 )
 
                 if not body.data:
@@ -1070,9 +1052,7 @@ class ObjectStorageAdapter(
         bucket = await self._resolved_bucket()
 
         if self.cipher is not None:
-            return await self._encrypted_download_range(
-                bucket, key, start=start, end=end
-            )
+            return await self._encrypted_download_range(bucket, key, start=start, end=end)
 
         return await self._raw_download_range(bucket, key, start=start, end=end)
 
@@ -1296,8 +1276,7 @@ class ObjectStorageAdapter(
 
         if if_none_match is None and if_modified_since is None:
             raise exc.validation(
-                "download_if_changed requires at least one of if_none_match / "
-                "if_modified_since",
+                "download_if_changed requires at least one of if_none_match / if_modified_since",
             )
 
         self._validate_key(key)

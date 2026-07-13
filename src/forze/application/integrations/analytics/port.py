@@ -9,11 +9,10 @@ no longer re-declares the identical delegation boilerplate.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncGenerator,
-    Sequence,
     TypeVar,
     cast,
 )

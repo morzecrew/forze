@@ -1,8 +1,9 @@
 """Context-scoped buffer for collecting objects during a logical task."""
 
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Callable, Iterator, Sequence, final
+from typing import final
 
 import attrs
 

@@ -5,8 +5,9 @@ Some code taken from: https://gist.github.com/nymous/f138c7f06062b7c43c060bf0375
 
 import logging
 import sys
+from collections.abc import Callable, Sequence
 from enum import StrEnum
-from typing import Any, Callable, Final, Literal, Sequence, TextIO, TypedDict
+from typing import Any, Final, Literal, TextIO, TypedDict
 
 import orjson
 import structlog
@@ -180,9 +181,7 @@ def build_foreign_formatter(
         ],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            build_renderer(
-                render_mode, custom_console_renderer=custom_console_renderer
-            ),
+            build_renderer(render_mode, custom_console_renderer=custom_console_renderer),
         ],
     )
 
@@ -199,9 +198,7 @@ def _cast_logger_names(x: _LoggerNames) -> list[str]:
         if isinstance(item, StrEnum):
             output.append(item.value)
 
-        elif isinstance(item, type) and issubclass(
-            item, StrEnum
-        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+        elif isinstance(item, type) and issubclass(item, StrEnum):  # pyright: ignore[reportUnnecessaryIsInstance]
             output.extend(list(map(str, item)))
 
         else:

@@ -27,13 +27,12 @@ require_socketio()
 import asyncio
 import os
 import socket
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext, suppress
 from datetime import timedelta
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
-    Callable,
     Protocol,
     cast,
     final,
@@ -79,9 +78,7 @@ _logger = Logger(ForzeSocketIOLogger.ERRORS)
 _IDLE_FLOOR = 0.05
 """Seconds: a small idle pause floor so a non-blocking backend can't hot-loop."""
 
-SignalHandler = Callable[
-    [RealtimeSignal, UUID | None, str | None, HlcTimestamp], Awaitable[None]
-]
+SignalHandler = Callable[[RealtimeSignal, UUID | None, str | None, HlcTimestamp], Awaitable[None]]
 """A per-signal bridge: a decoded signal, its tenant, a dedup id, and its HLC position.
 
 The dedup id is the durable ``forze_event_id`` (``None`` for ephemeral signals); the
@@ -250,15 +247,12 @@ async def _process_messages(
                 _hlc_from_headers(message.headers),
             )
 
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             # A deterministic wiring error (e.g. a tenant-aware mailbox with no bound tenant)
             # never succeeds on retry — re-raise to fail fast instead of leaving the durable
             # message pending and reclaim-looping it forever. The message stays unacked, so it
             # redelivers once the operator fixes the wiring and restarts.
-            if (
-                isinstance(error, CoreException)
-                and error.kind is ExceptionKind.CONFIGURATION
-            ):
+            if isinstance(error, CoreException) and error.kind is ExceptionKind.CONFIGURATION:
                 raise
 
             _logger.critical_exception(
@@ -337,9 +331,7 @@ async def _consume_group_stream(
             _logger.critical_exception("Realtime gateway loop error", stream=stream)
             await asyncio.sleep(poll_interval.total_seconds())
 
-        except (
-            Exception
-        ):  # noqa: BLE001 - a transient broker error must not kill the loop
+        except Exception:
             _logger.critical_exception("Realtime gateway loop error", stream=stream)
             await asyncio.sleep(poll_interval.total_seconds())
 
@@ -576,9 +568,7 @@ class RealtimeGateway:
         """Consume signals forever and emit each to its room. Cancel to stop."""
 
         # resolve the mailbox's ports once, against the run ctx (worker-resolved-once)
-        mailbox = (
-            self.mailbox_factory(ctx) if self.mailbox_factory is not None else None
-        )
+        mailbox = self.mailbox_factory(ctx) if self.mailbox_factory is not None else None
 
         async def handle(
             signal: RealtimeSignal,
@@ -633,16 +623,10 @@ class RealtimeGateway:
             async with ctx.tx_ctx.scope(self.dedup.tx_route):
                 inbox = ctx.inbox(self.dedup.inbox_spec)
 
-                if not await inbox.mark_if_unseen(
-                    str(self.dedup.inbox_spec.name), dedup_id
-                ):
+                if not await inbox.mark_if_unseen(str(self.dedup.inbox_spec.name), dedup_id):
                     return
 
-                store = (
-                    mailbox
-                    if (mailbox is not None and self._should_mailbox(signal))
-                    else None
-                )
+                store = mailbox if (mailbox is not None and self._should_mailbox(signal)) else None
 
                 if store is not None:
                     try:
@@ -661,9 +645,7 @@ class RealtimeGateway:
                         raise
                 else:
                     # not replay-safe: emit inside the tx so a failed emit rolls the mark back
-                    await self._emit_live(
-                        signal, tenant, event_id=dedup_id, recoverable=False
-                    )
+                    await self._emit_live(signal, tenant, event_id=dedup_id, recoverable=False)
 
             if store is not None:
                 # replay-safe: mark + store committed, so the durable obligation is met and the
@@ -672,12 +654,8 @@ class RealtimeGateway:
                 # would leave the message pending forever (it never re-emits live once the mark
                 # is committed, and reclaim may be disabled). Swallow it; the mailbox recovers.
                 try:
-                    await self._emit_live(
-                        signal, tenant, event_id=dedup_id, recoverable=True
-                    )
-                except (
-                    Exception
-                ) as error:  # noqa: BLE001 - best-effort; the mailbox is the guarantee
+                    await self._emit_live(signal, tenant, event_id=dedup_id, recoverable=True)
+                except Exception as error:
                     if (
                         isinstance(error, CoreException)
                         and error.kind is ExceptionKind.CONFIGURATION

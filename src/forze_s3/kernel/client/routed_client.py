@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, AsyncGenerator, Callable, Mapping, cast, final
+from typing import TYPE_CHECKING, cast, final
 from uuid import UUID
 
 import attrs

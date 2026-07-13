@@ -1,15 +1,15 @@
 """Gateway factory helpers for building Postgres read, write, search, and history gateways."""
 
-from typing import Any, Literal, Mapping
+from collections.abc import Mapping
+from typing import Any, Literal
 
-from forze.base.serialization import default_model_codec
 from forze.application.contracts.document import (
     DocumentCodecs,
     DocumentWriteTypes,
     document_codecs_for_write_types,
 )
 from forze.application.execution import ExecutionContext, resolve_resilience_executor
-from forze.base.serialization import ModelCodec
+from forze.base.serialization import ModelCodec, default_model_codec
 from forze_postgres.kernel.relation import RelationSpec
 
 from ...kernel.gateways import (

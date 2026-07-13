@@ -1,7 +1,8 @@
 """Structural protocol for BigQuery clients."""
 
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Awaitable, Protocol, Sequence
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 

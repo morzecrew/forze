@@ -113,6 +113,7 @@ quality strict="false":
     {{ _uv_sync }}
 
     just _uv_cmd "Linting" {{ strict }} ruff check "src"
+    just _uv_cmd "Formatting" {{ strict }} ruff format --check "src"
     just _uv_cmd "Types" {{ strict }} mypy "src"
     just _uv_cmd "Imports" {{ strict }} lint-imports
     just _uv_cmd "Determinism" {{ strict }} pytest "tests/unit/test_determinism_guard.py" -q
@@ -162,3 +163,18 @@ worktree branch new="false":
     else \
         git worktree add {{ _worktree_dir }}/forze-{{ branch }} {{ branch }};
     fi
+
+# ----------------------- #
+# Coverage floors
+
+# Enforce per-package coverage floors on existing combined coverage data (.coverage)
+coverage-floors-check:
+    {{ _uv_sync }}
+
+    uv run coverage json --fail-under=0 -o coverage.json
+    uv run python .github/scripts/coverage_floors.py coverage.json
+
+# Run the full suite with coverage (unit + integration; Docker), then enforce the floors
+coverage-floors *args='':
+    just test {{ args }} --cov=src --cov-report=
+    just coverage-floors-check

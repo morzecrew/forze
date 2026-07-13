@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal, Mapping, NotRequired, Sequence, TypeAlias, TypedDict
+from collections.abc import Mapping, Sequence
+from typing import Literal, NotRequired, TypeAlias, TypedDict
 
 from .types import Array, HierarchyValue, Numeric, Scalar, TextPatternValue
 
@@ -74,9 +75,7 @@ QueryElementValuesPredicate = TypedDict(
 )
 """Element-relative ``$values`` bundle for object-array quantifiers."""
 
-QueryElementConstraint = (
-    QueryElementOpConjunction | Scalar | QueryElementValuesPredicate
-)
+QueryElementConstraint = QueryElementOpConjunction | Scalar | QueryElementValuesPredicate
 """Inner constraint for ``$any`` / ``$all`` / ``$none`` (op map, scalar shortcut, or ``$values``)."""
 
 QueryElementQuantifierExpression = TypedDict(
@@ -91,9 +90,7 @@ QueryElementQuantifierExpression = TypedDict(
 """Element quantifier application on an array field."""
 
 QueryValueMapValue = (
-    QueryValueOpConjunction
-    | QueryValueShortcutValue
-    | QueryElementQuantifierExpression
+    QueryValueOpConjunction | QueryValueShortcutValue | QueryElementQuantifierExpression
 )
 """Value for a single field: operator map, shortcut, or element quantifier."""
 
@@ -163,10 +160,7 @@ QueryNegation = TypedDict(
 """Negation of a single filter expression."""
 
 QueryFilterExpression: TypeAlias = (
-    QueryConstraintPredicate
-    | QueryConjunction
-    | QueryDisjunction
-    | QueryNegation
+    QueryConstraintPredicate | QueryConjunction | QueryDisjunction | QueryNegation
 )
 """Recursive filter expression (constraints, and, or, not)."""
 
@@ -180,10 +174,12 @@ QuerySortNulls = Literal["first", "last"]
 FIRST``/``LAST`` semantics). When omitted, the canonical default applies: ``first`` for
 ``asc``, ``last`` for ``desc`` (a null sorts as the smallest value)."""
 
-QuerySortKeySpec = TypedDict(
-    "QuerySortKeySpec",
-    {"dir": QuerySortDirection, "nulls": NotRequired[QuerySortNulls]},
-)
+
+class QuerySortKeySpec(TypedDict):
+    dir: QuerySortDirection
+    nulls: NotRequired[QuerySortNulls]
+
+
 """Explicit per-key sort spec: a direction plus optional null placement."""
 
 QuerySortValue = QuerySortDirection | QuerySortKeySpec

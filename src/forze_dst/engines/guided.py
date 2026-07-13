@@ -10,13 +10,13 @@ run-scoped ``active_config``.
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from forze.base.primitives import derive_seed
-from forze_dst.engines import base, context
-from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.config import SimulationConfig
-from forze_dst.engines import op_case
+from forze_dst.engines import base, context, op_case
+from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.explore_guided import Genome, GuidedStats, coverage_guided_search
 from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.invariants import check
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 def run_guided(
-    sim: "Simulation",
+    sim: Simulation,
     config: SimulationConfig,
     *,
     cases: Sequence[OperationCase],
@@ -84,14 +84,10 @@ def run_guided(
         return base.attempt_and_minimize(
             sim,
             seed=genome.seed,
-            schedule_seed=(
-                derive_seed(genome.seed, "schedule") if config.perturb else None
-            ),
+            schedule_seed=(derive_seed(genome.seed, "schedule") if config.perturb else None),
             run_initial=lambda: (run_items(workload, genome.seed), workload),
             run_subset=lambda subset: run_items(subset, genome.seed),
-            format_workload=lambda minimal: tuple(
-                (call.op, call.arg) for call in minimal
-            ),
+            format_workload=lambda minimal: tuple((call.op, call.arg) for call in minimal),
         )
 
     # The initial workload mirrors a normal op-case run at the master seed.

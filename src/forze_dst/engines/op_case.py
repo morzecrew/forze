@@ -9,12 +9,13 @@ returned as a reproducible report. Logic only — the run substrate lives in :mo
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable, Sequence
+from typing import TYPE_CHECKING
 
 from forze.base.primitives import derive_seed
 from forze_dst.engines import base, context, projection
-from forze_dst.engines.cases import OperationCase, Call
+from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.recorder import History, Recorder
 from forze_dst.runtime import run_simulation
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 
 
 def run_workload(
-    sim: "Simulation",
+    sim: Simulation,
     workload: Sequence[Call],
     *,
     concurrency: int,
@@ -49,9 +50,7 @@ def run_workload(
             semaphore = asyncio.Semaphore(concurrency)
             await asyncio.gather(
                 *(
-                    context.run_call(
-                        sim, ctx, semaphore, call_id=index, op=call.op, arg=call.arg
-                    )
+                    context.run_call(sim, ctx, semaphore, call_id=index, op=call.op, arg=call.arg)
                     for index, call in enumerate(workload)
                 )
             )
@@ -80,7 +79,7 @@ def run_workload(
 
 
 def attempt(
-    sim: "Simulation",
+    sim: Simulation,
     *,
     cases: Sequence[OperationCase],
     count: int,
@@ -114,9 +113,7 @@ def attempt(
         schedule_seed=schedule_seed,
         run_initial=lambda: (run(workload), workload),
         run_subset=run,
-        format_workload=lambda minimal: tuple(
-            (call.op, call.arg) for call in minimal
-        ),
+        format_workload=lambda minimal: tuple((call.op, call.arg) for call in minimal),
     )
 
 
@@ -124,7 +121,7 @@ def attempt(
 
 
 def explore(
-    sim: "Simulation",
+    sim: Simulation,
     *,
     cases: Sequence[OperationCase],
     count: int = 50,

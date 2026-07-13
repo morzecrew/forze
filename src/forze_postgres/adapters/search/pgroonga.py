@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Final, Literal, Mapping, Sequence, final
+from collections.abc import Mapping, Sequence
+from typing import Any, Final, Literal, final
 
 import attrs
 from psycopg import sql
@@ -289,7 +290,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                         [],
                         pagination or {},
                         total=0,
-                        facets={f: () for f in facet_fields} if facet_fields else None,
+                        facets=dict.fromkeys(facet_fields, ()) if facet_fields else None,
                     )
             else:
                 total = await resolve_ranked_approximate_total(
@@ -333,14 +334,10 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         if want_sn and self.result_snapshot is not None and rs_spec is not None:
             # Stream the ordered pool window-by-window into the snapshot store so peak memory
             # is one chunk, never the whole (up to ``max_ids``) decoded pool at once.
-            page_limit = SearchResultSnapshot.snapshot_pagination(
-                True, 0, dict(pagination)
-            )[2]
+            page_limit = SearchResultSnapshot.snapshot_pagination(True, 0, dict(pagination))[2]
             base_params = list(params_base)
 
-            async def fetch_window(
-                window_offset: int, window_limit: int
-            ) -> SnapshotWindow:
+            async def fetch_window(window_offset: int, window_limit: int) -> SnapshotWindow:
                 stmt = data_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
                     sql.Placeholder(), sql.Placeholder()
                 )
@@ -480,9 +477,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             score_version=self.pgroonga_score_version,
         )
 
-        read_spec = (
-            self.read_relation if self.read_relation is not None else self.relation
-        )
+        read_spec = self.read_relation if self.read_relation is not None else self.relation
         heap_spec = (
             self.heap_relation_spec
             if self.heap_relation_spec is not None
@@ -631,9 +626,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             join_pairs=join,
             proj_ident=proj_qname.ident(),
             heap_ident=index_heap_qname.ident(),
-            outer_proj_ident=(
-                index_heap_qname.ident() if coalesced else proj_qname.ident()
-            ),
+            outer_proj_ident=(index_heap_qname.ident() if coalesced else proj_qname.ident()),
             fw=fw,
             fp=fp,
             leg_params=leg_params,

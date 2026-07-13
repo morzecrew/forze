@@ -87,13 +87,8 @@ class DurableFunctionRunner:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if (
-            self.max_run_duration is not None
-            and self.max_run_duration.total_seconds() <= 0
-        ):
-            raise exc.configuration(
-                "Max run duration must be positive (None disables the cap)"
-            )
+        if self.max_run_duration is not None and self.max_run_duration.total_seconds() <= 0:
+            raise exc.configuration("Max run duration must be positive (None disables the cap)")
 
     # ....................... #
 
@@ -211,7 +206,7 @@ class DurableFunctionRunner:
         try:
             await self._execute(ctx, record, reraise=False)
 
-        except Exception:  # noqa: BLE001 — one bad run must not strand the batch
+        except Exception:
             # ``_execute`` records body failures itself; anything reaching here escaped
             # that path (a terminal write against the store errored, tenant binding
             # failed, ...). Swallow it so the co-claimed runs still drain — the run
@@ -236,9 +231,7 @@ class DurableFunctionRunner:
         # right tenant (essential when recovery ran unbound over a tagged table; a no-op
         # under a namespace shard already bound to this tenant).
         binding = (
-            ctx.inv_ctx.bind_identity(
-                tenant=TenantIdentity(tenant_id=record.tenant_id)
-            )
+            ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=record.tenant_id))
             if record.tenant_id is not None
             else nullcontext()
         )
@@ -272,11 +265,7 @@ class DurableFunctionRunner:
 
         started = perf_counter()
         outcome = "completed"
-        span_cm = (
-            self.telemetry.run_span(record)
-            if self.telemetry is not None
-            else nullcontext()
-        )
+        span_cm = self.telemetry.run_span(record) if self.telemetry is not None else nullcontext()
 
         try:
             with span_cm as span:
@@ -287,9 +276,7 @@ class DurableFunctionRunner:
                     # scanner claims oldest-first, so letting it escape would strand
                     # every run co-claimed with it as leased RUNNING, sweep after sweep.
                     handler = self.registry.get(record.name)
-                    output = await self._run_body_with_heartbeat(
-                        ctx, store, handler, record, fence
-                    )
+                    output = await self._run_body_with_heartbeat(ctx, store, handler, record, fence)
 
                 except _LeaseLost:
                     # A heartbeat found the lease reclaimed mid-body: another worker owns the
@@ -322,7 +309,7 @@ class DurableFunctionRunner:
 
                     return
 
-                except Exception as error:  # noqa: BLE001 — record then optionally re-raise
+                except Exception as error:
                     outcome = "failed"
                     self._mark_span_error(span, error)
                     await store.fail(record.run_id, error=str(error), fence=fence)
@@ -338,9 +325,7 @@ class DurableFunctionRunner:
             reset_durable_run(token)
 
             if self.telemetry is not None:
-                self.telemetry.record_run(
-                    record.name, outcome, (perf_counter() - started) * 1000.0
-                )
+                self.telemetry.record_run(record.name, outcome, (perf_counter() - started) * 1000.0)
 
     # ....................... #
 
@@ -362,16 +347,12 @@ class DurableFunctionRunner:
         reclaimed = asyncio.Event()
         expired = asyncio.Event()
         watchers = [
-            asyncio.ensure_future(
-                self._heartbeat(store, record.run_id, fence, body, reclaimed)
-            )
+            asyncio.ensure_future(self._heartbeat(store, record.run_id, fence, body, reclaimed))
         ]
 
         if self.max_run_duration is not None:
             watchers.append(
-                asyncio.ensure_future(
-                    self._expire_body_after(self.max_run_duration, body, expired)
-                )
+                asyncio.ensure_future(self._expire_body_after(self.max_run_duration, body, expired))
             )
 
         try:
@@ -422,7 +403,7 @@ class DurableFunctionRunner:
         store: DurableRunStorePort,
         run_id: str,
         fence: int,
-        body: "asyncio.Future[JsonDict | None]",
+        body: asyncio.Future[JsonDict | None],
         reclaimed: asyncio.Event,
     ) -> None:
         interval = self.lease_for / max(self.heartbeat_divisor, 2)
@@ -438,9 +419,7 @@ class DurableFunctionRunner:
                 # the lease lapsed server-side — the exact double-execution window
                 # the heartbeat exists to close.
                 async with asyncio.timeout(seconds):
-                    held = await store.renew(
-                        run_id, lease_for=self.lease_for, fence=fence
-                    )
+                    held = await store.renew(run_id, lease_for=self.lease_for, fence=fence)
 
             except Exception:
                 # A renewal that errors (DB/network blip) or times out means we can no
@@ -472,7 +451,7 @@ class DurableFunctionRunner:
     async def _expire_body_after(
         self,
         cap: timedelta,
-        body: "asyncio.Future[JsonDict | None]",
+        body: asyncio.Future[JsonDict | None],
         expired: asyncio.Event,
     ) -> None:
         await asyncio.sleep(cap.total_seconds())
@@ -485,6 +464,6 @@ class DurableFunctionRunner:
 
     # ....................... #
 
-    def _mark_span_error(self, span: "Span | None", error: BaseException) -> None:
+    def _mark_span_error(self, span: Span | None, error: BaseException) -> None:
         if self.telemetry is not None and span is not None:
             self.telemetry.mark_error(span, error)

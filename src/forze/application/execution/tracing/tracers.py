@@ -5,7 +5,8 @@
 Both ship a noop (production default, zero cost) and a recording implementation.
 """
 
-from typing import Any, Mapping, Protocol, final, runtime_checkable
+from collections.abc import Mapping
+from typing import Any, Protocol, final, runtime_checkable
 
 import attrs
 
@@ -202,9 +203,7 @@ class RecordingRuntimeTracer:
 # ....................... #
 
 
-def runtime_tracer_from_flag(
-    enabled: bool, *, capture_values: bool = False
-) -> RuntimeTracer:
+def runtime_tracer_from_flag(enabled: bool, *, capture_values: bool = False) -> RuntimeTracer:
     """Return a recording or noop runtime tracer."""
 
     if enabled:

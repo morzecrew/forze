@@ -245,9 +245,7 @@ class Neo4jGraphAdapter(TenancyMixin):
 
         return encryption.encrypted | encryption.searchable
 
-    def _filter_params(
-        self, property_filter: JsonDict | None, sealed: frozenset[str]
-    ) -> JsonDict:
+    def _filter_params(self, property_filter: JsonDict | None, sealed: frozenset[str]) -> JsonDict:
         """Validate an equality filter and render it to ``$pf_<key>`` params.
 
         Rejects a filter on a sealed (encrypted) property — its stored value is ciphertext,
@@ -259,9 +257,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         if not property_filter:
             return {}
 
-        malformed = sorted(
-            k for k in property_filter if not builders.is_valid_filter_key(k)
-        )
+        malformed = sorted(k for k in property_filter if not builders.is_valid_filter_key(k))
 
         if malformed:
             raise exc.validation(
@@ -334,9 +330,7 @@ class Neo4jGraphAdapter(TenancyMixin):
 
     async def get_vertex(self, ref: VertexRef) -> BaseModel | None:
         node = self._node(ref.kind)
-        query = builders.get_vertex(
-            ref.kind, node.key_field, tenant_field=self._tenant_field
-        )
+        query = builders.get_vertex(ref.kind, node.key_field, tenant_field=self._tenant_field)
         rows = await self.client.run(
             query, self._params(key=ref.key), database=await self._resolved_database()
         )
@@ -350,9 +344,7 @@ class Neo4jGraphAdapter(TenancyMixin):
 
     async def vertex_exists(self, ref: VertexRef) -> bool:
         node = self._node(ref.kind)
-        query = builders.vertex_exists(
-            ref.kind, node.key_field, tenant_field=self._tenant_field
-        )
+        query = builders.vertex_exists(ref.kind, node.key_field, tenant_field=self._tenant_field)
         rows = await self.client.run(
             query, self._params(key=ref.key), database=await self._resolved_database()
         )
@@ -379,9 +371,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             params = self._params(key=ref.key)
 
         else:
-            query, params = self._endpoints_edge_query(
-                ref, builders.get_edge_by_endpoints
-            )
+            query, params = self._endpoints_edge_query(ref, builders.get_edge_by_endpoints)
 
         rows = await self.client.run(query, params, database=database)
 
@@ -390,9 +380,7 @@ class Neo4jGraphAdapter(TenancyMixin):
 
         return await self._edge_model(ref.kind, rows[0]["r"])
 
-    def _endpoints_edge_query(
-        self, ref: EdgeRef, builder: Any
-    ) -> tuple[str, JsonDict]:
+    def _endpoints_edge_query(self, ref: EdgeRef, builder: Any) -> tuple[str, JsonDict]:
         """Build an endpoints-mode edge query (shared by get_edge / edge_exists / delete)."""
 
         if ref.from_ref is None or ref.to_ref is None:
@@ -498,9 +486,7 @@ class Neo4jGraphAdapter(TenancyMixin):
                 )
 
             if row.get("from_parent") and row.get("from_parent_type"):
-                from_parent = await self._edge_model(
-                    row["from_parent_type"], row["from_parent"]
-                )
+                from_parent = await self._edge_model(row["from_parent_type"], row["from_parent"])
 
             out.append(
                 GraphWalkStep(
@@ -558,17 +544,13 @@ class Neo4jGraphAdapter(TenancyMixin):
         vertices = tuple(
             [
                 await self._vertex_model(self._node_kind_from_labels(labels), props)
-                for props, labels in zip(
-                    row["vertices"], row["vertex_labels"], strict=True
-                )
+                for props, labels in zip(row["vertices"], row["vertex_labels"], strict=True)
             ]
         )
         edges = tuple(
             [
                 await self._edge_model(edge_type, props)
-                for props, edge_type in zip(
-                    row["edges"], row["edge_types"], strict=True
-                )
+                for props, edge_type in zip(row["edges"], row["edge_types"], strict=True)
             ]
         )
 
@@ -655,9 +637,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         bounded: list[JsonDict] = []
 
         try:
-            await self.client.run(
-                project, self._params(graph_name=graph_name), database=database
-            )
+            await self.client.run(project, self._params(graph_name=graph_name), database=database)
             while True:
                 rows = await self.client.run(
                     query,
@@ -702,8 +682,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         self._node(params.target_kind)  # validate the target kind is in the spec
 
         segments = [
-            (step.direction, step.edge_kinds, step.min_hops, step.max_hops)
-            for step in params.steps
+            (step.direction, step.edge_kinds, step.min_hops, step.max_hops) for step in params.steps
         ]
         query = builders.scoped_walk(
             anchor_label=anchor.kind,
@@ -718,9 +697,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             database=await self._resolved_database(),
         )
 
-        return [
-            await self._vertex_model(params.target_kind, row["m"]) for row in rows
-        ]
+        return [await self._vertex_model(params.target_kind, row["m"]) for row in rows]
 
     # ....................... #
     # GraphCommandPort
@@ -749,12 +726,8 @@ class Neo4jGraphAdapter(TenancyMixin):
 
     async def update_vertex(self, ref: VertexRef, cmd: BaseModel) -> BaseModel:
         node = self._node(ref.kind)
-        query = builders.update_vertex(
-            ref.kind, node.key_field, tenant_field=self._tenant_field
-        )
-        props = await self._encode(
-            cmd, self._node_cipher(ref.kind), record_id=ref.key
-        )
+        query = builders.update_vertex(ref.kind, node.key_field, tenant_field=self._tenant_field)
+        props = await self._encode(cmd, self._node_cipher(ref.kind), record_id=ref.key)
         rows = await self.client.run(
             query,
             {"props": props, **self._params(key=ref.key)},
@@ -773,10 +746,10 @@ class Neo4jGraphAdapter(TenancyMixin):
 
     async def delete_vertex(self, ref: VertexRef) -> None:
         node = self._node(ref.kind)
-        query = builders.delete_vertex(
-            ref.kind, node.key_field, tenant_field=self._tenant_field
+        query = builders.delete_vertex(ref.kind, node.key_field, tenant_field=self._tenant_field)
+        await self.client.run(
+            query, self._params(key=ref.key), database=await self._resolved_database()
         )
-        await self.client.run(query, self._params(key=ref.key), database=await self._resolved_database())
 
     # ....................... #
 
@@ -787,9 +760,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         *,
         return_new: bool = True,
     ) -> BaseModel | None:
-        return await self._write_edge(
-            edge_kind, cmd, merge=False, return_new=return_new
-        )
+        return await self._write_edge(edge_kind, cmd, merge=False, return_new=return_new)
 
     # ....................... #
 
@@ -880,9 +851,7 @@ class Neo4jGraphAdapter(TenancyMixin):
     # ....................... #
     # GraphRawQueryPort
 
-    async def run(
-        self, query: str, params: JsonDict | None = None
-    ) -> Sequence[JsonDict]:
+    async def run(self, query: str, params: JsonDict | None = None) -> Sequence[JsonDict]:
         # The whole-query raw hatch is trusted-caller by construction; a deployment that
         # requires enforced tenancy disables it (``allow_raw_query=False``) and uses the
         # structured ports / ``scoped_walk`` instead.
@@ -902,7 +871,9 @@ class Neo4jGraphAdapter(TenancyMixin):
         if self.tenant_aware:
             merged["tenant"] = self._tenant_str()
 
-        return await self.client.run(query, merged or None, database=await self._resolved_database())
+        return await self.client.run(
+            query, merged or None, database=await self._resolved_database()
+        )
 
     # ....................... #
     # GraphManagementPort — schema provisioning
@@ -1000,9 +971,7 @@ class Neo4jGraphAdapter(TenancyMixin):
 
         # Input order, found-only (missing refs omitted — batch-get semantics).
         return [
-            found[(ref.kind, str(ref.key))]
-            for ref in refs
-            if (ref.kind, str(ref.key)) in found
+            found[(ref.kind, str(ref.key))] for ref in refs if (ref.kind, str(ref.key)) in found
         ]
 
     async def get_edges(self, refs: Sequence[EdgeRef]) -> Sequence[BaseModel]:
@@ -1067,9 +1036,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             params = self._params(key=ref.key)
 
         else:
-            query, params = self._endpoints_edge_query(
-                ref, builders.edge_exists_by_endpoints
-            )
+            query, params = self._endpoints_edge_query(ref, builders.edge_exists_by_endpoints)
 
         rows = await self.client.run(query, params, database=database)
         return bool(rows and rows[0]["exists"])
@@ -1284,19 +1251,13 @@ class Neo4jGraphAdapter(TenancyMixin):
             params = {"props": props, **self._params(key=ref.key)}
 
         else:
-            query, base = self._endpoints_edge_query(
-                ref, builders.update_edge_by_endpoints
-            )
+            query, base = self._endpoints_edge_query(ref, builders.update_edge_by_endpoints)
             params = {"props": props, **base}
 
-        rows = await self.client.run(
-            query, params, database=await self._resolved_database()
-        )
+        rows = await self.client.run(query, params, database=await self._resolved_database())
 
         if not rows:
-            raise exc.not_found(
-                f"Edge {ref.kind!r} not found", code="graph_edge_not_found"
-            )
+            raise exc.not_found(f"Edge {ref.kind!r} not found", code="graph_edge_not_found")
 
         return await self._edge_model(ref.kind, rows[0]["r"])
 
@@ -1316,9 +1277,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             params = self._params(key=ref.key)
 
         else:
-            query, params = self._endpoints_edge_query(
-                ref, builders.delete_edge_by_endpoints
-            )
+            query, params = self._endpoints_edge_query(ref, builders.delete_edge_by_endpoints)
 
         await self.client.run(query, params, database=await self._resolved_database())
 
@@ -1389,9 +1348,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         node = self._node(node_kind)
         props = await self._encode(cmd, self._node_cipher(node_kind))
         key = str(props[node.key_field])  # the key field is the plaintext identity
-        query = builders.ensure_vertex(
-            node_kind, node.key_field, tenant_field=self._tenant_field
-        )
+        query = builders.ensure_vertex(node_kind, node.key_field, tenant_field=self._tenant_field)
         rows = await self.client.run(
             query,
             {"props": props, **self._params(key=key)},
@@ -1415,12 +1372,8 @@ class Neo4jGraphAdapter(TenancyMixin):
 
         for kind, keys in by_kind.items():
             node = self._node(kind)
-            query = builders.delete_vertices(
-                kind, node.key_field, tenant_field=self._tenant_field
-            )
-            await self.client.run(
-                query, self._params(keys=list(set(keys))), database=database
-            )
+            query = builders.delete_vertices(kind, node.key_field, tenant_field=self._tenant_field)
+            await self.client.run(query, self._params(keys=list(set(keys))), database=database)
 
     async def delete_edges(self, refs: Sequence[EdgeRef]) -> None:
         if not refs:

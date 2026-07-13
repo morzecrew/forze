@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Mapping, Sequence, final
+from collections.abc import Mapping, Sequence
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -75,9 +76,7 @@ class PostgresQualifiedName:
     def ident(self) -> sql.Composable:
         """Construct an identifier SQL expression for the qualified name."""
 
-        return sql.SQL(".").join(
-            [sql.Identifier(self.schema), sql.Identifier(self.name)]
-        )
+        return sql.SQL(".").join([sql.Identifier(self.schema), sql.Identifier(self.name)])
 
     # ....................... #
 
@@ -345,9 +344,7 @@ class PostgresGateway[M: BaseModel](
                 table_alias=alias,
             )
             dir_st = sql.SQL("ASC") if direction == "asc" else sql.SQL("DESC")
-            null_st = (
-                sql.SQL("NULLS FIRST") if nulls == "first" else sql.SQL("NULLS LAST")
-            )
+            null_st = sql.SQL("NULLS FIRST") if nulls == "first" else sql.SQL("NULLS LAST")
             parts.append(sql.SQL("{} {} {}").format(key, dir_st, null_st))
 
         return sql.SQL(", ").join(parts)
@@ -371,9 +368,7 @@ class PostgresGateway[M: BaseModel](
         """
 
         if return_fields is not None and return_type is not None:
-            raise exc.internal(
-                "Fields and model for mapping cannot be specified simultaneously"
-            )
+            raise exc.internal("Fields and model for mapping cannot be specified simultaneously")
 
         if return_fields is not None:
             return self._build_return_clause(list(return_fields), table_alias)
@@ -494,10 +489,7 @@ class PostgresGateway[M: BaseModel](
     ) -> Sequence[JsonDict]:
         types = await self.column_types()
         omit = self.write_omit_fields
-        out = [
-            {k: v for k, v in dict(payload).items() if k not in omit}
-            for payload in payloads
-        ]
+        out = [{k: v for k, v in dict(payload).items() if k not in omit} for payload in payloads]
 
         for payload in out:
             for k, v in payload.items():

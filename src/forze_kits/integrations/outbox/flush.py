@@ -33,7 +33,7 @@ def outbox_flush_tx_on_success_factory(
     """
 
     def _factory(ctx: "ExecutionContext") -> OnSuccess[Any, Any]:
-        async def _hook(args: Any, result: Any) -> None:  # noqa: F841
+        async def _hook(args: Any, result: Any) -> None:
             await ctx.outbox.command(outbox_spec).flush()
 
         return _hook

@@ -11,12 +11,12 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze_kits.integrations._logger import logger
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
+from forze_kits.integrations._logger import logger
 
 from .runner import QueueConsumer
 
@@ -26,10 +26,18 @@ from .runner import QueueConsumer
 @final
 @attrs.define(slots=True, kw_only=True)
 class _QueueConsumerBackgroundStartup(LifecycleHook):
-    """Start a background task that runs a :class:`QueueConsumer` forever."""
+    """Start a background task that runs a :class:`QueueConsumer` forever.
 
-    consumer: QueueConsumer[Any]
-    """The configured consumer; carries all consume options (validated on build)."""
+    The consumer is built by *consumer_factory* at startup (with the scope's
+    context in hand), so a handler that resolves ports off the context can be
+    closed over it; a pre-built consumer rides a constant factory.
+    """
+
+    queue: str
+    """Logical queue name, for task naming and crash logs."""
+
+    consumer_factory: Callable[[ExecutionContext], QueueConsumer[Any]]
+    """Builds the configured consumer once at startup, from the scope's context."""
 
     restart_backoff: timedelta
     task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
@@ -43,6 +51,10 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
+        # Built eagerly at startup (not inside the detached task), so a broken
+        # factory fails startup loudly instead of spawning a task that dies.
+        consumer = self.consumer_factory(ctx)
+
         async def _loop() -> None:
             while True:
                 try:
@@ -50,7 +62,7 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
                     # absorbed inside the consumer's decision ladder; only a
                     # consume-generator crash (broker connection loss, ...)
                     # escapes to here.
-                    await self.consumer.run(ctx, timeout=None)
+                    await consumer.run(ctx, timeout=None)
 
                 except asyncio.CancelledError:
                     raise
@@ -58,7 +70,7 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
                 except Exception:
                     logger.exception(
                         "Queue consumer for %s crashed; restarting after backoff",
-                        self.consumer.queue,
+                        self.queue,
                     )
 
                 # Reached on crash — or if the consume generator ever ends
@@ -78,13 +90,13 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
             # must not leak (and orphan) the previous consumer task.
             logger.warning(
                 "Queue consumer for %s already running; ignoring duplicate startup",
-                self.consumer.queue,
+                self.queue,
             )
             return
 
         self.task = asyncio.create_task(
             _loop(),
-            name=f"queue_consumer:{self.consumer.queue}",
+            name=f"queue_consumer:{self.queue}",
         )
 
 
@@ -101,7 +113,7 @@ class _QueueConsumerBackgroundShutdown(LifecycleHook):
 
     # ....................... #
 
-    async def __call__(self, ctx: ExecutionContext) -> None:  # noqa: ARG002
+    async def __call__(self, ctx: ExecutionContext) -> None:
         task = self.startup.task
 
         if task is None:
@@ -111,6 +123,40 @@ class _QueueConsumerBackgroundShutdown(LifecycleHook):
 
         with suppress(asyncio.CancelledError):
             await task
+
+
+# ....................... #
+
+
+def queue_consumer_factory_background_lifecycle_step(
+    *,
+    queue: str,
+    consumer_factory: Callable[[ExecutionContext], QueueConsumer[Any]],
+    restart_backoff: timedelta = timedelta(seconds=5),
+    step_id: StrKey | None = None,
+) -> LifecycleStep:
+    """Background queue-consumer step whose consumer is built from the scope's context.
+
+    Same loop and crash/restart semantics as
+    :func:`queue_consumer_background_lifecycle_step`, but the
+    :class:`~forze_kits.integrations.consumer.QueueConsumer` is produced by
+    *consumer_factory* at startup — for handlers that must resolve ports off the
+    execution context (an index-maintenance consumer, a projector). The factory
+    runs once per startup, eagerly, so a broken wiring fails startup loudly.
+    """
+
+    startup = _QueueConsumerBackgroundStartup(
+        queue=queue,
+        consumer_factory=consumer_factory,
+        restart_backoff=restart_backoff,
+    )
+    shutdown = _QueueConsumerBackgroundShutdown(startup=startup)
+
+    return LifecycleStep(
+        id=step_id if step_id is not None else f"queue_consumer:{queue}",
+        startup=startup,
+        shutdown=shutdown,
+    )
 
 
 # ....................... #
@@ -164,14 +210,9 @@ def queue_consumer_background_lifecycle_step(
         max_deliveries=max_deliveries,
         retry_policy=retry_policy,
     )
-    startup = _QueueConsumerBackgroundStartup(
-        consumer=consumer,
+    return queue_consumer_factory_background_lifecycle_step(
+        queue=queue,
+        consumer_factory=lambda ctx: consumer,
         restart_backoff=restart_backoff,
-    )
-    shutdown = _QueueConsumerBackgroundShutdown(startup=startup)
-
-    return LifecycleStep(
-        id=step_id if step_id is not None else f"queue_consumer:{queue}",
-        startup=startup,
-        shutdown=shutdown,
+        step_id=step_id,
     )

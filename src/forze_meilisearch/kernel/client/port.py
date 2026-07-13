@@ -1,7 +1,8 @@
 """Structural protocol for the Meilisearch async client."""
 
+from collections.abc import Awaitable
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Awaitable, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from forze.base.primitives import JsonDict
 

@@ -11,7 +11,8 @@ a run to its observable effect order, the equivalence key the DPOR engine prunes
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from forze.application.execution import ExecutionContext
 from forze_dst.oracle.recorder import History, current_recorder, record_event

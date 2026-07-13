@@ -25,9 +25,10 @@ require_socketio()
 
 # ....................... #
 
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from inspect import isawaitable
-from typing import Any, Awaitable, Callable, Final, Mapping, final
+from typing import Any, Final, final
 
 import attrs
 from pydantic import TypeAdapter, ValidationError
@@ -37,8 +38,7 @@ from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefu
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
-from forze.base.exceptions import FrameErr, guard_frame
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, FrameErr, exc, guard_frame
 from forze.base.primitives import StrKey
 from forze.base.scrubbing import sanitize_pydantic_errors
 
@@ -146,9 +146,7 @@ class SocketIOCommandRoute[Args, Ack]:
 
     _ack_adapter: TypeAdapter[Any] | None = attrs.field(
         default=attrs.Factory(
-            lambda self: (
-                TypeAdapter[Any](self.ack_type) if self.ack_type is not None else None
-            ),
+            lambda self: TypeAdapter[Any](self.ack_type) if self.ack_type is not None else None,
             takes_self=True,
         ),
         init=False,
@@ -326,9 +324,7 @@ class SocketIONamespaceRouter:
                         context_factory=context_factory,
                         operation_resolver=operation_resolver,
                     ),
-                    on_server_error=lambda core, error: log_server_error(
-                        error, core=core
-                    ),
+                    on_server_error=lambda core, error: log_server_error(error, core=core),
                 )
 
                 if isinstance(outcome, FrameErr):
@@ -392,9 +388,7 @@ class ForzeSocketIOAdapter:
         :raises exc.internal: If namespace was already attached.
         """
         if router.namespace in self.__routers:
-            raise exc.internal(
-                f"Socket.IO namespace `{router.namespace}` is already attached"
-            )
+            raise exc.internal(f"Socket.IO namespace `{router.namespace}` is already attached")
 
         self.__routers[router.namespace] = router
         router.bind(
@@ -548,7 +542,7 @@ def _build_connect_handler(
 
             raise SocketIOConnectionRefusedError(error.summary) from error
 
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             log_server_error(error)
 
             raise SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL) from error

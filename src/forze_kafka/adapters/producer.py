@@ -1,7 +1,8 @@
 """Kafka producer adapter implementing :class:`StreamCommandPort`."""
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Mapping, final
+from typing import final
 from uuid import UUID
 
 import attrs
@@ -63,9 +64,7 @@ class KafkaStreamCommandAdapter[M](StreamCommandPort[M]):
             self.codec.encode_value(payload),
             key=key.encode("utf-8") if key is not None else None,
             headers=self.codec.encode_headers(type=type, headers=headers),
-            timestamp_ms=(
-                int(timestamp.timestamp() * 1000) if timestamp is not None else None
-            ),
+            timestamp_ms=(int(timestamp.timestamp() * 1000) if timestamp is not None else None),
         )
 
         return f"{metadata.topic}:{metadata.partition}:{metadata.offset}"

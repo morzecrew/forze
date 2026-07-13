@@ -1,7 +1,8 @@
 """BigQuery implementation of analytics query and ingest ports."""
 
+from collections.abc import AsyncGenerator, Sequence
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Sequence, TypeVar, cast, final
+from typing import Any, TypeVar, cast, final
 from uuid import UUID
 
 import attrs
@@ -211,9 +212,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             raise exc.validation("Cursor pagination 'limit' must be positive")
 
         if c.get("after") and c.get("before"):
-            raise exc.validation(
-                "Cursor pagination: pass at most one of 'after' or 'before'"
-            )
+            raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
         if c.get("after"):
             try:
@@ -432,9 +431,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         params = self._validated_params(query_key, params)
 
         if dry_run_enabled(options):
-            return CursorPage(
-                hits=[], next_cursor=None, prev_cursor=None, has_more=False
-            )
+            return CursorPage(hits=[], next_cursor=None, prev_cursor=None, has_more=False)
 
         page_token, lim = self._cursor_page_token(cursor)
         result = await self._fetch_rows(
@@ -466,9 +463,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     async def append(self, rows: Sequence[Ing]) -> AnalyticsAppendResult | None:
         if self.spec.ingest is None:
-            raise exc.internal(
-                f"Analytics ingest is not configured for route {self.spec.name!r}."
-            )
+            raise exc.internal(f"Analytics ingest is not configured for route {self.spec.name!r}.")
 
         if self.config.resolved_ingest_relation() is None:
             raise exc.internal(
@@ -481,9 +476,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         max_append = self._max_append_rows()
 
         if len(rows) > max_append:
-            raise exc.internal(
-                f"Analytics append batch exceeds max_append_rows ({max_append})."
-            )
+            raise exc.internal(f"Analytics append batch exceeds max_append_rows ({max_append}).")
 
         ingest_codec = self.spec.resolved_ingest_codec
         if ingest_codec is None:

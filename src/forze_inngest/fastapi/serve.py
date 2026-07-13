@@ -1,6 +1,7 @@
 """FastAPI helper to expose registered Inngest functions."""
 
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from forze.application.execution import ExecutionContext, FrozenOperationRegistry
 

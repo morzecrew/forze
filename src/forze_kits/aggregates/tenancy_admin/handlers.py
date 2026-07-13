@@ -30,9 +30,7 @@ class CreateTenant(Handler[CreateTenantRequestDTO, CreatedTenantDTO]):
     tenant_management: TenantManagementPort
 
     async def __call__(self, args: CreateTenantRequestDTO) -> CreatedTenantDTO:
-        identity = await self.tenant_management.provision_tenant(
-            tenant_key=args.tenant_key
-        )
+        identity = await self.tenant_management.provision_tenant(tenant_key=args.tenant_key)
 
         return CreatedTenantDTO(
             tenant_id=identity.tenant_id,
@@ -53,10 +51,7 @@ class ListMembers(Handler[TenantRefDTO, MemberListDTO]):
         principal_ids = await self.tenant_management.list_tenant_principals(args.id)
 
         return MemberListDTO(
-            members=[
-                MemberListItemDTO(principal_id=principal_id)
-                for principal_id in principal_ids
-            ]
+            members=[MemberListItemDTO(principal_id=principal_id) for principal_id in principal_ids]
         )
 
 

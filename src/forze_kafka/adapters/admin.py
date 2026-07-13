@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence, final
+from collections.abc import Mapping, Sequence
+from contextlib import suppress
+from typing import final
 from uuid import UUID
 
 import attrs
@@ -87,9 +89,7 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
         by_topic = {entry.get("topic"): entry for entry in described}
         entry = by_topic.get(topic)
 
-        if (
-            entry is None
-        ):  # pragma: no cover - describe_topics returns an entry per queried topic
+        if entry is None:  # pragma: no cover - describe_topics returns an entry per queried topic
             return []
 
         return sorted(part["partition"] for part in entry.get("partitions", []))
@@ -117,10 +117,8 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
             topic_configs=dict(config) if config else None,
         )
 
-        try:
+        with suppress(TopicAlreadyExistsError):  # idempotent
             await admin.create_topics([new_topic])
-        except TopicAlreadyExistsError:
-            pass  # idempotent
 
     # ....................... #
 
@@ -134,9 +132,7 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
         admin = await self.client.admin()
         committed = await admin.list_consumer_group_offsets(group)
         already: _SkipSet = {
-            (tp.topic, tp.partition)
-            for tp, meta in committed.items()
-            if meta.offset >= 0
+            (tp.topic, tp.partition) for tp, meta in committed.items() if meta.offset >= 0
         }
 
         for logical in topics:
@@ -175,13 +171,9 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
 
         if stream is not None:
             topic = await self._resolve(stream)
-            partitions = [
-                TopicPartition(topic, p) for p in await self._partition_ids(topic)
-            ]
+            partitions = [TopicPartition(topic, p) for p in await self._partition_ids(topic)]
         else:
-            partitions = sorted(
-                committed.keys(), key=lambda tp: (tp.topic, tp.partition)
-            )
+            partitions = sorted(committed.keys(), key=lambda tp: (tp.topic, tp.partition))
 
         if not partitions:
             return []
@@ -199,9 +191,7 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
         for tp in partitions:
             meta = committed.get(tp)
             committed_offset = (
-                meta.offset
-                if meta is not None and meta.offset >= 0
-                else begins.get(tp, 0)
+                meta.offset if meta is not None and meta.offset >= 0 else begins.get(tp, 0)
             )
             out.append(
                 ConsumerLag(
@@ -224,14 +214,10 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
         *,
         skip: _SkipSet | None,
     ) -> None:
-        partitions = [
-            TopicPartition(topic, p) for p in await self._partition_ids(topic)
-        ]
+        partitions = [TopicPartition(topic, p) for p in await self._partition_ids(topic)]
 
         if skip is not None:
-            partitions = [
-                tp for tp in partitions if (tp.topic, tp.partition) not in skip
-            ]
+            partitions = [tp for tp in partitions if (tp.topic, tp.partition) not in skip]
 
         if not partitions:
             return
@@ -271,12 +257,11 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
 
         # TIMESTAMP: first offset at or after the instant, else the partition end.
         when_ms = int(target.timestamp.timestamp() * 1000) if target.timestamp else 0
-        found = await consumer.offsets_for_times({tp: when_ms for tp in partitions})
+        found = await consumer.offsets_for_times(dict.fromkeys(partitions, when_ms))
         ends = await consumer.end_offsets(partitions)
 
         return {
-            tp: (found[tp].offset if found.get(tp) is not None else ends[tp])
-            for tp in partitions
+            tp: (found[tp].offset if found.get(tp) is not None else ends[tp]) for tp in partitions
         }
 
     # ....................... #

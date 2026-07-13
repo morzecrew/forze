@@ -1,5 +1,6 @@
 """Transactional outbox contracts for integration events."""
 
+from ..base import EncryptionReach
 from .deps import (
     OutboxCommandDepKey,
     OutboxCommandDepPort,
@@ -7,7 +8,6 @@ from .deps import (
     OutboxQueryDepKey,
     OutboxQueryDepPort,
 )
-from ..base import EncryptionReach
 from .integration_config import OutboxIntegrationConfig
 from .ports import OutboxCommandPort, OutboxQueryPort, OutboxRowPersistPort
 from .specs import (

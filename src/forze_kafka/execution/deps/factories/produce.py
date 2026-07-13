@@ -27,9 +27,7 @@ class ConfigurableKafkaProduce(StreamCommandDepPort):
         validator=attrs.validators.instance_of(KafkaStreamConfig),
     )
 
-    def __call__(
-        self, ctx: ExecutionContext, spec: StreamSpec[Any]
-    ) -> StreamCommandPort[Any]:
+    def __call__(self, ctx: ExecutionContext, spec: StreamSpec[Any]) -> StreamCommandPort[Any]:
         enforce_required_reach(
             ctx.deps,
             route=str(spec.name),
@@ -44,9 +42,7 @@ class ConfigurableKafkaProduce(StreamCommandDepPort):
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
-        cipher = (
-            ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
-        )
+        cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
         return encrypting_stream_command(
             adapter, spec, cipher=cipher, tenant_provider=ctx.inv_ctx.get_tenant
         )

@@ -32,8 +32,8 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
-from typing import Awaitable, Callable, Mapping
 from uuid import UUID
 
 import attrs
@@ -140,22 +140,22 @@ async def _run_non_repeatable_read(
     outcomes: dict[str, str] = {}
 
     async def read_twice(gate: Gate) -> None:
-        async with record_outcome(outcomes, "reader"):
-            async with reader.tx_ctx.scope(scope, isolation=level):
-                reads.append((await reader.document.query(CELL).get(cid)).value)
-                await (
-                    gate.checkpoint()
-                )  # let the writer update + commit between the two reads
-                reads.append((await reader.document.query(CELL).get(cid)).value)
+        async with (
+            record_outcome(outcomes, "reader"),
+            reader.tx_ctx.scope(scope, isolation=level),
+        ):
+            reads.append((await reader.document.query(CELL).get(cid)).value)
+            await gate.checkpoint()  # let the writer update + commit between the two reads
+            reads.append((await reader.document.query(CELL).get(cid)).value)
 
     async def update_once(gate: Gate) -> None:
         await gate.checkpoint()
-        async with record_outcome(outcomes, "writer"):
-            async with writer.tx_ctx.scope(scope, isolation=level):
-                current = await writer.document.query(CELL).get(cid)
-                await writer.document.command(CELL).update(
-                    cid, current.rev, CellUpdate(value=2)
-                )
+        async with (
+            record_outcome(outcomes, "writer"),
+            writer.tx_ctx.scope(scope, isolation=level),
+        ):
+            current = await writer.document.query(CELL).get(cid)
+            await writer.document.command(CELL).update(cid, current.rev, CellUpdate(value=2))
 
     await Conductor(schedule=("writer", "reader")).run(
         {"reader": read_twice, "writer": update_once}
@@ -182,22 +182,26 @@ async def _run_read_skew(backend: ConformanceBackend, level: IsolationLevel) -> 
     outcomes: dict[str, str] = {}
 
     async def read_x_then_y(gate: Gate) -> None:
-        async with record_outcome(outcomes, "reader"):
-            async with reader.tx_ctx.scope(scope, isolation=level):
-                seen["x"] = (await reader.document.query(CELL).get(x)).value
-                await gate.checkpoint()  # let the writer update both rows + commit
-                seen["y"] = (await reader.document.query(CELL).get(y)).value
+        async with (
+            record_outcome(outcomes, "reader"),
+            reader.tx_ctx.scope(scope, isolation=level),
+        ):
+            seen["x"] = (await reader.document.query(CELL).get(x)).value
+            await gate.checkpoint()  # let the writer update both rows + commit
+            seen["y"] = (await reader.document.query(CELL).get(y)).value
 
     async def update_both(gate: Gate) -> None:
         await gate.checkpoint()
-        async with record_outcome(outcomes, "writer"):
-            async with writer.tx_ctx.scope(scope, isolation=level):
-                query = writer.document.query(CELL)
-                command = writer.document.command(CELL)
-                xr = await query.get(x)
-                yr = await query.get(y)
-                await command.update(x, xr.rev, CellUpdate(value=11))
-                await command.update(y, yr.rev, CellUpdate(value=18))
+        async with (
+            record_outcome(outcomes, "writer"),
+            writer.tx_ctx.scope(scope, isolation=level),
+        ):
+            query = writer.document.query(CELL)
+            command = writer.document.command(CELL)
+            xr = await query.get(x)
+            yr = await query.get(y)
+            await command.update(x, xr.rev, CellUpdate(value=11))
+            await command.update(y, yr.rev, CellUpdate(value=18))
 
     await Conductor(schedule=("writer", "reader")).run(
         {"reader": read_x_then_y, "writer": update_both}
@@ -224,22 +228,19 @@ def _writeskew_session(
     name: str,
 ) -> Callable[[Gate], Awaitable[None]]:
     async def session(gate: Gate) -> None:
-        async with record_outcome(outcomes, name):
-            async with ctx.tx_ctx.scope(scope, isolation=level):
-                query = ctx.document.query(ONCALL)
-                d1 = await query.get(id1)
-                d2 = await query.get(id2)
-                await gate.checkpoint()  # both sessions have read before either writes
+        async with record_outcome(outcomes, name), ctx.tx_ctx.scope(scope, isolation=level):
+            query = ctx.document.query(ONCALL)
+            d1 = await query.get(id1)
+            d2 = await query.get(id2)
+            await gate.checkpoint()  # both sessions have read before either writes
 
-                if (
-                    d1.on_call and d2.on_call
-                ):  # "safe" to drop mine — both still on call
-                    target = d1 if mine == id1 else d2
-                    await ctx.document.command(ONCALL).update(
-                        mine, target.rev, OnCallUpdate(on_call=False)
-                    )
+            if d1.on_call and d2.on_call:  # "safe" to drop mine — both still on call
+                target = d1 if mine == id1 else d2
+                await ctx.document.command(ONCALL).update(
+                    mine, target.rev, OnCallUpdate(on_call=False)
+                )
 
-                await gate.checkpoint()  # commit happens on scope exit, after this
+            await gate.checkpoint()  # commit happens on scope exit, after this
 
     return session
 
@@ -288,9 +289,7 @@ async def _run_write_skew(
 
     async with a.tx_ctx.scope(scope):
         query = a.document.query(ONCALL)
-        still_on = int((await query.get(id1)).on_call) + int(
-            (await query.get(id2)).on_call
-        )
+        still_on = int((await query.get(id1)).on_call) + int((await query.get(id2)).on_call)
 
     # The invariant broke (nobody on call) only if both disjoint writes committed.
     return _PERMIT if still_on == 0 else _PREVENT
@@ -312,20 +311,15 @@ def _lost_update_session(
     name: str,
 ) -> Callable[[Gate], Awaitable[None]]:
     async def session(gate: Gate) -> None:
-        async with record_outcome(outcomes, name):
-            async with ctx.tx_ctx.scope(scope, isolation=level):
-                current = await ctx.document.query(CELL).get(cid)
-                await gate.checkpoint()  # both read before either writes
-                await ctx.document.command(CELL).update(
-                    cid, current.rev, CellUpdate(value=new_value)
-                )
+        async with record_outcome(outcomes, name), ctx.tx_ctx.scope(scope, isolation=level):
+            current = await ctx.document.query(CELL).get(cid)
+            await gate.checkpoint()  # both read before either writes
+            await ctx.document.command(CELL).update(cid, current.rev, CellUpdate(value=new_value))
 
     return session
 
 
-async def _run_lost_update(
-    backend: ConformanceBackend, level: IsolationLevel
-) -> Verdict:
+async def _run_lost_update(backend: ConformanceBackend, level: IsolationLevel) -> Verdict:
     sessions = backend.contexts(2)
     a, b = sessions[0], sessions[1]
     scope = backend.scope_name
@@ -388,9 +382,7 @@ async def _run_dirty_read(
         with suppress(_Rollback):
             async with writer.tx_ctx.scope(scope, isolation=level):
                 current = await writer.document.query(CELL).get(cid)
-                await writer.document.command(CELL).update(
-                    cid, current.rev, CellUpdate(value=99)
-                )
+                await writer.document.command(CELL).update(cid, current.rev, CellUpdate(value=99))
                 await gate.checkpoint()  # 99 is written but not committed
                 raise _Rollback()
 
@@ -426,17 +418,21 @@ async def _run_phantom(backend: ConformanceBackend, level: IsolationLevel) -> Ve
     outcomes: dict[str, str] = {}
 
     async def scan_twice(gate: Gate) -> None:
-        async with record_outcome(outcomes, "reader"):
-            async with reader.tx_ctx.scope(scope, isolation=level):
-                counts.append(await reader.document.query(CELL).count(matching))
-                await gate.checkpoint()  # let the writer insert a matching row + commit
-                counts.append(await reader.document.query(CELL).count(matching))
+        async with (
+            record_outcome(outcomes, "reader"),
+            reader.tx_ctx.scope(scope, isolation=level),
+        ):
+            counts.append(await reader.document.query(CELL).count(matching))
+            await gate.checkpoint()  # let the writer insert a matching row + commit
+            counts.append(await reader.document.query(CELL).count(matching))
 
     async def insert_match(gate: Gate) -> None:
         await gate.checkpoint()
-        async with record_outcome(outcomes, "writer"):
-            async with writer.tx_ctx.scope(scope, isolation=level):
-                await writer.document.command(CELL).create(CellCreate(value=marker))
+        async with (
+            record_outcome(outcomes, "writer"),
+            writer.tx_ctx.scope(scope, isolation=level),
+        ):
+            await writer.document.command(CELL).create(CellCreate(value=marker))
 
     await Conductor(schedule=("writer", "reader")).run(
         {"reader": scan_twice, "writer": insert_match}
@@ -470,19 +466,14 @@ def _predicate_skew_session(
     name: str,
 ) -> Callable[[Gate], Awaitable[None]]:
     async def session(gate: Gate) -> None:
-        async with record_outcome(outcomes, name):
-            async with ctx.tx_ctx.scope(scope, isolation=level):
-                count = await ctx.document.query(CELL).count(matching)
-                await gate.checkpoint()  # both scan before either inserts
+        async with record_outcome(outcomes, name), ctx.tx_ctx.scope(scope, isolation=level):
+            count = await ctx.document.query(CELL).count(matching)
+            await gate.checkpoint()  # both scan before either inserts
 
-                if (
-                    count == 0
-                ):  # "safe" to insert — my scan saw none of this run's marker
-                    await ctx.document.command(CELL).create(CellCreate(value=marker))
+            if count == 0:  # "safe" to insert — my scan saw none of this run's marker
+                await ctx.document.command(CELL).create(CellCreate(value=marker))
 
-                await (
-                    gate.checkpoint()
-                )  # commit happens on scope exit, after both decided
+            await gate.checkpoint()  # commit happens on scope exit, after both decided
 
     return session
 
@@ -565,33 +556,35 @@ async def _run_read_only_anomaly(
         await (
             gate.checkpoint()
         )  # park; T3 opens its scope (snapshot X=0,Y=0) here, before T2 deposits
-        async with record_outcome(outcomes, "t3"):
-            async with t3ctx.tx_ctx.scope(scope, isolation=level):
-                xr = await t3ctx.document.query(CELL).get(x)
-                yr = await t3ctx.document.query(CELL).get(y)
-                await gate.checkpoint()  # hold open while T2 then T1 run + commit
-                penalty = 1 if (xr.value + yr.value - 10) < 0 else 0
-                await t3ctx.document.command(CELL).update(
-                    x, xr.rev, CellUpdate(value=xr.value - 10 - penalty)
-                )
+        async with (
+            record_outcome(outcomes, "t3"),
+            t3ctx.tx_ctx.scope(scope, isolation=level),
+        ):
+            xr = await t3ctx.document.query(CELL).get(x)
+            yr = await t3ctx.document.query(CELL).get(y)
+            await gate.checkpoint()  # hold open while T2 then T1 run + commit
+            penalty = 1 if (xr.value + yr.value - 10) < 0 else 0
+            await t3ctx.document.command(CELL).update(
+                x, xr.rev, CellUpdate(value=xr.value - 10 - penalty)
+            )
 
     async def deposit_savings(gate: Gate) -> None:  # T2
-        await (
-            gate.checkpoint()
-        )  # park; T2 runs after T3's snapshot, and commits before T1 reads
-        async with record_outcome(outcomes, "t2"):
-            async with t2ctx.tx_ctx.scope(scope, isolation=level):
-                yr = await t2ctx.document.query(CELL).get(y)
-                await t2ctx.document.command(CELL).update(
-                    y, yr.rev, CellUpdate(value=yr.value + 20)
-                )
+        await gate.checkpoint()  # park; T2 runs after T3's snapshot, and commits before T1 reads
+        async with (
+            record_outcome(outcomes, "t2"),
+            t2ctx.tx_ctx.scope(scope, isolation=level),
+        ):
+            yr = await t2ctx.document.query(CELL).get(y)
+            await t2ctx.document.command(CELL).update(y, yr.rev, CellUpdate(value=yr.value + 20))
 
     async def read_only(gate: Gate) -> None:  # T1 — read-only
         await gate.checkpoint()  # park; T1 runs after T2 commits, before T3 writes
-        async with record_outcome(outcomes, "t1"):
-            async with t1ctx.tx_ctx.scope(scope, isolation=level):
-                seen["x"] = (await t1ctx.document.query(CELL).get(x)).value
-                seen["y"] = (await t1ctx.document.query(CELL).get(y)).value
+        async with (
+            record_outcome(outcomes, "t1"),
+            t1ctx.tx_ctx.scope(scope, isolation=level),
+        ):
+            seen["x"] = (await t1ctx.document.query(CELL).get(x)).value
+            seen["y"] = (await t1ctx.document.query(CELL).get(y)).value
 
     await Conductor(schedule=("t3", "t2", "t1", "t3")).run(
         {"t3": withdraw_with_penalty, "t2": deposit_savings, "t1": read_only}
@@ -627,28 +620,32 @@ async def _run_fresh_read_update(
     outcomes: dict[str, str] = {}
 
     async def open_then_fresh_update(gate: Gate) -> None:
-        async with record_outcome(outcomes, "updater"):
-            async with updater.tx_ctx.scope(scope, isolation=level):
-                # Read once to PIN the snapshot before the concurrent commit — Postgres REPEATABLE
-                # READ captures its snapshot at the first statement, not at BEGIN, so a bare park here
-                # would let SI see the fresh value too. Then park so the concurrent update lands.
-                await updater.document.query(CELL).get(cid)
-                await gate.checkpoint()
-                # Re-read: RC reads through to the fresh committed row (new rev); SI/SER still see the
-                # pinned as-of-begin snapshot (stale rev).
-                current = await updater.document.query(CELL).get(cid)
-                await updater.document.command(CELL).update(
-                    cid, current.rev, CellUpdate(value=current.value + 1)
-                )
+        async with (
+            record_outcome(outcomes, "updater"),
+            updater.tx_ctx.scope(scope, isolation=level),
+        ):
+            # Read once to PIN the snapshot before the concurrent commit — Postgres REPEATABLE
+            # READ captures its snapshot at the first statement, not at BEGIN, so a bare park here
+            # would let SI see the fresh value too. Then park so the concurrent update lands.
+            await updater.document.query(CELL).get(cid)
+            await gate.checkpoint()
+            # Re-read: RC reads through to the fresh committed row (new rev); SI/SER still see the
+            # pinned as-of-begin snapshot (stale rev).
+            current = await updater.document.query(CELL).get(cid)
+            await updater.document.command(CELL).update(
+                cid, current.rev, CellUpdate(value=current.value + 1)
+            )
 
     async def update_and_commit(gate: Gate) -> None:
         await gate.checkpoint()  # run only after the updater has opened its scope
-        async with record_outcome(outcomes, "precommitter"):
-            async with precommitter.tx_ctx.scope(scope, isolation=level):
-                current = await precommitter.document.query(CELL).get(cid)
-                await precommitter.document.command(CELL).update(
-                    cid, current.rev, CellUpdate(value=current.value + 10)
-                )
+        async with (
+            record_outcome(outcomes, "precommitter"),
+            precommitter.tx_ctx.scope(scope, isolation=level),
+        ):
+            current = await precommitter.document.query(CELL).get(cid)
+            await precommitter.document.command(CELL).update(
+                cid, current.rev, CellUpdate(value=current.value + 10)
+            )
 
     await Conductor(schedule=("precommitter", "updater")).run(
         {"updater": open_then_fresh_update, "precommitter": update_and_commit}
@@ -707,16 +704,12 @@ async def _drive_lock_race(holder: Session, contender: Session) -> None:
 # commit — at EVERY level the duplicate must be REJECTED, never a silent merge.
 
 
-async def _run_duplicate_key_insert(
-    backend: ConformanceBackend, level: IsolationLevel
-) -> Verdict:
+async def _run_duplicate_key_insert(backend: ConformanceBackend, level: IsolationLevel) -> Verdict:
     sessions = backend.contexts(2)
     holder_ctx, contender_ctx = sessions[0], sessions[1]
     scope = backend.scope_name
 
-    contested = UUID(
-        int=next(_contested_id_seq)
-    )  # one id both racers insert; fresh per run
+    contested = UUID(int=next(_contested_id_seq))  # one id both racers insert; fresh per run
     outcomes: dict[str, str] = {}
 
     def insert_session(ctx: ExecutionContext, name: str, *, is_holder: bool) -> Session:
@@ -726,24 +719,20 @@ async def _run_duplicate_key_insert(
             try:
                 async with ctx.tx_ctx.scope(scope, isolation=level):
                     if is_holder:
-                        await ctx.document.command(CELL).create(
-                            CellCreate(value=1), id=contested
-                        )
-                        await gate.checkpoint()  # hold the id, uncommitted, until released to commit
+                        await ctx.document.command(CELL).create(CellCreate(value=1), id=contested)
+                        await (
+                            gate.checkpoint()
+                        )  # hold the id, uncommitted, until released to commit
                     else:
                         # The next insert of the same id blocks on the holder's unique index (Postgres)
                         # or buffers (mock); announce it so the driver commits the holder to release it.
                         await gate.arrive_blocking()
-                        await ctx.document.command(CELL).create(
-                            CellCreate(value=1), id=contested
-                        )
+                        await ctx.document.command(CELL).create(CellCreate(value=1), id=contested)
                 outcomes[name] = "committed"
             except CoreException as error:
                 # A unique violation (conflict) OR a serialization failure both mean "the duplicate
                 # was rejected" — the anomaly (a silent merge) did NOT occur. Any other error is a bug.
-                if error.kind is ExceptionKind.CONFLICT or is_serialization_conflict(
-                    error
-                ):
+                if error.kind is ExceptionKind.CONFLICT or is_serialization_conflict(error):
                     outcomes[name] = "rejected"
                 else:
                     raise
@@ -787,24 +776,23 @@ def _for_update_session(
     async def session(gate: Gate) -> None:
         if not is_holder:
             await gate.checkpoint()  # start gate: let the holder take the row lock first
-        async with record_outcome(outcomes, name):
-            async with ctx.tx_ctx.scope(scope, isolation=level):
-                if not is_holder:
-                    # The locked read blocks on the holder's row lock (Postgres) or claims the same
-                    # row (mock); announce it so the driver commits the holder to release it.
-                    await gate.arrive_blocking()
-                row = await ctx.document.query(CELL).get(cid, for_update=True)
-                if is_holder:
-                    await gate.checkpoint()  # hold the lock until released to commit
-                # Rev-less write via the contract's bulk fast path: ``update_matching`` takes no
-                # expected revision, so the revision guard cannot catch the lost update — only the
-                # FOR UPDATE lock can. That isolates the lock's effect (a plain rev-guarded
-                # ``update`` would be prevented by rev-OCC at every level, masking it).
-                await ctx.document.command(CELL).update_matching(
-                    {"$values": {"id": {"$eq": cid}}},
-                    CellUpdate(value=row.value + delta),
-                    return_new=False,
-                )
+        async with record_outcome(outcomes, name), ctx.tx_ctx.scope(scope, isolation=level):
+            if not is_holder:
+                # The locked read blocks on the holder's row lock (Postgres) or claims the same
+                # row (mock); announce it so the driver commits the holder to release it.
+                await gate.arrive_blocking()
+            row = await ctx.document.query(CELL).get(cid, for_update=True)
+            if is_holder:
+                await gate.checkpoint()  # hold the lock until released to commit
+            # Rev-less write via the contract's bulk fast path: ``update_matching`` takes no
+            # expected revision, so the revision guard cannot catch the lost update — only the
+            # FOR UPDATE lock can. That isolates the lock's effect (a plain rev-guarded
+            # ``update`` would be prevented by rev-OCC at every level, masking it).
+            await ctx.document.command(CELL).update_matching(
+                {"$values": {"id": {"$eq": cid}}},
+                CellUpdate(value=row.value + delta),
+                return_new=False,
+            )
 
     return session
 
@@ -818,9 +806,7 @@ async def _run_for_update_lost_update(
 
     async with holder_ctx.tx_ctx.scope(scope):
         cid = (
-            await holder_ctx.document.command(CELL).create(
-                CellCreate(value=_FOR_UPDATE_BASE)
-            )
+            await holder_ctx.document.command(CELL).create(CellCreate(value=_FOR_UPDATE_BASE))
         ).id
 
     outcomes: dict[str, str] = {}

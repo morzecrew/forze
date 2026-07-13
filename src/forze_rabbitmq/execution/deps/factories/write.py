@@ -56,11 +56,7 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
             tenant_provider=ctx.inv_ctx.get_tenant,
             delayed_delivery=self.config.delayed_delivery,
         )
-        cipher = (
-            ctx.deps.provide(KeyringDepKey)
-            if ctx.deps.exists(KeyringDepKey)
-            else None
-        )
+        cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
         return encrypting_queue_command(
             adapter, spec, cipher=cipher, tenant_provider=ctx.inv_ctx.get_tenant
         )

@@ -70,9 +70,7 @@ class OperationRegistryBinder:
     def as_command(self) -> Self:
         """Mark these operations as read-write (``COMMAND``) — the default."""
 
-        return attrs.evolve(
-            self, acc=attrs.evolve(self._acc, kind=OperationKind.COMMAND)
-        )
+        return attrs.evolve(self, acc=attrs.evolve(self._acc, kind=OperationKind.COMMAND))
 
     # ....................... #
 

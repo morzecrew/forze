@@ -22,7 +22,8 @@ from __future__ import annotations
 import asyncio
 import random
 import selectors
-from typing import Any, Mapping, cast
+from collections.abc import Mapping
+from typing import Any, cast
 
 from forze_dst.scheduler import Reorderer
 
@@ -192,9 +193,7 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         # wakeup can only come from a real foreign thread — which would inject callbacks whose
         # timing depends on wall-clock thread scheduling, breaking determinism. Refuse it (the
         # in-loop path uses ``call_soon``); make such work inline for simulation.
-        raise _forbidden(
-            "scheduling a callback from another thread (call_soon_threadsafe)"
-        )
+        raise _forbidden("scheduling a callback from another thread (call_soon_threadsafe)")
 
     def close(self) -> None:
         self._selector.close()

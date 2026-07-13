@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Sequence, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from forze.application.contracts.interception import PortInterceptor
 from forze.application.execution import (
@@ -25,12 +26,12 @@ from forze.application.execution import (
 )
 from forze.application.execution.interception import LatencyModel
 from forze.application.execution.operations import run_operation
+from forze.application.execution.tracing import bind_tx_sequence
 from forze.base.primitives import derive_seed
 from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.faults import compile_fault_policy
 from forze_dst.latency import compile_latency
 from forze_dst.loop import SimulationDeadlock
-from forze.application.execution.tracing import bind_tx_sequence
 from forze_dst.oracle.recorder import Recorder, bind_recorder, record_event
 
 if TYPE_CHECKING:
@@ -63,14 +64,12 @@ def run_recording(recorder: Recorder, run: Callable[[], None]) -> None:
             )
 
 
-def build_modules(sim: "Simulation") -> tuple[DepsModule, ...]:
+def build_modules(sim: Simulation) -> tuple[DepsModule, ...]:
     """Build a fresh set of deps modules from the factory (fresh state per call)."""
 
     produced = sim.deps()
     return (
-        tuple(produced)
-        if isinstance(produced, (list, tuple))
-        else (cast("DepsModule", produced),)
+        tuple(produced) if isinstance(produced, (list, tuple)) else (cast("DepsModule", produced),)
     )
 
 
@@ -78,7 +77,7 @@ def build_modules(sim: "Simulation") -> tuple[DepsModule, ...]:
 
 
 def registry_from_modules(
-    sim: "Simulation",
+    sim: Simulation,
     modules: tuple[DepsModule, ...],
     seed: int,
     *,
@@ -121,7 +120,7 @@ def registry_from_modules(
 # ....................... #
 
 
-def frozen_registry(sim: "Simulation", seed: int) -> FrozenDepsRegistry:
+def frozen_registry(sim: Simulation, seed: int) -> FrozenDepsRegistry:
     """The run's frozen, runtime-traced deps registry over a fresh module set."""
 
     return registry_from_modules(sim, build_modules(sim), seed)
@@ -132,7 +131,7 @@ def frozen_registry(sim: "Simulation", seed: int) -> FrozenDepsRegistry:
 
 @asynccontextmanager
 async def execution_context(
-    sim: "Simulation",
+    sim: Simulation,
     fault_seed: int,
 ) -> AsyncGenerator[ExecutionContext]:
     """Yield the run's :class:`ExecutionContext` — bare by default, runtime-scoped on opt-in.
@@ -159,7 +158,7 @@ async def execution_context(
 # ....................... #
 
 
-def latency_for(sim: "Simulation", seed: int) -> LatencyModel | None:
+def latency_for(sim: Simulation, seed: int) -> LatencyModel | None:
     """The run's latency model: the config profile (compiled from the latency sub-seed) if set,
     else the manual ``Simulation.latency`` callable escape hatch. *seed* is the master.
     """
@@ -179,7 +178,7 @@ def latency_for(sim: "Simulation", seed: int) -> LatencyModel | None:
 
 
 def input_for(
-    sim: "Simulation",
+    sim: Simulation,
     op: str,
     rng: random.Random,
     case: OperationCase,
@@ -213,7 +212,7 @@ def input_for(
 
 
 def generate(
-    sim: "Simulation",
+    sim: Simulation,
     cases: Sequence[OperationCase],
     count: int,
     seed: int,
@@ -236,7 +235,7 @@ def generate(
 
 
 async def run_call(
-    sim: "Simulation",
+    sim: Simulation,
     ctx: ExecutionContext,
     semaphore: asyncio.Semaphore,
     *,
@@ -267,7 +266,7 @@ async def run_call(
 
 
 async def run_arrange_call(
-    sim: "Simulation",
+    sim: Simulation,
     ctx: ExecutionContext,
     *,
     call_id: int,

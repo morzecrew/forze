@@ -1,7 +1,7 @@
 """Timezone and calendar bucketing helpers for aggregate time windows."""
 
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -15,9 +15,7 @@ from forze.base.exceptions import exc
 # (group 5). The no-colon minutes form requires four digits, so an ambiguous
 # ``+123`` matches none of the alternatives and is rejected (vs. parsing as
 # 1h23m); ``+3``, ``+05``, ``+0530`` and ``+05:30`` all parse.
-_TIMEZONE_OFFSET_RE = re.compile(
-    r"^([+-])(?:(\d{1,2}):(\d{2})|(\d{4})|(\d{1,2}))\Z"
-)
+_TIMEZONE_OFFSET_RE = re.compile(r"^([+-])(?:(\d{1,2}):(\d{2})|(\d{4})|(\d{1,2}))\Z")
 
 TimeBucketMode = Literal["iana", "fixed"]
 
@@ -106,7 +104,7 @@ def floor_to_time_bucket(
     """Floor *dt* to the start of *unit* in *tz* (weeks start Monday)."""
 
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
 
     local = dt.astimezone(tz)
 

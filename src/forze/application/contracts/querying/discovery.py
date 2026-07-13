@@ -17,7 +17,7 @@ upper bound a correctly-typed filter may use; a restricted backend may compile f
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import attrs
 from pydantic import BaseModel

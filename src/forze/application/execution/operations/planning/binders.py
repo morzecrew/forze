@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, Self, overload
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, overload
 
 import attrs
 
@@ -65,7 +66,7 @@ class ScopeBinder[P: _Parent, R]:
 
     # ....................... #
 
-    def wrap(self, *steps: "MiddlewareStep") -> Self:
+    def wrap(self, *steps: MiddlewareStep) -> Self:
         """Add wrap steps to the plan."""
 
         new_acc = attrs.evolve(
@@ -77,7 +78,7 @@ class ScopeBinder[P: _Parent, R]:
 
     # ....................... #
 
-    def finally_(self, *steps: "FinallyStep") -> Self:
+    def finally_(self, *steps: FinallyStep) -> Self:
         """Add finally steps to the plan."""
 
         new_acc = attrs.evolve(
@@ -89,7 +90,7 @@ class ScopeBinder[P: _Parent, R]:
 
     # ....................... #
 
-    def on_failure(self, *steps: "OnFailureStep") -> Self:
+    def on_failure(self, *steps: OnFailureStep) -> Self:
         """Add on failure steps to the plan."""
 
         new_acc = attrs.evolve(
@@ -101,7 +102,7 @@ class ScopeBinder[P: _Parent, R]:
 
     # ....................... #
 
-    def before(self, *steps: "BeforeStep") -> Self:
+    def before(self, *steps: BeforeStep) -> Self:
         """Add before steps to the plan."""
 
         new_acc = attrs.evolve(
@@ -113,7 +114,7 @@ class ScopeBinder[P: _Parent, R]:
 
     # ....................... #
 
-    def on_success(self, *steps: "OnSuccessStep") -> Self:
+    def on_success(self, *steps: OnSuccessStep) -> Self:
         """Add on success steps to the plan."""
 
         new_acc = attrs.evolve(
@@ -125,7 +126,7 @@ class ScopeBinder[P: _Parent, R]:
 
     # ....................... #
 
-    def dispatch(self, *steps: "DispatchStep") -> Self:
+    def dispatch(self, *steps: DispatchStep) -> Self:
         """Add dispatch steps to the plan."""
 
         new_acc = attrs.evolve(
@@ -140,12 +141,10 @@ class ScopeBinder[P: _Parent, R]:
     @overload
     def finish(self, *, deep: Literal[False] = False) -> P:
         """Finish binding and return updated parent."""
-        ...
 
     @overload
     def finish(self, *, deep: Literal[True]) -> R:
         """Finish binding and return updated root."""
-        ...
 
     def finish(self, *, deep: bool = False) -> P | R:
         """Finish binding and return updated parent or root."""
@@ -157,9 +156,7 @@ class ScopeBinder[P: _Parent, R]:
             return new_parent
 
         if self._root_commit_fn is None:
-            raise exc.internal(
-                "Cannot finish a scope binder without a root commit function"
-            )
+            raise exc.internal("Cannot finish a scope binder without a root commit function")
 
         return self._root_commit_fn(new_parent)
 
@@ -206,7 +203,7 @@ class TransactionScopeBinder[P: _Parent, R](ScopeBinder[P, R]):
 
     # ....................... #
 
-    def after_commit(self, *steps: "OnSuccessStep") -> Self:
+    def after_commit(self, *steps: OnSuccessStep) -> Self:
         """Add after commit steps to the plan.
 
         After-commit steps run *after* the root transaction has committed. Every
@@ -225,7 +222,7 @@ class TransactionScopeBinder[P: _Parent, R](ScopeBinder[P, R]):
 
     # ....................... #
 
-    def dispatch_after_commit(self, *steps: "DispatchStep") -> Self:
+    def dispatch_after_commit(self, *steps: DispatchStep) -> Self:
         """Add dispatch after commit steps to the plan."""
 
         new_acc = attrs.evolve(

@@ -1,12 +1,19 @@
 """Mongo dependency module for the application kernel."""
 
-from typing import Any, Callable, cast, final
+from collections.abc import Callable
+from functools import partial
+from typing import Any, cast, final
 
 import attrs
 
-from functools import partial
-
 from forze.application.contracts.crypto import EncryptionTier
+from forze.application.contracts.deps import (
+    Deps,
+    DepsModule,
+    merge_deps,
+    routed_constant,
+    routed_from_mapping,
+)
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -21,12 +28,6 @@ from forze.application.contracts.tenancy import (
     warn_integration_routes,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
-from forze.application.contracts.deps import Deps, DepsModule
-from forze.application.contracts.deps import (
-    merge_deps,
-    routed_constant,
-    routed_from_mapping,
-)
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
@@ -83,13 +84,13 @@ class MongoDepsModule(DepsModule):
 
     ro_documents: StrKeyMapping[MongoReadOnlyDocumentConfig] | None = attrs.field(
         default=None,
-        converter=MappingConverter.to_str_key_frozen, # type: ignore[misc]
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from read-only document names to their Mongo-specific configurations."""
 
     rw_documents: StrKeyMapping[MongoDocumentConfig] | None = attrs.field(
         default=None,
-        converter=MappingConverter.to_str_key_frozen, # type: ignore[misc]
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from read-write document names to their Mongo-specific configurations."""
 
@@ -98,13 +99,13 @@ class MongoDepsModule(DepsModule):
 
     searches: StrKeyMapping[MongoSearchConfig] | None = attrs.field(
         default=None,
-        converter=MappingConverter.to_str_key_frozen, # type: ignore[misc]
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from search spec names to Mongo-specific search configurations."""
 
     outboxes: StrKeyMapping[MongoOutboxConfig] | None = attrs.field(
         default=None,
-        converter=MappingConverter.to_str_key_frozen, # type: ignore[misc]
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from outbox route names to Mongo-specific configurations."""
 

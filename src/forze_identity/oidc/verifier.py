@@ -5,8 +5,9 @@ require_oidc()
 # ....................... #
 
 import asyncio
+from collections.abc import Sequence
 from datetime import timedelta
-from typing import Sequence, final
+from typing import final
 
 import attrs
 from jwt import ExpiredSignatureError, InvalidTokenError
@@ -81,9 +82,7 @@ class OidcTokenVerifier(TokenVerifierPort):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.enforce_issuer_and_audience and (
-            self.issuer is None or self.audience is None
-        ):
+        if self.enforce_issuer_and_audience and (self.issuer is None or self.audience is None):
             raise exc.configuration(
                 "enforce_issuer_and_audience requires both issuer and audience",
             )
@@ -149,9 +148,7 @@ class OidcTokenVerifier(TokenVerifierPort):
         if self.audience is None:
             return None
 
-        configured = (
-            (self.audience,) if isinstance(self.audience, str) else tuple(self.audience)
-        )
+        configured = (self.audience,) if isinstance(self.audience, str) else tuple(self.audience)
 
         if isinstance(token_aud, str):
             presented: set[str] = {token_aud}

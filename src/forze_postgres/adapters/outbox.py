@@ -106,9 +106,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
         )
         col_idents = [sql.Identifier(c) for c in cols]
         row_template = (
-            sql.SQL("(")
-            + sql.SQL(", ").join(sql.Placeholder() for _ in cols)
-            + sql.SQL(")")
+            sql.SQL("(") + sql.SQL(", ").join(sql.Placeholder() for _ in cols) + sql.SQL(")")
         )
         value_parts = [row_template] * len(rows)
         flat_params: list[Any] = []
@@ -188,13 +186,9 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
         # ``created_at``. Off keeps the size-only created_at order, byte for byte.
         hlc_ordering = self.config.hlc_ordering
         propagate_trace = self.config.propagate_trace
-        order_by = sql.SQL(
-            "hlc NULLS LAST, created_at, id" if hlc_ordering else "created_at"
-        )
+        order_by = sql.SQL("hlc NULLS LAST, created_at, id" if hlc_ordering else "created_at")
         hlc_returning = sql.SQL(", t.hlc") if hlc_ordering else sql.SQL("")
-        trace_returning = (
-            sql.SQL(", t.traceparent") if propagate_trace else sql.SQL("")
-        )
+        trace_returning = sql.SQL(", t.traceparent") if propagate_trace else sql.SQL("")
 
         stmt = sql.SQL(
             """

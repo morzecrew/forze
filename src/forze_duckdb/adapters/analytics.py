@@ -1,7 +1,8 @@
 """DuckDB implementation of the analytics query port (query-only)."""
 
+from collections.abc import AsyncGenerator, Sequence
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Sequence, TypeVar, final
+from typing import Any, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
@@ -39,7 +40,6 @@ from forze.application.integrations.analytics.adapter_common import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-
 from forze_duckdb.execution.deps.configs import (
     DuckDbAnalyticsConfig,
     DuckDbQueryConfig,
@@ -282,9 +282,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
         params = self._validated_params(query_key, params)
 
         if dry_run_enabled(options):
-            return CursorPage(
-                hits=[], next_cursor=None, prev_cursor=None, has_more=False
-            )
+            return CursorPage(hits=[], next_cursor=None, prev_cursor=None, has_more=False)
 
         start, lim = parse_offset_cursor_after(
             cursor,

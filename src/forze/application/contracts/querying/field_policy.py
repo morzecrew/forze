@@ -8,7 +8,7 @@ per-aggregate contract, distinct from authorization row-scoping (a dynamic, per-
 policy): the two compose, neither replaces the other.
 """
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import attrs
 from pydantic import BaseModel
@@ -99,8 +99,7 @@ def validate_filterable_fields(
 
     if forbidden:
         raise exc.precondition(
-            f"Filtering on field(s) {sorted(forbidden)} is not allowed for "
-            f"{spec_name!r}.",
+            f"Filtering on field(s) {sorted(forbidden)} is not allowed for {spec_name!r}.",
             code="field_not_filterable",
         )
 
@@ -131,14 +130,11 @@ def validate_runtime_filter_fields(
         return
 
     fields = (frozenset(model.model_fields) | materialized) - lenient
-    unknown = sorted(
-        root for root in collect_filter_field_roots(filters) if root not in fields
-    )
+    unknown = sorted(root for root in collect_filter_field_roots(filters) if root not in fields)
 
     if unknown:
         raise exc.precondition(
-            f"Filter field(s) {unknown} are not on the read model "
-            f"({model.__name__}).",
+            f"Filter field(s) {unknown} are not on the read model ({model.__name__}).",
             code="field_not_on_read_model",
         )
 
@@ -158,8 +154,7 @@ def validate_sortable_fields(
 
     if forbidden:
         raise exc.precondition(
-            f"Sorting on field(s) {sorted(forbidden)} is not allowed for "
-            f"{spec_name!r}.",
+            f"Sorting on field(s) {sorted(forbidden)} is not allowed for {spec_name!r}.",
             code="field_not_sortable",
         )
 
@@ -179,11 +174,7 @@ def collect_aggregate_field_roots(aggregates: AggregatesExpression) -> frozenset
     parsed = AggregatesExpressionParser.parse(aggregates)
 
     roots = {_root(group.expr.field) for group in parsed.groups}
-    roots |= {
-        _root(field.field)
-        for field in parsed.computed_fields
-        if field.field is not None
-    }
+    roots |= {_root(field.field) for field in parsed.computed_fields if field.field is not None}
 
     return frozenset(roots)
 
@@ -195,9 +186,7 @@ def collect_aggregate_filter_expressions(
 
     parsed = AggregatesExpressionParser.parse(aggregates)
 
-    return tuple(
-        field.filter for field in parsed.computed_fields if field.filter is not None
-    )
+    return tuple(field.filter for field in parsed.computed_fields if field.filter is not None)
 
 
 def validate_aggregatable_fields(
@@ -215,8 +204,7 @@ def validate_aggregatable_fields(
 
     if forbidden:
         raise exc.precondition(
-            f"Aggregating on field(s) {sorted(forbidden)} is not allowed for "
-            f"{spec_name!r}.",
+            f"Aggregating on field(s) {sorted(forbidden)} is not allowed for {spec_name!r}.",
             code="field_not_aggregatable",
         )
 
@@ -237,17 +225,13 @@ class QueryFieldPolicy:
     subset of the read model's fields (validated where the policy is attached to a spec).
     """
 
-    filterable: frozenset[str] | None = attrs.field(
-        default=None, converter=_to_frozenset
-    )
+    filterable: frozenset[str] | None = attrs.field(default=None, converter=_to_frozenset)
     """Field names a caller may filter on, or ``None`` for all read-model fields."""
 
     sortable: frozenset[str] | None = attrs.field(default=None, converter=_to_frozenset)
     """Field names a caller may sort by, or ``None`` for all read-model fields."""
 
-    aggregatable: frozenset[str] | None = attrs.field(
-        default=None, converter=_to_frozenset
-    )
+    aggregatable: frozenset[str] | None = attrs.field(default=None, converter=_to_frozenset)
     """Field names a caller may group by / aggregate over (the dimensions and computed-metric
     source fields of an aggregate query), or ``None`` for all read-model fields. Per-metric
     ``filter`` sub-expressions are governed by :attr:`filterable`, not this axis."""
@@ -316,9 +300,7 @@ class QueryFieldGuard:
                     )
 
         if self.policy.sortable is not None:
-            validate_sortable_fields(
-                sorts, allowed=self.policy.sortable, spec_name=self.spec_name
-            )
+            validate_sortable_fields(sorts, allowed=self.policy.sortable, spec_name=self.spec_name)
 
         if self.policy.aggregatable is not None:
             validate_aggregatable_fields(

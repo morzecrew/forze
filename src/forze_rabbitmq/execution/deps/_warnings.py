@@ -6,9 +6,5 @@ from .configs import RabbitMQQueueConfig
 
 # ----------------------- #
 
-RABBITMQ_QUEUE_READER_WARNING = namespace_route_warning(
-    RabbitMQQueueConfig, kind="queue_reader"
-)
-RABBITMQ_QUEUE_WRITER_WARNING = namespace_route_warning(
-    RabbitMQQueueConfig, kind="queue_writer"
-)
+RABBITMQ_QUEUE_READER_WARNING = namespace_route_warning(RabbitMQQueueConfig, kind="queue_reader")
+RABBITMQ_QUEUE_WRITER_WARNING = namespace_route_warning(RabbitMQQueueConfig, kind="queue_writer")

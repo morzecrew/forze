@@ -1,7 +1,8 @@
 from collections import OrderedDict
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import AsyncGenerator, Awaitable, Callable, final
+from typing import final
 from uuid import UUID
 
 import attrs
@@ -88,8 +89,8 @@ class TenantClientRegistry[C, R]:
     __disposed_count: int = attrs.field(default=0, init=False, repr=False)
     __evicted_explicit_count: int = attrs.field(default=0, init=False, repr=False)
 
-    __registry: GuardedLruRegistry[UUID, C, R] | SimpleLruRegistry[UUID, C, R] = (
-        attrs.field(init=False, repr=False)
+    __registry: GuardedLruRegistry[UUID, C, R] | SimpleLruRegistry[UUID, C, R] = attrs.field(
+        init=False, repr=False
     )
 
     # ....................... #
@@ -99,9 +100,7 @@ class TenantClientRegistry[C, R]:
             raise exc.configuration("max_entries must be at least 1")
 
         registry_cls = (
-            GuardedLruRegistry[UUID, C, R]
-            if self.guarded
-            else SimpleLruRegistry[UUID, C, R]
+            GuardedLruRegistry[UUID, C, R] if self.guarded else SimpleLruRegistry[UUID, C, R]
         )
 
         self.__registry = registry_cls(

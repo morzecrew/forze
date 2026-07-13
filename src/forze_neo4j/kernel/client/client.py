@@ -7,9 +7,10 @@ require_neo4j()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import AsyncGenerator, final
+from typing import final
 
 import attrs
 from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncTransaction
@@ -110,7 +111,7 @@ class Neo4jClient(Neo4jClientPort):
         try:
             await self._require_driver.verify_connectivity()  # pyright: ignore[reportUnknownMemberType]
 
-        except Exception as e:  # noqa: BLE001 - health must not raise
+        except Exception as e:
             logger.debug("Neo4j health check failed", exc_info=True)
             return str(e) or "Neo4j health check failed", False
 
@@ -172,11 +173,9 @@ class Neo4jClient(Neo4jClientPort):
             yield
             return
 
-        async with (
-            self._require_driver.session(  # pyright: ignore[reportUnknownMemberType]
-                database=self._database(database)
-            ) as session
-        ):
+        async with self._require_driver.session(  # pyright: ignore[reportUnknownMemberType]
+            database=self._database(database)
+        ) as session:
             tx = await session.begin_transaction()
             token = self._tx_var.set(tx)
 

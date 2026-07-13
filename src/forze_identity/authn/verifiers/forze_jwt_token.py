@@ -101,11 +101,7 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
             },
         )
 
-        if (
-            session is None
-            or session.revoked_at is not None
-            or session.rotated_at is not None
-        ):
+        if session is None or session.revoked_at is not None or session.rotated_at is not None:
             raise exc.authentication(
                 "Session revoked",
                 code="session_revoked",
@@ -126,9 +122,12 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
             )
 
         tid_raw = claims.get("tid")
-        if tid_raw is not None and session.tenant_id is not None:
-            if str(session.tenant_id) != tid_raw:
-                raise exc.authentication(
-                    "Session does not match token tenant",
-                    code="session_tenant_mismatch",
-                )
+        if (
+            tid_raw is not None
+            and session.tenant_id is not None
+            and str(session.tenant_id) != tid_raw
+        ):
+            raise exc.authentication(
+                "Session does not match token tenant",
+                code="session_tenant_mismatch",
+            )

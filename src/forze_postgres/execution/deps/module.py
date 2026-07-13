@@ -1,8 +1,9 @@
 """Postgres dependency module for the application kernel."""
 
+from collections.abc import Callable
 from datetime import timedelta
 from functools import partial
-from typing import Any, Callable, cast, final
+from typing import Any, cast, final
 
 import attrs
 
@@ -10,8 +11,14 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
-from forze.application.contracts.procedure import ProcedureCommandDepKey
 from forze.application.contracts.crypto import EncryptionTier
+from forze.application.contracts.deps import (
+    DepKey,
+    Deps,
+    DepsModule,
+    merge_deps,
+    routed_from_mapping,
+)
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -26,14 +33,13 @@ from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
+from forze.application.contracts.procedure import ProcedureCommandDepKey
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     HubSearchQueryDepKey,
     SearchQueryDepKey,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
-from forze.application.contracts.deps import DepKey, Deps, DepsModule
-from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
@@ -150,11 +156,9 @@ class PostgresDepsModule(DepsModule):
     )
     """Mapping from hub search names to their Postgres-specific configurations."""
 
-    federated_searches: StrKeyMapping[PostgresFederatedSearchConfig] | None = (
-        attrs.field(
-            default=None,
-            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
-        )
+    federated_searches: StrKeyMapping[PostgresFederatedSearchConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from federated search names to their Postgres-specific configurations."""
 
@@ -517,13 +521,7 @@ class PostgresDepsModule(DepsModule):
 
         if self.tx:
             tx_deps = tx_deps.merge(
-                Deps.routed(
-                    {
-                        TransactionManagerDepKey: {
-                            name: postgres_txmanager for name in self.tx
-                        }
-                    }
-                )
+                Deps.routed({TransactionManagerDepKey: dict.fromkeys(self.tx, postgres_txmanager)})
             )
 
         if self.analytics:
@@ -532,12 +530,10 @@ class PostgresDepsModule(DepsModule):
                 Deps.routed(
                     {
                         AnalyticsQueryDepKey: {
-                            name: factory(config=config)
-                            for name, config in self.analytics.items()
+                            name: factory(config=config) for name, config in self.analytics.items()
                         },
                         AnalyticsIngestDepKey: {
-                            name: factory(config=config)
-                            for name, config in self.analytics.items()
+                            name: factory(config=config) for name, config in self.analytics.items()
                         },
                     }
                 )
@@ -626,9 +622,7 @@ class PostgresDepsModule(DepsModule):
             # The dual-port store implements both the run store and the admin/list port; the
             # same factory registers under both keys when admin listing is opted in.
             run_factory = ConfigurablePostgresDurableRun(config=self.durable_run)
-            run_registrations: dict[DepKey[Any], Any] = {
-                DurableRunStoreDepKey: run_factory
-            }
+            run_registrations: dict[DepKey[Any], Any] = {DurableRunStoreDepKey: run_factory}
 
             if self.durable_run.admin:
                 run_registrations[DurableRunAdminDepKey] = run_factory

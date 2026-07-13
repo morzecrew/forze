@@ -1,6 +1,7 @@
 """Pydantic-specific helpers for error context scrubbing."""
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -25,9 +26,7 @@ def sanitize_pydantic_errors(
     sanitized: list[dict[str, Any]] = []
 
     for err in errors:
-        sanitized.append(
-            {k: v for k, v in err.items() if k not in _PYDANTIC_ERROR_DROP_KEYS}
-        )
+        sanitized.append({k: v for k, v in err.items() if k not in _PYDANTIC_ERROR_DROP_KEYS})
 
     return sanitized
 

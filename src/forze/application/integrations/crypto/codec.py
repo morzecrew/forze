@@ -24,14 +24,11 @@ is not an envelope is passed through untouched, tolerating legacy plaintext.
 
 import base64
 import binascii
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import (
     Any,
-    Iterable,
-    Iterator,
     Literal,
     Protocol,
-    Sequence,
     final,
     runtime_checkable,
 )
@@ -100,9 +97,7 @@ def _maybe_envelope(value: str) -> bytes | None:
 class _SupportsFieldDecryptSnapshot(Protocol):
     """A field cipher that can snapshot resolved data keys for thread-safe offloaded decrypt."""
 
-    def freeze_decryptor(
-        self, envelopes: Iterable[EncryptedEnvelope]
-    ) -> FieldCipherPort: ...
+    def freeze_decryptor(self, envelopes: Iterable[EncryptedEnvelope]) -> FieldCipherPort: ...
 
 
 @runtime_checkable
@@ -201,9 +196,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         if envelopes:
             # Pass the tenant so the keyring authorizes each envelope's key id against
             # the tenant's own key before unwrapping (confused-deputy guard).
-            await self.cipher.ensure_unwrapped(
-                envelopes, tenant=self.tenant_provider()
-            )
+            await self.cipher.ensure_unwrapped(envelopes, tenant=self.tenant_provider())
 
     # ....................... #
     # field crypto helpers
@@ -333,9 +326,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
 
         return self._decrypt_fields(mapping)
 
-    def freeze_for_decrypt(
-        self, rows: Sequence[JsonDict]
-    ) -> "EncryptingModelCodec[T] | None":
+    def freeze_for_decrypt(self, rows: Sequence[JsonDict]) -> "EncryptingModelCodec[T] | None":
         """Return a thread-safe copy of this codec for offloaded batch decrypt, or ``None``.
 
         Resolves every data key and deterministic key these *rows* need on the event loop
@@ -411,9 +402,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             if out is None:
                 out = dict(mapping)
 
-            out[field] = orjson.loads(
-                self._decrypt_field_blob(field, tenant, mapping, blob)
-            )
+            out[field] = orjson.loads(self._decrypt_field_blob(field, tenant, mapping, blob))
 
         if self.searchable_fields:
             det = self._require_det()
@@ -547,9 +536,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
 
         return self._rewrite_node(expr, self.tenant_provider())
 
-    def _rewrite_node(
-        self, node: QueryExpr, tenant: TenantIdentity | None
-    ) -> QueryExpr:
+    def _rewrite_node(self, node: QueryExpr, tenant: TenantIdentity | None) -> QueryExpr:
         match node:
             case QueryAnd(items):
                 return QueryAnd(tuple(self._rewrite_node(i, tenant) for i in items))
@@ -576,9 +563,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
                     code="core.crypto.searchable_op_unsupported",
                 )
 
-            case QueryCompare(left, _op, right) if (
-                left in self.fields or right in self.fields
-            ):
+            case QueryCompare(left, _op, right) if left in self.fields or right in self.fields:
                 raise self._reject_randomized(left if left in self.fields else right)
 
             case QueryElem(path, quantifier, inner):
@@ -616,9 +601,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             code="core.crypto.encrypted_field_not_filterable",
         )
 
-    def _det_search(
-        self, tenant: TenantIdentity | None, field: str, value: Any
-    ) -> tuple[str, ...]:
+    def _det_search(self, tenant: TenantIdentity | None, field: str, value: Any) -> tuple[str, ...]:
         """Base64 ciphertext(s) a stored value could match — both keys during rotation."""
 
         return tuple(
@@ -667,8 +650,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         obj: T,
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> JsonDict:
+        if exclude is None:
+            exclude = {}
         return self._encrypt_fields(
             self.inner.encode_persistence_mapping(obj, mode=mode, exclude=exclude)
         )
@@ -678,13 +663,13 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         objs: Sequence[T],
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> list[JsonDict]:
+        if exclude is None:
+            exclude = {}
         return [
             self._encrypt_fields(m)
-            for m in self.inner.encode_persistence_mapping_many(
-                objs, mode=mode, exclude=exclude
-            )
+            for m in self.inner.encode_persistence_mapping_many(objs, mode=mode, exclude=exclude)
         ]
 
     def encode_persistence_patch(
@@ -693,7 +678,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         *,
         record_id: Any = None,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> JsonDict:
         """Encode an update DTO, binding *record_id* into encrypted-field AAD.
 
@@ -704,6 +689,8 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         discover this method by duck typing, so plain codecs need not define it.
         """
 
+        if exclude is None:
+            exclude = {}
         return self._encrypt_fields(
             self.inner.encode_persistence_mapping(obj, mode=mode, exclude=exclude),
             record_id=record_id,
@@ -761,8 +748,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         obj: T,
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> JsonDict:
+        if exclude is None:
+            exclude = {}
         return self.inner.encode_mapping(obj, mode=mode, exclude=exclude)
 
     def encode_mapping_many(
@@ -770,8 +759,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         objs: Sequence[T],
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> list[JsonDict]:
+        if exclude is None:
+            exclude = {}
         return self.inner.encode_mapping_many(objs, mode=mode, exclude=exclude)
 
     def encode_mapping_many_batched(
@@ -780,8 +771,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         *,
         batch_size: int = 2000,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> Iterator[list[JsonDict]]:
+        if exclude is None:
+            exclude = {}
         return self.inner.encode_mapping_many_batched(
             objs, batch_size=batch_size, mode=mode, exclude=exclude
         )
@@ -791,8 +784,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         source: Any,
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {"unset": True},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> T:
+        if exclude is None:
+            exclude = {"unset": True}
         return self.inner.transform(source, mode=mode, exclude=exclude)
 
     def transform_many(
@@ -800,8 +795,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         sources: Sequence[Any],
         *,
         mode: Literal["json", "python"] = "python",
-        exclude: ModelDumpExcludeOptions = {"unset": True},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> list[T]:
+        if exclude is None:
+            exclude = {"unset": True}
         return self.inner.transform_many(sources, mode=mode, exclude=exclude)
 
     @property
@@ -818,8 +815,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         self,
         obj: T,
         *,
-        exclude: ModelDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions | None = None,
     ) -> bytes:
+        if exclude is None:
+            exclude = {}
         return self.inner.encode_json_bytes(obj, exclude=exclude)
 
     def decode_json_bytes(
@@ -829,9 +828,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         forbid_extra: bool = False,
         encoding: str = "utf-8",
     ) -> T:
-        return self.inner.decode_json_bytes(
-            raw, forbid_extra=forbid_extra, encoding=encoding
-        )
+        return self.inner.decode_json_bytes(raw, forbid_extra=forbid_extra, encoding=encoding)
 
 
 # ....................... #

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from collections.abc import AsyncGenerator, Sequence
+from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import AsyncGenerator, Sequence, cast, final
+from typing import cast, final
 from uuid import UUID
 
 import attrs
@@ -51,9 +52,7 @@ class _ConsumerCell:
     assigned to one group member at a time, so the key is unambiguous even when
     several members of the same group read different topics/partitions."""
 
-    by_partition: dict[tuple[str, str, int | None], AIOKafkaConsumer] = attrs.field(
-        factory=dict
-    )
+    by_partition: dict[tuple[str, str, int | None], AIOKafkaConsumer] = attrs.field(factory=dict)
 
 
 # ....................... #
@@ -96,10 +95,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
     async def _physical_topics(self, topics: Sequence[str]) -> list[str]:
         tenant_id = self._tenant_id()
 
-        return [
-            await resolve_kafka_topic(self.namespace, tenant_id, topic)
-            for topic in topics
-        ]
+        return [await resolve_kafka_topic(self.namespace, tenant_id, topic) for topic in topics]
 
     # ....................... #
 
@@ -114,11 +110,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
             payload=self.codec.decode_value(record.value),
             type=message_type,
             key=raw_key.decode("utf-8") if isinstance(raw_key, bytes) else None,
-            timestamp=(
-                datetime.fromtimestamp(raw_ts / 1000, tz=timezone.utc)
-                if raw_ts
-                else None
-            ),
+            timestamp=(datetime.fromtimestamp(raw_ts / 1000, tz=UTC) if raw_ts else None),
             partition=record.partition,
             offset=record.offset,
             headers=headers,
@@ -149,9 +141,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
 
     # ....................... #
 
-    def _forget_partitions(
-        self, group: str, revoked: Sequence[TopicPartition]
-    ) -> None:
+    def _forget_partitions(self, group: str, revoked: Sequence[TopicPartition]) -> None:
         """Drop revoked partitions' commit routing (a rebalance took them away)."""
 
         for tp in revoked:
@@ -185,9 +175,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
             ),
         )
         timeout_ms = (
-            int(timeout.total_seconds() * 1000)
-            if timeout is not None
-            else _DEFAULT_POLL_MS
+            int(timeout.total_seconds() * 1000) if timeout is not None else _DEFAULT_POLL_MS
         )
         batches = await kafka_consumer.getmany(
             timeout_ms=timeout_ms,
@@ -220,9 +208,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
 
                 # Remember which consumer delivered this partition so its commit
                 # routes to the right assigned member.
-                self._cell.by_partition[
-                    (group, message.stream, message.partition)
-                ] = kafka_consumer
+                self._cell.by_partition[(group, message.stream, message.partition)] = kafka_consumer
                 out.append(message)
 
                 if limit is not None and len(out) >= limit:
@@ -261,9 +247,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
         routed: dict[AIOKafkaConsumer, dict[TopicPartition, int]] = {}
 
         for position in positions:
-            consumer = self._cell.by_partition.get(
-                (group, position.stream, position.partition)
-            )
+            consumer = self._cell.by_partition.get((group, position.stream, position.partition))
 
             if consumer is None:
                 continue  # not read through this adapter — nothing to commit on
@@ -292,9 +276,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
         # consumer — would resume PAST the uncommitted records and skip them.
         seen: set[int] = set()
 
-        for (member_group, _topic, _partition), consumer in list(
-            self._cell.by_partition.items()
-        ):
+        for (member_group, _topic, _partition), consumer in list(self._cell.by_partition.items()):
             if member_group != group or id(consumer) in seen:
                 continue
 

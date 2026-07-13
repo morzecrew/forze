@@ -7,13 +7,9 @@ extra. Emits via the global OpenTelemetry providers — configure the SDK + expo
 app.
 """
 
+from collections.abc import Callable, Iterable
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, Callable, Iterable
-
-# OpenTelemetry is imported lazily inside the ``instrument_*`` functions below so that
-# merely importing this module (it is re-exported from ``forze.application.execution``)
-# does not pull ``opentelemetry`` into the import path of an uninstrumented app.
-from forze.base.exceptions import CoreException, http_status_for_kind
+from typing import TYPE_CHECKING, Any
 
 from forze.application.contracts.crypto import CryptoKeyringStats
 from forze.application.contracts.execution import (
@@ -23,17 +19,22 @@ from forze.application.contracts.execution import (
 )
 from forze.application.contracts.tenancy import TenantPoolStats
 
+# OpenTelemetry is imported lazily inside the ``instrument_*`` functions below so that
+# merely importing this module (it is re-exported from ``forze.application.execution``)
+# does not pull ``opentelemetry`` into the import path of an uninstrumented app.
+from forze.base.exceptions import CoreException, http_status_for_kind
+
 from .operations.registry import OperationRegistry
 from .resilience import InProcessResilienceExecutor
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import (  # noqa: F401
+    from opentelemetry.metrics import (
         CallbackOptions,
         Counter,
         Histogram,
         Meter,
     )
-    from opentelemetry.trace import Tracer  # noqa: F401
+    from opentelemetry.trace import Tracer
 
     from .context import ExecutionContext
 
@@ -412,7 +413,7 @@ def _telemetry_factory(
 
     def factory(ctx: "ExecutionContext") -> Middleware[Any, Any]:
         async def middleware(
-            next: Any,  # noqa: A002 — matches the Middleware protocol parameter name
+            next: Any,
             args: Any,
         ) -> Any:
             kind = "query" if ctx.inv_ctx.is_read_only() else "command"
@@ -434,10 +435,7 @@ def _telemetry_factory(
                     # with a clean span, so error-rate alerting on
                     # ``forze.operations{forze.outcome="error"}`` tracks genuine faults.
                     # A 5xx CoreException or any other exception paints the span red.
-                    if (
-                        isinstance(exc, CoreException)
-                        and http_status_for_kind(exc.kind) < 500
-                    ):
+                    if isinstance(exc, CoreException) and http_status_for_kind(exc.kind) < 500:
                         outcome = "failed"
 
                     else:
@@ -461,9 +459,7 @@ def _telemetry_factory(
 # ....................... #
 
 
-def _span_attributes(
-    ctx: "ExecutionContext", op_name: str, kind: str
-) -> dict[str, str]:
+def _span_attributes(ctx: "ExecutionContext", op_name: str, kind: str) -> dict[str, str]:
     attributes: dict[str, str] = {
         "forze.operation": op_name,
         "forze.operation.kind": kind,

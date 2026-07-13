@@ -1,4 +1,5 @@
-from typing import Any, Sequence, final
+from collections.abc import Sequence
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -37,9 +38,7 @@ class TenantManagementAdapter(TenantManagementPort):
     """Document-backed :class:`~forze.application.contracts.tenancy.TenantManagementPort`."""
 
     tenant_qry: DocumentQueryPort[ReadTenant]
-    tenant_cmd: DocumentCommandPort[
-        ReadTenant, Tenant, CreateTenantCmd, UpdateTenantCmd
-    ]
+    tenant_cmd: DocumentCommandPort[ReadTenant, Tenant, CreateTenantCmd, UpdateTenantCmd]
     binding_qry: DocumentQueryPort[ReadPrincipalTenantBinding]
     binding_cmd: DocumentCommandPort[
         ReadPrincipalTenantBinding,
@@ -65,14 +64,10 @@ class TenantManagementAdapter(TenantManagementPort):
             raise exc.internal("tenant_cmd spec must match tenant_spec")
 
         if self.binding_qry.spec.name != principal_tenant_binding_spec.name:
-            raise exc.internal(
-                "binding_qry spec must match principal_tenant_binding_spec"
-            )
+            raise exc.internal("binding_qry spec must match principal_tenant_binding_spec")
 
         if self.binding_cmd.spec.name != principal_tenant_binding_spec.name:
-            raise exc.internal(
-                "binding_cmd spec must match principal_tenant_binding_spec"
-            )
+            raise exc.internal("binding_cmd spec must match principal_tenant_binding_spec")
 
         forbid_cache_and_history(
             self.tenant_qry.spec,
@@ -179,9 +174,7 @@ class TenantManagementAdapter(TenantManagementPort):
             tenant = await self.tenant_qry.get(bind.tenant_id)
 
             if tenant.is_active:
-                out.append(
-                    TenantIdentity(tenant_id=tenant.id, tenant_key=tenant.tenant_key)
-                )
+                out.append(TenantIdentity(tenant_id=tenant.id, tenant_key=tenant.tenant_key))
 
         return out
 

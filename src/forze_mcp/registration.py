@@ -9,7 +9,8 @@ contract); the result is whatever the operation returns, serialized by FastMCP.
 
 import inspect
 import warnings
-from typing import Any, Awaitable, Callable, Final
+from collections.abc import Awaitable, Callable
+from typing import Any, Final
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -24,20 +25,15 @@ from forze.application.execution.operations import (
     OperationCatalogEntry,
     OperationDescriptor,
 )
-from forze.base.exceptions import CoreException, error_envelope, exc
-from forze.base.logging import Logger
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
-
-from ._logging import ForzeMCPLogger
 
 # ----------------------- #
 
 _UNSET: Final[Any] = object()
 """Sentinel signalling a tool argument the client omitted (see :func:`_flat_tool_handler`)."""
 
-_error_logger = Logger(ForzeMCPLogger.ERRORS)
-"""Server-side error diagnostics (mirrors the HTTP edge's error logging)."""
-
+from ._errors import client_safe_error
 from .dispatch import invoke_operation
 from .identity import MCPIdentityResolver, StaticIdentityResolver
 from .projection import exposed_operations
@@ -82,31 +78,10 @@ def _flat_tool_handler(
                 arguments=arguments,
             )
         except CoreException as e:
-            # ``error_envelope`` has already applied the per-kind egress policy — a caller-caused
-            # kind keeps its message, an internal/server error is masked to a generic detail — so
-            # the agent gets an actionable error without any internal specifics.
-            envelope = error_envelope(e)
-
-            if envelope.server_error:
-                # Mirror the HTTP edge: a server-side error is logged (with its cause's traceback)
-                # before the masked ToolError reaches the agent, so operators still see the real
-                # failure instead of only a generic client-facing message.
-                if e.__cause__ is not None:
-                    _error_logger.critical_exception(
-                        "MCP server error",
-                        exc=e.__cause__,
-                        error_code=e.code,
-                        error_kind=e.kind.value,
-                    )
-                else:
-                    _error_logger.error(
-                        "MCP server error",
-                        error_code=e.code,
-                        error_kind=e.kind.value,
-                        detail=e.summary,
-                    )
-
-            raise ToolError(f"{envelope.code}: {envelope.detail}") from e
+            # Shared egress-masked translation (see :mod:`forze_mcp._errors`): a caller-caused
+            # kind keeps its message + code, an internal/server error is masked to a generic
+            # detail and logged server-side before the ToolError reaches the agent.
+            raise client_safe_error(e, ToolError) from e
 
     params: list[inspect.Parameter] = []
     annotations: dict[str, Any] = {}
@@ -133,9 +108,7 @@ def _flat_tool_handler(
             )
             annotations[field_name] = field.annotation
 
-    return_annotation: Any = (
-        output_type if output_type is not None else inspect.Signature.empty
-    )
+    return_annotation: Any = output_type if output_type is not None else inspect.Signature.empty
 
     _handler.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         params, return_annotation=return_annotation

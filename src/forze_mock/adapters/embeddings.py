@@ -1,7 +1,7 @@
 """Deterministic mock :class:`~forze.application.contracts.embeddings.EmbeddingsProviderPort`."""
 
 import hashlib
-from typing import Sequence
+from collections.abc import Sequence
 
 import attrs
 

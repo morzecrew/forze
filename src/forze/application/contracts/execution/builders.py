@@ -1,4 +1,5 @@
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from forze.base.exceptions import exc
 from forze.base.primitives import AbstractSequence, DirectedAcyclicGraph, StrKey
@@ -35,9 +36,7 @@ def steps_graph_from_sequence[X: GraphStep](
     for s in step_list:
         for cap in s.provides:
             if cap in provider_by_capability:
-                raise exc.internal(
-                    f"Capability {cap} is provided by more than one step"
-                )
+                raise exc.internal(f"Capability {cap} is provided by more than one step")
 
             provider_by_capability[cap] = s.id
 
@@ -70,9 +69,7 @@ def steps_graph_from_sequence[X: GraphStep](
 
     # If sort key is not provided, sort by priority descending, then registration order
     resolved_sort_key: Callable[[StrKey], Any] = (
-        ready_sort_key
-        if ready_sort_key is not None
-        else (lambda sid: (-priority[sid], index[sid]))
+        ready_sort_key if ready_sort_key is not None else (lambda sid: (-priority[sid], index[sid]))
     )
     waves = tuple(dag.topological_batches(ready_sort_key=resolved_sort_key))
 
@@ -82,9 +79,7 @@ def steps_graph_from_sequence[X: GraphStep](
 # ....................... #
 
 
-def steps_pipe_from_sequence[X: Step](
-    seq: AbstractSequence[X], /
-) -> ExecutionPipeline[X]:
+def steps_pipe_from_sequence[X: Step](seq: AbstractSequence[X], /) -> ExecutionPipeline[X]:
     """Build a pipeline from a sequence of steps."""
 
     step_list = tuple(seq.items)

@@ -1,12 +1,11 @@
 """One-call assembly of an :class:`ExecutionRuntime` from modules, deps, and steps."""
 
-from typing import Iterable
+from collections.abc import Iterable
 from datetime import timedelta
-
-from forze.base.primitives import CpuExecutor
 
 from forze.application.contracts.deps import Deps, DepsModule
 from forze.application.contracts.execution import LifecycleModule, LifecycleStep
+from forze.base.primitives import CpuExecutor
 
 from .context.transaction import AfterCommitErrorHandler
 from .deps import DepsRegistry
@@ -86,9 +85,7 @@ def build_runtime(
 
     if drain_timeout is None:
         drain_timeout = (
-            timedelta(0)
-            if deployment is DeploymentProfile.SERVERLESS
-            else timedelta(seconds=10)
+            timedelta(0) if deployment is DeploymentProfile.SERVERLESS else timedelta(seconds=10)
         )
 
     registry = DepsRegistry(modules=tuple(modules), deps=tuple(deps))

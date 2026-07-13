@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Sequence, final
+from collections.abc import Sequence
+from typing import final
 from uuid import UUID
 
 import attrs

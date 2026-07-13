@@ -1,4 +1,5 @@
-from typing import Sequence, final
+from collections.abc import Sequence
+from typing import final
 from uuid import UUID
 
 import attrs
@@ -14,8 +15,8 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import exc
-from forze_identity._secure_spec import forbid_cache_and_history
 from forze.base.primitives import utcnow
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..domain.models.account import (
     ApiKeyAccount,
@@ -48,6 +49,7 @@ def _key_hint(key: str) -> str:
         return "…"
 
     return f"{key[:_HINT_EDGE]}…{key[-_HINT_EDGE:]}"
+
 
 # ----------------------- #
 
@@ -110,9 +112,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     async def list_api_keys(self, identity: AuthnIdentity) -> Sequence[ApiKeyInfo]:
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
-        accounts = await find_api_key_accounts_by_principal(
-            self.ak_qry, identity.principal_id
-        )
+        accounts = await find_api_key_accounts_by_principal(self.ak_qry, identity.principal_id)
 
         return [
             ApiKeyInfo(

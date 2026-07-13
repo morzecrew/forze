@@ -1,4 +1,5 @@
-from typing import Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Protocol
 
 from ..value_objects import IssuedPasswordReset
 
@@ -16,7 +17,7 @@ class PasswordResetPort(Protocol):  # pragma: no cover
 
     def request_reset(
         self,
-        login: str,  # noqa: F841
+        login: str,
     ) -> Awaitable["IssuedPasswordReset | None"]:
         """Issue a single-use reset token for ``login``.
 
@@ -29,8 +30,8 @@ class PasswordResetPort(Protocol):  # pragma: no cover
 
     def reset_password(
         self,
-        token: str,  # noqa: F841
-        new_password: str,  # noqa: F841
+        token: str,
+        new_password: str,
     ) -> Awaitable[None]:
         """Consume a reset token and set a new password.
 

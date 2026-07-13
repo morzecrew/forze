@@ -1,11 +1,12 @@
 """Internal helpers for integration DepsModule registration."""
 
-from typing import Any, Callable, Sequence, TypeVar
+from collections.abc import Callable, Sequence
+from typing import Any, TypeVar
 
-from .keys import DepKey
 from forze.base.primitives import StrKey, StrKeyMapping
 
 from .container import Deps
+from .keys import DepKey
 from .store import PlainDepsMap
 
 # ----------------------- #
@@ -67,9 +68,7 @@ def routed_constant(
     if not routes or not bindings:
         return Deps()
 
-    parts = [
-        Deps.routed_group({key: provider}, routes=routes) for key, provider in bindings
-    ]
+    parts = [Deps.routed_group({key: provider}, routes=routes) for key, provider in bindings]
 
     return Deps.merge(*parts)
 
@@ -90,4 +89,4 @@ def routed_shared_factories(
 
     route_map = {name: factory(config=config) for name, config in configs.items()}
 
-    return Deps.routed({key: route_map for key in dep_keys})
+    return Deps.routed(dict.fromkeys(dep_keys, route_map))

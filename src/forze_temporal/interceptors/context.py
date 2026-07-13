@@ -4,7 +4,8 @@ require_temporal()
 
 # ....................... #
 
-from typing import Any, Awaitable, Callable, Mapping, Protocol
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any, Protocol
 
 import attrs
 from temporalio.api.common.v1 import Payload
@@ -39,7 +40,6 @@ from temporalio.worker import Interceptor as WorkerInterceptor
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
-
 from forze.base.primitives import bind_time_source
 
 from .clock import TemporalWorkflowTimeSource
@@ -88,9 +88,7 @@ class ExecutionContextInterceptor(ClientInterceptor, WorkerInterceptor):
 
         @attrs.define(slots=True, frozen=True)
         class BoundWorkflowInterceptor(WorkflowContextInboundInterceptor):
-            ctx_dep: Callable[[], ExecutionContext] = attrs.field(
-                default=outer_ctx_dep, init=False
-            )
+            ctx_dep: Callable[[], ExecutionContext] = attrs.field(default=outer_ctx_dep, init=False)
 
         return BoundWorkflowInterceptor
 

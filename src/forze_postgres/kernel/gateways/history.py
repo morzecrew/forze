@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence, final, get_args
+from collections.abc import Sequence
+from typing import Any, final, get_args
 from uuid import UUID
 
 import attrs
@@ -168,8 +169,8 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         insert_data_raw = self.history_codec.encode_persistence_mapping(record)
         insert_data = await self.adapt_payload_for_write(insert_data_raw)
 
-        cols = [sql.Identifier(k) for k in insert_data.keys()]
-        vals = [sql.Placeholder() for _ in insert_data.keys()]
+        cols = [sql.Identifier(k) for k in insert_data]
+        vals = [sql.Placeholder() for _ in insert_data]
         params = list(insert_data.values())
 
         stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES ({vals})").format(
@@ -197,9 +198,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
         # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
         row_template = (
-            sql.SQL("(")
-            + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-            + sql.SQL(")")
+            sql.SQL("(") + sql.SQL(", ").join(sql.Placeholder() for _ in keys) + sql.SQL(")")
         )
 
         offset = 0

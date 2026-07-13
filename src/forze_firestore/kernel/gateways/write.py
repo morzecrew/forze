@@ -6,7 +6,8 @@ require_firestore()
 
 # ....................... #
 
-from typing import Any, Sequence, final
+from collections.abc import Sequence
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -49,9 +50,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     create_cmd_type: type[C]
     update_cmd_type: type[U] | None = attrs.field(default=None)
     create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
-    update_codec: ModelCodec[U, Any] | None = attrs.field(
-        kw_only=True, eq=False, repr=False
-    )
+    update_codec: ModelCodec[U, Any] | None = attrs.field(kw_only=True, eq=False, repr=False)
     history_gw: FirestoreHistoryGateway[D] | None = attrs.field(default=None)
 
     # ....................... #
@@ -127,17 +126,11 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if self.history_gw is None:
             for current, rev, _ in data:
                 if rev != current.rev:
-                    raise exc.precondition(
-                        "Revision mismatch", code="revision_mismatch"
-                    )
+                    raise exc.precondition("Revision mismatch", code="revision_mismatch")
 
             return
 
-        to_check = [
-            (current, rev, update)
-            for current, rev, update in data
-            if rev != current.rev
-        ]
+        to_check = [(current, rev, update) for current, rev, update in data if rev != current.rev]
         bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
 
         if bad_records:
@@ -153,9 +146,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     "History records not found. Please retry with actual revision number."
                 )
 
-            for (current, _, update), historical in zip(
-                to_check, hist_records, strict=True
-            ):
+            for (current, _, update), historical in zip(to_check, hist_records, strict=True):
                 if not current.validate_historical_consistency(historical, update):
                     raise exc.conflict(
                         "Historical consistency violation during update",
@@ -196,9 +187,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return self.update_codec
 
         if self.update_cmd_type is not None:
-            raise exc.internal(
-                "Update codec is required when update commands are supported"
-            )
+            raise exc.internal("Update codec is required when update commands are supported")
 
         return self.read_codec
 
@@ -237,8 +226,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         raw_payloads = await self._encode_domain_many(models)
         write_payloads = self.adapt_many_payload_for_write(raw_payloads)
         documents = [
-            (self._storage_pk(m.id), dict(p))
-            for m, p in zip(models, write_payloads, strict=True)
+            (self._storage_pk(m.id), dict(p)) for m, p in zip(models, write_payloads, strict=True)
         ]
         # Create-only so a colliding id fails closed (``conflict``) instead of
         # silently overwriting, matching single-document ``create``.
@@ -283,9 +271,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 if rev is not None:
                     await self._validate_history((current, rev, update))
 
-                _, diff = current.update(
-                    update, materialized=self.read_codec.materialized
-                )
+                _, diff = current.update(update, materialized=self.read_codec.materialized)
 
             else:
                 _, diff = current.touch()
@@ -449,10 +435,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if not creates:
             return []
 
-        return [
-            await self.upsert(i, c, u)
-            for i, c, u in zip(ids, creates, updates, strict=True)
-        ]
+        return [await self.upsert(i, c, u) for i, c, u in zip(ids, creates, updates, strict=True)]
 
     # ....................... #
 

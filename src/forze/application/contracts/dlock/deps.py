@@ -20,14 +20,10 @@ DistributedLockCommandDepPort = ConfigurableDepPort[
 
 # ....................... #
 
-DistributedLockQueryDepKey = DepKey[DistributedLockQueryDepPort](
-    "distributed_lock_query"
-)
+DistributedLockQueryDepKey = DepKey[DistributedLockQueryDepPort]("distributed_lock_query")
 """Key used to register the ``DistributedLockQueryDepPort`` implementation."""
 
-DistributedLockCommandDepKey = DepKey[DistributedLockCommandDepPort](
-    "distributed_lock_command"
-)
+DistributedLockCommandDepKey = DepKey[DistributedLockCommandDepPort]("distributed_lock_command")
 """Key used to register the ``DistributedLockCommandDepPort`` implementation."""
 
 # ....................... #

@@ -1,7 +1,8 @@
 """Idempotent initialize/close guard shared by integration kernel clients."""
 
 import asyncio
-from typing import Awaitable, Callable, final
+from collections.abc import Awaitable, Callable
+from typing import final
 
 import attrs
 

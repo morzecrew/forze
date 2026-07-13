@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
-from typing import Awaitable, Callable, Sequence, final
+from typing import final
 
 import attrs
 
@@ -54,9 +55,7 @@ def generate_workload(
     if count < 0:
         raise ValueError("count must be non-negative")
 
-    rng = random.Random(
-        seed
-    )  # nosec B311 - deterministic workload generation, not crypto
+    rng = random.Random(seed)  # nosec B311 - deterministic workload generation, not crypto
     weights = [op.weight for op in catalog]
 
     if any(weight < 0.0 for weight in weights):

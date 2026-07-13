@@ -1,13 +1,6 @@
 """Postgres dependency factories (document, search, hub, federated, analytics, tx)."""
 
 from .analytics import ConfigurablePostgresAnalytics
-from .idempotency import ConfigurablePostgresIdempotency
-from .inbox import ConfigurablePostgresInbox
-from .outbox import (
-    ConfigurablePostgresOutbox,
-    ConfigurablePostgresOutboxCommand,
-    ConfigurablePostgresOutboxQuery,
-)
 from .document import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
@@ -21,6 +14,13 @@ from .federated import ConfigurablePostgresFederatedSearch
 from .hlc_checkpoint import ConfigurablePostgresHlcCheckpoint
 from .hub import ConfigurablePostgresHubSearch
 from .hub_builder import build_hub_leg_runtimes
+from .idempotency import ConfigurablePostgresIdempotency
+from .inbox import ConfigurablePostgresInbox
+from .outbox import (
+    ConfigurablePostgresOutbox,
+    ConfigurablePostgresOutboxCommand,
+    ConfigurablePostgresOutboxQuery,
+)
 from .procedure import ConfigurablePostgresProcedure
 from .search import (
     ConfigurablePostgresSearch,

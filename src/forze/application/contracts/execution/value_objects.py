@@ -1,4 +1,5 @@
-from typing import Any, Callable, final
+from collections.abc import Callable
+from typing import Any, final
 
 import attrs
 

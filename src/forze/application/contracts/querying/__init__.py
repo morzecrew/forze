@@ -20,13 +20,6 @@ from .discovery import (
     QueryDiscovery,
     build_query_discovery,
 )
-from .field_types import (
-    OPERATOR_TYPE_MISMATCH_CODE,
-    classify_field_type,
-    field_value_operators,
-    is_quantifiable_field,
-    validate_query_field_types,
-)
 from .expressions import (
     AggregateComputedFieldExpression,
     AggregateComputedFunctionApplication,
@@ -35,10 +28,10 @@ from .expressions import (
     AggregateGroupKeysExpression,
     AggregateGroupKeysMapExpression,
     AggregateGroupKeyValue,
+    AggregatesExpression,
     AggregateTruncExpression,
     AggregateTruncSpec,
     AggregateTruncUnit,
-    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
     QueryConjunction,
@@ -77,14 +70,21 @@ from .field_policy import (
     validate_runtime_filter_fields,
     validate_sortable_fields,
 )
+from .field_types import (
+    OPERATOR_TYPE_MISMATCH_CODE,
+    classify_field_type,
+    field_value_operators,
+    is_quantifiable_field,
+    validate_query_field_types,
+)
 from .internal import (
+    ELEM_SCALAR_FIELD,
     AggregateComputedField,
     AggregatesExpressionParser,
-    GroupKey,
     GroupField,
+    GroupKey,
     GroupTrunc,
     ParsedAggregates,
-    ELEM_SCALAR_FIELD,
     QueryAnd,
     QueryCompare,
     QueryElem,

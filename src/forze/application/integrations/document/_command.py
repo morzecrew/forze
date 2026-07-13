@@ -1,7 +1,8 @@
 """Document command port methods."""
 
 import asyncio
-from typing import Generic, Literal, Sequence, overload
+from collections.abc import Sequence
+from typing import Generic, Literal, overload
 from uuid import UUID
 
 from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
@@ -159,9 +160,7 @@ class DocumentCommandMixin(
         return_new: Literal[False],
     ) -> None: ...
 
-    async def ensure(
-        self, id: UUID, payload: C, *, return_new: bool = True
-    ) -> R | None:
+    async def ensure(self, id: UUID, payload: C, *, return_new: bool = True) -> R | None:
         w = self._require_write()
 
         domain = await w.ensure(id, payload)
@@ -281,9 +280,7 @@ class DocumentCommandMixin(
         creates = [it.create for it in items]
         updates = [it.update for it in items]
 
-        domains = await w.upsert_many(
-            ids, creates, updates, batch_size=self.eff_batch_size
-        )
+        domains = await w.upsert_many(ids, creates, updates, batch_size=self.eff_batch_size)
         pks = [x.id for x in domains]
         await self.document_cache.invalidate_keys_now(*pks)
         return await self._finalize_bulk_write(domains, return_new=return_new)
@@ -366,9 +363,7 @@ class DocumentCommandMixin(
             return None
 
         res = await self._to_read(domain, pk=pk)
-        await self.document_cache.after_commit_or_now(
-            lambda: self.document_cache.set_one(res)
-        )
+        await self.document_cache.after_commit_or_now(lambda: self.document_cache.set_one(res))
 
         if return_diff:
             return res, diff
@@ -442,9 +437,7 @@ class DocumentCommandMixin(
         pks = [u.id for u in updates]
 
         if len(set(pks)) != len(pks):
-            raise exc.precondition(
-                "update_many requires distinct id values in the batch"
-            )
+            raise exc.precondition("update_many requires distinct id values in the batch")
 
         revs = [u.rev for u in updates]
         dtos = [u.dto for u in updates]
@@ -463,9 +456,7 @@ class DocumentCommandMixin(
             return None
 
         res = await self._to_read_many(domains, pks=pks)
-        await self.document_cache.after_commit_or_now(
-            lambda: self.document_cache.set_many(res)
-        )
+        await self.document_cache.after_commit_or_now(lambda: self.document_cache.set_many(res))
 
         if return_diff:
             return list(zip(res, diffs, strict=True))

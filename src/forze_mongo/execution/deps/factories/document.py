@@ -69,11 +69,7 @@ def _resolve_codecs(
         spec.resolved_codecs,
         spec_name=str(spec.name),
         encryption=spec.encryption,
-        keyring=(
-            ctx.deps.provide(KeyringDepKey)
-            if ctx.deps.exists(KeyringDepKey)
-            else None
-        ),
+        keyring=(ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None),
         deterministic=(
             ctx.deps.provide(DeterministicCipherDepKey)
             if ctx.deps.exists(DeterministicCipherDepKey)
@@ -84,6 +80,7 @@ def _resolve_codecs(
         code="mongo.document.encryption_wiring",
         required_encryption=required_encryption,
     )
+
 
 # ....................... #
 
@@ -110,9 +107,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
     ) -> MongoDocumentAdapter[R, Any, Any, Any]:
         cache = ctx.cache(spec.cache) if spec.cache is not None else None
 
-        codecs = _resolve_codecs(
-            ctx, spec, required_encryption=self.required_encryption
-        )
+        codecs = _resolve_codecs(ctx, spec, required_encryption=self.required_encryption)
 
         read = read_gw(
             ctx,
@@ -136,9 +131,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             cache=cache,
             after_commit=after_commit,
             cache_spec=spec.cache,
-            tenant_key=lambda: (
-                str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
-            ),
+            tenant_key=lambda: str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None,
             read_codec=read.read_codec,
             cipher=_cache_cipher(ctx, spec),
             cipher_tenant=ctx.inv_ctx.get_tenant,
@@ -186,13 +179,9 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
         tenant_aware = config.tenant_aware
 
         if spec.write is None:
-            raise exc.internal(
-                "Write relation is required for non read-only documents."
-            )
+            raise exc.internal("Write relation is required for non read-only documents.")
 
-        codecs = _resolve_codecs(
-            ctx, spec, required_encryption=self.required_encryption
-        )
+        codecs = _resolve_codecs(ctx, spec, required_encryption=self.required_encryption)
 
         read = read_gw(
             ctx,
@@ -241,9 +230,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             cache=cache,
             after_commit=after_commit,
             cache_spec=spec.cache,
-            tenant_key=lambda: (
-                str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
-            ),
+            tenant_key=lambda: str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None,
             read_codec=read.read_codec,
             cipher=_cache_cipher(ctx, spec),
             cipher_tenant=ctx.inv_ctx.get_tenant,

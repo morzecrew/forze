@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Sequence
+from collections.abc import Sequence
+from typing import Any, Literal
 
 import attrs
 
@@ -99,11 +100,7 @@ async def build_hub_search_plan(
     if execution not in ("sql", "parallel"):
         execution = "sql"
 
-    use_parallel = (
-        execution == "parallel"
-        and do_legs
-        and (mode == "cursor" or sorts is None)
-    )
+    use_parallel = execution == "parallel" and do_legs and (mode == "cursor" or sorts is None)
 
     hub_spec = host.hub_spec
     effective_sorts = sorts if sorts else hub_spec.default_sort

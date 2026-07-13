@@ -2,8 +2,9 @@
 
 import asyncio
 import math
-from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Protocol, Sequence, cast, runtime_checkable
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime, timedelta
+from typing import Any, Protocol, cast, runtime_checkable
 from uuid import UUID
 
 import attrs
@@ -189,9 +190,7 @@ class DocumentCache[R: BaseModel]:
             return
 
         try:
-            unsubscribe = await self.cache.subscribe_invalidations(
-                self._on_invalidation
-            )
+            unsubscribe = await self.cache.subscribe_invalidations(self._on_invalidation)
 
         except Exception:
             logger.warning(
@@ -356,7 +355,7 @@ class DocumentCache[R: BaseModel]:
             return None
 
         if last_update_at.tzinfo is None:
-            last_update_at = last_update_at.replace(tzinfo=timezone.utc)
+            last_update_at = last_update_at.replace(tzinfo=UTC)
 
         age = max(0.0, (current_time_source().now() - last_update_at).total_seconds())
         seconds = clamp(
@@ -429,9 +428,7 @@ class DocumentCache[R: BaseModel]:
             tenant = self.cipher_tenant() if self.cipher_tenant is not None else None
             sealed = await encrypt_payload(
                 self.cipher,
-                self.read_codec.encode_mapping(
-                    doc, mode="json", exclude=CACHE_DUMP_EXCLUDE_OPTS
-                ),
+                self.read_codec.encode_mapping(doc, mode="json", exclude=CACHE_DUMP_EXCLUDE_OPTS),
                 domain=CACHE_PAYLOAD_DOMAIN,
                 tenant_id=None if tenant is None else tenant.tenant_id,
                 record_id=pk,
@@ -575,9 +572,7 @@ class DocumentCache[R: BaseModel]:
             if len(self._bg_tasks) >= self.max_inflight_refresh:
                 return
 
-            task = asyncio.get_running_loop().create_task(
-                self._background_refresh(key, fetch)
-            )
+            task = asyncio.get_running_loop().create_task(self._background_refresh(key, fetch))
             self._bg_tasks.add(task)
             task.add_done_callback(self._bg_tasks.discard)
 
@@ -657,9 +652,7 @@ class DocumentCache[R: BaseModel]:
 
         try:
             ttl = self._entry_ttl(doc)
-            payload = await self._encode_cache_value(
-                doc, pk=casted_doc.id, delta=delta, ttl=ttl
-            )
+            payload = await self._encode_cache_value(doc, pk=casted_doc.id, delta=delta, ttl=ttl)
 
             await self.cache.set_versioned(
                 str(casted_doc.id), str(casted_doc.rev), payload, ttl=ttl
@@ -704,10 +697,10 @@ class DocumentCache[R: BaseModel]:
 
             for casted in docs_casted:
                 ttl = self._entry_ttl(cast(R, casted))
-                groups.setdefault(ttl, {})[(str(casted.id), str(casted.rev))] = (
-                    await self._encode_cache_value(
-                        cast(R, casted), pk=casted.id, delta=delta, ttl=ttl
-                    )
+                groups.setdefault(ttl, {})[
+                    (str(casted.id), str(casted.rev))
+                ] = await self._encode_cache_value(
+                    cast(R, casted), pk=casted.id, delta=delta, ttl=ttl
                 )
 
             for ttl, versioned_mapping in groups.items():
@@ -814,15 +807,11 @@ class DocumentCache[R: BaseModel]:
                     self.document_name,
                 )
                 self._l1_put(pk, doc)
-                await self._schedule_background_refresh(
-                    str(pk), fetch_on_miss_without_lock
-                )
+                await self._schedule_background_refresh(str(pk), fetch_on_miss_without_lock)
 
                 return doc
 
-            logger.trace(
-                "Early refresh elected for 1 '%s' document", self.document_name
-            )
+            logger.trace("Early refresh elected for 1 '%s' document", self.document_name)
 
         else:
             logger.debug(
@@ -860,9 +849,7 @@ class DocumentCache[R: BaseModel]:
             return res
 
         async def _warm(res: R) -> None:
-            await self.after_commit_or_now(
-                lambda: self.set_one(res, delta=timing["delta"])
-            )
+            await self.after_commit_or_now(lambda: self.set_one(res, delta=timing["delta"]))
 
         return cast(R, await self._inflight.run(key, _load, on_result=_warm))
 
@@ -944,9 +931,7 @@ class DocumentCache[R: BaseModel]:
             # per-entry estimate is enough for XFetch election.
             delta = (monotonic() - start) / len(miss_res) if miss_res else 0.0
 
-            await self.after_commit_or_now(
-                lambda: self.set_many(miss_res, delta=delta)
-            )
+            await self.after_commit_or_now(lambda: self.set_many(miss_res, delta=delta))
 
         hits_validated = [
             (await self._decode_cached(value, pk=key))[0] for key, value in hits.items()
@@ -959,9 +944,7 @@ class DocumentCache[R: BaseModel]:
             self._l1_put(casted.id, cast(R, casted))
 
         by_pk: dict[UUID, Any] = (
-            l1_docs
-            | {x.id: x for x in hits_validated_cast}
-            | {x.id: x for x in miss_res_cast}
+            l1_docs | {x.id: x for x in hits_validated_cast} | {x.id: x for x in miss_res_cast}
         )
 
         return [cast(R, by_pk[pk]) for pk in pks]

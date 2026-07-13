@@ -15,8 +15,8 @@ one history is one interleaving and proves nothing on its own, so the check need
 compares their end states — it cannot be expressed as an assertion over a single history.
 """
 
+from collections.abc import Callable, Hashable, Iterable
 from datetime import datetime
-from typing import Callable, Hashable, Iterable
 
 from ..time_source import DEFAULT_EPOCH
 from .invariants import Violation
@@ -55,9 +55,7 @@ def commutative_convergence(
     first_seed_for: dict[Hashable, int] = {}
 
     for schedule_seed in schedule_seeds:
-        history = run_recorded(
-            build(), seed=seed, schedule_seed=schedule_seed, epoch=epoch
-        )
+        history = run_recorded(build(), seed=seed, schedule_seed=schedule_seed, epoch=epoch)
         first_seed_for.setdefault(final_state(history), schedule_seed)
 
     if len(first_seed_for) <= 1:

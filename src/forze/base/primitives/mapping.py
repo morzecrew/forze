@@ -1,8 +1,9 @@
 """Immutable mapping helpers for frozen integration configs."""
 
+from collections.abc import Mapping
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Mapping, overload
+from typing import Any, overload
 
 from .types import StrKey
 
@@ -29,9 +30,7 @@ class MappingConverter:
         value: Mapping[str, V] | Mapping[K, V],
     ) -> None:
         for k in value:
-            if not isinstance(
-                k, StrKey
-            ):  # pyright: ignore[reportUnnecessaryIsInstance]
+            if not isinstance(k, StrKey):  # pyright: ignore[reportUnnecessaryIsInstance]
                 raise TypeError(f"Expected str-compatible key, got {type(k).__name__}")
 
     # ....................... #

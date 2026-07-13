@@ -81,9 +81,7 @@ class ExceptionInfoFormatter:
         event_dict[ERR_MESSAGE_KEY] = str(exc)
 
         if self.include_exception_stack:
-            event_dict[ERR_STACK_KEY] = "".join(
-                traceback.format_exception(exc_type, exc, tb)
-            )
+            event_dict[ERR_STACK_KEY] = "".join(traceback.format_exception(exc_type, exc, tb))
 
         # only for console renderer / dev output
         if self.render_mode == "console":
@@ -245,9 +243,7 @@ class EventDictSanitizer:
             try:
                 key_name = (
                     key
-                    if isinstance(
-                        key, str
-                    )  # pyright: ignore[reportUnnecessaryIsInstance]
+                    if isinstance(key, str)  # pyright: ignore[reportUnnecessaryIsInstance]
                     else str(key)
                 )
 
@@ -374,9 +370,7 @@ class SamplingDeduplicator:
 
         if key not in self._last_emit and len(self._last_emit) >= self.max_tracked_keys:
             # Drop entries whose window has elapsed; if still full, reset entirely.
-            self._last_emit = {
-                k: t for k, t in self._last_emit.items() if (now - t) < span
-            }
+            self._last_emit = {k: t for k, t in self._last_emit.items() if (now - t) < span}
 
             if len(self._last_emit) >= self.max_tracked_keys:
                 self._last_emit.clear()

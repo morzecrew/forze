@@ -10,10 +10,11 @@ seams), so deep handler code can record without threading a history object throu
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
-from typing import Any, Iterator, Mapping, final
+from typing import Any, final
 
 import attrs
 

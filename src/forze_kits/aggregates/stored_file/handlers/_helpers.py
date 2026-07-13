@@ -41,10 +41,7 @@ def merge_list_filters(
         s.value
         for s in StoredFileStatus
         if (include_deleted or s is not StoredFileStatus.DELETED)
-        and (
-            include_pending
-            or s not in (StoredFileStatus.PENDING, StoredFileStatus.FAILED)
-        )
+        and (include_pending or s not in (StoredFileStatus.PENDING, StoredFileStatus.FAILED))
     ]
     if len(allowed) < len(StoredFileStatus):
         parts.append({"$values": {"status": {"$in": allowed}}})
@@ -80,9 +77,7 @@ def ensure_downloadable(file: StoredFileRead) -> None:
     ensure_readable(file)
 
     if file.status != StoredFileStatus.READY:
-        raise exc.precondition(
-            f"Stored file is not ready for download (status={file.status!s})"
-        )
+        raise exc.precondition(f"Stored file is not ready for download (status={file.status!s})")
 
     if not file.storage_key:
         raise exc.internal("Ready stored file is missing storage_key")

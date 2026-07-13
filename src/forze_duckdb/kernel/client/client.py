@@ -7,13 +7,13 @@ require_duckdb()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Callable, Mapping, Sequence, TypeVar, final
+from typing import Any, TypeVar, final
 
 import attrs
 import duckdb
-
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
@@ -218,16 +218,14 @@ class DuckDbClient(DuckDbClientPort):
                 try:
                     cursor.interrupt()
 
-                except Exception:  # noqa: BLE001 # nosec B110 - best-effort cancellation
+                except Exception:  # nosec B110 - best-effort cancellation
                     logger.debug("DuckDB cursor interrupt failed", exc_info=True)
 
             await asyncio.gather(fut, return_exceptions=True)
             # Infrastructure (not internal): timeouts are transient backend
             # conditions, mirroring how Postgres/ClickHouse classify query
             # timeouts for retry purposes.
-            raise exc.infrastructure(
-                f"DuckDB query exceeded timeout of {timeout_sec}s"
-            )
+            raise exc.infrastructure(f"DuckDB query exceeded timeout of {timeout_sec}s")
 
         return fut.result()
 
@@ -366,6 +364,6 @@ class DuckDbClient(DuckDbClientPort):
             await self.run_query("SELECT 1")
             return "ok", True
 
-        except Exception as e:  # noqa: BLE001 - health must not raise
+        except Exception as e:
             logger.debug("DuckDB health check failed", exc_info=True)
             return str(e), False

@@ -16,8 +16,9 @@ is the :func:`linearizable` invariant, which plugs into the oracle like any othe
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Protocol, Sequence, final, runtime_checkable
+from typing import Any, Protocol, final, runtime_checkable
 
 import attrs
 

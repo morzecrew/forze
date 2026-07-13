@@ -1,6 +1,7 @@
 """Structural protocol for the httpx async client."""
 
-from typing import Any, Awaitable, Mapping, Protocol
+from collections.abc import Awaitable, Mapping
+from typing import Any, Protocol
 
 from forze.base.primitives import JsonDict
 

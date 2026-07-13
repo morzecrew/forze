@@ -8,7 +8,7 @@ stored documents — keeping the mock a faithful differential oracle for the rea
 
 from __future__ import annotations
 
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 import attrs
 from pydantic import BaseModel

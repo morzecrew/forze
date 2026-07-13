@@ -5,7 +5,7 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.crypto import KeyManagementDepKey, KeyManagementPort
-from forze.application.contracts.deps import Deps, DepKey, DepsModule
+from forze.application.contracts.deps import DepKey, Deps, DepsModule
 
 from ...kernel.client import AwsKmsClientPort
 from .keys import AwsKmsClientDepKey

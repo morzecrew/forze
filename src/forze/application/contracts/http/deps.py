@@ -1,6 +1,5 @@
 """HTTP service dependency keys and routers."""
 
-
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
 from .ports import HttpServicePort
 from .specs import HttpServiceSpec

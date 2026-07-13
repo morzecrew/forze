@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import math
 import statistics
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from functools import cmp_to_key
 from typing import (
     Any,
-    Sequence,
     cast,
 )
 
@@ -90,9 +90,7 @@ def _path_text(obj: Any, path: str) -> str:  # pyright: ignore[reportPrivateUsag
     return str(value)
 
 
-def _project(
-    doc: JsonDict, return_fields: Sequence[str] | None
-) -> JsonDict:  # pyright: ignore[reportPrivateUsage]
+def _project(doc: JsonDict, return_fields: Sequence[str] | None) -> JsonDict:  # pyright: ignore[reportPrivateUsage]
     # Delegate to the shared reshaper so the mock (the cross-backend parity oracle) emits the
     # same nested shape as the real backends: a dotted path like ``contract.reg_number`` yields
     # ``{"contract": {"reg_number": ...}}`` rather than a flat ``contract.reg_number`` key.
@@ -181,7 +179,7 @@ def _percentile_cont(nums: list[int | float], p: float) -> float | None:
 
 def _coerce_datetime_for_bucket(raw: Any) -> datetime:
     if isinstance(raw, datetime):
-        return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+        return raw if raw.tzinfo is not None else raw.replace(tzinfo=UTC)
 
     if isinstance(raw, str):
         s = raw.strip().replace("Z", "+00:00")
@@ -189,7 +187,7 @@ def _coerce_datetime_for_bucket(raw: Any) -> datetime:
         return datetime.fromisoformat(s)
 
     if isinstance(raw, (int, float)):
-        return datetime.fromtimestamp(float(raw), tz=timezone.utc)
+        return datetime.fromtimestamp(float(raw), tz=UTC)
 
     raise exc.internal(f"Invalid timestamp for $trunc: {raw!r}")
 
@@ -243,9 +241,7 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
         for group, value in zip(parsed.groups, key, strict=True):
             row[group.alias] = value
 
-        for computed, matcher in zip(
-            parsed.computed_fields, computed_matchers, strict=True
-        ):
+        for computed, matcher in zip(parsed.computed_fields, computed_matchers, strict=True):
             computed_items = (
                 [doc for doc in items if matcher(doc)] if matcher is not None else items
             )
@@ -258,11 +254,7 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
                 raise exc.internal("Computed field has no field path")
 
             raw_values = [_path_get(doc, computed.field) for doc in computed_items]
-            values = [
-                value
-                for value in raw_values
-                if value is not _MISSING and value is not None
-            ]
+            values = [value for value in raw_values if value is not _MISSING and value is not None]
 
             match computed.function:
                 case "$sum":
@@ -319,9 +311,7 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
 
                 case "$stddev_samp":
                     nums = _numeric_values(values, computed)
-                    row[computed.alias] = (
-                        statistics.stdev(nums) if len(nums) >= 2 else None
-                    )
+                    row[computed.alias] = statistics.stdev(nums) if len(nums) >= 2 else None
 
                 case "$var_pop":
                     nums = _numeric_values(values, computed)
@@ -329,15 +319,11 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
 
                 case "$var_samp":
                     nums = _numeric_values(values, computed)
-                    row[computed.alias] = (
-                        statistics.variance(nums) if len(nums) >= 2 else None
-                    )
+                    row[computed.alias] = statistics.variance(nums) if len(nums) >= 2 else None
 
                 case "$percentile":
                     nums = _numeric_values(values, computed)
-                    row[computed.alias] = _percentile_cont(
-                        nums, cast(float, computed.p)
-                    )
+                    row[computed.alias] = _percentile_cont(nums, cast(float, computed.p))
 
         rows.append(row)
 

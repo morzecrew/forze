@@ -1,8 +1,9 @@
 """RabbitMQ client that resolves a DSN per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Callable, Mapping, Sequence, final
+from typing import final
 from uuid import UUID
 
 import attrs

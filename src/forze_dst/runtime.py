@@ -8,8 +8,8 @@ milliseconds however much virtual time the scenario spans.
 """
 
 import random
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Awaitable, Callable
 
 from forze.application.execution.interception import (
     CooperativeInterceptor,
@@ -74,11 +74,7 @@ def run_simulation[T](
         raise ValueError("epoch must be timezone-aware (e.g. tzinfo=UTC)")
 
     schedule_rng = (
-        None
-        if schedule_seed is None
-        else random.Random(
-            schedule_seed
-        )  # nosec B311 - deterministic sim schedule, not crypto
+        None if schedule_seed is None else random.Random(schedule_seed)  # nosec B311 - deterministic sim schedule, not crypto
     )
     loop = SimulationEventLoop(schedule_rng=schedule_rng, scheduler=scheduler)
     time_source = SimulationTimeSource(loop=loop, epoch=epoch)

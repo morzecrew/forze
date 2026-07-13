@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, AsyncGenerator, Callable, Mapping, Sequence, cast, final
+from typing import TYPE_CHECKING, cast, final
 from uuid import UUID
 
 import attrs

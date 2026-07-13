@@ -1,13 +1,10 @@
 """Structural protocol for RabbitMQ clients (single DSN or tenant-routed)."""
 
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 from typing import (
-    AsyncContextManager,
-    AsyncGenerator,
-    Awaitable,
-    Mapping,
     Protocol,
-    Sequence,
 )
 
 from aio_pika.abc import AbstractChannel
@@ -24,7 +21,7 @@ class RabbitMQClientPort(Protocol):
 
     def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
-    def channel(self) -> AsyncContextManager[AbstractChannel]: ...  # pragma: no cover
+    def channel(self) -> AbstractAsyncContextManager[AbstractChannel]: ...  # pragma: no cover
 
     def enqueue(
         self,

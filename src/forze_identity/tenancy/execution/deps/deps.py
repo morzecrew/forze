@@ -30,9 +30,7 @@ class ConfigurableTenantResolver(TenantResolverDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext) -> TenantResolverPort:
-        tenant_qry = (
-            ctx.document.query(tenant_spec) if self.verify_tenant_active else None
-        )
+        tenant_qry = ctx.document.query(tenant_spec) if self.verify_tenant_active else None
 
         return TenantResolverAdapter(
             binding_qry=ctx.document.query(principal_tenant_binding_spec),

@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import (
     Any,
-    AsyncGenerator,
-    Callable,
     Literal,
-    Mapping,
-    Sequence,
     overload,
 )
 from uuid import UUID
@@ -40,9 +37,7 @@ from .value_objects import (
 
 
 @attrs.define(slots=True, kw_only=True)
-class RoutedPostgresClient(
-    DsnRoutedTenantClientBase[PostgresClient], PostgresClientPort
-):
+class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresClientPort):
     """Routes each call to a lazily created :class:`PostgresClient` for the current tenant.
 
     The tenant is read from ``tenant_provider`` (typically
@@ -215,9 +210,8 @@ class RoutedPostgresClient(
 
     @asynccontextmanager
     async def bound_connection(self) -> AsyncGenerator[AsyncConnection]:
-        async with self._client_scope() as inner:
-            async with inner.bound_connection() as conn:
-                yield conn
+        async with self._client_scope() as inner, inner.bound_connection() as conn:
+            yield conn
 
     # ....................... #
 
@@ -227,9 +221,11 @@ class RoutedPostgresClient(
         *,
         options: PostgresTransactionOptions | None = None,
     ) -> AsyncGenerator[AsyncConnection | None]:
-        async with self._client_scope() as inner:
-            async with inner.transaction(options=options) as conn:
-                yield conn
+        async with (
+            self._client_scope() as inner,
+            inner.transaction(options=options) as conn,
+        ):
+            yield conn
 
     # ....................... #
 

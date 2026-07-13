@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import nullcontext
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Sequence, final
+from typing import TYPE_CHECKING, Any, final
 from uuid import UUID
 
 import attrs
@@ -135,9 +136,7 @@ class DurableScheduler:
             # returns every tenant's schedules, but advance scopes its id from the bound
             # tenant); a no-op under a namespace shard already bound to this tenant.
             binding = (
-                ctx.inv_ctx.bind_identity(
-                    tenant=TenantIdentity(tenant_id=schedule.tenant_id)
-                )
+                ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=schedule.tenant_id))
                 if schedule.tenant_id is not None
                 else nullcontext()
             )
@@ -159,15 +158,13 @@ class DurableScheduler:
                     await schedules.advance(
                         schedule.schedule_id,
                         from_fire_at=schedule.next_fire_at,
-                        to_fire_at=next_cron_fire(
-                            schedule.cron, after=moment, tz=schedule.tz
-                        ),
+                        to_fire_at=next_cron_fire(schedule.cron, after=moment, tz=schedule.tz),
                     )
 
                     if self.telemetry is not None:
                         self.telemetry.record_fire(schedule.name)
 
-            except Exception:  # noqa: BLE001 — one bad schedule must not strand the batch
+            except Exception:
                 # A schedule whose stored cron/tz no longer parses (deploy skew, a hand-edited
                 # row) or whose enqueue hit a store error stays due — it never advances, so
                 # ``claim_due`` returns it first every tick. Letting it escape would strand

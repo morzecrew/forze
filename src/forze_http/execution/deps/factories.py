@@ -8,7 +8,6 @@ from forze.application.contracts.http import HttpServiceDepPort, HttpServiceSpec
 from forze.application.contracts.secrets import SecretsDepKey
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
-
 from forze_http.adapters.http_service import HttpServiceAdapter
 from forze_http.execution.deps.configs import HttpServiceConfig
 from forze_http.execution.deps.keys import HttpClientDepKey

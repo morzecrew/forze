@@ -52,7 +52,10 @@ How many, and how you walk them, is the suffix:
 
 Offset pages (`_page`, `_many`) are simple but get slower the deeper you go, and
 can skip or repeat rows as data shifts underneath. **Cursor (keyset)** pages walk
-by a stable key — reach for them on big result sets and live feeds.
+by a stable key — reach for them on big result sets and live feeds. The cursor
+itself is a client-held token; on a public API you can
+[sign or encrypt it](../identity-tenancy-enc/cursor-tokens.md) so it can't be
+forged or replayed against a different query.
 
 The name *is* the combination: `select_page(...)` is an alternate return type,
 offset-paged, with a count; `find_cursor(...)` is the read model, keyset-paged.

@@ -37,9 +37,7 @@ class Document(CoreModel):
     _update_validators_: ClassVar[list[tuple[str, UpdateValidatorMetadata]]] = []
     """Update validators."""
 
-    _update_validators_on_conflict: ClassVar[Literal["warn", "error", "overwrite"]] = (
-        "warn"
-    )
+    _update_validators_on_conflict: ClassVar[Literal["warn", "error", "overwrite"]] = "warn"
     """Update validators on conflict."""
 
     _invariants_: ClassVar[list[str]] = []
@@ -255,9 +253,7 @@ class Document(CoreModel):
 
     def _apply_update(self, diff: JsonDict) -> Self:
         if not diff:
-            logger.trace(
-                "No diff for %s; returning original instance", type(self).__qualname__
-            )
+            logger.trace("No diff for %s; returning original instance", type(self).__qualname__)
             return self
 
         merged = apply_dict_patch(self._dump_stored_fields(), diff)
@@ -408,12 +404,8 @@ class Document(CoreModel):
         old_self_diff = calculate_dict_difference(old_state, self_state)
         old_upd_diff = calculate_dict_difference(old_state, old_upd_state)
 
-        old_self_scalars, old_self_containers = split_touches_from_merge_patch(
-            old_self_diff
-        )
-        old_upd_scalars, old_upd_containers = split_touches_from_merge_patch(
-            old_upd_diff
-        )
+        old_self_scalars, old_self_containers = split_touches_from_merge_patch(old_self_diff)
+        old_upd_scalars, old_upd_containers = split_touches_from_merge_patch(old_upd_diff)
 
         has_conflict = has_hybrid_patch_conflict(
             old_self_scalars,

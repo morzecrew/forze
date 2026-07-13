@@ -69,9 +69,7 @@ def _query_guard(spec: DocumentSpec[Any, Any, Any, Any]) -> QueryFieldGuard | No
     policy = spec.query_policy
 
     if policy is None or (
-        policy.filterable is None
-        and policy.sortable is None
-        and policy.aggregatable is None
+        policy.filterable is None and policy.sortable is None and policy.aggregatable is None
     ):
         return None
 
@@ -126,9 +124,7 @@ def _default_update_mapper(
     """Build default update mapper factory (pydantic)."""
 
     udto = dtos.update
-    u_cmd = (
-        spec.write["update_cmd"] if spec.write and "update_cmd" in spec.write else None
-    )
+    u_cmd = spec.write["update_cmd"] if spec.write and "update_cmd" in spec.write else None
 
     if udto is None or u_cmd is None:
         raise exc.configuration("Update DTO or update command is not provided")
@@ -224,8 +220,7 @@ def _build_document_descriptors(
 
     if spec.sensitive:
         descriptors = {
-            op: attrs.evolve(descriptor, sensitive=True)
-            for op, descriptor in descriptors.items()
+            op: attrs.evolve(descriptor, sensitive=True) for op, descriptor in descriptors.items()
         }
 
     return descriptors
@@ -290,22 +285,16 @@ def build_document_registry(
                 mapper=mappers.cursor_list(ctx) if mappers.cursor_list else None,
                 query_guard=guard,
             ),
-            ns.key(
-                DocumentKernelOp.RAW_LIST_CURSOR
-            ): lambda ctx: ProjectedCursorListDocuments(
+            ns.key(DocumentKernelOp.RAW_LIST_CURSOR): lambda ctx: ProjectedCursorListDocuments(
                 doc=ctx.doc.query(spec),
                 mapper=(
-                    mappers.projected_cursor_list(ctx)
-                    if mappers.projected_cursor_list
-                    else None
+                    mappers.projected_cursor_list(ctx) if mappers.projected_cursor_list else None
                 ),
                 query_guard=guard,
             ),
             ns.key(DocumentKernelOp.AGG_LIST): lambda ctx: AggregatedListDocuments(
                 doc=ctx.doc.query(spec),
-                mapper=(
-                    mappers.aggregated_list(ctx) if mappers.aggregated_list else None
-                ),
+                mapper=(mappers.aggregated_list(ctx) if mappers.aggregated_list else None),
                 query_guard=guard,
             ),
         },

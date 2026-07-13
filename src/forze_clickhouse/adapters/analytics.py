@@ -1,7 +1,8 @@
 """ClickHouse implementation of analytics query and ingest ports."""
 
+from collections.abc import AsyncGenerator, Sequence
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Sequence, TypeVar, final
+from typing import Any, TypeVar, final
 from uuid import UUID
 
 import attrs
@@ -14,6 +15,20 @@ from forze.application.contracts.analytics import (
     AnalyticsRunOptions,
     AnalyticsSpec,
 )
+from forze.application.contracts.base import (
+    CountlessPage,
+    CursorPage,
+    Page,
+)
+from forze.application.contracts.querying import (
+    CursorPaginationExpression,
+    PaginationExpression,
+)
+from forze.application.contracts.resolution import (
+    is_static_relation,
+    resolve_scoped_namespace,
+)
+from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
 from forze.application.integrations.analytics import (
     AnalyticsQueryPortMixin,
     decrypt_and_shape_rows,
@@ -34,18 +49,8 @@ from forze.application.integrations.analytics.adapter_common import (
     validate_fetch_batch_size,
     validated_params,
 )
-from forze.application.contracts.base import (
-    CountlessPage,
-    CursorPage,
-    Page,
-)
-from forze.application.contracts.querying import (
-    CursorPaginationExpression,
-    PaginationExpression,
-)
-from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, OnceCell
 from forze_clickhouse.execution.deps.configs import (
     ClickHouseAnalyticsConfig,
     ClickHouseQueryConfig,
@@ -56,11 +61,6 @@ from forze_clickhouse.kernel.client import (
 )
 from forze_clickhouse.kernel.client.query import parameters_from_model
 from forze_clickhouse.kernel.client.value_objects import ClickHouseQueryResult
-from forze.application.contracts.resolution import (
-    is_static_relation,
-    resolve_scoped_namespace,
-)
-from forze.base.primitives import OnceCell
 from forze_clickhouse.kernel.relation import resolve_clickhouse_ingest_target
 
 # ----------------------- #
@@ -375,9 +375,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         params = self._validated_params(query_key, params)
 
         if dry_run_enabled(options):
-            return CursorPage(
-                hits=[], next_cursor=None, prev_cursor=None, has_more=False
-            )
+            return CursorPage(hits=[], next_cursor=None, prev_cursor=None, has_more=False)
 
         cursor_col = self._cursor_column(query_key)
 
@@ -452,9 +450,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     async def append(self, rows: Sequence[Ing]) -> AnalyticsAppendResult | None:
         if self.spec.ingest is None:
-            raise exc.internal(
-                f"Analytics ingest is not configured for route {self.spec.name!r}."
-            )
+            raise exc.internal(f"Analytics ingest is not configured for route {self.spec.name!r}.")
 
         if self.config.resolved_ingest_relation() is None:
             raise exc.internal(
@@ -467,9 +463,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         max_append = self._max_append_rows()
 
         if len(rows) > max_append:
-            raise exc.internal(
-                f"Analytics append batch exceeds max_append_rows ({max_append})."
-            )
+            raise exc.internal(f"Analytics append batch exceeds max_append_rows ({max_append}).")
 
         ingest_codec = self.spec.resolved_ingest_codec
         if ingest_codec is None:

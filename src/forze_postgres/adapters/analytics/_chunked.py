@@ -1,6 +1,7 @@
 """Chunked scan helpers for Postgres analytics."""
 
-from typing import AsyncGenerator, Sequence, TypeVar
+from collections.abc import AsyncGenerator, Sequence
+from typing import TypeVar
 
 from pydantic import BaseModel
 

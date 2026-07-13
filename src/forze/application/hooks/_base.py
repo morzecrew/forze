@@ -1,6 +1,7 @@
 """Shared building blocks for hook plan factories (authn, authz, tenancy)."""
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from forze.application.contracts.execution import Before, BeforeFactory, BeforeStep
 from forze.application.execution.context import ExecutionContext

@@ -9,7 +9,8 @@ parity guarantee real rather than per-adapter.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 from forze.base.exceptions import exc
 
@@ -35,9 +36,7 @@ DEFAULT_HIGHLIGHT_POST_TAG = "</em>"
 # ....................... #
 
 
-def resolve_facet_fields(
-    spec: FacetableSpec, options: SearchOptions | None
-) -> tuple[str, ...]:
+def resolve_facet_fields(spec: FacetableSpec, options: SearchOptions | None) -> tuple[str, ...]:
     """The requested facet fields, fail-closed against ``spec.facetable_fields``.
 
     Returns ``()`` when no facets were requested.
@@ -177,9 +176,7 @@ def _match_spans(text: str, tokens: Sequence[str]) -> list[tuple[int, int]]:
     return merged
 
 
-def _wrap_spans(
-    text: str, spans: Sequence[tuple[int, int]], pre_tag: str, post_tag: str
-) -> str:
+def _wrap_spans(text: str, spans: Sequence[tuple[int, int]], pre_tag: str, post_tag: str) -> str:
     """Splice the markers around each *span* in *text* (spans sorted, disjoint)."""
 
     pieces: list[str] = []
@@ -238,9 +235,7 @@ def highlight_fragments(
     return tuple(fragments)
 
 
-def mark_highlight(
-    text: str, tokens: Sequence[str], *, pre_tag: str, post_tag: str
-) -> str | None:
+def mark_highlight(text: str, tokens: Sequence[str], *, pre_tag: str, post_tag: str) -> str | None:
     """Whole-field highlight: every match in *text* wrapped, or ``None`` when none match.
 
     A thin shim over :func:`highlight_fragments` for callers that want the single unbounded
@@ -375,9 +370,7 @@ def reject_nested_highlight_fields(fields: Sequence[str], *, backend: str) -> No
 # ....................... #
 
 
-def reject_unsupported_facets(
-    options: SearchOptions | None, *, backend: str
-) -> None:
+def reject_unsupported_facets(options: SearchOptions | None, *, backend: str) -> None:
     """Fail closed when *backend* does not yet implement faceting but one was requested."""
 
     if (options or {}).get("facets"):

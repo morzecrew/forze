@@ -5,7 +5,8 @@ allocation time (``incr``/``incr_batch``), so a separate read-only query port
 is deliberately not provided.
 """
 
-from typing import Awaitable, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import Protocol, runtime_checkable
 
 # ----------------------- #
 

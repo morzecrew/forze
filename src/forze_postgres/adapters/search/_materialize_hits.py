@@ -1,6 +1,7 @@
 """Shared hit materialization for Postgres search adapters."""
 
-from typing import Any, Literal, Sequence, TypeVar
+from collections.abc import Sequence
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel
 

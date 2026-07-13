@@ -1,6 +1,7 @@
 """Frozen configuration models for local identity backends."""
 
-from typing import Mapping, Self, final
+from collections.abc import Mapping
+from typing import Self, final
 from uuid import UUID
 
 import attrs
@@ -66,8 +67,8 @@ class LocalIdentityConfig:
             try:
                 principal_tenants[UUID(str(pid_raw))] = UUID(str(tid_raw))  # type: ignore
 
-            except ValueError:
-                raise exc.configuration("principal_tenants must be a mapping of UUIDs")
+            except ValueError as err:
+                raise exc.configuration("principal_tenants must be a mapping of UUIDs") from err
 
         for index, (key, entry_raw) in enumerate(raw_keys.items()):  # type: ignore
             if not isinstance(key, str) or not key:
@@ -75,29 +76,24 @@ class LocalIdentityConfig:
 
             # Never echo the raw key: it is secret material. Report by position.
             if key in api_keys:
-                raise exc.configuration(
-                    f"duplicate api_keys entry at position {index}"
-                )
+                raise exc.configuration(f"duplicate api_keys entry at position {index}")
 
             if not isinstance(entry_raw, Mapping):
-                raise exc.configuration(
-                    f"api_keys entry at position {index} must be a mapping"
-                )
+                raise exc.configuration(f"api_keys entry at position {index} must be a mapping")
 
             try:
                 principal_id = UUID(str(entry_raw["principal_id"]))  # type: ignore
 
-            except ValueError:
-
-                raise exc.configuration("principal_id must be a valid UUID")
+            except ValueError as err:
+                raise exc.configuration("principal_id must be a valid UUID") from err
 
             tenant_raw = entry_raw.get("tenant_id")  # type: ignore
 
             try:
                 tenant_id = UUID(str(tenant_raw)) if tenant_raw is not None else None  # type: ignore
 
-            except ValueError:
-                raise exc.configuration("tenant_id must be a valid UUID")
+            except ValueError as err:
+                raise exc.configuration("tenant_id must be a valid UUID") from err
 
             api_keys[key] = LocalApiKeyEntry(
                 principal_id=principal_id,
@@ -110,12 +106,10 @@ class LocalIdentityConfig:
         default_raw = data.get("default_tenant_id")
 
         try:
-            default_tenant_id = (
-                UUID(str(default_raw)) if default_raw is not None else None
-            )
+            default_tenant_id = UUID(str(default_raw)) if default_raw is not None else None
 
-        except ValueError:
-            raise exc.configuration("default_tenant_id must be a valid UUID")
+        except ValueError as err:
+            raise exc.configuration("default_tenant_id must be a valid UUID") from err
 
         return cls(
             api_keys=api_keys,

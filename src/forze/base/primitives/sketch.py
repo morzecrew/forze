@@ -200,9 +200,7 @@ class DDSketch:
             )
 
         if other.max_bins != self.max_bins:
-            raise exc.configuration(
-                "cannot merge DDSketch instances with different max_bins"
-            )
+            raise exc.configuration("cannot merge DDSketch instances with different max_bins")
 
         for key, cnt in other._bins.items():
             self._bins[key] = self._bins.get(key, 0) + cnt

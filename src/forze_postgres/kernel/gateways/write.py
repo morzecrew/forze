@@ -7,9 +7,10 @@ require_psycopg()
 # ....................... #
 
 from collections import defaultdict
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from functools import partial
-from typing import Any, AsyncGenerator, LiteralString, Sequence, cast, final, get_args
+from typing import Any, LiteralString, cast, final, get_args
 from uuid import UUID
 
 import attrs
@@ -112,9 +113,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
     """Codec for create commands."""
 
-    update_codec: ModelCodec[U, Any] | None = attrs.field(
-        kw_only=True, eq=False, repr=False
-    )
+    update_codec: ModelCodec[U, Any] | None = attrs.field(kw_only=True, eq=False, repr=False)
     """Codec for update commands when :attr:`update_cmd_type` is set; else ``None``."""
 
     history_gw: PostgresHistoryGateway[D] | None = attrs.field(default=None)  # type: ignore[override]
@@ -224,9 +223,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return self.update_codec
 
         if self.update_cmd_type is not None:
-            raise exc.configuration(
-                "Update codec is required when update commands are supported"
-            )
+            raise exc.configuration("Update codec is required when update commands are supported")
 
         return self.read_codec
 
@@ -272,26 +269,20 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         async with self._write_tx():
             model = self._from_create_dto(payload, id)
             insert_data_raw = await self._encode_domain_one(model)
-            insert_data = await self.adapt_payload_for_write(
-                insert_data_raw, create=True
-            )
+            insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
 
-            cols = [sql.Identifier(k) for k in insert_data.keys()]
-            vals = [sql.Placeholder() for _ in insert_data.keys()]
+            cols = [sql.Identifier(k) for k in insert_data]
+            vals = [sql.Placeholder() for _ in insert_data]
             params = list(insert_data.values())
 
-            stmt = sql.SQL(
-                "INSERT INTO {table} ({cols}) VALUES ({vals}) RETURNING {ret}"
-            ).format(
+            stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES ({vals}) RETURNING {ret}").format(
                 table=(await self._qname()).ident(),
                 cols=sql.SQL(", ").join(cols),
                 vals=sql.SQL(", ").join(vals),
                 ret=self.return_clause(),
             )
 
-            row = await self.client.fetch_one(
-                stmt, params, row_factory="dict", commit=False
-            )
+            row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=False)
 
             if row is None:
                 raise exc.concurrency(
@@ -331,9 +322,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 value_parts = [row_template] * len(batch)
                 params = [b[k] for b in batch for k in keys]
 
-                stmt = sql.SQL(
-                    "INSERT INTO {table} ({cols}) VALUES {vals} RETURNING {ret}"
-                ).format(
+                stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES {vals} RETURNING {ret}").format(
                     table=(await self._qname()).ident(),
                     cols=sql.SQL(", ").join(col_idents),
                     vals=sql.SQL(", ").join(value_parts),
@@ -409,12 +398,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         async with self._write_tx():
             model = self._from_create_dto(payload, id)
             insert_data_raw = await self._encode_domain_one(model)
-            insert_data = await self.adapt_payload_for_write(
-                insert_data_raw, create=True
-            )
+            insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
 
-            cols = [sql.Identifier(k) for k in insert_data.keys()]
-            vals = [sql.Placeholder() for _ in insert_data.keys()]
+            cols = [sql.Identifier(k) for k in insert_data]
+            vals = [sql.Placeholder() for _ in insert_data]
             params = list(insert_data.values())
 
             conflict = await self._ident_conflict_target()
@@ -430,9 +417,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 ret=self.return_clause(),
             )
 
-            row = await self.client.fetch_one(
-                stmt, params, row_factory="dict", commit=False
-            )
+            row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=False)
 
             if row is not None:
                 res = self._decode_row(row)
@@ -591,12 +576,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         async with self._write_tx():
             model = self._from_create_dto(create, id)
             insert_data_raw = await self._encode_domain_one(model)
-            insert_data = await self.adapt_payload_for_write(
-                insert_data_raw, create=True
-            )
+            insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
 
-            cols = [sql.Identifier(k) for k in insert_data.keys()]
-            vals = [sql.Placeholder() for _ in insert_data.keys()]
+            cols = [sql.Identifier(k) for k in insert_data]
+            vals = [sql.Placeholder() for _ in insert_data]
             params = list(insert_data.values())
 
             conflict = await self._ident_conflict_target()
@@ -612,9 +595,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 ret=self.return_clause(),
             )
 
-            row = await self.client.fetch_one(
-                stmt, params, row_factory="dict", commit=False
-            )
+            row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=False)
 
             if row is not None:
                 res = self._decode_row(row)
@@ -726,7 +707,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
                 ordered: list[D] = []
 
-                for i, m in enumerate(model_batch):
+                for m in model_batch:
                     rj = by_returned.get(m.id)
 
                     if rj is not None:
@@ -820,9 +801,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             params: list[Any] = []
 
             for k, v in diff.items():
-                set_parts.append(
-                    sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder())
-                )
+                set_parts.append(sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder()))
                 params.append(v)
 
             where_sql = self._where_pk_rev()
@@ -830,18 +809,14 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
             params.extend(where_params)
 
-            stmt = sql.SQL(
-                "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
-            ).format(
+            stmt = sql.SQL("UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}").format(
                 table=(await self._qname()).ident(),
                 sets=sql.SQL(", ").join(set_parts),
                 where=where_sql,
                 ret=self.return_clause(),
             )
 
-            row = await self.client.fetch_one(
-                stmt, params, row_factory="dict", commit=False
-            )
+            row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=False)
 
             if row is None:
                 raise exc.concurrency("Failed to update record")
@@ -886,7 +861,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         # for SET; naming the match column ``expected_rev`` avoids duplicate ``rev`` in
         # ``AS v(...)``, which PostgreSQL rejects as ambiguous.
         expected_rev_alias = "expected_rev"
-        value_cols = [ID_FIELD, expected_rev_alias] + list(key)
+        value_cols = [ID_FIELD, expected_rev_alias, *list(key)]
         v_col_idents: list[sql.Composable] = [
             self.ident_pk(),
             sql.Identifier(expected_rev_alias),
@@ -988,18 +963,14 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         async with self._write_tx():
             currents = await self.read_gw.get_many(pks)
 
-            groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = (
-                defaultdict(list)
-            )
+            groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = defaultdict(list)
 
             if updates is None:
 
                 async def _prepare_touch(c: D) -> tuple[UUID, int, JsonDict]:
                     _, diff = c.touch()
                     diff = self.__bump_rev(c, diff)
-                    adapted_diff = await self.adapt_payload_for_write(
-                        diff, create=False
-                    )
+                    adapted_diff = await self.adapt_payload_for_write(diff, create=False)
 
                     return c.id, c.rev, adapted_diff
 
@@ -1108,9 +1079,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         for start in range(0, len(dtos), batch_size):
             stop = start + batch_size
             updates.extend(
-                await self._encode_patch_many(
-                    dtos[start:stop], record_ids=pks[start:stop]
-                ),
+                await self._encode_patch_many(dtos[start:stop], record_ids=pks[start:stop]),
             )
 
         res, res_diffs = await self.__patch_many(
@@ -1167,9 +1136,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             set_params: list[Any] = []
 
             for k, v in adapted.items():
-                set_parts.append(
-                    sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder())
-                )
+                set_parts.append(sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder()))
                 set_params.append(v)
 
             if self.strategy == "application":
@@ -1198,9 +1165,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             # ``WHERE filters`` per chunk under READ COMMITTED would drift as rows are
             # concurrently inserted/updated, unlike the prior single statement. The
             # whole thing runs in one transaction (``_write_tx``), so it stays atomic.
-            id_stmt = sql.SQL(
-                "SELECT {pk} FROM {table} WHERE {where} ORDER BY {pk}"
-            ).format(pk=pk, table=table, where=where_sql)
+            id_stmt = sql.SQL("SELECT {pk} FROM {table} WHERE {where} ORDER BY {pk}").format(
+                pk=pk, table=table, where=where_sql
+            )
             id_params = list(where_params)
 
             # Bound the id snapshot: fetch at most ``max_rows + 1`` (a probe) so an
@@ -1330,8 +1297,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     raise exc.not_found("Some records not found")
 
             batches = [
-                list(pks[start : start + batch_size])
-                for start in range(0, len(pks), batch_size)
+                list(pks[start : start + batch_size]) for start in range(0, len(pks), batch_size)
             ]
 
             await gather_db_work(

@@ -1,14 +1,12 @@
 """Federated multi-index Meilisearch search (native federation or RRF merge)."""
 
 import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from typing import (
     Any,
-    Awaitable,
-    Callable,
     Final,
     Literal,
     NoReturn,
-    Sequence,
     TypeVar,
     cast,
     final,
@@ -18,13 +16,6 @@ from typing import (
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchCapabilities,
-    SearchCountlessPage,
-    SearchPage,
-    SearchSnapshotHandle,
-    search_page_from_limit_offset,
-)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -35,16 +26,21 @@ from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
     MultiSourceSearchOptions,
+    SearchCapabilities,
+    SearchCountlessPage,
     SearchOptions,
+    SearchPage,
     SearchQueryPort,
     SearchResultSnapshotOptions,
     SearchResultSnapshotSpec,
+    SearchSnapshotHandle,
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
-    resolve_fusion,
     prepare_federated_search_options,
     reject_federated_facets,
+    resolve_fusion,
+    search_page_from_limit_offset,
 )
 from forze.application.integrations.search import (
     SearchResultSnapshot,
@@ -126,9 +122,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
     def search_capabilities(self) -> SearchCapabilities:
         # Cross-index fusion; reciprocal rank fusion is the advertised strategy.
         # Totals are estimated (Meilisearch estimatedTotalHits), never exact.
-        return SearchCapabilities(
-            hybrid_fusion=frozenset({"rrf"}), exact_total_count=False
-        )
+        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}), exact_total_count=False)
 
     # ....................... #
 
@@ -138,9 +132,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 "Federated adapter legs must match FederatedSearchSpec.members length.",
             )
 
-        for (leg_member, _), member in zip(
-            self.legs, self.federated_spec.members, strict=True
-        ):
+        for (leg_member, _), member in zip(self.legs, self.federated_spec.members, strict=True):
             if leg_member != member.name:
                 raise exc.internal(
                     f"Federated leg member {leg_member!r} does not match spec name {member.name!r}.",
@@ -327,16 +319,14 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             and snapshot is not None
             and "id" in snapshot
         ):
-            maybe_page = (
-                await self.result_snapshot.read_federated_snapshot_page_if_requested(
-                    federated_spec=self.federated_spec,
-                    rs_spec=rs_spec,
-                    snapshot=snapshot,
-                    fp_computed=fp_computed,
-                    pagination=dict(pagination or {}),
-                    return_type=return_type,
-                    return_count=return_count,
-                )
+            maybe_page = await self.result_snapshot.read_federated_snapshot_page_if_requested(
+                federated_spec=self.federated_spec,
+                rs_spec=rs_spec,
+                snapshot=snapshot,
+                fp_computed=fp_computed,
+                pagination=dict(pagination or {}),
+                return_type=return_type,
+                return_count=return_count,
             )
 
             if maybe_page is not None:
@@ -511,18 +501,20 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 # carries no match highlights. A highlights request must skip the
                 # replay and fall through to the live merge below, which builds them.
                 if not wants_highlights:
-                    maybe_page = await self.result_snapshot.read_federated_thin_snapshot_page_if_requested(
-                        rs_spec=rs_spec,
-                        snapshot=snapshot,
-                        fp_computed=fp_computed,
-                        pagination=dict(pagination or {}),
-                        return_type=return_type,
-                        return_count=return_count,
-                        rehydrate=federated_snapshot_rehydrator(
-                            ports={name: port for name, port in self.legs},
-                            leg_opts=leg_opts,
-                            run_legs=self._run_legs,
-                        ),
+                    maybe_page = (
+                        await self.result_snapshot.read_federated_thin_snapshot_page_if_requested(
+                            rs_spec=rs_spec,
+                            snapshot=snapshot,
+                            fp_computed=fp_computed,
+                            pagination=dict(pagination or {}),
+                            return_type=return_type,
+                            return_count=return_count,
+                            rehydrate=federated_snapshot_rehydrator(
+                                ports=dict(self.legs),
+                                leg_opts=leg_opts,
+                                run_legs=self._run_legs,
+                            ),
+                        )
                     )
 
             else:
@@ -610,9 +602,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             *(_run_leg(n, p, w) for n, p, w in active),
         )
 
-        hl_index = build_federated_highlight_index(
-            [(name, page) for name, page, _w in leg_results]
-        )
+        hl_index = build_federated_highlight_index([(name, page) for name, page, _w in leg_results])
         merged = SearchResultSnapshot.weighted_rrf_merge_rows(
             leg_rows=[(name, page.hits, w) for name, page, w in leg_results],
             k=int(self.rrf_k),
@@ -627,11 +617,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
         window_models = [it[0] for it in window]
         # A filter-only browse (no query terms) has no meaningful relevance score.
-        window_scores = (
-            [float(it[1]) for it in window]
-            if normalize_search_queries(query)
-            else None
-        )
+        window_scores = [float(it[1]) for it in window] if normalize_search_queries(query) else None
 
         return await self._finalize_page(
             window_models,
@@ -661,9 +647,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         snapshot: SearchResultSnapshotOptions | None,
         rs_spec: SearchResultSnapshotSpec | None,
         fp_computed: str,
-        merged_for_snap: list[
-            tuple[FederatedSearchReadModel[M], float] | tuple[Any, float]
-        ],
+        merged_for_snap: list[tuple[FederatedSearchReadModel[M], float] | tuple[Any, float]],
         highlights: list[Any] | None = None,
         scores: list[float] | None = None,
         write_snapshot: bool = True,
@@ -696,9 +680,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             return attrs.evolve(result, highlights=highlights)
 
         if return_type is not None:
-            rows = [
-                {"hit": h.hit.model_dump(mode="json"), "member": h.member} for h in hits
-            ]
+            rows = [{"hit": h.hit.model_dump(mode="json"), "member": h.member} for h in hits]
             v = default_model_codec(return_type).decode_mapping_many(rows)
 
             if return_count:

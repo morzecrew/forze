@@ -1,6 +1,6 @@
 """Keyset cursor sort specs for ranked search (score + user sorts + id tie-break)."""
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from forze.application.contracts.querying import QuerySortExpression, parse_sort_value
 from forze.domain.constants import ID_FIELD

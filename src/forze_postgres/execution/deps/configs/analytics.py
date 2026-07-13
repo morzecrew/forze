@@ -15,7 +15,6 @@ from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_postgres.kernel.relation import RelationSpec
 
-
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 

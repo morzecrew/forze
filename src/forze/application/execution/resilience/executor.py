@@ -88,9 +88,7 @@ rejection counts as always-on metrics in production.
 
 # ....................... #
 
-_BREAKER_FAILURE_KINDS = frozenset(
-    {ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT}
-)
+_BREAKER_FAILURE_KINDS = frozenset({ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT})
 """Kinds that mean the downstream is unreachable / unresponsive — a breaker *failure*."""
 
 _BREAKER_NEUTRAL_KINDS = frozenset({ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY})
@@ -120,9 +118,7 @@ def _classify_breaker_outcome(kind: ExceptionKind) -> bool | None:
 
 # ....................... #
 
-_AMBIGUOUS_RETRY_KINDS = frozenset(
-    {ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT}
-)
+_AMBIGUOUS_RETRY_KINDS = frozenset({ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT})
 """Retry-triggering kinds whose outcome is *ambiguous* — an infrastructure error or a
 per-attempt timeout can leave a write applied-but-unacknowledged, so retrying may duplicate
 it. Concurrency conflicts and throttles are unambiguous (the call did not take effect), so
@@ -147,9 +143,7 @@ def reject_blanket_ambiguous_retry(
     if retry is None:
         return
 
-    if ambiguous := sorted(
-        kind.value for kind in retry.retry_on & _AMBIGUOUS_RETRY_KINDS
-    ):
+    if ambiguous := sorted(kind.value for kind in retry.retry_on & _AMBIGUOUS_RETRY_KINDS):
         raise exc.configuration(
             f"Port policy for {key_name!r} applies retrying policy "
             f"{str(policy.name)!r} (retries {ambiguous}) to every method: this would "
@@ -277,9 +271,7 @@ class InProcessResilienceExecutor:
     _throttles: BoundedLruMap[_StateKey, AdaptiveThrottleState] = attrs.field(
         init=False,
         default=attrs.Factory(
-            lambda self: BoundedLruMap[_StateKey, AdaptiveThrottleState](
-                self.max_state_entries
-            ),
+            lambda self: BoundedLruMap[_StateKey, AdaptiveThrottleState](self.max_state_entries),
             takes_self=True,
         ),
     )
@@ -288,9 +280,7 @@ class InProcessResilienceExecutor:
     _hedge_delays: BoundedLruMap[_StateKey, HedgeDelayState] = attrs.field(
         init=False,
         default=attrs.Factory(
-            lambda self: BoundedLruMap[_StateKey, HedgeDelayState](
-                self.max_state_entries
-            ),
+            lambda self: BoundedLruMap[_StateKey, HedgeDelayState](self.max_state_entries),
             takes_self=True,
         ),
     )
@@ -423,9 +413,7 @@ class InProcessResilienceExecutor:
 
         snapshots: list[ResilienceStateSnapshot] = []
 
-        for key in sorted(
-            keys, key=lambda k: (str(k[0]), str(k[1]) if k[1] is not None else "")
-        ):
+        for key in sorted(keys, key=lambda k: (str(k[0]), str(k[1]) if k[1] is not None else "")):
             name, route = key
             bulkhead = bulkheads.get(key)
             hedge = hedges.get(key)
@@ -489,7 +477,7 @@ class InProcessResilienceExecutor:
             try:
                 await self.breaker_store.reset_breaker(policy, route)
 
-            except Exception:  # noqa: BLE001 — bookkeeping, must not fail the clear
+            except Exception:
                 # The switch is already released; a reset failure only means the
                 # scope recovers on the breaker's own break_duration instead of
                 # immediately. Surfaced as a metric, like a record() failure.
@@ -551,14 +539,13 @@ class InProcessResilienceExecutor:
 
         if fallback is not None and not pol.has_fallback:
             raise exc.configuration(
-                f"Policy {policy!r} declares no FallbackStrategy "
-                "but a fallback was provided",
+                f"Policy {policy!r} declares no FallbackStrategy but a fallback was provided",
             )
 
         try:
             return await self._apply(pol, fn, route)
 
-        except Exception as error:  # noqa: BLE001 — terminal fallback boundary
+        except Exception as error:
             if fallback is not None and pol.has_fallback:
                 return await fallback(error)
 
@@ -690,11 +677,7 @@ class InProcessResilienceExecutor:
 
         delay_state = self._hedge_delay_for(hedge, pol, route)
 
-        delay = (
-            delay_state.delay()
-            if delay_state is not None
-            else (hedge.delay.total_seconds())
-        )
+        delay = delay_state.delay() if delay_state is not None else (hedge.delay.total_seconds())
 
         tasks: set[asyncio.Future[T]] = set()
         errors: list[BaseException] = []
@@ -906,8 +889,7 @@ class InProcessResilienceExecutor:
             if remaining <= 0.0:
                 self._emit("deadline_exceeded", pol, route)
                 raise exc.timeout(
-                    f"Invocation deadline exceeded before call "
-                    f"under policy {pol.name!r}",
+                    f"Invocation deadline exceeded before call under policy {pol.name!r}",
                     code="deadline_exceeded",
                 )
 
@@ -921,8 +903,7 @@ class InProcessResilienceExecutor:
                 except TimeoutError as error:
                     self._emit("deadline_exceeded", pol, route)
                     raise exc.timeout(
-                        f"Invocation deadline exceeded during call "
-                        f"under policy {pol.name!r}",
+                        f"Invocation deadline exceeded during call under policy {pol.name!r}",
                         code="deadline_exceeded",
                     ) from error
 
@@ -976,8 +957,7 @@ class InProcessResilienceExecutor:
 
             except CoreException as error:
                 retryable = (
-                    error.kind in strat.retry_on
-                    and exception_egress_policy(error.kind).retryable
+                    error.kind in strat.retry_on and exception_egress_policy(error.kind).retryable
                 )
 
                 if not retryable or attempt >= strat.max_attempts:
@@ -1100,7 +1080,7 @@ class InProcessResilienceExecutor:
         try:
             acquired = await self.rate_limit_store.try_acquire((pol.name, route), strat)
 
-        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
+        except Exception as error:
             # Store unreachable: fail open by default (don't let a down limiter
             # store shed live traffic), or fail closed if the policy demands it.
             self._on_store_unavailable("rate_limit_store_error", pol, route, error)
@@ -1244,11 +1224,9 @@ class InProcessResilienceExecutor:
             key = (pol.name, route)
 
             try:
-                quantile_value = await self.latency_digest_store.observe(
-                    key, elapsed, strat
-                )
+                quantile_value = await self.latency_digest_store.observe(key, elapsed, strat)
 
-            except Exception:  # noqa: BLE001 — store-outage fail-open boundary
+            except Exception:
                 self._emit("latency_digest_store_error", pol, route)
                 return
 
@@ -1261,7 +1239,7 @@ class InProcessResilienceExecutor:
                 try:
                     await self.latency_digest_store.reset((pol.name, route), strat)
 
-                except Exception:  # noqa: BLE001 — store-outage fail-open boundary
+                except Exception:
                     self._emit("latency_digest_store_error", pol, route)
 
     # ....................... #
@@ -1406,7 +1384,7 @@ class InProcessResilienceExecutor:
         try:
             return state.on_complete(latency, self.clock(), quantile_value, inflight)
 
-        except Exception:  # noqa: BLE001 — controller bookkeeping must never fail a completed call
+        except Exception:
             self._emit("bulkhead_controller_error", pol, route)
             return False
 
@@ -1424,7 +1402,7 @@ class InProcessResilienceExecutor:
         try:
             allowed, transition = await self.breaker_store.admit(key, strat)
 
-        except Exception as error:  # noqa: BLE001 — store-outage fail-open boundary
+        except Exception as error:
             # Store unreachable (e.g. a distributed breaker's Redis is down):
             # fail open by default so the breaker can't become the outage, or
             # fail closed if the policy demands it.
@@ -1488,9 +1466,7 @@ class InProcessResilienceExecutor:
                 cooldown=0.0,
                 clock=self.clock,
                 queue_target_s=(
-                    strat.queue_target.total_seconds()
-                    if strat.queue_target is not None
-                    else None
+                    strat.queue_target.total_seconds() if strat.queue_target is not None else None
                 ),
                 queue_interval_s=strat.queue_interval.total_seconds(),
                 queue_adaptive_lifo=strat.queue_adaptive_lifo,
@@ -1523,9 +1499,7 @@ class InProcessResilienceExecutor:
                 cooldown=strat.cooldown.total_seconds(),
                 clock=self.clock,
                 queue_target_s=(
-                    strat.queue_target.total_seconds()
-                    if strat.queue_target is not None
-                    else None
+                    strat.queue_target.total_seconds() if strat.queue_target is not None else None
                 ),
                 queue_interval_s=strat.queue_interval.total_seconds(),
                 queue_adaptive_lifo=strat.queue_adaptive_lifo,
@@ -1559,9 +1533,7 @@ class InProcessResilienceExecutor:
                 cooldown=0.0,
                 clock=self.clock,
                 queue_target_s=(
-                    strat.queue_target.total_seconds()
-                    if strat.queue_target is not None
-                    else None
+                    strat.queue_target.total_seconds() if strat.queue_target is not None else None
                 ),
                 queue_interval_s=strat.queue_interval.total_seconds(),
                 queue_adaptive_lifo=strat.queue_adaptive_lifo,
@@ -1665,16 +1637,8 @@ class InProcessResilienceExecutor:
             state = HedgeDelayState(
                 quantile=strat.adaptive_delay_quantile,
                 fixed_delay=strat.delay.total_seconds(),
-                floor=(
-                    strat.delay_min.total_seconds()
-                    if strat.delay_min is not None
-                    else None
-                ),
-                cap=(
-                    strat.delay_max.total_seconds()
-                    if strat.delay_max is not None
-                    else None
-                ),
+                floor=(strat.delay_min.total_seconds() if strat.delay_min is not None else None),
+                cap=(strat.delay_max.total_seconds() if strat.delay_max is not None else None),
             )
             self._hedge_delays[key] = state
 

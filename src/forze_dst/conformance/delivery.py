@@ -23,8 +23,8 @@ real and the inbox is doing the work, not that the crash was a no-op.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Sequence
 from uuid import UUID
 
 import attrs

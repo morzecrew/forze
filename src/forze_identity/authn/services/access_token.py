@@ -171,9 +171,7 @@ class AccessTokenService:
             header["kid"] = self.signer.kid
 
         signing_input = (
-            base64url_encode(orjson.dumps(header))
-            + b"."
-            + base64url_encode(orjson.dumps(payload))
+            base64url_encode(orjson.dumps(header)) + b"." + base64url_encode(orjson.dumps(payload))
         )
         signature = await self.signer.sign(signing_input)
         self._n_signed += 1
@@ -226,16 +224,16 @@ class AccessTokenService:
             self._n_verified += 1
             return AccessTokenClaims(**res)  # type: ignore[typeddict-item]
 
-        except jwt.ExpiredSignatureError:
+        except jwt.ExpiredSignatureError as err:
             self._n_verify_failed += 1
             raise exc.authentication(
                 "Access token expired",
                 code="access_token_expired",
-            )
+            ) from err
 
-        except jwt.InvalidTokenError:
+        except jwt.InvalidTokenError as err:
             self._n_verify_failed += 1
             raise exc.authentication(
                 "Invalid access token",
                 code="invalid_access_token",
-            )
+            ) from err

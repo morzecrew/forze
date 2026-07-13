@@ -16,7 +16,8 @@ fields where equality search is worth that exposure.
 """
 
 from collections import OrderedDict
-from typing import Iterable, final
+from collections.abc import Iterable
+from typing import final
 
 import attrs
 from cryptography.exceptions import InvalidTag
@@ -129,7 +130,7 @@ class DeterministicFieldCipher:
             algorithm=hashes.SHA256(),
             length=_DERIVED_KEY_BYTES,
             salt=_HKDF_SALT,
-            info=f"forze.det|{_tenant_key(tenant)}|{field}".encode("utf-8"),
+            info=f"forze.det|{_tenant_key(tenant)}|{field}".encode(),
         ).derive(root)
 
     def _cached_key(
@@ -214,9 +215,7 @@ class DeterministicFieldCipher:
 
         keys = {field: self._key(tenant, field) for field in fields}
         prev = {
-            field: pk
-            for field in keys
-            if (pk := self._previous_key(tenant, field)) is not None
+            field: pk for field in keys if (pk := self._previous_key(tenant, field)) is not None
         }
 
         return _FrozenDeterministicFieldCipher(keys=keys, prev=prev)

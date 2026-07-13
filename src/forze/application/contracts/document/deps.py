@@ -34,9 +34,7 @@ DocumentCommandDepPort = ConfigurableDepPort[
 DocumentQueryDepKey = DepKey[DocumentQueryDepPort[Any]]("document_query")
 """Key used to register the ``DocumentQueryDepPort`` implementation."""
 
-DocumentCommandDepKey = DepKey[DocumentCommandDepPort[Any, Any, Any, Any]](
-    "document_command"
-)
+DocumentCommandDepKey = DepKey[DocumentCommandDepPort[Any, Any, Any, Any]]("document_command")
 """Key used to register the ``DocumentCommandDepPort`` implementation."""
 
 # ....................... #

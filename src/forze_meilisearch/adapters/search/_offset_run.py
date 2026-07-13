@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import attrs
 from pydantic import BaseModel
@@ -139,9 +140,7 @@ class _MeilisearchOffsetHooks:
         max_total_hits = self.gw.config.max_total_hits
         # A missing ``limit`` still reads Meilisearch's default page, so count that toward the
         # window — otherwise the guard undercounts and a deep offset slips past ``maxTotalHits``.
-        effective_limit = (
-            limit if limit is not None else _MEILI_DEFAULT_SEARCH_LIMIT
-        )
+        effective_limit = limit if limit is not None else _MEILI_DEFAULT_SEARCH_LIMIT
         far_edge = offset + effective_limit
 
         if far_edge > max_total_hits:
@@ -172,11 +171,7 @@ class _MeilisearchOffsetHooks:
         )
         rows = [self.gw.from_hit(h) for h in hits_raw]
 
-        facets = (
-            extract_facets(result, self.facet_plan)
-            if self.facet_plan is not None
-            else None
-        )
+        facets = extract_facets(result, self.facet_plan) if self.facet_plan is not None else None
         highlights = (
             extract_highlights(hits_raw, self.highlight_plan)
             if self.highlight_plan is not None

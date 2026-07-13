@@ -51,9 +51,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
         spec = resolve_search_read_codec_spec(
             spec,
             keyring=(
-                context.deps.provide(KeyringDepKey)
-                if context.deps.exists(KeyringDepKey)
-                else None
+                context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
             ),
             deterministic=(
                 context.deps.provide(DeterministicCipherDepKey)

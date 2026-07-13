@@ -44,8 +44,15 @@ lifecycle = LifecyclePlan.from_steps(gcs_lifecycle_step(project_id="my-project")
 
 | Contract | Operations | Keyed by |
 |----------|-----------|----------|
-| Storage query | `download`, `list` | `StorageSpec.name` (`storages`) |
-| Storage command | `upload`, `delete` | `StorageSpec.name` (`storages`) |
+| Storage query | `download`, `download_stream`, `download_range`, `download_if_changed`, `head`, `presign_download`, `list` | `StorageSpec.name` (`storages`) |
+| Storage command | `upload`, `upload_stream`, `overwrite_stream`, `presign_upload`, `delete`, `copy`, `move`, `put_object_tags` | `StorageSpec.name` (`storages`) |
+| Upload sessions (resumable multipart) | `begin` … `complete` / `abort` | `StorageSpec.name` (`storages`) |
+
+The full method surface is the
+[storage contract](../reference/contracts/stores.md#storage); the streamed and
+ranged downloads are what the generated
+[download route](../reference/fastapi-routes.md#downloads-streaming-ranges-caching)
+serves by default.
 
 ## Notes
 

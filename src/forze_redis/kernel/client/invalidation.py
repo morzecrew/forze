@@ -26,7 +26,9 @@ require_redis()
 # ....................... #
 
 import asyncio
-from typing import Any, Awaitable, Callable, Sequence
+import contextlib
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 import attrs
 
@@ -118,11 +120,8 @@ class InvalidationHub:
         if task is not None and not task.done():
             task.cancel()
 
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-
-            except asyncio.CancelledError:
-                pass
 
         self._task = None
         self._subs.clear()
@@ -144,7 +143,7 @@ class InvalidationHub:
             try:
                 sub.on_reset()
 
-            except Exception:  # noqa: BLE001 — subscriber bugs must not kill the hub
+            except Exception:
                 logger.warning("Invalidation reset callback failed", exc_info=True)
 
     # ....................... #
@@ -154,7 +153,7 @@ class InvalidationHub:
             try:
                 sub.on_keys(keys)
 
-            except Exception:  # noqa: BLE001 — subscriber bugs must not kill the hub
+            except Exception:
                 logger.warning("Invalidation key callback failed", exc_info=True)
 
     # ....................... #
@@ -208,11 +207,9 @@ class InvalidationHub:
 
             # The parser-level handler is where redis-py (8+) routes RESP3
             # ``invalidate`` push frames; without one they are dropped.
-            conn._parser.set_invalidation_push_handler(self._on_push)  # noqa: SLF001
+            conn._parser.set_invalidation_push_handler(self._on_push)
 
-            prefixes = sorted(
-                {p for sub in self._active_subs() for p in sub.prefixes}
-            )
+            prefixes = sorted({p for sub in self._active_subs() for p in sub.prefixes})
             args: list[Any] = ["CLIENT", "TRACKING", "ON", "BCAST"]
 
             for prefix in prefixes:
@@ -241,7 +238,7 @@ class InvalidationHub:
                 # returns to the pool and reconnects cleanly on next use.
                 await self.release_connection(conn)
 
-        except Exception:  # noqa: BLE001 — best-effort cleanup
+        except Exception:
             logger.debug("Invalidation connection release failed", exc_info=True)
 
     # ....................... #
@@ -285,8 +282,7 @@ class InvalidationHub:
                     break
 
                 logger.warning(
-                    "Invalidation stream failed; flushing subscribers and "
-                    "reconnecting in ~%.1fs",
+                    "Invalidation stream failed; flushing subscribers and reconnecting in ~%.1fs",
                     backoff,
                     exc_info=True,
                 )

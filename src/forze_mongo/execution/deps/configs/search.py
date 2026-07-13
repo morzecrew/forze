@@ -1,6 +1,7 @@
 """Mongo search execution configs."""
 
-from typing import TYPE_CHECKING, Any, Literal, Mapping
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Literal
 
 import attrs
 
@@ -177,19 +178,33 @@ class MongoSearchConfig(TenantAwareIntegrationConfig):
 
     @property
     def default_language(self) -> str | None:
-        return self.engine_spec.default_language if isinstance(self.engine_spec, MongoTextEngine) else None
+        return (
+            self.engine_spec.default_language
+            if isinstance(self.engine_spec, MongoTextEngine)
+            else None
+        )
 
     @property
     def vector_path(self) -> str | None:
-        return self.engine_spec.vector_path if isinstance(self.engine_spec, MongoVectorEngine) else None
+        return (
+            self.engine_spec.vector_path
+            if isinstance(self.engine_spec, MongoVectorEngine)
+            else None
+        )
 
     @property
     def embeddings_name(self) -> str | None:
-        return self.engine_spec.embeddings_name if isinstance(self.engine_spec, MongoVectorEngine) else None
+        return (
+            self.engine_spec.embeddings_name
+            if isinstance(self.engine_spec, MongoVectorEngine)
+            else None
+        )
 
     @property
     def embedding_dimensions(self) -> int | None:
-        return self.engine_spec.dimensions if isinstance(self.engine_spec, MongoVectorEngine) else None
+        return (
+            self.engine_spec.dimensions if isinstance(self.engine_spec, MongoVectorEngine) else None
+        )
 
     # ....................... #
 

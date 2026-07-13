@@ -3,8 +3,8 @@
 from .pool import (
     RabbitMQShutdownHook,
     RabbitMQStartupHook,
-    routed_rabbitmq_lifecycle_step,
     rabbitmq_lifecycle_step,
+    routed_rabbitmq_lifecycle_step,
 )
 
 # ----------------------- #

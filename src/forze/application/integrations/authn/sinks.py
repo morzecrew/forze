@@ -47,14 +47,12 @@ class LoggingAuthnEventSink(AuthnEventSink):
                 "Authn event '%s' on route '%s'",
                 str(event.kind),
                 str(event.route),
-                principal_id=(
-                    str(event.principal_id) if event.principal_id is not None else None
-                ),
+                principal_id=(str(event.principal_id) if event.principal_id is not None else None),
                 login_digest=event.login_digest,
                 tenant_id=str(event.tenant_id) if event.tenant_id is not None else None,
                 occurred_at=event.occurred_at.isoformat(),
                 **dict(event.details),
             )
 
-        except Exception:  # nosec B110 # noqa: BLE001 — a logging sink must never raise
+        except Exception:  # nosec B110
             pass

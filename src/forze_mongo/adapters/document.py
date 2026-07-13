@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from forze.application.contracts.document import (
     DocumentSpec,
 )
-from forze.application.integrations.document import DocumentCache, DocumentAdapter
+from forze.application.integrations.document import DocumentAdapter, DocumentCache
 from forze.application.integrations.document.hydration import (
     can_hydrate_read_from_write_domain,
     validate_read_write_gateway_compat,

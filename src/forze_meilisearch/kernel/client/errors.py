@@ -6,7 +6,8 @@ require_meilisearch()
 
 # ....................... #
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from meilisearch_python_sdk.errors import (
     MeilisearchApiError,

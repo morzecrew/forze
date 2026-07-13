@@ -1,6 +1,7 @@
 """Base gateway for Mongo search adapters."""
 
-from typing import Any, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import attrs
 from pydantic import BaseModel

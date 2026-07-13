@@ -1,5 +1,6 @@
 """Postgres lifecycle steps (pool, catalog warmup, document schema validation)."""
 
+from .capabilities import POSTGRES_CLIENT_CAPABILITY
 from .catalog_warmup import (
     PostgresCatalogWarmupHook,
     postgres_catalog_warmup_lifecycle_step,
@@ -10,7 +11,6 @@ from .document_schema import (
     postgres_document_schema_spec_for_binding,
     postgres_document_schema_validation_lifecycle_step,
 )
-from .capabilities import POSTGRES_CLIENT_CAPABILITY
 from .module import PostgresLifecycleModule
 from .pool import (
     PostgresShutdownHook,

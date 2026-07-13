@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Literal, Sequence
+from collections.abc import Sequence
+from typing import Any, Literal
 
 import attrs
 from psycopg import sql
@@ -48,10 +49,10 @@ from ._cursor_run import (
 from ._engine import RankedPipelineSql
 from ._materialize_hits import search_trust_source
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
-from ._search_count import effective_search_count, resolve_ranked_approximate_total
 from ._pgroonga_plan import is_coalesced_read_heap
 from ._pipeline_sql import PipelineAliases, build_rank_first_order, build_rank_select
 from ._port import PostgresSearchPortMixin
+from ._search_count import effective_search_count, resolve_ranked_approximate_total
 
 # ----------------------- #
 

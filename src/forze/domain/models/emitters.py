@@ -10,7 +10,7 @@ transition raises. Emitters must be declared on an
 
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
-from typing import Final, TypeVar, Union, cast, overload
+from typing import Final, TypeVar, cast, overload
 
 import attrs
 from pydantic import BaseModel
@@ -36,11 +36,11 @@ M = TypeVar("M", bound=BaseModel)
 type EventEmitter[X: BaseModel] = Callable[[X, X, JsonDict], DomainEvent | None]
 """Normalized emitter signature."""
 
-type EventEmitterLike[X: BaseModel] = Union[
-    Callable[[X], DomainEvent | None],
-    Callable[[X, X], DomainEvent | None],
-    Callable[[X, X, JsonDict], DomainEvent | None],
-]
+type EventEmitterLike[X: BaseModel] = (
+    Callable[[X], DomainEvent | None]
+    | Callable[[X, X], DomainEvent | None]
+    | Callable[[X, X, JsonDict], DomainEvent | None]
+)
 """Allowed emitter signatures."""
 
 
@@ -70,7 +70,6 @@ class _EmitterEntry:
 @overload
 def event_emitter(_func: EventEmitterLike[M]) -> EventEmitter[M]:
     """Register a method as an emitter when used as a bare decorator."""
-    ...
 
 
 @overload
@@ -80,7 +79,6 @@ def event_emitter(
     fields: Iterable[str] | None = None,
 ) -> Callable[[EventEmitterLike[M]], EventEmitter[M]]:
     """Return a decorator that registers an emitter with an optional field filter."""
-    ...
 
 
 def event_emitter(

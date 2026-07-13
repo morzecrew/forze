@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, overload
+from collections.abc import Mapping
+from typing import Any, overload
 
 import attrs
 
@@ -59,9 +60,7 @@ class CursorPage[T]:
 # ....................... #
 
 
-def offset_page_coords(
-    pagination: Mapping[str, Any] | None, hit_count: int
-) -> tuple[int, int]:
+def offset_page_coords(pagination: Mapping[str, Any] | None, hit_count: int) -> tuple[int, int]:
     """Resolve ``(page_number, size)`` from offset/limit window params (``page`` one-based).
 
     Shared by :func:`page_from_limit_offset` and the search page builder so both number a

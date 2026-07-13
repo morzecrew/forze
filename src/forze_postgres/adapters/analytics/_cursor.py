@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence, TypeVar
+from collections.abc import Sequence
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 

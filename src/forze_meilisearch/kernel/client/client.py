@@ -49,11 +49,7 @@ class MeilisearchClient(MeilisearchClientPort):
 
             key: str | None
 
-            if isinstance(api_key, SecretStr):
-                key = api_key.get_secret_value()
-
-            else:
-                key = api_key
+            key = api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key
 
             cfg = config or MeilisearchConfig()
             self.__client = AsyncClient(
@@ -105,7 +101,7 @@ class MeilisearchClient(MeilisearchClientPort):
             status = str(getattr(result, "status", "")).lower()
             return status or "unknown", status == "available"
 
-        except Exception as e:  # noqa: BLE001 - health must not raise
+        except Exception as e:
             return str(e) or "Meilisearch health check failed", False
 
     # ....................... #

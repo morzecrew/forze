@@ -1,5 +1,6 @@
 import asyncio
-from typing import TYPE_CHECKING, Any, Callable, cast, final
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -11,9 +12,9 @@ from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 
 from ...context.active_operation import active_operation_var
+from ...context.commit_state import commit_started, reset_commit_started
 from ...context.deadline import remaining_time, reset_deadline, set_deadline
 from ...context.drain import OperationDrainGate
-from ...context.commit_state import commit_started, reset_commit_started
 from ...tracing.emit import record
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import TransactionRunner, run_resolved_operation_plan
@@ -83,8 +84,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
 
             if remaining <= 0.0:
                 raise exc.timeout(
-                    f"Invocation deadline exceeded before operation "
-                    f"{str(self.op)!r} started",
+                    f"Invocation deadline exceeded before operation {str(self.op)!r} started",
                     code="deadline_exceeded",
                 )
 
@@ -186,9 +186,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
             # propagates to the top-level boundary.
             reset_commit_started()
 
-        marker_token = active_operation_var.set(
-            current_task if current_task is not None else True
-        )
+        marker_token = active_operation_var.set(current_task if current_task is not None else True)
 
         try:
             if self.plan.kind is OperationKind.QUERY:

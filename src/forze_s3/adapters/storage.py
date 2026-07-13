@@ -32,8 +32,8 @@ class S3StorageAdapter(ObjectStorageAdapter):
     :class:`~forze.application.integrations.storage.ObjectStorageAdapter`.
     """
 
-    resolve_bucket: Callable[[NamedResourceSpec, UUID | None], Awaitable[str]] = (
-        attrs.field(default=resolve_s3_bucket)
+    resolve_bucket: Callable[[NamedResourceSpec, UUID | None], Awaitable[str]] = attrs.field(
+        default=resolve_s3_bucket
     )
 
     # ....................... #

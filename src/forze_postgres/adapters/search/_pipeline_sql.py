@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import attrs
 from psycopg import sql
@@ -225,11 +225,7 @@ def build_scored_cte(
     tail = sql.SQL("")
 
     if candidate_limit is not None and scored_order is not None:
-        order_suf = (
-            sql.SQL("ASC NULLS LAST")
-            if candidate_order_asc
-            else sql.SQL("DESC NULLS LAST")
-        )
+        order_suf = sql.SQL("ASC NULLS LAST") if candidate_order_asc else sql.SQL("DESC NULLS LAST")
         tail = sql.SQL(" ORDER BY {ord} {suf} LIMIT {lim}").format(  # type: ignore[assignment]
             ord=scored_order,
             suf=order_suf,
@@ -273,9 +269,9 @@ def build_pgroonga_index_first_pipeline(
 ) -> tuple[sql.Composable, sql.Composable]:
     """Index-first PGroonga: top-K on heap, then join projection with filters.
 
-  When ``heap_row_limit`` is ``None``, the scored CTE has no ``LIMIT`` (for exact counts).
+    When ``heap_row_limit`` is ``None``, the scored CTE has no ``LIMIT`` (for exact counts).
 
-    Returns ``(with_clause, from_outer)``.
+      Returns ``(with_clause, from_outer)``.
     """
 
     where_parts: list[sql.Composable] = [sw]

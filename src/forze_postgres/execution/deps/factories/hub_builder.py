@@ -26,15 +26,13 @@ def build_hub_leg_runtimes(
     """Resolve hub member legs from spec members and per-member Postgres config."""
 
     members: list[HubLegRuntime] = []
-    vector_embedders: dict[int, "EmbeddingsProviderPort"] = {}
+    vector_embedders: dict[int, EmbeddingsProviderPort] = {}
 
     for i, m in enumerate(spec.members):
         c = config.members.get(m.name)
 
         if c is None:
-            raise exc.internal(
-                f"Member '{m.name}' not found in PostgresHubSearchConfig.members."
-            )
+            raise exc.internal(f"Member '{m.name}' not found in PostgresHubSearchConfig.members.")
 
         engine = c.engine
 

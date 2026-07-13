@@ -81,9 +81,7 @@ class OperationDescriptor:
     def output_schema(self) -> JsonDict | None:
         """JSON schema for the output DTO, or ``None`` when the operation returns nothing."""
 
-        return (
-            None if self.output_type is None else self.output_type.model_json_schema()
-        )
+        return None if self.output_type is None else self.output_type.model_json_schema()
 
 
 # ....................... #

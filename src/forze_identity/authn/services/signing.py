@@ -13,7 +13,8 @@ can validate tokens via a JWKS document (:func:`jwks_document`).
 """
 
 import json
-from typing import Any, Awaitable, Protocol, final
+from collections.abc import Awaitable
+from typing import Any, Protocol, final
 
 import attrs
 from jwt.algorithms import ECAlgorithm, HMACAlgorithm, RSAAlgorithm

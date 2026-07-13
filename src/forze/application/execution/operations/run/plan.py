@@ -1,9 +1,10 @@
 """Orchestrate execution of a resolved operation plan."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import attrs
 
@@ -37,9 +38,7 @@ class _PrepareOnce:
     future: "asyncio.Future[Any] | None" = None
 
 
-_prepare_once: ContextVar[_PrepareOnce | None] = ContextVar(
-    "two_phase_prepare_once", default=None
-)
+_prepare_once: ContextVar[_PrepareOnce | None] = ContextVar("two_phase_prepare_once", default=None)
 
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from ..planning.scopes import ResolvedScope, ResolvedTransactionScope

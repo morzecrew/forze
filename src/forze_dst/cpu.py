@@ -8,7 +8,8 @@ can interleave around, and a latency site a deadline can fire "during".
 """
 
 import asyncio
-from typing import Callable, final
+from collections.abc import Callable
+from typing import final
 
 import attrs
 

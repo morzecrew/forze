@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import timedelta
-from typing import Any, Sequence, final
+from typing import Any, final
 
 import attrs
 
@@ -171,9 +172,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
         with self.state.lock:
             meta = self._meta_store().get(run_id)
             if meta is None:
-                raise exc.internal(
-                    "begin_run is required before append_chunk (missing meta)."
-                )
+                raise exc.internal("begin_run is required before append_chunk (missing meta).")
             if meta.get("complete"):
                 raise exc.internal("Cannot append_chunk to a completed snapshot run.")
             if chunk_index != int(meta.get("next_chunk_index", 0)):
@@ -182,13 +181,9 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
                 )
             chunk_size = int(meta["chunk_size"])
             if len(ids) > chunk_size:
-                raise exc.internal(
-                    f"Chunk has {len(ids)} ids; chunk_size is {chunk_size!r}."
-                )
+                raise exc.internal(f"Chunk has {len(ids)} ids; chunk_size is {chunk_size!r}.")
             if not is_last and len(ids) != chunk_size:
-                raise exc.internal(
-                    "All non-final chunks must contain exactly ``chunk_size`` ids."
-                )
+                raise exc.internal("All non-final chunks must contain exactly ``chunk_size`` ids.")
             self._chunk_store()[(run_id, chunk_index)] = list(ids)
             total_ids = int(meta.get("total_ids", 0)) + len(ids)
             next_idx = chunk_index + 1
@@ -226,9 +221,9 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
             meta = self._meta_store().get(run_id)
             if meta is None or not meta.get("complete") or _is_expired(meta):
                 return None
-            if expected_fingerprint is not None and str(
-                meta.get("fingerprint")
-            ) != str(expected_fingerprint):
+            if expected_fingerprint is not None and str(meta.get("fingerprint")) != str(
+                expected_fingerprint
+            ):
                 return None
             total = int(meta["total"])
             if offset >= total:

@@ -12,6 +12,7 @@ from forze.application.contracts.search import (
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKey, StrKeyNamespace
+
 from .dto import (
     CursorSearchRequestDTO,
     ProjectedCursorSearchRequestDTO,
@@ -137,9 +138,7 @@ def build_search_registry[M: BaseModel](
             ),
             ns.key(SearchKernelOp.RAW): lambda ctx: ProjectedSearch(
                 search=ctx.search.query(spec),
-                mapper=(
-                    mappers.projected_search(ctx) if mappers.projected_search else None
-                ),
+                mapper=(mappers.projected_search(ctx) if mappers.projected_search else None),
             ),
             ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: CursorSearch(
                 search=ctx.search.query(spec),
@@ -191,9 +190,7 @@ def build_hub_search_registry[M: BaseModel](
             ),
             ns.key(SearchKernelOp.RAW): lambda ctx: ProjectedSearch(
                 search=ctx.search.hub(spec),
-                mapper=(
-                    mappers.projected_search(ctx) if mappers.projected_search else None
-                ),
+                mapper=(mappers.projected_search(ctx) if mappers.projected_search else None),
             ),
             ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: CursorSearch(
                 search=ctx.search.hub(spec),
@@ -282,9 +279,7 @@ def build_federated_search_registry[M: BaseModel](
                 sensitive=sensitive,
             ),
             SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
-                input_type=_request_dto(
-                    CursorSearchRequestDTO, MultiSourceSearchOptions
-                ),
+                input_type=_request_dto(CursorSearchRequestDTO, MultiSourceSearchOptions),
                 description="Federated full-text search across members (cursor pagination).",
                 sensitive=sensitive,
             ),

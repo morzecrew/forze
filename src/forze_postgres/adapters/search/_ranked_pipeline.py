@@ -201,8 +201,8 @@ def ranked_parts_to_sql(
     projection_alias: str,
     browse_count_params: list[Any] | None = None,
     resolved_plan: str | None = None,
-    highlight: "HighlightSelect | None" = None,
-) -> "RankedPipelineSql":
+    highlight: HighlightSelect | None = None,
+) -> RankedPipelineSql:
     """Convert :class:`RankedPipelineParts` to :class:`RankedPipelineSql`."""
 
     from ._engine import RankedPipelineSql

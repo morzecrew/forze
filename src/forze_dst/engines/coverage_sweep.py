@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING
 
 from forze.base.primitives import derive_seed
 from forze_dst.config import SimulationConfig
+from forze_dst.engines import scenario as scenario_engine
+from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.confidence import ConfidenceProbe
 from forze_dst.oracle.coverage import Behavior, CoverageStats, behavioral_coverage
-from forze_dst.engines import scenario as scenario_engine
 from forze_dst.oracle.invariants import check
-from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.reachability import ReachabilityReport, reached_labels
 from forze_dst.scenario import Scenario
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 def run_coverage(
-    sim: "Simulation",
+    sim: Simulation,
     config: SimulationConfig,
     *,
     scenario: Scenario | None = None,
@@ -45,7 +45,7 @@ def run_coverage(
     plateau = 0
     plateaued = False
     violation: ViolationReport | None = None
-    reach_hits: dict[str, int] = {t: 0 for t in config.reachability_targets}
+    reach_hits: dict[str, int] = dict.fromkeys(config.reachability_targets, 0)
     probe = ConfidenceProbe()
 
     for seed in config.seeds:

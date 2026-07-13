@@ -222,9 +222,7 @@ def _walk_caps(
                 # they only reach this slow branch when not already allowed.
                 if op in HIERARCHY_OPS:
                     if in_element:
-                        _cap_fail(
-                            backend, f"hierarchy operator {op!r} inside element quantifiers"
-                        )
+                        _cap_fail(backend, f"hierarchy operator {op!r} inside element quantifiers")
 
                     if not caps.supports_hierarchy:
                         _cap_fail(backend, f"hierarchy operator {op!r}")

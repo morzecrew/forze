@@ -6,8 +6,9 @@ require_psycopg()
 
 # ....................... #
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, final
+from typing import final
 
 import attrs
 
@@ -58,6 +59,7 @@ def _statement_timeout_ms(
 
     return max(1, ms)
 
+
 # ....................... #
 
 
@@ -69,9 +71,7 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
     client: PostgresClientPort
     """Client instance."""
 
-    options: PostgresTransactionOptions = attrs.field(
-        factory=PostgresTransactionOptions
-    )
+    options: PostgresTransactionOptions = attrs.field(factory=PostgresTransactionOptions)
     """Transaction options forwarded to the Postgres client."""
 
     # ....................... #
@@ -147,9 +147,7 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
         or no deadline is bound.
         """
 
-        ms = _statement_timeout_ms(
-            self.client.deadline_pushdown(), driver_deadline_budget()
-        )
+        ms = _statement_timeout_ms(self.client.deadline_pushdown(), driver_deadline_budget())
 
         if ms is None:
             return

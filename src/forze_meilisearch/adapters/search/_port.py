@@ -1,6 +1,7 @@
 """Meilisearch search port delegation; cursor pagination is unsupported."""
 
-from typing import TYPE_CHECKING, Any, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 import attrs
 from pydantic import BaseModel

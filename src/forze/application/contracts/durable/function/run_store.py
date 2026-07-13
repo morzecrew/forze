@@ -9,9 +9,10 @@ an in-memory mock (tests / simulation).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Awaitable, Protocol, Sequence, final, runtime_checkable
+from typing import Protocol, final, runtime_checkable
 from uuid import UUID
 
 import attrs
@@ -107,9 +108,9 @@ class DurableRunStorePort(Protocol):
         name: str,
         *,
         input_json: JsonDict | None,
-        idempotency_key: str | None = None,  # noqa: F841
-        tenant_id: UUID | None = None,  # noqa: F841
-        available_at: datetime | None = None,  # noqa: F841
+        idempotency_key: str | None = None,
+        tenant_id: UUID | None = None,
+        available_at: datetime | None = None,
     ) -> Awaitable[DurableRunRecord]:
         """Record a new ``PENDING`` run and return it.
 
@@ -153,7 +154,7 @@ class DurableRunStorePort(Protocol):
         run_id: str,
         *,
         lease_for: timedelta,
-        fence: int,  # noqa: F841
+        fence: int,
     ) -> Awaitable[bool]:
         """Extend a running run's lease, but only while the caller still holds it.
 
@@ -172,7 +173,7 @@ class DurableRunStorePort(Protocol):
         run_id: str,
         *,
         output_json: JsonDict | None,
-        fence: int | None = None,  # noqa: F841
+        fence: int | None = None,
     ) -> Awaitable[None]:
         """Mark a running run ``COMPLETED`` with its encoded result.
 
@@ -187,7 +188,7 @@ class DurableRunStorePort(Protocol):
         run_id: str,
         *,
         error: str,
-        fence: int | None = None,  # noqa: F841
+        fence: int | None = None,
     ) -> Awaitable[None]:
         """Mark a running run ``FAILED`` with a message (fenced when *fence* is given)."""
         ...  # pragma: no cover
@@ -197,7 +198,7 @@ class DurableRunStorePort(Protocol):
         run_id: str,
         *,
         error: str,
-        fence: int | None = None,  # noqa: F841
+        fence: int | None = None,
     ) -> Awaitable[None]:
         """Mark a running run ``FORWARD_INCOMPLETE`` (pivot committed, forward step failed)."""
         ...  # pragma: no cover

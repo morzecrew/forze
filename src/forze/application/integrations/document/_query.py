@@ -1,6 +1,7 @@
 """Document query port methods."""
 
-from typing import AsyncGenerator, Generic, Sequence, cast
+from collections.abc import AsyncGenerator, Sequence
+from typing import Generic, cast
 from uuid import UUID
 
 from forze.application.contracts.base import CountlessPage, CursorPage, Page
@@ -16,7 +17,6 @@ from forze.application.contracts.querying import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from .cache import DocumentCache
 from ._pagination import (
     CursorQuery,
     DocumentPaginationMixin,
@@ -24,6 +24,7 @@ from ._pagination import (
     StreamQuery,
 )
 from ._types import R, T
+from .cache import DocumentCache
 
 
 class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
@@ -87,9 +88,7 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
         return await self.document_cache.get_many_read_through(
             pks,
             fetch_many_on_cache_fault=lambda: self.read_gw.get_many(pks),
-            fetch_misses_many=lambda misses: self.read_gw.get_many(
-                [UUID(x) for x in misses]
-            ),
+            fetch_misses_many=lambda misses: self.read_gw.get_many([UUID(x) for x in misses]),
         )
 
     # ....................... #

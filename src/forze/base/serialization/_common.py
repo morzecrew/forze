@@ -1,6 +1,6 @@
 """Shared internal helpers for the pydantic serialization module."""
 
-from typing import Sequence
+from collections.abc import Sequence
 
 # ----------------------- #
 

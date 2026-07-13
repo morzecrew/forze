@@ -7,6 +7,7 @@ from .wiring import (
     PurgeHook,
     SoftDeleteAwareGet,
     SoftDeleteWiring,
+    exclude_soft_deleted_mapper,
     soft_delete_wiring,
 )
 
@@ -20,5 +21,6 @@ __all__ = [
     "PurgeHook",
     "SoftDeleteAwareGet",
     "SoftDeleteWiring",
+    "exclude_soft_deleted_mapper",
     "soft_delete_wiring",
 ]

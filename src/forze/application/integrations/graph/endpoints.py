@@ -44,7 +44,6 @@ def resolve_write_endpoint(edge: GraphEdgeSpec[Any], data: JsonDict) -> GraphEdg
             return endpoint
 
     raise exc.validation(
-        f"({from_kind!r}, {to_kind!r}) is not a declared endpoint pair of edge "
-        f"{edge.name!r}.",
+        f"({from_kind!r}, {to_kind!r}) is not a declared endpoint pair of edge {edge.name!r}.",
         code="graph_edge_unknown_endpoint",
     )

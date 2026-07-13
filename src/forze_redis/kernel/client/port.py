@@ -1,15 +1,11 @@
 """Structural protocol for Redis clients (single DSN or tenant-routed)."""
 
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import timedelta
 from typing import (
     Any,
-    AsyncContextManager,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    Mapping,
     Protocol,
-    Sequence,
 )
 
 from redis.asyncio.client import Pipeline
@@ -37,7 +33,7 @@ class RedisClientPort(Protocol):
         self,
         *,
         transaction: bool = True,
-    ) -> AsyncContextManager[Pipeline]:
+    ) -> AbstractAsyncContextManager[Pipeline]:
         """Bind a context-local pipeline for **write batching**.
 
         Value-returning methods called inside the scope raise a precondition

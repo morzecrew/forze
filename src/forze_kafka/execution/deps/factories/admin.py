@@ -24,9 +24,7 @@ class ConfigurableKafkaAdmin(CommitStreamGroupAdminDepPort):
         validator=attrs.validators.instance_of(KafkaCommitStreamGroupConfig),
     )
 
-    def __call__(
-        self, ctx: ExecutionContext, spec: StreamSpec[Any]
-    ) -> CommitStreamGroupAdminPort:
+    def __call__(self, ctx: ExecutionContext, spec: StreamSpec[Any]) -> CommitStreamGroupAdminPort:
         return KafkaCommitStreamGroupAdminAdapter(
             client=ctx.deps.provide(KafkaClientDepKey),
             namespace=self.config.namespace,

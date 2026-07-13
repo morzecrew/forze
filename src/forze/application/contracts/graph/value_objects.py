@@ -21,9 +21,7 @@ def _require_int(value: object, *, name: str, minimum: int, code: str) -> None:
     """
 
     if isinstance(value, bool) or not isinstance(value, int):
-        raise exc.validation(
-            f"{name} must be an integer, got {type(value).__name__}", code=code
-        )
+        raise exc.validation(f"{name} must be an integer, got {type(value).__name__}", code=code)
 
     if value < minimum:
         raise exc.validation(f"{name} must be >= {minimum}", code=code)

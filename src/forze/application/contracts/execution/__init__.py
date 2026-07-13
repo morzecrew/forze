@@ -6,10 +6,10 @@ from .defaults import noop_lifecycle_hook
 from .protocols import (
     Before,
     BeforeFactory,
-    Finally,
     DeclaresAuthn,
     DeclaresAuthz,
     DeclaresHedge,
+    Finally,
     FinallyFactory,
     Handler,
     HandlerFactory,

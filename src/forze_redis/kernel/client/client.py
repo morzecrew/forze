@@ -7,16 +7,12 @@ require_redis()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
 from typing import (
     Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    Mapping,
-    Sequence,
     TypeVar,
     final,
 )
@@ -131,9 +127,7 @@ class RedisClient(RedisClientPort):
                 config.socket_timeout.total_seconds() if config.socket_timeout else None
             )
             connect_timeout = (
-                config.connect_timeout.total_seconds()
-                if config.connect_timeout
-                else None
+                config.connect_timeout.total_seconds() if config.connect_timeout else None
             )
             health_check_interval = (
                 int(config.health_check_interval.total_seconds())
@@ -594,10 +588,8 @@ class RedisClient(RedisClientPort):
 
     @exc_interceptor.coroutine("redis.publish")  # type: ignore[untyped-decorator]
     async def publish(self, channel: str, message: bytes | str) -> int:
-        res = (
-            await self.__executor().publish(  # pyright: ignore[reportUnknownMemberType]
-                channel, message
-            )
+        res = await self.__executor().publish(  # pyright: ignore[reportUnknownMemberType]
+            channel, message
         )
 
         # Queued onto the pipeline; the receiver count materializes at execute().

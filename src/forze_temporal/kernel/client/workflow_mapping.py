@@ -1,6 +1,6 @@
 """Map Temporal workflow execution descriptions to Forze durable workflow models."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from temporalio.client import WorkflowExecutionDescription, WorkflowExecutionStatus
 
@@ -18,7 +18,7 @@ def _to_utc(dt: datetime | None) -> datetime | None:
         return None
 
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
 
     return dt
 

@@ -32,9 +32,7 @@ def resolve_result_snapshot(
     ):
         return None
 
-    return context.deps.provide(SearchResultSnapshotDepKey, route=spec.name)(
-        context, spec
-    )
+    return context.deps.provide(SearchResultSnapshotDepKey, route=spec.name)(context, spec)
 
 
 # ....................... #
@@ -54,12 +52,8 @@ def result_snapshot(
     cipher = resolve_snapshot_cipher(
         encrypted=encrypted,
         keyring=(
-            context.deps.provide(KeyringDepKey)
-            if context.deps.exists(KeyringDepKey)
-            else None
+            context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
         ),
     )
 
-    return SearchResultSnapshot(
-        store=port, cipher=cipher, cipher_tenant=context.inv_ctx.get_tenant
-    )
+    return SearchResultSnapshot(store=port, cipher=cipher, cipher_tenant=context.inv_ctx.get_tenant)

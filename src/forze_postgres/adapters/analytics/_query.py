@@ -1,6 +1,7 @@
 """Query execution helpers for Postgres analytics."""
 
-from typing import Any, Awaitable, Callable, Sequence, TypeVar, cast
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from psycopg import sql
@@ -8,6 +9,8 @@ from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions, AnalyticsSpec
+from forze.application.contracts.base import CountlessPage, Page
+from forze.application.contracts.querying import PaginationExpression
 from forze.application.contracts.resolution import resolve_scoped_namespace
 from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
 from forze.application.integrations.analytics.adapter_common import (
@@ -19,8 +22,6 @@ from forze.application.integrations.analytics.adapter_common import (
     timeout_seconds,
     validated_params,
 )
-from forze.application.contracts.base import CountlessPage, Page
-from forze.application.contracts.querying import PaginationExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell, StrKey
 from forze_postgres.execution.deps.configs import (

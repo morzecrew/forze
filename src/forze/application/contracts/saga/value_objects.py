@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Awaitable, Callable, Sequence, final
+from typing import TYPE_CHECKING, final
 
 import attrs
 
@@ -51,10 +52,10 @@ class SagaStep[Ctx]:
     name: StrKey
     """Step name (for tracing and error context)."""
 
-    action: Callable[["ExecutionContext", Ctx], Awaitable[Ctx]]
+    action: Callable[[ExecutionContext, Ctx], Awaitable[Ctx]]
     """Perform the step; return the updated saga context."""
 
-    compensation: Callable[["ExecutionContext", Ctx], Awaitable[None]] | None = None
+    compensation: Callable[[ExecutionContext, Ctx], Awaitable[None]] | None = None
     """Undo a committed step; receives the context as of the step's completion."""
 
     kind: SagaStepKind = SagaStepKind.COMPENSATABLE
@@ -100,15 +101,12 @@ def validate_saga_order(
         if kind is SagaStepKind.COMPENSATABLE:
             if seen_pivot or seen_retryable:
                 raise exc.configuration(
-                    f"Saga {saga_name!r}: compensatable step {name!r} must come before "
-                    "the pivot."
+                    f"Saga {saga_name!r}: compensatable step {name!r} must come before the pivot."
                 )
 
         elif kind is SagaStepKind.PIVOT:
             if seen_pivot:
-                raise exc.configuration(
-                    f"Saga {saga_name!r}: at most one pivot step is allowed."
-                )
+                raise exc.configuration(f"Saga {saga_name!r}: at most one pivot step is allowed.")
 
             seen_pivot = True
 
@@ -117,8 +115,7 @@ def validate_saga_order(
 
         else:
             raise exc.configuration(
-                f"Saga {saga_name!r}: retryable step {name!r} requires a preceding "
-                "pivot step."
+                f"Saga {saga_name!r}: retryable step {name!r} requires a preceding pivot step."
             )
 
 
@@ -147,9 +144,7 @@ class SagaDefinition[Ctx](BaseSpec):
 
         # A re-executed step must affirm it is safe to re-run.
         for step in self.steps:
-            retried = (
-                step.retry_policy is not None or step.kind is SagaStepKind.RETRYABLE
-            )
+            retried = step.retry_policy is not None or step.kind is SagaStepKind.RETRYABLE
 
             if retried and not step.idempotent:
                 reason = (

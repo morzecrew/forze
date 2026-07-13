@@ -12,16 +12,15 @@ if TYPE_CHECKING:
 
     from forze.base.logging import Logger
 
+from forze.application.contracts.deps import Deps, DepsModule, ProviderStore
+
 from ..interception import PortInterceptor, PortInterceptorChain
 from ..tracing import RuntimeTracer, runtime_tracer_from_flag
-from forze.application.contracts.deps import Deps
 from .frozen import FrozenDepsRegistry
-from forze.application.contracts.deps import DepsModule
 from .resolution import (
     ResolutionTracer,
     resolution_tracer_from_flag,
 )
-from forze.application.contracts.deps import ProviderStore
 
 # ----------------------- #
 

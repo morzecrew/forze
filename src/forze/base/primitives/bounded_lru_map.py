@@ -1,7 +1,7 @@
 """A synchronous bounded LRU map for hot-path per-key state that is safe to evict."""
 
 from collections import OrderedDict
-from typing import Callable, Hashable
+from collections.abc import Callable, Hashable
 
 from forze.base.exceptions import exc
 

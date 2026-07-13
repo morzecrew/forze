@@ -40,9 +40,7 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
     state: MockState
 
     def _schedules(self) -> dict[str, Any]:
-        return _workflow_schedules(
-            self.state, self._partitioned_namespace(str(self.spec.name))
-        )
+        return _workflow_schedules(self.state, self._partitioned_namespace(str(self.spec.name)))
 
     async def create(
         self,
@@ -143,9 +141,7 @@ class MockDurableWorkflowScheduleQueryAdapter[In: BaseModel](
     state: MockState
 
     def _schedules(self) -> dict[str, Any]:
-        return _workflow_schedules(
-            self.state, self._partitioned_namespace(str(self.spec.name))
-        )
+        return _workflow_schedules(self.state, self._partitioned_namespace(str(self.spec.name)))
 
     async def describe(
         self,

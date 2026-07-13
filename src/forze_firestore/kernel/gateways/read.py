@@ -6,11 +6,10 @@ require_firestore()
 
 # ....................... #
 
+from collections.abc import AsyncGenerator, Sequence
 from typing import (
-    AsyncGenerator,
     Literal,
     Never,
-    Sequence,
     TypeVar,
     final,
     overload,
@@ -35,15 +34,14 @@ from forze.application.contracts.querying import (
     normalize_sorts_for_keyset,
     resolved_cursor_limit,
 )
-from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
-from forze.domain.constants import ID_FIELD
-
 from forze.application.integrations.persistence import (
     ReadValidationCodecMixin,
     document_cursor_binding,
     log_non_postgres_lock_degrade,
 )
+from forze.base.exceptions import exc
+from forze.base.primitives import JsonDict
+from forze.domain.constants import ID_FIELD
 
 from .base import FirestoreGateway
 
@@ -144,7 +142,6 @@ class FirestoreReadGateway[M: BaseModel](
         return_fields: None = ...,
     ) -> M | None:
         """Find one document matching filters as the gateway model."""
-        ...
 
     @overload
     async def find(
@@ -156,7 +153,6 @@ class FirestoreReadGateway[M: BaseModel](
         return_fields: None = ...,
     ) -> T | None:
         """Find one document matching filters validated against *return_model*."""
-        ...
 
     @overload
     async def find(
@@ -168,7 +164,6 @@ class FirestoreReadGateway[M: BaseModel](
         return_fields: Sequence[str],
     ) -> JsonDict | None:
         """Find one document matching filters projected to *return_fields*."""
-        ...
 
     @overload
     async def find(
@@ -180,7 +175,6 @@ class FirestoreReadGateway[M: BaseModel](
         return_fields: Sequence[str],
     ) -> Never:
         """Invalid combination; specifying both *return_model* and *return_fields* is unsupported."""
-        ...
 
     async def find(
         self,
@@ -227,7 +221,6 @@ class FirestoreReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]:
         """Find aggregate rows as JSON mappings."""
-        ...
 
     @overload
     async def find_many(
@@ -243,7 +236,6 @@ class FirestoreReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[T]:
         """Find aggregate rows validated against *return_model*."""
-        ...
 
     @overload
     async def find_many(
@@ -259,7 +251,6 @@ class FirestoreReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[M]:
         """Find documents as the gateway model."""
-        ...
 
     @overload
     async def find_many(
@@ -275,7 +266,6 @@ class FirestoreReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[T]:
         """Find documents validated against *return_model*."""
-        ...
 
     @overload
     async def find_many(
@@ -291,7 +281,6 @@ class FirestoreReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]:
         """Find documents projected to *return_fields*."""
-        ...
 
     @overload
     async def find_many(
@@ -307,7 +296,6 @@ class FirestoreReadGateway[M: BaseModel](
         parsed: QueryExpr | None = ...,
     ) -> Never:
         """Invalid combination; specifying both *return_model* and *return_fields* is unsupported."""
-        ...
 
     async def find_many(
         self,
@@ -414,9 +402,7 @@ class FirestoreReadGateway[M: BaseModel](
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise exc.validation(
-                "Cursor pagination: pass at most one of 'after' or 'before'"
-            )
+            raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
         # Coerced + clamped like the document/search cursor paths: a non-integer is a clean
         # 400 (not a raw ValueError) and an over-large value is clamped to MAX_CURSOR_LIMIT
@@ -446,11 +432,7 @@ class FirestoreReadGateway[M: BaseModel](
                 token, binding=document_cursor_binding(self, filters)
             )
 
-            if (
-                tk != [ID_FIELD]
-                or len(td) != 1
-                or str(td[0]).lower() not in ("asc", "desc")
-            ):
+            if tk != [ID_FIELD] or len(td) != 1 or str(td[0]).lower() not in ("asc", "desc"):
                 raise exc.validation("Invalid cursor for current sort")
 
             if str(td[0]).lower() != ("asc" if _id_asc else "desc"):

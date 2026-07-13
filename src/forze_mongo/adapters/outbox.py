@@ -52,32 +52,20 @@ def _claim_from_doc(doc: JsonDict) -> OutboxClaim:
         event_id=_as_uuid(doc["event_id"]),
         event_type=str(doc["event_type"]),
         payload=dict(doc["payload"]),
-        tenant_id=(
-            _as_uuid(doc["tenant_id"]) if doc.get("tenant_id") is not None else None
-        ),
+        tenant_id=(_as_uuid(doc["tenant_id"]) if doc.get("tenant_id") is not None else None),
         execution_id=(
-            _as_uuid(doc["execution_id"])
-            if doc.get("execution_id") is not None
-            else None
+            _as_uuid(doc["execution_id"]) if doc.get("execution_id") is not None else None
         ),
         correlation_id=(
-            _as_uuid(doc["correlation_id"])
-            if doc.get("correlation_id") is not None
-            else None
+            _as_uuid(doc["correlation_id"]) if doc.get("correlation_id") is not None else None
         ),
         causation_id=(
-            _as_uuid(doc["causation_id"])
-            if doc.get("causation_id") is not None
-            else None
+            _as_uuid(doc["causation_id"]) if doc.get("causation_id") is not None else None
         ),
         occurred_at=doc.get("occurred_at"),
         attempts=int(doc.get("attempts") or 0),
-        ordering_key=(
-            str(doc["ordering_key"]) if doc.get("ordering_key") is not None else None
-        ),
-        hlc=(
-            HlcTimestamp.unpack(int(doc["hlc"])) if doc.get("hlc") is not None else None
-        ),
+        ordering_key=(str(doc["ordering_key"]) if doc.get("ordering_key") is not None else None),
+        hlc=(HlcTimestamp.unpack(int(doc["hlc"])) if doc.get("hlc") is not None else None),
     )
 
 
@@ -149,23 +137,15 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                     "outbox_route": entry.outbox_route,
                     "event_id": eid,
                     "event_type": event.event_type,
-                    "tenant_id": (
-                        str(event.tenant_id) if event.tenant_id is not None else None
-                    ),
+                    "tenant_id": (str(event.tenant_id) if event.tenant_id is not None else None),
                     "execution_id": (
-                        str(event.execution_id)
-                        if event.execution_id is not None
-                        else None
+                        str(event.execution_id) if event.execution_id is not None else None
                     ),
                     "correlation_id": (
-                        str(event.correlation_id)
-                        if event.correlation_id is not None
-                        else None
+                        str(event.correlation_id) if event.correlation_id is not None else None
                     ),
                     "causation_id": (
-                        str(event.causation_id)
-                        if event.causation_id is not None
-                        else None
+                        str(event.causation_id) if event.causation_id is not None else None
                     ),
                     "occurred_at": event.occurred_at,
                     "ordering_key": event.ordering_key,

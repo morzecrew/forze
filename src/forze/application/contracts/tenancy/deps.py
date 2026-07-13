@@ -3,8 +3,8 @@ from uuid import UUID
 from forze.base.exceptions import exc
 
 from ..deps import ConvenientDeps, DepKey, SimpleDepPort
-from .tenant_hint import require_tenant_id
 from .ports import TenantManagementPort, TenantResolverPort
+from .tenant_hint import require_tenant_id
 from .value_objects import TenantIdentity
 
 # ----------------------- #
@@ -53,8 +53,7 @@ class TenancyDeps(ConvenientDeps):
 
         if resolver is None:
             raise exc.configuration(
-                "Tenant resolver is not registered "
-                f"(no {TenantResolverDepKey.name!r} dependency)",
+                f"Tenant resolver is not registered (no {TenantResolverDepKey.name!r} dependency)",
             )
 
         return resolver

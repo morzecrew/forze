@@ -1,4 +1,5 @@
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 from uuid import UUID
 
 from forze.application.contracts.authz.specs import AuthzSpec
@@ -8,7 +9,6 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.base.exceptions import exc
-
 from forze_identity._secure_spec import forbid_cache_and_history
 
 from .._logger import logger

@@ -1,5 +1,6 @@
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Awaitable, Callable, Protocol, TypeVar, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
 
 # ----------------------- #
 
@@ -17,8 +18,8 @@ class DurableFunctionEventCommandPort[M](Protocol):
         self,
         payload: M,
         *,
-        event_id: str | None = None,  # noqa: F841
-        occurred_at: datetime | None = None,  # noqa: F841
+        event_id: str | None = None,
+        occurred_at: datetime | None = None,
     ) -> Awaitable[str]:
         """Send an event and return its identifier.
 

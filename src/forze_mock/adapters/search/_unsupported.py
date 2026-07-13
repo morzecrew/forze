@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
-from typing import AsyncGenerator, Generic, NoReturn, Sequence, TypeVar
+from collections.abc import AsyncGenerator, Sequence
+from typing import Generic, NoReturn, TypeVar
 
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchCountlessPage,
-    SearchCursorPage,
-    SearchPage,
-)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
 )
-from forze.application.contracts.search import SearchOptions, SearchResultSnapshotOptions
+from forze.application.contracts.search import (
+    SearchCountlessPage,
+    SearchCursorPage,
+    SearchOptions,
+    SearchPage,
+    SearchResultSnapshotOptions,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 

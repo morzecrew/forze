@@ -1,6 +1,7 @@
 """Shared object-storage ``DepsModule`` base for S3/GCS-style backends."""
 
-from typing import Any, Callable, ClassVar, Generic, TypeVar
+from collections.abc import Callable
+from typing import Any, ClassVar, Generic, TypeVar
 
 import attrs
 

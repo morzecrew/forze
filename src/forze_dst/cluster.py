@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Awaitable, Callable, Sequence, cast, final
+from typing import Any, cast, final
 
 import attrs
 
@@ -209,9 +210,7 @@ class Cluster:
             return None
 
         # Minimize by dropping nodes — the smallest cluster that still breaks (often two).
-        minimal = minimize(
-            list(node_ids), lambda subset: bool(check(run(subset), self.invariants))
-        )
+        minimal = minimize(list(node_ids), lambda subset: bool(check(run(subset), self.invariants)))
         history = run(minimal)
 
         return ViolationReport(
@@ -247,19 +246,13 @@ class Cluster:
                         await self.node(node_id, ctx)
 
                     except SimulatedCrash:
-                        record_event(
-                            "crash", node=node_id
-                        )  # the node died; cluster proceeds
+                        record_event("crash", node=node_id)  # the node died; cluster proceeds
 
-                    except (
-                        Exception
-                    ) as error:  # noqa: BLE001 — one node's failure must not abort the cluster
+                    except Exception as error:
                         # Record it so an invariant can catch a node that stopped on an
                         # unexpected error (e.g. a bug in a port call outside the op trace),
                         # rather than leaving the cluster history looking clean.
-                        record_event(
-                            "node_error", node=node_id, error=type(error).__name__
-                        )
+                        record_event("node_error", node=node_id, error=type(error).__name__)
                     finally:
                         fold_runtime_trace(ctx)
 
@@ -321,16 +314,12 @@ class Cluster:
             cluster = config.cluster or ClusterConfig()
 
             if cluster.partitions is not None:
-                part_seed = derive_seed(
-                    derive_seed(seed, "partition"), f"node-{node_id}"
-                )
+                part_seed = derive_seed(derive_seed(seed, "partition"), f"node-{node_id}")
                 interceptors.append(
                     _PartitionInterceptor(
                         node_id=node_id,
                         schedule=cluster.partitions,
-                        rng=random.Random(
-                            part_seed
-                        ),  # nosec B311 - seeded sim partition loss
+                        rng=random.Random(part_seed),  # nosec B311 - seeded sim partition loss
                     )
                 )
 
@@ -378,9 +367,7 @@ class Cluster:
 
         return compile_latency(
             config.latency,
-            random.Random(
-                derive_seed(seed, "latency")
-            ),  # nosec B311 - seeded sim latency
+            random.Random(derive_seed(seed, "latency")),  # nosec B311 - seeded sim latency
         )
 
 

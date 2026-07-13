@@ -3,8 +3,8 @@
 from .aggregate import (
     AggregateComputedField,
     AggregatesExpressionParser,
-    GroupKey,
     GroupField,
+    GroupKey,
     GroupTrunc,
     ParsedAggregates,
 )

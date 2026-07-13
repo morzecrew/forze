@@ -1,6 +1,7 @@
 """Temporal client that resolves a server address per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from typing import Any, Callable, Mapping, Sequence, final
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, final
 from uuid import UUID
 
 import attrs

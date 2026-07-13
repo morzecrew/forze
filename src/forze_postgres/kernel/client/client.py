@@ -15,6 +15,7 @@ require_psycopg()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -23,7 +24,7 @@ from contextlib import (
 )
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Literal, Sequence, final, overload
+from typing import Any, Literal, final, overload
 
 import attrs
 from psycopg import AsyncConnection, Column, sql
@@ -99,9 +100,7 @@ def _pool_configure_for_config(  # type: ignore[no-untyped-def]
             if cfg.idle_in_transaction_session_timeout is not None:
                 await cur.execute(
                     sql.SQL("SET idle_in_transaction_session_timeout = {}").format(
-                        sql.Literal(
-                            _timeout_ms(cfg.idle_in_transaction_session_timeout)
-                        ),
+                        sql.Literal(_timeout_ms(cfg.idle_in_transaction_session_timeout)),
                     ),
                 )
 
@@ -210,9 +209,7 @@ class PostgresClient(PostgresClientPort):
     __max_concurrent_queries: int = attrs.field(default=1, init=False)
     """Cap for parallel operations that each checkout a pool connection."""
 
-    __deadline_pushdown: DeadlinePushdownPolicy | None = attrs.field(
-        default=None, init=False
-    )
+    __deadline_pushdown: DeadlinePushdownPolicy | None = attrs.field(default=None, init=False)
     """Invocation-deadline ``statement_timeout`` push-down policy, or ``None`` when disabled
     (set from config in :meth:`initialize`)."""
 
@@ -250,9 +247,7 @@ class PostgresClient(PostgresClientPort):
                 self.__max_concurrent_queries = config.max_concurrent_queries
 
             else:
-                self.__max_concurrent_queries = max(
-                    1, config.max_size - config.pool_headroom
-                )
+                self.__max_concurrent_queries = max(1, config.max_size - config.pool_headroom)
 
             self.__lazy_tx = config.lazy_transaction
 
@@ -323,10 +318,9 @@ class PostgresClient(PostgresClientPort):
         """
 
         try:
-            async with self.__acquire_conn() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute("SELECT 1")
-                    return "ok", True
+            async with self.__acquire_conn() as conn, conn.cursor() as cur:
+                await cur.execute("SELECT 1")
+                return "ok", True
 
         except Exception as e:
             return str(e), False
@@ -381,18 +375,14 @@ class PostgresClient(PostgresClientPort):
                 return pending.conn
 
             conn = await pending.stack.enter_async_context(
-                self.__require_pool().connection(
-                    timeout=self.__acquire_timeout.total_seconds()
-                )
+                self.__require_pool().connection(timeout=self.__acquire_timeout.total_seconds())
             )
 
             # Apply read_only / isolation as connection attributes before BEGIN
             # (zero round-trips); restore them as the connection returns to the pool.
             if not self._options_are_default(pending.options):
                 await self._apply_transaction_options(conn, pending.options)
-                pending.stack.push_async_callback(
-                    self._restore_transaction_attributes, conn
-                )
+                pending.stack.push_async_callback(self._restore_transaction_attributes, conn)
 
             await pending.stack.enter_async_context(conn.transaction())
 
@@ -430,9 +420,7 @@ class PostgresClient(PostgresClientPort):
             pending.statement_timeout_ms = ms
             return
 
-        await self.execute(
-            sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(ms))
-        )
+        await self.execute(sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(ms)))
 
     # ....................... #
 
@@ -813,7 +801,7 @@ class PostgresClient(PostgresClientPort):
 
         cols = tuple(d.name for d in description) if description else ()
 
-        return [dict(zip(cols, row)) for row in rows]
+        return [dict(zip(cols, row, strict=False)) for row in rows]
 
     # ....................... #
 
@@ -826,7 +814,7 @@ class PostgresClient(PostgresClientPort):
 
         cols = tuple(d.name for d in description) if description else ()
 
-        return dict(zip(cols, row))
+        return dict(zip(cols, row, strict=False))
 
     # ....................... #
 
@@ -894,9 +882,8 @@ class PostgresClient(PostgresClientPort):
         must be atomic.
         """
 
-        async with self._statement_conn() as conn:
-            async with conn.cursor() as cur:
-                await cur.executemany(query, params)
+        async with self._statement_conn() as conn, conn.cursor() as cur:
+            await cur.executemany(query, params)
 
     # ....................... #
 
@@ -1107,13 +1094,12 @@ class PostgresClient(PostgresClientPort):
         :returns: First column value or ``default``.
         """
 
-        async with self._statement_conn() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
+        async with self._statement_conn() as conn, conn.cursor() as cur:
+            await cur.execute(query, params)
 
-                row = await cur.fetchone()
+            row = await cur.fetchone()
 
-                if not row:
-                    return default
+            if not row:
+                return default
 
-                return row[0]
+            return row[0]

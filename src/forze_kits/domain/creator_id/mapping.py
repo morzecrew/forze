@@ -1,15 +1,15 @@
-from typing import Callable
+from collections.abc import Callable
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution.context import ExecutionContext
+from forze.base.primitives import JsonDict
 from forze_kits.mapping import (
     PydanticPipelineMapperStep,
     PydanticPipelineMapperStepFactory,
 )
-from forze.base.primitives import JsonDict
 
 from .constants import CREATOR_ID_FIELD
 

@@ -1,9 +1,10 @@
 """Firestore async client with context-bound transactions."""
 
 import asyncio
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, AsyncGenerator, Mapping, Sequence, final
+from typing import Any, final
 
 import attrs
 from google.cloud.firestore_v1 import (

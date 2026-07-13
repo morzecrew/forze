@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Literal, Mapping, Protocol, Sequence, TypeVar
+from collections.abc import Awaitable, Mapping, Sequence
+from typing import Any, Literal, Protocol, TypeVar
 from uuid import UUID
 
 from psycopg import sql
@@ -26,7 +27,6 @@ from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 from .runtime import HubLegRuntime
-from collections.abc import Awaitable
 
 # ----------------------- #
 

@@ -1,7 +1,6 @@
 """Resolve ``ON CONFLICT`` targets for Postgres document write gateways."""
 
 from forze.base.exceptions import exc
-
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 
 # ----------------------- #

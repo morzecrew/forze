@@ -7,12 +7,12 @@ from typing import Any, final
 import attrs
 
 from forze.application._logger import logger
-from .keys import DepKey
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from .frame import ResolutionFrame
+from .keys import DepKey
 from .store import PlainDepsMap, ProviderStore, RoutedDeps
 
 # ----------------------- #
@@ -82,7 +82,7 @@ class Deps:
             raise exc.precondition("Routes must not be empty")
 
         expanded: dict[DepKey[Any], dict[StrKey, Any]] = {
-            key: {name: dep for name in routes} for key, dep in deps.items()
+            key: dict.fromkeys(routes, dep) for key, dep in deps.items()
         }
 
         return cls(store=ProviderStore(routed_deps=expanded))

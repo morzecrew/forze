@@ -1,15 +1,13 @@
 """Federated multi-index search: per-member adapters merged with weighted RRF."""
 
 import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 from typing import (
     Any,
-    Awaitable,
-    Callable,
     Final,
     Literal,
     NoReturn,
-    Sequence,
     TypeVar,
     cast,
     final,
@@ -19,13 +17,6 @@ from typing import (
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchCapabilities,
-    SearchCountlessPage,
-    SearchPage,
-    SearchSnapshotHandle,
-    search_page_from_limit_offset,
-)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -36,14 +27,19 @@ from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
     MultiSourceSearchOptions,
+    SearchCapabilities,
+    SearchCountlessPage,
     SearchOptions,
+    SearchPage,
     SearchQueryPort,
     SearchResultSnapshotOptions,
     SearchResultSnapshotSpec,
+    SearchSnapshotHandle,
     normalize_search_queries,
     prepare_federated_search_options,
     reject_federated_facets,
     resolve_fusion,
+    search_page_from_limit_offset,
 )
 from forze.application.integrations.search import (
     SearchResultSnapshot,
@@ -57,9 +53,8 @@ from forze.application.integrations.search import (
 from forze.base.exceptions import exc
 from forze.base.serialization import default_model_codec
 
-from ._materialize_hits import decode_search_hits
-
 from ...kernel.client import PostgresClientPort, gather_db_work
+from ._materialize_hits import decode_search_hits
 from ._port import PostgresSearchPortMixin
 from ._search_count import effective_search_count
 
@@ -142,9 +137,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 "Federated adapter legs must match FederatedSearchSpec.members length.",
             )
 
-        for (leg_member, _), m in zip(
-            self.legs, self.federated_spec.members, strict=True
-        ):
+        for (leg_member, _), m in zip(self.legs, self.federated_spec.members, strict=True):
             if leg_member != m.name:
                 raise exc.internal(
                     f"Federated leg member {leg_member!r} does not match SearchSpec.name {m.name!r}.",
@@ -294,18 +287,20 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             and "id" in snapshot
         ):
             if effective_thin:
-                maybe_page = await self.result_snapshot.read_federated_thin_snapshot_page_if_requested(
-                    rs_spec=rs_spec,
-                    snapshot=snapshot,
-                    fp_computed=fp_computed,
-                    pagination=dict(pagination or {}),
-                    return_type=return_type,
-                    return_count=snapshot_return_count,
-                    rehydrate=federated_snapshot_rehydrator(
-                        ports={name: port for name, port in self.legs},
-                        leg_opts=leg_opts,
-                        run_legs=self._run_legs,
-                    ),
+                maybe_page = (
+                    await self.result_snapshot.read_federated_thin_snapshot_page_if_requested(
+                        rs_spec=rs_spec,
+                        snapshot=snapshot,
+                        fp_computed=fp_computed,
+                        pagination=dict(pagination or {}),
+                        return_type=return_type,
+                        return_count=snapshot_return_count,
+                        rehydrate=federated_snapshot_rehydrator(
+                            ports=dict(self.legs),
+                            leg_opts=leg_opts,
+                            run_legs=self._run_legs,
+                        ),
+                    )
                 )
 
             else:
@@ -398,9 +393,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 *(_run_leg(n, p, w) for n, p, w in active),
             )
 
-        hl_index = build_federated_highlight_index(
-            [(name, page) for name, page, _w in leg_results]
-        )
+        hl_index = build_federated_highlight_index([(name, page) for name, page, _w in leg_results])
         merged = SearchResultSnapshot.weighted_rrf_merge_rows(
             leg_rows=[(name, page.hits, w) for name, page, w in leg_results],
             k=int(self.rrf_k),
@@ -438,16 +431,10 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             window = window[: int(limit)]
 
         # Per-hit highlights from the originating leg, aligned with the windowed hits.
-        highlights = federated_highlights_for_hits(
-            [it[0] for it in window], hl_index
-        )
+        highlights = federated_highlights_for_hits([it[0] for it in window], hl_index)
         # Fused RRF score per windowed hit (index-aligned with the hits either branch builds);
         # a filter-only browse (no query terms) has no meaningful relevance score.
-        scores = (
-            [float(it[1]) for it in window]
-            if normalize_search_queries(query)
-            else None
-        )
+        scores = [float(it[1]) for it in window] if normalize_search_queries(query) else None
 
         def _finish(hits: list[Any]) -> Any:
             result = search_page_from_limit_offset(

@@ -1,18 +1,19 @@
 import asyncio
 import contextlib
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Callable, Final
+from typing import Any, Final
 
 import attrs
 
-from forze_kits.scopes._logger import logger
 from forze.application.contracts.dlock import (
     AcquiredLock,
     DistributedLockCommandPort,
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import current_entropy_source
+from forze_kits.scopes._logger import logger
 
 # ----------------------- #
 
@@ -83,10 +84,7 @@ class DistributedLockScope:
         if self.wait_timeout is not None and self.wait_timeout.total_seconds() <= 0:
             raise exc.configuration("Wait timeout must be positive")
 
-        if (
-            self.extend_interval is not None
-            and self.extend_interval.total_seconds() <= 0
-        ):
+        if self.extend_interval is not None and self.extend_interval.total_seconds() <= 0:
             raise exc.configuration("Extend interval must be positive")
 
     # ....................... #
@@ -96,9 +94,7 @@ class DistributedLockScope:
         loop = asyncio.get_running_loop()
 
         deadline = (
-            None
-            if self.wait_timeout is None
-            else loop.time() + self.wait_timeout.total_seconds()
+            None if self.wait_timeout is None else loop.time() + self.wait_timeout.total_seconds()
         )
 
         owner = self.owner_provider()
@@ -130,9 +126,7 @@ class DistributedLockScope:
                     jitter_max_ns = int(jitter_s * 1_000_000_000)
 
                     extra_s = (
-                        current_entropy_source()
-                        .as_random()
-                        .randrange(jitter_max_ns + 1)
+                        current_entropy_source().as_random().randrange(jitter_max_ns + 1)
                         / 1_000_000_000
                         if jitter_max_ns > 0
                         else 0.0
@@ -167,7 +161,7 @@ class DistributedLockScope:
                         await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
                         break
 
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         ok = await self.cmd.reset(key, owner)
 
                         if not ok:
@@ -175,8 +169,7 @@ class DistributedLockScope:
                             # (it cannot be cancelled mid-flight), so record the
                             # loss, stop extending, and raise at scope exit.
                             lost = exc.concurrency(
-                                "Distributed lock lost before scope exit "
-                                "(expired or stolen)",
+                                "Distributed lock lost before scope exit (expired or stolen)",
                                 details={"key": key, "owner": owner},
                             )
                             logger.error(
@@ -197,9 +190,7 @@ class DistributedLockScope:
 
         try:
             if self.extend_interval is not None:
-                extend_task = asyncio.create_task(
-                    extend_lock(key, owner, self.extend_interval)
-                )
+                extend_task = asyncio.create_task(extend_lock(key, owner, self.extend_interval))
 
             yield acquired
 
@@ -217,7 +208,7 @@ class DistributedLockScope:
                         timeout=EXTEND_TASK_SHUTDOWN_GRACE.total_seconds(),
                     )
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     extend_task.cancel()
 
                     with contextlib.suppress(asyncio.CancelledError):

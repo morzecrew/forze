@@ -1,6 +1,7 @@
 """Structural protocol for Kafka clients (single bootstrap or tenant-routed)."""
 
-from typing import Awaitable, Mapping, Protocol, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
+from typing import Protocol
 
 from aiokafka import AIOKafkaConsumer, ConsumerRebalanceListener
 from aiokafka.admin import AIOKafkaAdminClient

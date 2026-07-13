@@ -9,20 +9,14 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from datetime import timedelta
 from functools import cmp_to_key
-from typing import Any, Mapping, Sequence, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchCountlessPage,
-    SearchPage,
-    SearchSnapshotHandle,
-    search_page_from_limit_offset,
-)
 from forze.application.contracts.crypto import KeyringPort
 from forze.application.contracts.querying import (
     QueryFilterExpression,
@@ -33,11 +27,15 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
+    SearchCountlessPage,
+    SearchPage,
     SearchResultSnapshotMeta,
     SearchResultSnapshotOptions,
     SearchResultSnapshotPort,
     SearchResultSnapshotSpec,
+    SearchSnapshotHandle,
     SearchSpec,
+    search_page_from_limit_offset,
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import payload_aad
@@ -92,9 +90,7 @@ def _shape_snapshot_page(
     """
 
     if return_type is not None:
-        decoded = default_model_codec(return_type).decode_mapping_many(
-            to_return_rows(items)
-        )
+        decoded = default_model_codec(return_type).decode_mapping_many(to_return_rows(items))
 
         return search_page_from_limit_offset(
             decoded,
@@ -269,9 +265,7 @@ class SearchResultSnapshot:
                 continue
 
             try:
-                blobs.append(
-                    base64.b64decode(key[len(_SEALED_PREFIX) :], validate=True)
-                )
+                blobs.append(base64.b64decode(key[len(_SEALED_PREFIX) :], validate=True))
 
             except (binascii.Error, ValueError) as error:
                 raise exc.validation(
@@ -354,11 +348,7 @@ class SearchResultSnapshot:
     ) -> str:
         qpart: list[str] | str
 
-        if isinstance(query, (list, tuple)):
-            qpart = [str(x) for x in query]
-
-        else:
-            qpart = str(query)
+        qpart = [str(x) for x in query] if isinstance(query, (list, tuple)) else str(query)
 
         payload: JsonDict = {
             "kind": "simple",
@@ -456,9 +446,7 @@ class SearchResultSnapshot:
 
     @staticmethod
     def result_record_key_string(hit: BaseModel) -> str:
-        return json.dumps(
-            hit.model_dump(mode="json"), sort_keys=True, ensure_ascii=False
-        )
+        return json.dumps(hit.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
 
     # ....................... #
 
@@ -496,9 +484,7 @@ class SearchResultSnapshot:
         """Split a thin federated key into ``(member, id)``."""
 
         if "\0" not in key:
-            raise exc.internal(
-                "Invalid thin federated snapshot key (missing partition)."
-            )
+            raise exc.internal("Invalid thin federated snapshot key (missing partition).")
 
         member, record_id = key.split("\0", 1)
 
@@ -512,9 +498,7 @@ class SearchResultSnapshot:
         federated_spec: FederatedSearchSpec[M_co],
     ) -> FederatedSearchReadModel[M_co]:
         if "\0" not in key:
-            raise exc.internal(
-                "Invalid federated snapshot record key (missing partition)."
-            )
+            raise exc.internal("Invalid federated snapshot record key (missing partition).")
 
         member, rest = key.split("\0", 1)
 
@@ -647,9 +631,7 @@ class SearchResultSnapshot:
 
             for rank, rid in enumerate(ids, start=1):
                 key = (member, rid)
-                scores[key] = scores.get(key, 0.0) + float(weight) / (
-                    float(k) + float(rank)
-                )
+                scores[key] = scores.get(key, 0.0) + float(weight) / (float(k) + float(rank))
 
         ordered = sorted(scores.keys(), key=lambda kk: (-scores[kk], kk[0], kk[1]))
 
@@ -1045,8 +1027,7 @@ class SearchResultSnapshot:
             pagination=pagination,
             hydrate=lambda k: self.hydrate_federated_record_key(k, federated_spec),
             to_return_rows=lambda items: [
-                {"hit": it.hit.model_dump(mode="json"), "member": it.member}
-                for it in items
+                {"hit": it.hit.model_dump(mode="json"), "member": it.member} for it in items
             ],
             return_type=return_type,
             return_fields=None,
@@ -1100,8 +1081,7 @@ class SearchResultSnapshot:
             return_type=return_type,
             return_fields=None,
             to_return_rows=lambda hits: [
-                {"hit": it.hit.model_dump(mode="json"), "member": it.member}
-                for it in hits
+                {"hit": it.hit.model_dump(mode="json"), "member": it.member} for it in hits
             ],
         )
 
@@ -1172,11 +1152,9 @@ class _OrderedHitSink:
         take = len(self._buffer) if is_last else self.chunk_size
         block = self._buffer[:take]
 
-        sealed = (
-            await self.coordinator._seal_ids(  # pyright: ignore[reportPrivateUsage]
-                block,
-                run_id=self.run_id,
-            )
+        sealed = await self.coordinator._seal_ids(  # pyright: ignore[reportPrivateUsage]
+            block,
+            run_id=self.run_id,
         )
 
         await self.coordinator.store.append_chunk(
