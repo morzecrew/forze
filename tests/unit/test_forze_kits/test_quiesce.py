@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.inventory import SpecRegistry
 from forze.application.contracts.outbox import OutboxSpec, OutboxStatus
 from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException
@@ -311,6 +312,31 @@ async def test_quiesce_reports_unwired_planes_without_holding_them_against_it() 
     assert states["outbox:events"] == "not_wired"
     assert states["durable"] == "not_wired"
     assert report.attested
+
+
+@pytest.mark.asyncio
+async def test_quiesce_discovers_its_outboxes_from_the_spec_inventory() -> None:
+    # The wart the inventory removes. A sweep handed its routes by the caller can only watch
+    # the ones the caller remembered — and the easiest routes to forget are the ones nobody
+    # wrote (a kit's `<search>_sync` relay mints an outbox out of one line of declaration).
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze(),
+        spec_registry=SpecRegistry().register(OUTBOX).freeze(),
+    )
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = [_row(), _row(index=1)]
+
+        # No `outboxes=` argument at all.
+        report = await quiesce(
+            runtime, timeout=timedelta(milliseconds=100), poll=timedelta(milliseconds=10)
+        )
+
+    (plane,) = report.unsettled
+
+    assert plane.name == "outbox:events"  # found it on its own
+    assert "2 pending" in plane.detail
 
 
 @pytest.mark.asyncio

@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from forze.application.contracts.durable.function import DurableRunStatus
+from forze.application.contracts.inventory import SpecPlane
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.stream import StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
@@ -235,11 +236,31 @@ async def _guarded(name: str, plane: Awaitable[QuiescePlane]) -> QuiescePlane:
 # ....................... #
 
 
+def _inventoried_outboxes(runtime: ExecutionRuntime) -> tuple[OutboxSpec[Any], ...]:
+    """Every outbox route the runtime's spec inventory knows about.
+
+    The reason the inventory exists: a sweep that has to be *handed* its outboxes can only
+    watch the ones the caller remembered, and the routes most likely to be forgotten are the
+    ones no author wrote — a kit's ``<search>_sync`` relay, for instance.
+    """
+
+    if runtime.spec_registry is None:
+        return ()
+
+    return tuple(
+        cast("OutboxSpec[Any]", entry.spec)
+        for entry in runtime.spec_registry.of_plane(SpecPlane.OUTBOX)
+    )
+
+
+# ....................... #
+
+
 async def quiesce(
     runtime: ExecutionRuntime,
     *,
     timeout: timedelta = timedelta(seconds=30),
-    outboxes: Sequence[OutboxSpec[Any]] = (),
+    outboxes: Sequence[OutboxSpec[Any]] | None = None,
     streams: Sequence[tuple[StreamSpec[Any], str]] = (),
     tenants: Sequence[UUID] | None = None,
     close_gate: bool = True,
@@ -270,10 +291,17 @@ async def quiesce(
     finite, but if nothing is draining it the plane is reported ``residual``, with the age of
     the oldest pending row to say so. Give the budget room for at least one relay tick.
 
-    *outboxes* and *streams* are named explicitly because nothing enumerates an application's
-    specs yet; a runtime-wide inventory would let quiesce discover them itself, and is the
-    next piece of this arc. *tenants* mirrors the relay's shard: on a tenant-partitioned
-    outbox, each partition is probed under its own bound tenant.
+    *outboxes* defaults to **every outbox route in the runtime's spec inventory** — pass an
+    explicit sequence to narrow it, or ``()`` to skip the plane. This is what the inventory is
+    for: a sweep handed its routes by the caller can only watch the ones the caller remembered,
+    and the easiest routes to forget are the ones nobody wrote (a kit's ``<search>_sync`` relay
+    mints an outbox, a queue and an inbox out of one line of declaration).
+
+    *streams* stays explicit, and always will: a consumer **group** is not a property of a
+    stream spec — it is the identity of whoever is reading — so no inventory can supply it.
+
+    *tenants* mirrors the relay's shard: on a tenant-partitioned outbox, each partition is
+    probed under its own bound tenant.
 
     Planes the runtime does not wire are reported ``not_wired`` and do not count against
     attestation. Two things are outside what this can speak for, in either mode: a
@@ -292,6 +320,9 @@ async def quiesce(
     planes: list[QuiescePlane] = [
         await _operations_plane(ctx, deadline=deadline, close_gate=close_gate)
     ]
+
+    if outboxes is None:
+        outboxes = _inventoried_outboxes(runtime)
 
     for spec in outboxes:
         planes.append(

@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from forze.application.contracts.deps import Deps, DepsModule
 from forze.application.contracts.execution import LifecycleModule, LifecycleStep
+from forze.application.contracts.inventory import FrozenSpecRegistry, SpecRegistry
 from forze.base.primitives import CpuExecutor
 
 from .context.transaction import AfterCommitErrorHandler
@@ -28,6 +29,8 @@ def build_runtime(
     cpu_executor: CpuExecutor | None = None,
     cpu_workers: int | None = None,
     after_commit_error_handler: AfterCommitErrorHandler | None = None,
+    specs: SpecRegistry | FrozenSpecRegistry | None = None,
+    allow_unregistered: bool = False,
 ) -> ExecutionRuntime:
     """Assemble an :class:`ExecutionRuntime` in one call.
 
@@ -80,6 +83,14 @@ def build_runtime(
         notified when a non-fatal post-commit callback fails on an already-committed
         transaction (the operation still returns its committed result). Must not raise.
         ``None`` (default) logs only.
+    :param specs: This application's spec inventory (a ``SpecRegistry`` is frozen for you).
+        When given, it is reconciled against the wired dependencies at construction: a spec
+        catalogued but never bound, or a route bound but never catalogued, fails assembly.
+        ``None`` (default) skips the check. Merge the contributions — the author's own specs,
+        every ``AggregateKit.spec_contributions()``, and ``forze_identity.spec_contributions()``
+        if the identity plane is wired — into one registry.
+    :param allow_unregistered: Downgrade "bound but not catalogued" to a logged warning, for
+        adopting the inventory incrementally.
     :returns: Runtime ready for :meth:`ExecutionRuntime.scope`.
     """
 
@@ -98,6 +109,8 @@ def build_runtime(
     return ExecutionRuntime(
         deps=registry.freeze(),
         lifecycle=plan.freeze(),
+        spec_registry=specs.freeze() if isinstance(specs, SpecRegistry) else specs,
+        allow_unregistered=allow_unregistered,
         cache_resolved_operations=cache_resolved_operations,
         cache_resolved_ports=cache_resolved_ports,
         drain_timeout=drain_timeout,

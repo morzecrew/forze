@@ -24,11 +24,17 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.execution import (
     LifecycleStep,
     OperationHandlerFactory,
 )
 from forze.application.contracts.invariants import SystemInvariant
+from forze.application.contracts.inventory import (
+    SpecEdgeKind,
+    SpecRegistry,
+    SpecSource,
+)
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution.domain import DomainEventRegistry
@@ -66,7 +72,7 @@ from forze_kits.aggregates.soft_deletion import (
 )
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
-from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
+from forze_kits.integrations.outbox import OutboxEmit, RelayBinding, bind_outbox
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
 
 if TYPE_CHECKING:
@@ -74,6 +80,34 @@ if TYPE_CHECKING:
     from forze.application.execution import ExecutionRuntime
 
 # ----------------------- #
+
+
+def _relay_transport_spec(relay: RelayBinding | None) -> BaseSpec | None:
+    """The one transport spec a relay actually binds.
+
+    ``RelayBinding`` lets a queue, a stream *and* a pubsub spec all be set, but only the one
+    its ``transport`` names is ever resolved. Contributing the others would have the inventory
+    demand a dependency route that nothing wires.
+    """
+
+    if relay is None:
+        return None
+
+    match relay.transport:
+        case "queue":
+            return relay.queue_spec
+
+        case "stream":
+            return relay.stream_spec
+
+        case "pubsub":
+            return relay.pubsub_spec
+
+        case _:  # pragma: no cover - the destination kinds are exhaustive  # pyright: ignore[reportUnnecessaryComparison]
+            return None
+
+
+# ....................... #
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
@@ -314,6 +348,51 @@ class AggregateKit(Generic[R, D, C, U]):
         return bind_search_sync_outbox(
             document=self.spec, search=self.search, config=self.search_delivery
         )
+
+    # ....................... #
+
+    def spec_contributions(self) -> SpecRegistry:
+        """Every spec this declaration binds — including the ones the author never wrote.
+
+        The spec-valued sibling of :meth:`backend_requirements` (which reports route *names*).
+        Merge it into the application's inventory, or reconciliation will fail on routes the
+        kit wired behind the author's back:
+
+        - A ``search_delivery`` mints an **outbox, a queue and an inbox**, all named
+          ``<search-name>_sync``, none of which appear anywhere in the author's code.
+        - The relay binds exactly one transport spec — the one its ``transport`` selects.
+          ``RelayBinding`` lets all three be set and only consumes the selected one, so
+          contributing them all would demand a dependency route nothing ever resolves.
+
+        Also carries the ``REBUILDS_FROM`` edge from the search index to its source document.
+        A ``SearchSpec`` holds no pointer back, so this is the only place that pairing is
+        known; lose it here and no import can ever rebuild the index automatically.
+        """
+
+        registry = SpecRegistry().register(self.spec, source=SpecSource.KIT)
+
+        if self.storage is not None:
+            registry.register(self.storage, source=SpecSource.KIT)
+
+        if self.search is not None:
+            registry.register(self.search, source=SpecSource.KIT).link(
+                SpecEdgeKind.REBUILDS_FROM, source=self.search, target=self.spec
+            )
+
+        if self.outbox is not None:
+            registry.register(self.outbox.spec, source=SpecSource.KIT)
+            transport = _relay_transport_spec(self.outbox.relay)
+
+            if transport is not None:
+                registry.register(transport, source=SpecSource.KIT)
+
+        if self.search is not None and self.search_delivery is not None:
+            sync = self.search_sync_wiring()
+            registry.register(
+                sync.outbox_spec, sync.queue_spec, sync.inbox_spec, source=SpecSource.KIT
+            )
+
+        return registry
 
     # ....................... #
 

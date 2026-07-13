@@ -9,6 +9,7 @@ from typing import final
 import attrs
 
 from forze.application._logger import logger
+from forze.application.contracts.inventory import FrozenSpecRegistry, reconcile_specs
 from forze.application.contracts.querying import (
     CursorTokenCipher,
     CursorTokenSigner,
@@ -107,6 +108,27 @@ class ExecutionRuntime:
 
     ``FLEET`` enables assembly-time validation: a lifecycle step declared
     ``mutates_shared_state`` must be ``singleton_guarded`` or construction fails.
+    """
+
+    spec_registry: FrozenSpecRegistry | None = None
+    """This application's spec inventory — what it binds, and what an export may do with it.
+
+    When set, it is **reconciled against the wired dependencies at construction**: a spec
+    catalogued but never bound, or a route bound but never catalogued, fails assembly. The
+    second direction is the one that earns its keep — most of an app's specs are not written
+    by its author (``forze_identity`` alone binds nineteen document specs it inherits), so
+    "did I forget one?" is a question no author can answer by eye.
+
+    ``None`` (default) skips the check entirely, so existing apps are untouched. Portable
+    export refuses to run without an inventory: it cannot export what it cannot enumerate.
+    """
+
+    allow_unregistered: bool = False
+    """Downgrade "bound but not catalogued" from a failure to a logged warning.
+
+    For adopting the inventory incrementally: switch it on, start the runtime, read the list
+    of what you are missing, fix it. It does not soften the other checks — a catalogued spec
+    nothing binds is a plain wiring bug either way.
     """
 
     drain_timeout: timedelta = timedelta(seconds=10)
@@ -234,6 +256,32 @@ class ExecutionRuntime:
                 + ", ".join(offending)
                 + ". Run each as a separate long-running worker instead.",
             )
+
+        self._reconcile_spec_registry()
+
+    # ....................... #
+
+    def _reconcile_spec_registry(self) -> None:
+        """Check the declared inventory against what is actually bound.
+
+        Runs at construction because this is the only place that holds both halves: the frozen
+        deps know every ``(key, route)`` the app wired, and the inventory knows every spec it
+        declared, and neither can see the other anywhere else. (The operation registry — what
+        ``check_wiring`` inspects — is a separate object the runtime never receives, which is
+        why that diagnostic cannot be automatic and this one can.)
+        """
+
+        if self.spec_registry is None:
+            return
+
+        warnings = reconcile_specs(
+            self.spec_registry,
+            self.deps.store.registered_frames(),
+            allow_unregistered=self.allow_unregistered,
+        )
+
+        for warning in warnings:
+            logger.warning("Bound route missing from the spec inventory:%s", warning)
 
     # ....................... #
 
