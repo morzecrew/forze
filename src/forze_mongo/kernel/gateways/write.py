@@ -16,10 +16,7 @@ from pymongo import UpdateOne
 
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
-from forze.application.execution.resilience import (
-    default_resilience_executor,
-    occ_retry,
-)
+from forze.application.execution.resilience import default_resilience_executor
 from forze.application.integrations.persistence import (
     DocumentWriteCodecMixin,
     HistoryOccMixin,
@@ -31,6 +28,7 @@ from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, Document
 
 from ..relation import relations_match
+from ._occ import mongo_occ_retry
 from .base import MongoGateway
 from .history import MongoHistoryGateway
 from .read import MongoReadGateway
@@ -272,7 +270,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def create(self, payload: C, *, id: UUID | None = None) -> D:
         """Insert a new document from a creation payload and record its history.
 
@@ -295,7 +293,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def create_many(
         self,
         payloads: Sequence[C],
@@ -324,7 +322,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def ensure(self, id: UUID, payload: C) -> D:
         """Insert a document at *id* when missing using ``$setOnInsert``; no updates on match."""
 
@@ -347,7 +345,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def ensure_many(
         self,
         ids: Sequence[UUID],
@@ -392,7 +390,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def upsert(self, id: UUID, create: C, update: U) -> D:
         """Insert *create* at *id* with ``$setOnInsert`` when missing; else delegate to :meth:`update`."""
 
@@ -419,7 +417,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def upsert_many(
         self,
         ids: Sequence[UUID],
@@ -489,7 +487,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def _patch(
         self,
         pk: UUID,
@@ -536,7 +534,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def _patch_many(
         self,
         pks: Sequence[UUID],
@@ -654,7 +652,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def update_matching(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]

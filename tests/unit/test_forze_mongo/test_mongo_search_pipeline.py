@@ -1,5 +1,8 @@
 """Unit tests for Mongo search aggregation pipeline builders."""
 
+from pydantic import BaseModel
+
+from forze.application.contracts.search import SearchSpec
 from forze_mongo.adapters.search._pipeline import (
     build_atlas_ranked_pipeline,
     build_count_pipeline,
@@ -7,8 +10,6 @@ from forze_mongo.adapters.search._pipeline import (
     thin_ranked_pipeline,
 )
 from forze_mongo.adapters.search.constants import MONGO_RANK_FIELD
-from forze.application.contracts.search import SearchSpec
-from pydantic import BaseModel
 
 
 class _Read(BaseModel):
@@ -17,8 +18,10 @@ class _Read(BaseModel):
     body: str = ""
 
 
-def test_text_pipeline_includes_text_match_and_score() -> None:
-    spec = SearchSpec(name="n", model_type=_Read, fields=("title", "body"))
+def test_text_pipeline_merges_prefilter_into_first_text_match() -> None:
+    """``$text`` is only valid in the FIRST ``$match`` stage, so the prefilter
+    (tenant scope / caller filters) must share that stage rather than precede it."""
+
     pipeline = build_text_ranked_pipeline(
         pre_filter={"status": "active"},
         terms=("hello",),
@@ -26,9 +29,22 @@ def test_text_pipeline_includes_text_match_and_score() -> None:
         user_sorts=None,
     )
 
-    assert pipeline[0] == {"$match": {"status": "active"}}
-    assert pipeline[1] == {"$match": {"$text": {"$search": "hello"}}}
-    assert pipeline[2] == {"$addFields": {MONGO_RANK_FIELD: {"$meta": "textScore"}}}
+    assert pipeline[0] == {"$match": {"$text": {"$search": "hello"}, "status": "active"}}
+    assert pipeline[1] == {"$addFields": {MONGO_RANK_FIELD: {"$meta": "textScore"}}}
+    # No other $match carries $text or the prefilter.
+    assert all("$match" not in stage for stage in pipeline[1:])
+
+
+def test_text_pipeline_without_prefilter_still_leads_with_text_match() -> None:
+    pipeline = build_text_ranked_pipeline(
+        pre_filter={},
+        terms=("hello",),
+        combine="any",
+        user_sorts=None,
+    )
+
+    assert pipeline[0] == {"$match": {"$text": {"$search": "hello"}}}
+    assert pipeline[1] == {"$addFields": {MONGO_RANK_FIELD: {"$meta": "textScore"}}}
 
 
 def test_text_empty_query_browse_mode() -> None:
@@ -70,9 +86,9 @@ def test_count_pipeline_strips_rank_and_sort() -> None:
 
     count = build_count_pipeline(pipeline)
 
-    # Matchers survive; the rank $addFields and $sort (pure ordering) are dropped.
-    assert {"$match": {"status": "active"}} in count
-    assert {"$match": {"$text": {"$search": "hello"}}} in count
+    # The single first-stage matcher ($text + prefilter) survives; the rank
+    # $addFields and $sort (pure ordering) are dropped.
+    assert count[0] == {"$match": {"$text": {"$search": "hello"}, "status": "active"}}
     assert all("$sort" not in stage for stage in count)
     assert all("$addFields" not in stage for stage in count)
     assert count[-1] == {"$count": "total"}

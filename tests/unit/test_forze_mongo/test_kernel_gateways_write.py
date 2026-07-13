@@ -1,6 +1,5 @@
 """Unit tests for ``forze_mongo.kernel.gateways.write``."""
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -8,18 +7,20 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenantIdentity
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mongo.kernel.client import MongoClient
 from forze_mongo.kernel.gateways import (
     MongoHistoryGateway,
     MongoReadGateway,
     MongoWriteGateway,
 )
-from forze_mongo.kernel.client import MongoClient
 from tests.unit._gateway_codec_helpers import (
     codec_for,
     history_codecs_for,
     write_codecs_for,
 )
+
 
 class MyDoc(Document):
     name: str
@@ -55,6 +56,9 @@ def _build_client() -> MagicMock:
     client.collection.return_value = object()
     client.update_one = AsyncMock()
     client.find_one_and_update = AsyncMock()
+    # Out-of-transaction by default: gateway OCC retry only runs outside a
+    # transaction scope (a MagicMock return value would be truthy).
+    client.is_in_transaction.return_value = False
     return client
 
 _DOMAIN_CODEC, _CREATE_CODEC, _UPDATE_CODEC = write_codecs_for(
@@ -232,6 +236,37 @@ class TestMongoWriteGateway:
             await gw.update(pk, MyUpdateDoc(name="after"))
 
         assert client.find_one_and_update.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_update_inside_transaction_runs_once_and_surfaces_concurrency(self) -> None:
+        """Inside a transaction a conflict is not retried at the gateway: a Mongo write
+        conflict aborts the whole server transaction (further session operations fail
+        with NoSuchTransaction) and a snapshot re-read cannot see fresher state, so the
+        method runs exactly once and ``concurrency`` propagates to the scope owner."""
+
+        pk = uuid4()
+        current = _domain_doc(pk, rev=1, name="before")
+        client = _build_client()
+        client.is_in_transaction.return_value = True
+        client.find_one_and_update.return_value = None
+        read = _build_read(client)
+        read.get.return_value = current
+
+        gw = MongoWriteGateway(
+            relation=("test_db", "docs"),
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
+        )
+
+        with pytest.raises(CoreException, match="Failed to update record"):
+            await gw.update(pk, MyUpdateDoc(name="after"))
+
+        assert client.find_one_and_update.await_count == 1
+        assert read.get.await_count == 1
 
     @pytest.mark.asyncio
     async def test_touch_uses_find_one_and_update_with_rev_filter(self) -> None:
