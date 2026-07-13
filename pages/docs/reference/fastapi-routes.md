@@ -99,15 +99,15 @@ attach_search_routes(
 `attach_storage_routes` covers a storage registry (`build_storage_registry`)
 and takes the same explicit `style`. Transport shapes are fixed by the
 payloads — multipart upload (the file plus optional `description`/`prefix`
-form fields), the listing DTO as JSON body, the object bytes back with content
+form fields), the listing DTO as JSON body, a streamed download with content
 type and a `Content-Disposition` filename, a void delete (204); keys may
 contain slashes. The style only decides paths and verbs:
 
-- `"rest"` — `POST /files` (201), `POST /files/list`, `GET /files/{key}`,
-  `DELETE /files/{key}`.
+- `"rest"` — `POST /files` (201), `POST /files/list`, `GET /files/{key}` (with a
+  `HEAD` sibling on the same path), `DELETE /files/{key}`.
 - `"rpc"` — `POST /files/upload`, `POST /files/list`,
-  `GET /files/download/{key}`, `DELETE /files/delete/{key}`. The key rides the
-  path tail in both styles since it is slash-bearing, not a JSON field.
+  `GET /files/download/{key}` (+ `HEAD`), `DELETE /files/delete/{key}`. The key
+  rides the path tail in both styles since it is slash-bearing, not a JSON field.
 
 ```python
 from forze_fastapi.routes import attach_storage_routes
@@ -122,6 +122,57 @@ attach_storage_routes(
     style="rest",
 )
 ```
+
+### Downloads: streaming, ranges & caching
+
+The `GET` download route **streams by default** (`stream=True`): the body is a
+`StreamingResponse` consumed chunk by chunk, so the process never buffers a
+whole object and a large download can't OOM it. It is backed by three read-only
+query operations the registry carries (`build_storage_registry` registers them;
+they acquire only the storage query port): `head`, `download_stream`, and
+`download_range`. A plain unconditional `GET` runs a single `download_stream`
+operation — the cache validators ride along on its result, no separate `head`
+round-trip; a conditional or `Range` request runs `head` first.
+
+The route is a full HTTP range/cache citizen:
+
+| Request | Response |
+|---------|----------|
+| plain `GET` | **200**, streamed body, `Accept-Ranges: bytes` |
+| `If-None-Match` / `If-Modified-Since` match | **304**, no body, validators echoed (`If-None-Match` takes precedence per RFC 7232) |
+| `Range: bytes=…` within the object | **206** from a real backend-ranged fetch, with `Content-Range` |
+| well-formed `Range` beyond the object | **416** with `Content-Range: bytes */total` |
+| malformed / non-`bytes` / multi-range | header ignored per RFC 7233 — full **200** stream |
+
+- **Range cap.** A single `Range` window is buffered, so it is capped —
+  `max_range_bytes`, default **16 MiB**. A wider request is served *truncated*
+  to the cap with a `206` whose `Content-Range` reports the bytes actually
+  returned — a valid partial the client simply re-requests from. Only explicit
+  range windows are bounded; a plain download always streams.
+- **ETag is the backend's.** `ETag` / `Last-Modified` come from the backend
+  head, not from hashing the body. For a client-side-encrypted object the ETag
+  is over the *stored ciphertext* — an opaque but stable validator, exactly what
+  conditional requests need.
+- **Encrypted objects stream too.** A client-side-encrypted object is decrypted
+  chunk by chunk on the way out; its plaintext size isn't known up front, so the
+  response carries **no `Content-Length`** (chunked transfer). Ranged reads
+  still work over chunked-AEAD objects — only the chunks the window covers are
+  fetched and decrypted; a legacy *whole-payload* envelope can't be sliced, so a
+  `Range` request against one falls back to the full streamed body rather than
+  erroring.
+- **`HEAD` mirrors the `GET`** on the same path: `Content-Type`,
+  `Content-Length`, `ETag`, `Last-Modified`, `Accept-Ranges`, no body. Its
+  `Content-Length` is the **stored** size (for an encrypted object, the
+  ciphertext length — the streamed `GET` decrypts and uses chunked transfer
+  instead).
+
+`stream=False` opts back into the legacy fully-buffered download: the whole
+object in memory, an ETag hashed from the body bytes, and `Range` served by
+slicing the buffer instead of a backend-ranged fetch. Prefer the default; if you
+must keep large objects out of the app entirely, expose `presign_download` (see
+below) so the client fetches straight from the backend. When a registry predates
+the three streaming operations, the attacher quietly keeps the buffered
+endpoint, so enabling `stream` is safe on any registry.
 
 ### Direct & resumable uploads
 

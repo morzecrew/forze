@@ -59,7 +59,8 @@ consumes the stream and bridges it to live connections. The concept is
 
 | Contract | Backend | Integration |
 |----------|---------|-------------|
-| Stream (+ consumer groups) | Redis | [Redis](../../integrations/redis.md) |
+| Stream (+ ack consumer groups) | Redis | [Redis](../../integrations/redis.md) |
+| Stream produce + commit consumer groups | Kafka-protocol brokers | [Kafka](../../integrations/kafka.md) |
 | Pub/sub | Redis | [Redis](../../integrations/redis.md) |
 
 A mock implements both for tests.
