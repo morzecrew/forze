@@ -174,6 +174,8 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
         *property_filter* is an adapter-defined equality (or best-effort) map; it is
         not a full ``forze.application.contracts.querying.QueryFilterExpression`` tree.
+        Keys must be plain identifiers (see :func:`validate_property_filter_keys`);
+        adapters fail closed on anything else.
         """
         ...  # pragma: no cover
 

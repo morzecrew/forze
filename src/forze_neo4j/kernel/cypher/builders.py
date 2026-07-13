@@ -15,10 +15,9 @@ anchor — so a cross-tenant edge cannot leak a foreign node's properties (defen
 that does not depend on the "no edge crosses a tenant boundary" write-path invariant).
 """
 
-import re
 from collections.abc import Iterable, Sequence
 
-from forze.application.contracts.graph import GraphDirection
+from forze.application.contracts.graph import GraphDirection, is_valid_filter_key
 
 # ----------------------- #
 
@@ -564,15 +563,6 @@ def _tenant_pred(alias: str, tenant_field: str | None) -> str:
 def _where(*preds: str) -> str:
     active = [p for p in preds if p]
     return f"WHERE {' AND '.join(active)}\n" if active else ""
-
-
-_FILTER_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-
-def is_valid_filter_key(key: str) -> bool:
-    """Whether *key* can be safely embedded in a ``$pf_<key>`` parameter name."""
-
-    return _FILTER_KEY_RE.fullmatch(key) is not None
 
 
 def property_predicate(alias: str, keys: Sequence[str]) -> str:

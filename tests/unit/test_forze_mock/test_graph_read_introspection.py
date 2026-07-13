@@ -151,9 +151,7 @@ async def test_degree_neighbors_incident(ctx: ExecutionContext) -> None:
         )
         == 2
     )
-    incident = await q.incident_edges(
-        _u("a"), GraphDirection.OUT, frozenset({"FOLLOWS"}), limit=10
-    )
+    incident = await q.incident_edges(_u("a"), GraphDirection.OUT, frozenset({"FOLLOWS"}), limit=10)
     assert len(incident) == 2
 
 
@@ -165,9 +163,10 @@ async def test_find_vertices_orders_paginates_filters(ctx: ExecutionContext) -> 
 
     assert [v.id for v in await q.find_vertices("User")] == ["a", "b", "c"]
     assert [v.id for v in await q.find_vertices("User", limit=1, offset=1)] == ["b"]
-    assert [
-        v.id for v in await q.find_vertices("User", property_filter={"name": "Ana"})
-    ] == ["a", "c"]
+    assert [v.id for v in await q.find_vertices("User", property_filter={"name": "Ana"})] == [
+        "a",
+        "c",
+    ]
 
 
 @pytest.mark.asyncio
@@ -342,3 +341,39 @@ async def test_filter_on_encrypted_field_rejected() -> None:
     with pytest.raises(CoreException) as ei:
         await q.count_vertices("Secret", property_filter={"ssn": "123"})
     assert ei.value.code == "graph_filter_on_encrypted_field"
+
+
+@pytest.mark.asyncio
+async def test_filter_key_must_be_identifier(ctx: ExecutionContext) -> None:
+    """A non-identifier filter key fails closed on every property-filter entry point.
+
+    Neo4j rejects such a key before building a query (it lands in a ``$pf_<key>``
+    parameter name); the mock enforces the same rule so a simulation cannot pass
+    with a filter key that production would reject.
+    """
+
+    spec = _spec()
+    await _seed(ctx.graph.command(spec))
+    q = ctx.graph.query(spec)
+
+    bad = {"name = $tenant OR true //": "x"}
+
+    for call in (
+        lambda: q.count_vertices("User", property_filter=bad),
+        lambda: q.count_edges("RATED", property_filter=bad),
+        lambda: q.find_vertices("User", property_filter=bad),
+        lambda: q.find_edges("RATED", property_filter=bad),
+    ):
+        with pytest.raises(CoreException) as ei:
+            await call()
+        assert ei.value.code == "graph_filter_key_invalid"
+
+
+@pytest.mark.asyncio
+async def test_filter_identifier_keys_accepted(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    await _seed(ctx.graph.command(spec))
+    q = ctx.graph.query(spec)
+
+    assert await q.count_vertices("User", property_filter={"name": "Ana"}) == 2
+    assert await q.count_edges("RATED", property_filter={"_score2": 1}) == 0

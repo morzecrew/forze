@@ -11,6 +11,7 @@ from .deps import (
     GraphRawQueryDepKey,
     GraphRawQueryDepPort,
 )
+from .filters import is_valid_filter_key, validate_property_filter_keys
 from .ports import (
     BaseGraphModulePort,
     GraphCommandPort,
@@ -73,6 +74,8 @@ __all__ = [
     "ShortestPathParams",
     "ShortestPathResult",
     "VertexRef",
+    "is_valid_filter_key",
     "resolve_query_directions",
     "validate_graph_module_spec",
+    "validate_property_filter_keys",
 ]
