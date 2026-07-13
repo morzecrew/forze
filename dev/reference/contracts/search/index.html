@@ -5686,7 +5686,7 @@ result-set snapshots.</p>
 <td><code>fields</code></td>
 <td><code>Sequence[str]</code></td>
 <td>required</td>
-<td>indexed fields (non-empty, unique)</td>
+<td>indexed fields (non-empty, unique, never field-encrypted — the index would store ciphertext and content search would silently miss)</td>
 </tr>
 <tr>
 <td><code>default_weights</code></td>

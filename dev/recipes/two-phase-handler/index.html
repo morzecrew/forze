@@ -5653,7 +5653,12 @@ the row commits:</p>
 
     <span class="c1"># The write committed and is readable afterwards.</span>
     <span class="n">stored</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">ORDER_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">created</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
-    <span class="k">assert</span> <span class="n">stored</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">stored</span><span class="o">.</span><span class="n">price</span> <span class="o">==</span> <span class="n">created</span><span class="o">.</span><span class="n">price</span>
+
+    <span class="k">if</span> <span class="p">(</span>
+        <span class="n">stored</span> <span class="ow">is</span> <span class="kc">None</span>  <span class="c1"># pyright: ignore[reportUnnecessaryComparison]</span>
+        <span class="ow">or</span> <span class="n">stored</span><span class="o">.</span><span class="n">price</span> <span class="o">!=</span> <span class="n">created</span><span class="o">.</span><span class="n">price</span>
+    <span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;expected the committed price to match the prepared one&quot;</span><span class="p">)</span>
 
     <span class="k">return</span> <span class="n">created</span>
 </code></pre></div>

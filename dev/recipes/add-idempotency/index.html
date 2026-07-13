@@ -5627,7 +5627,8 @@ result:</p>
         <span class="n">first</span> <span class="o">=</span> <span class="k">await</span> <span class="n">facade</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
         <span class="n">second</span> <span class="o">=</span> <span class="k">await</span> <span class="n">facade</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>  <span class="c1"># replay — handler skipped, stored result</span>
 
-    <span class="k">assert</span> <span class="n">first</span><span class="o">.</span><span class="n">id</span> <span class="o">==</span> <span class="n">second</span><span class="o">.</span><span class="n">id</span>  <span class="c1"># created once, returned twice</span>
+    <span class="k">if</span> <span class="n">first</span><span class="o">.</span><span class="n">id</span> <span class="o">!=</span> <span class="n">second</span><span class="o">.</span><span class="n">id</span><span class="p">:</span>  <span class="c1"># created once, returned twice</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;expected the retry to replay the recorded result&quot;</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">first</span><span class="p">,</span> <span class="n">second</span>
 </code></pre></div>
 <p>Over HTTP you don't bind by hand: the

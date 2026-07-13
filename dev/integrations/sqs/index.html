@@ -5669,6 +5669,10 @@ region/credentials.</p>
   scheduler or <a href="../temporal/">Temporal</a> for longer waits.</li>
 <li>Visibility timeout, redrive/DLQ, and IAM are queue attributes managed outside
   Forze.</li>
+<li>On a <strong>FIFO</strong> queue an undecodable message is deleted to unblock its message
+  group (standard queues leave it for redrive → DLQ); set
+  <code>SQSConfig(poison_queue_url="…")</code> to retain a raw copy — ideally on a
+  standard queue — before that delete instead of destroying it.</li>
 </ul>
 
 

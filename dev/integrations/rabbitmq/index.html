@@ -5664,6 +5664,11 @@ queue ports.</p>
   precondition error.</li>
 <li>Exchange/queue/binding topology and DLQs are operational config, managed
   outside Forze.</li>
+<li><strong>Poison retention is opt-in</strong> — by default a <code>nack(requeue=False)</code> poison
+  message is destroyed by the broker (the consumer logs a warning per queue);
+  set <code>RabbitMQConfig(dead_letter_exchange="…")</code> to retain poison in
+  <code>&lt;dlx&gt;.dlq</code>, and <code>redelivery_counting=True</code> so <code>max_deliveries</code> parking can
+  count past the broker's redelivered ceiling.</li>
 </ul>
 
 

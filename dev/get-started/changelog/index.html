@@ -7363,7 +7363,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Reliability &amp; durability</strong></p>
 <ul>
 <li>
-<p><strong>Self-hosted durable execution (Postgres)</strong> — crash-resumable durable functions and sagas: exactly-once step replay, lease-based recovery with heartbeat renewal, delayed and cron runs, multi-worker fencing, and an opt-in read-only admin port. Wired via <code>forze_kits</code>; adds a croniter dependency.</p>
+<p><strong>Self-hosted durable execution (Postgres)</strong> — crash-resumable durable functions and sagas: exactly-once step replay, lease-based recovery with heartbeat renewal, an execution deadline (<code>max_run_duration</code>, default 1h — a hung body is cancelled and FAILED instead of renewing its lease forever), multi-worker fencing, delayed and cron runs, and an opt-in read-only admin port. Wired via <code>forze_kits</code>; adds croniter.</p>
 </li>
 <li>
 <p><strong><abbr title="Hybrid Logical Clock">HLC</abbr> durable high-water mark</strong> — the hybrid logical clock resumes from a checkpoint so a restart cannot re-issue a stamp; the outbox flush advances the mark in-transaction. Opt-in, node-global.</p>
@@ -7549,13 +7549,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Oracles</strong> — built-in invariants (duplicate effects, mutual exclusion, linearizability, consistency models), transactional-isolation oracles up to serializability cycles, commutativity checks, reachability targets, and opt-in value-level checks.</p>
 </li>
 <li>
-<p><strong>Reporting &amp; regression corpus</strong> — causal-graph violation reports and timelines, failure bundles with honest replay semantics, a regression corpus, and a CLI (<code>forze dst run</code> / replay / coverage / topology / derive).</p>
+<p><strong>Reporting &amp; regression corpus</strong> — causal-graph violation reports and timelines, failure bundles with honest replay semantics, a regression corpus, and a CLI (<code>forze dst run</code> / replay / coverage / topology / derive). Bundle serialization round-trips every config field (an introspective guard fails on any future field a serializer misses — it caught stream-fault rules and the pruning flag being dropped).</p>
 </li>
 <li>
 <p><strong>Mock substrate</strong> <em>(behavior change)</em> — journalled transactions with MVCC isolation are now the mock default; in-memory outbound HTTP added.</p>
 </li>
 <li>
-<p><strong>Adapter conformance</strong> — a backend-agnostic isolation-anomaly battery asserts the mock matches real Postgres and Mongo, including lock races, outbox→inbox delivery under crash, resilience stores under partition, and identity rotation/revocation under fault.</p>
+<p><strong>Adapter conformance</strong> — a backend-agnostic isolation-anomaly battery asserts the mock matches real Postgres and Mongo, including lock races, outbox→inbox delivery under crash, resilience stores under partition, and identity rotation/revocation under fault. The Mongo leg runs the full battery (abort-vs-block catalogued as a mechanism divergence); contract strengthenings can be engine-scoped, so a backend-specific one never masks a mock deviation.</p>
 </li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
@@ -7645,10 +7645,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Inngest deterministic failures stop retrying</strong> — malformed events, failed decrypts and non-retryable errors raise NonRetriableError; retryable kinds still propagate.</p>
 </li>
 <li>
-<p><strong>SQS: one poison message no longer poisons the receive batch</strong> — per-message decode failures are isolated (left for redrive; deleted on FIFO so a message group cannot deadlock); FIFO per-message delay and over-length queue names fail closed.</p>
+<p><strong>SQS: one poison message no longer poisons the receive batch</strong> — per-message decode failures are isolated (left for redrive; deleted on FIFO so a message group cannot deadlock); FIFO per-message delay and over-length queue names fail closed. Opt-in <code>poison_queue_url</code> retains a raw copy (with provenance attributes) before the FIFO delete — the framework's one poison-destroying path; unconfigured destruction now logs a warning naming the knob.</p>
 </li>
 <li>
-<p><strong>RabbitMQ: opt-in dead-letter sink and redelivery counting</strong> — a configured DLX makes a poison nack dead-letter instead of drop, and opt-in redelivery counting lets poison-parking fire past the broker's redelivered ceiling (requires publisher confirms; enabling the DLX on an existing queue requires recreating it).</p>
+<p><strong>RabbitMQ: opt-in dead-letter sink and redelivery counting</strong> — a configured DLX makes a poison nack dead-letter instead of drop, and opt-in redelivery counting lets poison-parking fire past the broker's redelivered ceiling (requires publisher confirms; enabling the DLX on an existing queue requires recreating it). A consumer starting on a queue with no DLX now warns once per queue that poison messages would be destroyed.</p>
 </li>
 <li>
 <p><strong>Kafka admin reads no longer auto-create topics</strong> — existence is checked against the all-topics listing, so querying lag for a mistyped topic returns empty instead of minting the topic.</p>
@@ -7657,10 +7657,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Inngest function-level config</strong> — <code>InngestFunctionConfig</code> forwards Inngest's native controls (retries, concurrency, rate limits, batching and more).</p>
 </li>
 <li>
-<p><strong>An unregistered durable run name cannot livelock recovery</strong> — the run lands FAILED with the reason recorded instead of stranding every co-claimed run each sweep; the scheduler likewise isolates a corrupt cron expression.</p>
+<p><strong>An unregistered durable run name cannot livelock recovery</strong> — the run lands FAILED with the reason recorded instead of stranding every co-claimed run each sweep; the scheduler likewise isolates a corrupt cron expression. Externally cancelling a run's awaiter also tears down the body and heartbeat tasks instead of leaving them running detached.</p>
+</li>
+<li>
+<p><strong>A transient saga step error no longer triggers irreversible compensation</strong> — a retryable kind (infrastructure, throttled, concurrency) is retried in place with backoff before anything is journaled, so a one-off blip cannot undo committed steps; compensation fires only on exhausted retries or a genuinely non-retryable failure, and a crash mid-blip replays completed steps from the journal. The same retry now guards transient errors during compensation itself.</p>
 </li>
 <li>
 <p><strong>A transient <abbr title="Key Management Service">KMS</abbr> failure during consume is retried, not poison</strong> — decrypt failures classify through the egress policy: retryable kinds requeue (queue consumer) or crash for a supervised rewind-and-restart (commit-stream) instead of being dropped; tampering still parks.</p>
+</li>
+<li>
+<p><strong>The e2e-encrypted DLQ copy is decryptable and keeps its identity</strong> — the commit-stream dead-letter path forwarded the decrypted payload back through the producer, re-sealing it tenant-unbound with a fresh id while keeping the old tenant header, so a DLQ consumer's rebuilt <abbr title="Additional Authenticated Data">AAD</abbr> failed auth and correlation was severed. The diverted copy is now the original sealed envelope byte-identical (payload and headers, including the event id); sealing with no bound tenant also drops a stale forwarded tenant header so minted headers can never contradict the <abbr title="Additional Authenticated Data">AAD</abbr>.</p>
 </li>
 </ul>
 <p><strong>Reliability — durability, shutdown, resilience</strong></p>
@@ -7762,7 +7768,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Cursor limits and token fields are validated at decode</strong> — a non-integer page size is rejected and clamped to the 10,000 cap; a crafted token version or non-finite decimal/float raises validation instead of an uncaught 500.</p>
 </li>
 <li>
-<p><strong>Encryption fail-closed</strong> — filtering a randomized-encrypted field raises precondition; encrypted-sort rejection covers every search backend.</p>
+<p><strong>Encryption fail-closed</strong> — filtering a randomized-encrypted field raises precondition; encrypted-sort rejection covers every search backend. Declaring an encrypted field as an indexed search content field (randomized or deterministic-searchable — ciphertext never tokenizes) is now refused at spec construction with a configuration error, instead of sealing ciphertext into the index and silently matching nothing.</p>
 </li>
 <li>
 <p><strong>Consistent adapter errors</strong> — the mock rev-conflict matches the real adapters; a missing dependency names what is registered; database errors classify on codes, not message text.</p>
@@ -7792,13 +7798,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Mock isolation matches Postgres at the default level</strong> — READ COMMITTED conflict detection anchors on the version actually read, a duplicate-id create race raises conflict, and FOR UPDATE is honoured; verified against real Postgres.</p>
 </li>
 <li>
-<p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> systematic search is complete again</strong> — the DPOR frontier zero-pads the choice prefix, so previously-unreachable schedules are explored; violation reports print a faithful reproduce line.</p>
+<p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> systematic search is complete again — and honest about pruning</strong> — the DPOR frontier zero-pads the choice prefix, so previously-unreachable schedules are explored; violation reports print a faithful reproduce line. Signature-pruning (a heuristic that can miss a violation behind an effect-equivalent prefix) is now switchable: <code>dpor_prune=False</code> walks the full choice tree, and the docs state the actual guarantee.</p>
 </li>
 <li>
 <p><strong>Regression bundles handle non-self-contained strategies honestly</strong> — a bundle that cannot self-replay reports as a clear failure, and one bad bundle cannot crash the batch.</p>
 </li>
 <li>
-<p><strong>Mock outbox/inbox write-through is a catalogued <abbr title="Deterministic Simulation Testing">DST</abbr> divergence</strong> — confirm a premature-visibility finding against a real broker or store.</p>
+<p><strong>Mock outbox/inbox write-through is a catalogued <abbr title="Deterministic Simulation Testing">DST</abbr> divergence</strong> — confirm a premature-visibility finding against a real broker or store. In-transaction outbox status transitions (claim, mark, retry, requeue, reclaim) now journal and revert on rollback, matching Postgres — the catalogued divergence covers visibility only.</p>
 </li>
 <li>
 <p><strong>Kafka commit-stream consumer is loss-free under poison and rebalance</strong> — malformed payloads pause instead of raising, every pause or abort re-seeks to committed, a rebalance listener drops stale routing, and the supervised lifecycle restarts crash-loss-free.</p>
@@ -7912,7 +7918,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Meilisearch write path</strong> — a failed task raises instead of reporting success, task waits are bounded, tenant-tagged writes and deletes are scoped, and windows crossing maxTotalHits fail closed with the index provisioned to match.</p>
 </li>
 <li>
-<p><strong>Neo4j keyed-edge identity &amp; quantifier coercion</strong> — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; hop quantifiers are int-coerced before inlining.</p>
+<p><strong>Neo4j keyed-edge identity &amp; quantifier coercion</strong> — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; every hop quantifier (including expand) is int-coerced before inlining; a filter key must be a plain identifier — a crafted key could reach query text through the parameter name (<code>graph_filter_key_invalid</code>); walk/path params validate their numeric bounds at construction.</p>
 </li>
 <li>
 <p><strong><code>forze_redis</code> imports on redis-py 7 again</strong> — version-specific typing aliases are self-owned; client-side caching fails closed below redis-py 8.</p>

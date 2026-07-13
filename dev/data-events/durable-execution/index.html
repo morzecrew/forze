@@ -5713,10 +5713,15 @@ re-invocation after a crash replays completed steps and resumes at the first inc
 <code>durable_recovery_background_lifecycle_step(runner=runner)</code>. It is <strong>multi-worker-safe</strong>:
 concurrent scanners never claim the same run (<code>FOR UPDATE SKIP LOCKED</code>) and a terminal
 write is <strong>fenced</strong> against a reclaimed lease, so a stalled worker whose lease expired can't
-finish a run the new owner already took over. Run it on every replica, or pair it with the
-singleton lifecycle guard to elect one. <code>max_concurrency</code> bounds how many runs a sweep
-recovers at once. Enqueue with <code>run_at=&lt;when&gt;</code> for a <strong>delayed</strong> run — the scan skips it
-until it's due.</p>
+finish a run the new owner already took over. A still-executing run heartbeats its lease
+alive, so a long body is never reclaimed mid-flight — bounded by the runner's
+<code>max_run_duration</code> (default 1 hour): past the cap the body is cancelled while the lease is
+still held (nothing double-executes) and the run lands <code>FAILED</code> with the deadline reason, so
+a body hung on a dead peer can't pin a recovery slot forever. Set it above your longest
+body, or <code>None</code> to remove the cap; re-enqueue a deadline-failed run to retry it. Run the
+scanner on every replica, or pair it with the singleton lifecycle guard to elect one.
+<code>max_concurrency</code> bounds how many runs a sweep recovers at once. Enqueue with
+<code>run_at=&lt;when&gt;</code> for a <strong>delayed</strong> run — the scan skips it until it's due.</p>
 <p><strong>Multi-tenant.</strong> The stores resolve their table under the bound tenant. On a <strong>tagged</strong>
 shared table (a <code>tenant_id</code> column), an unbound scanner recovers every tenant's runs and the
 runner re-binds each run's tenant to execute it. On a <strong>namespace</strong> store (a per-tenant
@@ -5749,9 +5754,11 @@ leaving committed steps un-compensated:</p>
 <span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">run_now</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">saga</span><span class="o">.</span><span class="n">name</span><span class="p">),</span> <span class="n">initial</span><span class="o">.</span><span class="n">model_dump</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;json&quot;</span><span class="p">))</span>
 </code></pre></div>
 <p>The saga context must be a serializable <code>pydantic.BaseModel</code> (it is journaled between
-steps). This tier is self-hosted-Postgres only; a full workflow engine (timers, signals,
-versioning) is still Temporal/Inngest. The two tables come from your migrations; their
-schema is documented on the adapter classes.</p>
+steps). A step failure classified retryable (infrastructure, throttled, concurrency) is
+retried in place with backoff before it is journaled — compensation only runs on genuine
+failures or exhausted retries, never a one-off blip. This tier is self-hosted-Postgres only;
+a full workflow engine (timers, signals, versioning) is still Temporal/Inngest. The two
+tables come from your migrations; their schema is documented on the adapter classes.</p>
 <h3 id="recurring-schedules">Recurring schedules<a class="headerlink" href="#recurring-schedules" title="Permanent link">&para;</a></h3>
 <p>A <code>durable_schedule</code> table + the <code>DurableScheduler</code> fire a run on a <strong>cron cadence</strong>. Put a
 schedule and run the scheduler step (alongside the recovery step, which executes the runs it

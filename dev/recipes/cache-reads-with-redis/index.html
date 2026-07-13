@@ -5696,7 +5696,8 @@ only the dependency wiring adds caching:</p>
     <span class="n">product</span> <span class="o">=</span> <span class="k">await</span> <span class="n">facade</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">ProductCreate</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Widget&quot;</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="mi">10</span><span class="p">))</span>
 
     <span class="k">await</span> <span class="n">facade</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">DocumentIdDTO</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">product</span><span class="o">.</span><span class="n">id</span><span class="p">))</span>  <span class="c1"># miss → fills the cache</span>
-    <span class="k">assert</span> <span class="k">await</span> <span class="n">cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">product</span><span class="o">.</span><span class="n">id</span><span class="p">))</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>  <span class="c1"># cached now</span>
+    <span class="k">if</span> <span class="k">await</span> <span class="n">cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">product</span><span class="o">.</span><span class="n">id</span><span class="p">))</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># cached now</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;expected the read to fill the cache&quot;</span><span class="p">)</span>
 
     <span class="k">await</span> <span class="n">facade</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
         <span class="n">DocumentUpdateDTO</span><span class="p">(</span>
@@ -5706,7 +5707,8 @@ only the dependency wiring adds caching:</p>
         <span class="p">)</span>
     <span class="p">)</span>
     <span class="n">fresh</span> <span class="o">=</span> <span class="k">await</span> <span class="n">facade</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">DocumentIdDTO</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">product</span><span class="o">.</span><span class="n">id</span><span class="p">))</span>  <span class="c1"># repopulates, new value</span>
-    <span class="k">assert</span> <span class="n">fresh</span><span class="o">.</span><span class="n">price</span> <span class="o">==</span> <span class="mi">12</span>
+    <span class="k">if</span> <span class="n">fresh</span><span class="o">.</span><span class="n">price</span> <span class="o">!=</span> <span class="mi">12</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;expected the cached read to see the new price&quot;</span><span class="p">)</span>
 
     <span class="k">return</span> <span class="n">fresh</span>
 </code></pre></div>
