@@ -63,17 +63,34 @@ def assert_search_encryption_parity(
 
     doc_sealed = _sealed(document_policy)
     search_sealed = _sealed(search_policy)
-    leaked = doc_sealed - search_sealed
 
-    detail = (
-        f"fields sealed on the document but not on the search spec: {sorted(leaked)} — "
-        f"they would be written to the index in clear"
-        if leaked
-        else (
+    # The two field sets can drift in either direction, and the two drifts are different
+    # failures: the document's extras leak, the search spec's extras cannot be produced. Only
+    # when neither set has extras is the disagreement down to the policy flags.
+    leaked = doc_sealed - search_sealed
+    unbacked = search_sealed - doc_sealed
+    reasons: list[str] = []
+
+    if leaked:
+        reasons.append(
+            f"fields sealed on the document but not on the search spec: {sorted(leaked)} — "
+            f"they would be written to the index in clear"
+        )
+
+    if unbacked:
+        reasons.append(
+            f"fields sealed on the search spec but not on the document: {sorted(unbacked)} — "
+            f"the document stores them in plaintext, so sealing them only on the index cannot "
+            f"be reproduced from the read model"
+        )
+
+    if not reasons:
+        reasons.append(
             f"the field sets agree ({sorted(doc_sealed)}) but the policies differ "
             f"(binds_record_id / reject_plaintext / encrypted-vs-searchable split)"
         )
-    )
+
+    detail = "; ".join(reasons)
 
     raise exc.configuration(
         f"Search spec {search.name!r} and document spec {document.name!r} declare different "

@@ -467,6 +467,25 @@ class TestSearchEncryptionParity:
 
         assert kit.backend_requirements().crypto_required is True
 
+    def test_a_field_sealed_only_on_the_search_spec_is_named_as_such(self) -> None:
+        # The reverse drift is a different failure from the leak, and must not be reported as
+        # "the field sets agree" — the document stores the field in plaintext, so the index
+        # cannot reproduce a seal the read model never carried.
+        with pytest.raises(CoreException) as exc_info:
+            AggregateKit(
+                spec=WIDGET_SPEC,  # seals nothing
+                search=attrs.evolve(
+                    WIDGET_INDEX,
+                    encryption=FieldEncryption(encrypted=frozenset({"qty"})),
+                ),
+            )
+
+        message = str(exc_info.value)
+        assert exc_info.value.code == "search_encryption_parity_mismatch"
+        assert "sealed on the search spec but not on the document" in message
+        assert "qty" in message
+        assert "the field sets agree" not in message
+
     def test_kit_refuses_a_policy_that_differs_only_in_strictness(self) -> None:
         # Same field set, different AAD/plaintext-tolerance — still not one policy.
         with pytest.raises(CoreException) as exc_info:

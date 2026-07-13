@@ -196,7 +196,7 @@ See [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) and [`f
 
 - **`ctx.doc_query` / `ctx.doc_command` are removed** — use `ctx.document.query` / `ctx.document.command`.
 - **`ctx.dep(...)` on context is removed** — use `ctx.deps.provide` or `ctx.deps.resolve_configurable`.
-- **`ctx.transaction()` is removed** — use `ctx.tx_ctx.scope(route)`.
+- **`ctx.transaction()` takes a route** — the no-argument form is gone; `ctx.transaction(route)` still resolves the `TransactionManagerPort`. To *open* a scope, use `ctx.tx_ctx.scope(route)`.
 - **`ctx.counter("name")` is wrong** — pass `CounterSpec(name=...)`.
 - **`UsecaseRegistry` is removed** — use `OperationRegistry` + `.freeze()`.
 - **Do not nest incompatible tx backends** (e.g. Postgres + Mongo in one scope).

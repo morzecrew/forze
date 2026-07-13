@@ -49,6 +49,7 @@ For tests that need real infrastructure — or to exercise database-level logic 
 ```python
 import pytest
 from testcontainers.postgres import PostgresContainer
+from forze.application.execution import build_runtime
 from forze_postgres import PostgresClient, PostgresDepsModule, PostgresLifecycleModule
 
 @pytest.fixture(scope="session")

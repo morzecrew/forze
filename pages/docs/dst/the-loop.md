@@ -13,7 +13,7 @@ Finding a bug is the start of the loop, not the end. A `ViolationReport` is a *r
 
 `report.format()` renders the whole failure: the minimised workload, the concurrency that triggered it, the causal trace (each operation and the port calls it caused — with the values they wrote and read back when `capture_values` is on), an **injected-environment timeline** (the faults, latency, and partitions the simulator applied, in virtual-time order), and the violated invariant.
 
-For a **time-travel** view, `report.timeline()` flattens the run into a virtual-time-ordered stream of steps — operations, port calls with their value flow, injected environment, recorded facts — that you scroll through like a debugger. `render_timeline(history)` renders it as text, and each `TimelineEntry.to_dict()` is JSON, so the timeline is a portable artifact a CLI or viewer steps through by virtual time:
+For a **time-travel** view, `report.timeline()` flattens the run into a virtual-time-ordered stream of steps — operations, port calls with their value flow, injected environment, recorded facts — that you scroll through like a debugger. `render_timeline(history)` renders it as text, and each `TimelineEntry.to_dict()` returns a JSON-serializable dictionary, so the timeline is a portable artifact a CLI or viewer steps through by virtual time:
 
 ```text
 DST timeline (by virtual time):
