@@ -1025,6 +1025,12 @@ class GCSClient(GCSClientPort):
         intermediate accumulators need no condition) so real GCS enforces the
         condition atomically: a concurrent change between the metadata read and
         the compose answers 412, mapped to the same ``conflict``.
+
+        Caller *metadata* stays inside that conditional boundary: the
+        single-part rewrite binds it in the conditional write itself, and the
+        compose paths patch it pinned (``ifGenerationMatch``) to the generation
+        the final compose produced — a concurrent overwrite in between answers
+        412, mapped to the same ``conflict`` instead of inheriting the metadata.
         """
 
         storage = self.__require_storage()
@@ -1056,6 +1062,11 @@ class GCSClient(GCSClientPort):
 
         cleanup: set[str] = set(part_keys)
 
+        # The object resource answered by the final compose to *key* — its
+        # ``generation`` pins the follow-up metadata patch to the object this
+        # completion wrote. (The single-part rewrite binds metadata itself.)
+        final_resource: dict[str, Any] = {}
+
         # ``compose`` rejects a single-source request (it requires >= 2 sources).
         # Two code paths can otherwise produce one — a 1-part upload and the
         # final fold of a >32-part chain — so both are handled explicitly. Note:
@@ -1073,18 +1084,29 @@ class GCSClient(GCSClientPort):
                     **(precondition or {}),
                 }
 
+                # The rewrite body is the destination object resource, so the
+                # caller's user metadata binds in the same conditional write —
+                # no separate patch that could land on a concurrent overwrite.
+                rewrite_body: dict[str, Any] = {}
+
+                if content_type:
+                    rewrite_body["contentType"] = content_type
+
+                if metadata:
+                    rewrite_body["metadata"] = dict(metadata)
+
                 await storage.copy(
                     bucket,
                     part_keys[0],
                     bucket,
                     new_name=key,
-                    metadata={"contentType": content_type} if content_type else None,
+                    metadata=rewrite_body or None,
                     params=rewrite_params or None,
                     timeout=timeout,
                 )
 
             elif len(part_keys) <= COMPOSE_MAX_SOURCES:
-                await storage.compose(
+                final_resource = await storage.compose(
                     bucket,
                     key,
                     part_keys,
@@ -1126,7 +1148,7 @@ class GCSClient(GCSClientPort):
                     # that becomes visible at the destination.
                     dest = acc_key if rest else key
 
-                    await storage.compose(
+                    final_resource = await storage.compose(
                         bucket,
                         dest,
                         [acc_key, *batch],
@@ -1147,15 +1169,33 @@ class GCSClient(GCSClientPort):
 
             raise
 
-        if metadata:
-            # Neither compose nor copy carries user metadata over from the temp parts,
-            # so stamp it on the finished destination (S3 binds it at create instead).
-            await storage.patch_metadata(
-                bucket,
-                key,
-                {"metadata": dict(metadata)},
-                timeout=timeout,
-            )
+        if metadata and len(part_keys) > 1:
+            # compose carries no user metadata from the temp parts, so stamp it on
+            # the finished destination (S3 binds it at create; the single-part
+            # rewrite above binds it in the write itself). Under ``if_match`` the
+            # patch addresses the exact object the final compose wrote — its new
+            # generation — so a concurrent overwrite landing in between answers
+            # 412 instead of inheriting this caller's metadata.
+            patch_params: dict[str, str] | None = None
+
+            if if_match is not None:
+                generation = str(final_resource.get("generation") or "")
+                patch_params = {"ifGenerationMatch": generation} if generation else None
+
+            try:
+                await storage.patch_metadata(
+                    bucket,
+                    key,
+                    {"metadata": dict(metadata)},
+                    params=patch_params,
+                    timeout=timeout,
+                )
+
+            except aiohttp.ClientResponseError as e:
+                if patch_params is not None and e.status == 412:
+                    raise overwrite_precondition_failed(key) from e
+
+                raise
 
         await self.__delete_mpu_keys(bucket, cleanup)
 
