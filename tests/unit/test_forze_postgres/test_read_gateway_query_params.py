@@ -151,6 +151,99 @@ async def test_reset_clears_applied_fields_even_if_bound_params_change() -> None
 
 
 @pytest.mark.asyncio
+async def test_reset_failure_does_not_mask_the_fetch_error() -> None:
+    """When the fetch fails and the reset then fails too (aborted transaction, dead
+    connection), the caller must see the fetch's error — the reset failure is logged,
+    never raised in its place."""
+
+    client = _client()
+    client.fetch_all = AsyncMock(side_effect=ValueError("query exploded"))
+    client.execute = AsyncMock(side_effect=[None, RuntimeError("reset failed")])
+    gw = _gw(client, params_required=True, bound_params=_Params(window="2026-01-01"))
+
+    with pytest.raises(ValueError, match="query exploded"):
+        await gw.find_many(None)
+
+    assert client.execute.await_count == 2  # the reset was still attempted
+
+
+@pytest.mark.asyncio
+async def test_reset_failure_with_no_error_in_flight_propagates() -> None:
+    """After a successful fetch, a failed reset must surface: the params could otherwise
+    outlive the read's savepoint and leak into the caller's transaction."""
+
+    client = _client()
+    client.execute = AsyncMock(side_effect=[None, RuntimeError("reset failed")])
+    gw = _gw(client, params_required=True, bound_params=_Params(window="2026-01-01"))
+
+    with pytest.raises(RuntimeError, match="reset failed"):
+        await gw.find_many(None)
+
+
+class _LogRecorder:
+    """Level-keyed recorder immune to global logging configuration leaks."""
+
+    def __init__(self) -> None:
+        self.debugs: list[str] = []
+        self.warnings: list[str] = []
+
+    def debug(self, msg: str, *args: object, **_kw: object) -> None:
+        self.debugs.append(msg % args if args else msg)
+
+    def warning(self, msg: str, *args: object, **_kw: object) -> None:
+        self.warnings.append(msg % args if args else msg)
+
+
+@pytest.mark.asyncio
+async def test_reset_failure_in_an_aborted_transaction_logs_debug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An aborted transaction rejects every command, including the reset — but the rollback
+    discards the transaction-local settings anyway, so that failure is harmless noise.
+
+    Asserted via a recorder stub, not ambient capture: earlier suite tests configure the
+    global logging state (cached structlog loggers, stdlib levels), which silently filters
+    debug records out of ``capture_logs``.
+    """
+
+    from psycopg.errors import InFailedSqlTransaction
+
+    recorder = _LogRecorder()
+    monkeypatch.setattr("forze_postgres.kernel.client.local_settings.logger", recorder)
+
+    client = _client()
+    client.fetch_all = AsyncMock(side_effect=ValueError("query exploded"))
+    client.execute = AsyncMock(side_effect=[None, InFailedSqlTransaction("transaction is aborted")])
+    gw = _gw(client, params_required=True, bound_params=_Params(window="2026-01-01"))
+
+    with pytest.raises(ValueError, match="query exploded"):
+        await gw.find_many(None)
+
+    assert recorder.debugs and not recorder.warnings
+
+
+@pytest.mark.asyncio
+async def test_unexpected_reset_failure_during_error_logs_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reset failure that is NOT the expected aborted-transaction rejection (e.g. the
+    connection died) is surfaced as a warning while the original error propagates."""
+
+    recorder = _LogRecorder()
+    monkeypatch.setattr("forze_postgres.kernel.client.local_settings.logger", recorder)
+
+    client = _client()
+    client.fetch_all = AsyncMock(side_effect=ValueError("query exploded"))
+    client.execute = AsyncMock(side_effect=[None, RuntimeError("connection closed")])
+    gw = _gw(client, params_required=True, bound_params=_Params(window="2026-01-01"))
+
+    with pytest.raises(ValueError, match="query exploded"):
+        await gw.find_many(None)
+
+    assert recorder.warnings and not recorder.debugs
+
+
+@pytest.mark.asyncio
 async def test_none_param_is_skipped_not_empty_string() -> None:
     client = _client()
     gw = _gw(

@@ -18,10 +18,7 @@ from psycopg import sql
 
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
-from forze.application.execution.resilience import (
-    default_resilience_executor,
-    occ_retry,
-)
+from forze.application.execution.resilience import default_resilience_executor
 from forze.application.integrations.persistence import (
     DocumentWriteCodecMixin,
     HistoryOccMixin,
@@ -35,6 +32,7 @@ from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, Postgr
 from forze_postgres.kernel.client import gather_db_work
 from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
 
+from ._occ import postgres_occ_retry
 from .base import PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
@@ -91,7 +89,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     Requires a companion :class:`PostgresReadGateway` sharing the same client.
     Optionally writes revision history via :class:`PostgresHistoryGateway`.
     All mutating operations are wrapped with the ``occ`` resilience policy via
-    :func:`~forze.application.execution.resilience.occ_retry`.
+    the transaction-aware :func:`~forze_postgres.kernel.gateways._occ.postgres_occ_retry`.
     """
 
     read_gw: PostgresReadGateway[D]
@@ -264,7 +262,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @postgres_occ_retry
     async def create(self, payload: C, *, id: UUID | None = None) -> D:
         async with self._write_tx():
             model = self._from_create_dto(payload, id)
@@ -297,7 +295,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @postgres_occ_retry
     async def create_many(
         self,
         payloads: Sequence[C],
@@ -387,7 +385,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @postgres_occ_retry
     async def ensure(self, id: UUID, payload: C) -> D:
         """Insert a row at *id* when absent; otherwise return the existing row.
 
@@ -429,7 +427,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @postgres_occ_retry
     async def ensure_many(
         self,
         ids: Sequence[UUID],
@@ -562,7 +560,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @postgres_occ_retry
     async def upsert(self, id: UUID, create: C, update: U) -> D:
         """Insert *create* at *id* when free; otherwise apply ``update`` like :meth:`update`.
 
@@ -610,7 +608,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @postgres_occ_retry
     async def upsert_many(
         self,
         ids: Sequence[UUID],
@@ -770,7 +768,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @postgres_occ_retry
     async def __patch(
         self,
         pk: UUID,
@@ -850,7 +848,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @postgres_occ_retry
     async def __patch_group(
         self,
         key: tuple[str, ...],
@@ -1093,7 +1091,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @postgres_occ_retry
     async def update_matching(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]

@@ -184,11 +184,65 @@ async def test_bound_params_do_not_leak_past_the_read(
     async with pg_client.transaction():
         await march.find_many({"$values": {"region": "eu"}}, sorts={"rank": "asc"})
 
-        leaked = await pg_client.fetch_value(
-            "SELECT current_setting('forze.as_of', true)", None
-        )
+        leaked = await pg_client.fetch_value("SELECT current_setting('forze.as_of', true)", None)
 
     assert leaked != "2026-03-01"  # the param value did not survive the read
+
+
+class _RawAsOf(BaseModel):
+    as_of: str
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_failed_read_surfaces_the_query_error_not_the_reset_failure(
+    pg_client: PostgresClient,
+) -> None:
+    """A bound value the view cannot cast fails the fetch and aborts the transaction; the
+    follow-up GUC reset then fails too (every command does in an aborted transaction) and
+    must never replace the query's own error."""
+
+    view = await _make_view(pg_client)
+    gw = read_gw(
+        _ctx(pg_client),
+        read_type=Standing,
+        read_relation=("public", view),
+        tenant_aware=False,
+        params_required=True,
+    )
+    bad = attrs.evolve(gw, bound_params=_RawAsOf(as_of="not-a-date"))
+
+    with pytest.raises(CoreException, match="Invalid value"):
+        await bad.find_many({"$values": {"region": "eu"}})
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_failed_read_leaves_the_caller_transaction_usable(
+    pg_client: PostgresClient,
+) -> None:
+    """Inside a caller transaction, the failed read's savepoint rolls back: the outer
+    transaction stays usable, sees the original error, and does not inherit the GUC."""
+
+    view = await _make_view(pg_client)
+    gw = read_gw(
+        _ctx(pg_client),
+        read_type=Standing,
+        read_relation=("public", view),
+        tenant_aware=False,
+        params_required=True,
+    )
+    bad = attrs.evolve(gw, bound_params=_RawAsOf(as_of="not-a-date"))
+
+    async with pg_client.transaction():
+        with pytest.raises(CoreException, match="Invalid value"):
+            await bad.find_many({"$values": {"region": "eu"}})
+
+        # The savepoint rolled back: the outer transaction still accepts statements
+        # and the failed read's parameter did not merge into it.
+        leaked = await pg_client.fetch_value("SELECT current_setting('forze.as_of', true)", None)
+
+    assert leaked != "not-a-date"
 
 
 @pytest.mark.integration
